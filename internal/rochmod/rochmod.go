@@ -9,32 +9,32 @@ import (
 
 // Dangerous chmod options that modify permissions
 var dangerousChmodOptions = map[string]bool{
-	"-R": true, "--recursive": true,       // Recursive changes
-	"-v": true, "--verbose": true,         // Verbose output (could be safe, but often used with changes)
-	"-c": true, "--changes": true,         // Report changes (implies changes are happening)
-	"--reference": true,                    // Change permissions to match reference file
+	"-R": true, "--recursive": true, // Recursive changes
+	"-v": true, "--verbose": true, // Verbose output (could be safe, but often used with changes)
+	"-c": true, "--changes": true, // Report changes (implies changes are happening)
+	"--reference": true, // Change permissions to match reference file
 }
 
 // Safe chmod options that are informational only
 var safeChmodOptions = map[string]bool{
-	"--help": true,                         // Display help
-	"--version": true,                      // Display version
+	"--help":    true, // Display help
+	"--version": true, // Display version
 }
 
 // Dangerous patterns to detect in chmod arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // isNumericMode checks if a string is a numeric chmod mode

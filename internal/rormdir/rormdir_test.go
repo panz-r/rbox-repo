@@ -7,9 +7,9 @@ import (
 // Test IsRmdirOptionSafe function
 func TestIsRmdirOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"parents -p", "-p", false},
@@ -47,9 +47,9 @@ func TestIsRmdirOptionSafe(t *testing.T) {
 // Test IsRmdirSafe function
 func TestIsRmdirSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe rmdir commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

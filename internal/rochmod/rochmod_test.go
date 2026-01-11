@@ -7,9 +7,9 @@ import (
 // Test isNumericMode function
 func TestIsNumericMode(t *testing.T) {
 	tests := []struct {
-		name     string
-		mode     string
-		want     bool
+		name string
+		mode string
+		want bool
 	}{
 		{"valid 3-digit mode", "644", true},
 		{"valid 4-digit mode", "0755", true},
@@ -35,9 +35,9 @@ func TestIsNumericMode(t *testing.T) {
 // Test isSymbolicMode function
 func TestIsSymbolicMode(t *testing.T) {
 	tests := []struct {
-		name     string
-		mode     string
-		want     bool
+		name string
+		mode string
+		want bool
 	}{
 		{"simple symbolic mode", "u+r", true},
 		{"complex symbolic mode", "a+rwx", true},
@@ -63,16 +63,16 @@ func TestIsSymbolicMode(t *testing.T) {
 // Test containsWritePermission function
 func TestContainsWritePermission(t *testing.T) {
 	tests := []struct {
-		name     string
-		mode     string
-		want     bool
+		name string
+		mode string
+		want bool
 	}{
 		// Numeric modes
 		{"numeric with write", "644", true},    // 6 = 4+2 (read+write)
 		{"numeric read-only", "444", false},    // 4 = read only
 		{"numeric execute-only", "111", false}, // 1 = execute only
 		{"numeric full", "755", true},          // 7 = 4+2+1 (read+write+execute)
-		{"numeric no write", "555", false},    // 5 = 4+1 (read+execute)
+		{"numeric no write", "555", false},     // 5 = 4+1 (read+execute)
 
 		// Symbolic modes
 		{"symbolic add write", "u+w", true},
@@ -100,9 +100,9 @@ func TestContainsWritePermission(t *testing.T) {
 // Test IsChmodOptionSafe function
 func TestIsChmodOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"recursive -R", "-R", false},
@@ -153,9 +153,9 @@ func TestIsChmodOptionSafe(t *testing.T) {
 // Test IsChmodSafe function
 func TestIsChmodSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe chmod commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

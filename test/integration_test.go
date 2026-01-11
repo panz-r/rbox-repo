@@ -88,8 +88,8 @@ func TestRoGitIntegration(t *testing.T) {
 						// or the specific command requires certain conditions
 						stderrStr := stderr.String()
 						if !bytes.Contains(stderr.Bytes(), []byte("not a git repository")) &&
-						   !bytes.Contains(stderr.Bytes(), []byte("warning: Not a git repository")) &&
-						   !bytes.Contains(stderr.Bytes(), []byte("unknown option")) {
+							!bytes.Contains(stderr.Bytes(), []byte("warning: Not a git repository")) &&
+							!bytes.Contains(stderr.Bytes(), []byte("unknown option")) {
 							t.Errorf("Expected command to succeed but it failed: %v, stderr: %s", tt.args, stderrStr)
 						}
 					} else {

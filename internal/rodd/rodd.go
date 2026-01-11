@@ -8,39 +8,39 @@ import (
 
 // Dangerous dd options that perform data operations
 var dangerousDdOptions = map[string]bool{
-	"if": true,      // Input file (dangerous if it's a device)
-	"of": true,      // Output file (very dangerous - write operation)
-	"bs": true,      // Block size
-	"ibs": true,     // Input block size
-	"obs": true,     // Output block size
-	"cbs": true,     // Conversion block size
-	"skip": true,    // Skip blocks
-	"seek": true,    // Seek blocks
-	"count": true,   // Copy only this many blocks
-	"conv": true,    // Conversion options
-	"status": true,  // Status level
+	"if":     true, // Input file (dangerous if it's a device)
+	"of":     true, // Output file (very dangerous - write operation)
+	"bs":     true, // Block size
+	"ibs":    true, // Input block size
+	"obs":    true, // Output block size
+	"cbs":    true, // Conversion block size
+	"skip":   true, // Skip blocks
+	"seek":   true, // Seek blocks
+	"count":  true, // Copy only this many blocks
+	"conv":   true, // Conversion options
+	"status": true, // Status level
 }
 
 // Safe dd options that are informational only
 var safeDdOptions = map[string]bool{
-	"--help": true,                         // Display help
-	"--version": true,                      // Display version
+	"--help":    true, // Display help
+	"--version": true, // Display version
 }
 
 // Dangerous patterns to detect in dd arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // isDdParameter checks if a parameter looks like a dd parameter

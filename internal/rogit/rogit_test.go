@@ -59,9 +59,9 @@ func TestIsWriteCommand(t *testing.T) {
 // Test IsConfigWriteOperation function
 func TestIsConfigWriteOperation(t *testing.T) {
 	tests := []struct {
-		name  string
-		args  []string
-		want  bool
+		name string
+		args []string
+		want bool
 	}{
 		// Read operations - should be allowed
 		{"list all", []string{"--list"}, false},

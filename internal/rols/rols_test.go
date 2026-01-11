@@ -7,10 +7,10 @@ import (
 // Test IsDangerousLsOption function
 func TestIsDangerousLsOption(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      string
-		want     bool
-		wantErr  string
+		name    string
+		arg     string
+		want    bool
+		wantErr string
 	}{
 		// Safe ls options
 		{"help", "--help", false, ""},

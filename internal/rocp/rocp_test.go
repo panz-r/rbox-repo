@@ -7,9 +7,9 @@ import (
 // Test IsCopyOptionSafe function
 func TestIsCopyOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"archive -a", "-a", false},
@@ -74,9 +74,9 @@ func TestIsCopyOptionSafe(t *testing.T) {
 // Test IsCopySafe function
 func TestIsCopySafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe cp commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

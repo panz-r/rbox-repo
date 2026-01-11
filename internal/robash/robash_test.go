@@ -7,9 +7,9 @@ import (
 // Test IsCommandAllowed function
 func TestIsCommandAllowed(t *testing.T) {
 	tests := []struct {
-		name     string
-		command  string
-		want     bool
+		name    string
+		command string
+		want    bool
 	}{
 		// Dangerous commands that should be blocked
 		{"rm", "rm", false},
@@ -91,9 +91,9 @@ func TestIsCommandAllowed(t *testing.T) {
 // Test ContainsDangerousPattern function
 func TestContainsDangerousPattern(t *testing.T) {
 	tests := []struct {
-		name     string
-		script   string
-		want     bool
+		name   string
+		script string
+		want   bool
 	}{
 		// Safe scripts
 		{"simple echo", "echo hello", false},
@@ -146,9 +146,9 @@ func TestContainsDangerousPattern(t *testing.T) {
 // Test IsScriptSafe function
 func TestIsScriptSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		script   string
-		want     bool
+		name   string
+		script string
+		want   bool
 	}{
 		// Safe scripts
 		{"simple safe script", "ls -la\necho hello\npwd", true},
@@ -183,9 +183,9 @@ func TestIsScriptSafe(t *testing.T) {
 // Test IsCommandLineSafe function
 func TestIsCommandLineSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe command lines
 		{"simple echo", []string{"echo", "hello"}, true},
@@ -219,9 +219,9 @@ func TestIsCommandLineSafe(t *testing.T) {
 // Test IsInteractiveCommandSafe function
 func TestIsInteractiveCommandSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		command  string
-		want     bool
+		name    string
+		command string
+		want    bool
 	}{
 		// Safe interactive commands
 		{"simple ls", "ls", true},

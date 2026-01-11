@@ -8,38 +8,38 @@ import (
 
 // Dangerous mv options that modify files
 var dangerousMvOptions = map[string]bool{
-	"-f": true, "--force": true,           // Force overwrite
-	"-i": true, "--interactive": true,      // Prompt before overwrite
-	"-n": true, "--no-clobber": true,       // Don't overwrite existing files
-	"-u": true, "--update": true,           // Move only when source is newer
-	"-v": true, "--verbose": true,          // Verbose output
-	"-b": true, "--backup": true,           // Make backup before removal
-	"-S": true, "--suffix": true,           // Override backup suffix
+	"-f": true, "--force": true, // Force overwrite
+	"-i": true, "--interactive": true, // Prompt before overwrite
+	"-n": true, "--no-clobber": true, // Don't overwrite existing files
+	"-u": true, "--update": true, // Move only when source is newer
+	"-v": true, "--verbose": true, // Verbose output
+	"-b": true, "--backup": true, // Make backup before removal
+	"-S": true, "--suffix": true, // Override backup suffix
 	"-t": true, "--target-directory": true, // Specify target directory
 	"-T": true, "--no-target-directory": true, // Treat destination as normal file
-	"--strip-trailing-slashes": true,        // Remove trailing slashes from source
+	"--strip-trailing-slashes": true, // Remove trailing slashes from source
 }
 
 // Safe mv options that are informational only
 var safeMvOptions = map[string]bool{
-	"--help": true,                         // Display help
-	"--version": true,                      // Display version
+	"--help":    true, // Display help
+	"--version": true, // Display version
 }
 
 // Dangerous patterns to detect in mv arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // IsMoveOptionSafe checks if a mv option is safe for read-only operation

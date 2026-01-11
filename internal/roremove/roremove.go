@@ -8,37 +8,37 @@ import (
 
 // Dangerous rm options that remove files
 var dangerousRmOptions = map[string]bool{
-	"-f": true, "--force": true,           // Force removal
-	"-i": true, "--interactive": true,      // Prompt before removal
+	"-f": true, "--force": true, // Force removal
+	"-i": true, "--interactive": true, // Prompt before removal
 	"-I": true, "--interactive=once": true, // Prompt once before removing many files
 	"-r": true, "-R": true, "--recursive": true, // Recursive removal
-	"-d": true, "--dir": true,             // Remove empty directories
-	"-v": true, "--verbose": true,          // Verbose output
-	"--one-file-system": true,              // Stay on this file system
-	"--no-preserve-root": true,             // Don't treat '/' specially
-	"--preserve-root": true,                // Don't operate recursively on '/'
+	"-d": true, "--dir": true, // Remove empty directories
+	"-v": true, "--verbose": true, // Verbose output
+	"--one-file-system":  true, // Stay on this file system
+	"--no-preserve-root": true, // Don't treat '/' specially
+	"--preserve-root":    true, // Don't operate recursively on '/'
 }
 
 // Safe rm options that are informational only
 var safeRmOptions = map[string]bool{
-	"--help": true,                         // Display help
-	"--version": true,                      // Display version
+	"--help":    true, // Display help
+	"--version": true, // Display version
 }
 
 // Dangerous patterns to detect in rm arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // IsRemoveOptionSafe checks if a rm option is safe for read-only operation

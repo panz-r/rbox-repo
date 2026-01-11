@@ -11,21 +11,21 @@ import (
 // TestMainWithMock demonstrates how to test the main function using mock executor
 func TestMainWithMock(t *testing.T) {
 	tests := []struct {
-		name       string
-		args       []string
-		shouldFail bool
+		name        string
+		args        []string
+		shouldFail  bool
 		expectedCmd []string
 	}{
 		{
-			name:       "safe echo",
-			args:       []string{"hello", "world"},
-			shouldFail: false,
+			name:        "safe echo",
+			args:        []string{"hello", "world"},
+			shouldFail:  false,
 			expectedCmd: []string{"echo", "hello", "world"},
 		},
 		{
-			name:       "echo with command substitution",
-			args:       []string{"$(whoami)"},
-			shouldFail: true,
+			name:        "echo with command substitution",
+			args:        []string{"$(whoami)"},
+			shouldFail:  true,
 			expectedCmd: nil,
 		},
 	}

@@ -10,35 +10,35 @@ import (
 // Dangerous touch options that modify files
 var dangerousTouchOptions = map[string]bool{
 	"-a": true, "--time=atime": true, "--time=access": true, // Change only access time
-	"-c": true, "--no-create": true,                         // Don't create files
-	"-d": true,                                               // Use specific date/time
-	"-f": true,                                               // (Ignored, for compatibility)
+	"-c": true, "--no-create": true, // Don't create files
+	"-d": true,                                              // Use specific date/time
+	"-f": true,                                              // (Ignored, for compatibility)
 	"-m": true, "--time=mtime": true, "--time=modify": true, // Change only modification time
-	"-r": true, "--reference": true,                         // Use reference file's time
-	"-t": true,                                               // Use [[CC]YY]MMDDhhmm[.ss] format
-	"--time": true,                                           // Change specific timestamp
+	"-r": true, "--reference": true, // Use reference file's time
+	"-t":     true, // Use [[CC]YY]MMDDhhmm[.ss] format
+	"--time": true, // Change specific timestamp
 }
 
 // Safe touch options that are informational only
 var safeTouchOptions = map[string]bool{
-	"--help": true,                         // Display help
-	"--version": true,                      // Display version
+	"--help":    true, // Display help
+	"--version": true, // Display version
 }
 
 // Dangerous patterns to detect in touch arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // isDateFormat checks if a string looks like a date format

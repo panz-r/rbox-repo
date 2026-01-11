@@ -7,9 +7,9 @@ import (
 // Test IsTouchOptionSafe function
 func TestIsTouchOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"access time -a", "-a", false},
@@ -58,9 +58,9 @@ func TestIsTouchOptionSafe(t *testing.T) {
 // Test IsTouchSafe function
 func TestIsTouchSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe touch commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

@@ -7,11 +7,11 @@ import (
 // Test IsDangerousFindOption function
 func TestIsDangerousFindOption(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      string
-		nextArg  string
-		want     bool
-		wantErr  string
+		name    string
+		arg     string
+		nextArg string
+		want    bool
+		wantErr string
 	}{
 		// Dangerous options that should be blocked
 		{"exec", "-exec", "rm {} \\;", true, "can execute commands"},

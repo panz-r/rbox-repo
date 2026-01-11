@@ -7,9 +7,9 @@ import (
 // Test IsRemoveOptionSafe function
 func TestIsRemoveOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"force -f", "-f", false},
@@ -57,9 +57,9 @@ func TestIsRemoveOptionSafe(t *testing.T) {
 // Test IsRemoveSafe function
 func TestIsRemoveSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe rm commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

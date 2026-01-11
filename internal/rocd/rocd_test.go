@@ -7,10 +7,10 @@ import (
 // Test IsDangerousCdOption function
 func TestIsDangerousCdOption(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      string
-		want     bool
-		wantErr  string
+		name    string
+		arg     string
+		want    bool
+		wantErr string
 	}{
 		// Safe cd options
 		{"help", "--help", false, ""},

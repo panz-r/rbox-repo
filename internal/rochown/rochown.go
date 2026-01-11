@@ -8,35 +8,35 @@ import (
 
 // Dangerous chown options that modify ownership
 var dangerousChownOptions = map[string]bool{
-	"-R": true, "--recursive": true,       // Recursive changes
-	"-v": true, "--verbose": true,         // Verbose output
-	"-c": true, "--changes": true,         // Report changes
-	"-f": true, "--silent": true,          // Suppress errors
-	"-h": true, "--no-dereference": true,  // Affect symlinks instead of targets
-	"--from": true,                         // Change only if current owner/group matches
-	"--reference": true,                    // Change ownership to match reference file
+	"-R": true, "--recursive": true, // Recursive changes
+	"-v": true, "--verbose": true, // Verbose output
+	"-c": true, "--changes": true, // Report changes
+	"-f": true, "--silent": true, // Suppress errors
+	"-h": true, "--no-dereference": true, // Affect symlinks instead of targets
+	"--from":      true, // Change only if current owner/group matches
+	"--reference": true, // Change ownership to match reference file
 }
 
 // Safe chown options that are informational only
 var safeChownOptions = map[string]bool{
-	"--help": true,                         // Display help
-	"--version": true,                      // Display version
+	"--help":    true, // Display help
+	"--version": true, // Display version
 }
 
 // Dangerous patterns to detect in chown arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // isValidOwnerSpec checks if a string is a valid owner specification
@@ -240,7 +240,7 @@ func parseChownCommand(args []string) (options []string, ownerSpec string, files
 			return nil, "", nil, fmt.Errorf("--reference requires target files")
 		}
 		// --reference changes ownership, so it's dangerous
-		return options, "REFERENCE:"+referenceFile, args[i:], nil
+		return options, "REFERENCE:" + referenceFile, args[i:], nil
 	}
 
 	// Parse owner specification and files

@@ -7,10 +7,10 @@ import (
 // Test IsDangerousHeadOption function
 func TestIsDangerousHeadOption(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      string
-		want     bool
-		wantErr  string
+		name    string
+		arg     string
+		want    bool
+		wantErr string
 	}{
 		// Safe head options
 		{"help", "--help", false, ""},

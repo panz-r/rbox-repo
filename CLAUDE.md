@@ -8,35 +8,75 @@ This repository contains read-only command wrappers for common Unix/Linux CLI to
 
 ## Build System
 
+This project uses **Mage** build system. Mage is a modern Go-based build tool that provides better integration with Go projects.
+
+### Using Mage
+
+You can use Mage commands:
+```bash
+# List available targets
+mage -l
+
+# Run default target (build)
+mage
+```
+
 ### Build Commands
 ```bash
-# Build all tools
+# Build all tools (using Mage)
+mage build
+
+# Build all tools (using Make)
 make build
 
 # Build individual tools
 go build -o bin/ro-git ./cmd/ro-git
 go build -o bin/ro-find ./cmd/ro-find
 
-# Clean build artifacts
+# Clean build artifacts (using Mage)
+mage clean
+
+# Clean build artifacts (using Make)
 make clean
 ```
 
 ### Installation
 ```bash
-# Install to /usr/local/bin
+# Install to /usr/local/bin (using Mage)
+mage install
+
+# Install to /usr/local/bin (using Make)
 make install
 
-# Uninstall
+# Uninstall (using Mage)
+mage uninstall
+
+# Uninstall (using Make)
 make uninstall
 
-# Install to custom location
+# Install to custom location (using Mage)
+DESTDIR=/custom/path mage install
+
+# Install to custom location (using Make)
 make install DESTDIR=/custom/path
 ```
 
 ### Testing
 ```bash
-# Run basic tests
+# Run all tests (using Mage)
+mage test
+
+# Run all tests (using Make)
 make test
+
+# Run unit tests (using Mage)
+mage unitTest
+
+# Run integration tests (using Mage)
+mage integrationTest
+
+# Quick test (using Mage)
+mage quickTest
 
 # Test individual commands
 ./bin/ro-git --version
@@ -134,10 +174,16 @@ if ownerSpec != "" {
 ### Common Tasks
 
 ```bash
-# Format code
+# Format code (using Mage)
+mage fmt
+
+# Format code (using Make)
 make fmt
 
-# Build and test
+# Build and test (using Mage)
+mage build && mage test
+
+# Build and test (using Make)
 make build && make test
 
 # Run specific wrapper

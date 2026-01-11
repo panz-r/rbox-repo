@@ -7,9 +7,9 @@ import (
 // Test IsSedOptionSafe function
 func TestIsSedOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Safe options that should be allowed
 		{"suppress printing -n", "-n", true},
@@ -51,9 +51,9 @@ func TestIsSedOptionSafe(t *testing.T) {
 // Test IsSedScriptSafe function
 func TestIsSedScriptSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		script   string
-		want     bool
+		name   string
+		script string
+		want   bool
 	}{
 		// Safe sed scripts that should be allowed
 		{"print specific line", "5p", true},
@@ -97,9 +97,9 @@ func TestIsSedScriptSafe(t *testing.T) {
 // Test IsSedSafe function
 func TestIsSedSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe sed commands
 		{"print specific line", []string{"5p"}, true},

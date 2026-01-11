@@ -7,9 +7,9 @@ import (
 // Test IsLnOptionSafe function
 func TestIsLnOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"symbolic -s", "-s", false},
@@ -58,9 +58,9 @@ func TestIsLnOptionSafe(t *testing.T) {
 // Test IsLnSafe function
 func TestIsLnSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe ln commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

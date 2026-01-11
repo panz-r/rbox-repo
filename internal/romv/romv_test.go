@@ -7,9 +7,9 @@ import (
 // Test IsMoveOptionSafe function
 func TestIsMoveOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"force -f", "-f", false},
@@ -60,9 +60,9 @@ func TestIsMoveOptionSafe(t *testing.T) {
 // Test IsMoveSafe function
 func TestIsMoveSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe mv commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

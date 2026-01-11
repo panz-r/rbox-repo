@@ -8,11 +8,11 @@ import (
 
 // Dangerous sort options that should be blocked
 var dangerousSortOptions = map[string]bool{
-	"-o": true,      // Output to file (write operation)
-	"--output": true, // Output to file (write operation)
-	"-T": true,      // Use directory for temporaries (potential write)
+	"-o":                    true, // Output to file (write operation)
+	"--output":              true, // Output to file (write operation)
+	"-T":                    true, // Use directory for temporaries (potential write)
 	"--temporary-directory": true, // Use directory for temporaries (potential write)
-	"--sort": true,  // Sort script (potential code execution)
+	"--sort":                true, // Sort script (potential code execution)
 }
 
 // Safe sort options that are allowed
@@ -32,30 +32,30 @@ var safeSortOptions = map[string]bool{
 	"-t": true, "--field-separator": true,
 	"-u": true, "--unique": true,
 	"-z": true, "--zero-terminated": true,
-	"--help": true,
+	"--help":    true,
 	"--version": true,
-	"-c": true, "--check": true,           // Check if already sorted (read-only)
-	"-m": true, "--merge": true,           // Merge already sorted files (read-only)
-	"-S": true, "--buffer-size": true,     // Buffer size (read-only)
-	"--batch-size": true,                  // Batch size (read-only)
-	"--parallel": true,                    // Parallel processing (read-only)
-	"--files0-from": true,                // Read input from files (read-only)
+	"-c":        true, "--check": true, // Check if already sorted (read-only)
+	"-m": true, "--merge": true, // Merge already sorted files (read-only)
+	"-S": true, "--buffer-size": true, // Buffer size (read-only)
+	"--batch-size":  true, // Batch size (read-only)
+	"--parallel":    true, // Parallel processing (read-only)
+	"--files0-from": true, // Read input from files (read-only)
 }
 
 // Dangerous patterns to detect in sort arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // IsSortOptionSafe checks if a sort option is safe for read-only operation

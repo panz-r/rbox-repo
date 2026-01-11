@@ -7,10 +7,10 @@ import (
 // Test IsDangerousGrepOption function
 func TestIsDangerousGrepOption(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      string
-		want     bool
-		wantErr  string
+		name    string
+		arg     string
+		want    bool
+		wantErr string
 	}{
 		// Safe grep options
 		{"help", "--help", false, ""},

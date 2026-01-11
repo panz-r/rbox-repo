@@ -8,51 +8,51 @@ import (
 
 // Dangerous cp options that copy files
 var dangerousCpOptions = map[string]bool{
-	"-a": true, "--archive": true,           // Archive mode
-	"-b": true, "--backup": true,           // Make backup before overwrite
-	"-f": true, "--force": true,            // Force overwrite
-	"-i": true, "--interactive": true,      // Prompt before overwrite
-	"-l": true, "--link": true,             // Hard link instead of copy
-	"-L": true, "--dereference": true,      // Always follow symbolic links
-	"-H": true,                               // Follow symlinks on command line
-	"-P": true,                               // Never follow symbolic links
-	"-p": true, "--preserve": true,          // Preserve attributes
+	"-a": true, "--archive": true, // Archive mode
+	"-b": true, "--backup": true, // Make backup before overwrite
+	"-f": true, "--force": true, // Force overwrite
+	"-i": true, "--interactive": true, // Prompt before overwrite
+	"-l": true, "--link": true, // Hard link instead of copy
+	"-L": true, "--dereference": true, // Always follow symbolic links
+	"-H": true,                     // Follow symlinks on command line
+	"-P": true,                     // Never follow symbolic links
+	"-p": true, "--preserve": true, // Preserve attributes
 	"-R": true, "-r": true, "--recursive": true, // Recursive copy
-	"-s": true, "--symbolic-link": true,    // Make symbolic links instead of copying
-	"-S": true, "--suffix": true,           // Override backup suffix
-	"-u": true, "--update": true,           // Copy only when source is newer
-	"-v": true, "--verbose": true,          // Verbose output
-	"-x": true, "--one-file-system": true,  // Stay on this file system
-	"-Z": true, "--context": true,          // Set SELinux security context
+	"-s": true, "--symbolic-link": true, // Make symbolic links instead of copying
+	"-S": true, "--suffix": true, // Override backup suffix
+	"-u": true, "--update": true, // Copy only when source is newer
+	"-v": true, "--verbose": true, // Verbose output
+	"-x": true, "--one-file-system": true, // Stay on this file system
+	"-Z": true, "--context": true, // Set SELinux security context
 	"-t": true, "--target-directory": true, // Specify target directory
 	"-T": true, "--no-target-directory": true, // Treat destination as normal file
-	"--attributes-only": true,              // Don't copy file data, just attributes
-	"--no-preserve": true,                  // Don't preserve attributes
-	"--parents": true,                      // Preserve parent directories
-	"--sparse": true,                       // Control creation of sparse files
-	"--strip-trailing-slashes": true,       // Remove trailing slashes from source
+	"--attributes-only":        true, // Don't copy file data, just attributes
+	"--no-preserve":            true, // Don't preserve attributes
+	"--parents":                true, // Preserve parent directories
+	"--sparse":                 true, // Control creation of sparse files
+	"--strip-trailing-slashes": true, // Remove trailing slashes from source
 }
 
 // Safe cp options that are informational only
 var safeCpOptions = map[string]bool{
-	"--help": true,                         // Display help
-	"--version": true,                      // Display version
+	"--help":    true, // Display help
+	"--version": true, // Display version
 }
 
 // Dangerous patterns to detect in cp arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // IsCopyOptionSafe checks if a cp option is safe for read-only operation

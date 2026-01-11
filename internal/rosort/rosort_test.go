@@ -7,9 +7,9 @@ import (
 // Test IsSortOptionSafe function
 func TestIsSortOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"output option -o", "-o", false},
@@ -68,9 +68,9 @@ func TestIsSortOptionSafe(t *testing.T) {
 // Test AreSortArgsSafe function
 func TestAreSortArgsSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe sort commands
 		{"no args", []string{}, true},

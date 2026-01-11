@@ -7,10 +7,10 @@ import (
 // Test IsDangerousTailOption function
 func TestIsDangerousTailOption(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      string
-		want     bool
-		wantErr  string
+		name    string
+		arg     string
+		want    bool
+		wantErr string
 	}{
 		// Safe tail options
 		{"help", "--help", false, ""},

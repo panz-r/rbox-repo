@@ -7,10 +7,10 @@ import (
 // Test IsDangerousDateOption function
 func TestIsDangerousDateOption(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      string
-		want     bool
-		wantErr  string
+		name    string
+		arg     string
+		want    bool
+		wantErr string
 	}{
 		// Safe date options
 		{"help", "--help", false, ""},

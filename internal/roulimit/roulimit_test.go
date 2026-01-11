@@ -7,9 +7,9 @@ import (
 // Test IsUlimitOptionSafe function
 func TestIsUlimitOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Safe read-only options that should be allowed
 		{"display all -a", "-a", true},
@@ -64,9 +64,9 @@ func TestIsUlimitOptionSafe(t *testing.T) {
 // Test IsUlimitSafe function
 func TestIsUlimitSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe ulimit commands (read-only)
 		{"display all limits", []string{"-a"}, true},

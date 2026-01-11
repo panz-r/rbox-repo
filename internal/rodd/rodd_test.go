@@ -7,9 +7,9 @@ import (
 // Test IsDdOptionSafe function
 func TestIsDdOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"input file if", "if", false},
@@ -57,9 +57,9 @@ func TestIsDdOptionSafe(t *testing.T) {
 // Test IsDdSafe function
 func TestIsDdSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe dd commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

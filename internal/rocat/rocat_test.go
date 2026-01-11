@@ -7,10 +7,10 @@ import (
 // Test IsDangerousCatOption function
 func TestIsDangerousCatOption(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      string
-		want     bool
-		wantErr  string
+		name    string
+		arg     string
+		want    bool
+		wantErr string
 	}{
 		// Safe cat options
 		{"help", "--help", false, ""},

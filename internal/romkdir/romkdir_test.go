@@ -7,9 +7,9 @@ import (
 // Test IsMkdirOptionSafe function
 func TestIsMkdirOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"parents -p", "-p", false},
@@ -50,9 +50,9 @@ func TestIsMkdirOptionSafe(t *testing.T) {
 // Test IsMkdirSafe function
 func TestIsMkdirSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe mkdir commands (read-only or informational)
 		{"help option", []string{"--help"}, true},

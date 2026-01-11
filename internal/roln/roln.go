@@ -8,39 +8,39 @@ import (
 
 // Dangerous ln options that create links
 var dangerousLnOptions = map[string]bool{
-	"-s": true, "--symbolic": true,         // Create symbolic links
-	"-f": true, "--force": true,            // Remove existing destination files
-	"-i": true, "--interactive": true,      // Prompt before removing
-	"-n": true, "--no-dereference": true,   // Treat destination as normal file
-	"-b": true, "--backup": true,           // Make backup before removal
-	"-S": true, "--suffix": true,           // Override backup suffix
-	"-v": true, "--verbose": true,          // Verbose output
+	"-s": true, "--symbolic": true, // Create symbolic links
+	"-f": true, "--force": true, // Remove existing destination files
+	"-i": true, "--interactive": true, // Prompt before removing
+	"-n": true, "--no-dereference": true, // Treat destination as normal file
+	"-b": true, "--backup": true, // Make backup before removal
+	"-S": true, "--suffix": true, // Override backup suffix
+	"-v": true, "--verbose": true, // Verbose output
 	"-t": true, "--target-directory": true, // Specify target directory
 	"-T": true, "--no-target-directory": true, // Treat destination as normal file
-	"--help": true,                         // Display help (actually safe, but we'll handle separately)
-	"--version": true,                      // Display version (actually safe, but we'll handle separately)
+	"--help":    true, // Display help (actually safe, but we'll handle separately)
+	"--version": true, // Display version (actually safe, but we'll handle separately)
 }
 
 // Safe ln options that are informational only
 var safeLnOptions = map[string]bool{
-	"--help": true,                         // Display help
-	"--version": true,                      // Display version
+	"--help":    true, // Display help
+	"--version": true, // Display version
 }
 
 // Dangerous patterns to detect in ln arguments
 var dangerousPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`>\s*[^\s]+`),           // Output redirection >
-	regexp.MustCompile(`>>\s*[^\s]+`),          // Append redirection >>
-	regexp.MustCompile(`\|\s*[^\s]+`),          // Pipe |
-	regexp.MustCompile(`\$\s*\([^)]+\)`),       // Command substitution $(...)
-	regexp.MustCompile("`[^`]+`"),               // Backtick command substitution
-	regexp.MustCompile(`\$\s*\{[^}]+\}`),      // Variable expansion ${...}
+	regexp.MustCompile(`>\s*[^\s]+`),                  // Output redirection >
+	regexp.MustCompile(`>>\s*[^\s]+`),                 // Append redirection >>
+	regexp.MustCompile(`\|\s*[^\s]+`),                 // Pipe |
+	regexp.MustCompile(`\$\s*\([^)]+\)`),              // Command substitution $(...)
+	regexp.MustCompile("`[^`]+`"),                     // Backtick command substitution
+	regexp.MustCompile(`\$\s*\{[^}]+\}`),              // Variable expansion ${...}
 	regexp.MustCompile(`\$\s*[A-Za-z_][A-Za-z0-9_]*`), // Simple variable $VAR
-	regexp.MustCompile(`\s*;\s*`),               // Command chaining with ;
-	regexp.MustCompile(`\s*&&\s*`),              // Command chaining with &&
-	regexp.MustCompile(`\s*\|\|\s*`),           // Command chaining with ||
-	regexp.MustCompile(`&\s*$`),                  // Background process &
-	regexp.MustCompile(`\s*&\s*`),                // Background process &
+	regexp.MustCompile(`\s*;\s*`),                     // Command chaining with ;
+	regexp.MustCompile(`\s*&&\s*`),                    // Command chaining with &&
+	regexp.MustCompile(`\s*\|\|\s*`),                  // Command chaining with ||
+	regexp.MustCompile(`&\s*$`),                       // Background process &
+	regexp.MustCompile(`\s*&\s*`),                     // Background process &
 }
 
 // IsLnOptionSafe checks if a ln option is safe for read-only operation

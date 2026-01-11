@@ -7,9 +7,9 @@ import (
 // Test isValidOwnerSpec function
 func TestIsValidOwnerSpec(t *testing.T) {
 	tests := []struct {
-		name     string
-		spec     string
-		want     bool
+		name string
+		spec string
+		want bool
 	}{
 		// Valid owner specifications
 		{"simple username", "john", true},
@@ -44,9 +44,9 @@ func TestIsValidOwnerSpec(t *testing.T) {
 // Test IsChownOptionSafe function
 func TestIsChownOptionSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		option   string
-		want     bool
+		name   string
+		option string
+		want   bool
 	}{
 		// Dangerous options that should be blocked
 		{"recursive -R", "-R", false},
@@ -178,9 +178,9 @@ func TestParseChownCommand(t *testing.T) {
 // Test IsChownSafe function
 func TestIsChownSafe(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		want     bool
+		name string
+		args []string
+		want bool
 	}{
 		// Safe chown commands (read-only or informational)
 		{"help option", []string{"--help"}, true},
@@ -202,9 +202,9 @@ func TestIsChownSafe(t *testing.T) {
 		{"unknown option", []string{"-x"}, false},
 
 		// New test cases for proper parsing
-		{"single username without files", []string{"john"}, false}, // Looks like ownership change attempt
+		{"single username without files", []string{"john"}, false},                                   // Looks like ownership change attempt
 		{"owner with colon in filename", []string{"john:developers", "file:with:colons.txt"}, false}, // Should detect owner spec
-		{"single numeric uid without files", []string{"1000"}, false}, // Looks like ownership change attempt
+		{"single numeric uid without files", []string{"1000"}, false},                                // Looks like ownership change attempt
 		{"complex case", []string{"-Rv", "john:dev", "file1", "file2"}, false},
 	}
 
