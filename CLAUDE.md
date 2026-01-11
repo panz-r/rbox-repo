@@ -4,7 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains read-only command wrappers for common Unix/Linux CLI tools. The wrappers are implemented in Go for security and prevent any write operations while allowing safe read-only commands.
+**ReadOnlyBox** is a BusyBox-like single binary that provides read-only command wrappers for common Unix/Linux CLI tools. The project has evolved from individual wrappers to a consolidated single binary architecture while maintaining the same security principles.
+
+### Architecture Evolution
+
+**Before (Individual Wrappers):**
+- Multiple separate binaries (ro-git, ro-find, ro-ls, etc.)
+- Each wrapper was a standalone binary
+- Total: 26+ individual binaries
+
+**After (ReadOnlyBox Single Binary):**
+- Single consolidated binary: `readonlybox`
+- BusyBox-like interface: `readonlybox <command> [args...]`
+- All 26+ commands available through one binary
+- Maintains all security features and backward compatibility
 
 ## Build System
 
@@ -23,15 +36,18 @@ mage
 
 ### Build Commands
 ```bash
-# Build all tools (using Mage)
+# Build ReadOnlyBox single binary (using Mage)
 mage build
 
-# Build all tools (using Make)
+# Build ReadOnlyBox single binary (using Make)
 make build
 
-# Build individual tools
+# Build individual tools (legacy - still supported)
 go build -o bin/ro-git ./cmd/ro-git
 go build -o bin/ro-find ./cmd/ro-find
+
+# Build new ReadOnlyBox binary
+go build -o readonlybox ./cmd/readonlybox
 
 # Clean build artifacts (using Mage)
 mage clean
@@ -78,9 +94,15 @@ mage integrationTest
 # Quick test (using Mage)
 mage quickTest
 
-# Test individual commands
+# Test individual commands (legacy)
 ./bin/ro-git --version
 ./bin/ro-find . -name "*.go"
+
+# Test ReadOnlyBox single binary
+./readonlybox --help
+./readonlybox git --version
+./readonlybox find . -name "*.go"
+./readonlybox ps aux
 ```
 
 ## Code Architecture
@@ -88,26 +110,69 @@ mage quickTest
 ### Project Structure
 ```
 cmd/
-  ro-git/      # Read-only git wrapper
+  readonlybox/  # ReadOnlyBox single binary (NEW!)
     main.go
-  ro-find/     # Read-only find wrapper
+  ro-git/      # Read-only git wrapper (legacy)
     main.go
+  ro-find/     # Read-only find wrapper (legacy)
+    main.go
+  # ... 26+ other individual wrappers (legacy)
 bin/           # Built binaries (created by make build)
+internal/
+  readonlybox/ # ReadOnlyBox core logic (NEW!)
+    commands.go # Command registry and routing
+  rogit/       # Git security validation
+  rofind/      # Find security validation
+  # ... all other security modules
 ```
 
 ### Key Components
 
-#### ro-git
+#### readonlybox (NEW!)
+- **Purpose**: Single binary providing all read-only command wrappers
+- **Implementation**: BusyBox-like command router with security validation
+- **Security**: Centralized security validation for all commands
+- **Location**: `cmd/readonlybox/main.go` and `internal/readonlybox/commands.go`
+- **Commands Supported**: 26+ read-only commands (ps, df, du, git, find, etc.)
+
+#### ro-git (legacy)
 - **Purpose**: Prevents any git commands that could modify the repository
 - **Implementation**: Go program that validates git commands before execution
 - **Security**: Blocks write operations like commit, push, add, reset, etc.
 - **Location**: `cmd/ro-git/main.go`
+- **Status**: Legacy - functionality now available via `readonlybox git`
 
-#### ro-find
+#### ro-find (legacy)
 - **Purpose**: Prevents any find commands that could execute or delete files
 - **Implementation**: Go program that validates find options before execution
 - **Security**: Blocks dangerous options like -exec, -delete, -ok, etc.
 - **Location**: `cmd/ro-find/main.go`
+- **Status**: Legacy - functionality now available via `readonlybox find`
+
+### ReadOnlyBox Architecture (NEW!)
+
+The ReadOnlyBox single binary follows a modular, security-first architecture:
+
+```
+User Command → Command Router → Security Validator → Safe Execution
+                       ↓
+                 (Block if dangerous)
+```
+
+#### Command Router
+- **Location**: `internal/readonlybox/commands.go`
+- **Function**: Routes commands to appropriate handlers
+- **Implementation**: 26+ command handlers in a registry pattern
+- **Benefits**: Easy to add new commands, centralized error handling
+
+#### Security Validators
+- **Pattern**: Reuse existing security modules
+- **Benefits**: Consistent security across all commands
+- **Modules**: rogit, rofind, rops, rodf, rodu, rowc, rouname, etc.
+
+#### Execution Engine
+- **Function**: Safe command execution with proper error handling
+- **Features**: Exit code preservation, stdin/stdout/stderr passthrough
 
 ### Security Design
 
@@ -164,11 +229,41 @@ if ownerSpec != "" {
 
 ## Development Workflow
 
-### Adding New Wrappers
+### Adding New Commands to ReadOnlyBox
+
+1. **Create security module** (if needed):
+   ```bash
+   mkdir -p internal/ro<command>
+   # Implement security validation in ro<command>.go
+   ```
+
+2. **Add command handler** to `internal/readonlybox/commands.go`:
+   ```go
+   // Add to CommandRegistry
+   "newcommand": {
+       Name:        "newcommand",
+       Description: "Description of the command",
+       Handler:     handleNewCommand,
+   }
+
+   // Implement handler function
+   func handleNewCommand(args []string) error {
+       // Add security validation
+       if safe, reason := ronewcommand.IsNewCommandSafe(args); !safe {
+           return fmt.Errorf("newcommand: %s", reason)
+       }
+       return runCommand("newcommand", args...)
+   }
+   ```
+
+3. **Add tests** following existing patterns
+4. **Update documentation** in README.md
+
+### Legacy: Adding Individual Wrappers
 
 1. Create new directory under `cmd/` (e.g., `cmd/ro-ls/`)
 2. Implement wrapper logic in `main.go`
-3. Add build rule to Makefile
+3. Add build rule to Makefile/Magefile
 4. Update this documentation
 
 ### Common Tasks
@@ -186,9 +281,16 @@ mage build && mage test
 # Build and test (using Make)
 make build && make test
 
-# Run specific wrapper
+# Run specific wrapper (legacy)
 ./bin/ro-git log --oneline
 ./bin/ro-find . -name "*.go" -type f
+
+# Use ReadOnlyBox single binary
+./readonlybox --help
+./readonlybox git log --oneline
+./readonlybox find . -name "*.go" -type f
+./readonlybox ps aux
+./readonlybox df -h
 ```
 
 ### Testing Requirements
@@ -230,12 +332,22 @@ func TestParseFailures(t *testing.T) {
 
 ## Current Tools
 
-### ro-git
+### ReadOnlyBox (Single Binary - RECOMMENDED)
+- **Commands**: 26+ read-only commands in one binary
+- **Interface**: `readonlybox <command> [args...]`
+- **Benefits**: Easy distribution, single installation, BusyBox-like interface
+- **Status**: Active development, recommended approach
+
+### Individual Wrappers (Legacy - Still Supported)
+
+#### ro-git
 - **Safe commands**: log, show, diff, status, grep, blame, etc.
 - **Blocked commands**: add, commit, push, pull, merge, rebase, etc.
 - **Special handling**: config commands are analyzed for write operations
+- **Status**: Legacy - use `readonlybox git` instead
 
-### ro-find
+#### ro-find
 - **Safe options**: -name, -type, -size, -mtime, etc.
 - **Blocked options**: -exec, -execdir, -ok, -okdir, -delete
 - **Special handling**: -printf/-fprintf with file redirection is blocked
+- **Status**: Legacy - use `readonlybox find` instead
