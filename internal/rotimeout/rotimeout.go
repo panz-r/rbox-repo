@@ -46,7 +46,7 @@ func IsDangerousTimeoutOption(arg string, position int) (bool, string) {
 		// Check for time suffixes
 		if strings.HasSuffix(arg, "s") || strings.HasSuffix(arg, "m") || strings.HasSuffix(arg, "h") || strings.HasSuffix(arg, "d") {
 			// Extract numeric part
-			numericPart := strings.TrimSuffix(arg, "smhd")
+			numericPart := strings.TrimSuffix(arg, string(arg[len(arg)-1]))
 			if _, err := strconv.ParseFloat(numericPart, 64); err == nil {
 				return false, "valid duration with suffix"
 			}

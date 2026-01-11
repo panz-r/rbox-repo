@@ -26,6 +26,11 @@ build:
 	go build -o bin/ro-mkdir ./cmd/ro-mkdir
 	go build -o bin/ro-rmdir ./cmd/ro-rmdir
 	go build -o bin/ro-ln ./cmd/ro-ln
+	go build -o bin/ro-mv ./cmd/ro-mv
+	go build -o bin/ro-cp ./cmd/ro-cp
+	go build -o bin/ro-rm ./cmd/ro-rm
+	go build -o bin/ro-touch ./cmd/ro-touch
+	go build -o bin/ro-dd ./cmd/ro-dd
 
 clean:
 	rm -rf bin
@@ -52,6 +57,11 @@ install:
 	install -m 755 bin/ro-mkdir $(DESTDIR)/usr/local/bin/ro-mkdir
 	install -m 755 bin/ro-rmdir $(DESTDIR)/usr/local/bin/ro-rmdir
 	install -m 755 bin/ro-ln $(DESTDIR)/usr/local/bin/ro-ln
+	install -m 755 bin/ro-mv $(DESTDIR)/usr/local/bin/ro-mv
+	install -m 755 bin/ro-cp $(DESTDIR)/usr/local/bin/ro-cp
+	install -m 755 bin/ro-rm $(DESTDIR)/usr/local/bin/ro-rm
+	install -m 755 bin/ro-touch $(DESTDIR)/usr/local/bin/ro-touch
+	install -m 755 bin/ro-dd $(DESTDIR)/usr/local/bin/ro-dd
 
 uninstall:
 	rm -f $(DESTDIR)/usr/local/bin/ro-git
@@ -74,6 +84,11 @@ uninstall:
 	rm -f $(DESTDIR)/usr/local/bin/ro-mkdir
 	rm -f $(DESTDIR)/usr/local/bin/ro-rmdir
 	rm -f $(DESTDIR)/usr/local/bin/ro-ln
+	rm -f $(DESTDIR)/usr/local/bin/ro-mv
+	rm -f $(DESTDIR)/usr/local/bin/ro-cp
+	rm -f $(DESTDIR)/usr/local/bin/ro-rm
+	rm -f $(DESTDIR)/usr/local/bin/ro-touch
+	rm -f $(DESTDIR)/usr/local/bin/ro-dd
 
 # Run all tests
 test: unit-test integration-test
@@ -101,6 +116,11 @@ unit-test:
 	go test -v ./internal/romkdir/...
 	go test -v ./internal/rormdir/...
 	go test -v ./internal/roln/...
+	go test -v ./internal/romv/...
+	go test -v ./internal/rocp/...
+	go test -v ./internal/roremove/...
+	go test -v ./internal/rotouch/...
+	go test -v ./internal/rodd/...
 
 # Run integration tests
 integration-test:
@@ -136,5 +156,5 @@ fmt:
 # Test coverage
 coverage:
 	@echo "Generating test coverage..."
-	go test -coverprofile=coverage.out ./internal/rogit/... ./internal/rofind/... ./internal/rols/... ./internal/rocat/... ./internal/rogrep/... ./internal/rohead/... ./internal/rotail/... ./internal/rotimeout/... ./internal/roecho/... ./internal/rodate/... ./internal/rocd/... ./internal/robash/... ./internal/rosort/... ./internal/roulimit/... ./internal/rosed/... ./internal/rochmod/... ./internal/rochown/... ./internal/romkdir/... ./internal/rormdir/... ./internal/roln/... ./test/...
+	go test -coverprofile=coverage.out ./internal/rogit/... ./internal/rofind/... ./internal/rols/... ./internal/rocat/... ./internal/rogrep/... ./internal/rohead/... ./internal/rotail/... ./internal/rotimeout/... ./internal/roecho/... ./internal/rodate/... ./internal/rocd/... ./internal/robash/... ./internal/rosort/... ./internal/roulimit/... ./internal/rosed/... ./internal/rochmod/... ./internal/rochown/... ./internal/romkdir/... ./internal/rormdir/... ./internal/roln/... ./internal/romv/... ./internal/rocp/... ./internal/roremove/... ./internal/rotouch/... ./internal/rodd/... ./test/...
 	go tool cover -html=coverage.out

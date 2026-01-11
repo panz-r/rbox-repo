@@ -56,10 +56,10 @@ func TestRoGitIntegration(t *testing.T) {
 		// Safe read operations (if in a git repo)
 		{"log", []string{"log", "--oneline"}, false, ""},
 		{"show", []string{"show", "--stat"}, false, ""},
-		{"diff", []string{"diff"}, true, "warning: Not a git repository"},
+		{"diff", []string{"diff"}, false, ""}, // We're in a git repo, so diff should work
 		{"status", []string{"status"}, false, ""},
 		{"grep", []string{"grep", "main"}, false, ""},
-		{"blame", []string{"blame", "--", "README.md"}, false, ""},
+		{"blame", []string{"blame", "--", "CLAUDE.md"}, false, ""}, // Use existing file instead of README.md
 	}
 
 	for _, tt := range tests {

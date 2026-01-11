@@ -76,6 +76,52 @@ bin/           # Built binaries (created by make build)
 3. **Go Implementation**: More secure than shell scripts (no shell injection vulnerabilities)
 4. **Direct Execution**: Uses `os/exec` to bypass shell interpretation entirely
 
+### CRITICAL: Command Syntax Parsing
+
+**MUST** implement proper command syntax parsing for each wrapper. The fundamental security principle is:
+
+> "Validate arguments based on their ROLE in the command, not just their isolated appearance"
+
+#### Requirements for All RO Wrappers:
+
+1. **Full Command Parsing**: Must parse the complete command syntax according to the underlying tool's specification
+2. **Role-Based Validation**: Arguments must be validated based on their semantic role (option, filename, owner spec, etc.)
+3. **Parse Failure = Block**: If the command cannot be correctly parsed, it MUST be blocked as potentially dangerous
+4. **Contextual Analysis**: The same string may be safe or dangerous depending on its position and role
+
+#### Example: The chown Fix
+
+**Before (Incorrect)**:
+```go
+// Just checked if each arg "looks dangerous"
+for _, arg := range args {
+    if isValidOwnerSpec(arg) {
+        return false, "attempts to change ownership"
+    }
+}
+```
+
+**After (Correct)**:
+```go
+// Parse full command structure first
+options, ownerSpec, files, err := parseChownCommand(args)
+if err != nil {
+    return false, fmt.Sprintf("invalid command: %s", err) // BLOCK if can't parse
+}
+
+// Validate based on parsed roles
+if ownerSpec != "" {
+    return false, "attempts to change ownership"
+}
+```
+
+#### Why This Matters:
+
+- **Prevents False Positives**: `chown file.txt` should not block because "file.txt" is a filename, not an owner spec
+- **Prevents False Negatives**: `chown john file.txt` must block because "john" is an owner spec targeting "file.txt"
+- **Security**: Malicious commands often rely on argument confusion attacks
+- **Correctness**: Proper parsing ensures the wrapper behaves like the real command (just read-only)
+
 ## Development Workflow
 
 ### Adding New Wrappers
@@ -97,6 +143,43 @@ make build && make test
 # Run specific wrapper
 ./bin/ro-git log --oneline
 ./bin/ro-find . -name "*.go" -type f
+```
+
+### Testing Requirements
+
+All RO wrapper tests **MUST** include:
+
+1. **Syntax Parsing Tests**: Test cases that verify proper command syntax parsing
+2. **Role-Based Validation Tests**: Tests for each argument type (options, targets, etc.)
+3. **Edge Case Tests**: Ambiguous cases that could be misinterpreted
+4. **Parse Failure Tests**: Commands that should fail to parse and be blocked
+
+#### Example Test Structure:
+
+```go
+// Test command parsing
+func TestParseCommand(t *testing.T) {
+    // Test proper parsing of full command syntax
+    // Verify options, targets, and arguments are correctly identified
+}
+
+// Test role-based validation
+func TestRoleBasedValidation(t *testing.T) {
+    // Test that the same string is handled differently based on role
+    // e.g., "file.txt" as filename vs "file.txt" as invalid owner spec
+}
+
+// Test edge cases
+func TestEdgeCases(t *testing.T) {
+    // Test ambiguous or borderline cases
+    // Test commands that look valid but should be blocked
+}
+
+// Test parse failures
+func TestParseFailures(t *testing.T) {
+    // Test malformed commands that should fail to parse
+    // Verify they are blocked rather than allowed through
+}
 ```
 
 ## Current Tools
