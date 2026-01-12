@@ -93,3 +93,27 @@ func AreLsArgsSafe(args []string) (bool, string) {
 	}
 	return true, ""
 }
+
+// ParseLsDirectories extracts directory/file paths from ls arguments
+func ParseLsDirectories(args []string) ([]string, error) {
+	var paths []string
+
+	for _, arg := range args {
+		// Skip options (arguments starting with -)
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+
+		// If it's not an option, it's a path (file or directory)
+		if arg != "" {
+			paths = append(paths, arg)
+		}
+	}
+
+	// If no paths specified, ls uses current directory
+	if len(paths) == 0 {
+		paths = append(paths, ".")
+	}
+
+	return paths, nil
+}

@@ -46,6 +46,8 @@ import (
 	"github.com/panz/openroutertest/internal/rosleep"
 	"github.com/panz/openroutertest/internal/roexpr"
 	"github.com/panz/openroutertest/internal/roman"
+	"github.com/panz/openroutertest/internal/access"
+	"github.com/panz/openroutertest/internal/dsl"
 	"strings"
 )
 
@@ -55,6 +57,9 @@ type Command struct {
 	Description string
 	Handler     func([]string) error
 }
+
+// Global access control engine
+var AccessEngine *access.AccessControlEngine
 
 // CommandRegistry maps command names to their handlers
 var CommandRegistry = map[string]Command{
@@ -303,6 +308,52 @@ func ExecuteCommand(command string, args []string) error {
 	return cmd.Handler(args)
 }
 
+// SetAccessEngine sets the global access control engine
+func SetAccessEngine(engine *access.AccessControlEngine) {
+	AccessEngine = engine
+}
+
+// GetAccessEngine returns the global access control engine
+func GetAccessEngine() *access.AccessControlEngine {
+	return AccessEngine
+}
+
+// CheckFileAccess checks if a command can access a file with the given operation
+func CheckFileAccess(cmd string, path string, opType dsl.OperationType) (bool, error) {
+	if AccessEngine == nil {
+		// No access control engine, allow all read operations
+		if opType == dsl.OpRead {
+			return true, nil
+		}
+		return false, fmt.Errorf("write operations not allowed without access control")
+	}
+
+	return AccessEngine.CanAccess(cmd, path, opType)
+}
+
+// CheckCommandAccess checks if a command can access all required files with the given operation type
+func CheckCommandAccess(cmd string, filePaths []string, opType dsl.OperationType) error {
+	if AccessEngine == nil {
+		// No access control engine, allow all read operations
+		if opType == dsl.OpRead {
+			return nil
+		}
+		return fmt.Errorf("write operations not allowed without access control")
+	}
+
+	for _, path := range filePaths {
+		allowed, err := AccessEngine.CanAccess(cmd, path, opType)
+		if err != nil {
+			return fmt.Errorf("access control error for %s: %v", path, err)
+		}
+		if !allowed {
+			return fmt.Errorf("access denied: %s cannot %s %s", cmd, opType, path)
+		}
+	}
+
+	return nil
+}
+
 // Command handlers
 
 func handleGit(args []string) error {
@@ -332,6 +383,18 @@ func handleFind(args []string) error {
 }
 
 func handleLs(args []string) error {
+	// Parse command to extract directory paths
+	dirs, err := rols.ParseLsDirectories(args)
+	if err != nil {
+		return fmt.Errorf("ls: %v", err)
+	}
+
+	// Check access control for all directories
+	if err := CheckCommandAccess("ls", dirs, dsl.OpRead); err != nil {
+		return err
+	}
+
+	// Also check original safety validation
 	if safe, reason := rols.AreLsArgsSafe(args); !safe {
 		return fmt.Errorf("ls: %s", reason)
 	}
@@ -344,6 +407,18 @@ func handleCat(args []string) error {
 		return fmt.Errorf("cat: no file provided")
 	}
 
+	// Parse command to extract file paths
+	files, err := rocat.ParseCatFiles(args)
+	if err != nil {
+		return fmt.Errorf("cat: %v", err)
+	}
+
+	// Check access control for all files
+	if err := CheckCommandAccess("cat", files, dsl.OpRead); err != nil {
+		return err
+	}
+
+	// Also check original safety validation
 	if safe, reason := rocat.AreCatArgsSafe(args); !safe {
 		return fmt.Errorf("cat: %s", reason)
 	}

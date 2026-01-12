@@ -64,3 +64,32 @@ func AreCatArgsSafe(args []string) (bool, string) {
 	}
 	return true, ""
 }
+
+// ParseCatFiles extracts file paths from cat arguments
+func ParseCatFiles(args []string) ([]string, error) {
+	var files []string
+
+	for _, arg := range args {
+		// Skip options (arguments starting with -)
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+
+		// Skip special device files that are handled safely
+		if arg == "/dev/null" || arg == "/dev/zero" || arg == "/dev/random" || arg == "/dev/urandom" {
+			continue
+		}
+
+		// If it's not an option and not a special device, it's a file path
+		if arg != "" {
+			files = append(files, arg)
+		}
+	}
+
+	// If no files specified, cat reads from stdin, which is always allowed
+	if len(files) == 0 {
+		return []string{"/dev/stdin"}, nil
+	}
+
+	return files, nil
+}

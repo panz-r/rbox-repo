@@ -1,0 +1,45 @@
+# Enhanced access control configuration for ReadOnlyBox
+version: "1.0"
+base_directory: /home/user/project
+
+# Command-specific access rules
+commands:
+  ls:
+    - read at /home/user/project/
+    - read sub[2] /home/user/project/src/
+
+  cat:
+    - read at /home/user/project/
+    - read super[1] /home/user/project/
+
+  grep:
+    - read at /home/user/project/
+    - redirect to /tmp/readonlybox_*.txt
+
+  sort:
+    - read at /home/user/project/
+    - redirect to /tmp/readonlybox_*.txt
+    - overwrite if created-by readonlybox /tmp/readonlybox_*.txt
+
+  find:
+    - read sub[3] /home/user/project/
+    - read at /home/user/project/
+
+# Temporary file management
+temp_files:
+  pattern: /tmp/readonlybox_*
+  max_size: 10MB
+  max_count: 50
+  auto_cleanup: 24h
+
+# Workflow definitions
+workflows:
+  code_review:
+    - allow grep read at /home/user/project/
+    - allow grep redirect to /tmp/readonlybox_*.txt
+    - allow cat read sub[3] /home/user/project/
+
+  log_analysis:
+    - allow grep read at /var/log/
+    - allow sort read at /var/log/
+    - allow redirect to /tmp/readonlybox_*.log
