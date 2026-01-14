@@ -74,6 +74,22 @@ func NewWholeCommandParser() *WholeCommandParser {
 	registry.RegisterParser("rev", &TextUtilsParser{commandType: "rev"})
 	registry.RegisterParser("expand", &TextUtilsParser{commandType: "expand"})
 	registry.RegisterParser("unexpand", &TextUtilsParser{commandType: "unexpand"})
+
+	// Work Stream B: Infrastructure & Operations
+	// System Operations
+	registry.RegisterParser("ln", &LnParser{})
+
+	// Network Tools
+	registry.RegisterParser("rsync", &RsyncParser{})
+	registry.RegisterParser("nc", &NcParser{})
+	registry.RegisterParser("netcat", &NcParser{})
+
+	// Containerization
+	registry.RegisterParser("docker", &DockerParser{})
+
+	// Cloud Tools
+	registry.RegisterParser("kubectl", &KubectlParser{})
+
 	// Add more parsers here as they're implemented
 
 	return &WholeCommandParser{
