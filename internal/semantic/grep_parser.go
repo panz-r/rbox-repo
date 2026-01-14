@@ -119,49 +119,36 @@ func (g *GrepParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperat
 		return nil, fmt.Errorf("invalid grep command type")
 	}
 
-	operations := make([]SemanticOperation, 0)
+	builder := ParserUtilsInstance.SemanticOperationBuilder()
 
 	// Add read operations for each input file
 	for _, file := range cmd.InputFiles {
-		operations = append(operations, SemanticOperation{
-			OperationType: OpRead,
-			TargetPath:    file,
-			Context:       "input_file",
-			Parameters: map[string]interface{}{
-				"command":      "grep",
-				"pattern":      cmd.Pattern,
-				"case_insensitive": cmd.CaseInsensitive,
-				"invert_match":    cmd.InvertMatch,
-			},
-		})
+		builder.AddReadOperation(file, "input_file")
+		builder.WithCommandInfo("grep")
+		builder.WithParameter("pattern", cmd.Pattern)
+		builder.WithParameter("case_insensitive", cmd.CaseInsensitive)
+		builder.WithParameter("invert_match", cmd.InvertMatch)
+		builder.WithParameter("show_line_numbers", cmd.ShowLineNumbers)
+		builder.WithParameter("show_file_names", cmd.ShowFileNames)
+		builder.WithPrecise() // Precise since we know exactly what file is being read
 	}
 
 	// If pattern file is specified, add read operation for it
 	if patternFile, ok := cmd.Options["pattern_file"]; ok {
-		operations = append(operations, SemanticOperation{
-			OperationType: OpRead,
-			TargetPath:    patternFile.(string),
-			Context:       "pattern_file",
-			Parameters: map[string]interface{}{
-				"command": "grep",
-			},
-		})
+		builder.AddReadOperation(patternFile.(string), "pattern_file")
+		builder.WithCommandInfo("grep")
+		builder.WithOverApproximated() // Pattern files can be complex
 	}
 
 	// If no input files, grep reads from stdin
 	if len(cmd.InputFiles) == 0 {
-		operations = append(operations, SemanticOperation{
-			OperationType: OpRead,
-			TargetPath:    "/dev/stdin",
-			Context:       "stdin",
-			Parameters: map[string]interface{}{
-				"command":      "grep",
-				"pattern":      cmd.Pattern,
-				"case_insensitive": cmd.CaseInsensitive,
-				"invert_match":    cmd.InvertMatch,
-			},
-		})
+		builder.AddReadOperation("/dev/stdin", "stdin")
+		builder.WithCommandInfo("grep")
+		builder.WithParameter("pattern", cmd.Pattern)
+		builder.WithParameter("case_insensitive", cmd.CaseInsensitive)
+		builder.WithParameter("invert_match", cmd.InvertMatch)
+		builder.WithOverApproximated() // Less precise since we don't know stdin source
 	}
 
-	return operations, nil
+	return builder.Build(), nil
 }

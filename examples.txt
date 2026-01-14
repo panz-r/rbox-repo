@@ -1,0 +1,37 @@
+echo "test data" | ./readonlybox tr 'a-z' 'A-Z' && echo "Testing diff:" && echo -e "line1\nline2" > /tmp/test1.txt && echo -e
+"line1\nline3" > /tmp/test2.txt && ./readonlybox diff /tmp/test1.txt /tmp/test2.txt && echo "Testing cut:" && echo "col1:col2:col3" |
+./readonlybox cut -d: -f2 && rm /tmp/test1.txt /tmp/test2.txt
+
+
+cd /home/panz/osrc/mistral-vibe && export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 && . venv/bin/activate && python -c "
+from spajson import parse_spa_json
+
+
+Complex bash command that we need to check is safe:
+Bash(for f in src/checks/*.rs; do
+      if ! grep -q "PHASE 5 MIGRATED" "$f" 2>/dev/null && grep -q "\.contains\|\.replace\|\.starts_with" "$f" 2>/dev/null; then…)
+
+One more example:
+sed -i '1152s/Arc<Type>/FullType/' /home/panz/osrc/cppr-repo/src/analysis/typed_evaluator.rs
+sed -i '1153,1154s/.unwrap_or_else(|| {\n            Arc::new(Type::integer("int".to_string(), 4, true))\n        })/.unwrap_or_else(||
+FullType::Fundamental(FundamentalType::Int(crate::analysis::types::SignKind::Signed)))/'
+/home/panz/osrc/cppr-repo/src/analysis/typed_evaluator.rs
+echo "Fixed get_variable_type"
+
+
+# Simple python3 usage needs to be validated and allowed:
+python3 -c "
+with open('src/checks/checkstl.rs', 'r') as f:
+    lines = f.readlines()
+
+for i, line in enumerate(lines[75:78], 76):  # lines 76-78
+    spaces = len(line) - len(line.lstrip())
+    print(f'Line {i}: {spaces} spaces: {repr(line[:20])}...')
+"
+
+
+#Find test files that test command parsers
+find . -name "*_test.go" -exec grep -l "ParseArguments\|GetSemanticOperations" {} \;
+
+# Safe and must be allowed:
+find /home/panz/osrc/cppr-repo/src/analysis -name "*.rs" -exec grep -l "TypeDatabase" {} \;

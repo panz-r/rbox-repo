@@ -55,31 +55,21 @@ func (c *CatParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperati
 		return nil, fmt.Errorf("invalid cat command type")
 	}
 
-	operations := make([]SemanticOperation, 0)
+	builder := ParserUtilsInstance.SemanticOperationBuilder()
 
 	// Add read operations for each input file
 	for _, file := range cmd.InputFiles {
-		operations = append(operations, SemanticOperation{
-			OperationType: OpRead,
-			TargetPath:    file,
-			Context:       "input_file",
-			Parameters: map[string]interface{}{
-				"command": "cat",
-			},
-		})
+		builder.AddReadOperation(file, "input_file")
+		builder.WithCommandInfo("cat")
+		builder.WithPrecise() // Precise since we know exactly what file is being read
 	}
 
 	// If no input files, cat reads from stdin (no file operation)
 	if len(cmd.InputFiles) == 0 {
-		operations = append(operations, SemanticOperation{
-			OperationType: OpRead,
-			TargetPath:    "/dev/stdin",
-			Context:       "stdin",
-			Parameters: map[string]interface{}{
-				"command": "cat",
-			},
-		})
+		builder.AddReadOperation("/dev/stdin", "stdin")
+		builder.WithCommandInfo("cat")
+		builder.WithOverApproximated() // Less precise since we don't know stdin source
 	}
 
-	return operations, nil
+	return builder.Build(), nil
 }
