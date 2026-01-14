@@ -265,3 +265,23 @@ func (f *FindParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperat
 
 	return operations, nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for find commands
+func (f *FindParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*FindCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid find command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := f.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("find", operations, []SemanticOperation{})
+
+	return graph, nil
+}

@@ -404,3 +404,32 @@ func (d *DiffCommUniqParser) GetSemanticOperations(parsed interface{}) ([]Semant
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface
+func (p *DiffCommUniqParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+
+	switch parsed.(type) {
+	case *DiffCommand:
+		commandName = "diff"
+	case *CommCommand:
+		commandName = "comm"
+	case *UniqCommand:
+		commandName = "uniq"
+	default:
+		return nil, fmt.Errorf("invalid command type for diff/comm/uniq parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}

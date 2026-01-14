@@ -343,3 +343,40 @@ func (c *CutPasteJoinParser) GetSemanticOperations(parsed interface{}) ([]Semant
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for cut/paste/join commands
+func (p *CutPasteJoinParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+	var isValid bool
+
+	if _, ok := parsed.(*CutCommand); ok {
+		commandName = "cut"
+		isValid = true
+	} else if _, ok := parsed.(*PasteCommand); ok {
+		commandName = "paste"
+		isValid = true
+	} else if _, ok := parsed.(*JoinCommand); ok {
+		commandName = "join"
+		isValid = true
+	}
+
+	if !isValid {
+		return nil, fmt.Errorf("invalid command type for cut parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}
+// GetOperationGraph implements the enhanced CommandParser interface for cut commands
+
+// GetOperationGraph implements the enhanced CommandParser interface for cut/paste/join commands

@@ -142,3 +142,23 @@ func (p *PsParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperatio
 
 	return operations, nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for ps commands
+func (p *PsParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*PsCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid ps command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("ps", operations, []SemanticOperation{})
+
+	return graph, nil
+}

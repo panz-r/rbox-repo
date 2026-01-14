@@ -43,4 +43,20 @@ grep -n "^}" /home/panz/osrc/cppr-repo/src/analysis/type_database.rs | awk -F: '
 find /home/panz/backup-copies/cppr-copy/src/analysis/preprocessor -name "*.rs" -exec grep -c "#\[test\]" {} \; | awk '{sum += $1} END
 {print "Total test count:", sum}'
 
+# Safe, must be allowed:
+# Remove duplicate GetOperationGraph methods from remaining files
+for file in internal/semantic/cp_mv_parser.go internal/semantic/cut_paste_join_parser.go internal/semantic/diff_comm_uniq_parser.go
+internal/semantic/echo_date_whoami_parser.go internal/semantic/gzip_parser.go internal/semantic/od_strings_parser.go
+internal/semantic/readlink_basename_uptime_parser.go internal/semantic/rm_parser.go; do
+    echo "Fixing duplicates in $file"
+    # Find the line number of the first GetOperationGraph method
+    first_line=$(grep -n "func.*GetOperationGraph" "$file" | head -n 1 | cut -d: -f1)
+    # Find the line number of the second GetOperationGraph method (if exists)
+    second_line=$(grep -n "func.*GetOperationGraph" "$file" | tail -n 1 | cut -d: -f1)
+
+    if [ -n "$second_line" ]; then
+      echo "Removing duplicate at line $second_line"
+      head -n $((second_line - 1)) "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+    fi
+done
 

@@ -305,3 +305,24 @@ func (w *WgetCurlParser) GetSemanticOperations(parsed interface{}) ([]SemanticOp
 
 	return operations, nil
 }
+// GetOperationGraph implements the enhanced CommandParser interface for wget commands
+func (p *WgetCurlParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*WgetCurlCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid wget command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("wget", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for wget commands

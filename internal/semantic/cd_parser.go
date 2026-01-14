@@ -103,3 +103,5 @@ func (c *CdParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperatio
 func NewCdParser() *CdParser {
 	return &CdParser{}
 }
+// GetOperationGraph implements the enhanced CommandParser interface for cd commands
+

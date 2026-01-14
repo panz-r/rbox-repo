@@ -11,6 +11,9 @@ type CommandParser interface {
 
 	// GetSemanticOperations extracts semantic operations from parsed command
 	GetSemanticOperations(parsed interface{}) ([]SemanticOperation, error)
+
+	// GetOperationGraph extracts complete operation graph from parsed command (enhanced)
+	GetOperationGraph(parsed interface{}) (*OperationGraph, error)
 }
 
 // GenericCommand represents a generic parsed command
@@ -76,4 +79,24 @@ func (g *GenericParser) GetSemanticOperations(parsed interface{}) ([]SemanticOpe
 	}
 
 	return operations, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for generic commands
+func (g *GenericParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	cmd, ok := parsed.(*GenericCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid parsed command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := g.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph with conservative assumptions
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(cmd.Command, operations, []SemanticOperation{})
+
+	return graph, nil
 }

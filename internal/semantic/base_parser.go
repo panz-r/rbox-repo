@@ -396,6 +396,26 @@ func (cp *CommonParser) GetSemanticOperations(parsed interface{}) ([]SemanticOpe
 	return operations, nil
 }
 
+// GetOperationGraph implements the enhanced CommandParser interface
+func (cp *CommonParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*BaseCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid command type for common parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := cp.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(cp.BaseParser.commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
 // hasDangerousOptions checks if any options indicate dangerous operations
 func (cp *CommonParser) hasDangerousOptions(options map[string]interface{}) bool {
 	for opt := range options {

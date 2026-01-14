@@ -187,3 +187,23 @@ func (s *SedAWKParser) GetSemanticOperations(parsed interface{}) ([]SemanticOper
 
 	return operations, nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for sed/awk commands
+func (s *SedAWKParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*SedAWKCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid sed/awk command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := s.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("sed", operations, []SemanticOperation{})
+
+	return graph, nil
+}

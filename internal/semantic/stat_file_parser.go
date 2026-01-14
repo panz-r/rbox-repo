@@ -263,3 +263,30 @@ func (s *StatFileParser) GetSemanticOperations(parsed interface{}) ([]SemanticOp
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface
+func (p *StatFileParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+
+	switch parsed.(type) {
+	case *StatCommand:
+		commandName = "stat"
+	case *FileCommand:
+		commandName = "file"
+	default:
+		return nil, fmt.Errorf("invalid command type for stat/file parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}

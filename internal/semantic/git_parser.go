@@ -282,3 +282,23 @@ func (g *GitParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperati
 
 	return operations, nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for git commands
+func (g *GitParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*GitCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid git command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := g.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("git", operations, []SemanticOperation{})
+
+	return graph, nil
+}

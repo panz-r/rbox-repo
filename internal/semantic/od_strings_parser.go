@@ -617,3 +617,40 @@ func (o *OdStringsParser) GetSemanticOperations(parsed interface{}) ([]SemanticO
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface
+func (p *OdStringsParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+
+	switch parsed.(type) {
+	case *OdCommand:
+		commandName = "od"
+	case *StringsCommand:
+		commandName = "strings"
+	case *FactorCommand:
+		commandName = "factor"
+	case *YesCommand:
+		commandName = "yes"
+	case *SleepCommand:
+		commandName = "sleep"
+	case *CalCommand:
+		commandName = "cal"
+	case *PrintenvCommand:
+		commandName = "printenv"
+	default:
+		return nil, fmt.Errorf("invalid command type for od/strings/factor/yes/sleep/cal/printenv parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}

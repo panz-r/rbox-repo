@@ -171,3 +171,23 @@ func (d *DfDuParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperat
 
 	return operations, nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for df/du commands
+func (d *DfDuParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*DfDuCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid df/du command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := d.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("df", operations, []SemanticOperation{})
+
+	return graph, nil
+}

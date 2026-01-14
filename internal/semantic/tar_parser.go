@@ -417,3 +417,24 @@ func (t *TarParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperati
 
 	return operations, nil
 }
+// GetOperationGraph implements the enhanced CommandParser interface for tar commands
+func (p *TarParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*TarCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid tar command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("tar", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for tar commands

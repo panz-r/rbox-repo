@@ -240,3 +240,23 @@ func (c *CpMvParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperat
 
 	return operations, nil
 }
+// GetOperationGraph implements the enhanced CommandParser interface for cp commands
+func (p *CpMvParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*CpMvCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid cp command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("cp", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+

@@ -73,3 +73,23 @@ func (c *CatParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperati
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for cat commands
+func (c *CatParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*CatCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid cat command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := c.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("cat", operations, []SemanticOperation{})
+
+	return graph, nil
+}

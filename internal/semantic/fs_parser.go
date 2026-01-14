@@ -743,3 +743,144 @@ func NewRmdirParser() *RmdirParser {
 func NewUlimitParser() *UlimitParser {
 	return &UlimitParser{}
 }
+// GetOperationGraph implements the enhanced CommandParser interface for fs commands
+
+// GetOperationGraph implements the enhanced CommandParser interface for dd commands
+func (p *DdParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*DdCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid dd command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("dd", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for expr commands
+func (p *ExprParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*ExprCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid expr command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("expr", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for ln commands
+func (p *LnParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*LnCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid ln command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("ln", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for mkdir commands
+func (p *MkdirParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*MkdirCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid mkdir command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("mkdir", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for printenv commands
+func (p *PrintenvParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*PrintenvCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid printenv command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("printenv", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for rmdir commands
+func (p *RmdirParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*RmdirCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid rmdir command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("rmdir", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for ulimit commands
+func (p *UlimitParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*UlimitCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid ulimit command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("ulimit", operations, []SemanticOperation{})
+
+	return graph, nil
+}

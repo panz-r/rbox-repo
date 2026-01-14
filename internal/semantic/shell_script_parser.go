@@ -1236,3 +1236,5 @@ func (p *MultiLineShellParser) analyzeStatement(stmt *ShellStatement, report *Sa
 		}
 	}
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for shellscript commands

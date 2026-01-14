@@ -160,3 +160,23 @@ func (l *LsParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperatio
 
 	return operations, nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface for ls commands
+func (l *LsParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*LsCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid ls command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := l.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("ls", operations, []SemanticOperation{})
+
+	return graph, nil
+}

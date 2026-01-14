@@ -249,3 +249,30 @@ func (w *WcUnameParser) GetSemanticOperations(parsed interface{}) ([]SemanticOpe
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface
+func (p *WcUnameParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+
+	switch parsed.(type) {
+	case *WcCommand:
+		commandName = "wc"
+	case *UnameCommand:
+		commandName = "uname"
+	default:
+		return nil, fmt.Errorf("invalid command type for wc/uname parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}

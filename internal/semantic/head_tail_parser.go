@@ -159,3 +159,22 @@ func (h *HeadTailParser) GetSemanticOperations(parsed interface{}) ([]SemanticOp
 
 	return builder.Build(), nil
 }
+// GetOperationGraph implements the enhanced CommandParser interface for head commands
+func (p *HeadTailParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*HeadTailCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid head command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("head", operations, []SemanticOperation{})
+
+	return graph, nil
+}

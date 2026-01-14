@@ -403,3 +403,24 @@ func (s *ScpParser) getRemotePath(path string) string {
 func (s *ScpParser) isDirectory(path string) bool {
 	return strings.HasSuffix(path, "/") || !strings.Contains(path, ".")
 }
+// GetOperationGraph implements the enhanced CommandParser interface for scp commands
+func (p *ScpParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*ScpCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid scp command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("scp", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for scp commands

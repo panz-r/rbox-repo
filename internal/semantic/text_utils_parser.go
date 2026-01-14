@@ -700,3 +700,38 @@ func (t *TextUtilsParser) GetSemanticOperations(parsed interface{}) ([]SemanticO
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface
+func (p *TextUtilsParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+
+	switch parsed.(type) {
+	case *SeqCommand:
+		commandName = "seq"
+	case *NlCommand:
+		commandName = "nl"
+	case *TacCommand:
+		commandName = "tac"
+	case *RevCommand:
+		commandName = "rev"
+	case *ExpandCommand:
+		commandName = "expand"
+	case *UnexpandCommand:
+		commandName = "unexpand"
+	default:
+		return nil, fmt.Errorf("invalid command type for seq/nl/tac/rev/expand/unexpand parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}

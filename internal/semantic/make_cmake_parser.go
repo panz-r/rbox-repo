@@ -267,3 +267,22 @@ func (m *MakeCMakeParser) GetSemanticOperations(parsed interface{}) ([]SemanticO
 
 	return operations, nil
 }
+// GetOperationGraph implements the enhanced CommandParser interface for make commands
+func (p *MakeCMakeParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*MakeCMakeCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid make command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("make", operations, []SemanticOperation{})
+
+	return graph, nil
+}

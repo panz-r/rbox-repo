@@ -426,3 +426,102 @@ func NewWhichParser() *WhichParser {
 func NewFreeParser() *FreeParser {
 	return &FreeParser{}
 }
+// GetOperationGraph implements the enhanced CommandParser interface for misc commands
+func (p *PwdParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*PwdCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid pwd command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("pwd", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for sleep commands
+func (p *SleepParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*SleepCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid sleep command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("sleep", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for timeout commands
+func (p *TimeoutParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*TimeoutCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid timeout command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("timeout", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for which commands
+func (p *WhichParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*WhichCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid which command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("which", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for free commands
+func (p *FreeParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*FreeCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid free command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("free", operations, []SemanticOperation{})
+
+	return graph, nil
+}

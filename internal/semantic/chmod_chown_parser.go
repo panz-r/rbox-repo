@@ -184,3 +184,23 @@ func (c *ChmodChownParser) GetSemanticOperations(parsed interface{}) ([]Semantic
 
 	return operations, nil
 }
+// GetOperationGraph implements the enhanced CommandParser interface for chmod commands
+func (p *ChmodChownParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*ChmodChownCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid chmod command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("chmod", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+

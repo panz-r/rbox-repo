@@ -471,3 +471,36 @@ func (r *ReadlinkBasenameUptimeParser) GetSemanticOperations(parsed interface{})
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface
+func (p *ReadlinkBasenameUptimeParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+
+	switch parsed.(type) {
+	case *ReadlinkCommand:
+		commandName = "readlink"
+	case *BasenameCommand:
+		commandName = "basename"
+	case *DirnameCommand:
+		commandName = "dirname"
+	case *UptimeCommand:
+		commandName = "uptime"
+	case *FreeCommand:
+		commandName = "free"
+	default:
+		return nil, fmt.Errorf("invalid command type for readlink/basename/dirname/uptime/free parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}

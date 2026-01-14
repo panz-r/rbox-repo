@@ -170,3 +170,23 @@ func (r *RmParser) GetSemanticOperations(parsed interface{}) ([]SemanticOperatio
 
 	return operations, nil
 }
+// GetOperationGraph implements the enhanced CommandParser interface for rm commands
+func (p *RmParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*RmCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid rm command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("rm", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+

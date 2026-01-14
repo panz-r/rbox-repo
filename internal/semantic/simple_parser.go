@@ -275,3 +275,24 @@ func (bp *BackupParser) GetSemanticOperations(parsed interface{}) ([]SemanticOpe
 
 	return operations, nil
 }
+// GetOperationGraph implements the enhanced CommandParser interface for simple commands
+func (p *SimpleParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	_, ok := parsed.(*SimpleCommand)
+	if !ok {
+		return nil, fmt.Errorf("invalid simple command type")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph("simple", operations, []SemanticOperation{})
+
+	return graph, nil
+}
+
+// GetOperationGraph implements the enhanced CommandParser interface for simple commands

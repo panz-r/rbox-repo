@@ -394,3 +394,34 @@ func (w *WhoLastIdPwdParser) GetSemanticOperations(parsed interface{}) ([]Semant
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface
+func (p *WhoLastIdPwdParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+
+	switch parsed.(type) {
+	case *WhoCommand:
+		commandName = "who"
+	case *LastCommand:
+		commandName = "last"
+	case *IdCommand:
+		commandName = "id"
+	case *PwdCommand:
+		commandName = "pwd"
+	default:
+		return nil, fmt.Errorf("invalid command type for who/last/id/pwd parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}

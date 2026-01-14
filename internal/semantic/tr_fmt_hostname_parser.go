@@ -292,3 +292,32 @@ func (t *TrFmtHostnameParser) GetSemanticOperations(parsed interface{}) ([]Seman
 
 	return builder.Build(), nil
 }
+
+// GetOperationGraph implements the enhanced CommandParser interface
+func (p *TrFmtHostnameParser) GetOperationGraph(parsed interface{}) (*OperationGraph, error) {
+	// This parser handles multiple command types
+	var commandName string
+
+	switch parsed.(type) {
+	case *TrCommand:
+		commandName = "tr"
+	case *FmtCommand:
+		commandName = "fmt"
+	case *HostnameCommand:
+		commandName = "hostname"
+	default:
+		return nil, fmt.Errorf("invalid command type for tr/fmt/hostname parser")
+	}
+
+	// Get basic semantic operations
+	operations, err := p.GetSemanticOperations(parsed)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build complete operation graph
+	builder := &OperationGraphBuilder{}
+	graph := builder.BuildOperationGraph(commandName, operations, []SemanticOperation{})
+
+	return graph, nil
+}
