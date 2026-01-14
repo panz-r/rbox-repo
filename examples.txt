@@ -30,8 +30,17 @@ for i, line in enumerate(lines[75:78], 76):  # lines 76-78
 "
 
 
-#Find test files that test command parsers
+# Safe, find stest files that test command parsers:
 find . -name "*_test.go" -exec grep -l "ParseArguments\|GetSemanticOperations" {} \;
 
 # Safe and must be allowed:
 find /home/panz/osrc/cppr-repo/src/analysis -name "*.rs" -exec grep -l "TypeDatabase" {} \;
+
+# Safe:
+grep -n "^}" /home/panz/osrc/cppr-repo/src/analysis/type_database.rs | awk -F: '$1 > 570 {print $1; exit}'
+
+# Safe, counts total number of tests:
+find /home/panz/backup-copies/cppr-copy/src/analysis/preprocessor -name "*.rs" -exec grep -c "#\[test\]" {} \; | awk '{sum += $1} END
+{print "Total test count:", sum}'
+
+

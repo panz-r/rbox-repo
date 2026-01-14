@@ -99,3 +99,72 @@ func TestBashParserExecutionPatterns(t *testing.T) {
 		})
 	}
 }
+
+func TestBashParserAdvancedPatterns(t *testing.T) {
+	parser := NewBashParser()
+
+	testCases := []struct {
+		script string
+		expectedEnvironmentVariables bool
+		expectedSourceCommands bool
+		expectedLoops bool
+		expectedConditionals bool
+	}{
+		{"echo hello", false, false, false, false},
+		{"export PATH=/usr/bin", true, false, false, false},
+		{"export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1", true, false, false, false},
+		{". venv/bin/activate", false, true, false, false},
+		{"source /etc/profile", false, true, false, false},
+		{"for f in *.rs; do echo $f; done", false, false, true, false},
+		{"if [ -f file.txt ]; then echo exists; fi", false, false, false, true},
+		{"cd /home/panz/osrc/mistral-vibe && export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 && . venv/bin/activate", true, true, false, false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.script, func(t *testing.T) {
+			cmd, err := parser.ParseArguments([]string{"-c", tc.script})
+			require.NoError(t, err)
+			bashCmd, ok := cmd.(*BashCommand)
+			require.True(t, ok)
+			assert.Equal(t, tc.expectedEnvironmentVariables, bashCmd.HasEnvironmentVariables)
+			assert.Equal(t, tc.expectedSourceCommands, bashCmd.HasSourceCommands)
+			assert.Equal(t, tc.expectedLoops, bashCmd.HasLoops)
+			assert.Equal(t, tc.expectedConditionals, bashCmd.HasConditionals)
+		})
+	}
+}
+
+func TestBashParserComplexPatterns(t *testing.T) {
+	parser := NewBashParser()
+
+	testCases := []struct {
+		script string
+		expectedChaining bool
+		expectedPipes bool
+		expectedRedirections bool
+		expectedIndividualCommands int
+	}{
+		{"echo hello", false, false, false, 1},
+		{"echo hello && echo world", true, false, false, 2},
+		{"ls | grep test", false, true, false, 3},
+		{"echo test > file.txt", false, false, true, 1},
+		{"echo hello | grep test && echo world", true, true, false, 4},
+		{"echo test > file.txt && echo test2 > file2.txt", true, false, true, 2},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.script, func(t *testing.T) {
+			cmd, err := parser.ParseArguments([]string{"-c", tc.script})
+			require.NoError(t, err)
+			bashCmd, ok := cmd.(*BashCommand)
+			require.True(t, ok)
+			assert.Equal(t, tc.expectedChaining, bashCmd.HasChaining)
+			assert.Equal(t, tc.expectedPipes, bashCmd.HasPipes)
+			assert.Equal(t, tc.expectedRedirections, bashCmd.HasRedirections)
+			if len(bashCmd.IndividualCommands) != tc.expectedIndividualCommands {
+		t.Logf("Expected %d commands, got %d: %v", tc.expectedIndividualCommands, len(bashCmd.IndividualCommands), bashCmd.IndividualCommands)
+	}
+	assert.Equal(t, tc.expectedIndividualCommands, len(bashCmd.IndividualCommands))
+		})
+	}
+}
