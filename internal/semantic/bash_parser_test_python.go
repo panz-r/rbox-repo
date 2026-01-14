@@ -32,7 +32,7 @@ func TestBashParserPythonCommands(t *testing.T) {
 			require.True(t, ok)
 
 			// Test Python command detection
-			hasPython := parser.hasPythonCommands(tc.script)
+			hasPython := parser.HasPythonCommands(tc.script)
 			assert.Equal(t, tc.expectedPython, hasPython, "Python detection should match expected")
 
 			// Test semantic operations for Python safety

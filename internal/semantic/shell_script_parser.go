@@ -33,6 +33,8 @@ type ShellStatement struct {
 	Pipes        []Pipe
 	Negated      bool
 	SourceInfo   string
+	HereDoc      *HereDoc
+	PythonReport *SafetyReport
 }
 
 type StatementType int
@@ -77,6 +79,7 @@ type ShellFunction struct {
 type MultiLineShellParser struct {
 	dangerousCommands map[string]bool
 	dangerousPatterns []*regexp.Regexp
+	pythonAnalyzer    PythonCodeAnalyzer
 }
 
 func NewMultiLineShellParser() *MultiLineShellParser {
@@ -103,6 +106,7 @@ func NewMultiLineShellParser() *MultiLineShellParser {
 			regexp.MustCompile(`find\s+.*-execdir\b`),
 			regexp.MustCompile(`find\s+.*-okdir\b`),
 		},
+		pythonAnalyzer: NewPythonCodeAnalyzer(),
 	}
 }
 
@@ -194,18 +198,6 @@ func (p *MultiLineShellParser) parseLines(lines []string, startLine, endLine int
 			continue
 		}
 
-		if strings.HasPrefix(line, "<<") || strings.HasPrefix(line, "<<-") || strings.Contains(line, "<<") {
-			doc, err := p.parseHereDoc(lines, i, endLine, line)
-			if err != nil {
-				return nil, nil, err
-			}
-			if doc != nil && doc.Delimiter != "" {
-				hereDocs = append(hereDocs, *doc)
-				i = doc.StartLine + strings.Count(doc.Content, "\n")
-			}
-			continue
-		}
-
 		if strings.HasPrefix(line, "source ") || (len(line) > 1 && (line[0] == '.' && (line[1] == ' ' || line[1] == '\t'))) {
 			stmt := p.parseSourceStatement(line, i)
 			statements = append(statements, *stmt)
@@ -224,11 +216,42 @@ func (p *MultiLineShellParser) parseLines(lines []string, startLine, endLine int
 			continue
 		}
 
+		isPythonCommand := strings.HasPrefix(line, "python") || strings.HasPrefix(line, "python3") || strings.HasPrefix(line, "py")
+
+		if strings.Contains(line, "<<") && !isPythonCommand {
+			doc, err := p.parseHereDoc(lines, i, endLine, line)
+			if err != nil {
+				return nil, nil, err
+			}
+			if doc != nil && doc.Delimiter != "" {
+				hereDocs = append(hereDocs, *doc)
+				i = doc.StartLine + strings.Count(doc.Content, "\n")
+			}
+			continue
+		}
+
 		stmt := p.parseSimpleCommand(line, i)
+		if isPythonCommand && strings.Contains(line, "<<") {
+			doc, err := p.parseHereDoc(lines, i, endLine, line)
+			if err == nil && doc != nil && doc.Delimiter != "" {
+				stmt.HereDoc = doc
+				_, pythonReport := p.analyzePythonHereDoc(doc.Content)
+				stmt.PythonReport = pythonReport
+				i = doc.StartLine + strings.Count(doc.Content, "\n")
+			}
+		}
 		statements = append(statements, *stmt)
 	}
 
 	return statements, hereDocs, nil
+}
+
+func (p *MultiLineShellParser) analyzePythonHereDoc(content string) (bool, *SafetyReport) {
+	if p.pythonAnalyzer == nil {
+		return true, nil
+	}
+	safe, report := p.pythonAnalyzer.IsSafe(content)
+	return safe, &report
 }
 
 func (p *MultiLineShellParser) parseIfStatement(lines []string, startLine, endLine int) (*ShellStatement, error) {

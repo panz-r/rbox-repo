@@ -404,4 +404,46 @@ PYTHON`
 			fmt.Printf("  Here doc delimiter: %s\n", result.HereDocs[0].Delimiter)
 		}
 	})
+
+	t.Run("python here doc with file write detected", func(t *testing.T) {
+		script := `python3 << 'EOF'
+with open('src/analysis/expression.rs', 'r') as f:
+   content = f.read()
+
+if old_code in content:
+   content = content.replace(old_code, new_code, 1)
+   with open('src/analysis/expression.rs', 'w') as f:
+       f.write(content)
+   print("Successfully patched BinaryOp construction")
+EOF`
+		result, err := parser.ParseScript(script)
+		if err != nil {
+			t.Fatalf("Parse failed: %v", err)
+		}
+		fmt.Printf("Python file mod here doc: %d commands\n", len(result.Commands))
+
+		if len(result.Commands) < 1 {
+			t.Errorf("Expected at least 1 command, got %d", len(result.Commands))
+		}
+		if result.Commands[0].HereDoc == nil {
+			t.Error("Expected HereDoc to be parsed")
+		}
+		if result.Commands[0].PythonReport == nil {
+			t.Error("Expected PythonReport to be populated")
+		}
+		fmt.Printf("Python report: safe=%v, risk=%d, patterns=%d\n",
+			result.Commands[0].PythonReport.IsSafe,
+			result.Commands[0].PythonReport.RiskScore,
+			len(result.Commands[0].PythonReport.DangerousPatterns))
+		for _, pattern := range result.Commands[0].PythonReport.DangerousPatterns {
+			fmt.Printf("  - %s: %s\n", pattern.Severity, pattern.Description)
+		}
+
+		if result.Commands[0].PythonReport.IsSafe {
+			t.Error("Expected script with file write to be flagged as unsafe")
+		}
+		if len(result.Commands[0].PythonReport.DangerousPatterns) == 0 {
+			t.Error("Expected at least one dangerous pattern for file write")
+		}
+	})
 }
