@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/panz/openroutertest/internal/readonlybox"
-	"github.com/panz/openroutertest/internal/config"
 	"github.com/panz/openroutertest/internal/access"
+	"github.com/panz/openroutertest/internal/config"
+	"github.com/panz/openroutertest/internal/readonlybox"
 )
 
 // readonlybox - A BusyBox-like read-only toolbox
@@ -89,7 +89,7 @@ func loadAccessControlEngine() (*access.AccessControlEngine, error) {
 	}
 
 	// Create access control engine
-	engine := access.NewAccessControlEngine(configAST)
+	engine := access.NewAccessControlEngine(*configAST)
 
 	return engine, nil
 }

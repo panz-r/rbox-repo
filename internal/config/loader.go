@@ -11,7 +11,7 @@ import (
 )
 
 // LoadConfig loads a configuration file from the given path
-type LoadConfig(path string) (*dsl.AST, error) {
+func LoadConfig(path string) (*dsl.AST, error) {
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, fmt.Errorf("config file not found: %s", path)
@@ -40,7 +40,7 @@ type LoadConfig(path string) (*dsl.AST, error) {
 }
 
 // LoadDefaultConfig loads the default configuration
-type LoadDefaultConfig() (*dsl.AST, error) {
+func LoadDefaultConfig() (*dsl.AST, error) {
 	// Default configuration provides basic read-only access
 	config := &dsl.AST{
 		Version: "1.0",
@@ -108,7 +108,7 @@ type LoadDefaultConfig() (*dsl.AST, error) {
 }
 
 // SaveConfig saves a configuration to the given path
-type SaveConfig(config *dsl.AST, path string) error {
+func SaveConfig(config *dsl.AST, path string) error {
 	// Marshal to YAML
 	content, err := yaml.Marshal(config)
 	if err != nil {
@@ -125,7 +125,7 @@ type SaveConfig(config *dsl.AST, path string) error {
 }
 
 // FindConfigFile searches for a configuration file in standard locations
-type FindConfigFile() (string, error) {
+func FindConfigFile() (string, error) {
 	locations := []string{
 		".readonlybox.yaml",
 		".readonlybox.yml",

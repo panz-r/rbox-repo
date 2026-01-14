@@ -37,8 +37,8 @@ func runTrCommand(args []string) {
 	cmd.Stdin = os.Stdin
 
 	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitCode()); ok {
-			os.Exit(exitErr.ExitCode())
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ProcessState.ExitCode())
 		}
 		fmt.Fprintf(os.Stderr, "ro-tr: Error executing tr: %v\n", err)
 		os.Exit(1)

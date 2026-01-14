@@ -9,7 +9,7 @@ import (
 )
 
 // ValidateConfig validates a configuration for correctness
-type ValidateConfig(config *dsl.AST) error {
+func ValidateConfig(config *dsl.AST) error {
 	if config.Version == "" {
 		return fmt.Errorf("version is required")
 	}
@@ -78,8 +78,8 @@ func validateAccessRule(rule dsl.AccessRule) error {
 
 	// Validate operations
 	for _, op := range rule.Operations {
-		if op.OpType == dsl.OpUnknown {
-			return fmt.Errorf("invalid operation type")
+		if op.OpType < dsl.OpRead || op.OpType > dsl.OpOverwrite {
+			return fmt.Errorf("invalid operation type: %d", op.OpType)
 		}
 
 		if op.IsTemp && op.Path == "" {
