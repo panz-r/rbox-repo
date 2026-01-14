@@ -422,28 +422,117 @@ EOF`
 		}
 		fmt.Printf("Python file mod here doc: %d commands\n", len(result.Commands))
 
-		if len(result.Commands) < 1 {
-			t.Errorf("Expected at least 1 command, got %d", len(result.Commands))
+		if len(result.Commands) != 1 {
+			t.Errorf("Expected 1 command, got %d", len(result.Commands))
 		}
 		if result.Commands[0].HereDoc == nil {
 			t.Error("Expected HereDoc to be parsed")
 		}
-		if result.Commands[0].PythonReport == nil {
-			t.Error("Expected PythonReport to be populated")
+		if result.Commands[0].PythonOps == nil {
+			t.Error("Expected PythonOps to be populated")
 		}
-		fmt.Printf("Python report: safe=%v, risk=%d, patterns=%d\n",
-			result.Commands[0].PythonReport.IsSafe,
-			result.Commands[0].PythonReport.RiskScore,
-			len(result.Commands[0].PythonReport.DangerousPatterns))
-		for _, pattern := range result.Commands[0].PythonReport.DangerousPatterns {
-			fmt.Printf("  - %s: %s\n", pattern.Severity, pattern.Description)
+		fmt.Printf("Python operations: %d\n", len(result.Commands[0].PythonOps))
+		for _, op := range result.Commands[0].PythonOps {
+			fmt.Printf("  - %v: %s\n", op.OperationType, op.Context)
 		}
 
-		if result.Commands[0].PythonReport.IsSafe {
+		isUnsafe := false
+		for _, op := range result.Commands[0].PythonOps {
+			if risk, ok := op.Parameters["risk_score"].(int); ok && risk > 0 {
+				isUnsafe = true
+			}
+			if safe, ok := op.Parameters["python_code_safe"].(bool); ok && !safe {
+				isUnsafe = true
+			}
+		}
+
+		if !isUnsafe {
 			t.Error("Expected script with file write to be flagged as unsafe")
 		}
-		if len(result.Commands[0].PythonReport.DangerousPatterns) == 0 {
-			t.Error("Expected at least one dangerous pattern for file write")
+		if len(result.Commands[0].PythonOps) == 0 {
+			t.Error("Expected at least one operation for file write")
 		}
+	})
+
+	t.Run("python -c with file write", func(t *testing.T) {
+		script := `python3 -c "with open('test.txt', 'w') as f: f.write('hello')"`
+		result, err := parser.ParseScript(script)
+		if err != nil {
+			t.Fatalf("Parse failed: %v", err)
+		}
+		fmt.Printf("Python -c inline: %d commands\n", len(result.Commands))
+
+		if len(result.Commands) != 1 {
+			t.Errorf("Expected 1 command, got %d", len(result.Commands))
+		}
+		if result.Commands[0].PythonOps == nil {
+			t.Error("Expected PythonOps to be populated")
+		}
+		fmt.Printf("Python -c operations: %d\n", len(result.Commands[0].PythonOps))
+
+		isUnsafe := false
+		for _, op := range result.Commands[0].PythonOps {
+			if risk, ok := op.Parameters["risk_score"].(int); ok && risk > 0 {
+				isUnsafe = true
+			}
+			if safe, ok := op.Parameters["python_code_safe"].(bool); ok && !safe {
+				isUnsafe = true
+			}
+		}
+
+		if !isUnsafe {
+			t.Error("Expected script with file write to be flagged as unsafe")
+		}
+	})
+
+	t.Run("python -c safe code", func(t *testing.T) {
+		script := `python3 -c "print('hello world'); import sys; print(sys.version)"`
+		result, err := parser.ParseScript(script)
+		if err != nil {
+			t.Fatalf("Parse failed: %v", err)
+		}
+		fmt.Printf("Python -c safe: %d commands, ops=%v\n", len(result.Commands), result.Commands[0].PythonOps != nil)
+	})
+
+	t.Run("bash -c with dangerous command", func(t *testing.T) {
+		script := `bash -c "rm -rf /tmp/test"`
+		result, err := parser.ParseScript(script)
+		if err != nil {
+			t.Fatalf("Parse failed: %v", err)
+		}
+		fmt.Printf("Bash -c dangerous: %d commands\n", len(result.Commands))
+		if len(result.Commands) != 1 {
+			t.Errorf("Expected 1 command, got %d", len(result.Commands))
+		}
+		if result.Commands[0].BashOps == nil {
+			t.Error("Expected BashOps to be populated")
+		}
+		fmt.Printf("Bash operations: %d\n", len(result.Commands[0].BashOps))
+		for _, op := range result.Commands[0].BashOps {
+			fmt.Printf("  - %v: %s\n", op.OperationType, op.Context)
+		}
+
+		isUnsafe := false
+		for _, op := range result.Commands[0].BashOps {
+			if risk, ok := op.Parameters["risk_score"].(int); ok && risk > 0 {
+				isUnsafe = true
+			}
+			if safe, ok := op.Parameters["bash_safe"].(bool); ok && !safe {
+				isUnsafe = true
+			}
+		}
+
+		if !isUnsafe {
+			t.Error("Expected script with rm to be flagged as unsafe")
+		}
+	})
+
+	t.Run("bash -c safe command", func(t *testing.T) {
+		script := `bash -c "echo 'hello'; ls -la"`
+		result, err := parser.ParseScript(script)
+		if err != nil {
+			t.Fatalf("Parse failed: %v", err)
+		}
+		fmt.Printf("Bash -c safe: %d commands, ops=%v\n", len(result.Commands), result.Commands[0].BashOps != nil)
 	})
 }

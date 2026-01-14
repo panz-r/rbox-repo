@@ -15,26 +15,28 @@ type ShellScript struct {
 }
 
 type ShellStatement struct {
-	Type         StatementType
-	Line         int
-	EndLine      int
-	Condition    string
-	ThenBody     []ShellStatement
-	ElseBody     []ShellStatement
-	ElifBodies   []ElifBranch
-	IterVariable string
-	IterItems    string
-	DoBody       []ShellStatement
-	CaseValue    string
-	CaseBody     []CaseClause
-	Command      string
-	Args         []string
-	Redirections []Redirection
-	Pipes        []Pipe
-	Negated      bool
-	SourceInfo   string
-	HereDoc      *HereDoc
-	PythonReport *SafetyReport
+	Type              StatementType
+	Line              int
+	EndLine           int
+	Condition         string
+	ThenBody          []ShellStatement
+	ElseBody          []ShellStatement
+	ElifBodies        []ElifBranch
+	IterVariable      string
+	IterItems         string
+	DoBody            []ShellStatement
+	CaseValue         string
+	CaseBody          []CaseClause
+	Command           string
+	Args              []string
+	Redirections      []Redirection
+	Pipes             []Pipe
+	Negated           bool
+	SourceInfo        string
+	HereDoc           *HereDoc
+	ExtractedCommands []string
+	PythonOps         []SemanticOperation
+	BashOps           []SemanticOperation
 }
 
 type StatementType int
@@ -224,10 +226,17 @@ func (p *MultiLineShellParser) parseLines(lines []string, startLine, endLine int
 				return nil, nil, err
 			}
 			if doc != nil && doc.Delimiter != "" {
+				stmt := &ShellStatement{
+					Type:    StmtSimple,
+					Command: "here-doc",
+					Line:    i + 1,
+				}
+				stmt.HereDoc = doc
 				hereDocs = append(hereDocs, *doc)
 				i = doc.StartLine + strings.Count(doc.Content, "\n")
+				statements = append(statements, *stmt)
+				continue
 			}
-			continue
 		}
 
 		stmt := p.parseSimpleCommand(line, i)
@@ -235,9 +244,34 @@ func (p *MultiLineShellParser) parseLines(lines []string, startLine, endLine int
 			doc, err := p.parseHereDoc(lines, i, endLine, line)
 			if err == nil && doc != nil && doc.Delimiter != "" {
 				stmt.HereDoc = doc
+				hereDocs = append(hereDocs, *doc)
 				_, pythonReport := p.analyzePythonHereDoc(doc.Content)
-				stmt.PythonReport = pythonReport
-				i = doc.StartLine + strings.Count(doc.Content, "\n")
+				ops := p.pythonReportToOperations(pythonReport)
+				stmt.PythonOps = ops
+				i = doc.StartLine + strings.Count(doc.Content, "\n") + 1
+				statements = append(statements, *stmt)
+				continue
+			}
+		}
+		if isPythonCommand && (strings.Contains(line, "-c ") || strings.HasSuffix(line, " -c")) {
+			pythonCode := p.extractPythonDashCFromLine(line)
+			if pythonCode != "" {
+				_, pythonReport := p.analyzePythonHereDoc(pythonCode)
+				stmt.PythonOps = p.pythonReportToOperations(pythonReport)
+			}
+		}
+
+		isBashCommand := strings.HasPrefix(line, "bash") || strings.HasPrefix(line, "sh") || strings.HasPrefix(line, "dash")
+		if isBashCommand && (strings.Contains(line, "-c ") || strings.HasSuffix(line, " -c")) {
+			bashCode := p.extractBashDashCFromLine(line)
+			if bashCode != "" {
+				ops := p.bashScriptToOperations(bashCode)
+				stmt.BashOps = ops
+				if len(ops) > 0 {
+					if cmds, ok := ops[0].Parameters["extracted_commands"].([]string); ok {
+						stmt.ExtractedCommands = cmds
+					}
+				}
 			}
 		}
 		statements = append(statements, *stmt)
@@ -252,6 +286,245 @@ func (p *MultiLineShellParser) analyzePythonHereDoc(content string) (bool, *Safe
 	}
 	safe, report := p.pythonAnalyzer.IsSafe(content)
 	return safe, &report
+}
+
+func (p *MultiLineShellParser) extractPythonDashCFromLine(line string) string {
+	cIdx := strings.Index(line, "-c ")
+	if cIdx >= 0 {
+		code := strings.TrimSpace(line[cIdx+3:])
+		if len(code) > 0 {
+			if code[0] == '"' || code[0] == '\'' {
+				quoteChar := rune(code[0])
+				code = code[1:]
+				for j, c := range code {
+					if c == quoteChar {
+						return code[:j]
+					}
+				}
+				return code
+			}
+			return code
+		}
+	}
+	return ""
+}
+
+func (p *MultiLineShellParser) extractBashDashCFromLine(line string) string {
+	cIdx := strings.Index(line, "-c ")
+	if cIdx >= 0 {
+		code := strings.TrimSpace(line[cIdx+3:])
+		if len(code) > 0 {
+			if code[0] == '"' || code[0] == '\'' {
+				quoteChar := rune(code[0])
+				code = code[1:]
+				for j, c := range code {
+					if c == quoteChar {
+						return code[:j]
+					}
+				}
+				return code
+			}
+			return code
+		}
+	}
+	return ""
+}
+
+func (p *MultiLineShellParser) analyzeBashInlineScript(script string) (bool, *SafetyReport) {
+	bashParser := NewMultiLineShellParser()
+	parsed, err := bashParser.ParseScript(script)
+	if err != nil {
+		report := SafetyReport{
+			IsSafe:    false,
+			RiskScore: 30,
+			DangerousPatterns: []DangerousPattern{
+				{
+					Pattern:     "parse error",
+					Location:    CodeLocation{Line: 1},
+					Severity:    "high",
+					Description: "Failed to parse inline bash script",
+					Category:    "shell_command",
+				},
+			},
+		}
+		return false, &report
+	}
+	safe, report := bashParser.IsSafe(parsed)
+	return safe, &report
+}
+
+func (p *MultiLineShellParser) pythonReportToOperations(report *SafetyReport) []SemanticOperation {
+	if report == nil {
+		return nil
+	}
+	operations := make([]SemanticOperation, 0)
+	for _, pattern := range report.DangerousPatterns {
+		op := SemanticOperation{
+			OperationType: OpExecute,
+			Context:       fmt.Sprintf("Python: %s", pattern.Description),
+			Parameters: map[string]interface{}{
+				"python_code_safe": report.IsSafe,
+				"risk_score":       report.RiskScore,
+				"pattern":          pattern.Pattern,
+				"severity":         pattern.Severity,
+				"category":         pattern.Category,
+			},
+		}
+		if strings.Contains(strings.ToLower(pattern.Description), "write") {
+			op.OperationType = OpWrite
+		}
+		operations = append(operations, op)
+	}
+	if !report.IsSafe && len(operations) == 0 {
+		operations = append(operations, SemanticOperation{
+			OperationType: OpExecute,
+			Context:       "Python code is not safe",
+			Parameters: map[string]interface{}{
+				"python_code_safe": false,
+				"risk_score":       report.RiskScore,
+			},
+		})
+	}
+	return operations
+}
+
+func (p *MultiLineShellParser) bashScriptToOperations(script string) []SemanticOperation {
+	operations := make([]SemanticOperation, 0)
+	bashParser := NewMultiLineShellParser()
+	parsed, err := bashParser.ParseScript(script)
+	if err != nil {
+		operations = append(operations, SemanticOperation{
+			OperationType: OpExecute,
+			Context:       "Failed to parse inline bash script",
+			Parameters: map[string]interface{}{
+				"bash_code":   script,
+				"parse_error": err.Error(),
+				"bash_safe":   false,
+			},
+		})
+		return operations
+	}
+
+	extractedCommands := p.extractCommandsFromParsedScript(parsed)
+
+	safe, report := bashParser.IsSafe(parsed)
+	params := map[string]interface{}{
+		"bash_code":          script,
+		"bash_safe":          safe,
+		"risk_score":         report.RiskScore,
+		"extracted_commands": extractedCommands,
+	}
+	operations = append(operations, SemanticOperation{
+		OperationType: OpExecute,
+		Context:       "Inline bash script",
+		Parameters:    params,
+	})
+	for _, pattern := range report.DangerousPatterns {
+		opParams := map[string]interface{}{
+			"bash_code": script,
+			"pattern":   pattern.Pattern,
+			"severity":  pattern.Severity,
+			"category":  pattern.Category,
+		}
+		if len(extractedCommands) > 0 {
+			opParams["extracted_commands"] = extractedCommands
+		}
+		op := SemanticOperation{
+			OperationType: OpExecute,
+			Context:       fmt.Sprintf("Bash: %s", pattern.Description),
+			Parameters:    opParams,
+		}
+		operations = append(operations, op)
+	}
+	return operations
+}
+
+// extractCommandsFromParsedScript extracts individual command strings from a parsed shell script.
+// Returns a slice of command strings that can be passed to the caller for further analysis.
+func (p *MultiLineShellParser) extractCommandsFromParsedScript(script *ShellScript) []string {
+	commands := make([]string, 0)
+	for _, stmt := range script.Commands {
+		cmd := p.statementToCommandString(&stmt)
+		if cmd != "" {
+			commands = append(commands, cmd)
+		}
+	}
+	return commands
+}
+
+// statementToCommandString converts a parsed ShellStatement back to a command string.
+// Returns an empty string if the statement cannot be converted.
+func (p *MultiLineShellParser) statementToCommandString(stmt *ShellStatement) string {
+	if stmt == nil {
+		return ""
+	}
+
+	switch stmt.Type {
+	case StmtSimple:
+		if stmt.Command != "" {
+			parts := []string{stmt.Command}
+			parts = append(parts, stmt.Args...)
+			return strings.Join(parts, " ")
+		}
+	case StmtSource:
+		if len(stmt.Args) > 0 {
+			return "source " + strings.Join(stmt.Args, " ")
+		}
+	case StmtExport:
+		if len(stmt.Args) > 0 {
+			return "export " + strings.Join(stmt.Args, " ")
+		}
+	case StmtCd:
+		if len(stmt.Args) > 0 {
+			return "cd " + stmt.Args[0]
+		}
+	case StmtFor:
+		parts := []string{"for", stmt.IterVariable, "in", stmt.IterItems, ";", "do"}
+		for _, bodyStmt := range stmt.DoBody {
+			bodyCmd := p.statementToCommandString(&bodyStmt)
+			if bodyCmd != "" {
+				parts = append(parts, bodyCmd)
+			}
+		}
+		parts = append(parts, "done")
+		return strings.Join(parts, " ")
+	case StmtWhile:
+		parts := []string{"while", stmt.Condition, ";"}
+		for _, bodyStmt := range stmt.DoBody {
+			bodyCmd := p.statementToCommandString(&bodyStmt)
+			if bodyCmd != "" {
+				parts = append(parts, bodyCmd)
+			}
+		}
+		parts = append(parts, "done")
+		return strings.Join(parts, " ")
+	case StmtIf:
+		parts := []string{"if", stmt.Condition, ";"}
+		for _, bodyStmt := range stmt.ThenBody {
+			bodyCmd := p.statementToCommandString(&bodyStmt)
+			if bodyCmd != "" {
+				parts = append(parts, bodyCmd)
+			}
+		}
+		parts = append(parts, "fi")
+		return strings.Join(parts, " ")
+	case StmtUntil:
+		parts := []string{"until", stmt.Condition, ";"}
+		for _, bodyStmt := range stmt.DoBody {
+			bodyCmd := p.statementToCommandString(&bodyStmt)
+			if bodyCmd != "" {
+				parts = append(parts, bodyCmd)
+			}
+		}
+		parts = append(parts, "done")
+		return strings.Join(parts, " ")
+	case StmtCase:
+		return "case " + stmt.CaseValue + " in ... ) ... esac"
+	case StmtFunction:
+		return stmt.Command + "() { ... }"
+	}
+
+	return ""
 }
 
 func (p *MultiLineShellParser) parseIfStatement(lines []string, startLine, endLine int) (*ShellStatement, error) {
@@ -839,7 +1112,9 @@ func (p *MultiLineShellParser) analyzeStatement(stmt *ShellStatement, report *Sa
 			})
 		}
 
+		fullLine := stmt.Command
 		for _, arg := range stmt.Args {
+			fullLine += " " + arg
 			for _, pattern := range p.dangerousPatterns {
 				if pattern.MatchString(arg) {
 					report.RiskScore += 20
@@ -851,6 +1126,19 @@ func (p *MultiLineShellParser) analyzeStatement(stmt *ShellStatement, report *Sa
 						Category:    "shell_command",
 					})
 				}
+			}
+		}
+
+		for _, pattern := range p.dangerousPatterns {
+			if pattern.MatchString(fullLine) {
+				report.RiskScore += 20
+				report.DangerousPatterns = append(report.DangerousPatterns, DangerousPattern{
+					Pattern:     pattern.String(),
+					Location:    CodeLocation{Line: stmt.Line},
+					Severity:    "high",
+					Description: "Dangerous pattern in command",
+					Category:    "shell_command",
+				})
 			}
 		}
 
@@ -902,6 +1190,49 @@ func (p *MultiLineShellParser) analyzeStatement(stmt *ShellStatement, report *Sa
 			if strings.HasPrefix(arg, "PATH=") || strings.HasPrefix(arg, "LD_") {
 				report.RiskScore += 10
 			}
+		}
+	}
+
+	if stmt.Type == StmtSimple {
+		if strings.HasPrefix(stmt.Command, "./") || strings.HasPrefix(stmt.Command, "../") {
+			report.RiskScore += 15
+			report.DangerousPatterns = append(report.DangerousPatterns, DangerousPattern{
+				Pattern:     stmt.Command,
+				Location:    CodeLocation{Line: stmt.Line},
+				Severity:    "medium",
+				Description: "Command with relative path",
+				Category:    "shell_command",
+			})
+		}
+	}
+
+	if stmt.PythonOps != nil && len(stmt.PythonOps) > 0 {
+		for _, op := range stmt.PythonOps {
+			if risk, ok := op.Parameters["risk_score"].(int); ok {
+				report.RiskScore += risk
+			}
+			report.DangerousPatterns = append(report.DangerousPatterns, DangerousPattern{
+				Pattern:     "",
+				Location:    CodeLocation{Line: stmt.Line},
+				Severity:    "medium",
+				Description: op.Context,
+				Category:    "python_code",
+			})
+		}
+	}
+
+	if stmt.BashOps != nil && len(stmt.BashOps) > 0 {
+		for _, op := range stmt.BashOps {
+			if risk, ok := op.Parameters["risk_score"].(int); ok {
+				report.RiskScore += risk
+			}
+			report.DangerousPatterns = append(report.DangerousPatterns, DangerousPattern{
+				Pattern:     "",
+				Location:    CodeLocation{Line: stmt.Line},
+				Severity:    "medium",
+				Description: op.Context,
+				Category:    "shell_command",
+			})
 		}
 	}
 }

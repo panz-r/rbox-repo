@@ -140,6 +140,12 @@ type pythonAnalyzer struct {
 	safeModules        map[string]bool
 }
 
+var (
+	osSystemPattern           = regexp.MustCompile(`os\.system\s*\(\s*([^)]+)\s*\)`)
+	subprocessCallPattern     = regexp.MustCompile(`subprocess\.(call|run|Popen|check_call|check_output)\s*\(\s*(\[.*?\]|".*?"|'.*?')\s*(?:,\s*[^)]+)?\)`)
+	subprocessShellCmdPattern = regexp.MustCompile(`subprocess\.(call|run|Popen|check_call|check_output)\s*\(\s*shell\s*=\s*(?:True|true)\s*,\s*cmd\s*=\s*(\[.*?\]|".*?"|'.*?')\s*(?:,|\))`)
+)
+
 // Parse extracts imports, functions, and structure from Python code
 func (pa *pythonAnalyzer) Parse(code string) (PythonStructure, error) {
 	structure := PythonStructure{
@@ -449,6 +455,61 @@ func (pa *pythonAnalyzer) splitArgs(args string) []string {
 	return result
 }
 
+// extractOsSystemCommand extracts shell commands passed to os.system() calls.
+// Returns a slice of command strings found in the code.
+func (pa *pythonAnalyzer) extractOsSystemCommand(code string) []string {
+	commands := make([]string, 0)
+	matches := osSystemPattern.FindAllStringSubmatch(code, -1)
+
+	for _, match := range matches {
+		if len(match) >= 2 {
+			cmd := strings.Trim(match[1], " \"'")
+			if cmd != "" {
+				commands = append(commands, cmd)
+			}
+		}
+	}
+	return commands
+}
+
+// extractSubprocessCommands extracts shell commands from subprocess calls.
+// Handles subprocess.run(), subprocess.call(), subprocess.Popen(), etc.
+// Returns a slice of command argument strings found in the code.
+func (pa *pythonAnalyzer) extractSubprocessCommands(code string) []string {
+	commands := make([]string, 0)
+
+	callMatches := subprocessCallPattern.FindAllStringSubmatch(code, -1)
+
+	for _, match := range callMatches {
+		if len(match) >= 3 {
+			cmdArgs := strings.Trim(match[2], " \"'")
+			commands = append(commands, cmdArgs)
+		}
+	}
+
+	shellMatches := subprocessShellCmdPattern.FindAllStringSubmatch(code, -1)
+
+	for _, match := range shellMatches {
+		if len(match) >= 3 {
+			cmdArgs := strings.Trim(match[2], " \"'")
+			commands = append(commands, cmdArgs)
+		}
+	}
+
+	return commands
+}
+
+// extractPythonShellCommands combines extraction from os.system and subprocess calls.
+// Returns all extracted shell commands for further analysis.
+func (pa *pythonAnalyzer) extractPythonShellCommands(code string) []string {
+	commands := make([]string, 0)
+
+	commands = append(commands, pa.extractOsSystemCommand(code)...)
+	commands = append(commands, pa.extractSubprocessCommands(code)...)
+
+	return commands
+}
+
 // IsSafe performs safety analysis on Python code
 func (pa *pythonAnalyzer) IsSafe(code string) (bool, SafetyReport) {
 	report := SafetyReport{
@@ -572,15 +633,22 @@ func (pa *pythonAnalyzer) GetSemanticOperations(code string) ([]SemanticOperatio
 
 	// Add operations for dangerous function calls
 	for _, call := range structure.DangerousCalls {
+		params := map[string]interface{}{
+			"line":         call.Line,
+			"danger_level": call.DangerLevel,
+			"reason":       call.Reason,
+		}
+
+		nestedCmds := pa.extractPythonShellCommands(code)
+		if len(nestedCmds) > 0 {
+			params["nested_commands"] = nestedCmds
+		}
+
 		operations = append(operations, SemanticOperation{
 			OperationType: OpExecute,
 			TargetPath:    call.Name,
 			Context:       "python_dangerous_call",
-			Parameters: map[string]interface{}{
-				"line":         call.Line,
-				"danger_level": call.DangerLevel,
-				"reason":       call.Reason,
-			},
+			Parameters:    params,
 		})
 	}
 
