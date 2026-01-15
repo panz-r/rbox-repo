@@ -9,16 +9,22 @@ import (
 )
 
 func TestLoadConfig(t *testing.T) {
-	// Create a temporary config file
+	// Create a temporary config file with correct DSL format
 	configContent := `version: "1.0"
 base_directory: /home/user/project
 commands:
-  ls:
-    - read at /home/user/project/
-    - read sub[2] /home/user/project/src/
-  cat:
-    - read at /home/user/project/
-    - read super[1] /home/user/project/
+  - command: ls
+    operations:
+      - op_type: 0
+    directories:
+      - path: /home/user/project/
+        level: 0
+  - command: cat
+    operations:
+      - op_type: 0
+    directories:
+      - path: /home/user/project/
+        level: 0
 temp_files:
   pattern: /tmp/readonlybox_*
   max_size: 10MB
@@ -52,8 +58,8 @@ temp_files:
 		t.Errorf("Expected base directory /home/user/project, got %s", config.BaseDir)
 	}
 
-	if len(config.Rules) != 4 {
-		t.Errorf("Expected 4 rules, got %d", len(config.Rules))
+	if len(config.Rules) != 2 {
+		t.Errorf("Expected 2 rules, got %d", len(config.Rules))
 	}
 
 	if config.TempConfig == nil {

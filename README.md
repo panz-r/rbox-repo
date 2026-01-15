@@ -151,6 +151,133 @@ make install
 make uninstall
 ```
 
+---
+
+## 🖥️ LD_PRELOAD Server & Client
+
+The LD_PRELOAD server provides real-time command interception and policy enforcement over a Unix socket.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Shell (sh, bash, etc.)                              │
+│ LD_PRELOAD=libreadonlybox_client.so                 │
+│                                                      │
+│ execve("/bin/ls", ...) → fast allow (execute)       │
+│ execve("/bin/rm", ...) → send to server             │
+│     ↓                                               │
+│ Server evaluates policy                             │
+│     ↓                                               │
+│ ALLOW → execute command                             │
+│ DENY → return error                                 │
+└─────────────────────────────────────────────────────┘
+```
+
+### Fast Allow Commands
+
+Commands in this list are executed directly without server consultation:
+
+| Category | Commands |
+|----------|----------|
+| **File Ops** | `ls`, `cat`, `head`, `tail`, `wc`, `stat`, `file` |
+| **Text Proc** | `sort`, `uniq`, `grep`, `tr`, `cut`, `join`, `paste`, `diff`, `comm`, `nl`, `od` |
+| **System** | `date`, `pwd`, `hostname`, `uname`, `whoami`, `id`, `who`, `last`, `uptime` |
+| **Utils** | `echo`, `printenv`, `sleep`, `expr`, `timeout`, `basename`, `dirname`, `readlink`, `which`, `test`, `[` |
+| **Search** | `find`, `xargs` |
+| **Other** | `true`, `false`, `null`, `base64`, `strings` |
+
+**All other commands** (`rm`, `mv`, `cp`, `mkdir`, `chmod`, `chown`, etc.) are sent to the server for policy decision.
+
+### Build Server and Client
+
+```bash
+# Build the server (Go)
+cd cmd/readonlybox-server
+go build -o ../../readonlybox-server .
+
+# Build the client (C)
+cd internal/client
+gcc -shared -fPIC -O2 -o libreadonlybox_client.so client.c -pthread
+```
+
+Or use the helper script:
+
+```bash
+./scripts/build-all.sh
+```
+
+### Run the Server
+
+```bash
+# Quiet mode (blocked commands only)
+./readonlybox-server -q
+
+# Verbose mode (show all commands)
+./readonlybox-server -v
+
+# Very verbose mode (show commands + client logs)
+./readonlybox-server -vv
+
+# TUI mode (interactive terminal UI)
+./readonlybox-server --tui
+```
+
+### Test with Client
+
+```bash
+# Preload the library into a shell
+LD_PRELOAD=./internal/client/libreadonlybox_client.so sh -c 'rm /tmp/testfile'
+
+# The rm command will be blocked and logged to the server
+
+# Test read-only commands (allowed)
+LD_PRELOAD=./internal/client/libreadonlybox_client.so ls /tmp
+
+# Test other commands
+LD_PRELOAD=./internal/client/libreadonlybox_client.so cat /etc/hostname
+```
+
+### Socket Path
+
+By default, the server listens on `/tmp/readonlybox.sock`. Use environment variable to customize:
+
+```bash
+# Custom socket path
+READONLYBOX_SOCKET=/var/run/readonlybox.sock LD_PRELOAD=... sh -c 'rm /tmp/testfile'
+```
+
+### Server Flags
+
+| Flag | Description |
+|------|-------------|
+| `-socket <path>` | Unix socket path (default: /tmp/readonlybox.sock) |
+| `-q` | Quiet mode: show blocked commands only |
+| `-v` | Verbose mode: show all commands |
+| `-vv` | Very verbose mode: show commands + client logs |
+| `-p <port>` | Also listen on TCP port (0=disabled) |
+| `--tui` | Run in interactive TUI mode |
+
+### Protocol
+
+The server uses a binary protocol over Unix socket:
+
+**Message Types (ID field):**
+| ID | Type | Purpose |
+|----|------|---------|
+| 0 | `ROBO_MSG_LOG` | Client debug/status logs |
+| 1+ | `ROBO_MSG_REQ` | Command execution requests |
+
+**Packet Structure:**
+```
+[magic:4][id:4][argc:4][envc:4][cmd\0][arg0\0]...[env0\0]...
+```
+
+**Response:**
+```
+[magic:4][id:4][decision:1][padding:3][reason_len:4][reason\0]
+```
+
 ### Adding New Commands
 
 To add a new read-only wrapper:

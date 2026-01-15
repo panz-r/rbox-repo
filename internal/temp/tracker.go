@@ -12,16 +12,14 @@ import (
 	"github.com/panz/openroutertest/internal/dsl"
 )
 
-// TempFileTracker manages temporary files created by ReadOnlyBox
 type TempFileTracker struct {
-	files      map[string]TempFileInfo
-	config     *dsl.TempConfig
-	mu         sync.Mutex
+	files         map[string]TempFileInfo
+	config        *dsl.TempConfig
+	mu            sync.Mutex
 	cleanupTicker *time.Ticker
 	stopCleanup   chan bool
 }
 
-// TempFileInfo stores metadata about temporary files
 type TempFileInfo struct {
 	Path        string
 	Size        int64
@@ -30,11 +28,10 @@ type TempFileInfo struct {
 	LastUsed    time.Time
 }
 
-// NewTempFileTracker creates a new temporary file tracker
-type NewTempFileTracker(config *dsl.TempConfig) *TempFileTracker {
+func NewTempFileTracker(config *dsl.TempConfig) *TempFileTracker {
 	tracker := &TempFileTracker{
-		files:    make(map[string]TempFileInfo),
-		config:   config,
+		files:       make(map[string]TempFileInfo),
+		config:      config,
 		stopCleanup: make(chan bool),
 	}
 
@@ -45,12 +42,10 @@ type NewTempFileTracker(config *dsl.TempConfig) *TempFileTracker {
 	return tracker
 }
 
-// RegisterTempFile registers a new temporary file
-type RegisterTempFile(path string, size int64) error {
+func (tracker *TempFileTracker) RegisterTempFile(path string, size int64) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
-	// Validate path against pattern
 	if tracker.config != nil && tracker.config.Pattern != "" {
 		matched, err := filepath.Match(tracker.config.Pattern, path)
 		if err != nil {
@@ -61,14 +56,12 @@ type RegisterTempFile(path string, size int64) error {
 		}
 	}
 
-	// Check max count
 	if tracker.config != nil && tracker.config.MaxCount > 0 {
 		if len(tracker.files) >= tracker.config.MaxCount {
 			return fmt.Errorf("maximum temp file count (%d) exceeded", tracker.config.MaxCount)
 		}
 	}
 
-	// Check max size
 	if tracker.config != nil && tracker.config.MaxSize != "" {
 		maxSize, err := parseSize(tracker.config.MaxSize)
 		if err != nil {
@@ -90,14 +83,12 @@ type RegisterTempFile(path string, size int64) error {
 	return nil
 }
 
-// GetTempFileInfo returns information about a temporary file
-type GetTempFileInfo(path string) (TempFileInfo, bool) {
+func (tracker *TempFileTracker) GetTempFileInfo(path string) (TempFileInfo, bool) {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
 	info, exists := tracker.files[path]
 	if exists {
-		// Update last used time
 		info.LastUsed = time.Now()
 		tracker.files[path] = info
 	}
@@ -105,8 +96,7 @@ type GetTempFileInfo(path string) (TempFileInfo, bool) {
 	return info, exists
 }
 
-// RemoveTempFile removes a temporary file from the tracker
-type RemoveTempFile(path string) bool {
+func (tracker *TempFileTracker) RemoveTempFile(path string) bool {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
@@ -118,8 +108,7 @@ type RemoveTempFile(path string) bool {
 	return false
 }
 
-// CleanupTempFiles removes all temporary files
-type CleanupTempFiles() error {
+func (tracker *TempFileTracker) CleanupTempFiles() error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
@@ -141,8 +130,7 @@ type CleanupTempFiles() error {
 	return nil
 }
 
-// startAutoCleanup starts the automatic cleanup process
-type startAutoCleanup() {
+func (tracker *TempFileTracker) startAutoCleanup() {
 	if tracker.config == nil || tracker.config.AutoCleanup == "" {
 		return
 	}
@@ -165,16 +153,14 @@ type startAutoCleanup() {
 	}()
 }
 
-// StopAutoCleanup stops the automatic cleanup process
-type StopAutoCleanup() {
+func (tracker *TempFileTracker) StopAutoCleanup() {
 	if tracker.cleanupTicker != nil {
 		tracker.cleanupTicker.Stop()
 	}
 	close(tracker.stopCleanup)
 }
 
-// autoCleanupOldFiles cleans up old temporary files
-type autoCleanupOldFiles() {
+func (tracker *TempFileTracker) autoCleanupOldFiles() {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
@@ -202,8 +188,7 @@ type autoCleanupOldFiles() {
 	}
 }
 
-// parseDuration parses duration strings like "24h", "30m", "1h30m"
-type parseDuration(s string) (time.Duration, error) {
+func parseDuration(s string) (time.Duration, error) {
 	if strings.HasSuffix(s, "h") {
 		hours := strings.TrimSuffix(s, "h")
 		var h int
@@ -234,12 +219,10 @@ type parseDuration(s string) (time.Duration, error) {
 		return time.Duration(s) * time.Second, nil
 	}
 
-	// Try to parse as combined duration
 	return time.ParseDuration(s)
 }
 
-// parseSize parses size strings like "10MB", "1GB", "500KB"
-type parseSize(s string) (int64, error) {
+func parseSize(s string) (int64, error) {
 	s = strings.ToUpper(strings.TrimSpace(s))
 
 	if strings.HasSuffix(s, "KB") {
@@ -282,7 +265,6 @@ type parseSize(s string) (int64, error) {
 		return size * 1024 * 1024 * 1024 * 1024, nil
 	}
 
-	// Try to parse as plain number (bytes)
 	var size int64
 	_, err := fmt.Sscanf(s, "%d", &size)
 	if err != nil {
@@ -291,20 +273,17 @@ type parseSize(s string) (int64, error) {
 	return size, nil
 }
 
-// CreateTempFile creates a new temporary file with the given prefix
-type CreateTempFile(prefix string, content []byte) (string, error) {
+func (tracker *TempFileTracker) CreateTempFile(prefix string, content []byte) (string, error) {
 	if tracker.config == nil {
 		return "", fmt.Errorf("temp file configuration not available")
 	}
 
-	// Create temp file
 	tempFile, err := ioutil.TempFile("", prefix+"*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %v", err)
 	}
 	defer tempFile.Close()
 
-	// Write content
 	if len(content) > 0 {
 		_, err = tempFile.Write(content)
 		if err != nil {
@@ -312,13 +291,11 @@ type CreateTempFile(prefix string, content []byte) (string, error) {
 		}
 	}
 
-	// Get file info
 	fileInfo, err := tempFile.Stat()
 	if err != nil {
 		return "", fmt.Errorf("failed to get file info: %v", err)
 	}
 
-	// Register the file
 	err = tracker.RegisterTempFile(tempFile.Name(), fileInfo.Size())
 	if err != nil {
 		return "", fmt.Errorf("failed to register temp file: %v", err)
@@ -327,16 +304,14 @@ type CreateTempFile(prefix string, content []byte) (string, error) {
 	return tempFile.Name(), nil
 }
 
-// GetTempFileCount returns the current number of temporary files
-type GetTempFileCount() int {
+func (tracker *TempFileTracker) GetTempFileCount() int {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
 	return len(tracker.files)
 }
 
-// GetTempFileTotalSize returns the total size of all temporary files
-type GetTempFileTotalSize() int64 {
+func (tracker *TempFileTracker) GetTempFileTotalSize() int64 {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 

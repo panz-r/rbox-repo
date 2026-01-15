@@ -4,51 +4,52 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
+	"syscall"
 
-	"github.com/panz/openroutertest/internal/rogit"
-	"github.com/panz/openroutertest/internal/rofind"
-	"github.com/panz/openroutertest/internal/rols"
-	"github.com/panz/openroutertest/internal/rocat"
-	"github.com/panz/openroutertest/internal/rogrep"
-	"github.com/panz/openroutertest/internal/rohead"
-	"github.com/panz/openroutertest/internal/rotail"
-	"github.com/panz/openroutertest/internal/rotimeout"
-	"github.com/panz/openroutertest/internal/roecho"
-	"github.com/panz/openroutertest/internal/rodate"
-	"github.com/panz/openroutertest/internal/rocd"
-	"github.com/panz/openroutertest/internal/robash"
-	"github.com/panz/openroutertest/internal/rosort"
-	"github.com/panz/openroutertest/internal/roulimit"
-	"github.com/panz/openroutertest/internal/rosed"
-	"github.com/panz/openroutertest/internal/rochmod"
-	"github.com/panz/openroutertest/internal/rochown"
-	"github.com/panz/openroutertest/internal/romkdir"
-	"github.com/panz/openroutertest/internal/rormdir"
-	"github.com/panz/openroutertest/internal/roln"
-	"github.com/panz/openroutertest/internal/romv"
-	"github.com/panz/openroutertest/internal/rocp"
-	"github.com/panz/openroutertest/internal/roremove"
-	"github.com/panz/openroutertest/internal/rotouch"
-	"github.com/panz/openroutertest/internal/rodd"
-	"github.com/panz/openroutertest/internal/rops"
-	"github.com/panz/openroutertest/internal/rodf"
-	"github.com/panz/openroutertest/internal/rodu"
-	"github.com/panz/openroutertest/internal/rowc"
-	"github.com/panz/openroutertest/internal/rouname"
-	"github.com/panz/openroutertest/internal/rostat"
-	"github.com/panz/openroutertest/internal/rofile"
-	"github.com/panz/openroutertest/internal/rodiff"
-	"github.com/panz/openroutertest/internal/rotr"
-	"github.com/panz/openroutertest/internal/rocut"
-	"github.com/panz/openroutertest/internal/rowhoami"
-	"github.com/panz/openroutertest/internal/rohostname"
-	"github.com/panz/openroutertest/internal/roprintenv"
-	"github.com/panz/openroutertest/internal/rosleep"
-	"github.com/panz/openroutertest/internal/roexpr"
-	"github.com/panz/openroutertest/internal/roman"
 	"github.com/panz/openroutertest/internal/access"
 	"github.com/panz/openroutertest/internal/dsl"
-	"strings"
+	"github.com/panz/openroutertest/internal/robash"
+	"github.com/panz/openroutertest/internal/rocat"
+	"github.com/panz/openroutertest/internal/rocd"
+	"github.com/panz/openroutertest/internal/rochmod"
+	"github.com/panz/openroutertest/internal/rochown"
+	"github.com/panz/openroutertest/internal/rocp"
+	"github.com/panz/openroutertest/internal/rocut"
+	"github.com/panz/openroutertest/internal/rodate"
+	"github.com/panz/openroutertest/internal/rodd"
+	"github.com/panz/openroutertest/internal/rodf"
+	"github.com/panz/openroutertest/internal/rodiff"
+	"github.com/panz/openroutertest/internal/rodu"
+	"github.com/panz/openroutertest/internal/roecho"
+	"github.com/panz/openroutertest/internal/roexpr"
+	"github.com/panz/openroutertest/internal/rofile"
+	"github.com/panz/openroutertest/internal/rofind"
+	"github.com/panz/openroutertest/internal/rogit"
+	"github.com/panz/openroutertest/internal/rogrep"
+	"github.com/panz/openroutertest/internal/rohead"
+	"github.com/panz/openroutertest/internal/rohostname"
+	"github.com/panz/openroutertest/internal/roln"
+	"github.com/panz/openroutertest/internal/rols"
+	"github.com/panz/openroutertest/internal/roman"
+	"github.com/panz/openroutertest/internal/romkdir"
+	"github.com/panz/openroutertest/internal/romv"
+	"github.com/panz/openroutertest/internal/roprintenv"
+	"github.com/panz/openroutertest/internal/rops"
+	"github.com/panz/openroutertest/internal/roremove"
+	"github.com/panz/openroutertest/internal/rormdir"
+	"github.com/panz/openroutertest/internal/rosed"
+	"github.com/panz/openroutertest/internal/rosleep"
+	"github.com/panz/openroutertest/internal/rosort"
+	"github.com/panz/openroutertest/internal/rostat"
+	"github.com/panz/openroutertest/internal/rotail"
+	"github.com/panz/openroutertest/internal/rotimeout"
+	"github.com/panz/openroutertest/internal/rotouch"
+	"github.com/panz/openroutertest/internal/rotr"
+	"github.com/panz/openroutertest/internal/roulimit"
+	"github.com/panz/openroutertest/internal/rouname"
+	"github.com/panz/openroutertest/internal/rowc"
+	"github.com/panz/openroutertest/internal/rowhoami"
 )
 
 // Command represents a read-only command wrapper
@@ -287,6 +288,16 @@ var CommandRegistry = map[string]Command{
 		Name:        "man",
 		Description: "Read-only manual pages",
 		Handler:     handleMan,
+	},
+	"basename": {
+		Name:        "basename",
+		Description: "Read-only basename extraction",
+		Handler:     handleBasename,
+	},
+	"dirname": {
+		Name:        "dirname",
+		Description: "Read-only dirname extraction",
+		Handler:     handleDirname,
 	},
 }
 
@@ -898,18 +909,53 @@ func handleTar(args []string) error {
 	return runCommand("tar", args...)
 }
 
-// runCommand executes the actual system command
-func runCommand(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+func handleBasename(args []string) error {
+	// basename is read-only - just extracts path components
+	for _, arg := range args {
+		if strings.Contains(arg, "`") || strings.Contains(arg, "$") {
+			return fmt.Errorf("basename: contains potential command injection characters")
 		}
+		if len(arg) >= 256 {
+			return fmt.Errorf("basename: suspiciously long argument")
+		}
+	}
+
+	return runCommand("basename", args...)
+}
+
+func handleDirname(args []string) error {
+	// dirname is read-only - just extracts directory from path
+	for _, arg := range args {
+		if strings.Contains(arg, "`") || strings.Contains(arg, "$") {
+			return fmt.Errorf("dirname: contains potential command injection characters")
+		}
+		if len(arg) >= 256 {
+			return fmt.Errorf("dirname: suspiciously long argument")
+		}
+	}
+
+	return runCommand("dirname", args...)
+}
+
+// runCommand executes the actual system command using syscall.Exec (no fork)
+// This is more efficient as it replaces the current process rather than forking
+func runCommand(name string, args ...string) error {
+	// Find the real command in PATH
+	cmdPath, err := exec.LookPath(name)
+	if err != nil {
+		return fmt.Errorf("failed to find %s: %v", name, err)
+	}
+
+	// Build environment - pass through current env
+	env := os.Environ()
+
+	// Use syscall.Exec to replace current process (no fork)
+	// This is much more efficient for high-frequency commands
+	err = syscall.Exec(cmdPath, append([]string{name}, args...), env)
+	if err != nil {
 		return fmt.Errorf("failed to execute %s: %v", name, err)
 	}
+
+	// syscall.Exec never returns on success
 	return nil
 }
