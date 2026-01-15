@@ -1,0 +1,39 @@
+# ReadOnlyBox Command Specification
+# Format: [category] command_pattern
+# Categories: safe, caution, modifying, dangerous, network, admin
+
+# Safe read-only commands
+[safe] cat *
+[safe] head *
+[safe] tail *
+[safe] grep * *
+[safe] less *
+[safe] more *
+
+# Git read-only commands
+[safe] git log *
+[safe] git show *
+[safe] git diff *
+[safe] git status
+[safe] git blame *
+
+# Find commands (read-only)
+[safe] find * -name *
+[safe] find * -type *
+
+# Dangerous commands (for testing)
+[dangerous] rm *
+[dangerous] rm -rf *
+[modifying] mv * *
+[modifying] cp * *
+
+# Network commands
+[network] curl *
+[network] wget *
+[network] ssh *
+
+# Admin commands
+[admin] sudo *
+[admin] su *
+[admin] chmod * *
+[admin] chown * *

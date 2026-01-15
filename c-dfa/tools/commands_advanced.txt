@@ -1,0 +1,106 @@
+# ReadOnlyBox Advanced Command Specification
+# Format: [category:subcategory:operations] pattern -> action
+#
+# Categories: safe, caution, modifying, dangerous, network, admin
+# Subcategories: file, text, system, build, vcs, container, cloud
+# Operations: read, write, execute, create, delete, network, privilege
+# Actions: allow, caution, block, audit, monitor
+#
+# Examples:
+# [safe:file:read] cat * -> allow
+# [modifying:file:write,create] cp * * -> caution
+# [dangerous:file:delete] rm * -> block
+
+# ============ SAFE COMMANDS ============
+
+# File operations - read only
+[safe:file:read] cat * -> allow
+[safe:file:read] head * -> allow
+[safe:file:read] tail * -> allow
+[safe:file:read] less * -> allow
+[safe:file:read] more * -> allow
+
+# Text processing - read only
+[safe:text:read] grep * * -> allow
+[safe:text:read] sed -n * * -> allow
+[safe:text:read] awk '{print}' * -> allow
+
+# Git - read only operations
+[safe:vcs:read] git log * -> allow
+[safe:vcs:read] git show * -> allow
+[safe:vcs:read] git diff * -> allow
+[safe:vcs:read] git status -> allow
+[safe:vcs:read] git blame * -> allow
+
+# Find - read only
+[safe:system:read] find * -name * -> allow
+[safe:system:read] find * -type * -> allow
+[safe:system:read] find * -size * -> allow
+
+# ============ CAUTION COMMANDS ============
+
+# Find with exec (needs careful validation)
+[caution:system:read,execute] find * -exec * \; -> caution
+[caution:system:read,execute] find * -exec * {} \; -> caution
+
+# Xargs (depends on command)
+[caution:text:execute] xargs * -> caution
+
+# ============ MODIFYING COMMANDS ============
+
+# File operations - modifying
+[modifying:file:write] cp * * -> block
+[modifying:file:create] touch * -> block
+[modifying:file:write] mv * * -> block
+[modifying:file:delete] rm * -> block
+
+# ============ DANGEROUS COMMANDS ============
+
+# Recursive delete
+[dangerous:file:delete] rm -rf * -> block
+[dangerous:file:delete] rm -r * -> block
+
+# Disk operations
+[dangerous:system:write] dd * -> block
+[dangerous:system:write] mkfs.* * -> block
+
+# ============ NETWORK COMMANDS ============
+
+# Network tools
+[network:network:read,write] curl * -> audit
+[network:network:read,write] wget * -> audit
+[network:network:execute] ssh * -> audit
+
+# ============ ADMIN COMMANDS ============
+
+# Privilege escalation
+[admin:system:privilege] sudo * -> block
+[admin:system:privilege] su * -> block
+
+# Permission changes
+[admin:file:privilege] chmod * * -> audit
+[admin:file:privilege] chown * * -> audit
+
+# ============ BUILD COMMANDS ============
+
+# Safe build operations
+[safe:build:read,execute] gcc -c * -> allow
+[safe:build:read,execute] clang -c * -> allow
+[safe:build:read,execute] make -> allow
+
+# Build with install (modifying)
+[modifying:build:write,execute] make install -> caution
+
+# ============ CONTAINER COMMANDS ============
+
+# Docker - read only
+[safe:container:read] docker ps -> allow
+[safe:container:read] docker images -> allow
+
+# Docker - modifying
+[modifying:container:write] docker run * -> audit
+[modifying:container:execute] docker exec * -> audit
+
+# Docker - dangerous
+[dangerous:container:privilege] docker run --privileged * -> block
+[dangerous:container:privilege] docker run --cap-add=ALL * -> block
