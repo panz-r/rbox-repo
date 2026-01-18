@@ -1,6 +1,6 @@
-module github.com/anomalyco/readonlybox/cmd/readonlybox-server
+module github.com/panz/openroutertest/cmd/readonlybox-server
 
-go 1.25.5
+go 1.24.0
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10

@@ -15,10 +15,10 @@ import (
 
 // Tools to build
 var tools = []string{
-	ro-git, ro-find, ro-ls, ro-cat, ro-grep, ro-head, ro-tail,
-	ro-timeout, ro-echo, ro-date, ro-cd, ro-bash, ro-sort, ro-ulimit,
-	ro-sed, ro-chmod, ro-chown, ro-mkdir, ro-rmdir, ro-ln, ro-mv,
-	ro-cp, ro-rm, ro-touch, ro-dd, ro-ps, ro-df, ro-du, ro-wc, ro-uname,
+	"ro-git", "ro-find", "ro-ls", "ro-cat", "ro-grep", "ro-head", "ro-tail",
+	"ro-timeout", "ro-echo", "ro-date", "ro-cd", "ro-bash", "ro-sort", "ro-ulimit",
+	"ro-sed", "ro-chmod", "ro-chown", "ro-mkdir", "ro-rmdir", "ro-ln", "ro-mv",
+	"ro-cp", "ro-rm", "ro-touch", "ro-dd", "ro-ps", "ro-df", "ro-du", "ro-wc", "ro-uname",
 }
 
 // Default target to run when none is specified
@@ -27,7 +27,59 @@ var Default = Build
 // Build all tools
 func Build() error {
 	mg.Deps(Clean)
-	return buildAll()
+	if err := buildAll(); err != nil {
+		return err
+	}
+	if err := BuildServer(); err != nil {
+		return err
+	}
+	return BuildClient()
+}
+
+// BuildClient builds the LD_PRELOAD client library
+func BuildClient() error {
+	fmt.Println("Building libreadonlybox_client.so...")
+
+	clientDir := "internal/client"
+	outputFile := filepath.Join(clientDir, "libreadonlybox_client.so")
+
+	cmd := exec.Command("gcc", "-shared", "-fPIC", "-O2", "-o", outputFile,
+		filepath.Join(clientDir, "client.c"), "-lpthread", "-ldl")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to build client: %w", err)
+	}
+
+	fmt.Println("Build complete!")
+	return nil
+}
+
+// BuildServer builds the readonlybox-server with TUI
+func BuildServer() error {
+	fmt.Println("Building readonlybox-server...")
+
+	// Run go mod tidy for the server module
+	cmd := exec.Command("go", "mod", "tidy")
+	cmd.Dir = "cmd/readonlybox-server"
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to tidy server module: %w", err)
+	}
+
+	// Build the server - use absolute path for output
+	binDir, _ := filepath.Abs("bin")
+	cmd = exec.Command("go", "build", "-o", filepath.Join(binDir, "readonlybox-server"), ".")
+	cmd.Dir = "cmd/readonlybox-server"
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to build readonlybox-server: %w", err)
+	}
+
+	fmt.Println("Build complete!")
+	return nil
 }
 
 // Clean build artifacts
@@ -135,16 +187,11 @@ func UnitTest() error {
 		"./internal/roremove/...",
 		"./internal/rotouch/...",
 		"./internal/rodd/...",
-			"./internal/rops/...",
-			"./internal/rodf/...",
-			"./internal/rodu/...",
-			"./internal/rowc/...",
-			"./internal/rouname/...",
-			"./internal/rops/...",
-			"./internal/rodf/...",
-			"./internal/rodu/...",
-			"./internal/rowc/...",
-			"./internal/rouname/...",
+		"./internal/rops/...",
+		"./internal/rodf/...",
+		"./internal/rodu/...",
+		"./internal/rowc/...",
+		"./internal/rouname/...",
 	}
 
 	for _, pkg := range packages {
@@ -245,16 +292,11 @@ func Coverage() error {
 		"./internal/roremove/...",
 		"./internal/rotouch/...",
 		"./internal/rodd/...",
-			./internal/rops/...",
-			./internal/rodf/...",
-			./internal/rodu/...",
-			./internal/rowc/...",
-			./internal/rouname/...",
-			./internal/rops/...",
-			./internal/rodf/...",
-			./internal/rodu/...",
-			./internal/rowc/...",
-			./internal/rouname/...",
+		"./internal/rops/...",
+		"./internal/rodf/...",
+		"./internal/rodu/...",
+		"./internal/rowc/...",
+		"./internal/rouname/...",
 		"./test/...",
 	}
 

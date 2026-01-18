@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR/.."
 
 echo "Building readonlybox-server..."
 cd cmd/readonlybox-server
-go build -o ../..readonlybox-server .
+go build -o ../../readonlybox-server .
 
 echo "Building libreadonlybox_client.so..."
 cd ../../internal/client
