@@ -23,6 +23,8 @@
 #include <sys/stat.h>
 #include <sys/select.h>
 
+#include "dfa.h"
+
 /* Protocol constants */
 #define ROBO_MAGIC      0x524F424F
 #define ROBO_VERSION    3  /* Protocol version */
@@ -506,17 +508,6 @@ static void init_random(void) {
     srand((unsigned int)(ts.tv_sec ^ ts.tv_nsec));
 }
 
-/* Fast path command lists */
-static const char *fast_allowed[] = {
-    "ls", "cat", "head", "tail", "wc", "uniq", "sort", "grep", "echo",
-    "date", "pwd", "hostname", "uname", "whoami", "id", "who", "last",
-    "printenv", "sleep", "expr", "timeout", "true", "false", "null",
-    "basename", "dirname", "readlink", "uptime", "which", "test", "[",
-    "stat", "file", "find", "xargs", "tr", "cut", "join", "paste",
-    "comm", "diff", "nl", "od", "base64", "strings",
-    NULL
-};
-
 /* Forward declarations */
 static int connect_to_server(void);
 static void disconnect_from_server(void);
@@ -909,13 +900,9 @@ static const char *get_basename(const char *path) {
     return last_slash ? last_slash + 1 : path;
 }
 
-/* Fast path check - allow */
+/* Fast path check - allow using DFA */
 static int should_fast_allow(const char *cmd) {
-    if (!cmd) return 0;
-    for (int i = 0; fast_allowed[i] != NULL; i++) {
-        if (strcmp(cmd, fast_allowed[i]) == 0) return 1;
-    }
-    return 0;
+    return dfa_should_allow(cmd);
 }
 
 /* Check if path is readonlybox itself */

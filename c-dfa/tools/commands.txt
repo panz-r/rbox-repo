@@ -3,18 +3,45 @@
 # Categories: safe, caution, modifying, dangerous, network, admin
 
 # Safe read-only commands
+[safe] cat
 [safe] cat *
+[safe] head
 [safe] head *
+[safe] tail
 [safe] tail *
+[safe] grep
 [safe] grep * *
+[safe] less
 [safe] less *
+[safe] more
 [safe] more *
+[safe] pager
+[safe] pager *
+[safe] ls
+[safe] ls *
+[safe] wc
+[safe] wc *
+[safe] ps
+[safe] ps *
+[safe] find
+[safe] find *
+[safe] find * -name *
+[safe] find * -type *
+[safe] df
+[safe] df *
+[safe] du
+[safe] du *
 
 # Git read-only commands
+[safe] git
+[safe] git log
 [safe] git log *
+[safe] git show
 [safe] git show *
+[safe] git diff
 [safe] git diff *
 [safe] git status
+[safe] git blame
 [safe] git blame *
 
 # Find commands (read-only)
