@@ -4,37 +4,67 @@
 # Note: DFA is a fast-path filter. Commands not matched go to server for full validation.
 
 # Safe read-only commands (simple commands with no complex arguments)
+# Include both basename and full path versions
 [safe] cat
 [safe] cat *
+[safe] /usr/bin/cat
+[safe] /usr/bin/cat *
 [safe] head
 [safe] head *
+[safe] /usr/bin/head
+[safe] /usr/bin/head *
 [safe] tail
 [safe] tail *
+[safe] /usr/bin/tail
+[safe] /usr/bin/tail *
 [safe] grep
 [safe] grep * *
+[safe] /usr/bin/grep
+[safe] /usr/bin/grep * *
 [safe] less
 [safe] less *
+[safe] /usr/bin/less
+[safe] /usr/bin/less *
 [safe] more
 [safe] more *
+[safe] /usr/bin/more
+[safe] /usr/bin/more *
 [safe] pager
 [safe] pager *
+[safe] /usr/bin/pager
+[safe] /usr/bin/pager *
 [safe] ls
 [safe] ls *
+[safe] /usr/bin/ls
+[safe] /usr/bin/ls *
 [safe] wc
 [safe] wc *
+[safe] /usr/bin/wc
+[safe] /usr/bin/wc *
 [safe] ps
 [safe] ps *
+[safe] /usr/bin/ps
+[safe] /usr/bin/ps *
 [safe] df
 [safe] df *
+[safe] /usr/bin/df
+[safe] /usr/bin/df *
 [safe] du
 [safe] du *
+[safe] /usr/bin/du
+[safe] /usr/bin/du *
 [safe] uname
 [safe] uname *
+[safe] /usr/bin/uname
+[safe] /usr/bin/uname *
 
 # Git read-only commands (base command only - arguments validated by server)
 [safe] git log
+[safe] git log *
 [safe] git show
+[safe] git show *
 [safe] git diff
+[safe] git diff *
 [safe] git status
 [safe] git blame
 [safe] git blame *

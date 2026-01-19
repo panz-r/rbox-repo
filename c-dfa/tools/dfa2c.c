@@ -254,13 +254,13 @@ void write_c_array(const char* input_filename, const char* output_filename, cons
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s <spec_file> <output_dfa> <var_name>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <spec_file> <output_dfa> <var_name> [c_output_file]\n", argv[0]);
         return 1;
     }
 
     const char* spec_file = argv[1];
     const char* output_file = argv[2];
-    const char* var_name = argc > 3 ? argv[3] : "dfa";
+    const char* var_name = argv[3];
 
     printf("DFA Generator (Trie-based)\n============================\n\n");
 
@@ -273,7 +273,11 @@ int main(int argc, char* argv[]) {
 
     printf("\nGenerating C array...\n");
     char c_array_filename[1024];
-    snprintf(c_array_filename, sizeof(c_array_filename), "%s.c", var_name);
+    if (argc > 4) {
+        snprintf(c_array_filename, sizeof(c_array_filename), "%s", argv[4]);
+    } else {
+        snprintf(c_array_filename, sizeof(c_array_filename), "%s.c", var_name);
+    }
     write_c_array(output_file, c_array_filename, var_name);
 
     printf("\nDone!\n");

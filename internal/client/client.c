@@ -971,9 +971,9 @@ static int request_decision(const char *syscall_name, const char *cmd, char *con
 
 /* Common execution check - returns 0 to proceed, -1 to block */
 static int check_and_execute(const char *syscall_name, const char *path, char *const argv[], char *const envp[]) {
-    const char *cmd = get_basename(path);
+    const char *base_cmd = get_basename(path);
 
-    if (!cmd) {
+    if (!base_cmd) {
         return 0;
     }
 
@@ -982,17 +982,19 @@ static int check_and_execute(const char *syscall_name, const char *path, char *c
         return 0;
     }
 
-    /* Fast allow - only for known safe commands, always check unknown syscalls */
-    if (should_fast_allow(cmd)) {
-        return 0;
+    /* Build full command string from base command and arguments */
+    char cmd_str[512] = "";
+    if (argv && argv[0]) {
+        strncat(cmd_str, argv[0], sizeof(cmd_str) - 1);
+        for (int i = 1; argv && argv[i] && strlen(cmd_str) < sizeof(cmd_str) - 50; i++) {
+            strncat(cmd_str, " ", sizeof(cmd_str) - strlen(cmd_str) - 1);
+            strncat(cmd_str, argv[i], sizeof(cmd_str) - strlen(cmd_str) - 1);
+        }
     }
 
-    /* Build command string for time-limited cache lookup */
-    char cmd_str[512] = "";
-    strncat(cmd_str, cmd, sizeof(cmd_str) - 1);
-    for (int i = 0; argv && argv[i] && strlen(cmd_str) < sizeof(cmd_str) - 50; i++) {
-        strncat(cmd_str, " ", sizeof(cmd_str) - strlen(cmd_str) - 1);
-        strncat(cmd_str, argv[i], sizeof(cmd_str) - strlen(cmd_str) - 1);
+    /* Fast allow - only for known safe commands, always check unknown syscalls */
+    if (should_fast_allow(cmd_str)) {
+        return 0;
     }
 
     /* Check time-limited decision cache first */
@@ -1011,18 +1013,18 @@ static int check_and_execute(const char *syscall_name, const char *path, char *c
 
     /* Get decision from server - always check for posix_spawn and write ops */
     char reason[256];
-    int result = request_decision(syscall_name, cmd, argv, envp, reason, sizeof(reason));
+    int result = request_decision(syscall_name, base_cmd, argv, envp, reason, sizeof(reason));
 
     if (result < 0) {
         /* Denied */
-        send_log("[readonlybox-client] DENY (%s): %s - %s", syscall_name, cmd, reason);
+        send_log("[readonlybox-client] DENY (%s): %s - %s", syscall_name, cmd_str, reason);
         errno = EACCES;
         return -1;
     }
 
     /* Allowed - log if it was a write operation or posix_spawn */
     if (is_write || strcmp(syscall_name, "posix_spawn") == 0) {
-        send_log("[readonlybox-client] ALLOW (%s): %s - %s", syscall_name, cmd, reason);
+        send_log("[readonlybox-client] ALLOW (%s): %s - %s", syscall_name, cmd_str, reason);
     }
 
     return 0;

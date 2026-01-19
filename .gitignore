@@ -4,3 +4,4 @@ bin/*
 c-dfa/tools/readonlybox_dfa.c
 internal/client/dfa_static_data.c
 c-dfa/tools/dfa2c
+internal/client/test_dfa
