@@ -1,8 +1,9 @@
 # ReadOnlyBox Command Specification
 # Format: [category] command_pattern
 # Categories: safe, caution, modifying, dangerous, network, admin
+# Note: DFA is a fast-path filter. Commands not matched go to server for full validation.
 
-# Safe read-only commands
+# Safe read-only commands (simple commands with no complex arguments)
 [safe] cat
 [safe] cat *
 [safe] head
@@ -23,22 +24,17 @@
 [safe] wc *
 [safe] ps
 [safe] ps *
-[safe] find
-[safe] find *
-[safe] find * -name *
-[safe] find * -type *
 [safe] df
 [safe] df *
 [safe] du
 [safe] du *
+[safe] uname
+[safe] uname *
 
-# Git read-only commands
+# Git read-only commands (base command only - arguments validated by server)
 [safe] git log
-[safe] git log *
 [safe] git show
-[safe] git show *
 [safe] git diff
-[safe] git diff *
 [safe] git status
 [safe] git blame
 [safe] git blame *
@@ -55,10 +51,6 @@
 [safe] git rev-parse
 [safe] git rev-parse *
 
-# Find commands (read-only)
-[safe] find * -name *
-[safe] find * -type *
-
-# Dangerous commands (for testing) - these should NOT be here
-# The DFA should ONLY contain safe commands
-# Any command not matched by DFA is sent to server for judgment
+# Note: 'find' commands are NOT in the DFA because they require detailed
+# argument validation to detect dangerous options like -exec, -delete, etc.
+# All 'find' commands go to the server where rofind module does full validation.

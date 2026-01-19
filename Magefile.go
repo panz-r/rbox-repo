@@ -40,14 +40,54 @@ func Build() error {
 func BuildClient() error {
 	fmt.Println("Building libreadonlybox_client.so...")
 
-	clientDir := "internal/client"
-	outputFile := filepath.Join(clientDir, "libreadonlybox_client.so")
+	// Step 1: Generate DFA from commands.txt
+	dfaToolsDir := "c-dfa/tools"
+	dfa2cPath := filepath.Join(dfaToolsDir, "dfa2c")
+	commandsTxt := filepath.Join(dfaToolsDir, "commands.txt")
+	dfaCArray := filepath.Join(dfaToolsDir, "readonlybox_dfa.c")
+	clientDfaData := filepath.Join("internal/client", "dfa_static_data.c")
 
-	cmd := exec.Command("gcc", "-shared", "-fPIC", "-O2", "-o", outputFile,
-		filepath.Join(clientDir, "client.c"), "-lpthread", "-ldl")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// Build dfa2c if needed
+	if _, err := os.Stat(dfa2cPath); os.IsNotExist(err) {
+		fmt.Println("Building dfa2c...")
+		buildCmd := exec.Command("gcc", "-o", dfa2cPath, filepath.Join(dfaToolsDir, "dfa2c.c"))
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			fmt.Printf("gcc error: %v\n", err)
+			return fmt.Errorf("failed to build dfa2c: %w", err)
+		}
+		info, _ := os.Stat(dfa2cPath)
+		fmt.Printf("After gcc: %s exists=%v size=%d\n", dfa2cPath, info != nil, info.Size())
+	}
+
+	// Generate DFA C array
+	fmt.Println("Generating DFA...")
+	dfaBinaryFile := filepath.Join(dfaToolsDir, "readonlybox_dfa.dfa")
+	genDfa := exec.Command(dfa2cPath, commandsTxt, dfaBinaryFile, "readonlybox_dfa", dfaCArray)
+	wd, _ := os.Getwd()
+	genDfa.Dir = wd
+	genDfa.Stdout = os.Stdout
+	genDfa.Stderr = os.Stderr
+	if err := genDfa.Run(); err != nil {
+		return fmt.Errorf("failed to generate DFA: %w", err)
+	}
+
+	// Copy DFA C array to client directory (dfa2c writes directly there now)
+	if err := copyFile(dfaCArray, clientDfaData); err != nil {
+		return fmt.Errorf("failed to copy DFA to client: %w", err)
+	}
+
+	// Build the client library with DFA
+	outputFile := filepath.Join("bin", "libreadonlybox_client.so")
+	buildClient := exec.Command("gcc", "-shared", "-fPIC", "-O2", "-o", outputFile,
+		filepath.Join("internal/client", "client.c"),
+		filepath.Join("internal/client", "dfa.c"),
+		filepath.Join("internal/client", "dfa_static_data.c"),
+		"-lpthread", "-ldl")
+	buildClient.Stdout = os.Stdout
+	buildClient.Stderr = os.Stderr
+	if err := buildClient.Run(); err != nil {
 		return fmt.Errorf("failed to build client: %w", err)
 	}
 
@@ -89,6 +129,19 @@ func Clean() error {
 	// Remove binaries in project root
 	for _, tool := range tools {
 		if err := os.Remove(tool); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	// Remove generated DFA files
+	generatedFiles := []string{
+		"c-dfa/tools/dfa2c",
+		"c-dfa/tools/readonlybox_dfa.c",
+		"c-dfa/tools/readonlybox_dfa.dfa",
+		"internal/client/dfa_static_data.c",
+	}
+	for _, f := range generatedFiles {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
