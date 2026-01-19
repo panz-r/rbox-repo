@@ -33,7 +33,6 @@
 [safe] du *
 
 # Git read-only commands
-[safe] git
 [safe] git log
 [safe] git log *
 [safe] git show
@@ -43,24 +42,23 @@
 [safe] git status
 [safe] git blame
 [safe] git blame *
+[safe] git branch
+[safe] git branch *
+[safe] git tag
+[safe] git tag *
+[safe] git remote
+[safe] git remote *
+[safe] git fetch
+[safe] git fetch *
+[safe] git ls-files
+[safe] git ls-files *
+[safe] git rev-parse
+[safe] git rev-parse *
 
 # Find commands (read-only)
 [safe] find * -name *
 [safe] find * -type *
 
-# Dangerous commands (for testing)
-[dangerous] rm *
-[dangerous] rm -rf *
-[modifying] mv * *
-[modifying] cp * *
-
-# Network commands
-[network] curl *
-[network] wget *
-[network] ssh *
-
-# Admin commands
-[admin] sudo *
-[admin] su *
-[admin] chmod * *
-[admin] chown * *
+# Dangerous commands (for testing) - these should NOT be here
+# The DFA should ONLY contain safe commands
+# Any command not matched by DFA is sent to server for judgment
