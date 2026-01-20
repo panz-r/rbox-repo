@@ -5,15 +5,17 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#if defined(__GNUC__) || defined(__clang__)
-#define DFA_PACKED __attribute__((packed))
-#else
-#define DFA_PACKED
-#endif
-
 #define DFA_MAGIC     0xDFA1DFA1
-#define DFA_VERSION   1
+#define DFA_VERSION   2
 #define DFA_CHAR_ANY  0x00
+#define DFA_CHAR_EPSILON 0x01
+#define DFA_CHAR_WHITESPACE 0x02
+#define DFA_CHAR_VERBATIM_SPACE 0x03
+#define DFA_CHAR_NORMALIZING_SPACE 0x04
+
+#define DFA_STATE_ACCEPTING  0x0001
+#define DFA_STATE_ERROR      0x0002
+#define DFA_STATE_DEAD       0x0004
 
 typedef enum {
     DFA_CMD_UNKNOWN = 0,
@@ -37,9 +39,11 @@ typedef struct {
     uint16_t state_count;
     uint32_t initial_state;
     uint32_t accepting_mask;
+    uint16_t alphabet_size;
+    uint16_t reserved;
 } dfa_header_t;
 
-typedef struct DFA_PACKED {
+typedef struct {
     uint8_t character;
     uint32_t next_state_offset;
 } dfa_transition_t;

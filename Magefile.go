@@ -40,50 +40,120 @@ func Build() error {
 func BuildClient() error {
 	fmt.Println("Building libreadonlybox_client.so...")
 
-	// Step 1: Generate DFA from commands.txt
-	dfaToolsDir := "c-dfa/tools"
-	dfa2cPath := filepath.Join(dfaToolsDir, "dfa2c")
-	commandsTxt := filepath.Join(dfaToolsDir, "commands.txt")
-	dfaCArray := filepath.Join(dfaToolsDir, "readonlybox_dfa.c")
-	clientDfaData := filepath.Join("internal/client", "dfa_static_data.c")
+	// Get absolute paths
+	wd, _ := os.Getwd()
+	cdfaDir := filepath.Join(wd, "c-dfa")
+	cdfaToolsDir := filepath.Join(cdfaDir, "tools")
+	patternsFile := filepath.Join(cdfaDir, "patterns_safe_commands.txt")
+	nfaFile := filepath.Join(cdfaDir, "readonlybox.nfa")
+	dfaFile := filepath.Join(cdfaDir, "readonlybox.dfa")
+	dfaCArray := filepath.Join(cdfaToolsDir, "readonlybox_dfa.c")
+	clientDfaData := filepath.Join(wd, "internal/client", "dfa_static_data.c")
 
-	// Build dfa2c if needed
-	if _, err := os.Stat(dfa2cPath); os.IsNotExist(err) {
-		fmt.Println("Building dfa2c...")
-		buildCmd := exec.Command("gcc", "-o", dfa2cPath, filepath.Join(dfaToolsDir, "dfa2c.c"))
+	// Build nfa_builder if needed
+	nfaBuilder := filepath.Join(cdfaToolsDir, "nfa_builder")
+	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
+		fmt.Println("Building nfa_builder...")
+		buildCmd := exec.Command("gcc", "-o", nfaBuilder, filepath.Join(cdfaToolsDir, "nfa_builder.c"),
+			"-Wall", "-Wextra", "-std=c11", "-O2")
 		buildCmd.Stdout = os.Stdout
 		buildCmd.Stderr = os.Stderr
 		if err := buildCmd.Run(); err != nil {
-			fmt.Printf("gcc error: %v\n", err)
-			return fmt.Errorf("failed to build dfa2c: %w", err)
+			return fmt.Errorf("failed to build nfa_builder: %w", err)
 		}
-		info, _ := os.Stat(dfa2cPath)
-		fmt.Printf("After gcc: %s exists=%v size=%d\n", dfa2cPath, info != nil, info.Size())
 	}
 
-	// Generate DFA C array
-	fmt.Println("Generating DFA...")
-	dfaBinaryFile := filepath.Join(dfaToolsDir, "readonlybox_dfa.dfa")
-	genDfa := exec.Command(dfa2cPath, commandsTxt, dfaBinaryFile, "readonlybox_dfa", dfaCArray)
-	wd, _ := os.Getwd()
-	genDfa.Dir = wd
+	// Build alphabet_constructor if needed
+	alphabetConstructor := filepath.Join(cdfaToolsDir, "alphabet_constructor")
+	if _, err := os.Stat(alphabetConstructor); os.IsNotExist(err) {
+		fmt.Println("Building alphabet_constructor...")
+		buildCmd := exec.Command("gcc", "-o", alphabetConstructor, filepath.Join(cdfaToolsDir, "alphabet_constructor.c"),
+			"-Wall", "-Wextra", "-std=c11", "-O2")
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			return fmt.Errorf("failed to build alphabet_constructor: %w", err)
+		}
+	}
+
+	// Build nfa2dfa if needed
+	nfa2dfa := filepath.Join(cdfaToolsDir, "nfa2dfa")
+	if _, err := os.Stat(nfa2dfa); os.IsNotExist(err) {
+		fmt.Println("Building nfa2dfa...")
+		buildCmd := exec.Command("gcc", "-o", nfa2dfa, filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
+			"-Wall", "-Wextra", "-std=c11", "-O2")
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			return fmt.Errorf("failed to build nfa2dfa: %w", err)
+		}
+	}
+
+	// Build dfa2c_array if needed
+	dfa2cArray := filepath.Join(cdfaToolsDir, "dfa2c_array")
+	if _, err := os.Stat(dfa2cArray); os.IsNotExist(err) {
+		fmt.Println("Building dfa2c_array...")
+		buildCmd := exec.Command("gcc", "-o", dfa2cArray, filepath.Join(cdfaToolsDir, "dfa2c_array.c"),
+			"-Wall", "-Wextra", "-std=c11", "-O2")
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			return fmt.Errorf("failed to build dfa2c_array: %w", err)
+		}
+	}
+
+	// Step 2a: Generate alphabet from patterns
+	alphabetFile := filepath.Join(cdfaDir, "alphabet.map")
+	fmt.Println("Generating alphabet from patterns...")
+	genAlphabet := exec.Command(alphabetConstructor, patternsFile, alphabetFile)
+	genAlphabet.Dir = cdfaDir
+	genAlphabet.Stdout = os.Stdout
+	genAlphabet.Stderr = os.Stderr
+	if err := genAlphabet.Run(); err != nil {
+		return fmt.Errorf("failed to generate alphabet: %w", err)
+	}
+
+	// Step 2b: Generate NFA from patterns using alphabet
+	fmt.Println("Generating NFA from patterns...")
+	genNfa := exec.Command(nfaBuilder, alphabetFile, patternsFile, nfaFile)
+	genNfa.Dir = cdfaDir
+	genNfa.Stdout = os.Stdout
+	genNfa.Stderr = os.Stderr
+	if err := genNfa.Run(); err != nil {
+		return fmt.Errorf("failed to generate NFA: %w", err)
+	}
+
+	// Step 3: Convert NFA to DFA
+	fmt.Println("Converting NFA to DFA...")
+	genDfa := exec.Command(nfa2dfa, nfaFile, dfaFile)
+	genDfa.Dir = cdfaDir
 	genDfa.Stdout = os.Stdout
 	genDfa.Stderr = os.Stderr
 	if err := genDfa.Run(); err != nil {
 		return fmt.Errorf("failed to generate DFA: %w", err)
 	}
 
-	// Copy DFA C array to client directory (dfa2c writes directly there now)
+	// Step 4: Convert DFA binary to C array
+	fmt.Println("Generating C array from DFA...")
+	convCmd := exec.Command(dfa2cArray, dfaFile, dfaCArray, "readonlybox_dfa")
+	convCmd.Dir = cdfaDir
+	convCmd.Stdout = os.Stdout
+	convCmd.Stderr = os.Stderr
+	if err := convCmd.Run(); err != nil {
+		return fmt.Errorf("failed to convert DFA to C array: %w", err)
+	}
+
+	// Step 5: Copy DFA C array to client directory
 	if err := copyFile(dfaCArray, clientDfaData); err != nil {
 		return fmt.Errorf("failed to copy DFA to client: %w", err)
 	}
 
-	// Build the client library with DFA
-	outputFile := filepath.Join("bin", "libreadonlybox_client.so")
+	// Step 6: Build the client library with DFA
+	outputFile := filepath.Join(wd, "bin", "libreadonlybox_client.so")
 	buildClient := exec.Command("gcc", "-shared", "-fPIC", "-O2", "-o", outputFile,
-		filepath.Join("internal/client", "client.c"),
-		filepath.Join("internal/client", "dfa.c"),
-		filepath.Join("internal/client", "dfa_static_data.c"),
+		filepath.Join(wd, "internal/client", "client.c"),
+		filepath.Join(wd, "internal/client", "dfa.c"),
+		filepath.Join(wd, "internal/client", "dfa_static_data.c"),
 		"-lpthread", "-ldl")
 	buildClient.Stdout = os.Stdout
 	buildClient.Stderr = os.Stderr
