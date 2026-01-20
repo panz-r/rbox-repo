@@ -37,10 +37,15 @@ typedef struct {
  */
 typedef struct {
     uint32_t magic;              // Magic number: 0xDFA1DFA1
-    uint16_t version;            // Version: 1
+    uint16_t version;            // Version: 2 (with alphabet support)
     uint16_t state_count;        // Total number of states
     uint32_t initial_state;      // Offset to initial state
     uint32_t accepting_mask;     // Bitmask of accepting states
+    uint16_t alphabet_size;      // Number of symbols in alphabet (version 2+)
+    uint16_t reserved;           // Reserved for future use
+    // Alphabet mapping follows (version 2+):
+    // char alphabet_map[256];   // Maps character to symbol ID
+    // Then states and transitions follow
     dfa_state_t states[];        // Flexible array of states
     // Transition tables follow after states
 } dfa_t;
@@ -60,7 +65,7 @@ typedef struct {
 /**
  * Current DFA version
  */
-#define DFA_VERSION 1
+#define DFA_VERSION 2  // Version 2 adds alphabet support
 
 /**
  * Maximum number of states in a single DFA

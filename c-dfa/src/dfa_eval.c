@@ -5,6 +5,10 @@
 // Current DFA instance
 static const dfa_t* current_dfa = NULL;
 
+// Alphabet mapping for character-to-symbol conversion
+static char alphabet_map[256] = {0}; // Maps character to symbol ID
+static bool alphabet_initialized = false;
+
 bool dfa_init(const void* dfa_data, size_t size) {
     if (dfa_data == NULL || size < sizeof(dfa_t)) {
         return false;
@@ -17,8 +21,8 @@ bool dfa_init(const void* dfa_data, size_t size) {
         return false;
     }
 
-    // Validate version
-    if (dfa->version != DFA_VERSION) {
+    // Validate version (support both v1 and v2)
+    if (dfa->version != 1 && dfa->version != 2) {
         return false;
     }
 
@@ -33,6 +37,22 @@ bool dfa_init(const void* dfa_data, size_t size) {
     }
 
     current_dfa = dfa;
+    
+    // Initialize alphabet mapping for version 2
+    if (dfa->version == 2) {
+        const char* alphabet_map_ptr = (const char*)dfa + sizeof(dfa_t);
+        for (int i = 0; i < 256; i++) {
+            alphabet_map[i] = alphabet_map_ptr[i];
+        }
+        alphabet_initialized = true;
+    } else {
+        // Version 1: identity mapping (character = symbol)
+        for (int i = 0; i < 256; i++) {
+            alphabet_map[i] = i;
+        }
+        alphabet_initialized = true;
+    }
+    
     return true;
 }
 
@@ -62,6 +82,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
 
     for (pos = 0; pos < length; pos++) {
         char c = input[pos];
+        char symbol_id = alphabet_initialized ? alphabet_map[(unsigned char)c] : c;
         bool transition_found = false;
 
         // Get transition table for current state
@@ -70,7 +91,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                 (const char*)current_dfa + current_state->transitions_offset);
 
             for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                if (trans[i].character == DFA_CHAR_ANY || trans[i].character == c) {
+                if (trans[i].character == DFA_CHAR_ANY || trans[i].character == symbol_id) {
                     // Found a transition
                     if (trans[i].next_state_offset == 0) {
                         // No transition (dead end)

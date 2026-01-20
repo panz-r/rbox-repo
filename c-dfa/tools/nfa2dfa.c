@@ -490,6 +490,13 @@ void write_dfa_file(const char* filename) {
     }
     size_t transitions_size = total_transitions * sizeof(dfa_transition_t);
 
+    // Add space for alphabet mapping (version 2+)
+    size_t alphabet_map_size = 256; // Full character mapping (256 bytes)
+    dfa_size += alphabet_map_size;
+    
+    // Store the actual alphabet size from the loaded alphabet
+    size_t actual_alphabet_size = alphabet_size;
+
     dfa_size += states_size + transitions_size;
 
     // Allocate memory for DFA structure
@@ -504,12 +511,32 @@ void write_dfa_file(const char* filename) {
     dfa_struct->magic = DFA_MAGIC;
     dfa_struct->version = DFA_VERSION;
     dfa_struct->state_count = dfa_state_count;
-    dfa_struct->initial_state = sizeof(dfa_t); // Initial state follows header
+    dfa_struct->initial_state = sizeof(dfa_t) + alphabet_map_size; // Initial state follows header + alphabet
     dfa_struct->accepting_mask = 0; // Will be computed below
+    dfa_struct->alphabet_size = actual_alphabet_size; // Store actual alphabet entries
+    dfa_struct->reserved = 0;
 
     // Set up pointers
-    dfa_state_t* states = (dfa_state_t*)((char*)dfa_struct + sizeof(dfa_t));
+    char* alphabet_map = (char*)dfa_struct + sizeof(dfa_t);
+    dfa_state_t* states = (dfa_state_t*)((char*)alphabet_map + alphabet_map_size);
     dfa_transition_t* transitions = (dfa_transition_t*)((char*)states + states_size);
+    
+    // Initialize alphabet mapping (identity mapping for now)
+    for (int i = 0; i < 256; i++) {
+        alphabet_map[i] = i; // Default: character maps to itself
+    }
+    
+    // Apply our specific alphabet mapping
+    for (int i = 0; i < alphabet_map_size; i++) {
+        if (alphabet[i].symbol_id < 256) {
+            // Map all characters in this range to the symbol ID
+            for (int c = alphabet[i].start_char; c <= alphabet[i].end_char; c++) {
+                if (c < 256) {
+                    alphabet_map[c] = alphabet[i].symbol_id;
+                }
+            }
+        }
+    }
 
     // Build transition table
     size_t current_transition = 0;
@@ -525,8 +552,16 @@ void write_dfa_file(const char* filename) {
         }
 
         // Copy transitions
-        for (int s = 0; s < alphabet_size; s++) {
+        for (int s = 0; s < MAX_SYMBOLS; s++) {
             if (dfa[i].transitions[s] != -1) {
+                // Only count if we have space
+                if (current_transition >= total_transitions) {
+                    fprintf(stderr, "Error: Transition count mismatch for state %d\n", i);
+                    fprintf(stderr, "  Expected: %zu, Got: %d\n", total_transitions, current_transition);
+                    free(dfa_struct);
+                    fclose(file);
+                    return;
+                }
                 if (current_transition >= total_transitions) {
                     fprintf(stderr, "Error: Transition count mismatch\n");
                     free(dfa_struct);
