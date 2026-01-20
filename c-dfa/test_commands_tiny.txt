@@ -1,0 +1,11 @@
+# Tiny test commands for DFA validation
+
+# Safe file operations (read-only)
+[safe:file:read] cat file.txt
+[safe:file:read] ls -la
+
+# Modifying operations (should be blocked)
+[modifying:file:write] rm file.txt
+
+# Dangerous operations (should be blocked)
+[dangerous:system:execute] reboot

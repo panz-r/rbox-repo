@@ -1,0 +1,86 @@
+# Modifying Commands - Operations that modify files or system state
+
+# File deletion operations
+[modifying:file:write] rm file.txt
+[modifying:file:write] rm -f file.txt
+[modifying:file:write] rm -rf dir
+[modifying:file:write] rm -rf /
+[modifying:file:write] rmdir dir
+[modifying:file:write] rm -i file.txt
+
+# File creation operations
+[modifying:file:write] touch file.txt
+[modifying:file:write] touch newfile.txt
+[modifying:file:write] mkdir dir
+[modifying:file:write] mkdir -p dir/subdir
+[modifying:file:write] echo "text" > file.txt
+[modifying:file:write] echo "text" >> file.txt
+[modifying:file:write] printf "text" > file.txt
+
+# File modification operations
+[modifying:file:write] mv file1.txt file2.txt
+[modifying:file:write] cp file1.txt file2.txt
+[modifying:file:write] cp -r dir1 dir2
+[modifying:file:write] chmod 755 file.txt
+[modifying:file:write] chmod +x script.sh
+[modifying:file:write] chown user:group file.txt
+[modifying:file:write] chown -R user:group dir
+[modifying:file:write] ln -s target link
+[modifying:file:write] ln file.txt hardlink.txt
+
+# File content modification
+[modifying:file:write] sed -i 's/old/new/g' file.txt
+[modifying:file:write] sed -i '/pattern/d' file.txt
+[modifying:file:write] awk '{print $1}' file.txt > output.txt
+[modifying:file:write] sort file.txt -o sorted.txt
+[modifying:file:write] uniq file.txt > unique.txt
+
+# Archive operations
+[modifying:file:write] tar -cf archive.tar files
+[modifying:file:write] tar -czf archive.tar.gz files
+[modifying:file:write] gzip file.txt
+[modifying:file:write] zip archive.zip files
+[modifying:file:write] rar a archive.rar files
+
+# File system operations
+[modifying:file:write] dd if=/dev/zero of=file.txt bs=1M count=10
+[modifying:file:write] fallocate -l 1G file.txt
+[modifying:file:write] truncate -s 100M file.txt
+[modifying:file:write] sync
+[modifying:file:write] mount /dev/sda1 /mnt
+[modifying:file:write] umount /mnt
+
+# Git modifying operations
+[modifying:git:write] git add .
+[modifying:git:write] git add file.txt
+[modifying:git:write] git commit -m "message"
+[modifying:git:write] git commit -a -m "message"
+[modifying:git:write] git push
+[modifying:git:write] git push origin main
+[modifying:git:write] git pull
+[modifying:git:write] git pull origin main
+[modifying:git:write] git merge branch
+[modifying:git:write] git rebase main
+[modifying:git:write] git reset --hard
+[modifying:git:write] git reset HEAD~
+[modifying:git:write] git checkout -b newbranch
+[modifying:git:write] git branch -d branch
+[modifying:git:write] git tag -a v1.0 -m "message"
+[modifying:git:write] git stash
+[modifying:git:write] git stash pop
+[modifying:git:write] git config --global user.name "name"
+[modifying:git:write] git config --global user.email "email"
+
+# Complex modifying patterns
+[modifying:file:write] find . -name "*.tmp" -exec rm {} \;
+[modifying:file:write] find . -name "*.log" -delete
+[modifying:file:write] xargs rm < filelist.txt
+[modifying:file:write] rm $(find . -name "*.tmp")
+[modifying:file:write] for file in *.tmp; do rm "$file"; done
+
+# Patterns with dangerous wildcards
+[modifying:file:write] rm -rf *
+[modifying:file:write] rm -rf .*
+[modifying:file:write] chmod -R 777 /
+[modifying:file:write] chown -R user:group /
+[modifying:file:write] mv * ../

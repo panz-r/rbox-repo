@@ -50,6 +50,8 @@ typedef struct {
     size_t token_count;               // Number of tokens
     bool has_transformations;         // Has any transformations
     bool has_shell_syntax;            // Has shell syntax
+    void* subshell_commands;          // Subshell commands (use void* to avoid circular dependency)
+    size_t subshell_count;            // Number of subshell commands
 } transformed_command_t;
 
 /**

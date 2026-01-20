@@ -32,7 +32,7 @@ static void skip_whitespace(shell_tokenizer_state_t* state) {
 static bool handle_quotes(shell_tokenizer_state_t* state) {
     char c = state->input[state->position];
 
-    if (c == '\"' || c == "'" || c == '`') {
+    if (c == '"' || c == '\'' || c == '`') {
         if (!state->in_quotes) {
             // Start of quotes
             state->in_quotes = true;

@@ -1,0 +1,26 @@
+# Small test commands for DFA validation
+
+# Safe file operations (read-only)
+[safe:file:read] cat file.txt
+[safe:file:read] cat *.txt
+[safe:file:read] grep pattern file.txt
+[safe:file:read] find . -name "*.txt"
+[safe:file:read] ls -la
+
+# Safe git operations (read-only)
+[safe:git:read] git log
+[safe:git:read] git log --oneline
+[safe:git:read] git status
+
+# Modifying operations (should be blocked)
+[modifying:file:write] rm file.txt
+[modifying:file:write] rm -rf /
+[modifying:file:write] touch file.txt
+
+# Dangerous operations (should be blocked)
+[dangerous:system:execute] reboot
+[dangerous:system:execute] shutdown
+
+# Complex command patterns
+[safe:file:read] cat file.txt | grep pattern
+[safe:file:read] git log --oneline | head -10

@@ -18,29 +18,14 @@
  * Extended token types
  */
 typedef enum {
-    // Original types
-    TOKEN_COMMAND = 0,
-    TOKEN_ARGUMENT,
-    TOKEN_PIPE,
-    TOKEN_REDIRECT_IN,
-    TOKEN_REDIRECT_OUT,
-    TOKEN_REDIRECT_ERR,
-    TOKEN_REDIRECT_APPEND,
-    TOKEN_SEMICOLON,
-    TOKEN_AND,
-    TOKEN_OR,
-    TOKEN_SUBSHELL_START,
-    TOKEN_SUBSHELL_END,
-    TOKEN_END,
-
-    // Extended types
-    TOKEN_VARIABLE,        // $VAR, ${VAR}
-    TOKEN_VARIABLE_QUOTED, // "$VAR", '$VAR'
-    TOKEN_SPECIAL_VAR,     // $1, $#, $?, $$
-    TOKEN_GLOB,            // *.txt, file?
-    TOKEN_SUBSHELL,        // $(command), `command`
-    TOKEN_ARITHMETIC,      // $((expr))
-    TOKEN_PROCESS_SUB      // <(command), >(command)
+    // Extended types (original types are in base tokenizer)
+    TOKEN_VARIABLE = 100,        // $VAR, ${VAR}
+    TOKEN_VARIABLE_QUOTED,      // "$VAR", '$VAR'
+    TOKEN_SPECIAL_VAR,          // $1, $#, $?, $$
+    TOKEN_GLOB,                 // *.txt, file?
+    TOKEN_SUBSHELL,             // $(command), `command`
+    TOKEN_ARITHMETIC,           // $((expr))
+    TOKEN_PROCESS_SUB           // <(command), >(command)
 } extended_token_type_t;
 
 /**

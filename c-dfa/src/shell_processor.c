@@ -1,8 +1,13 @@
+#define _POSIX_C_SOURCE 200809L
 #include "shell_processor.h"
 #include "shell_tokenizer.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+// Forward declarations
+static bool split_pipeline_into_commands(shell_command_info_t* info, const char** inputs, size_t* dfa_input_count);
+static bool extract_pipeline_commands(shell_command_info_t* infos, size_t info_count, const char*** dfa_inputs, size_t* dfa_input_count, bool* has_shell_features);
 
 // Helper: Check if token is shell operator
 static bool is_shell_operator_token(shell_token_t* token) {
@@ -447,7 +452,7 @@ static bool extract_pipeline_commands(
 // Split pipeline into individual commands
 static bool split_pipeline_into_commands(
     shell_command_info_t* pipeline_info,
-    const char*** command_array,
+    const char** command_array,
     size_t* command_count
 ) {
     // Count pipe operators
@@ -460,13 +465,7 @@ static bool split_pipeline_into_commands(
 
     size_t actual_count = pipe_count + 1;
 
-    // Allocate array for individual commands
-    const char** commands = malloc(actual_count * sizeof(const char*));
-    if (!commands) {
-        return false;
-    }
-
-    // Split the command tokens by pipe positions
+    // Split the command tokens by pipe positions and copy into provided array
     size_t current_command = 0;
     size_t token_start = 0;
 
@@ -483,16 +482,15 @@ static bool split_pipeline_into_commands(
             // Extract command from token_start to current position
             size_t command_token_count = i - token_start;
             if (command_token_count > 0) {
-                commands[current_command] = build_clean_command(
+                command_array[current_command] = build_clean_command(
                     &pipeline_info->command_tokens[token_start],
                     command_token_count
                 );
-                if (!commands[current_command]) {
+                if (!command_array[current_command]) {
                     // Free allocated commands
                     for (size_t j = 0; j < current_command; j++) {
-                        free((void*)commands[j]);
+                        free((void*)command_array[j]);
                     }
-                    free(commands);
                     return false;
                 }
                 current_command++;
@@ -501,7 +499,6 @@ static bool split_pipeline_into_commands(
         }
     }
 
-    *command_array = commands;
     *command_count = actual_count;
     return true;
 }

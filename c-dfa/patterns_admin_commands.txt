@@ -1,0 +1,150 @@
+# Admin Commands - Operations that require administrative privileges
+
+# System administration operations
+[admin:system:privileged] sudo command
+[admin:system:privileged] sudo -i
+[admin:system:privileged] sudo -s
+[admin:system:privileged] sudo su
+[admin:system:privileged] sudo su -
+[admin:system:privileged] sudo su user
+[admin:system:privileged] sudo -u user command
+
+# User management operations
+[admin:system:privileged] useradd username
+[admin:system:privileged] useradd -m username
+[admin:system:privileged] userdel username
+[admin:system:privileged] userdel -r username
+[admin:system:privileged] usermod -aG group username
+[admin:system:privileged] passwd username
+[admin:system:privileged] chpasswd
+[admin:system:privileged] chage -E 2023-12-31 username
+
+# Group management operations
+[admin:system:privileged] groupadd groupname
+[admin:system:privileged] groupdel groupname
+[admin:system:privileged] groupmod -n newname groupname
+[admin:system:privileged] gpasswd -a user group
+[admin:system:privileged] gpasswd -d user group
+
+# Package management operations
+[admin:system:privileged] apt-get update
+[admin:system:privileged] apt-get upgrade
+[admin:system:privileged] apt-get install package
+[admin:system:privileged] apt-get remove package
+[admin:system:privileged] apt-get purge package
+[admin:system:privileged] yum install package
+[admin:system:privileged] yum remove package
+[admin:system:privileged] dnf install package
+[admin:system:privileged] dnf remove package
+[admin:system:privileged] pacman -S package
+[admin:system:privileged] pacman -R package
+
+# Service management operations
+[admin:system:privileged] systemctl start service
+[admin:system:privileged] systemctl stop service
+[admin:system:privileged] systemctl restart service
+[admin:system:privileged] systemctl enable service
+[admin:system:privileged] systemctl disable service
+[admin:system:privileged] systemctl status service
+[admin:system:privileged] service service start
+[admin:system:privileged] service service stop
+[admin:system:privileged] service service restart
+
+# System configuration operations
+[admin:system:privileged] visudo
+[admin:system:privileged] nano /etc/sudoers
+[admin:system:privileged] echo "config" >> /etc/config
+[admin:system:privileged] sed -i 's/old/new/g' /etc/config
+[admin:system:privileged] sysctl -w parameter=value
+[admin:system:privileged] sysctl -p
+[admin:system:privileged] ulimit -n 65535
+[admin:system:privileged] ulimit -u unlimited
+
+# Network configuration operations
+[admin:system:privileged] ifconfig eth0 up
+[admin:system:privileged] ifconfig eth0 down
+[admin:system:privileged] ip addr add address dev eth0
+[admin:system:privileged] ip route add default via gateway
+[admin:system:privileged] iptables -A INPUT -p tcp --dport port -j ACCEPT
+[admin:system:privileged] iptables -D INPUT -p tcp --dport port -j ACCEPT
+[admin:system:privileged] ufw allow port
+[admin:system:privileged] ufw deny port
+[admin:system:privileged] ufw enable
+[admin:system:privileged] ufw disable
+
+# Storage management operations
+[admin:system:privileged] fdisk /dev/sda
+[admin:system:privileged] parted /dev/sda
+[admin:system:privileged] mkfs.ext4 /dev/sda1
+[admin:system:privileged] mount /dev/sda1 /mnt
+[admin:system:privileged] umount /mnt
+[admin:system:privileged] lvm lvcreate -n vol -L size pool
+[admin:system:privileged] lvm lvremove /dev/pool/vol
+[admin:system:privileged] vgcreate pool /dev/sda1
+[admin:system:privileged] vgremove pool
+
+# System monitoring and logging
+[admin:system:privileged] journalctl -u service
+[admin:system:privileged] journalctl -f
+[admin:system:privileged] journalctl --vacuum-size=100M
+[admin:system:privileged] logrotate -f /etc/logrotate.conf
+[admin:system:privileged] tail -f /var/log/syslog
+[admin:system:privileged] cat /var/log/auth.log
+[admin:system:privileged] dmesg -c
+[admin:system:privileged] dmesg --clear
+
+# Security operations
+[admin:system:privileged] fail2ban-client start
+[admin:system:privileged] fail2ban-client stop
+[admin:system:privileged] fail2ban-client reload
+[admin:system:privileged] fail2ban-client set jail banip ip
+[admin:system:privileged] fail2ban-client set jail unbanip ip
+[admin:system:privileged] iptables -A INPUT -s ip -j DROP
+[admin:system:privileged] iptables -D INPUT -s ip -j DROP
+[admin:system:privileged] ufw deny from ip
+[admin:system:privileged] ufw allow from ip
+
+# Backup and restore operations
+[admin:system:privileged] tar -czf backup.tar.gz /important
+[admin:system:privileged] tar -xzf backup.tar.gz -C /
+[admin:system:privileged] rsync -avz /source/ /backup/
+[admin:system:privileged] dd if=/dev/sda of=/backup/sda.img
+[admin:system:privileged] dd if=/backup/sda.img of=/dev/sda
+[admin:system:privileged] mysqldump -u root -p database > backup.sql
+[admin:system:privileged] mysql -u root -p database < backup.sql
+
+# System update and maintenance
+[admin:system:privileged] apt-get dist-upgrade
+[admin:system:privileged] apt-get autoremove
+[admin:system:privileged] apt-get autoclean
+[admin:system:privileged] yum update
+[admin:system:privileged] yum clean all
+[admin:system:privileged] dnf update
+[admin:system:privileged] dnf clean all
+[admin:system:privileged] pacman -Syu
+[admin:system:privileged] pacman -Sc
+
+# Kernel and module operations
+[admin:system:privileged] modprobe module
+[admin:system:privileged] rmmod module
+[admin:system:privileged] insmod module.ko
+[admin:system:privileged] lsmod
+[admin:system:privileged] depmod -a
+[admin:system:privileged] sysctl -w kernel parameter=value
+[admin:system:privileged] echo value > /proc/sys/kernel/parameter
+
+# Complex admin patterns
+[admin:system:privileged] sudo apt-get update && sudo apt-get upgrade -y
+[admin:system:privileged] sudo useradd username && sudo passwd username
+[admin:system:privileged] sudo systemctl enable service && sudo systemctl start service
+[admin:system:privileged] sudo iptables -A INPUT -p tcp --dport port -j ACCEPT && sudo service iptables save
+[admin:system:privileged] sudo mount /dev/sda1 /mnt && sudo chown user:group /mnt
+
+# Patterns with sudo variations
+[admin:system:privileged] sudo -E command
+[admin:system:privileged] sudo -H command
+[admin:system:privileged] sudo -P command
+[admin:system:privileged] sudo -b command
+[admin:system:privileged] sudo -p "password: " command
+[admin:system:privileged] sudo -u root command
+[admin:system:privileged] sudo -g group command

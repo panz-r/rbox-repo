@@ -84,6 +84,54 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                         (const char*)current_dfa + trans[i].next_state_offset);
                     transition_found = true;
                     break;
+                } else if (trans[i].character == DFA_CHAR_WHITESPACE) {
+                    // Whitespace wildcard - matches any whitespace character
+                    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                        if (trans[i].next_state_offset == 0) {
+                            // No transition (dead end)
+                            result->final_state = current_state->flags;
+                            result->matched_length = pos;
+                            return true;
+                        }
+
+                        // Move to next state
+                        current_state = (const dfa_state_t*)(
+                            (const char*)current_dfa + trans[i].next_state_offset);
+                        transition_found = true;
+                        break;
+                    }
+                } else if (trans[i].character == DFA_CHAR_VERBATIM_SPACE) {
+                    // Verbatim space - matches exactly one space character
+                    if (c == ' ') {
+                        if (trans[i].next_state_offset == 0) {
+                            // No transition (dead end)
+                            result->final_state = current_state->flags;
+                            result->matched_length = pos;
+                            return true;
+                        }
+
+                        // Move to next state
+                        current_state = (const dfa_state_t*)(
+                            (const char*)current_dfa + trans[i].next_state_offset);
+                        transition_found = true;
+                        break;
+                    }
+                } else if (trans[i].character == DFA_CHAR_NORMALIZING_SPACE) {
+                    // Normalizing space - matches one or more space/tab characters
+                    if (c == ' ' || c == '\t') {
+                        if (trans[i].next_state_offset == 0) {
+                            // No transition (dead end)
+                            result->final_state = current_state->flags;
+                            result->matched_length = pos;
+                            return true;
+                        }
+
+                        // Move to next state
+                        current_state = (const dfa_state_t*)(
+                            (const char*)current_dfa + trans[i].next_state_offset);
+                        transition_found = true;
+                        break;
+                    }
                 }
             }
         }

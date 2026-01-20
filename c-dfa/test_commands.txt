@@ -1,0 +1,146 @@
+# ReadOnlyBox Test Commands
+# Comprehensive test cases for DFA validation
+
+# Safe file operations (read-only)
+[safe:file:read] cat file.txt
+[safe:file:read] cat *.txt
+[safe:file:read] cat file1.txt file2.txt
+[safe:file:read] less file.txt
+[safe:file:read] head file.txt
+[safe:file:read] tail file.txt
+[safe:file:read] grep pattern file.txt
+[safe:file:read] grep -r pattern *.txt
+[safe:file:read] find . -name "*.txt"
+[safe:file:read] find /path -name "*.log"
+[safe:file:read] ls -la
+[safe:file:read] ls *.txt
+[safe:file:read] pwd
+[safe:file:read] stat file.txt
+[safe:file:read] file file.txt
+[safe:file:read] wc -l file.txt
+[safe:file:read] du -sh .
+[safe:file:read] df -h
+
+# Safe git operations (read-only)
+[safe:git:read] git log
+[safe:git:read] git log --oneline
+[safe:git:read] git status
+[safe:git:read] git show
+[safe:git:read] git diff
+[safe:git:read] git blame file.txt
+[safe:git:read] git grep pattern
+[safe:git:read] git ls-files
+[safe:git:read] git tag
+[safe:git:read] git branch
+
+# Safe system operations (read-only)
+[safe:system:read] ps aux
+[safe:system:read] ps -ef
+[safe:system:read] top -n 1
+[safe:system:read] whoami
+[safe:system:read] date
+[safe:system:read] uptime
+[safe:system:read] uname -a
+[safe:system:read] hostname
+[safe:system:read] id
+[safe:system:read] env
+[safe:system:read] printenv
+
+# Caution operations (read-only but potentially sensitive)
+[caution:file:read] cat /etc/passwd
+[caution:file:read] cat /etc/shadow
+[caution:file:read] cat ~/.bash_history
+[caution:file:read] find / -name "*.conf"
+[caution:file:read] grep -r password /
+[caution:system:read] last
+[caution:system:read] w
+[caution:system:read] netstat -tuln
+[caution:system:read] ss -tuln
+
+# Modifying operations (should be blocked)
+[modifying:file:write] rm file.txt
+[modifying:file:write] rm -rf /
+[modifying:file:write] touch file.txt
+[modifying:file:write] mkdir dir
+[modifying:file:write] rmdir dir
+[modifying:file:write] mv file1.txt file2.txt
+[modifying:file:write] cp file1.txt file2.txt
+[modifying:file:write] chmod 755 file.txt
+[modifying:file:write] chown user:group file.txt
+[modifying:file:write] ln -s target link
+[modifying:file:write] echo "text" > file.txt
+[modifying:file:write] echo "text" >> file.txt
+
+# Dangerous operations (should be blocked)
+[dangerous:system:execute] reboot
+[dangerous:system:execute] shutdown
+[dangerous:system:execute] halt
+[dangerous:system:execute] poweroff
+[dangerous:system:execute] dd if=/dev/sda of=/dev/null
+[dangerous:system:execute] :(){ :|:& };:
+[dangerous:system:execute] exec rm -rf /
+[dangerous:system:execute] sudo rm -rf /
+[dangerous:system:execute] su -c "rm -rf /"
+
+# Git modifying operations (should be blocked)
+[modifying:git:write] git add .
+[modifying:git:write] git commit -m "message"
+[modifying:git:write] git push
+[modifying:git:write] git pull
+[modifying:git:write] git merge
+[modifying:git:write] git rebase
+[modifying:git:write] git reset
+[modifying:git:write] git checkout -b branch
+[modifying:git:write] git stash
+[modifying:git:write] git config --global user.name "name"
+
+# Network operations (should be blocked)
+[network:system:connect] ping google.com
+[network:system:connect] curl http://example.com
+[network:system:connect] wget http://example.com
+[network:system:connect] nc host port
+[network:system:connect] telnet host port
+[network:system:connect] ssh user@host
+[network:system:connect] scp file user@host:
+[network:system:connect] rsync -avz source/ dest/
+
+# Admin operations (should be blocked)
+[admin:system:privileged] sudo command
+[admin:system:privileged] su user
+[admin:system:privileged] sudo -i
+[admin:system:privileged] sudo -s
+[admin:system:privileged] visudo
+[admin:system:privileged] useradd username
+[admin:system:privileged] userdel username
+[admin:system:privileged] passwd username
+[admin:system:privileged] apt-get install package
+[admin:system:privileged] yum install package
+
+# Complex command patterns with pipes and redirects
+[safe:file:read] cat file.txt | grep pattern
+[safe:file:read] cat file.txt | head -10
+[safe:file:read] cat file.txt | tail -5
+[safe:file:read] grep pattern file.txt | wc -l
+[safe:file:read] find . -name "*.txt" | xargs cat
+[safe:file:read] git log --oneline | head -10
+[safe:file:read] ps aux | grep process
+
+# Test patterns with special characters and escaping
+[safe:file:read] cat file\ with\ spaces.txt
+[safe:file:read] grep "pattern with spaces" file.txt
+[safe:file:read] find . -name "file\*.txt"
+[safe:file:read] echo "test with quotes"
+
+# Test patterns with wildcards
+[safe:file:read] ls *.txt
+[safe:file:read] ls *.log
+[safe:file:read] find . -name "*.txt"
+[safe:file:read] grep pattern *
+
+# Test patterns with options and flags
+[safe:file:read] cat -n file.txt
+[safe:file:read] grep -i pattern file.txt
+[safe:file:read] grep -r --include="*.txt" pattern .
+[safe:file:read] find . -type f -name "*.txt"
+[safe:file:read] ls -la -h
+[safe:file:read] ps aux --sort=-%mem

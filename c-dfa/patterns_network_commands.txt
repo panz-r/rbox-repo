@@ -1,0 +1,114 @@
+# Network Commands - Operations that involve network connectivity
+
+# Basic network connectivity tests
+[network:system:connect] ping google.com
+[network:system:connect] ping -c 4 example.com
+[network:system:connect] ping6 ipv6.google.com
+[network:system:connect] traceroute google.com
+[network:system:connect] mtr google.com
+[network:system:connect] tracepath google.com
+
+# HTTP/HTTPS operations
+[network:system:connect] curl http://example.com
+[network:system:connect] curl https://example.com
+[network:system:connect] wget http://example.com
+[network:system:connect] wget https://example.com
+[network:system:connect] wget -O file.html http://example.com
+[network:system:connect] curl -o file.html http://example.com
+
+# Network connection operations
+[network:system:connect] nc host port
+[network:system:connect] netcat host port
+[network:system:connect] telnet host port
+[network:system:connect] openssl s_client -connect host:port
+[network:system:connect] nmap host
+[network:system:connect] nmap -sS host
+[network:system:connect] nmap -sT host
+
+# SSH and remote access
+[network:system:connect] ssh user@host
+[network:system:connect] ssh -p port user@host
+[network:system:connect] scp file user@host:
+[network:system:connect] scp user@host:file .
+[network:system:connect] sftp user@host
+[network:system:connect] rsync -avz source/ user@host:dest/
+[network:system:connect] rsync -avz user@host:source/ dest/
+
+# DNS operations
+[network:system:connect] nslookup example.com
+[network:system:connect] dig example.com
+[network:system:connect] dig +short example.com
+[network:system:connect] host example.com
+[network:system:connect] whois example.com
+[network:system:connect] dig mx example.com
+[network:system:connect] dig txt example.com
+
+# FTP operations
+[network:system:connect] ftp host
+[network:system:connect] lftp host
+[network:system:connect] wget ftp://host/file
+[network:system:connect] curl ftp://host/file
+[network:system:connect] ncftpget host file
+
+# Email operations
+[network:system:connect] telnet smtp.example.com 25
+[network:system:connect] openssl s_client -connect smtp.example.com:465
+[network:system:connect] openssl s_client -connect smtp.example.com:587 -starttls smtp
+[network:system:connect] swaks --to user@example.com --from sender@example.com --server smtp.example.com
+
+# Database operations
+[network:system:connect] mysql -h host -u user -p
+[network:system:connect] psql -h host -U user -d database
+[network:system:connect] mongo host:port
+[network:system:connect] redis-cli -h host -p port
+[network:system:connect] sqlite3 database.db
+
+# Cloud and API operations
+[network:system:connect] aws s3 ls
+[network:system:connect] aws ec2 describe-instances
+[network:system:connect] gcloud compute instances list
+[network:system:connect] azure vm list
+[network:system:connect] curl -X GET https://api.example.com/endpoint
+[network:system:connect] curl -X POST -d 'data' https://api.example.com/endpoint
+
+# VPN and tunneling
+[network:system:connect] openvpn config.ovpn
+[network:system:connect] ssh -D port user@host
+[network:system:connect] ssh -L local_port:remote_host:remote_port user@host
+[network:system:connect] ssh -R remote_port:local_host:local_port user@host
+[network:system:connect] ngrok http port
+[network:system:connect] ngrok tcp port
+
+# Proxy operations
+[network:system:connect] curl -x proxy:port http://example.com
+[network:system:connect] wget -e use_proxy=yes -e http_proxy=proxy:port http://example.com
+[network:system:connect] export http_proxy=http://proxy:port
+[network:system:connect] export https_proxy=http://proxy:port
+[network:system:connect] export ftp_proxy=http://proxy:port
+
+# Complex network patterns
+[network:system:connect] curl http://example.com | grep pattern
+[network:system:connect] wget -qO- http://example.com | grep pattern
+[network:system:connect] ping -c 4 google.com | grep time
+[network:system:connect] nslookup example.com | grep Address
+[network:system:connect] dig example.com | grep ANSWER
+
+# Network scanning and discovery
+[network:system:connect] nmap -sn network/cidr
+[network:system:connect] nmap -O host
+[network:system:connect] nmap -sV host
+[network:system:connect] masscan network/cidr
+[network:system:connect] arp-scan --localnet
+[network:system:connect] netdiscover -i eth0
+
+# Web socket operations
+[network:system:connect] websocat ws://host:port
+[network:system:connect] wscat -c ws://host:port
+[network:system:connect] curl --include --no-buffer --header "Connection: Upgrade" http://host
+
+# Network file transfer
+[network:system:connect] rclone copy source remote:dest
+[network:system:connect] rclone sync source remote:dest
+[network:system:connect] rclone move source remote:dest
+[network:system:connect] aws s3 cp file s3://bucket/file
+[network:system:connect] aws s3 sync dir s3://bucket/dir

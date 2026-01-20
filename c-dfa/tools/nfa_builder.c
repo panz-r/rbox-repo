@@ -248,14 +248,61 @@ void parse_advanced_pattern(const char* line) {
         pattern_count++;
     }
 
-    // Build NFA for this pattern
+    // Build NFA for this pattern with enhanced whitespace handling
     int current_state = 0;
     int pattern_len = strlen(pattern);
+    bool in_quote = false;
 
     for (int i = 0; i < pattern_len; i++) {
         char c = pattern[i];
 
-        if (c == '*') {
+        // Handle quoted verbatim sections
+        if (c == '\'' && !in_quote) {
+            // Start of quoted section - skip the quote character
+            in_quote = true;
+            continue;
+        } else if (c == '\'' && in_quote) {
+            // End of quoted section - skip the quote character
+            in_quote = false;
+            continue;
+        }
+
+        // Handle escape sequences
+        if (c == '\\' && i + 1 < pattern_len) {
+            i++;
+            char escaped_char = pattern[i];
+
+            // Handle special escape sequences
+            switch (escaped_char) {
+                case 't': escaped_char = '\t'; break;
+                case 'n': escaped_char = '\n'; break;
+                case 'r': escaped_char = '\r'; break;
+                case 's': escaped_char = ' '; break;  // space
+                case '\'': escaped_char = '\''; break; // single quote
+                case '\\': escaped_char = '\\'; break; // backslash
+                // Add more escape sequences as needed
+            }
+
+            int new_state = nfa_add_state(false);
+            nfa_add_transition(current_state, new_state, escaped_char);
+            current_state = new_state;
+            continue;
+        }
+
+        // Handle whitespace based on quote context
+        if (c == ' ' && !in_quote) {
+            // Normalizing whitespace - matches any sequence of 1+ space/tab chars
+            int new_state = nfa_add_state(false);
+            nfa_add_transition(current_state, new_state, DFA_CHAR_NORMALIZING_SPACE);
+            // Add self-loop for additional whitespace characters
+            nfa_add_transition(new_state, new_state, DFA_CHAR_NORMALIZING_SPACE);
+            current_state = new_state;
+        } else if (c == ' ' && in_quote) {
+            // Verbatim whitespace - matches exactly one space character
+            int new_state = nfa_add_state(false);
+            nfa_add_transition(current_state, new_state, DFA_CHAR_VERBATIM_SPACE);
+            current_state = new_state;
+        } else if (c == '*') {
             // Wildcard: create epsilon transitions
             int new_state = nfa_add_state(false);
             nfa_add_transition(current_state, new_state, DFA_CHAR_ANY);
@@ -266,14 +313,6 @@ void parse_advanced_pattern(const char* line) {
             int new_state = nfa_add_state(false);
             nfa_add_transition(current_state, new_state, DFA_CHAR_ANY);
             current_state = new_state;
-        } else if (c == '\\') {
-            // Escape character
-            if (i + 1 < pattern_len) {
-                i++;
-                int new_state = nfa_add_state(false);
-                nfa_add_transition(current_state, new_state, pattern[i]);
-                current_state = new_state;
-            }
         } else {
             // Regular character
             int new_state = nfa_add_state(false);

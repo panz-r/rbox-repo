@@ -57,7 +57,12 @@ int main(int argc, char* argv[]) {
         test_dfa = dfa_get_current();
         printf("Loaded DFA with %u states\n\n", dfa_get_state_count());
     } else {
-        printf("No DFA available - using mock validation\n\n");
+        printf("No DFA available - real DFA evaluation required\n\n");
+        printf("TEST 2: DFA Validation - SKIPPED (no DFA file available)\n");
+        printf("--------------------------------------------------------\n\n");
+
+        // Skip to Test 3
+        goto test3;
     }
 
     // Test individual commands
@@ -79,7 +84,15 @@ int main(int argc, char* argv[]) {
 
     printf("\n");
 
+    // Cleanup DFA
+    if (dfa_data != NULL) {
+        free(dfa_data);
+        dfa_reset();
+        dfa_data = NULL;
+    }
+
     // Test 3: Complete Command Line Validation
+    test3:
     printf("TEST 3: Complete Command Line Validation\n");
     printf("---------------------------------------\n");
 
@@ -114,6 +127,8 @@ int main(int argc, char* argv[]) {
         free(dfa_data);
         dfa_reset();
     }
+
+    return 0;
 
     printf("TEST COMPLETE\n");
     return 0;

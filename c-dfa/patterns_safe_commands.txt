@@ -1,0 +1,115 @@
+# Safe Commands - Read-only operations that are completely safe
+
+# File reading operations
+[safe:file:read] cat file.txt
+[safe:file:read] cat *.txt
+[safe:file:read] cat file1.txt file2.txt
+[safe:file:read] less file.txt
+[safe:file:read] head file.txt
+[safe:file:read] tail file.txt
+[safe:file:read] more file.txt
+[safe:file:read] grep pattern file.txt
+[safe:file:read] grep -r pattern *.txt
+[safe:file:read] grep -i search *.log
+[safe:file:read] find . -name "*.txt"
+[safe:file:read] find /path -name "*.log"
+[safe:file:read] find . -type f -name "*.txt"
+[safe:file:read] ls -la
+[safe:file:read] ls *.txt
+[safe:file:read] ls -la *.log
+[safe:file:read] pwd
+[safe:file:read] stat file.txt
+[safe:file:read] file file.txt
+[safe:file:read] wc -l file.txt
+[safe:file:read] wc -w file.txt
+[safe:file:read] wc -c file.txt
+[safe:file:read] du -sh .
+[safe:file:read] du -sh *
+[safe:file:read] df -h
+[safe:file:read] df -h .
+
+# Git read-only operations
+[safe:git:read] git log
+[safe:git:read] git log --oneline
+[safe:git:read] git log --graph
+[safe:git:read] git status
+[safe:git:read] git show
+[safe:git:read] git show commit_hash
+[safe:git:read] git diff
+[safe:git:read] git diff HEAD
+[safe:git:read] git blame file.txt
+[safe:git:read] git grep pattern
+[safe:git:read] git ls-files
+[safe:git:read] git tag
+[safe:git:read] git tag -l
+[safe:git:read] git branch
+[safe:git:read] git branch -a
+[safe:git:read] git remote -v
+[safe:git:read] git config --list
+
+# System information operations
+[safe:system:read] ps aux
+[safe:file:read] ps -ef
+[safe:file:read] top -n 1
+[safe:file:read] whoami
+[safe:file:read] date
+[safe:file:read] uptime
+[safe:file:read] uname -a
+[safe:file:read] hostname
+[safe:file:read] id
+[safe:file:read] env
+[safe:file:read] printenv
+[safe:file:read] echo "hello world"
+[safe:file:read] echo $PATH
+[safe:file:read] echo $HOME
+
+# Text processing operations
+[safe:file:read] cut -d',' -f1 file.csv
+[safe:file:read] sort file.txt
+[safe:file:read] uniq file.txt
+[safe:file:read] tr 'a-z' 'A-Z' < file.txt
+[safe:file:read] sed 's/pattern/replacement/g' file.txt
+[safe:file:read] awk '{print $1}' file.txt
+[safe:file:read] paste file1.txt file2.txt
+[safe:file:read] join file1.txt file2.txt
+[safe:file:read] comm file1.txt file2.txt
+
+# Archive viewing operations
+[safe:file:read] tar -tf archive.tar
+[safe:file:read] tar -tzf archive.tar.gz
+[safe:file:read] gzip -l file.gz
+[safe:file:read] zipinfo archive.zip
+
+# Complex safe patterns with pipes and redirects
+[safe:file:read] cat file.txt | grep pattern
+[safe:file:read] cat file.txt | head -10
+[safe:file:read] cat file.txt | tail -5
+[safe:file:read] grep pattern file.txt | wc -l
+[safe:file:read] find . -name "*.txt" | xargs cat
+[safe:file:read] git log --oneline | head -10
+[safe:file:read] ps aux | grep process
+[safe:file:read] ls -la | grep ".txt"
+
+# Patterns with special characters and escaping
+[safe:file:read] cat file\ with\ spaces.txt
+[safe:file:read] grep "pattern with spaces" file.txt
+[safe:file:read] find . -name "file\*.txt"
+[safe:file:read] echo "test with quotes"
+[safe:file:read] echo 'test with single quotes'
+
+# Patterns with wildcards
+[safe:file:read] ls *.txt
+[safe:file:read] ls *.log
+[safe:file:read] find . -name "*.txt"
+[safe:file:read] grep pattern *
+[safe:file:read] cat *.log | grep error
+
+# Patterns with options and flags
+[safe:file:read] cat -n file.txt
+[safe:file:read] grep -i pattern file.txt
+[safe:file:read] grep -r --include="*.txt" pattern .
+[safe:file:read] find . -type f -name "*.txt"
+[safe:file:read] ls -la -h
+[safe:file:read] ps aux --sort=-%mem
+[safe:file:read] git log --oneline --decorate
+[safe:file:read] git log --graph --oneline

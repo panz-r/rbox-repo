@@ -1,0 +1,7923 @@
+NFA
+States: 1539
+Initial: 0
+
+State 0:
+  Accepting: no
+  Transitions: 96
+    'a' -> 776
+    'c' -> 1356
+    'd' -> 596
+    'e' -> 1256
+    'f' -> 1430
+    'g' -> 1514
+    'h' -> 614
+    'i' -> 622
+    'j' -> 824
+    'l' -> 1458
+    'm' -> 84
+    'p' -> 1467
+    's' -> 740
+    't' -> 891
+    'u' -> 706
+    'w' -> 590
+    'z' -> 929
+
+State 1:
+  Accepting: no
+  Transitions: 1
+    'a' -> 2
+
+State 2:
+  Accepting: no
+  Transitions: 1
+    't' -> 3
+
+State 3:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 4
+
+State 4:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 4
+    'f' -> 5
+
+State 5:
+  Accepting: no
+  Transitions: 1
+    'i' -> 6
+
+State 6:
+  Accepting: no
+  Transitions: 1
+    'l' -> 7
+
+State 7:
+  Accepting: no
+  Transitions: 1
+    'e' -> 8
+
+State 8:
+  Accepting: no
+  Transitions: 1
+    '.' -> 9
+
+State 9:
+  Accepting: no
+  Transitions: 1
+    't' -> 10
+
+State 10:
+  Accepting: no
+  Transitions: 1
+    'x' -> 11
+
+State 11:
+  Accepting: no
+  Transitions: 1
+    't' -> 12
+
+State 12:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 13:
+  Accepting: no
+  Transitions: 1
+    'a' -> 14
+
+State 14:
+  Accepting: no
+  Transitions: 1
+    't' -> 15
+
+State 15:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 16
+
+State 16:
+  Accepting: no
+  Transitions: 2
+    ANY -> 17
+    0x04 -> 16
+
+State 17:
+  Accepting: no
+  Transitions: 2
+    ANY -> 17
+    '.' -> 18
+
+State 18:
+  Accepting: no
+  Transitions: 1
+    't' -> 19
+
+State 19:
+  Accepting: no
+  Transitions: 1
+    'x' -> 20
+
+State 20:
+  Accepting: no
+  Transitions: 1
+    't' -> 21
+
+State 21:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 22:
+  Accepting: no
+  Transitions: 1
+    'a' -> 23
+
+State 23:
+  Accepting: no
+  Transitions: 1
+    't' -> 24
+
+State 24:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 25
+
+State 25:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 25
+    'f' -> 26
+
+State 26:
+  Accepting: no
+  Transitions: 1
+    'i' -> 27
+
+State 27:
+  Accepting: no
+  Transitions: 1
+    'l' -> 28
+
+State 28:
+  Accepting: no
+  Transitions: 1
+    'e' -> 29
+
+State 29:
+  Accepting: no
+  Transitions: 1
+    '1' -> 30
+
+State 30:
+  Accepting: no
+  Transitions: 1
+    '.' -> 31
+
+State 31:
+  Accepting: no
+  Transitions: 1
+    't' -> 32
+
+State 32:
+  Accepting: no
+  Transitions: 1
+    'x' -> 33
+
+State 33:
+  Accepting: no
+  Transitions: 1
+    't' -> 34
+
+State 34:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 35
+
+State 35:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 35
+    'f' -> 36
+
+State 36:
+  Accepting: no
+  Transitions: 1
+    'i' -> 37
+
+State 37:
+  Accepting: no
+  Transitions: 1
+    'l' -> 38
+
+State 38:
+  Accepting: no
+  Transitions: 1
+    'e' -> 39
+
+State 39:
+  Accepting: no
+  Transitions: 1
+    '2' -> 40
+
+State 40:
+  Accepting: no
+  Transitions: 1
+    '.' -> 41
+
+State 41:
+  Accepting: no
+  Transitions: 1
+    't' -> 42
+
+State 42:
+  Accepting: no
+  Transitions: 1
+    'x' -> 43
+
+State 43:
+  Accepting: no
+  Transitions: 1
+    't' -> 44
+
+State 44:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 45:
+  Accepting: no
+  Transitions: 1
+    'e' -> 46
+
+State 46:
+  Accepting: no
+  Transitions: 1
+    's' -> 47
+
+State 47:
+  Accepting: no
+  Transitions: 1
+    's' -> 48
+
+State 48:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 49
+
+State 49:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 49
+    'f' -> 50
+
+State 50:
+  Accepting: no
+  Transitions: 1
+    'i' -> 51
+
+State 51:
+  Accepting: no
+  Transitions: 1
+    'l' -> 52
+
+State 52:
+  Accepting: no
+  Transitions: 1
+    'e' -> 53
+
+State 53:
+  Accepting: no
+  Transitions: 1
+    '.' -> 54
+
+State 54:
+  Accepting: no
+  Transitions: 1
+    't' -> 55
+
+State 55:
+  Accepting: no
+  Transitions: 1
+    'x' -> 56
+
+State 56:
+  Accepting: no
+  Transitions: 1
+    't' -> 57
+
+State 57:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 58:
+  Accepting: no
+  Transitions: 1
+    'e' -> 59
+
+State 59:
+  Accepting: no
+  Transitions: 1
+    'a' -> 60
+
+State 60:
+  Accepting: no
+  Transitions: 1
+    'd' -> 61
+
+State 61:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 62
+
+State 62:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 62
+    'f' -> 63
+
+State 63:
+  Accepting: no
+  Transitions: 1
+    'i' -> 64
+
+State 64:
+  Accepting: no
+  Transitions: 1
+    'l' -> 65
+
+State 65:
+  Accepting: no
+  Transitions: 1
+    'e' -> 66
+
+State 66:
+  Accepting: no
+  Transitions: 1
+    '.' -> 67
+
+State 67:
+  Accepting: no
+  Transitions: 1
+    't' -> 68
+
+State 68:
+  Accepting: no
+  Transitions: 1
+    'x' -> 69
+
+State 69:
+  Accepting: no
+  Transitions: 1
+    't' -> 70
+
+State 70:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 71:
+  Accepting: no
+  Transitions: 1
+    'a' -> 72
+
+State 72:
+  Accepting: no
+  Transitions: 1
+    'i' -> 73
+
+State 73:
+  Accepting: no
+  Transitions: 1
+    'l' -> 74
+
+State 74:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 75
+
+State 75:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 75
+    'f' -> 76
+
+State 76:
+  Accepting: no
+  Transitions: 1
+    'i' -> 77
+
+State 77:
+  Accepting: no
+  Transitions: 1
+    'l' -> 78
+
+State 78:
+  Accepting: no
+  Transitions: 1
+    'e' -> 79
+
+State 79:
+  Accepting: no
+  Transitions: 1
+    '.' -> 80
+
+State 80:
+  Accepting: no
+  Transitions: 1
+    't' -> 81
+
+State 81:
+  Accepting: no
+  Transitions: 1
+    'x' -> 82
+
+State 82:
+  Accepting: no
+  Transitions: 1
+    't' -> 83
+
+State 83:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 84:
+  Accepting: no
+  Transitions: 1
+    'o' -> 85
+
+State 85:
+  Accepting: no
+  Transitions: 1
+    'r' -> 86
+
+State 86:
+  Accepting: no
+  Transitions: 1
+    'e' -> 87
+
+State 87:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 88
+
+State 88:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 88
+    'f' -> 89
+
+State 89:
+  Accepting: no
+  Transitions: 1
+    'i' -> 90
+
+State 90:
+  Accepting: no
+  Transitions: 1
+    'l' -> 91
+
+State 91:
+  Accepting: no
+  Transitions: 1
+    'e' -> 92
+
+State 92:
+  Accepting: no
+  Transitions: 1
+    '.' -> 93
+
+State 93:
+  Accepting: no
+  Transitions: 1
+    't' -> 94
+
+State 94:
+  Accepting: no
+  Transitions: 1
+    'x' -> 95
+
+State 95:
+  Accepting: no
+  Transitions: 1
+    't' -> 96
+
+State 96:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 97:
+  Accepting: no
+  Transitions: 1
+    'r' -> 98
+
+State 98:
+  Accepting: no
+  Transitions: 1
+    'e' -> 99
+
+State 99:
+  Accepting: no
+  Transitions: 1
+    'p' -> 100
+
+State 100:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 101
+
+State 101:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 101
+    'p' -> 102
+
+State 102:
+  Accepting: no
+  Transitions: 1
+    'a' -> 103
+
+State 103:
+  Accepting: no
+  Transitions: 1
+    't' -> 104
+
+State 104:
+  Accepting: no
+  Transitions: 1
+    't' -> 105
+
+State 105:
+  Accepting: no
+  Transitions: 1
+    'e' -> 106
+
+State 106:
+  Accepting: no
+  Transitions: 1
+    'r' -> 107
+
+State 107:
+  Accepting: no
+  Transitions: 1
+    'n' -> 108
+
+State 108:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 109
+
+State 109:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 109
+    'f' -> 110
+
+State 110:
+  Accepting: no
+  Transitions: 1
+    'i' -> 111
+
+State 111:
+  Accepting: no
+  Transitions: 1
+    'l' -> 112
+
+State 112:
+  Accepting: no
+  Transitions: 1
+    'e' -> 113
+
+State 113:
+  Accepting: no
+  Transitions: 1
+    '.' -> 114
+
+State 114:
+  Accepting: no
+  Transitions: 1
+    't' -> 115
+
+State 115:
+  Accepting: no
+  Transitions: 1
+    'x' -> 116
+
+State 116:
+  Accepting: no
+  Transitions: 1
+    't' -> 117
+
+State 117:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 118:
+  Accepting: no
+  Transitions: 1
+    'r' -> 119
+
+State 119:
+  Accepting: no
+  Transitions: 1
+    'e' -> 120
+
+State 120:
+  Accepting: no
+  Transitions: 1
+    'p' -> 121
+
+State 121:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 122
+
+State 122:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 122
+    '-' -> 123
+
+State 123:
+  Accepting: no
+  Transitions: 1
+    'r' -> 124
+
+State 124:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 125
+
+State 125:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 125
+    'p' -> 126
+
+State 126:
+  Accepting: no
+  Transitions: 1
+    'a' -> 127
+
+State 127:
+  Accepting: no
+  Transitions: 1
+    't' -> 128
+
+State 128:
+  Accepting: no
+  Transitions: 1
+    't' -> 129
+
+State 129:
+  Accepting: no
+  Transitions: 1
+    'e' -> 130
+
+State 130:
+  Accepting: no
+  Transitions: 1
+    'r' -> 131
+
+State 131:
+  Accepting: no
+  Transitions: 1
+    'n' -> 132
+
+State 132:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 133
+
+State 133:
+  Accepting: no
+  Transitions: 2
+    ANY -> 134
+    0x04 -> 133
+
+State 134:
+  Accepting: no
+  Transitions: 2
+    ANY -> 134
+    '.' -> 135
+
+State 135:
+  Accepting: no
+  Transitions: 1
+    't' -> 136
+
+State 136:
+  Accepting: no
+  Transitions: 1
+    'x' -> 137
+
+State 137:
+  Accepting: no
+  Transitions: 1
+    't' -> 138
+
+State 138:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 139:
+  Accepting: no
+  Transitions: 1
+    'r' -> 140
+
+State 140:
+  Accepting: no
+  Transitions: 1
+    'e' -> 141
+
+State 141:
+  Accepting: no
+  Transitions: 1
+    'p' -> 142
+
+State 142:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 143
+
+State 143:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 143
+    '-' -> 144
+
+State 144:
+  Accepting: no
+  Transitions: 1
+    'i' -> 145
+
+State 145:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 146
+
+State 146:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 146
+    's' -> 147
+
+State 147:
+  Accepting: no
+  Transitions: 1
+    'e' -> 148
+
+State 148:
+  Accepting: no
+  Transitions: 1
+    'a' -> 149
+
+State 149:
+  Accepting: no
+  Transitions: 1
+    'r' -> 150
+
+State 150:
+  Accepting: no
+  Transitions: 1
+    'c' -> 151
+
+State 151:
+  Accepting: no
+  Transitions: 1
+    'h' -> 152
+
+State 152:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 153
+
+State 153:
+  Accepting: no
+  Transitions: 2
+    ANY -> 154
+    0x04 -> 153
+
+State 154:
+  Accepting: no
+  Transitions: 2
+    ANY -> 154
+    '.' -> 155
+
+State 155:
+  Accepting: no
+  Transitions: 1
+    'l' -> 156
+
+State 156:
+  Accepting: no
+  Transitions: 1
+    'o' -> 157
+
+State 157:
+  Accepting: no
+  Transitions: 1
+    'g' -> 158
+
+State 158:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 159:
+  Accepting: no
+  Transitions: 1
+    'i' -> 160
+
+State 160:
+  Accepting: no
+  Transitions: 1
+    'n' -> 161
+
+State 161:
+  Accepting: no
+  Transitions: 1
+    'd' -> 162
+
+State 162:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 163
+
+State 163:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 163
+    '.' -> 164
+
+State 164:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 165
+
+State 165:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 165
+    '-' -> 166
+
+State 166:
+  Accepting: no
+  Transitions: 1
+    'n' -> 167
+
+State 167:
+  Accepting: no
+  Transitions: 1
+    'a' -> 168
+
+State 168:
+  Accepting: no
+  Transitions: 1
+    'm' -> 169
+
+State 169:
+  Accepting: no
+  Transitions: 1
+    'e' -> 170
+
+State 170:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 171
+
+State 171:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 171
+    '"' -> 172
+
+State 172:
+  Accepting: no
+  Transitions: 1
+    ANY -> 173
+
+State 173:
+  Accepting: no
+  Transitions: 2
+    ANY -> 173
+    '.' -> 174
+
+State 174:
+  Accepting: no
+  Transitions: 1
+    't' -> 175
+
+State 175:
+  Accepting: no
+  Transitions: 1
+    'x' -> 176
+
+State 176:
+  Accepting: no
+  Transitions: 1
+    't' -> 177
+
+State 177:
+  Accepting: no
+  Transitions: 1
+    '"' -> 178
+
+State 178:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 179:
+  Accepting: no
+  Transitions: 1
+    'i' -> 180
+
+State 180:
+  Accepting: no
+  Transitions: 1
+    'n' -> 181
+
+State 181:
+  Accepting: no
+  Transitions: 1
+    'd' -> 182
+
+State 182:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 183
+
+State 183:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 183
+    '/' -> 184
+
+State 184:
+  Accepting: no
+  Transitions: 1
+    'p' -> 185
+
+State 185:
+  Accepting: no
+  Transitions: 1
+    'a' -> 186
+
+State 186:
+  Accepting: no
+  Transitions: 1
+    't' -> 187
+
+State 187:
+  Accepting: no
+  Transitions: 1
+    'h' -> 188
+
+State 188:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 189
+
+State 189:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 189
+    '-' -> 190
+
+State 190:
+  Accepting: no
+  Transitions: 1
+    'n' -> 191
+
+State 191:
+  Accepting: no
+  Transitions: 1
+    'a' -> 192
+
+State 192:
+  Accepting: no
+  Transitions: 1
+    'm' -> 193
+
+State 193:
+  Accepting: no
+  Transitions: 1
+    'e' -> 194
+
+State 194:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 195
+
+State 195:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 195
+    '"' -> 196
+
+State 196:
+  Accepting: no
+  Transitions: 1
+    ANY -> 197
+
+State 197:
+  Accepting: no
+  Transitions: 2
+    ANY -> 197
+    '.' -> 198
+
+State 198:
+  Accepting: no
+  Transitions: 1
+    'l' -> 199
+
+State 199:
+  Accepting: no
+  Transitions: 1
+    'o' -> 200
+
+State 200:
+  Accepting: no
+  Transitions: 1
+    'g' -> 201
+
+State 201:
+  Accepting: no
+  Transitions: 1
+    '"' -> 202
+
+State 202:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 203:
+  Accepting: no
+  Transitions: 1
+    'i' -> 204
+
+State 204:
+  Accepting: no
+  Transitions: 1
+    'n' -> 205
+
+State 205:
+  Accepting: no
+  Transitions: 1
+    'd' -> 206
+
+State 206:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 207
+
+State 207:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 207
+    '.' -> 208
+
+State 208:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 209
+
+State 209:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 209
+    '-' -> 210
+
+State 210:
+  Accepting: no
+  Transitions: 1
+    't' -> 211
+
+State 211:
+  Accepting: no
+  Transitions: 1
+    'y' -> 212
+
+State 212:
+  Accepting: no
+  Transitions: 1
+    'p' -> 213
+
+State 213:
+  Accepting: no
+  Transitions: 1
+    'e' -> 214
+
+State 214:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 215
+
+State 215:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 215
+    'f' -> 216
+
+State 216:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 217
+
+State 217:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 217
+    '-' -> 218
+
+State 218:
+  Accepting: no
+  Transitions: 1
+    'n' -> 219
+
+State 219:
+  Accepting: no
+  Transitions: 1
+    'a' -> 220
+
+State 220:
+  Accepting: no
+  Transitions: 1
+    'm' -> 221
+
+State 221:
+  Accepting: no
+  Transitions: 1
+    'e' -> 222
+
+State 222:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 223
+
+State 223:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 223
+    '"' -> 224
+
+State 224:
+  Accepting: no
+  Transitions: 1
+    ANY -> 225
+
+State 225:
+  Accepting: no
+  Transitions: 2
+    ANY -> 225
+    '.' -> 226
+
+State 226:
+  Accepting: no
+  Transitions: 1
+    't' -> 227
+
+State 227:
+  Accepting: no
+  Transitions: 1
+    'x' -> 228
+
+State 228:
+  Accepting: no
+  Transitions: 1
+    't' -> 229
+
+State 229:
+  Accepting: no
+  Transitions: 1
+    '"' -> 230
+
+State 230:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 231:
+  Accepting: no
+  Transitions: 1
+    's' -> 232
+
+State 232:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 233
+
+State 233:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 233
+    '-' -> 234
+
+State 234:
+  Accepting: no
+  Transitions: 1
+    'l' -> 235
+
+State 235:
+  Accepting: no
+  Transitions: 1
+    'a' -> 236
+
+State 236:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 237:
+  Accepting: no
+  Transitions: 1
+    's' -> 238
+
+State 238:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 239
+
+State 239:
+  Accepting: no
+  Transitions: 2
+    ANY -> 240
+    0x04 -> 239
+
+State 240:
+  Accepting: no
+  Transitions: 2
+    ANY -> 240
+    '.' -> 241
+
+State 241:
+  Accepting: no
+  Transitions: 1
+    't' -> 242
+
+State 242:
+  Accepting: no
+  Transitions: 1
+    'x' -> 243
+
+State 243:
+  Accepting: no
+  Transitions: 1
+    't' -> 244
+
+State 244:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 245:
+  Accepting: no
+  Transitions: 1
+    's' -> 246
+
+State 246:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 247
+
+State 247:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 247
+    '-' -> 248
+
+State 248:
+  Accepting: no
+  Transitions: 1
+    'l' -> 249
+
+State 249:
+  Accepting: no
+  Transitions: 1
+    'a' -> 250
+
+State 250:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 251
+
+State 251:
+  Accepting: no
+  Transitions: 2
+    ANY -> 252
+    0x04 -> 251
+
+State 252:
+  Accepting: no
+  Transitions: 2
+    ANY -> 252
+    '.' -> 253
+
+State 253:
+  Accepting: no
+  Transitions: 1
+    'l' -> 254
+
+State 254:
+  Accepting: no
+  Transitions: 1
+    'o' -> 255
+
+State 255:
+  Accepting: no
+  Transitions: 1
+    'g' -> 256
+
+State 256:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 257:
+  Accepting: no
+  Transitions: 1
+    'w' -> 258
+
+State 258:
+  Accepting: no
+  Transitions: 1
+    'd' -> 259
+
+State 259:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 260:
+  Accepting: no
+  Transitions: 1
+    't' -> 261
+
+State 261:
+  Accepting: no
+  Transitions: 1
+    'a' -> 262
+
+State 262:
+  Accepting: no
+  Transitions: 1
+    't' -> 263
+
+State 263:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 264
+
+State 264:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 264
+    'f' -> 265
+
+State 265:
+  Accepting: no
+  Transitions: 1
+    'i' -> 266
+
+State 266:
+  Accepting: no
+  Transitions: 1
+    'l' -> 267
+
+State 267:
+  Accepting: no
+  Transitions: 1
+    'e' -> 268
+
+State 268:
+  Accepting: no
+  Transitions: 1
+    '.' -> 269
+
+State 269:
+  Accepting: no
+  Transitions: 1
+    't' -> 270
+
+State 270:
+  Accepting: no
+  Transitions: 1
+    'x' -> 271
+
+State 271:
+  Accepting: no
+  Transitions: 1
+    't' -> 272
+
+State 272:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 273:
+  Accepting: no
+  Transitions: 1
+    'i' -> 274
+
+State 274:
+  Accepting: no
+  Transitions: 1
+    'l' -> 275
+
+State 275:
+  Accepting: no
+  Transitions: 1
+    'e' -> 276
+
+State 276:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 277
+
+State 277:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 277
+    'f' -> 278
+
+State 278:
+  Accepting: no
+  Transitions: 1
+    'i' -> 279
+
+State 279:
+  Accepting: no
+  Transitions: 1
+    'l' -> 280
+
+State 280:
+  Accepting: no
+  Transitions: 1
+    'e' -> 281
+
+State 281:
+  Accepting: no
+  Transitions: 1
+    '.' -> 282
+
+State 282:
+  Accepting: no
+  Transitions: 1
+    't' -> 283
+
+State 283:
+  Accepting: no
+  Transitions: 1
+    'x' -> 284
+
+State 284:
+  Accepting: no
+  Transitions: 1
+    't' -> 285
+
+State 285:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 286:
+  Accepting: no
+  Transitions: 1
+    'c' -> 287
+
+State 287:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 288
+
+State 288:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 288
+    '-' -> 289
+
+State 289:
+  Accepting: no
+  Transitions: 1
+    'l' -> 290
+
+State 290:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 291
+
+State 291:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 291
+    'f' -> 292
+
+State 292:
+  Accepting: no
+  Transitions: 1
+    'i' -> 293
+
+State 293:
+  Accepting: no
+  Transitions: 1
+    'l' -> 294
+
+State 294:
+  Accepting: no
+  Transitions: 1
+    'e' -> 295
+
+State 295:
+  Accepting: no
+  Transitions: 1
+    '.' -> 296
+
+State 296:
+  Accepting: no
+  Transitions: 1
+    't' -> 297
+
+State 297:
+  Accepting: no
+  Transitions: 1
+    'x' -> 298
+
+State 298:
+  Accepting: no
+  Transitions: 1
+    't' -> 299
+
+State 299:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 300:
+  Accepting: no
+  Transitions: 1
+    'c' -> 301
+
+State 301:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 302
+
+State 302:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 302
+    '-' -> 303
+
+State 303:
+  Accepting: no
+  Transitions: 1
+    'w' -> 304
+
+State 304:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 305
+
+State 305:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 305
+    'f' -> 306
+
+State 306:
+  Accepting: no
+  Transitions: 1
+    'i' -> 307
+
+State 307:
+  Accepting: no
+  Transitions: 1
+    'l' -> 308
+
+State 308:
+  Accepting: no
+  Transitions: 1
+    'e' -> 309
+
+State 309:
+  Accepting: no
+  Transitions: 1
+    '.' -> 310
+
+State 310:
+  Accepting: no
+  Transitions: 1
+    't' -> 311
+
+State 311:
+  Accepting: no
+  Transitions: 1
+    'x' -> 312
+
+State 312:
+  Accepting: no
+  Transitions: 1
+    't' -> 313
+
+State 313:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 314:
+  Accepting: no
+  Transitions: 1
+    'c' -> 315
+
+State 315:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 316
+
+State 316:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 316
+    '-' -> 317
+
+State 317:
+  Accepting: no
+  Transitions: 1
+    'c' -> 318
+
+State 318:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 319
+
+State 319:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 319
+    'f' -> 320
+
+State 320:
+  Accepting: no
+  Transitions: 1
+    'i' -> 321
+
+State 321:
+  Accepting: no
+  Transitions: 1
+    'l' -> 322
+
+State 322:
+  Accepting: no
+  Transitions: 1
+    'e' -> 323
+
+State 323:
+  Accepting: no
+  Transitions: 1
+    '.' -> 324
+
+State 324:
+  Accepting: no
+  Transitions: 1
+    't' -> 325
+
+State 325:
+  Accepting: no
+  Transitions: 1
+    'x' -> 326
+
+State 326:
+  Accepting: no
+  Transitions: 1
+    't' -> 327
+
+State 327:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 328:
+  Accepting: no
+  Transitions: 1
+    'u' -> 329
+
+State 329:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 330
+
+State 330:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 330
+    '-' -> 331
+
+State 331:
+  Accepting: no
+  Transitions: 1
+    's' -> 332
+
+State 332:
+  Accepting: no
+  Transitions: 1
+    'h' -> 333
+
+State 333:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 334
+
+State 334:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 334
+    '.' -> 335
+
+State 335:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 336:
+  Accepting: no
+  Transitions: 1
+    'u' -> 337
+
+State 337:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 338
+
+State 338:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 338
+    '-' -> 339
+
+State 339:
+  Accepting: no
+  Transitions: 1
+    's' -> 340
+
+State 340:
+  Accepting: no
+  Transitions: 1
+    'h' -> 341
+
+State 341:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 342
+
+State 342:
+  Accepting: no
+  Transitions: 2
+    ANY -> 343
+    0x04 -> 342
+
+State 343:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 1
+    ANY -> 343
+
+State 344:
+  Accepting: no
+  Transitions: 1
+    'f' -> 345
+
+State 345:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 346
+
+State 346:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 346
+    '-' -> 347
+
+State 347:
+  Accepting: no
+  Transitions: 1
+    'h' -> 348
+
+State 348:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 349:
+  Accepting: no
+  Transitions: 1
+    'f' -> 350
+
+State 350:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 351
+
+State 351:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 351
+    '-' -> 352
+
+State 352:
+  Accepting: no
+  Transitions: 1
+    'h' -> 353
+
+State 353:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 354
+
+State 354:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 354
+    '.' -> 355
+
+State 355:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 356:
+  Accepting: no
+  Transitions: 1
+    'i' -> 357
+
+State 357:
+  Accepting: no
+  Transitions: 1
+    't' -> 358
+
+State 358:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 359
+
+State 359:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 359
+    'l' -> 360
+
+State 360:
+  Accepting: no
+  Transitions: 1
+    'o' -> 361
+
+State 361:
+  Accepting: no
+  Transitions: 1
+    'g' -> 362
+
+State 362:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 363:
+  Accepting: no
+  Transitions: 1
+    'i' -> 364
+
+State 364:
+  Accepting: no
+  Transitions: 1
+    't' -> 365
+
+State 365:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 366
+
+State 366:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 366
+    'l' -> 367
+
+State 367:
+  Accepting: no
+  Transitions: 1
+    'o' -> 368
+
+State 368:
+  Accepting: no
+  Transitions: 1
+    'g' -> 369
+
+State 369:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 370
+
+State 370:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 370
+    '-' -> 371
+
+State 371:
+  Accepting: no
+  Transitions: 1
+    '-' -> 372
+
+State 372:
+  Accepting: no
+  Transitions: 1
+    'o' -> 373
+
+State 373:
+  Accepting: no
+  Transitions: 1
+    'n' -> 374
+
+State 374:
+  Accepting: no
+  Transitions: 1
+    'e' -> 375
+
+State 375:
+  Accepting: no
+  Transitions: 1
+    'l' -> 376
+
+State 376:
+  Accepting: no
+  Transitions: 1
+    'i' -> 377
+
+State 377:
+  Accepting: no
+  Transitions: 1
+    'n' -> 378
+
+State 378:
+  Accepting: no
+  Transitions: 1
+    'e' -> 379
+
+State 379:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 380:
+  Accepting: no
+  Transitions: 1
+    'i' -> 381
+
+State 381:
+  Accepting: no
+  Transitions: 1
+    't' -> 382
+
+State 382:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 383
+
+State 383:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 383
+    'l' -> 384
+
+State 384:
+  Accepting: no
+  Transitions: 1
+    'o' -> 385
+
+State 385:
+  Accepting: no
+  Transitions: 1
+    'g' -> 386
+
+State 386:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 387
+
+State 387:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 387
+    '-' -> 388
+
+State 388:
+  Accepting: no
+  Transitions: 1
+    '-' -> 389
+
+State 389:
+  Accepting: no
+  Transitions: 1
+    'g' -> 390
+
+State 390:
+  Accepting: no
+  Transitions: 1
+    'r' -> 391
+
+State 391:
+  Accepting: no
+  Transitions: 1
+    'a' -> 392
+
+State 392:
+  Accepting: no
+  Transitions: 1
+    'p' -> 393
+
+State 393:
+  Accepting: no
+  Transitions: 1
+    'h' -> 394
+
+State 394:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 395:
+  Accepting: no
+  Transitions: 1
+    'i' -> 396
+
+State 396:
+  Accepting: no
+  Transitions: 1
+    't' -> 397
+
+State 397:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 398
+
+State 398:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 398
+    's' -> 399
+
+State 399:
+  Accepting: no
+  Transitions: 1
+    't' -> 400
+
+State 400:
+  Accepting: no
+  Transitions: 1
+    'a' -> 401
+
+State 401:
+  Accepting: no
+  Transitions: 1
+    't' -> 402
+
+State 402:
+  Accepting: no
+  Transitions: 1
+    'u' -> 403
+
+State 403:
+  Accepting: no
+  Transitions: 1
+    's' -> 404
+
+State 404:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 405:
+  Accepting: no
+  Transitions: 1
+    'i' -> 406
+
+State 406:
+  Accepting: no
+  Transitions: 1
+    't' -> 407
+
+State 407:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 408
+
+State 408:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 408
+    's' -> 409
+
+State 409:
+  Accepting: no
+  Transitions: 1
+    'h' -> 410
+
+State 410:
+  Accepting: no
+  Transitions: 1
+    'o' -> 411
+
+State 411:
+  Accepting: no
+  Transitions: 1
+    'w' -> 412
+
+State 412:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 413:
+  Accepting: no
+  Transitions: 1
+    'i' -> 414
+
+State 414:
+  Accepting: no
+  Transitions: 1
+    't' -> 415
+
+State 415:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 416
+
+State 416:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 416
+    's' -> 417
+
+State 417:
+  Accepting: no
+  Transitions: 1
+    'h' -> 418
+
+State 418:
+  Accepting: no
+  Transitions: 1
+    'o' -> 419
+
+State 419:
+  Accepting: no
+  Transitions: 1
+    'w' -> 420
+
+State 420:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 421
+
+State 421:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 421
+    'c' -> 422
+
+State 422:
+  Accepting: no
+  Transitions: 1
+    'o' -> 423
+
+State 423:
+  Accepting: no
+  Transitions: 1
+    'm' -> 424
+
+State 424:
+  Accepting: no
+  Transitions: 1
+    'm' -> 425
+
+State 425:
+  Accepting: no
+  Transitions: 1
+    'i' -> 426
+
+State 426:
+  Accepting: no
+  Transitions: 1
+    't' -> 427
+
+State 427:
+  Accepting: no
+  Transitions: 1
+    '_' -> 428
+
+State 428:
+  Accepting: no
+  Transitions: 1
+    'h' -> 429
+
+State 429:
+  Accepting: no
+  Transitions: 1
+    'a' -> 430
+
+State 430:
+  Accepting: no
+  Transitions: 1
+    's' -> 431
+
+State 431:
+  Accepting: no
+  Transitions: 1
+    'h' -> 432
+
+State 432:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 433:
+  Accepting: no
+  Transitions: 1
+    'i' -> 434
+
+State 434:
+  Accepting: no
+  Transitions: 1
+    't' -> 435
+
+State 435:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 436
+
+State 436:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 436
+    'd' -> 437
+
+State 437:
+  Accepting: no
+  Transitions: 1
+    'i' -> 438
+
+State 438:
+  Accepting: no
+  Transitions: 1
+    'f' -> 439
+
+State 439:
+  Accepting: no
+  Transitions: 1
+    'f' -> 440
+
+State 440:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 441:
+  Accepting: no
+  Transitions: 1
+    'i' -> 442
+
+State 442:
+  Accepting: no
+  Transitions: 1
+    't' -> 443
+
+State 443:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 444
+
+State 444:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 444
+    'd' -> 445
+
+State 445:
+  Accepting: no
+  Transitions: 1
+    'i' -> 446
+
+State 446:
+  Accepting: no
+  Transitions: 1
+    'f' -> 447
+
+State 447:
+  Accepting: no
+  Transitions: 1
+    'f' -> 448
+
+State 448:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 449
+
+State 449:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 449
+    'H' -> 450
+
+State 450:
+  Accepting: no
+  Transitions: 1
+    'E' -> 451
+
+State 451:
+  Accepting: no
+  Transitions: 1
+    'A' -> 452
+
+State 452:
+  Accepting: no
+  Transitions: 1
+    'D' -> 453
+
+State 453:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 454:
+  Accepting: no
+  Transitions: 1
+    'i' -> 455
+
+State 455:
+  Accepting: no
+  Transitions: 1
+    't' -> 456
+
+State 456:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 457
+
+State 457:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 457
+    'b' -> 458
+
+State 458:
+  Accepting: no
+  Transitions: 1
+    'l' -> 459
+
+State 459:
+  Accepting: no
+  Transitions: 1
+    'a' -> 460
+
+State 460:
+  Accepting: no
+  Transitions: 1
+    'm' -> 461
+
+State 461:
+  Accepting: no
+  Transitions: 1
+    'e' -> 462
+
+State 462:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 463
+
+State 463:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 463
+    'f' -> 464
+
+State 464:
+  Accepting: no
+  Transitions: 1
+    'i' -> 465
+
+State 465:
+  Accepting: no
+  Transitions: 1
+    'l' -> 466
+
+State 466:
+  Accepting: no
+  Transitions: 1
+    'e' -> 467
+
+State 467:
+  Accepting: no
+  Transitions: 1
+    '.' -> 468
+
+State 468:
+  Accepting: no
+  Transitions: 1
+    't' -> 469
+
+State 469:
+  Accepting: no
+  Transitions: 1
+    'x' -> 470
+
+State 470:
+  Accepting: no
+  Transitions: 1
+    't' -> 471
+
+State 471:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 472:
+  Accepting: no
+  Transitions: 1
+    'i' -> 473
+
+State 473:
+  Accepting: no
+  Transitions: 1
+    't' -> 474
+
+State 474:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 475
+
+State 475:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 475
+    'g' -> 476
+
+State 476:
+  Accepting: no
+  Transitions: 1
+    'r' -> 477
+
+State 477:
+  Accepting: no
+  Transitions: 1
+    'e' -> 478
+
+State 478:
+  Accepting: no
+  Transitions: 1
+    'p' -> 479
+
+State 479:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 480
+
+State 480:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 480
+    'p' -> 481
+
+State 481:
+  Accepting: no
+  Transitions: 1
+    'a' -> 482
+
+State 482:
+  Accepting: no
+  Transitions: 1
+    't' -> 483
+
+State 483:
+  Accepting: no
+  Transitions: 1
+    't' -> 484
+
+State 484:
+  Accepting: no
+  Transitions: 1
+    'e' -> 485
+
+State 485:
+  Accepting: no
+  Transitions: 1
+    'r' -> 486
+
+State 486:
+  Accepting: no
+  Transitions: 1
+    'n' -> 487
+
+State 487:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 488:
+  Accepting: no
+  Transitions: 1
+    'i' -> 489
+
+State 489:
+  Accepting: no
+  Transitions: 1
+    't' -> 490
+
+State 490:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 491
+
+State 491:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 491
+    'l' -> 492
+
+State 492:
+  Accepting: no
+  Transitions: 1
+    's' -> 493
+
+State 493:
+  Accepting: no
+  Transitions: 1
+    '-' -> 494
+
+State 494:
+  Accepting: no
+  Transitions: 1
+    'f' -> 495
+
+State 495:
+  Accepting: no
+  Transitions: 1
+    'i' -> 496
+
+State 496:
+  Accepting: no
+  Transitions: 1
+    'l' -> 497
+
+State 497:
+  Accepting: no
+  Transitions: 1
+    'e' -> 498
+
+State 498:
+  Accepting: no
+  Transitions: 1
+    's' -> 499
+
+State 499:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 500:
+  Accepting: no
+  Transitions: 1
+    'i' -> 501
+
+State 501:
+  Accepting: no
+  Transitions: 1
+    't' -> 502
+
+State 502:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 503
+
+State 503:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 503
+    't' -> 504
+
+State 504:
+  Accepting: no
+  Transitions: 1
+    'a' -> 505
+
+State 505:
+  Accepting: no
+  Transitions: 1
+    'g' -> 506
+
+State 506:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 507:
+  Accepting: no
+  Transitions: 1
+    'i' -> 508
+
+State 508:
+  Accepting: no
+  Transitions: 1
+    't' -> 509
+
+State 509:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 510
+
+State 510:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 510
+    't' -> 511
+
+State 511:
+  Accepting: no
+  Transitions: 1
+    'a' -> 512
+
+State 512:
+  Accepting: no
+  Transitions: 1
+    'g' -> 513
+
+State 513:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 514
+
+State 514:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 514
+    '-' -> 515
+
+State 515:
+  Accepting: no
+  Transitions: 1
+    'l' -> 516
+
+State 516:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 517:
+  Accepting: no
+  Transitions: 1
+    'i' -> 518
+
+State 518:
+  Accepting: no
+  Transitions: 1
+    't' -> 519
+
+State 519:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 520
+
+State 520:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 520
+    'b' -> 521
+
+State 521:
+  Accepting: no
+  Transitions: 1
+    'r' -> 522
+
+State 522:
+  Accepting: no
+  Transitions: 1
+    'a' -> 523
+
+State 523:
+  Accepting: no
+  Transitions: 1
+    'n' -> 524
+
+State 524:
+  Accepting: no
+  Transitions: 1
+    'c' -> 525
+
+State 525:
+  Accepting: no
+  Transitions: 1
+    'h' -> 526
+
+State 526:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 527:
+  Accepting: no
+  Transitions: 1
+    'i' -> 528
+
+State 528:
+  Accepting: no
+  Transitions: 1
+    't' -> 529
+
+State 529:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 530
+
+State 530:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 530
+    'b' -> 531
+
+State 531:
+  Accepting: no
+  Transitions: 1
+    'r' -> 532
+
+State 532:
+  Accepting: no
+  Transitions: 1
+    'a' -> 533
+
+State 533:
+  Accepting: no
+  Transitions: 1
+    'n' -> 534
+
+State 534:
+  Accepting: no
+  Transitions: 1
+    'c' -> 535
+
+State 535:
+  Accepting: no
+  Transitions: 1
+    'h' -> 536
+
+State 536:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 537
+
+State 537:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 537
+    '-' -> 538
+
+State 538:
+  Accepting: no
+  Transitions: 1
+    'a' -> 539
+
+State 539:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 540:
+  Accepting: no
+  Transitions: 1
+    'i' -> 541
+
+State 541:
+  Accepting: no
+  Transitions: 1
+    't' -> 542
+
+State 542:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 543
+
+State 543:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 543
+    'r' -> 544
+
+State 544:
+  Accepting: no
+  Transitions: 1
+    'e' -> 545
+
+State 545:
+  Accepting: no
+  Transitions: 1
+    'm' -> 546
+
+State 546:
+  Accepting: no
+  Transitions: 1
+    'o' -> 547
+
+State 547:
+  Accepting: no
+  Transitions: 1
+    't' -> 548
+
+State 548:
+  Accepting: no
+  Transitions: 1
+    'e' -> 549
+
+State 549:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 550
+
+State 550:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 550
+    '-' -> 551
+
+State 551:
+  Accepting: no
+  Transitions: 1
+    'v' -> 552
+
+State 552:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 553:
+  Accepting: no
+  Transitions: 1
+    'i' -> 554
+
+State 554:
+  Accepting: no
+  Transitions: 1
+    't' -> 555
+
+State 555:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 556
+
+State 556:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 556
+    'c' -> 557
+
+State 557:
+  Accepting: no
+  Transitions: 1
+    'o' -> 558
+
+State 558:
+  Accepting: no
+  Transitions: 1
+    'n' -> 559
+
+State 559:
+  Accepting: no
+  Transitions: 1
+    'f' -> 560
+
+State 560:
+  Accepting: no
+  Transitions: 1
+    'i' -> 561
+
+State 561:
+  Accepting: no
+  Transitions: 1
+    'g' -> 562
+
+State 562:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 563
+
+State 563:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 563
+    '-' -> 564
+
+State 564:
+  Accepting: no
+  Transitions: 1
+    '-' -> 565
+
+State 565:
+  Accepting: no
+  Transitions: 1
+    'l' -> 566
+
+State 566:
+  Accepting: no
+  Transitions: 1
+    'i' -> 567
+
+State 567:
+  Accepting: no
+  Transitions: 1
+    's' -> 568
+
+State 568:
+  Accepting: no
+  Transitions: 1
+    't' -> 569
+
+State 569:
+  Accepting: yes
+  Tags: safe git read allow
+  Transitions: 0
+
+State 570:
+  Accepting: no
+  Transitions: 1
+    's' -> 571
+
+State 571:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 572
+
+State 572:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 572
+    'a' -> 573
+
+State 573:
+  Accepting: no
+  Transitions: 1
+    'u' -> 574
+
+State 574:
+  Accepting: no
+  Transitions: 1
+    'x' -> 575
+
+State 575:
+  Accepting: yes
+  Tags: safe system read allow
+  Transitions: 0
+
+State 576:
+  Accepting: no
+  Transitions: 1
+    's' -> 577
+
+State 577:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 578
+
+State 578:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 578
+    '-' -> 579
+
+State 579:
+  Accepting: no
+  Transitions: 1
+    'e' -> 580
+
+State 580:
+  Accepting: no
+  Transitions: 1
+    'f' -> 581
+
+State 581:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 582:
+  Accepting: no
+  Transitions: 1
+    'o' -> 583
+
+State 583:
+  Accepting: no
+  Transitions: 1
+    'p' -> 584
+
+State 584:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 585
+
+State 585:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 585
+    '-' -> 586
+
+State 586:
+  Accepting: no
+  Transitions: 1
+    'n' -> 587
+
+State 587:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 588
+
+State 588:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 588
+    '1' -> 589
+
+State 589:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 590:
+  Accepting: no
+  Transitions: 1
+    'h' -> 591
+
+State 591:
+  Accepting: no
+  Transitions: 1
+    'o' -> 592
+
+State 592:
+  Accepting: no
+  Transitions: 1
+    'a' -> 593
+
+State 593:
+  Accepting: no
+  Transitions: 1
+    'm' -> 594
+
+State 594:
+  Accepting: no
+  Transitions: 1
+    'i' -> 595
+
+State 595:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 596:
+  Accepting: no
+  Transitions: 1
+    'a' -> 597
+
+State 597:
+  Accepting: no
+  Transitions: 1
+    't' -> 598
+
+State 598:
+  Accepting: no
+  Transitions: 1
+    'e' -> 599
+
+State 599:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 600:
+  Accepting: no
+  Transitions: 1
+    'p' -> 601
+
+State 601:
+  Accepting: no
+  Transitions: 1
+    't' -> 602
+
+State 602:
+  Accepting: no
+  Transitions: 1
+    'i' -> 603
+
+State 603:
+  Accepting: no
+  Transitions: 1
+    'm' -> 604
+
+State 604:
+  Accepting: no
+  Transitions: 1
+    'e' -> 605
+
+State 605:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 606:
+  Accepting: no
+  Transitions: 1
+    'n' -> 607
+
+State 607:
+  Accepting: no
+  Transitions: 1
+    'a' -> 608
+
+State 608:
+  Accepting: no
+  Transitions: 1
+    'm' -> 609
+
+State 609:
+  Accepting: no
+  Transitions: 1
+    'e' -> 610
+
+State 610:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 611
+
+State 611:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 611
+    '-' -> 612
+
+State 612:
+  Accepting: no
+  Transitions: 1
+    'a' -> 613
+
+State 613:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 614:
+  Accepting: no
+  Transitions: 1
+    'o' -> 615
+
+State 615:
+  Accepting: no
+  Transitions: 1
+    's' -> 616
+
+State 616:
+  Accepting: no
+  Transitions: 1
+    't' -> 617
+
+State 617:
+  Accepting: no
+  Transitions: 1
+    'n' -> 618
+
+State 618:
+  Accepting: no
+  Transitions: 1
+    'a' -> 619
+
+State 619:
+  Accepting: no
+  Transitions: 1
+    'm' -> 620
+
+State 620:
+  Accepting: no
+  Transitions: 1
+    'e' -> 621
+
+State 621:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 622:
+  Accepting: no
+  Transitions: 1
+    'd' -> 623
+
+State 623:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 624:
+  Accepting: no
+  Transitions: 1
+    'n' -> 625
+
+State 625:
+  Accepting: no
+  Transitions: 1
+    'v' -> 626
+
+State 626:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 627:
+  Accepting: no
+  Transitions: 1
+    'r' -> 628
+
+State 628:
+  Accepting: no
+  Transitions: 1
+    'i' -> 629
+
+State 629:
+  Accepting: no
+  Transitions: 1
+    'n' -> 630
+
+State 630:
+  Accepting: no
+  Transitions: 1
+    't' -> 631
+
+State 631:
+  Accepting: no
+  Transitions: 1
+    'e' -> 632
+
+State 632:
+  Accepting: no
+  Transitions: 1
+    'n' -> 633
+
+State 633:
+  Accepting: no
+  Transitions: 1
+    'v' -> 634
+
+State 634:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 635:
+  Accepting: no
+  Transitions: 1
+    'c' -> 636
+
+State 636:
+  Accepting: no
+  Transitions: 1
+    'h' -> 637
+
+State 637:
+  Accepting: no
+  Transitions: 1
+    'o' -> 638
+
+State 638:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 639
+
+State 639:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 639
+    '"' -> 640
+
+State 640:
+  Accepting: no
+  Transitions: 1
+    'h' -> 641
+
+State 641:
+  Accepting: no
+  Transitions: 1
+    'e' -> 642
+
+State 642:
+  Accepting: no
+  Transitions: 1
+    'l' -> 643
+
+State 643:
+  Accepting: no
+  Transitions: 1
+    'l' -> 644
+
+State 644:
+  Accepting: no
+  Transitions: 1
+    'o' -> 645
+
+State 645:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 646
+
+State 646:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 646
+    'w' -> 647
+
+State 647:
+  Accepting: no
+  Transitions: 1
+    'o' -> 648
+
+State 648:
+  Accepting: no
+  Transitions: 1
+    'r' -> 649
+
+State 649:
+  Accepting: no
+  Transitions: 1
+    'l' -> 650
+
+State 650:
+  Accepting: no
+  Transitions: 1
+    'd' -> 651
+
+State 651:
+  Accepting: no
+  Transitions: 1
+    '"' -> 652
+
+State 652:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 653:
+  Accepting: no
+  Transitions: 1
+    'c' -> 654
+
+State 654:
+  Accepting: no
+  Transitions: 1
+    'h' -> 655
+
+State 655:
+  Accepting: no
+  Transitions: 1
+    'o' -> 656
+
+State 656:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 657
+
+State 657:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 657
+    '$' -> 658
+
+State 658:
+  Accepting: no
+  Transitions: 1
+    'P' -> 659
+
+State 659:
+  Accepting: no
+  Transitions: 1
+    'A' -> 660
+
+State 660:
+  Accepting: no
+  Transitions: 1
+    'T' -> 661
+
+State 661:
+  Accepting: no
+  Transitions: 1
+    'H' -> 662
+
+State 662:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 663:
+  Accepting: no
+  Transitions: 1
+    'c' -> 664
+
+State 664:
+  Accepting: no
+  Transitions: 1
+    'h' -> 665
+
+State 665:
+  Accepting: no
+  Transitions: 1
+    'o' -> 666
+
+State 666:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 667
+
+State 667:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 667
+    '$' -> 668
+
+State 668:
+  Accepting: no
+  Transitions: 1
+    'H' -> 669
+
+State 669:
+  Accepting: no
+  Transitions: 1
+    'O' -> 670
+
+State 670:
+  Accepting: no
+  Transitions: 1
+    'M' -> 671
+
+State 671:
+  Accepting: no
+  Transitions: 1
+    'E' -> 672
+
+State 672:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 673:
+  Accepting: no
+  Transitions: 1
+    'u' -> 674
+
+State 674:
+  Accepting: no
+  Transitions: 1
+    't' -> 675
+
+State 675:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 676
+
+State 676:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 676
+    '-' -> 677
+
+State 677:
+  Accepting: no
+  Transitions: 1
+    'd' -> 678
+
+State 678:
+  Accepting: no
+  Transitions: 1
+    ',' -> 679
+
+State 679:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 680
+
+State 680:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 680
+    '-' -> 681
+
+State 681:
+  Accepting: no
+  Transitions: 1
+    'f' -> 682
+
+State 682:
+  Accepting: no
+  Transitions: 1
+    '1' -> 683
+
+State 683:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 684
+
+State 684:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 684
+    'f' -> 685
+
+State 685:
+  Accepting: no
+  Transitions: 1
+    'i' -> 686
+
+State 686:
+  Accepting: no
+  Transitions: 1
+    'l' -> 687
+
+State 687:
+  Accepting: no
+  Transitions: 1
+    'e' -> 688
+
+State 688:
+  Accepting: no
+  Transitions: 1
+    '.' -> 689
+
+State 689:
+  Accepting: no
+  Transitions: 1
+    'c' -> 690
+
+State 690:
+  Accepting: no
+  Transitions: 1
+    's' -> 691
+
+State 691:
+  Accepting: no
+  Transitions: 1
+    'v' -> 692
+
+State 692:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 693:
+  Accepting: no
+  Transitions: 1
+    'o' -> 694
+
+State 694:
+  Accepting: no
+  Transitions: 1
+    'r' -> 695
+
+State 695:
+  Accepting: no
+  Transitions: 1
+    't' -> 696
+
+State 696:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 697
+
+State 697:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 697
+    'f' -> 698
+
+State 698:
+  Accepting: no
+  Transitions: 1
+    'i' -> 699
+
+State 699:
+  Accepting: no
+  Transitions: 1
+    'l' -> 700
+
+State 700:
+  Accepting: no
+  Transitions: 1
+    'e' -> 701
+
+State 701:
+  Accepting: no
+  Transitions: 1
+    '.' -> 702
+
+State 702:
+  Accepting: no
+  Transitions: 1
+    't' -> 703
+
+State 703:
+  Accepting: no
+  Transitions: 1
+    'x' -> 704
+
+State 704:
+  Accepting: no
+  Transitions: 1
+    't' -> 705
+
+State 705:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 706:
+  Accepting: no
+  Transitions: 1
+    'n' -> 707
+
+State 707:
+  Accepting: no
+  Transitions: 1
+    'i' -> 708
+
+State 708:
+  Accepting: no
+  Transitions: 1
+    'q' -> 709
+
+State 709:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 710
+
+State 710:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 710
+    'f' -> 711
+
+State 711:
+  Accepting: no
+  Transitions: 1
+    'i' -> 712
+
+State 712:
+  Accepting: no
+  Transitions: 1
+    'l' -> 713
+
+State 713:
+  Accepting: no
+  Transitions: 1
+    'e' -> 714
+
+State 714:
+  Accepting: no
+  Transitions: 1
+    '.' -> 715
+
+State 715:
+  Accepting: no
+  Transitions: 1
+    't' -> 716
+
+State 716:
+  Accepting: no
+  Transitions: 1
+    'x' -> 717
+
+State 717:
+  Accepting: no
+  Transitions: 1
+    't' -> 718
+
+State 718:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 719:
+  Accepting: no
+  Transitions: 1
+    'r' -> 720
+
+State 720:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 721
+
+State 721:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 721
+    'a' -> 722
+
+State 722:
+  Accepting: no
+  Transitions: 1
+    '-' -> 723
+
+State 723:
+  Accepting: no
+  Transitions: 1
+    'z' -> 724
+
+State 724:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 725
+
+State 725:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 725
+    'A' -> 726
+
+State 726:
+  Accepting: no
+  Transitions: 1
+    '-' -> 727
+
+State 727:
+  Accepting: no
+  Transitions: 1
+    'Z' -> 728
+
+State 728:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 729
+
+State 729:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 729
+    '<' -> 730
+
+State 730:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 731
+
+State 731:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 731
+    'f' -> 732
+
+State 732:
+  Accepting: no
+  Transitions: 1
+    'i' -> 733
+
+State 733:
+  Accepting: no
+  Transitions: 1
+    'l' -> 734
+
+State 734:
+  Accepting: no
+  Transitions: 1
+    'e' -> 735
+
+State 735:
+  Accepting: no
+  Transitions: 1
+    '.' -> 736
+
+State 736:
+  Accepting: no
+  Transitions: 1
+    't' -> 737
+
+State 737:
+  Accepting: no
+  Transitions: 1
+    'x' -> 738
+
+State 738:
+  Accepting: no
+  Transitions: 1
+    't' -> 739
+
+State 739:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 740:
+  Accepting: no
+  Transitions: 1
+    'e' -> 741
+
+State 741:
+  Accepting: no
+  Transitions: 1
+    'd' -> 742
+
+State 742:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 743
+
+State 743:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 743
+    's' -> 744
+
+State 744:
+  Accepting: no
+  Transitions: 1
+    '/' -> 745
+
+State 745:
+  Accepting: no
+  Transitions: 1
+    'p' -> 746
+
+State 746:
+  Accepting: no
+  Transitions: 1
+    'a' -> 747
+
+State 747:
+  Accepting: no
+  Transitions: 1
+    't' -> 748
+
+State 748:
+  Accepting: no
+  Transitions: 1
+    't' -> 749
+
+State 749:
+  Accepting: no
+  Transitions: 1
+    'e' -> 750
+
+State 750:
+  Accepting: no
+  Transitions: 1
+    'r' -> 751
+
+State 751:
+  Accepting: no
+  Transitions: 1
+    'n' -> 752
+
+State 752:
+  Accepting: no
+  Transitions: 1
+    '/' -> 753
+
+State 753:
+  Accepting: no
+  Transitions: 1
+    'r' -> 754
+
+State 754:
+  Accepting: no
+  Transitions: 1
+    'e' -> 755
+
+State 755:
+  Accepting: no
+  Transitions: 1
+    'p' -> 756
+
+State 756:
+  Accepting: no
+  Transitions: 1
+    'l' -> 757
+
+State 757:
+  Accepting: no
+  Transitions: 1
+    'a' -> 758
+
+State 758:
+  Accepting: no
+  Transitions: 1
+    'c' -> 759
+
+State 759:
+  Accepting: no
+  Transitions: 1
+    'e' -> 760
+
+State 760:
+  Accepting: no
+  Transitions: 1
+    'm' -> 761
+
+State 761:
+  Accepting: no
+  Transitions: 1
+    'e' -> 762
+
+State 762:
+  Accepting: no
+  Transitions: 1
+    'n' -> 763
+
+State 763:
+  Accepting: no
+  Transitions: 1
+    't' -> 764
+
+State 764:
+  Accepting: no
+  Transitions: 1
+    '/' -> 765
+
+State 765:
+  Accepting: no
+  Transitions: 1
+    'g' -> 766
+
+State 766:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 767
+
+State 767:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 767
+    'f' -> 768
+
+State 768:
+  Accepting: no
+  Transitions: 1
+    'i' -> 769
+
+State 769:
+  Accepting: no
+  Transitions: 1
+    'l' -> 770
+
+State 770:
+  Accepting: no
+  Transitions: 1
+    'e' -> 771
+
+State 771:
+  Accepting: no
+  Transitions: 1
+    '.' -> 772
+
+State 772:
+  Accepting: no
+  Transitions: 1
+    't' -> 773
+
+State 773:
+  Accepting: no
+  Transitions: 1
+    'x' -> 774
+
+State 774:
+  Accepting: no
+  Transitions: 1
+    't' -> 775
+
+State 775:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 776:
+  Accepting: no
+  Transitions: 1
+    'w' -> 777
+
+State 777:
+  Accepting: no
+  Transitions: 1
+    'k' -> 778
+
+State 778:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 779
+
+State 779:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 779
+    '{' -> 780
+
+State 780:
+  Accepting: no
+  Transitions: 1
+    'p' -> 781
+
+State 781:
+  Accepting: no
+  Transitions: 1
+    'r' -> 782
+
+State 782:
+  Accepting: no
+  Transitions: 1
+    'i' -> 783
+
+State 783:
+  Accepting: no
+  Transitions: 1
+    'n' -> 784
+
+State 784:
+  Accepting: no
+  Transitions: 1
+    't' -> 785
+
+State 785:
+  Accepting: no
+  Transitions: 1
+    0x03 -> 786
+
+State 786:
+  Accepting: no
+  Transitions: 1
+    '$' -> 787
+
+State 787:
+  Accepting: no
+  Transitions: 1
+    '1' -> 788
+
+State 788:
+  Accepting: no
+  Transitions: 1
+    '}' -> 789
+
+State 789:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 790
+
+State 790:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 790
+    'f' -> 791
+
+State 791:
+  Accepting: no
+  Transitions: 1
+    'i' -> 792
+
+State 792:
+  Accepting: no
+  Transitions: 1
+    'l' -> 793
+
+State 793:
+  Accepting: no
+  Transitions: 1
+    'e' -> 794
+
+State 794:
+  Accepting: no
+  Transitions: 1
+    '.' -> 795
+
+State 795:
+  Accepting: no
+  Transitions: 1
+    't' -> 796
+
+State 796:
+  Accepting: no
+  Transitions: 1
+    'x' -> 797
+
+State 797:
+  Accepting: no
+  Transitions: 1
+    't' -> 798
+
+State 798:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 799:
+  Accepting: no
+  Transitions: 1
+    'a' -> 800
+
+State 800:
+  Accepting: no
+  Transitions: 1
+    's' -> 801
+
+State 801:
+  Accepting: no
+  Transitions: 1
+    't' -> 802
+
+State 802:
+  Accepting: no
+  Transitions: 1
+    'e' -> 803
+
+State 803:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 804
+
+State 804:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 804
+    'f' -> 805
+
+State 805:
+  Accepting: no
+  Transitions: 1
+    'i' -> 806
+
+State 806:
+  Accepting: no
+  Transitions: 1
+    'l' -> 807
+
+State 807:
+  Accepting: no
+  Transitions: 1
+    'e' -> 808
+
+State 808:
+  Accepting: no
+  Transitions: 1
+    '1' -> 809
+
+State 809:
+  Accepting: no
+  Transitions: 1
+    '.' -> 810
+
+State 810:
+  Accepting: no
+  Transitions: 1
+    't' -> 811
+
+State 811:
+  Accepting: no
+  Transitions: 1
+    'x' -> 812
+
+State 812:
+  Accepting: no
+  Transitions: 1
+    't' -> 813
+
+State 813:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 814
+
+State 814:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 814
+    'f' -> 815
+
+State 815:
+  Accepting: no
+  Transitions: 1
+    'i' -> 816
+
+State 816:
+  Accepting: no
+  Transitions: 1
+    'l' -> 817
+
+State 817:
+  Accepting: no
+  Transitions: 1
+    'e' -> 818
+
+State 818:
+  Accepting: no
+  Transitions: 1
+    '2' -> 819
+
+State 819:
+  Accepting: no
+  Transitions: 1
+    '.' -> 820
+
+State 820:
+  Accepting: no
+  Transitions: 1
+    't' -> 821
+
+State 821:
+  Accepting: no
+  Transitions: 1
+    'x' -> 822
+
+State 822:
+  Accepting: no
+  Transitions: 1
+    't' -> 823
+
+State 823:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 824:
+  Accepting: no
+  Transitions: 1
+    'o' -> 825
+
+State 825:
+  Accepting: no
+  Transitions: 1
+    'i' -> 826
+
+State 826:
+  Accepting: no
+  Transitions: 1
+    'n' -> 827
+
+State 827:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 828
+
+State 828:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 828
+    'f' -> 829
+
+State 829:
+  Accepting: no
+  Transitions: 1
+    'i' -> 830
+
+State 830:
+  Accepting: no
+  Transitions: 1
+    'l' -> 831
+
+State 831:
+  Accepting: no
+  Transitions: 1
+    'e' -> 832
+
+State 832:
+  Accepting: no
+  Transitions: 1
+    '1' -> 833
+
+State 833:
+  Accepting: no
+  Transitions: 1
+    '.' -> 834
+
+State 834:
+  Accepting: no
+  Transitions: 1
+    't' -> 835
+
+State 835:
+  Accepting: no
+  Transitions: 1
+    'x' -> 836
+
+State 836:
+  Accepting: no
+  Transitions: 1
+    't' -> 837
+
+State 837:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 838
+
+State 838:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 838
+    'f' -> 839
+
+State 839:
+  Accepting: no
+  Transitions: 1
+    'i' -> 840
+
+State 840:
+  Accepting: no
+  Transitions: 1
+    'l' -> 841
+
+State 841:
+  Accepting: no
+  Transitions: 1
+    'e' -> 842
+
+State 842:
+  Accepting: no
+  Transitions: 1
+    '2' -> 843
+
+State 843:
+  Accepting: no
+  Transitions: 1
+    '.' -> 844
+
+State 844:
+  Accepting: no
+  Transitions: 1
+    't' -> 845
+
+State 845:
+  Accepting: no
+  Transitions: 1
+    'x' -> 846
+
+State 846:
+  Accepting: no
+  Transitions: 1
+    't' -> 847
+
+State 847:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 848:
+  Accepting: no
+  Transitions: 1
+    'o' -> 849
+
+State 849:
+  Accepting: no
+  Transitions: 1
+    'm' -> 850
+
+State 850:
+  Accepting: no
+  Transitions: 1
+    'm' -> 851
+
+State 851:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 852
+
+State 852:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 852
+    'f' -> 853
+
+State 853:
+  Accepting: no
+  Transitions: 1
+    'i' -> 854
+
+State 854:
+  Accepting: no
+  Transitions: 1
+    'l' -> 855
+
+State 855:
+  Accepting: no
+  Transitions: 1
+    'e' -> 856
+
+State 856:
+  Accepting: no
+  Transitions: 1
+    '1' -> 857
+
+State 857:
+  Accepting: no
+  Transitions: 1
+    '.' -> 858
+
+State 858:
+  Accepting: no
+  Transitions: 1
+    't' -> 859
+
+State 859:
+  Accepting: no
+  Transitions: 1
+    'x' -> 860
+
+State 860:
+  Accepting: no
+  Transitions: 1
+    't' -> 861
+
+State 861:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 862
+
+State 862:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 862
+    'f' -> 863
+
+State 863:
+  Accepting: no
+  Transitions: 1
+    'i' -> 864
+
+State 864:
+  Accepting: no
+  Transitions: 1
+    'l' -> 865
+
+State 865:
+  Accepting: no
+  Transitions: 1
+    'e' -> 866
+
+State 866:
+  Accepting: no
+  Transitions: 1
+    '2' -> 867
+
+State 867:
+  Accepting: no
+  Transitions: 1
+    '.' -> 868
+
+State 868:
+  Accepting: no
+  Transitions: 1
+    't' -> 869
+
+State 869:
+  Accepting: no
+  Transitions: 1
+    'x' -> 870
+
+State 870:
+  Accepting: no
+  Transitions: 1
+    't' -> 871
+
+State 871:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 872:
+  Accepting: no
+  Transitions: 1
+    'a' -> 873
+
+State 873:
+  Accepting: no
+  Transitions: 1
+    'r' -> 874
+
+State 874:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 875
+
+State 875:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 875
+    '-' -> 876
+
+State 876:
+  Accepting: no
+  Transitions: 1
+    't' -> 877
+
+State 877:
+  Accepting: no
+  Transitions: 1
+    'f' -> 878
+
+State 878:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 879
+
+State 879:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 879
+    'a' -> 880
+
+State 880:
+  Accepting: no
+  Transitions: 1
+    'r' -> 881
+
+State 881:
+  Accepting: no
+  Transitions: 1
+    'c' -> 882
+
+State 882:
+  Accepting: no
+  Transitions: 1
+    'h' -> 883
+
+State 883:
+  Accepting: no
+  Transitions: 1
+    'i' -> 884
+
+State 884:
+  Accepting: no
+  Transitions: 1
+    'v' -> 885
+
+State 885:
+  Accepting: no
+  Transitions: 1
+    'e' -> 886
+
+State 886:
+  Accepting: no
+  Transitions: 1
+    '.' -> 887
+
+State 887:
+  Accepting: no
+  Transitions: 1
+    't' -> 888
+
+State 888:
+  Accepting: no
+  Transitions: 1
+    'a' -> 889
+
+State 889:
+  Accepting: no
+  Transitions: 1
+    'r' -> 890
+
+State 890:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 891:
+  Accepting: no
+  Transitions: 1
+    'a' -> 892
+
+State 892:
+  Accepting: no
+  Transitions: 1
+    'r' -> 893
+
+State 893:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 894
+
+State 894:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 894
+    '-' -> 895
+
+State 895:
+  Accepting: no
+  Transitions: 1
+    't' -> 896
+
+State 896:
+  Accepting: no
+  Transitions: 1
+    'z' -> 897
+
+State 897:
+  Accepting: no
+  Transitions: 1
+    'f' -> 898
+
+State 898:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 899
+
+State 899:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 899
+    'a' -> 900
+
+State 900:
+  Accepting: no
+  Transitions: 1
+    'r' -> 901
+
+State 901:
+  Accepting: no
+  Transitions: 1
+    'c' -> 902
+
+State 902:
+  Accepting: no
+  Transitions: 1
+    'h' -> 903
+
+State 903:
+  Accepting: no
+  Transitions: 1
+    'i' -> 904
+
+State 904:
+  Accepting: no
+  Transitions: 1
+    'v' -> 905
+
+State 905:
+  Accepting: no
+  Transitions: 1
+    'e' -> 906
+
+State 906:
+  Accepting: no
+  Transitions: 1
+    '.' -> 907
+
+State 907:
+  Accepting: no
+  Transitions: 1
+    't' -> 908
+
+State 908:
+  Accepting: no
+  Transitions: 1
+    'a' -> 909
+
+State 909:
+  Accepting: no
+  Transitions: 1
+    'r' -> 910
+
+State 910:
+  Accepting: no
+  Transitions: 1
+    '.' -> 911
+
+State 911:
+  Accepting: no
+  Transitions: 1
+    'g' -> 912
+
+State 912:
+  Accepting: no
+  Transitions: 1
+    'z' -> 913
+
+State 913:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 914:
+  Accepting: no
+  Transitions: 1
+    'z' -> 915
+
+State 915:
+  Accepting: no
+  Transitions: 1
+    'i' -> 916
+
+State 916:
+  Accepting: no
+  Transitions: 1
+    'p' -> 917
+
+State 917:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 918
+
+State 918:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 918
+    '-' -> 919
+
+State 919:
+  Accepting: no
+  Transitions: 1
+    'l' -> 920
+
+State 920:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 921
+
+State 921:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 921
+    'f' -> 922
+
+State 922:
+  Accepting: no
+  Transitions: 1
+    'i' -> 923
+
+State 923:
+  Accepting: no
+  Transitions: 1
+    'l' -> 924
+
+State 924:
+  Accepting: no
+  Transitions: 1
+    'e' -> 925
+
+State 925:
+  Accepting: no
+  Transitions: 1
+    '.' -> 926
+
+State 926:
+  Accepting: no
+  Transitions: 1
+    'g' -> 927
+
+State 927:
+  Accepting: no
+  Transitions: 1
+    'z' -> 928
+
+State 928:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 929:
+  Accepting: no
+  Transitions: 1
+    'i' -> 930
+
+State 930:
+  Accepting: no
+  Transitions: 1
+    'p' -> 931
+
+State 931:
+  Accepting: no
+  Transitions: 1
+    'i' -> 932
+
+State 932:
+  Accepting: no
+  Transitions: 1
+    'n' -> 933
+
+State 933:
+  Accepting: no
+  Transitions: 1
+    'f' -> 934
+
+State 934:
+  Accepting: no
+  Transitions: 1
+    'o' -> 935
+
+State 935:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 936
+
+State 936:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 936
+    'a' -> 937
+
+State 937:
+  Accepting: no
+  Transitions: 1
+    'r' -> 938
+
+State 938:
+  Accepting: no
+  Transitions: 1
+    'c' -> 939
+
+State 939:
+  Accepting: no
+  Transitions: 1
+    'h' -> 940
+
+State 940:
+  Accepting: no
+  Transitions: 1
+    'i' -> 941
+
+State 941:
+  Accepting: no
+  Transitions: 1
+    'v' -> 942
+
+State 942:
+  Accepting: no
+  Transitions: 1
+    'e' -> 943
+
+State 943:
+  Accepting: no
+  Transitions: 1
+    '.' -> 944
+
+State 944:
+  Accepting: no
+  Transitions: 1
+    'z' -> 945
+
+State 945:
+  Accepting: no
+  Transitions: 1
+    'i' -> 946
+
+State 946:
+  Accepting: no
+  Transitions: 1
+    'p' -> 947
+
+State 947:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 948:
+  Accepting: no
+  Transitions: 1
+    'a' -> 949
+
+State 949:
+  Accepting: no
+  Transitions: 1
+    't' -> 950
+
+State 950:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 951
+
+State 951:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 951
+    'f' -> 952
+
+State 952:
+  Accepting: no
+  Transitions: 1
+    'i' -> 953
+
+State 953:
+  Accepting: no
+  Transitions: 1
+    'l' -> 954
+
+State 954:
+  Accepting: no
+  Transitions: 1
+    'e' -> 955
+
+State 955:
+  Accepting: no
+  Transitions: 1
+    '.' -> 956
+
+State 956:
+  Accepting: no
+  Transitions: 1
+    't' -> 957
+
+State 957:
+  Accepting: no
+  Transitions: 1
+    'x' -> 958
+
+State 958:
+  Accepting: no
+  Transitions: 1
+    't' -> 959
+
+State 959:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 960
+
+State 960:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 960
+    '|' -> 961
+
+State 961:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 962
+
+State 962:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 962
+    'g' -> 963
+
+State 963:
+  Accepting: no
+  Transitions: 1
+    'r' -> 964
+
+State 964:
+  Accepting: no
+  Transitions: 1
+    'e' -> 965
+
+State 965:
+  Accepting: no
+  Transitions: 1
+    'p' -> 966
+
+State 966:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 967
+
+State 967:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 967
+    'p' -> 968
+
+State 968:
+  Accepting: no
+  Transitions: 1
+    'a' -> 969
+
+State 969:
+  Accepting: no
+  Transitions: 1
+    't' -> 970
+
+State 970:
+  Accepting: no
+  Transitions: 1
+    't' -> 971
+
+State 971:
+  Accepting: no
+  Transitions: 1
+    'e' -> 972
+
+State 972:
+  Accepting: no
+  Transitions: 1
+    'r' -> 973
+
+State 973:
+  Accepting: no
+  Transitions: 1
+    'n' -> 974
+
+State 974:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 975:
+  Accepting: no
+  Transitions: 1
+    'a' -> 976
+
+State 976:
+  Accepting: no
+  Transitions: 1
+    't' -> 977
+
+State 977:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 978
+
+State 978:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 978
+    'f' -> 979
+
+State 979:
+  Accepting: no
+  Transitions: 1
+    'i' -> 980
+
+State 980:
+  Accepting: no
+  Transitions: 1
+    'l' -> 981
+
+State 981:
+  Accepting: no
+  Transitions: 1
+    'e' -> 982
+
+State 982:
+  Accepting: no
+  Transitions: 1
+    '.' -> 983
+
+State 983:
+  Accepting: no
+  Transitions: 1
+    't' -> 984
+
+State 984:
+  Accepting: no
+  Transitions: 1
+    'x' -> 985
+
+State 985:
+  Accepting: no
+  Transitions: 1
+    't' -> 986
+
+State 986:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 987
+
+State 987:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 987
+    '|' -> 988
+
+State 988:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 989
+
+State 989:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 989
+    'h' -> 990
+
+State 990:
+  Accepting: no
+  Transitions: 1
+    'e' -> 991
+
+State 991:
+  Accepting: no
+  Transitions: 1
+    'a' -> 992
+
+State 992:
+  Accepting: no
+  Transitions: 1
+    'd' -> 993
+
+State 993:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 994
+
+State 994:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 994
+    '-' -> 995
+
+State 995:
+  Accepting: no
+  Transitions: 1
+    '1' -> 996
+
+State 996:
+  Accepting: no
+  Transitions: 1
+    '0' -> 997
+
+State 997:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 998:
+  Accepting: no
+  Transitions: 1
+    'a' -> 999
+
+State 999:
+  Accepting: no
+  Transitions: 1
+    't' -> 1000
+
+State 1000:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1001
+
+State 1001:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1001
+    'f' -> 1002
+
+State 1002:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1003
+
+State 1003:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1004
+
+State 1004:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1005
+
+State 1005:
+  Accepting: no
+  Transitions: 1
+    '.' -> 1006
+
+State 1006:
+  Accepting: no
+  Transitions: 1
+    't' -> 1007
+
+State 1007:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1008
+
+State 1008:
+  Accepting: no
+  Transitions: 1
+    't' -> 1009
+
+State 1009:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1010
+
+State 1010:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1010
+    '|' -> 1011
+
+State 1011:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1012
+
+State 1012:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1012
+    't' -> 1013
+
+State 1013:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1014
+
+State 1014:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1015
+
+State 1015:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1016
+
+State 1016:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1017
+
+State 1017:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1017
+    '-' -> 1018
+
+State 1018:
+  Accepting: no
+  Transitions: 1
+    '5' -> 1019
+
+State 1019:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1020:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1021
+
+State 1021:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1022
+
+State 1022:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1023
+
+State 1023:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1024
+
+State 1024:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1024
+    'p' -> 1025
+
+State 1025:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1026
+
+State 1026:
+  Accepting: no
+  Transitions: 1
+    't' -> 1027
+
+State 1027:
+  Accepting: no
+  Transitions: 1
+    't' -> 1028
+
+State 1028:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1029
+
+State 1029:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1030
+
+State 1030:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1031
+
+State 1031:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1032
+
+State 1032:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1032
+    'f' -> 1033
+
+State 1033:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1034
+
+State 1034:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1035
+
+State 1035:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1036
+
+State 1036:
+  Accepting: no
+  Transitions: 1
+    '.' -> 1037
+
+State 1037:
+  Accepting: no
+  Transitions: 1
+    't' -> 1038
+
+State 1038:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1039
+
+State 1039:
+  Accepting: no
+  Transitions: 1
+    't' -> 1040
+
+State 1040:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1041
+
+State 1041:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1041
+    '|' -> 1042
+
+State 1042:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1043
+
+State 1043:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1043
+    'w' -> 1044
+
+State 1044:
+  Accepting: no
+  Transitions: 1
+    'c' -> 1045
+
+State 1045:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1046
+
+State 1046:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1046
+    '-' -> 1047
+
+State 1047:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1048
+
+State 1048:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1049:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1050
+
+State 1050:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1051
+
+State 1051:
+  Accepting: no
+  Transitions: 1
+    'd' -> 1052
+
+State 1052:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1053
+
+State 1053:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1053
+    '.' -> 1054
+
+State 1054:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1055
+
+State 1055:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1055
+    '-' -> 1056
+
+State 1056:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1057
+
+State 1057:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1058
+
+State 1058:
+  Accepting: no
+  Transitions: 1
+    'm' -> 1059
+
+State 1059:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1060
+
+State 1060:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1061
+
+State 1061:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1061
+    '"' -> 1062
+
+State 1062:
+  Accepting: no
+  Transitions: 1
+    ANY -> 1063
+
+State 1063:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1063
+    '.' -> 1064
+
+State 1064:
+  Accepting: no
+  Transitions: 1
+    't' -> 1065
+
+State 1065:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1066
+
+State 1066:
+  Accepting: no
+  Transitions: 1
+    't' -> 1067
+
+State 1067:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1068
+
+State 1068:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1069
+
+State 1069:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1069
+    '|' -> 1070
+
+State 1070:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1071
+
+State 1071:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1071
+    'x' -> 1072
+
+State 1072:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1073
+
+State 1073:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1074
+
+State 1074:
+  Accepting: no
+  Transitions: 1
+    'g' -> 1075
+
+State 1075:
+  Accepting: no
+  Transitions: 1
+    's' -> 1076
+
+State 1076:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1077
+
+State 1077:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1077
+    'c' -> 1078
+
+State 1078:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1079
+
+State 1079:
+  Accepting: no
+  Transitions: 1
+    't' -> 1080
+
+State 1080:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1081:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1082
+
+State 1082:
+  Accepting: no
+  Transitions: 1
+    't' -> 1083
+
+State 1083:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1084
+
+State 1084:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1084
+    'l' -> 1085
+
+State 1085:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1086
+
+State 1086:
+  Accepting: no
+  Transitions: 1
+    'g' -> 1087
+
+State 1087:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1088
+
+State 1088:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1088
+    '-' -> 1089
+
+State 1089:
+  Accepting: no
+  Transitions: 1
+    '-' -> 1090
+
+State 1090:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1091
+
+State 1091:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1092
+
+State 1092:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1093
+
+State 1093:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1094
+
+State 1094:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1095
+
+State 1095:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1096
+
+State 1096:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1097
+
+State 1097:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1098
+
+State 1098:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1098
+    '|' -> 1099
+
+State 1099:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1100
+
+State 1100:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1100
+    'h' -> 1101
+
+State 1101:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1102
+
+State 1102:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1103
+
+State 1103:
+  Accepting: no
+  Transitions: 1
+    'd' -> 1104
+
+State 1104:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1105
+
+State 1105:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1105
+    '-' -> 1106
+
+State 1106:
+  Accepting: no
+  Transitions: 1
+    '1' -> 1107
+
+State 1107:
+  Accepting: no
+  Transitions: 1
+    '0' -> 1108
+
+State 1108:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1109:
+  Accepting: no
+  Transitions: 1
+    's' -> 1110
+
+State 1110:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1111
+
+State 1111:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1111
+    'a' -> 1112
+
+State 1112:
+  Accepting: no
+  Transitions: 1
+    'u' -> 1113
+
+State 1113:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1114
+
+State 1114:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1115
+
+State 1115:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1115
+    '|' -> 1116
+
+State 1116:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1117
+
+State 1117:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1117
+    'g' -> 1118
+
+State 1118:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1119
+
+State 1119:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1120
+
+State 1120:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1121
+
+State 1121:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1122
+
+State 1122:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1122
+    'p' -> 1123
+
+State 1123:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1124
+
+State 1124:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1125
+
+State 1125:
+  Accepting: no
+  Transitions: 1
+    'c' -> 1126
+
+State 1126:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1127
+
+State 1127:
+  Accepting: no
+  Transitions: 1
+    's' -> 1128
+
+State 1128:
+  Accepting: no
+  Transitions: 1
+    's' -> 1129
+
+State 1129:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1130:
+  Accepting: no
+  Transitions: 1
+    's' -> 1131
+
+State 1131:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1132
+
+State 1132:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1132
+    '-' -> 1133
+
+State 1133:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1134
+
+State 1134:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1135
+
+State 1135:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1136
+
+State 1136:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1136
+    '|' -> 1137
+
+State 1137:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1138
+
+State 1138:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1138
+    'g' -> 1139
+
+State 1139:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1140
+
+State 1140:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1141
+
+State 1141:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1142
+
+State 1142:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1143
+
+State 1143:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1143
+    '"' -> 1144
+
+State 1144:
+  Accepting: no
+  Transitions: 1
+    '.' -> 1145
+
+State 1145:
+  Accepting: no
+  Transitions: 1
+    't' -> 1146
+
+State 1146:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1147
+
+State 1147:
+  Accepting: no
+  Transitions: 1
+    't' -> 1148
+
+State 1148:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1149
+
+State 1149:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1150:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1151
+
+State 1151:
+  Accepting: no
+  Transitions: 1
+    't' -> 1152
+
+State 1152:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1153
+
+State 1153:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1153
+    'f' -> 1154
+
+State 1154:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1155
+
+State 1155:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1156
+
+State 1156:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1157
+
+State 1157:
+  Accepting: no
+  Transitions: 1
+    ' ' -> 1158
+
+State 1158:
+  Accepting: no
+  Transitions: 1
+    'w' -> 1159
+
+State 1159:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1160
+
+State 1160:
+  Accepting: no
+  Transitions: 1
+    't' -> 1161
+
+State 1161:
+  Accepting: no
+  Transitions: 1
+    'h' -> 1162
+
+State 1162:
+  Accepting: no
+  Transitions: 1
+    ' ' -> 1163
+
+State 1163:
+  Accepting: no
+  Transitions: 1
+    's' -> 1164
+
+State 1164:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1165
+
+State 1165:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1166
+
+State 1166:
+  Accepting: no
+  Transitions: 1
+    'c' -> 1167
+
+State 1167:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1168
+
+State 1168:
+  Accepting: no
+  Transitions: 1
+    's' -> 1169
+
+State 1169:
+  Accepting: no
+  Transitions: 1
+    '.' -> 1170
+
+State 1170:
+  Accepting: no
+  Transitions: 1
+    't' -> 1171
+
+State 1171:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1172
+
+State 1172:
+  Accepting: no
+  Transitions: 1
+    't' -> 1173
+
+State 1173:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1174:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1175
+
+State 1175:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1176
+
+State 1176:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1177
+
+State 1177:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1178
+
+State 1178:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1178
+    '"' -> 1179
+
+State 1179:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1180
+
+State 1180:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1181
+
+State 1181:
+  Accepting: no
+  Transitions: 1
+    't' -> 1182
+
+State 1182:
+  Accepting: no
+  Transitions: 1
+    't' -> 1183
+
+State 1183:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1184
+
+State 1184:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1185
+
+State 1185:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1186
+
+State 1186:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1187
+
+State 1187:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1187
+    'w' -> 1188
+
+State 1188:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1189
+
+State 1189:
+  Accepting: no
+  Transitions: 1
+    't' -> 1190
+
+State 1190:
+  Accepting: no
+  Transitions: 1
+    'h' -> 1191
+
+State 1191:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1192
+
+State 1192:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1192
+    's' -> 1193
+
+State 1193:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1194
+
+State 1194:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1195
+
+State 1195:
+  Accepting: no
+  Transitions: 1
+    'c' -> 1196
+
+State 1196:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1197
+
+State 1197:
+  Accepting: no
+  Transitions: 1
+    's' -> 1198
+
+State 1198:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1199
+
+State 1199:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1200
+
+State 1200:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1200
+    'f' -> 1201
+
+State 1201:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1202
+
+State 1202:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1203
+
+State 1203:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1204
+
+State 1204:
+  Accepting: no
+  Transitions: 1
+    '.' -> 1205
+
+State 1205:
+  Accepting: no
+  Transitions: 1
+    't' -> 1206
+
+State 1206:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1207
+
+State 1207:
+  Accepting: no
+  Transitions: 1
+    't' -> 1208
+
+State 1208:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1209:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1210
+
+State 1210:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1211
+
+State 1211:
+  Accepting: no
+  Transitions: 1
+    'd' -> 1212
+
+State 1212:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1213
+
+State 1213:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1213
+    '.' -> 1214
+
+State 1214:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1215
+
+State 1215:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1215
+    '-' -> 1216
+
+State 1216:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1217
+
+State 1217:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1218
+
+State 1218:
+  Accepting: no
+  Transitions: 1
+    'm' -> 1219
+
+State 1219:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1220
+
+State 1220:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1221
+
+State 1221:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1221
+    '"' -> 1222
+
+State 1222:
+  Accepting: no
+  Transitions: 1
+    'f' -> 1223
+
+State 1223:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1224
+
+State 1224:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1225
+
+State 1225:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1226
+
+State 1226:
+  Accepting: no
+  Transitions: 1
+    '*' -> 1227
+
+State 1227:
+  Accepting: no
+  Transitions: 1
+    '.' -> 1228
+
+State 1228:
+  Accepting: no
+  Transitions: 1
+    't' -> 1229
+
+State 1229:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1230
+
+State 1230:
+  Accepting: no
+  Transitions: 1
+    't' -> 1231
+
+State 1231:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1232
+
+State 1232:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1233:
+  Accepting: no
+  Transitions: 1
+    'c' -> 1234
+
+State 1234:
+  Accepting: no
+  Transitions: 1
+    'h' -> 1235
+
+State 1235:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1236
+
+State 1236:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1237
+
+State 1237:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1237
+    '"' -> 1238
+
+State 1238:
+  Accepting: no
+  Transitions: 1
+    't' -> 1239
+
+State 1239:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1240
+
+State 1240:
+  Accepting: no
+  Transitions: 1
+    's' -> 1241
+
+State 1241:
+  Accepting: no
+  Transitions: 1
+    't' -> 1242
+
+State 1242:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1243
+
+State 1243:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1243
+    'w' -> 1244
+
+State 1244:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1245
+
+State 1245:
+  Accepting: no
+  Transitions: 1
+    't' -> 1246
+
+State 1246:
+  Accepting: no
+  Transitions: 1
+    'h' -> 1247
+
+State 1247:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1248
+
+State 1248:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1248
+    'q' -> 1249
+
+State 1249:
+  Accepting: no
+  Transitions: 1
+    'u' -> 1250
+
+State 1250:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1251
+
+State 1251:
+  Accepting: no
+  Transitions: 1
+    't' -> 1252
+
+State 1252:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1253
+
+State 1253:
+  Accepting: no
+  Transitions: 1
+    's' -> 1254
+
+State 1254:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1255
+
+State 1255:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1256:
+  Accepting: no
+  Transitions: 1
+    'c' -> 1257
+
+State 1257:
+  Accepting: no
+  Transitions: 1
+    'h' -> 1258
+
+State 1258:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1259
+
+State 1259:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1260
+
+State 1260:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1260
+    't' -> 1261
+
+State 1261:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1262
+
+State 1262:
+  Accepting: no
+  Transitions: 1
+    's' -> 1263
+
+State 1263:
+  Accepting: no
+  Transitions: 1
+    't' -> 1264
+
+State 1264:
+  Accepting: no
+  Transitions: 1
+    0x03 -> 1265
+
+State 1265:
+  Accepting: no
+  Transitions: 1
+    'w' -> 1266
+
+State 1266:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1267
+
+State 1267:
+  Accepting: no
+  Transitions: 1
+    't' -> 1268
+
+State 1268:
+  Accepting: no
+  Transitions: 1
+    'h' -> 1269
+
+State 1269:
+  Accepting: no
+  Transitions: 1
+    0x03 -> 1270
+
+State 1270:
+  Accepting: no
+  Transitions: 1
+    's' -> 1271
+
+State 1271:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1272
+
+State 1272:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1273
+
+State 1273:
+  Accepting: no
+  Transitions: 1
+    'g' -> 1274
+
+State 1274:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1275
+
+State 1275:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1276
+
+State 1276:
+  Accepting: no
+  Transitions: 1
+    0x03 -> 1277
+
+State 1277:
+  Accepting: no
+  Transitions: 1
+    'q' -> 1278
+
+State 1278:
+  Accepting: no
+  Transitions: 1
+    'u' -> 1279
+
+State 1279:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1280
+
+State 1280:
+  Accepting: no
+  Transitions: 1
+    't' -> 1281
+
+State 1281:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1282
+
+State 1282:
+  Accepting: no
+  Transitions: 1
+    's' -> 1283
+
+State 1283:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1284:
+  Accepting: no
+  Transitions: 1
+    's' -> 1285
+
+State 1285:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1286
+
+State 1286:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1287
+    0x04 -> 1286
+
+State 1287:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1287
+    '.' -> 1288
+
+State 1288:
+  Accepting: no
+  Transitions: 1
+    't' -> 1289
+
+State 1289:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1290
+
+State 1290:
+  Accepting: no
+  Transitions: 1
+    't' -> 1291
+
+State 1291:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1292:
+  Accepting: no
+  Transitions: 1
+    's' -> 1293
+
+State 1293:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1294
+
+State 1294:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1295
+    0x04 -> 1294
+
+State 1295:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1295
+    '.' -> 1296
+
+State 1296:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1297
+
+State 1297:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1298
+
+State 1298:
+  Accepting: no
+  Transitions: 1
+    'g' -> 1299
+
+State 1299:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1300:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1301
+
+State 1301:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1302
+
+State 1302:
+  Accepting: no
+  Transitions: 1
+    'd' -> 1303
+
+State 1303:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1304
+
+State 1304:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1304
+    '.' -> 1305
+
+State 1305:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1306
+
+State 1306:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1306
+    '-' -> 1307
+
+State 1307:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1308
+
+State 1308:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1309
+
+State 1309:
+  Accepting: no
+  Transitions: 1
+    'm' -> 1310
+
+State 1310:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1311
+
+State 1311:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1312
+
+State 1312:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1312
+    '"' -> 1313
+
+State 1313:
+  Accepting: no
+  Transitions: 1
+    ANY -> 1314
+
+State 1314:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1314
+    '.' -> 1315
+
+State 1315:
+  Accepting: no
+  Transitions: 1
+    't' -> 1316
+
+State 1316:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1317
+
+State 1317:
+  Accepting: no
+  Transitions: 1
+    't' -> 1318
+
+State 1318:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1319
+
+State 1319:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1320:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1321
+
+State 1321:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1322
+
+State 1322:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1323
+
+State 1323:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1324
+
+State 1324:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1324
+    'p' -> 1325
+
+State 1325:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1326
+
+State 1326:
+  Accepting: no
+  Transitions: 1
+    't' -> 1327
+
+State 1327:
+  Accepting: no
+  Transitions: 1
+    't' -> 1328
+
+State 1328:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1329
+
+State 1329:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1330
+
+State 1330:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1331
+
+State 1331:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1332
+
+State 1332:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1333
+    0x04 -> 1332
+
+State 1333:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 1
+    ANY -> 1333
+
+State 1334:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1335
+
+State 1335:
+  Accepting: no
+  Transitions: 1
+    't' -> 1336
+
+State 1336:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1337
+
+State 1337:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1338
+    0x04 -> 1337
+
+State 1338:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1338
+    '.' -> 1339
+
+State 1339:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1340
+
+State 1340:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1341
+
+State 1341:
+  Accepting: no
+  Transitions: 1
+    'g' -> 1342
+
+State 1342:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1343
+
+State 1343:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1343
+    '|' -> 1344
+
+State 1344:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1345
+
+State 1345:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1345
+    'g' -> 1346
+
+State 1346:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1347
+
+State 1347:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1348
+
+State 1348:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1349
+
+State 1349:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1350
+
+State 1350:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1350
+    'e' -> 1351
+
+State 1351:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1352
+
+State 1352:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1353
+
+State 1353:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1354
+
+State 1354:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1355
+
+State 1355:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1356:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1357
+
+State 1357:
+  Accepting: no
+  Transitions: 1
+    't' -> 1358
+
+State 1358:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1359
+
+State 1359:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1359
+    '-' -> 1360
+
+State 1360:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1361
+
+State 1361:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1362
+
+State 1362:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1362
+    'f' -> 1363
+
+State 1363:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1364
+
+State 1364:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1365
+
+State 1365:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1366
+
+State 1366:
+  Accepting: no
+  Transitions: 1
+    '.' -> 1367
+
+State 1367:
+  Accepting: no
+  Transitions: 1
+    't' -> 1368
+
+State 1368:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1369
+
+State 1369:
+  Accepting: no
+  Transitions: 1
+    't' -> 1370
+
+State 1370:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1371:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1372
+
+State 1372:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1373
+
+State 1373:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1374
+
+State 1374:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1375
+
+State 1375:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1375
+    '-' -> 1376
+
+State 1376:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1377
+
+State 1377:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1378
+
+State 1378:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1378
+    'p' -> 1379
+
+State 1379:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1380
+
+State 1380:
+  Accepting: no
+  Transitions: 1
+    't' -> 1381
+
+State 1381:
+  Accepting: no
+  Transitions: 1
+    't' -> 1382
+
+State 1382:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1383
+
+State 1383:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1384
+
+State 1384:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1385
+
+State 1385:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1386
+
+State 1386:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1386
+    'f' -> 1387
+
+State 1387:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1388
+
+State 1388:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1389
+
+State 1389:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1390
+
+State 1390:
+  Accepting: no
+  Transitions: 1
+    '.' -> 1391
+
+State 1391:
+  Accepting: no
+  Transitions: 1
+    't' -> 1392
+
+State 1392:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1393
+
+State 1393:
+  Accepting: no
+  Transitions: 1
+    't' -> 1394
+
+State 1394:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1395:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1396
+
+State 1396:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1397
+
+State 1397:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1398
+
+State 1398:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1399
+
+State 1399:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1399
+    '-' -> 1400
+
+State 1400:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1401
+
+State 1401:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1402
+
+State 1402:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1402
+    '-' -> 1403
+
+State 1403:
+  Accepting: no
+  Transitions: 1
+    '-' -> 1404
+
+State 1404:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1405
+
+State 1405:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1406
+
+State 1406:
+  Accepting: no
+  Transitions: 1
+    'c' -> 1407
+
+State 1407:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1408
+
+State 1408:
+  Accepting: no
+  Transitions: 1
+    'u' -> 1409
+
+State 1409:
+  Accepting: no
+  Transitions: 1
+    'd' -> 1410
+
+State 1410:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1411
+
+State 1411:
+  Accepting: no
+  Transitions: 1
+    '=' -> 1412
+
+State 1412:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1413
+
+State 1413:
+  Accepting: no
+  Transitions: 1
+    ANY -> 1414
+
+State 1414:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1414
+    '.' -> 1415
+
+State 1415:
+  Accepting: no
+  Transitions: 1
+    't' -> 1416
+
+State 1416:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1417
+
+State 1417:
+  Accepting: no
+  Transitions: 1
+    't' -> 1418
+
+State 1418:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1419
+
+State 1419:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1420
+
+State 1420:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1420
+    'p' -> 1421
+
+State 1421:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1422
+
+State 1422:
+  Accepting: no
+  Transitions: 1
+    't' -> 1423
+
+State 1423:
+  Accepting: no
+  Transitions: 1
+    't' -> 1424
+
+State 1424:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1425
+
+State 1425:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1426
+
+State 1426:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1427
+
+State 1427:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1428
+
+State 1428:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1428
+    '.' -> 1429
+
+State 1429:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1430:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1431
+
+State 1431:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1432
+
+State 1432:
+  Accepting: no
+  Transitions: 1
+    'd' -> 1433
+
+State 1433:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1434
+
+State 1434:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1434
+    '.' -> 1435
+
+State 1435:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1436
+
+State 1436:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1436
+    '-' -> 1437
+
+State 1437:
+  Accepting: no
+  Transitions: 1
+    't' -> 1438
+
+State 1438:
+  Accepting: no
+  Transitions: 1
+    'y' -> 1439
+
+State 1439:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1440
+
+State 1440:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1441
+
+State 1441:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1442
+
+State 1442:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1442
+    'f' -> 1443
+
+State 1443:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1444
+
+State 1444:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1444
+    '-' -> 1445
+
+State 1445:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1446
+
+State 1446:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1447
+
+State 1447:
+  Accepting: no
+  Transitions: 1
+    'm' -> 1448
+
+State 1448:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1449
+
+State 1449:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1450
+
+State 1450:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1450
+    '"' -> 1451
+
+State 1451:
+  Accepting: no
+  Transitions: 1
+    ANY -> 1452
+
+State 1452:
+  Accepting: no
+  Transitions: 2
+    ANY -> 1452
+    '.' -> 1453
+
+State 1453:
+  Accepting: no
+  Transitions: 1
+    't' -> 1454
+
+State 1454:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1455
+
+State 1455:
+  Accepting: no
+  Transitions: 1
+    't' -> 1456
+
+State 1456:
+  Accepting: no
+  Transitions: 1
+    '"' -> 1457
+
+State 1457:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1458:
+  Accepting: no
+  Transitions: 1
+    's' -> 1459
+
+State 1459:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1460
+
+State 1460:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1460
+    '-' -> 1461
+
+State 1461:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1462
+
+State 1462:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1463
+
+State 1463:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1464
+
+State 1464:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1464
+    '-' -> 1465
+
+State 1465:
+  Accepting: no
+  Transitions: 1
+    'h' -> 1466
+
+State 1466:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1467:
+  Accepting: no
+  Transitions: 1
+    's' -> 1468
+
+State 1468:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1469
+
+State 1469:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1469
+    'a' -> 1470
+
+State 1470:
+  Accepting: no
+  Transitions: 1
+    'u' -> 1471
+
+State 1471:
+  Accepting: no
+  Transitions: 1
+    'x' -> 1472
+
+State 1472:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1473
+
+State 1473:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1473
+    '-' -> 1474
+
+State 1474:
+  Accepting: no
+  Transitions: 1
+    '-' -> 1475
+
+State 1475:
+  Accepting: no
+  Transitions: 1
+    's' -> 1476
+
+State 1476:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1477
+
+State 1477:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1478
+
+State 1478:
+  Accepting: no
+  Transitions: 1
+    't' -> 1479
+
+State 1479:
+  Accepting: no
+  Transitions: 1
+    '=' -> 1480
+
+State 1480:
+  Accepting: no
+  Transitions: 1
+    '-' -> 1481
+
+State 1481:
+  Accepting: no
+  Transitions: 1
+    '%' -> 1482
+
+State 1482:
+  Accepting: no
+  Transitions: 1
+    'm' -> 1483
+
+State 1483:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1484
+
+State 1484:
+  Accepting: no
+  Transitions: 1
+    'm' -> 1485
+
+State 1485:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1486:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1487
+
+State 1487:
+  Accepting: no
+  Transitions: 1
+    't' -> 1488
+
+State 1488:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1489
+
+State 1489:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1489
+    'l' -> 1490
+
+State 1490:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1491
+
+State 1491:
+  Accepting: no
+  Transitions: 1
+    'g' -> 1492
+
+State 1492:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1493
+
+State 1493:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1493
+    '-' -> 1494
+
+State 1494:
+  Accepting: no
+  Transitions: 1
+    '-' -> 1495
+
+State 1495:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1496
+
+State 1496:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1497
+
+State 1497:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1498
+
+State 1498:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1499
+
+State 1499:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1500
+
+State 1500:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1501
+
+State 1501:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1502
+
+State 1502:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1503
+
+State 1503:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1503
+    '-' -> 1504
+
+State 1504:
+  Accepting: no
+  Transitions: 1
+    '-' -> 1505
+
+State 1505:
+  Accepting: no
+  Transitions: 1
+    'd' -> 1506
+
+State 1506:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1507
+
+State 1507:
+  Accepting: no
+  Transitions: 1
+    'c' -> 1508
+
+State 1508:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1509
+
+State 1509:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1510
+
+State 1510:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1511
+
+State 1511:
+  Accepting: no
+  Transitions: 1
+    't' -> 1512
+
+State 1512:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1513
+
+State 1513:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 1514:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1515
+
+State 1515:
+  Accepting: no
+  Transitions: 1
+    't' -> 1516
+
+State 1516:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1517
+
+State 1517:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1517
+    'l' -> 1518
+
+State 1518:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1519
+
+State 1519:
+  Accepting: no
+  Transitions: 1
+    'g' -> 1520
+
+State 1520:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1521
+
+State 1521:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1521
+    '-' -> 1522
+
+State 1522:
+  Accepting: no
+  Transitions: 1
+    '-' -> 1523
+
+State 1523:
+  Accepting: no
+  Transitions: 1
+    'g' -> 1524
+
+State 1524:
+  Accepting: no
+  Transitions: 1
+    'r' -> 1525
+
+State 1525:
+  Accepting: no
+  Transitions: 1
+    'a' -> 1526
+
+State 1526:
+  Accepting: no
+  Transitions: 1
+    'p' -> 1527
+
+State 1527:
+  Accepting: no
+  Transitions: 1
+    'h' -> 1528
+
+State 1528:
+  Accepting: no
+  Transitions: 1
+    0x04 -> 1529
+
+State 1529:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 1529
+    '-' -> 1530
+
+State 1530:
+  Accepting: no
+  Transitions: 1
+    '-' -> 1531
+
+State 1531:
+  Accepting: no
+  Transitions: 1
+    'o' -> 1532
+
+State 1532:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1533
+
+State 1533:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1534
+
+State 1534:
+  Accepting: no
+  Transitions: 1
+    'l' -> 1535
+
+State 1535:
+  Accepting: no
+  Transitions: 1
+    'i' -> 1536
+
+State 1536:
+  Accepting: no
+  Transitions: 1
+    'n' -> 1537
+
+State 1537:
+  Accepting: no
+  Transitions: 1
+    'e' -> 1538
+
+State 1538:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+

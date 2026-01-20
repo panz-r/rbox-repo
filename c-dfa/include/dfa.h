@@ -66,4 +66,13 @@ uint16_t dfa_get_state_count(void);
  */
 bool dfa_reset(void);
 
+/**
+ * Load DFA from file
+ *
+ * @param filename Path to DFA file
+ * @param size Pointer to store file size
+ * @return Pointer to loaded DFA data, or NULL on error
+ */
+void* load_dfa_from_file(const char* filename, size_t* size);
+
 #endif // DFA_H

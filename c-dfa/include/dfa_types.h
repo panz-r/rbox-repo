@@ -75,9 +75,12 @@ typedef struct {
 /**
  * Special character values
  */
-#define DFA_CHAR_ANY 0x00       // Wildcard (matches any character)
-#define DFA_CHAR_EPSILON 0x01   // Epsilon transition
-#define DFA_CHAR_END 0x00       // End of transition table marker
+#define DFA_CHAR_ANY 0x00               // Wildcard (matches any character)
+#define DFA_CHAR_EPSILON 0x01           // Epsilon transition
+#define DFA_CHAR_END 0x00               // End of transition table marker
+#define DFA_CHAR_WHITESPACE 0x02        // Matches any whitespace character (space, tab, newline)
+#define DFA_CHAR_VERBATIM_SPACE 0x03    // Matches exactly one space character
+#define DFA_CHAR_NORMALIZING_SPACE 0x04 // Matches one or more space/tab characters (normalizing)
 
 /**
  * Command categories for accepting states

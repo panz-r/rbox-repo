@@ -1,0 +1,119 @@
+# Dangerous Commands - Potentially destructive or system-altering operations
+
+# System shutdown and reboot operations
+[dangerous:system:execute] reboot
+[dangerous:system:execute] shutdown
+[dangerous:system:execute] shutdown -h now
+[dangerous:system:execute] shutdown -r now
+[dangerous:system:execute] halt
+[dangerous:system:execute] poweroff
+[dangerous:system:execute] init 0
+[dangerous:system:execute] init 6
+
+# Disk and partition operations
+[dangerous:system:execute] dd if=/dev/sda of=/dev/null
+[dangerous:system:execute] dd if=/dev/zero of=/dev/sda
+[dangerous:system:execute] mkfs.ext4 /dev/sda1
+[dangerous:system:execute] fdisk /dev/sda
+[dangerous:system:execute] parted /dev/sda
+[dangerous:system:execute] wipefs -a /dev/sda
+[dangerous:system:execute] shred -v /dev/sda
+
+# Fork bombs and resource exhaustion
+[dangerous:system:execute] :(){ :|:& };:
+[dangerous:system:execute] fork() { fork | fork & }; fork
+[dangerous:system:execute] while true; do fork; done
+[dangerous:system:execute] yes > /dev/null &
+[dangerous:system:execute] cat /dev/zero > /dev/null &
+[dangerous:system:execute] dd if=/dev/zero of=/dev/null &
+
+# System configuration changes
+[dangerous:system:execute] rm -rf /boot
+[dangerous:system:execute] rm -rf /lib
+[dangerous:system:execute] rm -rf /usr
+[dangerous:system:execute] rm -rf /bin
+[dangerous:system:execute] rm -rf /sbin
+[dangerous:system:execute] rm -rf /etc
+[dangerous:system:execute] mv /bin /bin.bak
+[dangerous:system:execute] mv /usr /usr.bak
+
+# Kernel and module operations
+[dangerous:system:execute] rmmod module
+[dangerous:system:execute] modprobe -r module
+[dangerous:system:execute] insmod bad_module.ko
+[dangerous:system:execute] echo 1 > /proc/sys/kernel/panic
+[dangerous:system:execute] sysctl -w kernel.panic=1
+
+# Network configuration changes
+[dangerous:system:execute] ifconfig eth0 down
+[dangerous:system:execute] ip link set eth0 down
+[dangerous:system:execute] route del default
+[dangerous:system:execute] iptables -F
+[dangerous:system:execute] iptables -P INPUT DROP
+[dangerous:system:execute] ufw disable
+[dangerous:system:execute] systemctl stop networking
+
+# Service management operations
+[dangerous:system:execute] systemctl stop ssh
+[dangerous:system:execute] systemctl disable ssh
+[dangerous:system:execute] service ssh stop
+[dangerous:system:execute] killall sshd
+[dangerous:system:execute] pkill -9 sshd
+[dangerous:system:execute] systemctl stop cron
+[dangerous:system:execute] systemctl stop nginx
+[dangerous:system:execute] systemctl stop apache2
+
+# User and authentication operations
+[dangerous:system:execute] passwd -d root
+[dangerous:system:execute] usermod -L root
+[dangerous:system:execute] usermod -p '' root
+[dangerous:system:execute] chage -E 0 root
+[dangerous:system:execute] userdel -r username
+[dangerous:system:execute] groupdel groupname
+[dangerous:system:execute] echo "root:password" | chpasswd
+
+# Package management operations
+[dangerous:system:execute] apt-get remove --purge package
+[dangerous:system:execute] apt-get autoremove
+[dangerous:system:execute] yum remove package
+[dangerous:system:execute] dnf remove package
+[dangerous:system:execute] rpm -e --nodeps package
+[dangerous:system:execute] pip uninstall package
+[dangerous:system:execute] npm uninstall -g package
+
+# File system destruction
+[dangerous:system:execute] mkfs.ext4 /dev/sda
+[dangerous:system:execute] mkfs.xfs /dev/sda -f
+[dangerous:system:execute] mkfs.btrfs /dev/sda -f
+[dangerous:system:execute] mkfs.ntfs /dev/sda -f
+[dangerous:system:execute] mkfs.fat /dev/sda
+[dangerous:system:execute] mkfs.vfat /dev/sda
+
+# Complex dangerous patterns
+[dangerous:system:execute] rm -rf / && echo "done"
+[dangerous:system:execute] :(){ :|:& };: && rm -rf /
+[dangerous:system:execute] dd if=/dev/zero of=/dev/sda bs=1M
+[dangerous:system:execute] for i in {1..1000}; do dd if=/dev/zero of=file$i bs=1G; done
+[dangerous:system:execute] find / -exec rm -rf {} \;
+[dangerous:system:execute] find / -delete
+
+# Patterns with dangerous combinations
+[dangerous:system:execute] sudo rm -rf /
+[dangerous:system:execute] su -c "rm -rf /"
+[dangerous:system:execute] pkexec rm -rf /
+[dangerous:system:execute] gksudo rm -rf /
+[dangerous:system:execute] echo "password" | sudo -S rm -rf /
+
+# Memory and CPU stress operations
+[dangerous:system:execute] stress --cpu 8 --timeout 60
+[dangerous:system:execute] stress --vm 4 --vm-bytes 1G --timeout 60
+[dangerous:system:execute] while true; do :; done &
+[dangerous:system:execute] yes > /dev/null | yes > /dev/null &
+[dangerous:system:execute] cat /dev/urandom > /dev/null &
+
+# Kernel panic and crash operations
+[dangerous:system:execute] echo c > /proc/sysrq-trigger
+[dangerous:system:execute] echo 1 > /proc/sys/kernel/sysrq
+[dangerous:system:execute] sysctl -w kernel.sysrq=1
+[dangerous:system:execute] kill -SEGV 1
+[dangerous:system:execute] kill -KILL 1
