@@ -6,30 +6,11 @@
 #include <ctype.h>
 #include "../include/dfa_types.h"
 
-// Forward declarations for minimization functions
-static uint64_t compute_state_signature(int state);
-static int find_equivalent_state(uint64_t signature, int current_state);
-static void add_state_to_signature_table(int state, uint64_t signature);
-
-/**
- * Advanced NFA Builder with Termination Tags
- *
- * This tool builds NFA (Non-deterministic Finite Automata) from advanced
- * command specifications that include:
- * - Command categories (safe, caution, modifying, etc.)
- * - Subcategories (file, text, system, etc.)
- * - Operations (read, write, execute, etc.)
- * - Actions (allow, block, audit, etc.)
- *
- * The NFA is then converted to DFA by nfa2dfa.
- */
-
 #define MAX_STATES 4096
 #define MAX_CHARS 256
 #define MAX_PATTERNS 2048
 #define MAX_LINE_LENGTH 2048
 #define MAX_TAGS 16
-#define SIGNATURE_TABLE_SIZE 1024
 
 // NFA State with termination tags
 typedef struct {
@@ -39,13 +20,6 @@ typedef struct {
     int transitions[MAX_CHARS];    // -1 = no transition, otherwise state index
     int transition_count;
 } nfa_state_t;
-
-// State signature for on-the-fly minimization
-typedef struct StateSignature {
-    uint64_t signature;
-    int state_index;
-    struct StateSignature* next; // For hash table collision handling
-} StateSignature;
 
 // Command pattern with metadata
 typedef struct {
@@ -63,7 +37,6 @@ static nfa_state_t nfa[MAX_STATES];
 static command_pattern_t patterns[MAX_PATTERNS];
 static int nfa_state_count = 0;
 static int pattern_count = 0;
-static StateSignature* signature_table[SIGNATURE_TABLE_SIZE] = {NULL};
 
 // Category IDs
 enum {
@@ -99,7 +72,7 @@ void nfa_init(void) {
     nfa_state_count = 1; // State 0 is initial state
 }
 
-// Add NFA state with on-the-fly minimization
+// Add NFA state
 int nfa_add_state(bool accepting) {
     if (nfa_state_count >= MAX_STATES) {
         fprintf(stderr, "Error: Maximum NFA states reached\n");
@@ -121,42 +94,6 @@ int nfa_add_state(bool accepting) {
     return state;
 }
 
-// Add NFA state with on-the-fly minimization check
-int nfa_add_state_with_minimization(bool accepting) {
-    // First create the state normally
-    int new_state = nfa_add_state(accepting);
-
-    // Compute signature for this state
-    uint64_t signature = compute_state_signature(new_state);
-
-    // Check if an equivalent state already exists
-    int equivalent_state = find_equivalent_state(signature, new_state);
-
-    if (equivalent_state != -1) {
-        // Found equivalent state, revert the new state and return the existing one
-        nfa_state_count--; // Revert the state count
-
-        // Clean up the new state
-        for (int j = 0; j < nfa[new_state].tag_count; j++) {
-            free(nfa[new_state].tags[j]);
-            nfa[new_state].tags[j] = NULL;
-        }
-        nfa[new_state].tag_count = 0;
-        nfa[new_state].accepting = false;
-        nfa[new_state].transition_count = 0;
-        for (int j = 0; j < MAX_CHARS; j++) {
-            nfa[new_state].transitions[j] = -1;
-        }
-
-        return equivalent_state; // Return the existing equivalent state
-    }
-
-    // No equivalent state found, add this state to signature table
-    add_state_to_signature_table(new_state, signature);
-
-    return new_state;
-}
-
 // Simple string duplication function
 static char* my_strdup(const char* str) {
     if (str == NULL) return NULL;
@@ -166,100 +103,6 @@ static char* my_strdup(const char* str) {
         memcpy(copy, str, len);
     }
     return copy;
-}
-
-// Hash function for signature table
-static unsigned int hash_signature(uint64_t signature) {
-    return (unsigned int)(signature % SIGNATURE_TABLE_SIZE);
-}
-
-// Compute state signature for equivalence detection
-static uint64_t compute_state_signature(int state) {
-    uint64_t signature = 0;
-
-    // Include accepting status in signature
-    if (nfa[state].accepting) {
-        signature |= 0x8000000000000000ULL;
-    }
-
-    // Include tags in signature (simple hash of tag strings)
-    for (int i = 0; i < nfa[state].tag_count; i++) {
-        if (nfa[state].tags[i] != NULL) {
-            const char* tag = nfa[state].tags[i];
-            while (*tag) {
-                signature = signature * 31 + *tag;
-                tag++;
-            }
-        }
-    }
-
-    // Include transitions in signature
-    for (int c = 0; c < MAX_CHARS; c++) {
-        if (nfa[state].transitions[c] != -1) {
-            signature = signature * 31 + c;
-            signature = signature * 31 + nfa[state].transitions[c];
-        }
-    }
-
-    return signature;
-}
-
-// Find equivalent state using signature
-static int find_equivalent_state(uint64_t signature, int current_state) {
-    unsigned int hash = hash_signature(signature);
-    StateSignature* entry = signature_table[hash];
-
-    while (entry != NULL) {
-        if (entry->signature == signature) {
-            // Found a state with matching signature, verify it's truly equivalent
-            int candidate_state = entry->state_index;
-
-            // Check if states are truly equivalent
-            if (nfa[current_state].accepting == nfa[candidate_state].accepting &&
-                nfa[current_state].tag_count == nfa[candidate_state].tag_count) {
-
-                // Check tags
-                bool tags_match = true;
-                for (int i = 0; i < nfa[current_state].tag_count; i++) {
-                    if (strcmp(nfa[current_state].tags[i], nfa[candidate_state].tags[i]) != 0) {
-                        tags_match = false;
-                        break;
-                    }
-                }
-
-                // Check transitions
-                bool transitions_match = true;
-                for (int c = 0; c < MAX_CHARS; c++) {
-                    if (nfa[current_state].transitions[c] != nfa[candidate_state].transitions[c]) {
-                        transitions_match = false;
-                        break;
-                    }
-                }
-
-                if (tags_match && transitions_match) {
-                    return candidate_state; // States are equivalent
-                }
-            }
-        }
-        entry = entry->next;
-    }
-
-    return -1; // No equivalent state found
-}
-
-// Add state to signature table
-static void add_state_to_signature_table(int state, uint64_t signature) {
-    unsigned int hash = hash_signature(signature);
-
-    StateSignature* new_entry = malloc(sizeof(StateSignature));
-    if (new_entry == NULL) {
-        return; // Memory allocation failed
-    }
-
-    new_entry->signature = signature;
-    new_entry->state_index = state;
-    new_entry->next = signature_table[hash];
-    signature_table[hash] = new_entry;
 }
 
 // Add tag to state
@@ -427,7 +270,7 @@ void parse_advanced_pattern(const char* line) {
                 // Add more escape sequences as needed
             }
 
-            int new_state = nfa_add_state_with_minimization(false);
+            int new_state = nfa_add_state(false);
             nfa_add_transition(current_state, new_state, escaped_char);
             current_state = new_state;
             continue;
@@ -436,37 +279,36 @@ void parse_advanced_pattern(const char* line) {
         // Handle whitespace based on quote context
         if (c == ' ' && !in_quote) {
             // Normalizing whitespace - matches any sequence of 1+ space/tab chars
-            int new_state = nfa_add_state_with_minimization(false);
+            int new_state = nfa_add_state(false);
             nfa_add_transition(current_state, new_state, DFA_CHAR_NORMALIZING_SPACE);
             // Add self-loop for additional whitespace characters
             nfa_add_transition(new_state, new_state, DFA_CHAR_NORMALIZING_SPACE);
             current_state = new_state;
         } else if (c == ' ' && in_quote) {
             // Verbatim whitespace - matches exactly one space character
-            int new_state = nfa_add_state_with_minimization(false);
+            int new_state = nfa_add_state(false);
             nfa_add_transition(current_state, new_state, DFA_CHAR_VERBATIM_SPACE);
             current_state = new_state;
         } else if (c == '*') {
             // Wildcard: create epsilon transitions
-            int new_state = nfa_add_state_with_minimization(false);
+            int new_state = nfa_add_state(false);
             nfa_add_transition(current_state, new_state, DFA_CHAR_ANY);
             nfa_add_transition(new_state, new_state, DFA_CHAR_ANY);
             current_state = new_state;
         } else if (c == '?') {
             // Single character wildcard
-            int new_state = nfa_add_state_with_minimization(false);
+            int new_state = nfa_add_state(false);
             nfa_add_transition(current_state, new_state, DFA_CHAR_ANY);
             current_state = new_state;
         } else {
             // Regular character
-            int new_state = nfa_add_state_with_minimization(false);
+            int new_state = nfa_add_state(false);
             nfa_add_transition(current_state, new_state, c);
             current_state = new_state;
         }
     }
 
     // Mark final state as accepting and add tags
-    // First, we need to set the tags and then check for minimization
     nfa[current_state].accepting = true;
     nfa_add_tag(current_state, category);
     if (subcategory[0] != '\0') {
@@ -476,18 +318,6 @@ void parse_advanced_pattern(const char* line) {
         nfa_add_tag(current_state, operations);
     }
     nfa_add_tag(current_state, action);
-
-    // Now check if this accepting state is equivalent to any existing state
-    uint64_t signature = compute_state_signature(current_state);
-    int equivalent_state = find_equivalent_state(signature, current_state);
-
-    if (equivalent_state != -1) {
-        // Merge with existing equivalent state
-        current_state = equivalent_state;
-    } else {
-        // Add to signature table
-        add_state_to_signature_table(current_state, signature);
-    }
 }
 
 // Read advanced command specification file
@@ -587,7 +417,7 @@ int main(int argc, char* argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <spec_file> [output.nfa]\n", argv[0]);
         fprintf(stderr, "\n");
-        fprintf(stderr, "Advanced NFA Builder with Termination Tags\n");
+        fprintf(stderr, "Advanced NFA Builder with Termination Tags (NO MINIMIZATION)\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "Example:\n");
         fprintf(stderr, "  %s commands_advanced.txt readonlybox.nfa\n", argv[0]);
@@ -597,8 +427,8 @@ int main(int argc, char* argv[]) {
     const char* spec_file = argv[1];
     const char* output_file = argc > 2 ? argv[2] : "readonlybox.nfa";
 
-    printf("Advanced NFA Builder\n");
-    printf("====================\n\n");
+    printf("Advanced NFA Builder (NO MINIMIZATION)\n");
+    printf("======================================\n\n");
 
     // Read specification
     read_advanced_spec_file(spec_file);

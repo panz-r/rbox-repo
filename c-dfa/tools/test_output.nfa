@@ -1,0 +1,200 @@
+NFA
+States: 33
+Initial: 0
+
+State 0:
+  Accepting: no
+  Transitions: 8
+    'c' -> 9
+    'g' -> 5
+    'l' -> 29
+    'p' -> 22
+
+State 1:
+  Accepting: no
+  Transitions: 2
+    'i' -> 1
+    't' -> 2
+
+State 2:
+  Accepting: no
+  Transitions: 3
+    0x04 -> 2
+    'l' -> 3
+
+State 3:
+  Accepting: no
+  Transitions: 2
+    'g' -> 4
+    'o' -> 3
+
+State 4:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+
+State 5:
+  Accepting: no
+  Transitions: 2
+    'i' -> 5
+    't' -> 6
+
+State 6:
+  Accepting: no
+  Transitions: 3
+    0x04 -> 6
+    's' -> 7
+
+State 7:
+  Accepting: no
+  Transitions: 2
+    'h' -> 7
+    'o' -> 8
+
+State 8:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 1
+    'w' -> 8
+
+State 9:
+  Accepting: no
+  Transitions: 2
+    'a' -> 9
+    't' -> 10
+
+State 10:
+  Accepting: no
+  Transitions: 3
+    0x04 -> 10
+    'f' -> 11
+
+State 11:
+  Accepting: no
+  Transitions: 2
+    'i' -> 11
+    'l' -> 12
+
+State 12:
+  Accepting: yes
+  Tags: safe text read allow
+  Transitions: 1
+    'e' -> 12
+
+State 13:
+  Accepting: no
+  Transitions: 2
+    'e' -> 13
+    's' -> 14
+
+State 14:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 15
+    's' -> 14
+
+State 15:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 15
+    'f' -> 16
+
+State 16:
+  Accepting: no
+  Transitions: 2
+    'i' -> 16
+    'l' -> 17
+
+State 17:
+  Accepting: yes
+  Tags: safe text read allow
+  Transitions: 1
+    'e' -> 17
+
+State 18:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 19
+    's' -> 18
+
+State 19:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 19
+    'a' -> 20
+
+State 20:
+  Accepting: no
+  Transitions: 2
+    'u' -> 20
+    'x' -> 21
+
+State 21:
+  Accepting: yes
+  Tags: safe system info allow
+  Transitions: 0
+
+State 22:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 23
+    's' -> 22
+
+State 23:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 23
+    '-' -> 24
+
+State 24:
+  Accepting: no
+  Transitions: 2
+    'e' -> 24
+    'f' -> 25
+
+State 25:
+  Accepting: yes
+  Tags: safe system info allow
+  Transitions: 0
+
+State 26:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 27
+    's' -> 26
+
+State 27:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 27
+    '-' -> 28
+
+State 28:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 1
+    'l' -> 28
+
+State 29:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 30
+    's' -> 29
+
+State 30:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 30
+    '-' -> 31
+
+State 31:
+  Accepting: no
+  Transitions: 2
+    'a' -> 32
+    'l' -> 31
+
+State 32:
+  Accepting: yes
+  Tags: safe file read allow
+  Transitions: 0
+

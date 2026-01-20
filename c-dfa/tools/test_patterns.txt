@@ -1,0 +1,18 @@
+# Test patterns for minimization
+# These patterns should result in some state merging
+
+# Simple identical patterns
+[safe:file:read] git log -> allow
+[safe:file:read] git show -> allow
+
+# Patterns with same structure
+[safe:text:read] cat file -> allow
+[safe:text:read] less file -> allow
+
+# Patterns that should share common prefixes
+[safe:system:info] ps aux -> allow
+[safe:system:info] ps -ef -> allow
+
+# More patterns to test state merging
+[safe:file:read] ls -l -> allow
+[safe:file:read] ls -la -> allow
