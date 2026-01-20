@@ -6,22 +6,11 @@
 #include <ctype.h>
 #include "../include/dfa_types.h"
 
-// Forward declarations for minimization functions
-static uint64_t compute_state_signature(int state);
-static int find_equivalent_state(uint64_t signature, int current_state);
-static void add_state_to_signature_table(int state, uint64_t signature);
-
 /**
- * Advanced NFA Builder with Termination Tags
+ * Advanced NFA Builder with Alphabet Support
  *
  * This tool builds NFA (Non-deterministic Finite Automata) from advanced
- * command specifications that include:
- * - Command categories (safe, caution, modifying, etc.)
- * - Subcategories (file, text, system, etc.)
- * - Operations (read, write, execute, etc.)
- * - Actions (allow, block, audit, etc.)
- *
- * The NFA is then converted to DFA by nfa2dfa.
+ * command specifications using an optimized alphabet to reduce DFA state space.
  */
 
 #define MAX_STATES 4096
@@ -30,14 +19,34 @@ static void add_state_to_signature_table(int state, uint64_t signature);
 #define MAX_LINE_LENGTH 2048
 #define MAX_TAGS 16
 #define SIGNATURE_TABLE_SIZE 1024
+#define MAX_SYMBOLS 64
 
-// NFA State with termination tags
+// Character class definition
+typedef struct {
+    char start_char;
+    char end_char;
+    int symbol_id;
+    bool is_special;
+} char_class_t;
+
+// Negated transition structure
+typedef struct {
+    int target_state;
+    char excluded_chars[MAX_SYMBOLS];
+    int excluded_count;
+} negated_transition_t;
+
+// NFA State with termination tags and negated transitions
 typedef struct {
     bool accepting;
     char* tags[MAX_TAGS];          // Termination tags
     int tag_count;
-    int transitions[MAX_CHARS];    // -1 = no transition, otherwise state index
+    int transitions[MAX_SYMBOLS];  // -1 = no transition, otherwise state index
     int transition_count;
+    
+    // Negated transitions: target state + excluded characters
+    negated_transition_t negated_transitions[MAX_SYMBOLS];
+    int negated_transition_count;
 } nfa_state_t;
 
 // State signature for on-the-fly minimization
@@ -61,6 +70,8 @@ typedef struct {
 // Global variables
 static nfa_state_t nfa[MAX_STATES];
 static command_pattern_t patterns[MAX_PATTERNS];
+static char_class_t alphabet[MAX_SYMBOLS];
+static int alphabet_size = 0;
 static int nfa_state_count = 0;
 static int pattern_count = 0;
 static StateSignature* signature_table[SIGNATURE_TABLE_SIZE] = {NULL};
@@ -91,40 +102,165 @@ void nfa_init(void) {
         for (int j = 0; j < MAX_TAGS; j++) {
             nfa[i].tags[j] = NULL;
         }
-        for (int j = 0; j < MAX_CHARS; j++) {
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
             nfa[i].transitions[j] = -1;
         }
         nfa[i].transition_count = 0;
+        
+        // Initialize negated transitions
+        nfa[i].negated_transition_count = 0;
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            nfa[i].negated_transitions[j].target_state = -1;
+            nfa[i].negated_transitions[j].excluded_count = 0;
+            for (int k = 0; k < MAX_SYMBOLS; k++) {
+                nfa[i].negated_transitions[j].excluded_chars[k] = 0;
+            }
+        }
     }
     nfa_state_count = 1; // State 0 is initial state
 }
 
-// Add NFA state with on-the-fly minimization
-int nfa_add_state(bool accepting) {
-    if (nfa_state_count >= MAX_STATES) {
-        fprintf(stderr, "Error: Maximum NFA states reached\n");
+// Negated transition helper functions
+bool is_char_excluded(negated_transition_t* neg_trans, char test_char) {
+    for (int i = 0; i < neg_trans->excluded_count; i++) {
+        if (neg_trans->excluded_chars[i] == test_char) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool can_add_to_negated_transition(negated_transition_t* neg_trans, char new_char) {
+    // Check if we have space and the char isn't already excluded
+    return neg_trans->excluded_count < MAX_SYMBOLS && 
+           !is_char_excluded(neg_trans, new_char);
+}
+
+negated_transition_t* find_negated_transition_for_target(nfa_state_t* state, int target_state) {
+    for (int i = 0; i < state->negated_transition_count; i++) {
+        if (state->negated_transitions[i].target_state == target_state) {
+            return &state->negated_transitions[i];
+        }
+    }
+    return NULL;
+}
+
+bool should_use_negation(int from_state, int to_state, char input_char) {
+    // More aggressive heuristic: use negation more frequently
+    // 1. Always use if we already have a negated transition to this target
+    // 2. Use if we're adding a second transition to the same target
+    // 3. Use for common patterns that benefit from negation
+    
+    nfa_state_t* state = &nfa[from_state];
+    
+    // If we already have a negated transition to this target, always use it
+    if (find_negated_transition_for_target(state, to_state) != NULL) {
+        return true;
+    }
+    
+    // Count how many transitions go to this target
+    int transitions_to_target = 0;
+    for (int c = 0; c < MAX_SYMBOLS; c++) {
+        if (state->transitions[c] == to_state) {
+            transitions_to_target++;
+        }
+    }
+    
+    // Use negation if we'd have 2 or more transitions to the same target
+    // This is more aggressive than the previous threshold of 3
+    return transitions_to_target >= 1; // Use negation for any duplicate target
+}
+
+void add_negated_transition(int from_state, int to_state, char excluded_char) {
+    nfa_state_t* state = &nfa[from_state];
+    
+    // Check if we already have a negated transition to this target
+    negated_transition_t* existing_neg_trans = find_negated_transition_for_target(state, to_state);
+    
+    if (existing_neg_trans != NULL) {
+        // Add to existing negated transition
+        if (can_add_to_negated_transition(existing_neg_trans, excluded_char)) {
+            existing_neg_trans->excluded_chars[existing_neg_trans->excluded_count++] = excluded_char;
+            return;
+        }
+    }
+    
+    // Create new negated transition
+    if (state->negated_transition_count < MAX_SYMBOLS) {
+        negated_transition_t* new_neg_trans = &state->negated_transitions[state->negated_transition_count++];
+        new_neg_trans->target_state = to_state;
+        new_neg_trans->excluded_chars[0] = excluded_char;
+        new_neg_trans->excluded_count = 1;
+    }
+}
+
+// Load alphabet from file
+void load_alphabet(const char* filename) {
+    FILE* file = fopen(filename, "r");
+    if (file == NULL) {
+        fprintf(stderr, "Error: Cannot open alphabet file %s\n", filename);
         exit(1);
     }
 
-    int state = nfa_state_count;
-    nfa[state].accepting = accepting;
-    nfa[state].tag_count = 0;
-    for (int j = 0; j < MAX_TAGS; j++) {
-        nfa[state].tags[j] = NULL;
-    }
-    for (int j = 0; j < MAX_CHARS; j++) {
-        nfa[state].transitions[j] = -1;
-    }
-    nfa[state].transition_count = 0;
-    nfa_state_count++;
+    char line[MAX_LINE_LENGTH];
+    alphabet_size = 0;
 
-    return state;
+    while (fgets(line, sizeof(line), file)) {
+        // Skip comments and empty lines
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\0') {
+            continue;
+        }
+
+        int symbol_id, start_char, end_char;
+        char special[16] = "";
+
+        if (sscanf(line, "%d %d %d %15s", &symbol_id, &start_char, &end_char, special) >= 3) {
+            if (alphabet_size >= MAX_SYMBOLS) {
+                fprintf(stderr, "Error: Maximum symbols reached\n");
+                exit(1);
+            }
+
+            alphabet[alphabet_size].symbol_id = symbol_id;
+            alphabet[alphabet_size].start_char = (char)start_char;
+            alphabet[alphabet_size].end_char = (char)end_char;
+            alphabet[alphabet_size].is_special = (strcmp(special, "special") == 0);
+            alphabet_size++;
+        }
+    }
+
+    fclose(file);
+    printf("Loaded alphabet with %d symbols from %s\n", alphabet_size, filename);
 }
 
-// Add NFA state with on-the-fly minimization check
+// Find symbol ID for a character
+int find_symbol_id(char c) {
+    for (int i = 0; i < alphabet_size; i++) {
+        if (c >= alphabet[i].start_char && c <= alphabet[i].end_char) {
+            return alphabet[i].symbol_id;
+        }
+    }
+    return -1; // Not found
+}
+
+// Forward declarations for minimization functions
+static uint64_t compute_state_signature(int state);
+static int find_equivalent_state(uint64_t signature, int current_state);
+static void add_state_to_signature_table(int state, uint64_t signature);
+
+// Add NFA state with on-the-fly minimization
 int nfa_add_state_with_minimization(bool accepting) {
     // First create the state normally
-    int new_state = nfa_add_state(accepting);
+    int new_state = nfa_state_count;
+    nfa[new_state].accepting = accepting;
+    nfa[new_state].tag_count = 0;
+    for (int j = 0; j < MAX_TAGS; j++) {
+        nfa[new_state].tags[j] = NULL;
+    }
+    for (int j = 0; j < MAX_SYMBOLS; j++) {
+        nfa[new_state].transitions[j] = -1;
+    }
+    nfa[new_state].transition_count = 0;
+    nfa_state_count++;
 
     // Compute signature for this state
     uint64_t signature = compute_state_signature(new_state);
@@ -144,7 +280,7 @@ int nfa_add_state_with_minimization(bool accepting) {
         nfa[new_state].tag_count = 0;
         nfa[new_state].accepting = false;
         nfa[new_state].transition_count = 0;
-        for (int j = 0; j < MAX_CHARS; j++) {
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
             nfa[new_state].transitions[j] = -1;
         }
 
@@ -194,10 +330,10 @@ static uint64_t compute_state_signature(int state) {
     }
 
     // Include transitions in signature
-    for (int c = 0; c < MAX_CHARS; c++) {
-        if (nfa[state].transitions[c] != -1) {
-            signature = signature * 31 + c;
-            signature = signature * 31 + nfa[state].transitions[c];
+    for (int s = 0; s < MAX_SYMBOLS; s++) {
+        if (nfa[state].transitions[s] != -1) {
+            signature = signature * 31 + s;
+            signature = signature * 31 + nfa[state].transitions[s];
         }
     }
 
@@ -229,8 +365,8 @@ static int find_equivalent_state(uint64_t signature, int current_state) {
 
                 // Check transitions
                 bool transitions_match = true;
-                for (int c = 0; c < MAX_CHARS; c++) {
-                    if (nfa[current_state].transitions[c] != nfa[candidate_state].transitions[c]) {
+                for (int s = 0; s < MAX_SYMBOLS; s++) {
+                    if (nfa[current_state].transitions[s] != nfa[candidate_state].transitions[s]) {
                         transitions_match = false;
                         break;
                     }
@@ -276,20 +412,26 @@ void nfa_add_tag(int state, const char* tag) {
     nfa[state].tag_count++;
 }
 
-// Add NFA transition
-void nfa_add_transition(int from, int to, char c) {
+// Add NFA transition using symbol ID
+void nfa_add_transition(int from, int to, int symbol_id) {
     if (from < 0 || from >= nfa_state_count || to < 0 || to >= nfa_state_count) {
         fprintf(stderr, "Error: Invalid state index\n");
         exit(1);
     }
 
-    if (c < 0 || c >= MAX_CHARS) {
-        fprintf(stderr, "Error: Invalid character\n");
+    if (symbol_id < 0 || symbol_id >= MAX_SYMBOLS) {
+        fprintf(stderr, "Error: Invalid symbol ID\n");
         exit(1);
     }
 
-    nfa[from].transitions[c] = to;
-    nfa[from].transition_count++;
+    // Check if we should use a negated transition instead
+    if (should_use_negation(from, to, symbol_id)) {
+        add_negated_transition(from, to, symbol_id);
+    } else {
+        // Use regular transition
+        nfa[from].transitions[symbol_id] = to;
+        nfa[from].transition_count++;
+    }
 }
 
 // Parse category ID
@@ -392,7 +534,7 @@ void parse_advanced_pattern(const char* line) {
         pattern_count++;
     }
 
-    // Build NFA for this pattern with enhanced whitespace handling
+    // Build NFA for this pattern with alphabet support
     int current_state = 0;
     int pattern_len = strlen(pattern);
     bool in_quote = false;
@@ -427,8 +569,14 @@ void parse_advanced_pattern(const char* line) {
                 // Add more escape sequences as needed
             }
 
+            int symbol_id = find_symbol_id(escaped_char);
+            if (symbol_id == -1) {
+                // Character not in alphabet, skip or handle error
+                continue;
+            }
+
             int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, escaped_char);
+            nfa_add_transition(current_state, new_state, symbol_id);
             current_state = new_state;
             continue;
         }
@@ -436,37 +584,65 @@ void parse_advanced_pattern(const char* line) {
         // Handle whitespace based on quote context
         if (c == ' ' && !in_quote) {
             // Normalizing whitespace - matches any sequence of 1+ space/tab chars
+            int symbol_id = find_symbol_id(DFA_CHAR_NORMALIZING_SPACE);
+            if (symbol_id == -1) {
+                symbol_id = find_symbol_id(' '); // Fallback to regular space
+            }
+
             int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, DFA_CHAR_NORMALIZING_SPACE);
+            nfa_add_transition(current_state, new_state, symbol_id);
             // Add self-loop for additional whitespace characters
-            nfa_add_transition(new_state, new_state, DFA_CHAR_NORMALIZING_SPACE);
+            nfa_add_transition(new_state, new_state, symbol_id);
             current_state = new_state;
         } else if (c == ' ' && in_quote) {
             // Verbatim whitespace - matches exactly one space character
+            int symbol_id = find_symbol_id(DFA_CHAR_VERBATIM_SPACE);
+            if (symbol_id == -1) {
+                symbol_id = find_symbol_id(' '); // Fallback to regular space
+            }
+
             int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, DFA_CHAR_VERBATIM_SPACE);
+            nfa_add_transition(current_state, new_state, symbol_id);
             current_state = new_state;
         } else if (c == '*') {
             // Wildcard: create epsilon transitions
+            int symbol_id = find_symbol_id(DFA_CHAR_ANY);
+            if (symbol_id == -1) {
+                // ANY symbol not found, this is a problem
+                fprintf(stderr, "Error: ANY symbol not found in alphabet\n");
+                exit(1);
+            }
+
             int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, DFA_CHAR_ANY);
-            nfa_add_transition(new_state, new_state, DFA_CHAR_ANY);
+            nfa_add_transition(current_state, new_state, symbol_id);
+            nfa_add_transition(new_state, new_state, symbol_id);
             current_state = new_state;
         } else if (c == '?') {
             // Single character wildcard
+            int symbol_id = find_symbol_id(DFA_CHAR_ANY);
+            if (symbol_id == -1) {
+                fprintf(stderr, "Error: ANY symbol not found in alphabet\n");
+                exit(1);
+            }
+
             int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, DFA_CHAR_ANY);
+            nfa_add_transition(current_state, new_state, symbol_id);
             current_state = new_state;
         } else {
             // Regular character
+            int symbol_id = find_symbol_id(c);
+            if (symbol_id == -1) {
+                // Character not in alphabet, skip or handle error
+                continue;
+            }
+
             int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, c);
+            nfa_add_transition(current_state, new_state, symbol_id);
             current_state = new_state;
         }
     }
 
     // Mark final state as accepting and add tags
-    // First, we need to set the tags and then check for minimization
     nfa[current_state].accepting = true;
     nfa_add_tag(current_state, category);
     if (subcategory[0] != '\0') {
@@ -477,7 +653,7 @@ void parse_advanced_pattern(const char* line) {
     }
     nfa_add_tag(current_state, action);
 
-    // Now check if this accepting state is equivalent to any existing state
+    // Check for minimization
     uint64_t signature = compute_state_signature(current_state);
     int equivalent_state = find_equivalent_state(signature, current_state);
 
@@ -535,9 +711,24 @@ void write_nfa_file(const char* filename) {
     }
 
     // Write header
-    fprintf(file, "NFA\n");
+    fprintf(file, "NFA_ALPHABET\n");
+    fprintf(file, "AlphabetSize: %d\n", alphabet_size);
     fprintf(file, "States: %d\n", nfa_state_count);
     fprintf(file, "Initial: 0\n\n");
+
+    // Write alphabet mapping
+    fprintf(file, "Alphabet:\n");
+    for (int i = 0; i < alphabet_size; i++) {
+        fprintf(file, "  Symbol %d: %d-%d",
+                alphabet[i].symbol_id,
+                (int)alphabet[i].start_char,
+                (int)alphabet[i].end_char);
+        if (alphabet[i].is_special) {
+            fprintf(file, " (special)");
+        }
+        fprintf(file, "\n");
+    }
+    fprintf(file, "\n");
 
     // Write states
     for (int i = 0; i < nfa_state_count; i++) {
@@ -554,23 +745,30 @@ void write_nfa_file(const char* filename) {
 
         fprintf(file, "  Transitions: %d\n", nfa[i].transition_count);
 
-        for (int c = 0; c < MAX_CHARS; c++) {
-            if (nfa[i].transitions[c] != -1) {
-                if (isprint(c)) {
-                    fprintf(file, "    '%c' -> %d\n", c, nfa[i].transitions[c]);
-                } else if (c == DFA_CHAR_ANY) {
-                    fprintf(file, "    ANY -> %d\n", nfa[i].transitions[c]);
-                } else {
-                    fprintf(file, "    0x%02x -> %d\n", c, nfa[i].transitions[c]);
-                }
+        for (int s = 0; s < MAX_SYMBOLS; s++) {
+            if (nfa[i].transitions[s] != -1) {
+                fprintf(file, "    Symbol %d -> %d\n", s, nfa[i].transitions[s]);
             }
+        }
+
+        // Write negated transitions
+        for (int n = 0; n < nfa[i].negated_transition_count; n++) {
+            negated_transition_t* neg_trans = &nfa[i].negated_transitions[n];
+            fprintf(file, "    NotSymbol ");
+            
+            // Write excluded characters
+            for (int e = 0; e < neg_trans->excluded_count; e++) {
+                if (e > 0) fprintf(file, ",");
+                fprintf(file, "%d", neg_trans->excluded_chars[e]);
+            }
+            fprintf(file, " -> %d\n", neg_trans->target_state);
         }
 
         fprintf(file, "\n");
     }
 
     fclose(file);
-    printf("Wrote NFA with %d states to %s\n", nfa_state_count, filename);
+    printf("Wrote NFA with %d states and %d symbols to %s\n", nfa_state_count, alphabet_size, filename);
 }
 
 // Cleanup
@@ -584,21 +782,25 @@ void cleanup(void) {
 
 // Main function
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <spec_file> [output.nfa]\n", argv[0]);
+    if (argc < 3) {
+        fprintf(stderr, "Usage: %s <alphabet_file> <spec_file> [output.nfa]\n", argv[0]);
         fprintf(stderr, "\n");
-        fprintf(stderr, "Advanced NFA Builder with Termination Tags\n");
+        fprintf(stderr, "Advanced NFA Builder with Alphabet Support\n");
         fprintf(stderr, "\n");
         fprintf(stderr, "Example:\n");
-        fprintf(stderr, "  %s commands_advanced.txt readonlybox.nfa\n", argv[0]);
+        fprintf(stderr, "  %s alphabet.map commands_advanced.txt readonlybox.nfa\n", argv[0]);
         return 1;
     }
 
-    const char* spec_file = argv[1];
-    const char* output_file = argc > 2 ? argv[2] : "readonlybox.nfa";
+    const char* alphabet_file = argv[1];
+    const char* spec_file = argv[2];
+    const char* output_file = argc > 3 ? argv[3] : "readonlybox.nfa";
 
-    printf("Advanced NFA Builder\n");
-    printf("====================\n\n");
+    printf("Advanced NFA Builder with Alphabet Support\n");
+    printf("===========================================\n\n");
+
+    // Load alphabet
+    load_alphabet(alphabet_file);
 
     // Read specification
     read_advanced_spec_file(spec_file);
@@ -610,8 +812,8 @@ int main(int argc, char* argv[]) {
     cleanup();
 
     printf("\nDone!\n");
-    printf("Next step: Run nfa2dfa to convert NFA to DFA\n");
-    printf("  nfa2dfa %s readonlybox.dfa\n", output_file);
+    printf("Next step: Run nfa2dfa_with_alphabet to convert NFA to DFA\n");
+    printf("  nfa2dfa_with_alphabet %s readonlybox.dfa\n", output_file);
 
     return 0;
 }

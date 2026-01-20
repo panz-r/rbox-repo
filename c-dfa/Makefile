@@ -50,6 +50,13 @@ dfa: $(BUILD_DIR)
 	@cd $(BUILD_DIR) && ../tools/nfa_builder ../tools/commands.txt
 	@cd $(BUILD_DIR) && ../tools/nfa2dfa_advanced readonlybox.nfa readonlybox.dfa
 
+# Build DFA with alphabet optimization
+dfa-alphabet: $(BUILD_DIR)
+	@echo "Building DFA with alphabet optimization..."
+	@cd $(BUILD_DIR) && ../tools/alphabet_constructor ../test_commands.txt alphabet.map
+	@cd $(BUILD_DIR) && ../tools/nfa_builder_with_alphabet alphabet.map ../test_commands.txt readonlybox_alphabet.nfa
+	@cd $(BUILD_DIR) && ../tools/nfa2dfa_with_alphabet readonlybox_alphabet.nfa readonlybox_alphabet.dfa
+
 # Quick test
 quick: tokenizer_test
 	@./tokenizer_test "cat xx | less -G > rsr"

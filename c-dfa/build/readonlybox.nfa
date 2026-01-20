@@ -1,181 +1,206 @@
 NFA
-States: 385
+States: 378
 Initial: 0
 
 State 0:
   Accepting: no
-  Transitions: 51
-    'c' -> 4
-    'd' -> 137
-    'f' -> 371
-    'g' -> 342
-    'h' -> 13
-    'l' -> 75
-    'm' -> 55
-    'p' -> 87
-    't' -> 23
-    'w' -> 81
+  Transitions: 73
+    '/' -> 251
+    'c' -> 3
+    'd' -> 221
+    'g' -> 370
+    'h' -> 22
+    'l' -> 153
+    'm' -> 110
+    'p' -> 187
+    't' -> 43
+    'u' -> 240
+    'w' -> 170
 
 State 1:
   Accepting: no
-  Transitions: 1
-    'a' -> 2
+  Transitions: 2
+    'a' -> 1
+    't' -> 2
 
 State 2:
-  Accepting: no
-  Transitions: 1
-    't' -> 3
-
-State 3:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
+State 3:
+  Accepting: no
+  Transitions: 2
+    'a' -> 3
+    't' -> 4
+
 State 4:
   Accepting: no
-  Transitions: 1
-    'a' -> 5
+  Transitions: 3
+    ANY -> 5
+    0x04 -> 4
 
 State 5:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    't' -> 6
+    ANY -> 5
 
 State 6:
   Accepting: no
-  Transitions: 1
-    0x04 -> 7
+  Transitions: 2
+    's' -> 7
+    'u' -> 6
 
 State 7:
   Accepting: no
   Transitions: 2
-    ANY -> 8
-    0x04 -> 7
+    '/' -> 8
+    'r' -> 7
 
 State 8:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 8
+  Accepting: no
+  Transitions: 2
+    'b' -> 8
+    'i' -> 9
 
 State 9:
   Accepting: no
-  Transitions: 1
-    'e' -> 10
+  Transitions: 2
+    '/' -> 10
+    'n' -> 9
 
 State 10:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
     'a' -> 11
+    'c' -> 10
 
 State 11:
-  Accepting: no
-  Transitions: 1
-    'd' -> 12
-
-State 12:
   Accepting: yes
   Tags: safe allow
-  Transitions: 0
+  Transitions: 1
+    't' -> 11
+
+State 12:
+  Accepting: no
+  Transitions: 2
+    's' -> 13
+    'u' -> 12
 
 State 13:
   Accepting: no
-  Transitions: 1
-    'e' -> 14
+  Transitions: 2
+    '/' -> 14
+    'r' -> 13
 
 State 14:
   Accepting: no
-  Transitions: 1
-    'a' -> 15
+  Transitions: 2
+    'b' -> 14
+    'i' -> 15
 
 State 15:
   Accepting: no
-  Transitions: 1
-    'd' -> 16
+  Transitions: 2
+    '/' -> 16
+    'n' -> 15
 
 State 16:
   Accepting: no
-  Transitions: 1
-    0x04 -> 17
+  Transitions: 2
+    'a' -> 17
+    'c' -> 16
 
 State 17:
   Accepting: no
   Transitions: 2
-    ANY -> 18
-    0x04 -> 17
+    0x04 -> 18
+    't' -> 17
 
 State 18:
+  Accepting: no
+  Transitions: 2
+    ANY -> 19
+    0x04 -> 18
+
+State 19:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 18
-
-State 19:
-  Accepting: no
-  Transitions: 1
-    'a' -> 20
+    ANY -> 19
 
 State 20:
   Accepting: no
-  Transitions: 1
-    'i' -> 21
+  Transitions: 2
+    'a' -> 21
+    'e' -> 20
 
 State 21:
-  Accepting: no
-  Transitions: 1
-    'l' -> 22
-
-State 22:
   Accepting: yes
   Tags: safe allow
-  Transitions: 0
+  Transitions: 1
+    'd' -> 21
+
+State 22:
+  Accepting: no
+  Transitions: 2
+    'a' -> 23
+    'e' -> 22
 
 State 23:
   Accepting: no
-  Transitions: 1
-    'a' -> 24
+  Transitions: 2
+    0x04 -> 24
+    'd' -> 23
 
 State 24:
   Accepting: no
-  Transitions: 1
-    'i' -> 25
+  Transitions: 2
+    ANY -> 25
+    0x04 -> 24
 
 State 25:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'l' -> 26
+    ANY -> 25
 
 State 26:
   Accepting: no
-  Transitions: 1
-    0x04 -> 27
+  Transitions: 2
+    's' -> 27
+    'u' -> 26
 
 State 27:
   Accepting: no
   Transitions: 2
-    ANY -> 28
-    0x04 -> 27
+    '/' -> 28
+    'r' -> 27
 
 State 28:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 28
+  Accepting: no
+  Transitions: 2
+    'b' -> 28
+    'i' -> 29
 
 State 29:
   Accepting: no
-  Transitions: 1
-    'r' -> 30
+  Transitions: 2
+    '/' -> 30
+    'n' -> 29
 
 State 30:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
     'e' -> 31
+    'h' -> 30
 
 State 31:
   Accepting: no
-  Transitions: 1
-    'p' -> 32
+  Transitions: 2
+    'a' -> 31
+    'd' -> 32
 
 State 32:
   Accepting: yes
@@ -184,39 +209,43 @@ State 32:
 
 State 33:
   Accepting: no
-  Transitions: 1
-    'r' -> 34
+  Transitions: 2
+    's' -> 34
+    'u' -> 33
 
 State 34:
   Accepting: no
-  Transitions: 1
-    'e' -> 35
+  Transitions: 2
+    '/' -> 35
+    'r' -> 34
 
 State 35:
   Accepting: no
-  Transitions: 1
-    'p' -> 36
+  Transitions: 2
+    'b' -> 35
+    'i' -> 36
 
 State 36:
   Accepting: no
-  Transitions: 1
-    0x04 -> 37
+  Transitions: 2
+    '/' -> 37
+    'n' -> 36
 
 State 37:
   Accepting: no
   Transitions: 2
-    ANY -> 38
-    0x04 -> 37
+    'e' -> 38
+    'h' -> 37
 
 State 38:
   Accepting: no
   Transitions: 2
-    ANY -> 38
-    0x04 -> 39
+    'a' -> 38
+    'd' -> 39
 
 State 39:
   Accepting: no
-  Transitions: 2
+  Transitions: 3
     ANY -> 40
     0x04 -> 39
 
@@ -228,459 +257,517 @@ State 40:
 
 State 41:
   Accepting: no
-  Transitions: 1
-    'e' -> 42
+  Transitions: 2
+    'a' -> 41
+    'i' -> 42
 
 State 42:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    's' -> 43
+    'l' -> 42
 
 State 43:
   Accepting: no
-  Transitions: 1
-    's' -> 44
+  Transitions: 2
+    'a' -> 43
+    'i' -> 44
 
 State 44:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 0
+  Accepting: no
+  Transitions: 2
+    0x04 -> 45
+    'l' -> 44
 
 State 45:
   Accepting: no
-  Transitions: 1
-    'e' -> 46
+  Transitions: 2
+    ANY -> 46
+    0x04 -> 45
 
 State 46:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    's' -> 47
+    ANY -> 46
 
 State 47:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
     's' -> 48
+    'u' -> 47
 
 State 48:
   Accepting: no
-  Transitions: 1
-    0x04 -> 49
+  Transitions: 2
+    '/' -> 49
+    'r' -> 48
 
 State 49:
   Accepting: no
   Transitions: 2
-    ANY -> 50
-    0x04 -> 49
+    'b' -> 49
+    'i' -> 50
 
 State 50:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 50
+  Accepting: no
+  Transitions: 2
+    '/' -> 51
+    'n' -> 50
 
 State 51:
   Accepting: no
-  Transitions: 1
-    'o' -> 52
+  Transitions: 2
+    'a' -> 52
+    't' -> 51
 
 State 52:
   Accepting: no
-  Transitions: 1
-    'r' -> 53
+  Transitions: 2
+    'i' -> 52
+    'l' -> 53
 
 State 53:
-  Accepting: no
-  Transitions: 1
-    'e' -> 54
-
-State 54:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
+State 54:
+  Accepting: no
+  Transitions: 2
+    's' -> 55
+    'u' -> 54
+
 State 55:
   Accepting: no
-  Transitions: 1
-    'o' -> 56
+  Transitions: 2
+    '/' -> 56
+    'r' -> 55
 
 State 56:
   Accepting: no
-  Transitions: 1
-    'r' -> 57
+  Transitions: 2
+    'b' -> 56
+    'i' -> 57
 
 State 57:
   Accepting: no
-  Transitions: 1
-    'e' -> 58
+  Transitions: 2
+    '/' -> 58
+    'n' -> 57
 
 State 58:
   Accepting: no
-  Transitions: 1
-    0x04 -> 59
+  Transitions: 2
+    'a' -> 59
+    't' -> 58
 
 State 59:
   Accepting: no
   Transitions: 2
-    ANY -> 60
-    0x04 -> 59
+    'i' -> 59
+    'l' -> 60
 
 State 60:
+  Accepting: no
+  Transitions: 3
+    ANY -> 61
+    0x04 -> 60
+
+State 61:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 60
-
-State 61:
-  Accepting: no
-  Transitions: 1
-    'a' -> 62
+    ANY -> 61
 
 State 62:
   Accepting: no
-  Transitions: 1
-    'g' -> 63
+  Transitions: 2
+    'e' -> 63
+    'r' -> 62
 
 State 63:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'e' -> 64
+    'p' -> 63
 
 State 64:
   Accepting: no
-  Transitions: 1
-    'r' -> 65
+  Transitions: 2
+    'e' -> 65
+    'r' -> 64
 
 State 65:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 0
+  Accepting: no
+  Transitions: 2
+    0x04 -> 66
+    'p' -> 65
 
 State 66:
   Accepting: no
-  Transitions: 1
-    'a' -> 67
+  Transitions: 2
+    ANY -> 67
+    0x04 -> 66
 
 State 67:
   Accepting: no
-  Transitions: 1
-    'g' -> 68
+  Transitions: 2
+    ANY -> 67
+    0x04 -> 68
 
 State 68:
   Accepting: no
-  Transitions: 1
-    'e' -> 69
+  Transitions: 2
+    ANY -> 69
+    0x04 -> 68
 
 State 69:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'r' -> 70
+    ANY -> 69
 
 State 70:
   Accepting: no
-  Transitions: 1
-    0x04 -> 71
+  Transitions: 2
+    's' -> 71
+    'u' -> 70
 
 State 71:
   Accepting: no
   Transitions: 2
-    ANY -> 72
-    0x04 -> 71
+    '/' -> 72
+    'r' -> 71
 
 State 72:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 72
+  Accepting: no
+  Transitions: 2
+    'b' -> 72
+    'i' -> 73
 
 State 73:
   Accepting: no
-  Transitions: 1
-    's' -> 74
+  Transitions: 2
+    '/' -> 74
+    'n' -> 73
 
 State 74:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 0
+  Accepting: no
+  Transitions: 2
+    'g' -> 74
+    'r' -> 75
 
 State 75:
   Accepting: no
-  Transitions: 1
-    's' -> 76
+  Transitions: 2
+    'e' -> 75
+    'p' -> 76
 
 State 76:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 77
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 0
 
 State 77:
   Accepting: no
   Transitions: 2
-    ANY -> 78
-    0x04 -> 77
+    's' -> 78
+    'u' -> 77
 
 State 78:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 78
+  Accepting: no
+  Transitions: 2
+    '/' -> 79
+    'r' -> 78
 
 State 79:
   Accepting: no
-  Transitions: 1
-    'c' -> 80
+  Transitions: 2
+    'b' -> 79
+    'i' -> 80
 
 State 80:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 0
+  Accepting: no
+  Transitions: 2
+    '/' -> 81
+    'n' -> 80
 
 State 81:
   Accepting: no
-  Transitions: 1
-    'c' -> 82
+  Transitions: 2
+    'g' -> 81
+    'r' -> 82
 
 State 82:
   Accepting: no
-  Transitions: 1
-    0x04 -> 83
+  Transitions: 2
+    'e' -> 82
+    'p' -> 83
 
 State 83:
   Accepting: no
-  Transitions: 2
+  Transitions: 3
     ANY -> 84
     0x04 -> 83
 
 State 84:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
+  Accepting: no
+  Transitions: 2
     ANY -> 84
+    0x04 -> 85
 
 State 85:
   Accepting: no
-  Transitions: 1
-    's' -> 86
+  Transitions: 2
+    ANY -> 86
+    0x04 -> 85
 
 State 86:
   Accepting: yes
   Tags: safe allow
-  Transitions: 0
+  Transitions: 1
+    ANY -> 86
 
 State 87:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
+    'e' -> 87
     's' -> 88
 
 State 88:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    0x04 -> 89
+    's' -> 88
 
 State 89:
   Accepting: no
   Transitions: 2
-    ANY -> 90
-    0x04 -> 89
+    'e' -> 89
+    's' -> 90
 
 State 90:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 90
+  Accepting: no
+  Transitions: 2
+    0x04 -> 91
+    's' -> 90
 
 State 91:
   Accepting: no
-  Transitions: 1
-    'i' -> 92
+  Transitions: 2
+    ANY -> 92
+    0x04 -> 91
 
 State 92:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'n' -> 93
+    ANY -> 92
 
 State 93:
   Accepting: no
-  Transitions: 1
-    'd' -> 94
+  Transitions: 2
+    's' -> 94
+    'u' -> 93
 
 State 94:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 0
+  Accepting: no
+  Transitions: 2
+    '/' -> 95
+    'r' -> 94
 
 State 95:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
+    'b' -> 95
     'i' -> 96
 
 State 96:
   Accepting: no
-  Transitions: 1
-    'n' -> 97
+  Transitions: 2
+    '/' -> 97
+    'n' -> 96
 
 State 97:
   Accepting: no
-  Transitions: 1
-    'd' -> 98
+  Transitions: 2
+    'e' -> 98
+    'l' -> 97
 
 State 98:
   Accepting: no
-  Transitions: 1
-    0x04 -> 99
+  Transitions: 2
+    's' -> 99
 
 State 99:
-  Accepting: no
-  Transitions: 2
-    ANY -> 100
-    0x04 -> 99
-
-State 100:
   Accepting: yes
   Tags: safe allow
-  Transitions: 1
-    ANY -> 100
+  Transitions: 0
+
+State 100:
+  Accepting: no
+  Transitions: 2
+    's' -> 101
+    'u' -> 100
 
 State 101:
   Accepting: no
-  Transitions: 1
-    'i' -> 102
+  Transitions: 2
+    '/' -> 102
+    'r' -> 101
 
 State 102:
   Accepting: no
-  Transitions: 1
-    'n' -> 103
+  Transitions: 2
+    'b' -> 102
+    'i' -> 103
 
 State 103:
   Accepting: no
-  Transitions: 1
-    'd' -> 104
+  Transitions: 2
+    '/' -> 104
+    'n' -> 103
 
 State 104:
   Accepting: no
-  Transitions: 1
-    0x04 -> 105
+  Transitions: 2
+    'e' -> 105
+    'l' -> 104
 
 State 105:
   Accepting: no
   Transitions: 2
-    ANY -> 106
-    0x04 -> 105
+    's' -> 106
 
 State 106:
   Accepting: no
-  Transitions: 2
-    ANY -> 106
-    0x04 -> 107
+  Transitions: 3
+    ANY -> 107
+    0x04 -> 106
 
 State 107:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 107
-    '-' -> 108
-
-State 108:
-  Accepting: no
-  Transitions: 1
-    'n' -> 109
-
-State 109:
-  Accepting: no
-  Transitions: 1
-    'a' -> 110
-
-State 110:
-  Accepting: no
-  Transitions: 1
-    'm' -> 111
-
-State 111:
-  Accepting: no
-  Transitions: 1
-    'e' -> 112
-
-State 112:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 113
-
-State 113:
-  Accepting: no
-  Transitions: 2
-    ANY -> 114
-    0x04 -> 113
-
-State 114:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 114
+    ANY -> 107
+
+State 108:
+  Accepting: no
+  Transitions: 2
+    'o' -> 108
+    'r' -> 109
+
+State 109:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    'e' -> 109
+
+State 110:
+  Accepting: no
+  Transitions: 2
+    'o' -> 110
+    'r' -> 111
+
+State 111:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 112
+    'e' -> 111
+
+State 112:
+  Accepting: no
+  Transitions: 2
+    ANY -> 113
+    0x04 -> 112
+
+State 113:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    ANY -> 113
+
+State 114:
+  Accepting: no
+  Transitions: 2
+    's' -> 115
+    'u' -> 114
 
 State 115:
   Accepting: no
-  Transitions: 1
-    'i' -> 116
+  Transitions: 2
+    '/' -> 116
+    'r' -> 115
 
 State 116:
   Accepting: no
-  Transitions: 1
-    'n' -> 117
+  Transitions: 2
+    'b' -> 116
+    'i' -> 117
 
 State 117:
   Accepting: no
-  Transitions: 1
-    'd' -> 118
+  Transitions: 2
+    '/' -> 118
+    'n' -> 117
 
 State 118:
   Accepting: no
-  Transitions: 1
-    0x04 -> 119
+  Transitions: 2
+    'm' -> 118
+    'o' -> 119
 
 State 119:
   Accepting: no
   Transitions: 2
-    ANY -> 120
-    0x04 -> 119
+    'e' -> 120
+    'r' -> 119
 
 State 120:
-  Accepting: no
-  Transitions: 2
-    ANY -> 120
-    0x04 -> 121
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 0
 
 State 121:
   Accepting: no
   Transitions: 2
-    0x04 -> 121
-    '-' -> 122
+    's' -> 122
+    'u' -> 121
 
 State 122:
   Accepting: no
-  Transitions: 1
-    't' -> 123
+  Transitions: 2
+    '/' -> 123
+    'r' -> 122
 
 State 123:
   Accepting: no
-  Transitions: 1
-    'y' -> 124
+  Transitions: 2
+    'b' -> 123
+    'i' -> 124
 
 State 124:
   Accepting: no
-  Transitions: 1
-    'p' -> 125
+  Transitions: 2
+    '/' -> 125
+    'n' -> 124
 
 State 125:
   Accepting: no
-  Transitions: 1
-    'e' -> 126
+  Transitions: 2
+    'm' -> 125
+    'o' -> 126
 
 State 126:
   Accepting: no
-  Transitions: 1
-    0x04 -> 127
+  Transitions: 2
+    'e' -> 127
+    'r' -> 126
 
 State 127:
   Accepting: no
-  Transitions: 2
+  Transitions: 3
     ANY -> 128
     0x04 -> 127
 
@@ -692,1208 +779,1384 @@ State 128:
 
 State 129:
   Accepting: no
-  Transitions: 1
-    'f' -> 130
+  Transitions: 2
+    'a' -> 129
+    'g' -> 130
 
 State 130:
+  Accepting: no
+  Transitions: 2
+    'e' -> 130
+    'r' -> 131
+
+State 131:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
-State 131:
-  Accepting: no
-  Transitions: 1
-    'f' -> 132
-
 State 132:
   Accepting: no
-  Transitions: 1
-    0x04 -> 133
+  Transitions: 2
+    'a' -> 132
+    'g' -> 133
 
 State 133:
   Accepting: no
   Transitions: 2
-    ANY -> 134
-    0x04 -> 133
+    'e' -> 133
+    'r' -> 134
 
 State 134:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 134
+  Accepting: no
+  Transitions: 3
+    ANY -> 135
+    0x04 -> 134
 
 State 135:
-  Accepting: no
-  Transitions: 1
-    'u' -> 136
-
-State 136:
   Accepting: yes
   Tags: safe allow
-  Transitions: 0
+  Transitions: 1
+    ANY -> 135
+
+State 136:
+  Accepting: no
+  Transitions: 2
+    's' -> 137
+    'u' -> 136
 
 State 137:
   Accepting: no
-  Transitions: 1
-    'u' -> 138
+  Transitions: 2
+    '/' -> 138
+    'r' -> 137
 
 State 138:
   Accepting: no
-  Transitions: 1
-    0x04 -> 139
+  Transitions: 2
+    'b' -> 138
+    'i' -> 139
 
 State 139:
   Accepting: no
   Transitions: 2
-    ANY -> 140
-    0x04 -> 139
+    '/' -> 140
+    'n' -> 139
 
 State 140:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 140
+  Accepting: no
+  Transitions: 2
+    'a' -> 141
+    'p' -> 140
 
 State 141:
   Accepting: no
-  Transitions: 1
-    'i' -> 142
+  Transitions: 2
+    'e' -> 142
+    'g' -> 141
 
 State 142:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    't' -> 143
+    'r' -> 142
 
 State 143:
   Accepting: no
-  Transitions: 1
-    0x04 -> 144
+  Transitions: 2
+    's' -> 144
+    'u' -> 143
 
 State 144:
   Accepting: no
   Transitions: 2
-    0x04 -> 144
-    'l' -> 145
+    '/' -> 145
+    'r' -> 144
 
 State 145:
   Accepting: no
-  Transitions: 1
-    'o' -> 146
+  Transitions: 2
+    'b' -> 145
+    'i' -> 146
 
 State 146:
   Accepting: no
-  Transitions: 1
-    'g' -> 147
+  Transitions: 2
+    '/' -> 147
+    'n' -> 146
 
 State 147:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 0
+  Accepting: no
+  Transitions: 2
+    'a' -> 148
+    'p' -> 147
 
 State 148:
   Accepting: no
-  Transitions: 1
-    'i' -> 149
+  Transitions: 2
+    'e' -> 149
+    'g' -> 148
 
 State 149:
   Accepting: no
-  Transitions: 1
-    't' -> 150
+  Transitions: 2
+    0x04 -> 150
+    'r' -> 149
 
 State 150:
   Accepting: no
-  Transitions: 1
-    0x04 -> 151
+  Transitions: 2
+    ANY -> 151
+    0x04 -> 150
 
 State 151:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 151
-    'l' -> 152
-
-State 152:
-  Accepting: no
-  Transitions: 1
-    'o' -> 153
-
-State 153:
-  Accepting: no
-  Transitions: 1
-    'g' -> 154
-
-State 154:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 155
-
-State 155:
-  Accepting: no
-  Transitions: 2
-    ANY -> 156
-    0x04 -> 155
-
-State 156:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 156
+    ANY -> 151
+
+State 152:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    's' -> 152
+
+State 153:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 154
+    's' -> 153
+
+State 154:
+  Accepting: no
+  Transitions: 2
+    ANY -> 155
+    0x04 -> 154
+
+State 155:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    ANY -> 155
+
+State 156:
+  Accepting: no
+  Transitions: 2
+    's' -> 157
+    'u' -> 156
 
 State 157:
   Accepting: no
-  Transitions: 1
-    'i' -> 158
+  Transitions: 2
+    '/' -> 158
+    'r' -> 157
 
 State 158:
   Accepting: no
-  Transitions: 1
-    't' -> 159
+  Transitions: 2
+    'b' -> 158
+    'i' -> 159
 
 State 159:
   Accepting: no
-  Transitions: 1
-    0x04 -> 160
+  Transitions: 2
+    '/' -> 160
+    'n' -> 159
 
 State 160:
   Accepting: no
   Transitions: 2
-    0x04 -> 160
+    'l' -> 160
     's' -> 161
 
 State 161:
-  Accepting: no
-  Transitions: 1
-    'h' -> 162
-
-State 162:
-  Accepting: no
-  Transitions: 1
-    'o' -> 163
-
-State 163:
-  Accepting: no
-  Transitions: 1
-    'w' -> 164
-
-State 164:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
+State 162:
+  Accepting: no
+  Transitions: 2
+    's' -> 163
+    'u' -> 162
+
+State 163:
+  Accepting: no
+  Transitions: 2
+    '/' -> 164
+    'r' -> 163
+
+State 164:
+  Accepting: no
+  Transitions: 2
+    'b' -> 164
+    'i' -> 165
+
 State 165:
   Accepting: no
-  Transitions: 1
-    'i' -> 166
+  Transitions: 2
+    '/' -> 166
+    'n' -> 165
 
 State 166:
   Accepting: no
-  Transitions: 1
-    't' -> 167
+  Transitions: 2
+    'l' -> 166
+    's' -> 167
 
 State 167:
   Accepting: no
-  Transitions: 1
-    0x04 -> 168
+  Transitions: 3
+    ANY -> 168
+    0x04 -> 167
 
 State 168:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 168
-    's' -> 169
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    ANY -> 168
 
 State 169:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'h' -> 170
+    'c' -> 169
 
 State 170:
   Accepting: no
-  Transitions: 1
-    'o' -> 171
+  Transitions: 2
+    0x04 -> 171
+    'c' -> 170
 
 State 171:
   Accepting: no
-  Transitions: 1
-    'w' -> 172
+  Transitions: 2
+    ANY -> 172
+    0x04 -> 171
 
 State 172:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    0x04 -> 173
+    ANY -> 172
 
 State 173:
   Accepting: no
   Transitions: 2
-    ANY -> 174
-    0x04 -> 173
+    's' -> 174
+    'u' -> 173
 
 State 174:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 174
+  Accepting: no
+  Transitions: 2
+    '/' -> 175
+    'r' -> 174
 
 State 175:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
+    'b' -> 175
     'i' -> 176
 
 State 176:
   Accepting: no
-  Transitions: 1
-    't' -> 177
+  Transitions: 2
+    '/' -> 177
+    'n' -> 176
 
 State 177:
   Accepting: no
-  Transitions: 1
-    0x04 -> 178
+  Transitions: 2
+    'c' -> 178
+    'w' -> 177
 
 State 178:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 178
-    'd' -> 179
-
-State 179:
-  Accepting: no
-  Transitions: 1
-    'i' -> 180
-
-State 180:
-  Accepting: no
-  Transitions: 1
-    'f' -> 181
-
-State 181:
-  Accepting: no
-  Transitions: 1
-    'f' -> 182
-
-State 182:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
+State 179:
+  Accepting: no
+  Transitions: 2
+    's' -> 180
+    'u' -> 179
+
+State 180:
+  Accepting: no
+  Transitions: 2
+    '/' -> 181
+    'r' -> 180
+
+State 181:
+  Accepting: no
+  Transitions: 2
+    'b' -> 181
+    'i' -> 182
+
+State 182:
+  Accepting: no
+  Transitions: 2
+    '/' -> 183
+    'n' -> 182
+
 State 183:
   Accepting: no
-  Transitions: 1
-    'i' -> 184
+  Transitions: 2
+    'c' -> 184
+    'w' -> 183
 
 State 184:
   Accepting: no
-  Transitions: 1
-    't' -> 185
+  Transitions: 3
+    ANY -> 185
+    0x04 -> 184
 
 State 185:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    0x04 -> 186
+    ANY -> 185
 
 State 186:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 186
-    'd' -> 187
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    's' -> 186
 
 State 187:
   Accepting: no
-  Transitions: 1
-    'i' -> 188
+  Transitions: 2
+    0x04 -> 188
+    's' -> 187
 
 State 188:
   Accepting: no
-  Transitions: 1
-    'f' -> 189
+  Transitions: 2
+    ANY -> 189
+    0x04 -> 188
 
 State 189:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'f' -> 190
+    ANY -> 189
 
 State 190:
   Accepting: no
-  Transitions: 1
-    0x04 -> 191
+  Transitions: 2
+    's' -> 191
+    'u' -> 190
 
 State 191:
   Accepting: no
   Transitions: 2
-    ANY -> 192
-    0x04 -> 191
+    '/' -> 192
+    'r' -> 191
 
 State 192:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 192
+  Accepting: no
+  Transitions: 2
+    'b' -> 192
+    'i' -> 193
 
 State 193:
   Accepting: no
-  Transitions: 1
-    'i' -> 194
+  Transitions: 2
+    '/' -> 194
+    'n' -> 193
 
 State 194:
   Accepting: no
-  Transitions: 1
-    't' -> 195
+  Transitions: 2
+    'p' -> 194
+    's' -> 195
 
 State 195:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 196
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 0
 
 State 196:
   Accepting: no
   Transitions: 2
-    0x04 -> 196
     's' -> 197
+    'u' -> 196
 
 State 197:
   Accepting: no
-  Transitions: 1
-    't' -> 198
+  Transitions: 2
+    '/' -> 198
+    'r' -> 197
 
 State 198:
   Accepting: no
-  Transitions: 1
-    'a' -> 199
+  Transitions: 2
+    'b' -> 198
+    'i' -> 199
 
 State 199:
   Accepting: no
-  Transitions: 1
-    't' -> 200
+  Transitions: 2
+    '/' -> 200
+    'n' -> 199
 
 State 200:
   Accepting: no
-  Transitions: 1
-    'u' -> 201
+  Transitions: 2
+    'p' -> 200
+    's' -> 201
 
 State 201:
   Accepting: no
-  Transitions: 1
-    's' -> 202
+  Transitions: 3
+    ANY -> 202
+    0x04 -> 201
 
 State 202:
   Accepting: yes
   Tags: safe allow
-  Transitions: 0
+  Transitions: 1
+    ANY -> 202
 
 State 203:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'i' -> 204
+    'f' -> 203
 
 State 204:
   Accepting: no
-  Transitions: 1
-    't' -> 205
+  Transitions: 2
+    0x04 -> 205
+    'f' -> 204
 
 State 205:
   Accepting: no
-  Transitions: 1
-    0x04 -> 206
+  Transitions: 2
+    ANY -> 206
+    0x04 -> 205
 
 State 206:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 206
-    'b' -> 207
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    ANY -> 206
 
 State 207:
   Accepting: no
-  Transitions: 1
-    'l' -> 208
+  Transitions: 2
+    's' -> 208
+    'u' -> 207
 
 State 208:
   Accepting: no
-  Transitions: 1
-    'a' -> 209
+  Transitions: 2
+    '/' -> 209
+    'r' -> 208
 
 State 209:
   Accepting: no
-  Transitions: 1
-    'm' -> 210
+  Transitions: 2
+    'b' -> 209
+    'i' -> 210
 
 State 210:
   Accepting: no
-  Transitions: 1
-    'e' -> 211
+  Transitions: 2
+    '/' -> 211
+    'n' -> 210
 
 State 211:
+  Accepting: no
+  Transitions: 2
+    'd' -> 211
+    'f' -> 212
+
+State 212:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
-State 212:
-  Accepting: no
-  Transitions: 1
-    'i' -> 213
-
 State 213:
   Accepting: no
-  Transitions: 1
-    't' -> 214
+  Transitions: 2
+    's' -> 214
+    'u' -> 213
 
 State 214:
   Accepting: no
-  Transitions: 1
-    0x04 -> 215
+  Transitions: 2
+    '/' -> 215
+    'r' -> 214
 
 State 215:
   Accepting: no
   Transitions: 2
-    0x04 -> 215
-    'b' -> 216
+    'b' -> 215
+    'i' -> 216
 
 State 216:
   Accepting: no
-  Transitions: 1
-    'l' -> 217
+  Transitions: 2
+    '/' -> 217
+    'n' -> 216
 
 State 217:
   Accepting: no
-  Transitions: 1
-    'a' -> 218
+  Transitions: 2
+    'd' -> 217
+    'f' -> 218
 
 State 218:
   Accepting: no
-  Transitions: 1
-    'm' -> 219
+  Transitions: 3
+    ANY -> 219
+    0x04 -> 218
 
 State 219:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'e' -> 220
+    ANY -> 219
 
 State 220:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    0x04 -> 221
+    'u' -> 220
 
 State 221:
   Accepting: no
   Transitions: 2
-    ANY -> 222
-    0x04 -> 221
+    0x04 -> 222
+    'u' -> 221
 
 State 222:
+  Accepting: no
+  Transitions: 2
+    ANY -> 223
+    0x04 -> 222
+
+State 223:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 222
-
-State 223:
-  Accepting: no
-  Transitions: 1
-    'i' -> 224
+    ANY -> 223
 
 State 224:
   Accepting: no
-  Transitions: 1
-    't' -> 225
+  Transitions: 2
+    's' -> 225
+    'u' -> 224
 
 State 225:
   Accepting: no
-  Transitions: 1
-    0x04 -> 226
+  Transitions: 2
+    '/' -> 226
+    'r' -> 225
 
 State 226:
   Accepting: no
   Transitions: 2
-    0x04 -> 226
-    'b' -> 227
+    'b' -> 226
+    'i' -> 227
 
 State 227:
   Accepting: no
-  Transitions: 1
-    'r' -> 228
+  Transitions: 2
+    '/' -> 228
+    'n' -> 227
 
 State 228:
   Accepting: no
-  Transitions: 1
-    'a' -> 229
+  Transitions: 2
+    'd' -> 228
+    'u' -> 229
 
 State 229:
-  Accepting: no
-  Transitions: 1
-    'n' -> 230
-
-State 230:
-  Accepting: no
-  Transitions: 1
-    'c' -> 231
-
-State 231:
-  Accepting: no
-  Transitions: 1
-    'h' -> 232
-
-State 232:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
+State 230:
+  Accepting: no
+  Transitions: 2
+    's' -> 231
+    'u' -> 230
+
+State 231:
+  Accepting: no
+  Transitions: 2
+    '/' -> 232
+    'r' -> 231
+
+State 232:
+  Accepting: no
+  Transitions: 2
+    'b' -> 232
+    'i' -> 233
+
 State 233:
   Accepting: no
-  Transitions: 1
-    'i' -> 234
+  Transitions: 2
+    '/' -> 234
+    'n' -> 233
 
 State 234:
   Accepting: no
-  Transitions: 1
-    't' -> 235
+  Transitions: 2
+    'd' -> 234
+    'u' -> 235
 
 State 235:
   Accepting: no
-  Transitions: 1
-    0x04 -> 236
+  Transitions: 3
+    ANY -> 236
+    0x04 -> 235
 
 State 236:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 236
-    'b' -> 237
-
-State 237:
-  Accepting: no
-  Transitions: 1
-    'r' -> 238
-
-State 238:
-  Accepting: no
-  Transitions: 1
-    'a' -> 239
-
-State 239:
-  Accepting: no
-  Transitions: 1
-    'n' -> 240
-
-State 240:
-  Accepting: no
-  Transitions: 1
-    'c' -> 241
-
-State 241:
-  Accepting: no
-  Transitions: 1
-    'h' -> 242
-
-State 242:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 243
-
-State 243:
-  Accepting: no
-  Transitions: 2
-    ANY -> 244
-    0x04 -> 243
-
-State 244:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 244
+    ANY -> 236
+
+State 237:
+  Accepting: no
+  Transitions: 2
+    'a' -> 238
+    'n' -> 237
+
+State 238:
+  Accepting: no
+  Transitions: 2
+    'e' -> 239
+    'm' -> 238
+
+State 239:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 0
+
+State 240:
+  Accepting: no
+  Transitions: 2
+    'a' -> 241
+    'n' -> 240
+
+State 241:
+  Accepting: no
+  Transitions: 2
+    'e' -> 242
+    'm' -> 241
+
+State 242:
+  Accepting: no
+  Transitions: 3
+    ANY -> 243
+    0x04 -> 242
+
+State 243:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    ANY -> 243
+
+State 244:
+  Accepting: no
+  Transitions: 2
+    's' -> 245
+    'u' -> 244
 
 State 245:
   Accepting: no
-  Transitions: 1
-    'i' -> 246
+  Transitions: 2
+    '/' -> 246
+    'r' -> 245
 
 State 246:
   Accepting: no
-  Transitions: 1
-    't' -> 247
+  Transitions: 2
+    'b' -> 246
+    'i' -> 247
 
 State 247:
   Accepting: no
-  Transitions: 1
-    0x04 -> 248
+  Transitions: 2
+    '/' -> 248
+    'n' -> 247
 
 State 248:
   Accepting: no
   Transitions: 2
-    0x04 -> 248
-    't' -> 249
+    'n' -> 249
+    'u' -> 248
 
 State 249:
   Accepting: no
-  Transitions: 1
-    'a' -> 250
+  Transitions: 2
+    'a' -> 249
+    'm' -> 250
 
 State 250:
-  Accepting: no
-  Transitions: 1
-    'g' -> 251
-
-State 251:
   Accepting: yes
   Tags: safe allow
-  Transitions: 0
+  Transitions: 1
+    'e' -> 250
+
+State 251:
+  Accepting: no
+  Transitions: 2
+    's' -> 252
+    'u' -> 251
 
 State 252:
   Accepting: no
-  Transitions: 1
-    'i' -> 253
+  Transitions: 2
+    '/' -> 253
+    'r' -> 252
 
 State 253:
   Accepting: no
-  Transitions: 1
-    't' -> 254
+  Transitions: 2
+    'b' -> 253
+    'i' -> 254
 
 State 254:
   Accepting: no
-  Transitions: 1
-    0x04 -> 255
+  Transitions: 2
+    '/' -> 255
+    'n' -> 254
 
 State 255:
   Accepting: no
   Transitions: 2
-    0x04 -> 255
-    't' -> 256
+    'n' -> 256
+    'u' -> 255
 
 State 256:
   Accepting: no
-  Transitions: 1
-    'a' -> 257
+  Transitions: 2
+    'a' -> 256
+    'm' -> 257
 
 State 257:
   Accepting: no
-  Transitions: 1
-    'g' -> 258
+  Transitions: 2
+    0x04 -> 258
+    'e' -> 257
 
 State 258:
   Accepting: no
-  Transitions: 1
-    0x04 -> 259
+  Transitions: 2
+    ANY -> 259
+    0x04 -> 258
 
 State 259:
-  Accepting: no
-  Transitions: 2
-    ANY -> 260
-    0x04 -> 259
-
-State 260:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 260
+    ANY -> 259
+
+State 260:
+  Accepting: no
+  Transitions: 2
+    'i' -> 260
+    't' -> 261
 
 State 261:
   Accepting: no
-  Transitions: 1
-    'i' -> 262
+  Transitions: 3
+    0x04 -> 261
+    'l' -> 262
 
 State 262:
   Accepting: no
-  Transitions: 1
-    't' -> 263
+  Transitions: 2
+    'g' -> 263
+    'o' -> 262
 
 State 263:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 264
-
-State 264:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 264
-    'r' -> 265
-
-State 265:
-  Accepting: no
-  Transitions: 1
-    'e' -> 266
-
-State 266:
-  Accepting: no
-  Transitions: 1
-    'm' -> 267
-
-State 267:
-  Accepting: no
-  Transitions: 1
-    'o' -> 268
-
-State 268:
-  Accepting: no
-  Transitions: 1
-    't' -> 269
-
-State 269:
-  Accepting: no
-  Transitions: 1
-    'e' -> 270
-
-State 270:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
+State 264:
+  Accepting: no
+  Transitions: 2
+    'i' -> 264
+    't' -> 265
+
+State 265:
+  Accepting: no
+  Transitions: 3
+    0x04 -> 265
+    'l' -> 266
+
+State 266:
+  Accepting: no
+  Transitions: 2
+    'g' -> 267
+    'o' -> 266
+
+State 267:
+  Accepting: no
+  Transitions: 3
+    ANY -> 268
+    0x04 -> 267
+
+State 268:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    ANY -> 268
+
+State 269:
+  Accepting: no
+  Transitions: 2
+    'i' -> 269
+    't' -> 270
+
+State 270:
+  Accepting: no
+  Transitions: 3
+    0x04 -> 270
+    's' -> 271
+
 State 271:
   Accepting: no
-  Transitions: 1
-    'i' -> 272
+  Transitions: 2
+    'h' -> 271
+    'o' -> 272
 
 State 272:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    't' -> 273
+    'w' -> 272
 
 State 273:
   Accepting: no
-  Transitions: 1
-    0x04 -> 274
+  Transitions: 2
+    'i' -> 273
+    't' -> 274
 
 State 274:
   Accepting: no
-  Transitions: 2
+  Transitions: 3
     0x04 -> 274
-    'r' -> 275
+    's' -> 275
 
 State 275:
   Accepting: no
-  Transitions: 1
-    'e' -> 276
+  Transitions: 2
+    'h' -> 275
+    'o' -> 276
 
 State 276:
   Accepting: no
-  Transitions: 1
-    'm' -> 277
+  Transitions: 2
+    0x04 -> 277
+    'w' -> 276
 
 State 277:
   Accepting: no
-  Transitions: 1
-    'o' -> 278
+  Transitions: 2
+    ANY -> 278
+    0x04 -> 277
 
 State 278:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    't' -> 279
+    ANY -> 278
 
 State 279:
   Accepting: no
-  Transitions: 1
-    'e' -> 280
+  Transitions: 2
+    'i' -> 279
+    't' -> 280
 
 State 280:
   Accepting: no
-  Transitions: 1
-    0x04 -> 281
+  Transitions: 3
+    0x04 -> 280
+    'd' -> 281
 
 State 281:
   Accepting: no
   Transitions: 2
-    ANY -> 282
-    0x04 -> 281
+    'f' -> 282
+    'i' -> 281
 
 State 282:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 282
+    'f' -> 282
 
 State 283:
   Accepting: no
-  Transitions: 1
-    'i' -> 284
+  Transitions: 2
+    'i' -> 283
+    't' -> 284
 
 State 284:
   Accepting: no
-  Transitions: 1
-    't' -> 285
+  Transitions: 3
+    0x04 -> 284
+    'd' -> 285
 
 State 285:
   Accepting: no
-  Transitions: 1
-    0x04 -> 286
+  Transitions: 2
+    'f' -> 286
+    'i' -> 285
 
 State 286:
   Accepting: no
   Transitions: 2
-    0x04 -> 286
-    'f' -> 287
+    0x04 -> 287
+    'f' -> 286
 
 State 287:
   Accepting: no
-  Transitions: 1
-    'e' -> 288
+  Transitions: 2
+    ANY -> 288
+    0x04 -> 287
 
 State 288:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    't' -> 289
+    ANY -> 288
 
 State 289:
   Accepting: no
-  Transitions: 1
-    'c' -> 290
+  Transitions: 2
+    'i' -> 289
+    't' -> 290
 
 State 290:
   Accepting: no
-  Transitions: 1
-    'h' -> 291
+  Transitions: 3
+    0x04 -> 290
+    's' -> 291
 
 State 291:
+  Accepting: no
+  Transitions: 2
+    'a' -> 292
+    't' -> 291
+
+State 292:
+  Accepting: no
+  Transitions: 2
+    't' -> 292
+    'u' -> 293
+
+State 293:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    's' -> 293
+
+State 294:
+  Accepting: no
+  Transitions: 2
+    'i' -> 294
+    't' -> 295
+
+State 295:
+  Accepting: no
+  Transitions: 3
+    0x04 -> 295
+    'b' -> 296
+
+State 296:
+  Accepting: no
+  Transitions: 2
+    'a' -> 297
+    'l' -> 296
+
+State 297:
+  Accepting: no
+  Transitions: 2
+    'e' -> 298
+    'm' -> 297
+
+State 298:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
-State 292:
-  Accepting: no
-  Transitions: 1
-    'i' -> 293
-
-State 293:
-  Accepting: no
-  Transitions: 1
-    't' -> 294
-
-State 294:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 295
-
-State 295:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 295
-    'f' -> 296
-
-State 296:
-  Accepting: no
-  Transitions: 1
-    'e' -> 297
-
-State 297:
-  Accepting: no
-  Transitions: 1
-    't' -> 298
-
-State 298:
-  Accepting: no
-  Transitions: 1
-    'c' -> 299
-
 State 299:
   Accepting: no
-  Transitions: 1
-    'h' -> 300
+  Transitions: 2
+    'i' -> 299
+    't' -> 300
 
 State 300:
   Accepting: no
-  Transitions: 1
-    0x04 -> 301
+  Transitions: 3
+    0x04 -> 300
+    'b' -> 301
 
 State 301:
   Accepting: no
   Transitions: 2
-    ANY -> 302
-    0x04 -> 301
+    'a' -> 302
+    'l' -> 301
 
 State 302:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 302
+  Accepting: no
+  Transitions: 2
+    'e' -> 303
+    'm' -> 302
 
 State 303:
   Accepting: no
-  Transitions: 1
-    'i' -> 304
+  Transitions: 3
+    ANY -> 304
+    0x04 -> 303
 
 State 304:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    't' -> 305
+    ANY -> 304
 
 State 305:
   Accepting: no
-  Transitions: 1
-    0x04 -> 306
+  Transitions: 2
+    'i' -> 305
+    't' -> 306
 
 State 306:
   Accepting: no
-  Transitions: 2
+  Transitions: 3
     0x04 -> 306
-    'l' -> 307
+    'b' -> 307
 
 State 307:
   Accepting: no
-  Transitions: 1
-    's' -> 308
+  Transitions: 2
+    'a' -> 308
+    'r' -> 307
 
 State 308:
   Accepting: no
-  Transitions: 1
-    '-' -> 309
+  Transitions: 2
+    'c' -> 309
+    'n' -> 308
 
 State 309:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'f' -> 310
+    'h' -> 309
 
 State 310:
   Accepting: no
-  Transitions: 1
-    'i' -> 311
+  Transitions: 2
+    'i' -> 310
+    't' -> 311
 
 State 311:
   Accepting: no
-  Transitions: 1
-    'l' -> 312
+  Transitions: 3
+    0x04 -> 311
+    'b' -> 312
 
 State 312:
   Accepting: no
-  Transitions: 1
-    'e' -> 313
+  Transitions: 2
+    'a' -> 313
+    'r' -> 312
 
 State 313:
   Accepting: no
-  Transitions: 1
-    's' -> 314
+  Transitions: 2
+    'c' -> 314
+    'n' -> 313
 
 State 314:
+  Accepting: no
+  Transitions: 2
+    0x04 -> 315
+    'h' -> 314
+
+State 315:
+  Accepting: no
+  Transitions: 2
+    ANY -> 316
+    0x04 -> 315
+
+State 316:
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
+    ANY -> 316
+
+State 317:
+  Accepting: no
+  Transitions: 2
+    'i' -> 317
+    't' -> 318
+
+State 318:
+  Accepting: no
+  Transitions: 3
+    0x04 -> 318
+    't' -> 319
+
+State 319:
+  Accepting: no
+  Transitions: 2
+    'a' -> 319
+    'g' -> 320
+
+State 320:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
-State 315:
-  Accepting: no
-  Transitions: 1
-    'i' -> 316
-
-State 316:
-  Accepting: no
-  Transitions: 1
-    't' -> 317
-
-State 317:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 318
-
-State 318:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 318
-    'l' -> 319
-
-State 319:
-  Accepting: no
-  Transitions: 1
-    's' -> 320
-
-State 320:
-  Accepting: no
-  Transitions: 1
-    '-' -> 321
-
 State 321:
   Accepting: no
-  Transitions: 1
-    'f' -> 322
+  Transitions: 2
+    'i' -> 321
+    't' -> 322
 
 State 322:
   Accepting: no
-  Transitions: 1
-    'i' -> 323
+  Transitions: 3
+    0x04 -> 322
+    't' -> 323
 
 State 323:
   Accepting: no
-  Transitions: 1
-    'l' -> 324
+  Transitions: 2
+    'a' -> 323
+    'g' -> 324
 
 State 324:
   Accepting: no
-  Transitions: 1
-    'e' -> 325
+  Transitions: 3
+    ANY -> 325
+    0x04 -> 324
 
 State 325:
-  Accepting: no
-  Transitions: 1
-    's' -> 326
-
-State 326:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 327
-
-State 327:
-  Accepting: no
-  Transitions: 2
-    ANY -> 328
-    0x04 -> 327
-
-State 328:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 328
+    ANY -> 325
+
+State 326:
+  Accepting: no
+  Transitions: 2
+    'i' -> 326
+    't' -> 327
+
+State 327:
+  Accepting: no
+  Transitions: 3
+    0x04 -> 327
+    'r' -> 328
+
+State 328:
+  Accepting: no
+  Transitions: 2
+    'e' -> 328
+    'm' -> 329
 
 State 329:
   Accepting: no
-  Transitions: 1
-    'i' -> 330
+  Transitions: 2
+    'o' -> 329
+    't' -> 330
 
 State 330:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    't' -> 331
+    'e' -> 330
 
 State 331:
   Accepting: no
-  Transitions: 1
-    0x04 -> 332
+  Transitions: 2
+    'i' -> 331
+    't' -> 332
 
 State 332:
   Accepting: no
-  Transitions: 2
+  Transitions: 3
     0x04 -> 332
     'r' -> 333
 
 State 333:
   Accepting: no
-  Transitions: 1
-    'e' -> 334
+  Transitions: 2
+    'e' -> 333
+    'm' -> 334
 
 State 334:
   Accepting: no
-  Transitions: 1
-    'v' -> 335
+  Transitions: 2
+    'o' -> 334
+    't' -> 335
 
 State 335:
   Accepting: no
-  Transitions: 1
-    '-' -> 336
+  Transitions: 2
+    0x04 -> 336
+    'e' -> 335
 
 State 336:
   Accepting: no
-  Transitions: 1
-    'p' -> 337
+  Transitions: 2
+    ANY -> 337
+    0x04 -> 336
 
 State 337:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    'a' -> 338
+    ANY -> 337
 
 State 338:
   Accepting: no
-  Transitions: 1
-    'r' -> 339
+  Transitions: 2
+    'i' -> 338
+    't' -> 339
 
 State 339:
   Accepting: no
-  Transitions: 1
-    's' -> 340
+  Transitions: 3
+    0x04 -> 339
+    'f' -> 340
 
 State 340:
   Accepting: no
-  Transitions: 1
-    'e' -> 341
+  Transitions: 2
+    'e' -> 340
+    't' -> 341
 
 State 341:
+  Accepting: no
+  Transitions: 2
+    'c' -> 341
+    'h' -> 342
+
+State 342:
   Accepting: yes
   Tags: safe allow
   Transitions: 0
 
-State 342:
-  Accepting: no
-  Transitions: 1
-    'i' -> 343
-
 State 343:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
+    'i' -> 343
     't' -> 344
 
 State 344:
   Accepting: no
-  Transitions: 1
-    0x04 -> 345
+  Transitions: 3
+    0x04 -> 344
+    'f' -> 345
 
 State 345:
   Accepting: no
   Transitions: 2
-    0x04 -> 345
-    'r' -> 346
+    'e' -> 345
+    't' -> 346
 
 State 346:
   Accepting: no
-  Transitions: 1
-    'e' -> 347
+  Transitions: 2
+    'c' -> 346
+    'h' -> 347
 
 State 347:
   Accepting: no
-  Transitions: 1
-    'v' -> 348
+  Transitions: 3
+    ANY -> 348
+    0x04 -> 347
 
 State 348:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    '-' -> 349
+    ANY -> 348
 
 State 349:
   Accepting: no
-  Transitions: 1
-    'p' -> 350
+  Transitions: 2
+    'i' -> 349
+    't' -> 350
 
 State 350:
   Accepting: no
-  Transitions: 1
-    'a' -> 351
+  Transitions: 3
+    0x04 -> 350
+    'l' -> 351
 
 State 351:
   Accepting: no
-  Transitions: 1
-    'r' -> 352
+  Transitions: 2
+    '-' -> 352
+    's' -> 351
 
 State 352:
   Accepting: no
-  Transitions: 1
-    's' -> 353
+  Transitions: 2
+    'f' -> 352
+    'i' -> 353
 
 State 353:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
     'e' -> 354
+    'l' -> 353
 
 State 354:
-  Accepting: no
+  Accepting: yes
+  Tags: safe allow
   Transitions: 1
-    0x04 -> 355
+    's' -> 354
 
 State 355:
   Accepting: no
   Transitions: 2
-    ANY -> 356
-    0x04 -> 355
+    'i' -> 355
+    't' -> 356
 
 State 356:
-  Accepting: yes
-  Tags: safe allow
-  Transitions: 1
-    ANY -> 356
+  Accepting: no
+  Transitions: 3
+    0x04 -> 356
+    'l' -> 357
 
 State 357:
   Accepting: no
-  Transitions: 1
-    'i' -> 358
+  Transitions: 2
+    '-' -> 358
+    's' -> 357
 
 State 358:
   Accepting: no
-  Transitions: 1
-    'n' -> 359
+  Transitions: 2
+    'f' -> 358
+    'i' -> 359
 
 State 359:
   Accepting: no
-  Transitions: 1
-    'd' -> 360
+  Transitions: 2
+    'e' -> 360
+    'l' -> 359
 
 State 360:
   Accepting: no
-  Transitions: 1
+  Transitions: 2
     0x04 -> 361
+    's' -> 360
 
 State 361:
   Accepting: no
@@ -1902,126 +2165,97 @@ State 361:
     0x04 -> 361
 
 State 362:
-  Accepting: no
-  Transitions: 2
+  Accepting: yes
+  Tags: safe allow
+  Transitions: 1
     ANY -> 362
-    0x04 -> 363
 
 State 363:
   Accepting: no
   Transitions: 2
-    0x04 -> 363
-    '-' -> 364
+    'i' -> 363
+    't' -> 364
 
 State 364:
   Accepting: no
-  Transitions: 1
-    'n' -> 365
+  Transitions: 3
+    0x04 -> 364
+    'r' -> 365
 
 State 365:
   Accepting: no
-  Transitions: 1
-    'a' -> 366
+  Transitions: 2
+    'e' -> 365
+    'v' -> 366
 
 State 366:
   Accepting: no
-  Transitions: 1
-    'm' -> 367
+  Transitions: 2
+    '-' -> 366
+    'p' -> 367
 
 State 367:
   Accepting: no
-  Transitions: 1
-    'e' -> 368
+  Transitions: 2
+    'a' -> 367
+    'r' -> 368
 
 State 368:
   Accepting: no
-  Transitions: 1
-    0x04 -> 369
+  Transitions: 2
+    'e' -> 369
+    's' -> 368
 
 State 369:
-  Accepting: no
-  Transitions: 2
-    ANY -> 370
-    0x04 -> 369
-
-State 370:
   Accepting: yes
   Tags: safe allow
-  Transitions: 1
-    ANY -> 370
+  Transitions: 0
+
+State 370:
+  Accepting: no
+  Transitions: 2
+    'i' -> 370
+    't' -> 371
 
 State 371:
   Accepting: no
-  Transitions: 1
-    'i' -> 372
+  Transitions: 3
+    0x04 -> 371
+    'r' -> 372
 
 State 372:
   Accepting: no
-  Transitions: 1
-    'n' -> 373
+  Transitions: 2
+    'e' -> 372
+    'v' -> 373
 
 State 373:
   Accepting: no
-  Transitions: 1
-    'd' -> 374
+  Transitions: 2
+    '-' -> 373
+    'p' -> 374
 
 State 374:
   Accepting: no
-  Transitions: 1
-    0x04 -> 375
+  Transitions: 2
+    'a' -> 374
+    'r' -> 375
 
 State 375:
   Accepting: no
   Transitions: 2
-    ANY -> 376
-    0x04 -> 375
+    'e' -> 376
+    's' -> 375
 
 State 376:
   Accepting: no
-  Transitions: 2
-    ANY -> 376
-    0x04 -> 377
+  Transitions: 3
+    ANY -> 377
+    0x04 -> 376
 
 State 377:
-  Accepting: no
-  Transitions: 2
-    0x04 -> 377
-    '-' -> 378
-
-State 378:
-  Accepting: no
-  Transitions: 1
-    't' -> 379
-
-State 379:
-  Accepting: no
-  Transitions: 1
-    'y' -> 380
-
-State 380:
-  Accepting: no
-  Transitions: 1
-    'p' -> 381
-
-State 381:
-  Accepting: no
-  Transitions: 1
-    'e' -> 382
-
-State 382:
-  Accepting: no
-  Transitions: 1
-    0x04 -> 383
-
-State 383:
-  Accepting: no
-  Transitions: 2
-    ANY -> 384
-    0x04 -> 383
-
-State 384:
   Accepting: yes
   Tags: safe allow
   Transitions: 1
-    ANY -> 384
+    ANY -> 377
 
