@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "dfa.h"
 
 int main(void) {
@@ -34,6 +35,12 @@ int main(void) {
         {"chmod", 0},
         {"chown", 0},
         {"unknown_command", 0},
+        /* Complex shell commands */
+        {"bash -c -l shopt -u extglob 2>/dev/null || true && eval 'cat README.md' < /dev/null && pwd -P >| /tmp/claude-2f0e-cwd", 0},
+        {"cat README.md", 1},
+        {"pwd", 1},
+        {"eval echo hello", 0},
+        {"shopt -s extglob", 0},
     };
 
     int passed = 0;

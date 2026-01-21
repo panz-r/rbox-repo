@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -950,8 +951,9 @@ func runCommand(name string, args ...string) error {
 	env := os.Environ()
 
 	// Use syscall.Exec to replace current process (no fork)
-	// This is much more efficient for high-frequency commands
-	err = syscall.Exec(cmdPath, append([]string{name}, args...), env)
+	// FIXED: argv[0] should be basename, not full path - was causing duplication bug
+	argv0 := filepath.Base(name)
+	err = syscall.Exec(cmdPath, append([]string{argv0}, args...), env)
 	if err != nil {
 		return fmt.Errorf("failed to execute %s: %v", name, err)
 	}

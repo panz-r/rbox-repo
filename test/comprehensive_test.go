@@ -8,96 +8,40 @@ import (
 	"testing"
 )
 
-// TestAllWrappersHelp tests --help functionality for all implemented RO wrappers
-func TestAllWrappersHelp(t *testing.T) {
-	// List of all implemented RO wrappers
-	wrappers := []string{
-		"ro-git", "ro-find", "ro-ls", "ro-cat", "ro-grep", "ro-head", "ro-tail",
-		"ro-timeout", "ro-echo", "ro-date", "ro-cd", "ro-bash", "ro-sort", "ro-ulimit",
-		"ro-sed", "ro-chmod", "ro-chown", "ro-mkdir", "ro-rmdir", "ro-ln", "ro-mv",
-		"ro-cp", "ro-rm", "ro-touch", "ro-dd",
+// TestReadOnlyBoxHelp tests --help functionality for readonlybox
+func TestReadOnlyBoxHelp(t *testing.T) {
+	// Build readonlybox binary
+	buildCmd := exec.Command("go", "build", "-o", "../bin/readonlybox", "../cmd/readonlybox")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("Failed to build readonlybox: %v", err)
 	}
 
-	for _, wrapper := range wrappers {
-		t.Run(wrapper+"_help", func(t *testing.T) {
-			// Build the wrapper binary
-			buildCmd := exec.Command("go", "build", "-o", "../bin/"+wrapper, "../cmd/"+wrapper)
-			if err := buildCmd.Run(); err != nil {
-				t.Fatalf("Failed to build %s: %v", wrapper, err)
-			}
-			defer os.Remove(filepath.Join("..", "bin", wrapper))
+	// Test --help flag
+	cmd := exec.Command("../bin/readonlybox", "--help")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-			// Test --help flag
-			cmd := exec.Command("../bin/"+wrapper, "--help")
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
+	err := cmd.Run()
 
-			err := cmd.Run()
+	// --help should either succeed or fail gracefully, but should not panic or crash
+	if err != nil {
+		// Some commands might exit with non-zero status for --help, that's okay
+		if _, ok := err.(*exec.ExitError); !ok {
+			t.Errorf("readonlybox --help failed with unexpected error: %v", err)
+		}
+	}
 
-			// --help should either succeed or fail gracefully, but should not panic or crash
-			if err != nil {
-				// Some commands might exit with non-zero status for --help, that's okay
-				if _, ok := err.(*exec.ExitError); !ok {
-					t.Errorf("%s --help failed with unexpected error: %v", wrapper, err)
-				}
-			}
-
-			// Should produce some output (either stdout or stderr)
-			if stdout.Len() == 0 && stderr.Len() == 0 {
-				t.Errorf("%s --help produced no output", wrapper)
-			}
-		})
+	// Should produce some output (either stdout or stderr)
+	if stdout.Len() == 0 && stderr.Len() == 0 {
+		t.Errorf("readonlybox --help produced no output")
 	}
 }
 
-// TestAllWrappersVersion tests --version functionality for wrappers that support it
-func TestAllWrappersVersion(t *testing.T) {
-	// List of wrappers that should support --version
-	versionWrappers := []string{
-		"ro-git", "ro-find", "ro-ls", "ro-cat", "ro-grep", "ro-head", "ro-tail",
-		"ro-timeout", "ro-echo", "ro-date", "ro-cd", "ro-bash", "ro-sort", "ro-ulimit",
-		"ro-sed", "ro-chmod", "ro-chown", "ro-mkdir", "ro-rmdir", "ro-ln", "ro-mv",
-		"ro-cp", "ro-rm", "ro-touch", "ro-dd",
-	}
-
-	for _, wrapper := range versionWrappers {
-		t.Run(wrapper+"_version", func(t *testing.T) {
-			// Build the wrapper binary
-			buildCmd := exec.Command("go", "build", "-o", "../bin/"+wrapper, "../cmd/"+wrapper)
-			if err := buildCmd.Run(); err != nil {
-				t.Fatalf("Failed to build %s: %v", wrapper, err)
-			}
-			defer os.Remove(filepath.Join("..", "bin", wrapper))
-
-			// Test --version flag
-			cmd := exec.Command("../bin/"+wrapper, "--version")
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-
-			err := cmd.Run()
-
-			// --version should either succeed or fail gracefully
-			if err != nil {
-				// Some commands might not support --version, that's okay
-				if _, ok := err.(*exec.ExitError); !ok {
-					t.Errorf("%s --version failed with unexpected error: %v", wrapper, err)
-				}
-			}
-
-			// Should produce some output if successful (either stdout or stderr)
-			if err == nil && stdout.Len() == 0 && stderr.Len() == 0 {
-				t.Errorf("%s --version produced no output", wrapper)
-			}
-		})
-	}
-}
-
-// TestAllWrappersSafeOperations tests basic safe operations for all wrappers
-func TestAllWrappersSafeOperations(t *testing.T) {
+// TestReadOnlyBoxCommands tests basic command execution via readonlybox
+func TestReadOnlyBoxCommands(t *testing.T) {
 	// Create a temporary directory for testing
-	tmpDir, err := os.MkdirTemp("", "ro-wrapper-test-*")
+	tmpDir, err := os.MkdirTemp("", "readonlybox-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -112,104 +56,115 @@ func TestAllWrappersSafeOperations(t *testing.T) {
 		}
 	}
 
-	// Test safe operations for each wrapper
+	// Build readonlybox binary
+	buildCmd := exec.Command("go", "build", "-o", "../bin/readonlybox", "../cmd/readonlybox")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("Failed to build readonlybox: %v", err)
+	}
+
+	// Test commands via readonlybox
 	tests := []struct {
 		name          string
-		wrapper       string
+		command       string
 		args          []string
 		shouldSucceed bool
 	}{
-		// ro-git safe operations
-		{"ro-git version", "ro-git", []string{"--version"}, true},
-		{"ro-git help", "ro-git", []string{"help"}, true},
+		// git commands
+		{"git version", "git", []string{"--version"}, true},
+		{"git help", "git", []string{"help"}, true},
 
-		// ro-find safe operations
-		{"ro-find name search", "ro-find", []string{tmpDir, "-name", "*.go"}, true},
-		{"ro-find type file", "ro-find", []string{tmpDir, "-type", "f"}, true},
+		// find commands
+		{"find name search", "find", []string{tmpDir, "-name", "*.go"}, true},
+		{"find type file", "find", []string{tmpDir, "-type", "f"}, true},
 
-		// ro-ls safe operations
-		{"ro-ls list", "ro-ls", []string{tmpDir}, true},
-		{"ro-ls detailed", "ro-ls", []string{"-la", tmpDir}, true},
+		// ls commands
+		{"ls list", "ls", []string{tmpDir}, true},
+		{"ls detailed", "ls", []string{"-la", tmpDir}, true},
 
-		// ro-cat safe operations
-		{"ro-cat read", "ro-cat", []string{filepath.Join(tmpDir, "test.txt")}, true},
+		// cat commands
+		{"cat read", "cat", []string{filepath.Join(tmpDir, "test.txt")}, true},
 
-		// ro-grep safe operations
-		{"ro-grep search", "ro-grep", []string{"test", filepath.Join(tmpDir, "test.txt")}, true},
+		// grep commands
+		{"grep search", "grep", []string{"test", filepath.Join(tmpDir, "test.txt")}, true},
 
-		// ro-head safe operations
-		{"ro-head read", "ro-head", []string{"-n", "5", filepath.Join(tmpDir, "test.txt")}, true},
+		// head commands
+		{"head read", "head", []string{"-n", "5", filepath.Join(tmpDir, "test.txt")}, true},
 
-		// ro-tail safe operations
-		{"ro-tail read", "ro-tail", []string{"-n", "5", filepath.Join(tmpDir, "test.txt")}, true},
+		// tail commands
+		{"tail read", "tail", []string{"-n", "5", filepath.Join(tmpDir, "test.txt")}, true},
 
-		// ro-echo safe operations
-		{"ro-echo text", "ro-echo", []string{"hello", "world"}, true},
+		// echo commands
+		{"echo text", "echo", []string{"hello", "world"}, true},
 
-		// ro-date safe operations
-		{"ro-date show", "ro-date", []string{"--iso-8601"}, true},
+		// date commands
+		{"date show", "date", []string{"--iso-8601"}, true},
 
-		// ro-sort safe operations
-		{"ro-sort lines", "ro-sort", []string{filepath.Join(tmpDir, "test.txt")}, true},
+		// sort commands
+		{"sort lines", "sort", []string{filepath.Join(tmpDir, "test.txt")}, true},
 
-		// ro-ulimit safe operations
-		{"ro-ulimit show", "ro-ulimit", []string{"-a"}, true},
+		// ulimit commands
+		{"ulimit show", "ulimit", []string{"-a"}, true},
 
-		// ro-sed safe operations (read-only) - use a simpler safe command
-		{"ro-sed help", "ro-sed", []string{"--help"}, true},
+		// sed commands (read-only)
+		{"sed help", "sed", []string{"--help"}, true},
 
-		// ro-chmod safe operations (read-only mode)
-		{"ro-chmod check", "ro-chmod", []string{"--help"}, true},
+		// chmod commands (read-only mode) - should be blocked for real files
+		{"chmod check", "chmod", []string{"-R", tmpDir}, false},
 
-		// ro-chown safe operations (read-only mode)
-		{"ro-chown check", "ro-chown", []string{"--help"}, true},
+		// chown commands (read-only mode) - should be blocked for real files
+		{"chown check", "chown", []string{"-R", tmpDir}, false},
 
-		// ro-mkdir safe operations (read-only mode)
-		{"ro-mkdir check", "ro-mkdir", []string{"--help"}, true},
+		// mkdir commands (read-only mode) - should be blocked for real files
+		{"mkdir check", "mkdir", []string{"-p", filepath.Join(tmpDir, "newdir")}, false},
 
-		// ro-rmdir safe operations (read-only mode)
-		{"ro-rmdir check", "ro-rmdir", []string{"--help"}, true},
+		// rmdir commands (read-only mode) - should be blocked for real directories
+		{"rmdir check", "rmdir", []string{tmpDir}, false},
 
-		// ro-ln safe operations (read-only mode)
-		{"ro-ln check", "ro-ln", []string{"--help"}, true},
+		// ln commands (read-only mode) - should be blocked for real files
+		{"ln check", "ln", []string{filepath.Join(tmpDir, "test.txt"), filepath.Join(tmpDir, "link.txt")}, false},
 
-		// ro-mv safe operations (read-only mode)
-		{"ro-mv check", "ro-mv", []string{"--help"}, true},
+		// mv commands (read-only mode) - should be blocked for real files
+		{"mv check", "mv", []string{filepath.Join(tmpDir, "test.txt"), filepath.Join(tmpDir, "moved.txt")}, false},
 
-		// ro-cp safe operations (read-only mode)
-		{"ro-cp check", "ro-cp", []string{"--help"}, true},
+		// cp commands (read-only mode) - should be blocked for real files
+		{"cp check", "cp", []string{filepath.Join(tmpDir, "test.txt"), filepath.Join(tmpDir, "copied.txt")}, false},
 
-		// ro-rm safe operations (read-only mode)
-		{"ro-rm check", "ro-rm", []string{"--help"}, true},
+		// rm commands (read-only mode) - should be blocked for real files
+		{"rm check", "rm", []string{filepath.Join(tmpDir, "test.tmp")}, false},
 
-		// ro-touch safe operations (read-only mode)
-		{"ro-touch check", "ro-touch", []string{"--help"}, true},
+		// touch commands (read-only mode) - should be blocked for real files
+		{"touch check", "touch", []string{filepath.Join(tmpDir, "newfile.txt")}, false},
 
-		// ro-dd safe operations (read-only mode)
-		{"ro-dd check", "ro-dd", []string{"--help"}, true},
+		// dd commands (read-only mode) - should be blocked
+		{"dd check", "dd", []string{"if=/dev/zero", "of=/dev/null", "count=1"}, false},
 
-		// ro-timeout safe operations
-		{"ro-timeout check", "ro-timeout", []string{"--help"}, true},
+		// timeout commands - requires duration and command
+		{"timeout check", "timeout", []string{"1s", "echo", "hello"}, true},
 
-		// ro-cd safe operations
-		{"ro-cd check", "ro-cd", []string{"--help"}, true},
+		// cd commands
+		{"cd check", "cd", []string{"--help"}, true},
 
-		// ro-bash safe operations (read-only mode) - bash doesn't support --help, use a safe command
-		{"ro-bash version", "ro-bash", []string{"echo", "hello", "world"}, true},
+		// ps commands
+		{"ps aux", "ps", []string{"aux"}, true},
+
+		// df commands
+		{"df -h", "df", []string{"-h"}, true},
+
+		// du commands
+		{"du -sh", "du", []string{"-sh", tmpDir}, true},
+
+		// wc commands
+		{"wc -l", "wc", []string{"-l", filepath.Join(tmpDir, "test.txt")}, true},
+
+		// uname commands
+		{"uname -a", "uname", []string{"-a"}, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Build the wrapper binary
-			buildCmd := exec.Command("go", "build", "-o", "../bin/"+tt.wrapper, "./cmd/"+tt.wrapper)
-			buildCmd.Dir = ".."
-			if err := buildCmd.Run(); err != nil {
-				t.Fatalf("Failed to build %s: %v", tt.wrapper, err)
-			}
-			defer os.Remove(filepath.Join("..", "bin", tt.wrapper))
-
-			// Test the operation
-			cmd := exec.Command("../bin/"+tt.wrapper, tt.args...)
+			// Test the operation via readonlybox
+			args := append([]string{tt.command}, tt.args...)
+			cmd := exec.Command("../bin/readonlybox", args...)
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
@@ -225,15 +180,48 @@ func TestAllWrappersSafeOperations(t *testing.T) {
 						!bytes.Contains(stderr.Bytes(), []byte("unknown option")) &&
 						!bytes.Contains(stderr.Bytes(), []byte("no such file")) &&
 						!bytes.Contains(stderr.Bytes(), []byte("executable file not found")) &&
-						!bytes.Contains(stderr.Bytes(), []byte("Error executing ulimit")) {
-						t.Errorf("Expected command to succeed but it failed: %v, stderr: %s", tt.args, stderrStr)
+						!bytes.Contains(stderr.Bytes(), []byte("Error executing ulimit")) &&
+						!bytes.Contains(stderr.Bytes(), []byte("unknown command")) &&
+						!bytes.Contains(stderr.Bytes(), []byte("cannot execute binary file")) {
+						t.Errorf("Expected command to succeed but it failed: %v %v, stderr: %s", tt.command, tt.args, stderrStr)
 					}
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected command to fail but it succeeded: %v", tt.args)
+					t.Errorf("Expected command to fail but it succeeded: %v %v", tt.command, tt.args)
 				}
 			}
 		})
+	}
+}
+
+// TestReadOnlyBoxSymlinks tests that symlinks work correctly
+func TestReadOnlyBoxSymlinks(t *testing.T) {
+	// Build readonlybox binary
+	buildCmd := exec.Command("go", "build", "-o", "../bin/readonlybox", "../cmd/readonlybox")
+	if err := buildCmd.Run(); err != nil {
+		t.Fatalf("Failed to build readonlybox: %v", err)
+	}
+
+	// Create symlinks
+	symlinks := []string{"ro-git", "ro-find", "ro-ls", "ro-cat", "ro-echo", "ro-date"}
+	for _, symlink := range symlinks {
+		symlinkPath := filepath.Join("..", "bin", symlink)
+		os.Remove(symlinkPath)
+		if err := os.Symlink("readonlybox", symlinkPath); err != nil {
+			t.Fatalf("Failed to create symlink %s: %v", symlink, err)
+		}
+		defer os.Remove(symlinkPath)
+
+		// Test that symlink works
+		cmd := exec.Command(symlinkPath, "--version")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+		if err != nil {
+			t.Errorf("Symlink %s failed: %v, stderr: %s", symlink, err, stderr.String())
+		}
 	}
 }

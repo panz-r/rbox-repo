@@ -34,11 +34,10 @@
 [safe:git:read] git log --graph
 [safe:git:read] git status
 [safe:git:read] git show
-[safe:git:read] git show commit_hash
 [safe:git:read] git diff
 [safe:git:read] git diff HEAD
-[safe:git:read] git blame file.txt
-[safe:git:read] git grep pattern
+[safe:git:read] git blame *
+[safe:git:read] git grep *
 [safe:git:read] git ls-files
 [safe:git:read] git tag
 [safe:git:read] git tag -l
@@ -46,6 +45,17 @@
 [safe:git:read] git branch -a
 [safe:git:read] git remote -v
 [safe:git:read] git config --list
+# git rev-parse: read any ref, tag, branch, or commit
+[safe:git:read] git rev-parse --abbrev-ref *
+[safe:git:read] git rev-parse --show-toplevel
+[safe:git:read] git rev-parse --git-dir
+[safe:git:read] git rev-parse --is-inside-work-tree
+[safe:git:read] git rev-parse --is-bare-repository
+[safe:git:read] git rev-parse HEAD
+[safe:git:read] git rev-parse --short *
+[safe:git:read] git rev-parse HEAD^{commit}
+[safe:git:read] git rev-parse *
+[safe:git:read] git rev-parse --*
 
 # System information operations
 [safe:system:read] ps aux
@@ -113,3 +123,4 @@
 [safe:file:read] ps aux --sort=-%mem
 [safe:file:read] git log --oneline --decorate
 [safe:file:read] git log --graph --oneline
+[safe:file:read] ls

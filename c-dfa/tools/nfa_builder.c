@@ -74,6 +74,7 @@ static char_class_t alphabet[MAX_SYMBOLS];
 static int alphabet_size = 0;
 static int nfa_state_count = 0;
 static int pattern_count = 0;
+static int current_pattern_index = 0;  // Track which pattern we're building
 static StateSignature* signature_table[SIGNATURE_TABLE_SIZE] = {NULL};
 
 // Category IDs
@@ -246,8 +247,11 @@ int find_symbol_id(char c) {
 static uint64_t compute_state_signature(int state);
 static int find_equivalent_state(uint64_t signature, int current_state);
 static void add_state_to_signature_table(int state, uint64_t signature);
+static int nfa_finalize_state(int state);
 
 // Add NFA state with on-the-fly minimization
+// NOTE: We do NOT compute signature here because transitions haven't been added yet.
+// The caller must call nfa_finalize_state() after adding all transitions.
 int nfa_add_state_with_minimization(bool accepting) {
     // First create the state normally
     int new_state = nfa_state_count;
@@ -262,35 +266,47 @@ int nfa_add_state_with_minimization(bool accepting) {
     nfa[new_state].transition_count = 0;
     nfa_state_count++;
 
-    // Compute signature for this state
-    uint64_t signature = compute_state_signature(new_state);
+    // DON'T compute signature here - transitions aren't added yet!
+    // The caller will call nfa_finalize_state() after adding all transitions.
+
+    return new_state;
+}
+
+// Finalize state after all transitions have been added
+// This is where minimization happens - checking for equivalent states
+int nfa_finalize_state(int state) {
+    // Compute signature for this state (NOW transitions are set)
+    uint64_t signature = compute_state_signature(state);
+
+    fprintf(stderr, "DEBUG: Finalizing state %d, pattern=%d, accepting=%d, transitions=%d, signature=0x%016lx\n",
+            state, current_pattern_index, nfa[state].accepting, nfa[state].transition_count, signature);
 
     // Check if an equivalent state already exists
-    int equivalent_state = find_equivalent_state(signature, new_state);
+    int equivalent_state = find_equivalent_state(signature, state);
 
     if (equivalent_state != -1) {
         // Found equivalent state, revert the new state and return the existing one
         nfa_state_count--; // Revert the state count
 
         // Clean up the new state
-        for (int j = 0; j < nfa[new_state].tag_count; j++) {
-            free(nfa[new_state].tags[j]);
-            nfa[new_state].tags[j] = NULL;
+        for (int j = 0; j < nfa[state].tag_count; j++) {
+            free(nfa[state].tags[j]);
+            nfa[state].tags[j] = NULL;
         }
-        nfa[new_state].tag_count = 0;
-        nfa[new_state].accepting = false;
-        nfa[new_state].transition_count = 0;
+        nfa[state].tag_count = 0;
+        nfa[state].accepting = false;
+        nfa[state].transition_count = 0;
         for (int j = 0; j < MAX_SYMBOLS; j++) {
-            nfa[new_state].transitions[j] = -1;
+            nfa[state].transitions[j] = -1;
         }
 
         return equivalent_state; // Return the existing equivalent state
     }
 
     // No equivalent state found, add this state to signature table
-    add_state_to_signature_table(new_state, signature);
+    add_state_to_signature_table(state, signature);
 
-    return new_state;
+    return state;
 }
 
 // Simple string duplication function
@@ -310,8 +326,14 @@ static unsigned int hash_signature(uint64_t signature) {
 }
 
 // Compute state signature for equivalence detection
+// IMPORTANT: Includes current_pattern_index to prevent states from different patterns
+// from being merged, even if they have the same structure
 static uint64_t compute_state_signature(int state) {
     uint64_t signature = 0;
+
+    // Include pattern index in signature - this ensures states from different patterns
+    // are never considered equivalent, even if they have identical structure
+    signature = signature * 31 + current_pattern_index;
 
     // Include accepting status in signature
     if (nfa[state].accepting) {
@@ -534,6 +556,12 @@ void parse_advanced_pattern(const char* line) {
         pattern_count++;
     }
 
+    // Set the pattern index for this NFA construction
+    // This prevents states from different patterns from being merged
+    current_pattern_index = pattern_count;
+    
+    fprintf(stderr, "DEBUG: Processing pattern %d: %s\n", pattern_count, pattern);
+
     // Build NFA for this pattern with alphabet support
     int current_state = 0;
     int pattern_len = strlen(pattern);
@@ -577,6 +605,7 @@ void parse_advanced_pattern(const char* line) {
 
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
+            nfa_finalize_state(new_state);
             current_state = new_state;
             continue;
         }
@@ -593,6 +622,7 @@ void parse_advanced_pattern(const char* line) {
             nfa_add_transition(current_state, new_state, symbol_id);
             // Add self-loop for additional whitespace characters
             nfa_add_transition(new_state, new_state, symbol_id);
+            nfa_finalize_state(new_state);
             current_state = new_state;
         } else if (c == ' ' && in_quote) {
             // Verbatim whitespace - matches exactly one space character
@@ -603,6 +633,7 @@ void parse_advanced_pattern(const char* line) {
 
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
+            nfa_finalize_state(new_state);
             current_state = new_state;
         } else if (c == '*') {
             // Wildcard: create epsilon transitions
@@ -616,6 +647,7 @@ void parse_advanced_pattern(const char* line) {
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
             nfa_add_transition(new_state, new_state, symbol_id);
+            nfa_finalize_state(new_state);
             current_state = new_state;
         } else if (c == '?') {
             // Single character wildcard
@@ -627,6 +659,7 @@ void parse_advanced_pattern(const char* line) {
 
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
+            nfa_finalize_state(new_state);
             current_state = new_state;
         } else {
             // Regular character
@@ -638,6 +671,7 @@ void parse_advanced_pattern(const char* line) {
 
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
+            nfa_finalize_state(new_state);
             current_state = new_state;
         }
     }
@@ -653,17 +687,8 @@ void parse_advanced_pattern(const char* line) {
     }
     nfa_add_tag(current_state, action);
 
-    // Check for minimization
-    uint64_t signature = compute_state_signature(current_state);
-    int equivalent_state = find_equivalent_state(signature, current_state);
-
-    if (equivalent_state != -1) {
-        // Merge with existing equivalent state
-        current_state = equivalent_state;
-    } else {
-        // Add to signature table
-        add_state_to_signature_table(current_state, signature);
-    }
+    // Final state already finalized by nfa_finalize_state() during construction
+    // No additional minimization needed here
 }
 
 // Read advanced command specification file

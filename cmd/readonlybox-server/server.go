@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"os"
@@ -27,11 +28,12 @@ var (
 	tui         = flag.Bool("tui", false, "Run in TUI mode")
 	debugTUI    = flag.Bool("debug-tui", false, "Debug mode: simulate TUI decisions (auto-allow after 500ms)")
 	autoDeny    = flag.Bool("auto-deny", false, "Auto-deny unknown commands (for testing)")
+	debugMode   = flag.Bool("debug", false, "Debug mode: print protocol traces to stderr")
 )
 
 const SocketPath = "/tmp/readonlybox.sock"
 const ServerVersion = "1.0.0"
-const ProtocolVersion uint32 = 3
+const ProtocolVersion uint32 = 4 /* Protocol version - matches client */
 
 // UUID for identifying this server instance
 var ServerUUID [16]byte
@@ -124,6 +126,49 @@ const (
 	ROBO_DECISION_DENY    = 3
 	ROBO_DECISION_ERROR   = 4
 )
+
+// CRC32 lookup table for validating packet integrity
+var crc32Table [256]uint32
+
+func init() {
+	// Generate CRC32 table (polynomial 0xEDB88320)
+	for i := 0; i < 256; i++ {
+		crc := uint32(i)
+		for j := 0; j < 8; j++ {
+			if crc&1 == 1 {
+				crc = (crc >> 1) ^ 0xEDB88320
+			} else {
+				crc >>= 1
+			}
+		}
+		crc32Table[i] = crc
+	}
+}
+
+// Calculate CRC32 checksum
+func calculateCRC32(data []byte) uint32 {
+	crc := uint32(0xFFFFFFFF)
+	for _, b := range data {
+		crc = (crc >> 8) ^ crc32Table[(crc^uint32(b))&0xFF]
+	}
+	return crc ^ 0xFFFFFFFF
+}
+
+// Validate packet checksum - returns true if valid
+func validatePacketChecksum(packet []byte, expectedChecksum uint32) bool {
+	// Calculate checksum over entire packet (excluding checksum field at offset 68)
+	// Temporarily zero out checksum field for calculation
+	original := make([]byte, 4)
+	copy(original, packet[68:72])
+	for i := 68; i < 72; i++ {
+		packet[i] = 0
+	}
+	calcChecksum := calculateCRC32(packet)
+	// Restore checksum field
+	copy(packet[68:72], original)
+
+	return calcChecksum == expectedChecksum
+}
 
 type Logger struct {
 	file     *os.File
@@ -470,7 +515,32 @@ func (s *Server) HandleConnection(conn net.Conn) {
 	for {
 		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-		// Read magic and header
+		// Read raw bytes first for debugging (Protocol v4 = 72 byte header with checksum)
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		rawHeader := make([]byte, 72)
+		n, err := io.ReadFull(reader, rawHeader)
+		if err != nil {
+			if *debugMode {
+				fmt.Fprintf(os.Stderr, "DEBUG: ReadFull failed: n=%d, err=%v\n", n, err)
+				fmt.Fprintf(os.Stderr, "DEBUG: Raw bytes (%d): ", n)
+				for i := 0; i < n && i < 16; i++ {
+					fmt.Fprintf(os.Stderr, "%02x ", rawHeader[i])
+				}
+				fmt.Fprintf(os.Stderr, "\n")
+			}
+			s.mu.Lock()
+			delete(s.connections, remoteAddr)
+			s.mu.Unlock()
+			return
+		}
+
+		if *debugMode {
+			fmt.Fprintf(os.Stderr, "DEBUG: ReadFull success, got 72 bytes: %02x%02x%02x%02x%02x%02x%02x%02x\n",
+				rawHeader[0], rawHeader[1], rawHeader[2], rawHeader[3],
+				rawHeader[4], rawHeader[5], rawHeader[6], rawHeader[7])
+		}
+
+		// Parse header from raw bytes (Protocol v4 with checksum)
 		var hdr struct {
 			Magic     uint32
 			Version   uint32
@@ -480,9 +550,22 @@ func (s *Server) HandleConnection(conn net.Conn) {
 			ID        uint32
 			Argc      uint32
 			Envc      uint32
+			Checksum  uint32
 		}
-		err := binary.Read(reader, binary.LittleEndian, &hdr)
-		gLogger.Log(3, "HDR: magic=0x%08x version=%d id=%d argc=%d", hdr.Magic, hdr.Version, hdr.ID, hdr.Argc)
+		hdr.Magic = uint32(rawHeader[0]) | uint32(rawHeader[1])<<8 | uint32(rawHeader[2])<<16 | uint32(rawHeader[3])<<24
+		hdr.Version = uint32(rawHeader[4]) | uint32(rawHeader[5])<<8 | uint32(rawHeader[6])<<16 | uint32(rawHeader[7])<<24
+		copy(hdr.ClientID[:], rawHeader[8:24])
+		copy(hdr.RequestID[:], rawHeader[24:40])
+		copy(hdr.ServerID[:], rawHeader[40:56])
+		hdr.ID = uint32(rawHeader[56]) | uint32(rawHeader[57])<<8 | uint32(rawHeader[58])<<16 | uint32(rawHeader[59])<<24
+		hdr.Argc = uint32(rawHeader[60]) | uint32(rawHeader[61])<<8 | uint32(rawHeader[62])<<16 | uint32(rawHeader[63])<<24
+		hdr.Envc = uint32(rawHeader[64]) | uint32(rawHeader[65])<<8 | uint32(rawHeader[66])<<16 | uint32(rawHeader[67])<<24
+		hdr.Checksum = uint32(rawHeader[68]) | uint32(rawHeader[69])<<8 | uint32(rawHeader[70])<<16 | uint32(rawHeader[71])<<24
+
+		if *debugMode {
+			fmt.Fprintf(os.Stderr, "DEBUG HDR: magic=0x%08x version=%d id=%d argc=%d checksum=%08x\n",
+				hdr.Magic, hdr.Version, hdr.ID, hdr.Argc, hdr.Checksum)
+		}
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				s.mu.Lock()
@@ -581,18 +664,30 @@ func (s *Server) HandleConnection(conn net.Conn) {
 		// Read command name
 		cmd, err := reader.ReadString(0)
 		if err != nil {
+			if *debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Error reading cmd: %v\n", err)
+			}
 			return
 		}
 		cmd = strings.TrimSuffix(cmd, "\x00")
+		if *debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Read cmd: %s\n", cmd)
+		}
 
 		// Read arguments
 		var args []string
 		for i := uint32(0); i < hdr.Argc; i++ {
 			arg, err := reader.ReadString(0)
 			if err != nil {
+				if *debugMode {
+					fmt.Fprintf(os.Stderr, "[DEBUG] Error reading arg %d: %v\n", i, err)
+				}
 				return
 			}
 			args = append(args, strings.TrimSuffix(arg, "\x00"))
+		}
+		if *debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Read %d args\n", len(args))
 		}
 
 		// Read environment
@@ -600,9 +695,15 @@ func (s *Server) HandleConnection(conn net.Conn) {
 		for i := uint32(0); i < hdr.Envc; i++ {
 			envVar, err := reader.ReadString(0)
 			if err != nil {
+				if *debugMode {
+					fmt.Fprintf(os.Stderr, "[DEBUG] Error reading env %d: %v\n", i, err)
+				}
 				return
 			}
 			env = append(env, strings.TrimSuffix(envVar, "\x00"))
+		}
+		if *debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Read %d env vars\n", len(env))
 		}
 
 		// Check request cache first (for retries after server restart)
@@ -643,7 +744,13 @@ func (s *Server) HandleConnection(conn net.Conn) {
 		// Add to request queue and notify TUI
 		pendingReq := GlobalRequestQueue.Add(remoteAddr, cmd, args, env)
 		if s.onRequest != nil {
+			if *debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Sending onCommand callback for request #%d\n", pendingReq.ID)
+			}
 			s.onRequest(pendingReq.ID, remoteAddr, cmd, args)
+			if *debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] onCommand callback done for request #%d\n", pendingReq.ID)
+			}
 		}
 		gLogger.Log(3, "REQUEST #%d: client=%s cmd=%s args=%v", pendingReq.ID, remoteAddr, cmd, args)
 
@@ -662,7 +769,9 @@ func (s *Server) HandleConnection(conn net.Conn) {
 
 		// In TUI mode or debug mode, unknown commands wait for user decision
 		if (*tui || *debugTUI) && decision == ROBO_DECISION_ALLOW && reason == "unknown command" {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Unknown command '%s', waiting for TUI decision (request #%d)...\n", cmd, pendingReq.ID)
+			if *debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Unknown command '%s', waiting for TUI decision (request #%d)...\n", cmd, pendingReq.ID)
+			}
 
 			if *debugTUI {
 				// In debug mode, wait with timeout using proper sync
@@ -682,16 +791,22 @@ func (s *Server) HandleConnection(conn net.Conn) {
 				select {
 				case result := <-resultCh:
 					if result.status == RequestAllowed {
-						fmt.Fprintf(os.Stderr, "[DEBUG] TUI allowed request #%d\n", pendingReq.ID)
+						if *debugMode {
+							fmt.Fprintf(os.Stderr, "[DEBUG] TUI allowed request #%d\n", pendingReq.ID)
+						}
 						decision = ROBO_DECISION_ALLOW
 						reason = result.reason
 					} else if result.status == RequestDenied {
-						fmt.Fprintf(os.Stderr, "[DEBUG] TUI denied request #%d\n", pendingReq.ID)
+						if *debugMode {
+							fmt.Fprintf(os.Stderr, "[DEBUG] TUI denied request #%d\n", pendingReq.ID)
+						}
 						decision = ROBO_DECISION_DENY
 						reason = result.reason
 					}
 				case <-time.After(30 * time.Second):
-					fmt.Fprintf(os.Stderr, "[DEBUG] Debug mode: auto-allowing request #%d\n", pendingReq.ID)
+					if *debugMode {
+						fmt.Fprintf(os.Stderr, "[DEBUG] Debug mode: auto-allowing request #%d\n", pendingReq.ID)
+					}
 					decision = ROBO_DECISION_ALLOW
 					reason = "debug auto-allow"
 				}
@@ -731,9 +846,13 @@ func (s *Server) HandleConnection(conn net.Conn) {
 			default:
 				decisionStr = "UNKNOWN"
 			}
-			fmt.Fprintf(os.Stderr, "[DEBUG] Sending onCommand callback for request #%d\n", pendingReq.ID)
+			if *debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Sending onCommand callback for request #%d\n", pendingReq.ID)
+			}
 			s.onCommand(pendingReq.ID, decisionStr, cmd, args, reason)
-			fmt.Fprintf(os.Stderr, "[DEBUG] onCommand callback done for request #%d\n", pendingReq.ID)
+			if *debugMode {
+				fmt.Fprintf(os.Stderr, "[DEBUG] onCommand callback done for request #%d\n", pendingReq.ID)
+			}
 		}
 
 		// Log based on mode

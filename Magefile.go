@@ -13,13 +13,8 @@ import (
 	"github.com/magefile/mage/mg"
 )
 
-// Tools to build
-var tools = []string{
-	"ro-git", "ro-find", "ro-ls", "ro-cat", "ro-grep", "ro-head", "ro-tail",
-	"ro-timeout", "ro-echo", "ro-date", "ro-cd", "ro-bash", "ro-sort", "ro-ulimit",
-	"ro-sed", "ro-chmod", "ro-chown", "ro-mkdir", "ro-rmdir", "ro-ln", "ro-mv",
-	"ro-cp", "ro-rm", "ro-touch", "ro-dd", "ro-ps", "ro-df", "ro-du", "ro-wc", "ro-uname",
-}
+// Build all tools - now just readonlybox with symlinks
+var tools = []string{}
 
 // Default target to run when none is specified
 var Default = Build
@@ -445,12 +440,25 @@ func buildAll() error {
 		return err
 	}
 
+	// Build readonlybox single binary
+	cmd := exec.Command("go", "build", "-o", filepath.Join("bin", "readonlybox"), "./cmd/readonlybox")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to build readonlybox: %w", err)
+	}
+
+	// Create symlinks for each tool pointing to readonlybox
 	for _, tool := range tools {
-		cmd := exec.Command("go", "build", "-o", filepath.Join("bin", tool), "./"+filepath.Join("cmd", tool))
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to build %s: %w", tool, err)
+		linkPath := filepath.Join("bin", tool)
+
+		// Remove existing file/symlink
+		os.Remove(linkPath)
+
+		// Create symlink with relative path "readonlybox"
+		// This works because the symlink is in the same directory as readonlybox
+		if err := os.Symlink("readonlybox", linkPath); err != nil {
+			return fmt.Errorf("failed to create symlink %s: %w", tool, err)
 		}
 	}
 

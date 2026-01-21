@@ -908,8 +908,12 @@ static int should_fast_allow(const char *cmd) {
 /* Check if path is readonlybox itself */
 static int is_readonlybox_path(const char *path) {
     if (!path) return 0;
+    /* Check if path contains readonlybox */
     if (strstr(path, "readonlybox") != NULL) return 1;
+    /* Also check for the full path pattern */
     if (strstr(path, "/readonlybox") != NULL) return 1;
+    /* Check for the bin directory path */
+    if (strstr(path, "/home/panz/osrc/lms-test/readonlybox/bin/readonlybox") != NULL) return 1;
     return 0;
 }
 
@@ -1030,7 +1034,10 @@ static int check_and_execute(const char *syscall_name, const char *path, char *c
     return 0;
 }
 
-/* execve interception */
+/* Forward declaration for redirect function */
+static int redirect_through_readonlybox(const char *path, char *const argv[], char *const envp[]);
+
+/* execve interception - redirect through readonlybox for validation */
 int execve(const char *path, char *const argv[], char *const envp[]) {
     static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
 
@@ -1038,22 +1045,93 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
         real_execve = dlsym(RTLD_NEXT, "execve");
     }
 
-    int check = check_and_execute("execve", path, argv, envp);
-    if (check < 0) {
-        /* Denied - print error and exit to prevent shell retry loops */
-        const char *cmd = get_basename(path);
-        if (cmd) {
-            fprintf(stderr, "%s: Permission denied\n", cmd);
-        }
-        /* Use _exit to avoid flushing buffers and prevent any retry */
-        _exit(1);
-        return -1;  /* Never reached */
+    /* Skip if already going through readonlybox */
+    if (is_readonlybox_path(path)) {
+        return real_execve(path, argv, envp);
     }
 
-    return real_execve(path, argv, envp);
+    /* Check for write operations - always deny immediately */
+    if (has_write_operation(argv)) {
+        const char *err = "[readonlybox] DENY: write operation detected\n";
+        write(2, err, strlen(err));
+        errno = EACCES;
+        return -1;
+    }
+
+    /* Get basename for fast-path check */
+    const char *base_cmd = get_basename(path);
+    if (!base_cmd) {
+        return real_execve(path, argv, envp);
+    }
+
+    /* Redirect through readonlybox --run */
+    return redirect_through_readonlybox(path, argv, envp);
 }
 
-/* execveat interception */
+/* Shared function to redirect through readonlybox --run */
+static int redirect_through_readonlybox(const char *path, char *const argv[], char *const envp[]) {
+    static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
+
+    if (real_execve == NULL) {
+        real_execve = dlsym(RTLD_NEXT, "execve");
+    }
+
+    char readonlybox_path[1024];
+    snprintf(readonlybox_path, sizeof(readonlybox_path), "%s/readonlybox", "/home/panz/osrc/lms-test/readonlybox/bin");
+
+    /* Build args: readonlybox --run <original-path> <original-args...> */
+    char *new_argv[128];
+    new_argv[0] = "readonlybox";
+    new_argv[1] = "--run";
+    new_argv[2] = (char*)path;
+    
+    /* Copy original args starting from argv[1] (skip argv[0] which is the command name) */
+    int i;
+    for (i = 1; argv && argv[i] && i < 125; i++) {
+        new_argv[2 + i] = argv[i];
+    }
+    new_argv[2 + i] = NULL;
+
+    /* If envp is NULL, use current environment from environ global */
+    char **exec_env_to_free = NULL;
+    char **exec_env = (char **)envp;
+    if (envp == NULL) {
+        /* Count environment variables */
+        int envc = 0;
+        for (char **e = environ; *e; e++) envc++;
+        
+        /* Allocate new environment array and copy */
+        exec_env_to_free = malloc((envc + 1) * sizeof(char*));
+        for (int j = 0; j < envc; j++) {
+            exec_env_to_free[j] = environ[j];
+        }
+        exec_env_to_free[envc] = NULL;
+        exec_env = exec_env_to_free;
+    }
+
+    int result = real_execve(readonlybox_path, new_argv, exec_env);
+
+    /* If we allocated new_env, free it */
+    if (exec_env_to_free != NULL) {
+        free(exec_env_to_free);
+    }
+
+    return result;
+}
+
+/* Also intercept execvpe - used by bash and other shells */
+int execvpe(const char *file, char *const argv[], char *const envp[]) {
+    static int (*real_execvpe)(const char *, char *const[], char *const[]) = NULL;
+
+    if (real_execvpe == NULL) {
+        real_execvpe = dlsym(RTLD_NEXT, "execvpe");
+    }
+
+    /* Let the real execvpe handle PATH resolution - it has correct environment */
+    return real_execvpe(file, argv, envp);
+}
+
+/* execveat interception - redirect through readonlybox for validation */
 int execveat(int dirfd, const char *pathname, char *const argv[],
              char *const envp[], int flags) {
     static int (*real_execveat)(int, const char *, char *const[], char *const[], int) = NULL;
@@ -1062,31 +1140,52 @@ int execveat(int dirfd, const char *pathname, char *const argv[],
         real_execveat = dlsym(RTLD_NEXT, "execveat");
     }
 
-    /* Get full path for checking */
-    char fullpath[4096];
-    if (pathname && pathname[0] != '/') {
-        /* Relative path - would need /proc/self/fd, skip check */
+    /* Skip if already going through readonlybox */
+    if (is_readonlybox_path(pathname)) {
         return real_execveat(dirfd, pathname, argv, envp, flags);
     }
-    snprintf(fullpath, sizeof(fullpath), "%s", pathname);
 
-    int check = check_and_execute("execveat", fullpath, argv, envp);
-    if (check < 0) {
+    /* Check for write operations - always deny immediately */
+    if (has_write_operation(argv)) {
+        const char *err = "[readonlybox] DENY: write operation detected\n";
+        write(2, err, strlen(err));
+        errno = EACCES;
         return -1;
     }
 
-    return real_execveat(dirfd, pathname, argv, envp, flags);
+    /* Get basename for fast-path check */
+    const char *base_cmd = get_basename(pathname);
+    if (!base_cmd) {
+        return real_execveat(dirfd, pathname, argv, envp, flags);
+    }
+
+    /* Resolve full path from dirfd + pathname */
+    char fullpath[4096];
+    if (pathname && pathname[0] == '/') {
+        snprintf(fullpath, sizeof(fullpath), "%s", pathname);
+    } else if (dirfd >= 0) {
+        /* Read symlink from /proc/self/fd */
+        char fdpath[64];
+        snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", dirfd);
+        ssize_t len = readlink(fdpath, fullpath, sizeof(fullpath) - 1);
+        if (len > 0) {
+            fullpath[len] = '\0';
+            if (pathname && pathname[0]) {
+                size_t prefix_len = strlen(fullpath);
+                snprintf(fullpath + prefix_len, sizeof(fullpath) - prefix_len, "/%s", pathname);
+            }
+        } else {
+            snprintf(fullpath, sizeof(fullpath), "%s", pathname ? pathname : "");
+        }
+    } else {
+        snprintf(fullpath, sizeof(fullpath), "%s", pathname ? pathname : "");
+    }
+
+    /* Redirect through readonlybox --run */
+    return redirect_through_readonlybox(fullpath, argv, envp);
 }
 
-/* Helper to extract path from posix_spawn attributes */
-static const char *get_path_from_file_actions(const char *file_actions) {
-    /* This is tricky - posix_spawn uses file_actions struct internally
-     * The simplest approach: if we can't easily check, let it through
-     * but log that posix_spawn was used */
-    return NULL;
-}
-
-/* posix_spawn interception - basic version */
+/* posix_spawn interception - redirect through readonlybox for validation */
 int posix_spawn(pid_t *pid, const char *path,
                 const void *file_actions, const void *attrp,
                 char *const argv[], char *const envp[]) {
@@ -1097,12 +1196,26 @@ int posix_spawn(pid_t *pid, const char *path,
         real_posix_spawn = dlsym(RTLD_NEXT, "posix_spawn");
     }
 
-    int check = check_and_execute("posix_spawn", path, argv, envp);
-    if (check < 0) {
+    /* Skip if already going through readonlybox */
+    if (is_readonlybox_path(path)) {
+        return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
+    }
+
+    /* Check for write operations - always deny immediately */
+    if (has_write_operation(argv)) {
+        const char *err = "[readonlybox] DENY: write operation detected\n";
+        write(2, err, strlen(err));
         return EPERM;
     }
 
-    return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
+    /* Get basename */
+    const char *base_cmd = get_basename(path);
+    if (!base_cmd) {
+        return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
+    }
+
+    /* Redirect through readonlybox --run */
+    return redirect_through_readonlybox(path, argv, envp);
 }
 
 /* posix_spawnp interception - searches PATH */
@@ -1116,7 +1229,71 @@ int posix_spawnp(pid_t *pid, const char *file,
         real_posix_spawnp = dlsym(RTLD_NEXT, "posix_spawnp");
     }
 
-    /* For spawnp, we need to resolve the path first - this is complex
-     * For now, we'll skip the check and let it through */
-    return real_posix_spawnp(pid, file, file_actions, attrp, argv, envp);
+    /* Skip if already going through readonlybox */
+    if (is_readonlybox_path(file)) {
+        return real_posix_spawnp(pid, file, file_actions, attrp, argv, envp);
+    }
+
+    /* Check for write operations - always deny immediately */
+    if (has_write_operation(argv)) {
+        const char *err = "[readonlybox] DENY: write operation detected\n";
+        write(2, err, strlen(err));
+        return EPERM;
+    }
+
+    /* For posix_spawnp, we need to resolve the path first */
+    const char *resolved_path = file;
+
+    /* If file doesn't contain a path separator, search PATH */
+    if (file && strchr(file, '/') == NULL) {
+        const char *path_env = NULL;
+        for (char *const *env = envp; *env; env++) {
+            if (strncmp(*env, "PATH=", 5) == 0) {
+                path_env = *env + 5;
+                break;
+            }
+        }
+
+        if (path_env) {
+            char path_buf[4096];
+            const char *path_copy = path_env;
+            const char *colon;
+
+            while ((colon = strchr(path_copy, ':')) != NULL) {
+                size_t dir_len = colon - path_copy;
+                if (dir_len > 0 && dir_len < sizeof(path_buf) - strlen(file) - 2) {
+                    memcpy(path_buf, path_copy, dir_len);
+                    path_buf[dir_len] = '/';
+                    strcpy(path_buf + dir_len + 1, file);
+                    if (access(path_buf, X_OK) == 0) {
+                        resolved_path = path_buf;
+                        break;
+                    }
+                }
+                path_copy = colon + 1;
+            }
+
+            /* Check the last directory in PATH */
+            if (!resolved_path || resolved_path == file) {
+                size_t last_len = strlen(path_copy);
+                if (last_len > 0 && last_len < sizeof(path_buf) - strlen(file) - 2) {
+                    strcpy(path_buf, path_copy);
+                    path_buf[last_len] = '/';
+                    strcpy(path_buf + last_len + 1, file);
+                    if (access(path_buf, X_OK) == 0) {
+                        resolved_path = path_buf;
+                    }
+                }
+            }
+        }
+    }
+
+    /* Get basename for the resolved path */
+    const char *base_cmd = get_basename(resolved_path);
+    if (!base_cmd) {
+        return real_posix_spawnp(pid, file, file_actions, attrp, argv, envp);
+    }
+
+    /* Redirect through readonlybox --run with resolved path */
+    return redirect_through_readonlybox(resolved_path, argv, envp);
 }

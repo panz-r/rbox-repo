@@ -257,7 +257,11 @@ void nfa_to_dfa(void) {
         int current_dfa = queue[queue_start];
         queue_start++;
 
-        printf("Processing DFA state %d (contains %d NFA states)\n", current_dfa, dfa[current_dfa].nfa_state_count);
+        printf("Processing DFA state %d (contains %d NFA states: ", current_dfa, dfa[current_dfa].nfa_state_count);
+        for (int i = 0; i < dfa[current_dfa].nfa_state_count; i++) {
+            printf("%d ", dfa[current_dfa].nfa_states[i]);
+        }
+        printf(")\n");
 
         // Try each symbol in the alphabet
         for (int symbol_id = 0; symbol_id < alphabet_size; symbol_id++) {
@@ -562,7 +566,8 @@ void write_dfa_file(const char* filename) {
     uint32_t accepting_mask = 0;
 
     for (int i = 0; i < dfa_state_count; i++) {
-        states[i].transitions_offset = sizeof(dfa_t) + states_size + (current_transition * sizeof(dfa_transition_t));
+        // transitions_offset is an offset WITHIN the transitions section
+        states[i].transitions_offset = current_transition * sizeof(dfa_transition_t);
         states[i].transition_count = dfa[i].transition_count;
         states[i].flags = dfa[i].flags;
 
@@ -589,8 +594,10 @@ void write_dfa_file(const char* filename) {
                 }
 
                 transitions[current_transition].character = (char)s; // Symbol ID as character
+                // next_state_offset is the FULL FILE OFFSET to the target state
+                // = header_size + alphabet + target_state_index * sizeof(dfa_state_t)
                 transitions[current_transition].next_state_offset =
-                    sizeof(dfa_t) + (dfa[i].transitions[s] * sizeof(dfa_state_t));
+                    sizeof(dfa_t) + alphabet_map_size + (dfa[i].transitions[s] * sizeof(dfa_state_t));
                 current_transition++;
             }
         }
