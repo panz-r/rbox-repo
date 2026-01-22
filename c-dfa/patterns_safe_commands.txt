@@ -1,5 +1,54 @@
 # Safe Commands - Read-only operations that are completely safe
 
+# Character set definitions for reuse (MUST come before patterns that use them)
+# These define valid single characters in each category
+[characterset:git:UPPERCASE] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[characterset:git:LOWERCASE] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[characterset:git:DIGIT] 0|1|2|3|4|5|6|7|8|9
+[characterset:git:HEXDIGIT] 0|1|2|3|4|5|6|7|8|9|a|b|c|d|e|f
+
+# Fragment definitions using character sets
+# These define complete patterns that can be referenced with ((namespace::name))
+[fragment:git:shortref] ((UPPERCASE))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))
+[fragment:git:longref] ((UPPERCASE))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))
+[fragment:git:refname] ((UPPERCASE))|((LOWERCASE))|((DIGIT))
+[fragment:git:reforigin] refs/((UPPERCASE))|((LOWERCASE))|((DIGIT))
+[fragment:git:reftype] heads/|tags/|remotes/
+
+# Git read-only operations
+[safe:git:read] git log
+[safe:git:read] git log --oneline
+[safe:git:read] git log --graph
+[safe:git:read] git status
+[safe:git:read] git show
+[safe:git:read] git diff
+[safe:git:read] git diff HEAD
+[safe:git:read] git blame *
+[safe:git:read] git grep *
+[safe:git:read] git ls-files
+[safe:git:read] git tag
+[safe:git:read] git tag -l
+[safe:git:read] git branch
+[safe:git:read] git branch -a
+[safe:git:read] git remote -v
+[safe:git:read] git config --list
+[safe:git:read] git rev-parse --abbrev-ref *
+[safe:git:read] git rev-parse --show-toplevel
+[safe:git:read] git rev-parse --git-dir
+[safe:git:read] git rev-parse --is-inside-work-tree
+[safe:git:read] git rev-parse --is-bare-repository
+[safe:git:read] git rev-parse HEAD
+[safe:git:read] git rev-parse --short *
+[safe:git:read] git rev-parse HEAD^{commit}
+[safe:git:read] git rev-parse *
+[safe:git:read] git rev-parse --*
+[safe:git:read] git rev-parse --short ((UPPERCASE))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))
+[safe:git:read] git rev-parse ((git::shortref))
+[safe:git:read] git rev-parse ((git::longref))
+[safe:git:read] git rev-parse --abbrev-ref ((UPPERCASE))|((LOWERCASE))|((DIGIT))
+[safe:git:read] git log --oneline --decorate
+[safe:git:read] git log --graph --oneline
+
 # File reading operations
 [safe:file:read] cat file.txt
 [safe:file:read] cat *.txt
@@ -27,35 +76,6 @@
 [safe:file:read] du -sh *
 [safe:file:read] df -h
 [safe:file:read] df -h .
-
-# Git read-only operations
-[safe:git:read] git log
-[safe:git:read] git log --oneline
-[safe:git:read] git log --graph
-[safe:git:read] git status
-[safe:git:read] git show
-[safe:git:read] git diff
-[safe:git:read] git diff HEAD
-[safe:git:read] git blame *
-[safe:git:read] git grep *
-[safe:git:read] git ls-files
-[safe:git:read] git tag
-[safe:git:read] git tag -l
-[safe:git:read] git branch
-[safe:git:read] git branch -a
-[safe:git:read] git remote -v
-[safe:git:read] git config --list
-# git rev-parse: read any ref, tag, branch, or commit
-[safe:git:read] git rev-parse --abbrev-ref *
-[safe:git:read] git rev-parse --show-toplevel
-[safe:git:read] git rev-parse --git-dir
-[safe:git:read] git rev-parse --is-inside-work-tree
-[safe:git:read] git rev-parse --is-bare-repository
-[safe:git:read] git rev-parse HEAD
-[safe:git:read] git rev-parse --short *
-[safe:git:read] git rev-parse HEAD^{commit}
-[safe:git:read] git rev-parse *
-[safe:git:read] git rev-parse --*
 
 # System information operations
 [safe:system:read] ps aux
@@ -121,6 +141,3 @@
 [safe:file:read] find . -type f -name "*.txt"
 [safe:file:read] ls -la -h
 [safe:file:read] ps aux --sort=-%mem
-[safe:file:read] git log --oneline --decorate
-[safe:file:read] git log --graph --oneline
-[safe:file:read] ls

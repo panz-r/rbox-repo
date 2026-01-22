@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include "../include/dfa_types.h"
+#include "../include/nfa.h"
 
 /**
  * Advanced NFA Builder with Alphabet Support
@@ -13,18 +14,10 @@
  * command specifications using an optimized alphabet to reduce DFA state space.
  */
 
-#define MAX_STATES 4096
-#define MAX_CHARS 256
-#define MAX_PATTERNS 2048
-#define MAX_LINE_LENGTH 2048
-#define MAX_TAGS 16
-#define SIGNATURE_TABLE_SIZE 1024
-#define MAX_SYMBOLS 64
-
 // Character class definition
 typedef struct {
-    char start_char;
-    char end_char;
+    int start_char;
+    int end_char;
     int symbol_id;
     bool is_special;
 } char_class_t;
@@ -222,8 +215,8 @@ void load_alphabet(const char* filename) {
             }
 
             alphabet[alphabet_size].symbol_id = symbol_id;
-            alphabet[alphabet_size].start_char = (char)start_char;
-            alphabet[alphabet_size].end_char = (char)end_char;
+            alphabet[alphabet_size].start_char = start_char;
+            alphabet[alphabet_size].end_char = end_char;
             alphabet[alphabet_size].is_special = (strcmp(special, "special") == 0);
             alphabet_size++;
         }
@@ -273,37 +266,27 @@ int nfa_add_state_with_minimization(bool accepting) {
 }
 
 // Finalize state after all transitions have been added
-// This is where minimization happens - checking for equivalent states
+// NOTE: State minimization is DISABLED to prevent states from different patterns
+// from being incorrectly merged. Each pattern keeps its own distinct states.
 int nfa_finalize_state(int state) {
     // Compute signature for this state (NOW transitions are set)
     uint64_t signature = compute_state_signature(state);
-
-    fprintf(stderr, "DEBUG: Finalizing state %d, pattern=%d, accepting=%d, transitions=%d, signature=0x%016lx\n",
-            state, current_pattern_index, nfa[state].accepting, nfa[state].transition_count, signature);
 
     // Check if an equivalent state already exists
     int equivalent_state = find_equivalent_state(signature, state);
 
     if (equivalent_state != -1) {
-        // Found equivalent state, revert the new state and return the existing one
-        nfa_state_count--; // Revert the state count
+        // DISABLED: Don't merge states - we want each pattern to have distinct states
+        // This prevents patterns like "git log" and "git status" from sharing
+        // intermediate states, which causes incorrect transitions.
+        //
+        // If we wanted to re-enable minimization, we'd uncomment this:
+        // return equivalent_state;
 
-        // Clean up the new state
-        for (int j = 0; j < nfa[state].tag_count; j++) {
-            free(nfa[state].tags[j]);
-            nfa[state].tags[j] = NULL;
-        }
-        nfa[state].tag_count = 0;
-        nfa[state].accepting = false;
-        nfa[state].transition_count = 0;
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
-            nfa[state].transitions[j] = -1;
-        }
-
-        return equivalent_state; // Return the existing equivalent state
+        // Instead, just add this state to the signature table without merging
     }
 
-    // No equivalent state found, add this state to signature table
+    // Add this state to signature table
     add_state_to_signature_table(state, signature);
 
     return state;
@@ -563,11 +546,80 @@ void parse_advanced_pattern(const char* line) {
     fprintf(stderr, "DEBUG: Processing pattern %d: %s\n", pattern_count, pattern);
 
     // Build NFA for this pattern with alphabet support
+    // For pattern 0 (first pattern), start fresh from state 0
+    // For subsequent patterns, try to share states for common prefixes
     int current_state = 0;
+    int divergence_point = 0;  // Point where this pattern diverges from existing paths
+    int prefix_end_state = 0;  // The state at the end of the shared prefix
     int pattern_len = strlen(pattern);
     bool in_quote = false;
+    
+    // For the first pattern, build a simple chain
+    // For subsequent patterns, find the longest common prefix with existing paths
+    if (pattern_count > 0) {
+        // Find how much of this pattern can share existing states
+        int temp_state = 0;
+        int shared_length = 0;
+        
+        for (int i = 0; i < pattern_len; i++) {
+            char c = pattern[i];
+            
+            // Skip whitespace handling for prefix matching
+            if (c == ' ' && !in_quote) {
+                int symbol_id = find_symbol_id(DFA_CHAR_NORMALIZING_SPACE);
+                if (symbol_id == -1) symbol_id = find_symbol_id(' ');
+                if (nfa[temp_state].transitions[symbol_id] != -1) {
+                    temp_state = nfa[temp_state].transitions[symbol_id];
+                    shared_length++;
+                } else {
+                    break;
+                }
+            } else if (c == '\\' && i + 1 < pattern_len) {
+                i++;
+                char escaped_char = pattern[i];
+                int symbol_id = find_symbol_id(escaped_char);
+                if (symbol_id == -1) break;
+                if (nfa[temp_state].transitions[symbol_id] != -1) {
+                    temp_state = nfa[temp_state].transitions[symbol_id];
+                    shared_length++;
+                } else {
+                    break;
+                }
+            } else if (c == '\'' && !in_quote) {
+                in_quote = true;
+                continue;
+            } else if (c == '\'' && in_quote) {
+                in_quote = false;
+                continue;
+            } else {
+                // Regular character
+                int symbol_id = find_symbol_id(c);
+                if (symbol_id == -1) break;
+                if (nfa[temp_state].transitions[symbol_id] != -1) {
+                    temp_state = nfa[temp_state].transitions[symbol_id];
+                    shared_length++;
+                } else {
+                    break;
+                }
+            }
+        }
+        
+        if (shared_length > 0) {
+            // Found shared prefix - continue from the end of the shared prefix
+            // The normal loop will add new transitions from there
+            divergence_point = shared_length;
+            prefix_end_state = temp_state;
+            current_state = temp_state;
 
-    for (int i = 0; i < pattern_len; i++) {
+            fprintf(stderr, "DEBUG: Pattern %d shares prefix of length %d, continuing from state %d\n",
+                    pattern_count, shared_length, prefix_end_state);
+        }
+    }
+
+    // Reset quote state after prefix matching
+    in_quote = false;
+
+    for (int i = divergence_point; i < pattern_len; i++) {
         char c = pattern[i];
 
         // Handle quoted verbatim sections
@@ -622,7 +674,6 @@ void parse_advanced_pattern(const char* line) {
             nfa_add_transition(current_state, new_state, symbol_id);
             // Add self-loop for additional whitespace characters
             nfa_add_transition(new_state, new_state, symbol_id);
-            nfa_finalize_state(new_state);
             current_state = new_state;
         } else if (c == ' ' && in_quote) {
             // Verbatim whitespace - matches exactly one space character
@@ -633,7 +684,6 @@ void parse_advanced_pattern(const char* line) {
 
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
-            nfa_finalize_state(new_state);
             current_state = new_state;
         } else if (c == '*') {
             // Wildcard: create epsilon transitions
@@ -647,7 +697,6 @@ void parse_advanced_pattern(const char* line) {
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
             nfa_add_transition(new_state, new_state, symbol_id);
-            nfa_finalize_state(new_state);
             current_state = new_state;
         } else if (c == '?') {
             // Single character wildcard
@@ -659,7 +708,6 @@ void parse_advanced_pattern(const char* line) {
 
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
-            nfa_finalize_state(new_state);
             current_state = new_state;
         } else {
             // Regular character
@@ -671,7 +719,6 @@ void parse_advanced_pattern(const char* line) {
 
             int new_state = nfa_add_state_with_minimization(false);
             nfa_add_transition(current_state, new_state, symbol_id);
-            nfa_finalize_state(new_state);
             current_state = new_state;
         }
     }
@@ -687,8 +734,8 @@ void parse_advanced_pattern(const char* line) {
     }
     nfa_add_tag(current_state, action);
 
-    // Final state already finalized by nfa_finalize_state() during construction
-    // No additional minimization needed here
+    // Finalize the accepting state
+    nfa_finalize_state(current_state);
 }
 
 // Read advanced command specification file

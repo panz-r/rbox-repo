@@ -27,25 +27,31 @@ typedef struct {
 /**
  * Transition entry - maps a character to a next state
  */
-typedef struct {
+typedef struct __attribute__((packed)) {
     char character;              // Input character (0 = end marker)
     uint32_t next_state_offset;  // Offset to next state (0 = no transition)
 } dfa_transition_t;
 
 /**
  * Complete DFA structure - can be memory-mapped directly
+ *
+ * Version 3 layout:
+ * - Header (24 bytes)
+ * - States array
+ * - Transition tables follow after states
+ *
+ * Transitions are stored as compact 5-byte entries:
+ * - 1 byte character (0 = end marker)
+ * - 4 bytes next_state_offset (absolute file offset)
  */
 typedef struct {
     uint32_t magic;              // Magic number: 0xDFA1DFA1
-    uint16_t version;            // Version: 2 (with alphabet support)
+    uint16_t version;            // Version: 3 (character-based, no alphabet_map)
     uint16_t state_count;        // Total number of states
     uint32_t initial_state;      // Offset to initial state
     uint32_t accepting_mask;     // Bitmask of accepting states
-    uint16_t alphabet_size;      // Number of symbols in alphabet (version 2+)
+    uint16_t flags;              // DFA flags
     uint16_t reserved;           // Reserved for future use
-    // Alphabet mapping follows (version 2+):
-    // char alphabet_map[256];   // Maps character to symbol ID
-    // Then states and transitions follow
     dfa_state_t states[];        // Flexible array of states
     // Transition tables follow after states
 } dfa_t;
@@ -65,7 +71,7 @@ typedef struct {
 /**
  * Current DFA version
  */
-#define DFA_VERSION 2  // Version 2 adds alphabet support
+#define DFA_VERSION 3  // Version 3: character-based transitions, no alphabet_map
 
 /**
  * Maximum number of states in a single DFA

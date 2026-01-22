@@ -1,0 +1,7 @@
+# Simple read-only command patterns
+# Each pattern is a command that should be allowed
+
+git log
+git status
+ls
+pwd

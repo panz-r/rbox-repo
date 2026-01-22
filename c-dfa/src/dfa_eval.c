@@ -1,13 +1,9 @@
 #include "dfa.h"
 #include "dfa_types.h"
+#include <stdio.h>
 #include <string.h>
 
-// Current DFA instance
 static const dfa_t* current_dfa = NULL;
-
-// Alphabet mapping for character-to-symbol conversion
-static char alphabet_map[256] = {0}; // Maps character to symbol ID
-static bool alphabet_initialized = false;
 
 bool dfa_init(const void* dfa_data, size_t size) {
     if (dfa_data == NULL || size < sizeof(dfa_t)) {
@@ -16,43 +12,24 @@ bool dfa_init(const void* dfa_data, size_t size) {
 
     const dfa_t* dfa = (const dfa_t*)dfa_data;
 
-    // Validate magic number
     if (dfa->magic != DFA_MAGIC) {
         return false;
     }
 
-    // Validate version (support both v1 and v2)
-    if (dfa->version != 1 && dfa->version != 2) {
+    if (dfa->version != 3) {
+        fprintf(stderr, "Error: Only DFA version 3 is supported (got version %d)\n", dfa->version);
         return false;
     }
 
-    // Validate state count
     if (dfa->state_count == 0 || dfa->state_count > DFA_MAX_STATES) {
         return false;
     }
 
-    // Validate initial state offset
     if (dfa->initial_state == 0 || dfa->initial_state >= size) {
         return false;
     }
 
     current_dfa = dfa;
-    
-    // Initialize alphabet mapping for version 2
-    if (dfa->version == 2) {
-        const char* alphabet_map_ptr = (const char*)dfa + sizeof(dfa_t);
-        for (int i = 0; i < 256; i++) {
-            alphabet_map[i] = alphabet_map_ptr[i];
-        }
-        alphabet_initialized = true;
-    } else {
-        // Version 1: identity mapping (character = symbol)
-        for (int i = 0; i < 256; i++) {
-            alphabet_map[i] = i;
-        }
-        alphabet_initialized = true;
-    }
-    
     return true;
 }
 
@@ -61,95 +38,78 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
         return false;
     }
 
-    // Initialize result
     result->category = DFA_CMD_UNKNOWN;
     result->final_state = 0;
     result->matched = false;
     result->matched_length = 0;
 
-    // Use length if provided, otherwise calculate
     if (length == 0) {
         length = strlen(input);
     }
 
     if (length == 0) {
-        return true; // Empty input
+        return true;
     }
 
-    // Start at initial state
     const dfa_state_t* current_state = (const dfa_state_t*)((const char*)current_dfa + current_dfa->initial_state);
-    size_t pos = 0;
+    size_t states_size = current_dfa->state_count * sizeof(dfa_state_t);
+    size_t transitions_base = (size_t)current_dfa + sizeof(dfa_t) + states_size;
 
+    size_t pos = 0;
     for (pos = 0; pos < length; pos++) {
-        char c = input[pos];
-        char symbol_id = alphabet_initialized ? alphabet_map[(unsigned char)c] : c;
+        unsigned char c = (unsigned char)input[pos];
         bool transition_found = false;
 
-        // Get transition table for current state
         if (current_state->transition_count > 0) {
-            const dfa_transition_t* trans = (const dfa_transition_t*)(
-                (const char*)current_dfa + current_state->transitions_offset);
+            size_t trans_addr = transitions_base + current_state->transitions_offset;
+            const dfa_transition_t* trans = (const dfa_transition_t*)trans_addr;
 
             for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                if (trans[i].character == DFA_CHAR_ANY || trans[i].character == symbol_id) {
-                    // Found a transition
+                unsigned char trans_char = (unsigned char)trans[i].character;
+
+                if (trans_char == DFA_CHAR_ANY || trans_char == c) {
                     if (trans[i].next_state_offset == 0) {
-                        // No transition (dead end)
                         result->final_state = current_state->flags;
                         result->matched_length = pos;
                         return true;
                     }
 
-                    // Move to next state
-                    current_state = (const dfa_state_t*)(
-                        (const char*)current_dfa + trans[i].next_state_offset);
+                    current_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
                     transition_found = true;
                     break;
-                } else if (trans[i].character == DFA_CHAR_WHITESPACE) {
-                    // Whitespace wildcard - matches any whitespace character
+                } else if (trans_char == DFA_CHAR_WHITESPACE) {
                     if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
                         if (trans[i].next_state_offset == 0) {
-                            // No transition (dead end)
                             result->final_state = current_state->flags;
                             result->matched_length = pos;
                             return true;
                         }
 
-                        // Move to next state
-                        current_state = (const dfa_state_t*)(
-                            (const char*)current_dfa + trans[i].next_state_offset);
+                        current_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
                         transition_found = true;
                         break;
                     }
-                } else if (trans[i].character == DFA_CHAR_VERBATIM_SPACE) {
-                    // Verbatim space - matches exactly one space character
+                } else if (trans_char == DFA_CHAR_VERBATIM_SPACE) {
                     if (c == ' ') {
                         if (trans[i].next_state_offset == 0) {
-                            // No transition (dead end)
                             result->final_state = current_state->flags;
                             result->matched_length = pos;
                             return true;
                         }
 
-                        // Move to next state
-                        current_state = (const dfa_state_t*)(
-                            (const char*)current_dfa + trans[i].next_state_offset);
+                        current_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
                         transition_found = true;
                         break;
                     }
-                } else if (trans[i].character == DFA_CHAR_NORMALIZING_SPACE) {
-                    // Normalizing space - matches one or more space/tab characters
+                } else if (trans_char == DFA_CHAR_NORMALIZING_SPACE) {
                     if (c == ' ' || c == '\t') {
                         if (trans[i].next_state_offset == 0) {
-                            // No transition (dead end)
                             result->final_state = current_state->flags;
                             result->matched_length = pos;
                             return true;
                         }
 
-                        // Move to next state
-                        current_state = (const dfa_state_t*)(
-                            (const char*)current_dfa + trans[i].next_state_offset);
+                        current_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
                         transition_found = true;
                         break;
                     }
@@ -158,27 +118,20 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
         }
 
         if (!transition_found) {
-            // No transition found for this character
             result->final_state = current_state->flags;
             result->matched_length = pos;
             return true;
         }
 
-        // Check if we reached an accepting state
         if (current_state->flags & DFA_STATE_ACCEPTING) {
             result->matched = true;
             result->final_state = current_state->flags;
             result->matched_length = pos + 1;
-
-            // Determine command category based on which accepting state we're in
-            // This would be enhanced with more sophisticated category detection
             result->category = DFA_CMD_READONLY_SAFE;
-
             return true;
         }
     }
 
-    // Reached end of input
     result->final_state = current_state->flags;
     result->matched_length = pos;
 

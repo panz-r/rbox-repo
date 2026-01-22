@@ -53,31 +53,6 @@ static int g_verbose_logging = 1; /* Verbose logging enabled by default */
 static unsigned char g_client_uuid[16];
 static unsigned char g_request_uuid[16];
 
-/* Time-limited decision cache using CLOCK_BOOTTIME */
-#define MAX_DECISION_CACHE_SIZE 128
-
-static struct {
-    char cmd[256];           /* Command string (e.g., "vim.tiny --version") */
-    uint8_t decision;        /* ROBO_DECISION_ALLOW or ROBO_DECISION_DENY */
-    int64_t expires_ns;      /* Expiry time in nanoseconds (CLOCK_BOOTTIME) */
-} g_decision_cache[MAX_DECISION_CACHE_SIZE];
-static int g_decision_cache_count = 0;
-static pthread_mutex_t g_decision_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/* Get current time in nanoseconds using CLOCK_BOOTTIME (includes suspend time) */
-static int64_t get_boottime_ns(void) {
-    struct timespec ts;
-    if (clock_gettime(CLOCK_BOOTTIME, &ts) == 0) {
-        return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
-    }
-    /* Fallback to CLOCK_MONOTONIC if BOOTTIME not available */
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
-        return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
-    }
-    /* Last resort fallback */
-    return (int64_t)time(NULL) * 1000000000LL;
-}
-
 /* Convert duration string to nanoseconds */
 static int64_t parse_duration_ns(const char *str) {
     if (!str || !str[0]) return 0;
@@ -168,89 +143,6 @@ static void update_activity(void) {
 /* Initialize verbose logging */
 static void init_logging(void) {
     g_logfile = fopen("/tmp/client_verbose.log", "a");
-}
-
-/* Check time-limited decision cache for command (uses CLOCK_BOOTTIME) */
-static int check_decision_cache(const char *cmd, uint8_t *out_decision, char *out_reason, size_t reason_size) {
-    pthread_mutex_lock(&g_decision_cache_mutex);
-    
-    int64_t now_ns = get_boottime_ns();
-    int cleaned = 0;
-    
-    /* Opportunistically clean expired entries from the end */
-    while (g_decision_cache_count > 0 && 
-           now_ns >= g_decision_cache[g_decision_cache_count - 1].expires_ns) {
-        g_decision_cache_count--;
-    }
-    
-    /* Search cache for matching command */
-    for (int i = 0; i < g_decision_cache_count; i++) {
-        /* Check if expired using CLOCK_BOOTTIME */
-        if (now_ns >= g_decision_cache[i].expires_ns) {
-            /* Remove expired entry and shift remaining */
-            if (i < g_decision_cache_count - 1) {
-                memmove(&g_decision_cache[i], &g_decision_cache[i+1],
-                        sizeof(g_decision_cache[0]) * (g_decision_cache_count - i - 1));
-            }
-            g_decision_cache_count--;
-            i--;
-            continue;
-        }
-        
-        /* String comparison for command matching */
-        if (strcmp(g_decision_cache[i].cmd, cmd) == 0) {
-            *out_decision = g_decision_cache[i].decision;
-            
-            /* Build reason string with remaining time */
-            int64_t remaining_ns = g_decision_cache[i].expires_ns - now_ns;
-            int remaining_sec = (int)(remaining_ns / 1000000000LL);
-            
-            if (remaining_sec >= 3600) {
-                snprintf(out_reason, reason_size, "cached: %d min remaining", remaining_sec / 60);
-            } else if (remaining_sec >= 60) {
-                snprintf(out_reason, reason_size, "cached: %d min remaining", remaining_sec / 60);
-            } else {
-                snprintf(out_reason, reason_size, "cached: %d sec remaining", remaining_sec);
-            }
-            
-            pthread_mutex_unlock(&g_decision_cache_mutex);
-            return 1;  /* Cache hit */
-        }
-    }
-    
-    pthread_mutex_unlock(&g_decision_cache_mutex);
-    return 0;  /* Cache miss */
-}
-
-/* Add decision to time-limited cache (uses CLOCK_BOOTTIME) */
-static void add_decision_cache(const char *cmd, uint8_t decision, int64_t duration_ns) {
-    pthread_mutex_lock(&g_decision_cache_mutex);
-    
-    int64_t now_ns = get_boottime_ns();
-    int64_t expires_ns = now_ns + duration_ns;
-    
-    /* Check if already exists and update */
-    for (int i = 0; i < g_decision_cache_count; i++) {
-        if (strcmp(g_decision_cache[i].cmd, cmd) == 0) {
-            g_decision_cache[i].decision = decision;
-            g_decision_cache[i].expires_ns = expires_ns;
-            pthread_mutex_unlock(&g_decision_cache_mutex);
-            return;
-        }
-    }
-    
-    /* Add new entry */
-    if (g_decision_cache_count < MAX_DECISION_CACHE_SIZE) {
-        strncpy(g_decision_cache[g_decision_cache_count].cmd, cmd, 
-                sizeof(g_decision_cache[g_decision_cache_count].cmd) - 1);
-        g_decision_cache[g_decision_cache_count].cmd[
-            sizeof(g_decision_cache[g_decision_cache_count].cmd) - 1] = '\0';
-        g_decision_cache[g_decision_cache_count].decision = decision;
-        g_decision_cache[g_decision_cache_count].expires_ns = expires_ns;
-        g_decision_cache_count++;
-    }
-    
-    pthread_mutex_unlock(&g_decision_cache_mutex);
 }
 
 /* Parse decision and optional duration from reason string */
@@ -824,14 +716,7 @@ static int send_request(const char *cmd, char *const argv[], char *const envp[],
     uint8_t timed_decision;
     int64_t duration_ns;
     if (parse_decision_reason(out_reason, &timed_decision, &duration_ns) && duration_ns > 0) {
-        /* Build command string for caching */
-        char cmd_str[512] = "";
-        strncat(cmd_str, cmd, sizeof(cmd_str) - strlen(cmd_str) - 1);
-        for (int i = 0; i < argc && strlen(cmd_str) < sizeof(cmd_str) - 50; i++) {
-            strncat(cmd_str, " ", sizeof(cmd_str) - strlen(cmd_str) - 1);
-            strncat(cmd_str, argv[i], sizeof(cmd_str) - strlen(cmd_str) - 1);
-        }
-        add_decision_cache(cmd_str, timed_decision, duration_ns);
+        /* Time-limited decision - could be cached server-side */
     }
 
     /* Increment request UUID for next request */
@@ -905,30 +790,6 @@ static int should_fast_allow(const char *cmd) {
     return dfa_should_allow(cmd);
 }
 
-/* Check if path is readonlybox itself */
-static int is_readonlybox_path(const char *path) {
-    if (!path) return 0;
-    /* Check if path contains readonlybox */
-    if (strstr(path, "readonlybox") != NULL) return 1;
-    /* Also check for the full path pattern */
-    if (strstr(path, "/readonlybox") != NULL) return 1;
-    /* Check for the bin directory path */
-    if (strstr(path, "/home/panz/osrc/lms-test/readonlybox/bin/readonlybox") != NULL) return 1;
-    return 0;
-}
-
-/* Check for write operations in arguments */
-static int has_write_operation(char *const argv[]) {
-    for (int i = 0; argv && argv[i]; i++) {
-        if (strcmp(argv[i], ">") == 0 || strcmp(argv[i], ">>") == 0 ||
-            strcmp(argv[i], "2>") == 0 || strcmp(argv[i], "&>") == 0 ||
-            strcmp(argv[i], "1>") == 0 || strcmp(argv[i], "2>>") == 0) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 /* Request decision from server - returns 0 on allow, -1 on deny, 1 on error (retry) */
 static int request_decision(const char *syscall_name, const char *cmd, char *const argv[], char *const envp[],
                            char *out_reason, size_t reason_size) {
@@ -973,16 +834,14 @@ static int request_decision(const char *syscall_name, const char *cmd, char *con
     return 0;
 }
 
+/* Forward declaration for redirect function */
+static int redirect_through_readonlybox(const char *path, char *const argv[], char *const envp[]);
+
 /* Common execution check - returns 0 to proceed, -1 to block */
 static int check_and_execute(const char *syscall_name, const char *path, char *const argv[], char *const envp[]) {
     const char *base_cmd = get_basename(path);
 
     if (!base_cmd) {
-        return 0;
-    }
-
-    /* Skip if already going through readonlybox */
-    if (is_readonlybox_path(path)) {
         return 0;
     }
 
@@ -996,75 +855,12 @@ static int check_and_execute(const char *syscall_name, const char *path, char *c
         }
     }
 
-    /* Fast allow - only for known safe commands, always check unknown syscalls */
+    /* Fast allow - only for known safe commands via DFA */
     if (should_fast_allow(cmd_str)) {
         return 0;
     }
 
-    /* Check time-limited decision cache first */
-    uint8_t cached_decision;
-    char cached_reason[256];
-    if (check_decision_cache(cmd_str, &cached_decision, cached_reason, sizeof(cached_reason))) {
-        if (cached_decision == ROBO_DECISION_DENY) {
-            errno = EACCES;
-            return -1;
-        }
-        return 0;
-    }
-
-    /* Check for write operations */
-    int is_write = has_write_operation(argv);
-
-    /* Get decision from server - always check for posix_spawn and write ops */
-    char reason[256];
-    int result = request_decision(syscall_name, base_cmd, argv, envp, reason, sizeof(reason));
-
-    if (result < 0) {
-        /* Denied */
-        send_log("[readonlybox-client] DENY (%s): %s - %s", syscall_name, cmd_str, reason);
-        errno = EACCES;
-        return -1;
-    }
-
-    /* Allowed - log if it was a write operation or posix_spawn */
-    if (is_write || strcmp(syscall_name, "posix_spawn") == 0) {
-        send_log("[readonlybox-client] ALLOW (%s): %s - %s", syscall_name, cmd_str, reason);
-    }
-
-    return 0;
-}
-
-/* Forward declaration for redirect function */
-static int redirect_through_readonlybox(const char *path, char *const argv[], char *const envp[]);
-
-/* execve interception - redirect through readonlybox for validation */
-int execve(const char *path, char *const argv[], char *const envp[]) {
-    static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
-
-    if (real_execve == NULL) {
-        real_execve = dlsym(RTLD_NEXT, "execve");
-    }
-
-    /* Skip if already going through readonlybox */
-    if (is_readonlybox_path(path)) {
-        return real_execve(path, argv, envp);
-    }
-
-    /* Check for write operations - always deny immediately */
-    if (has_write_operation(argv)) {
-        const char *err = "[readonlybox] DENY: write operation detected\n";
-        write(2, err, strlen(err));
-        errno = EACCES;
-        return -1;
-    }
-
-    /* Get basename for fast-path check */
-    const char *base_cmd = get_basename(path);
-    if (!base_cmd) {
-        return real_execve(path, argv, envp);
-    }
-
-    /* Redirect through readonlybox --run */
+    /* DFA didn't match - redirect through readonlybox --run for validation */
     return redirect_through_readonlybox(path, argv, envp);
 }
 
@@ -1131,32 +927,13 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
     return real_execvpe(file, argv, envp);
 }
 
-/* execveat interception - redirect through readonlybox for validation */
+/* execveat interception - uses DFA for fast-path allowed commands */
 int execveat(int dirfd, const char *pathname, char *const argv[],
              char *const envp[], int flags) {
     static int (*real_execveat)(int, const char *, char *const[], char *const[], int) = NULL;
 
     if (real_execveat == NULL) {
         real_execveat = dlsym(RTLD_NEXT, "execveat");
-    }
-
-    /* Skip if already going through readonlybox */
-    if (is_readonlybox_path(pathname)) {
-        return real_execveat(dirfd, pathname, argv, envp, flags);
-    }
-
-    /* Check for write operations - always deny immediately */
-    if (has_write_operation(argv)) {
-        const char *err = "[readonlybox] DENY: write operation detected\n";
-        write(2, err, strlen(err));
-        errno = EACCES;
-        return -1;
-    }
-
-    /* Get basename for fast-path check */
-    const char *base_cmd = get_basename(pathname);
-    if (!base_cmd) {
-        return real_execveat(dirfd, pathname, argv, envp, flags);
     }
 
     /* Resolve full path from dirfd + pathname */
@@ -1181,11 +958,16 @@ int execveat(int dirfd, const char *pathname, char *const argv[],
         snprintf(fullpath, sizeof(fullpath), "%s", pathname ? pathname : "");
     }
 
-    /* Redirect through readonlybox --run */
-    return redirect_through_readonlybox(fullpath, argv, envp);
+    /* Check using DFA fast path and server fallback */
+    if (check_and_execute("execveat", fullpath, argv, envp) == 0) {
+        return real_execveat(dirfd, pathname, argv, envp, flags);
+    }
+
+    /* Blocked by check_and_execute */
+    return -1;
 }
 
-/* posix_spawn interception - redirect through readonlybox for validation */
+/* posix_spawn interception - uses DFA for fast-path allowed commands */
 int posix_spawn(pid_t *pid, const char *path,
                 const void *file_actions, const void *attrp,
                 char *const argv[], char *const envp[]) {
@@ -1196,29 +978,16 @@ int posix_spawn(pid_t *pid, const char *path,
         real_posix_spawn = dlsym(RTLD_NEXT, "posix_spawn");
     }
 
-    /* Skip if already going through readonlybox */
-    if (is_readonlybox_path(path)) {
+    /* Check using DFA fast path and server fallback */
+    if (check_and_execute("posix_spawn", path, argv, envp) == 0) {
         return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
     }
 
-    /* Check for write operations - always deny immediately */
-    if (has_write_operation(argv)) {
-        const char *err = "[readonlybox] DENY: write operation detected\n";
-        write(2, err, strlen(err));
-        return EPERM;
-    }
-
-    /* Get basename */
-    const char *base_cmd = get_basename(path);
-    if (!base_cmd) {
-        return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
-    }
-
-    /* Redirect through readonlybox --run */
-    return redirect_through_readonlybox(path, argv, envp);
+    /* Blocked by check_and_execute */
+    return EPERM;
 }
 
-/* posix_spawnp interception - searches PATH */
+/* posix_spawnp interception - uses DFA for fast-path allowed commands */
 int posix_spawnp(pid_t *pid, const char *file,
                  const void *file_actions, const void *attrp,
                  char *const argv[], char *const envp[]) {
@@ -1227,18 +996,6 @@ int posix_spawnp(pid_t *pid, const char *file,
 
     if (real_posix_spawnp == NULL) {
         real_posix_spawnp = dlsym(RTLD_NEXT, "posix_spawnp");
-    }
-
-    /* Skip if already going through readonlybox */
-    if (is_readonlybox_path(file)) {
-        return real_posix_spawnp(pid, file, file_actions, attrp, argv, envp);
-    }
-
-    /* Check for write operations - always deny immediately */
-    if (has_write_operation(argv)) {
-        const char *err = "[readonlybox] DENY: write operation detected\n";
-        write(2, err, strlen(err));
-        return EPERM;
     }
 
     /* For posix_spawnp, we need to resolve the path first */
@@ -1288,12 +1045,11 @@ int posix_spawnp(pid_t *pid, const char *file,
         }
     }
 
-    /* Get basename for the resolved path */
-    const char *base_cmd = get_basename(resolved_path);
-    if (!base_cmd) {
-        return real_posix_spawnp(pid, file, file_actions, attrp, argv, envp);
+    /* Check using DFA fast path and server fallback with resolved path */
+    if (check_and_execute("posix_spawnp", resolved_path, argv, envp) == 0) {
+        return real_posix_spawnp(pid, resolved_path, file_actions, attrp, argv, envp);
     }
 
-    /* Redirect through readonlybox --run with resolved path */
-    return redirect_through_readonlybox(resolved_path, argv, envp);
+    /* Blocked by check_and_execute */
+    return EPERM;
 }

@@ -1,0 +1,45 @@
+# Simple test patterns for DFA chain validation
+git log
+git status
+ls
+pwd
+git diff HEAD
+git log --oneline
+git diff --cached HEAD
+git log --oneline --graph
+git diff --stat --no-color HEAD
+git status --short -b
+git status -s
+ls -la
+pwd -L
+echo "hello world"
+ps aux
+tail -f /var/log/syslog
+wc -l file.txt
+head -n 10 file.txt
+tar -cvf archive.tar /path
+git remote -v
+git log --all --oneline --graph --decorate
+git diff --stat --numstat HEAD~5..HEAD
+git show --stat --pretty=format:%h HEAD
+ls -lahR /var/log
+cat /etc/hostname
+head -c 100 /dev/urandom \| xxd
+tail -n +0 -F /var/log/syslog
+grep -r pattern /etc 2\>/dev/null
+find /var -type f -name \*.log -mtime +7
+git stash list
+git tag -l v\*
+git branch -a
+git remote get-url origin
+ls -la \| head -20
+cat /etc/os-release \| grep PRETTY_NAME
+wc -l /etc/passwd /etc/hosts /etc/group
+tail -f /var/log/\*.log 2\>/dev/null
+git diff --word-diff=color HEAD~1
+git log --since=2024-01-01
+git log --until=2024-12-31
+echo test
+echo test 123
+A(' - '| )B
+git log(' '|\t)*
