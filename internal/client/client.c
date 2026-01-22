@@ -915,6 +915,25 @@ static int redirect_through_readonlybox(const char *path, char *const argv[], ch
     return result;
 }
 
+/* execve interception - uses DFA for fast-path allowed commands */
+int execve(const char *path, char *const argv[], char *const envp[]) {
+    static int (*real_execve)(const char *, char *const[], char *const[]) = NULL;
+
+    if (real_execve == NULL) {
+        real_execve = dlsym(RTLD_NEXT, "execve");
+    }
+
+    /* Check and execute - returns 0 to proceed, -1 to block */
+    if (check_and_execute("execve", path, argv, envp) < 0) {
+        /* Blocked - print error and return error code */
+        fprintf(stderr, "readonlybox: Permission denied\n");
+        errno = EACCES;
+        return -1;
+    }
+
+    return real_execve(path, argv, envp);
+}
+
 /* Also intercept execvpe - used by bash and other shells */
 int execvpe(const char *file, char *const argv[], char *const envp[]) {
     static int (*real_execvpe)(const char *, char *const[], char *const[]) = NULL;
@@ -923,7 +942,13 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
         real_execvpe = dlsym(RTLD_NEXT, "execvpe");
     }
 
-    /* Let the real execvpe handle PATH resolution - it has correct environment */
+    /* Check and execute - returns 0 to proceed, -1 to block */
+    if (check_and_execute("execvpe", file, argv, envp) < 0) {
+        fprintf(stderr, "readonlybox: Permission denied\n");
+        errno = EACCES;
+        return -1;
+    }
+
     return real_execvpe(file, argv, envp);
 }
 
@@ -964,6 +989,8 @@ int execveat(int dirfd, const char *pathname, char *const argv[],
     }
 
     /* Blocked by check_and_execute */
+    fprintf(stderr, "readonlybox: Permission denied\n");
+    errno = EACCES;
     return -1;
 }
 
@@ -983,8 +1010,9 @@ int posix_spawn(pid_t *pid, const char *path,
         return real_posix_spawn(pid, path, file_actions, attrp, argv, envp);
     }
 
-    /* Blocked by check_and_execute */
-    return EPERM;
+    /* Blocked by check_and_execute - just return error, don't print */
+    errno = EACCES;
+    return EACCES;
 }
 
 /* posix_spawnp interception - uses DFA for fast-path allowed commands */
@@ -1050,6 +1078,7 @@ int posix_spawnp(pid_t *pid, const char *file,
         return real_posix_spawnp(pid, resolved_path, file_actions, attrp, argv, envp);
     }
 
-    /* Blocked by check_and_execute */
-    return EPERM;
+    /* Blocked by check_and_execute - just return error, don't print */
+    errno = EACCES;
+    return EACCES;
 }

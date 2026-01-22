@@ -277,7 +277,6 @@ mage build
 # Build outputs are in bin/ and internal/client/:
 # - bin/readonlybox-server        (TUI server)
 # - internal/client/libreadonlybox_client.so  (LD_PRELOAD client)
-# - bin/ro-*                      (individual tools)
 ```
 
 ### Run the Server

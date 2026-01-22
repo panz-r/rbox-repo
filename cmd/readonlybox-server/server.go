@@ -741,6 +741,23 @@ func (s *Server) HandleConnection(conn net.Conn) {
 			continue
 		}
 
+		// Check temporary allowances first (for duration-based decisions)
+		var allowanceDecision uint8
+		var allowanceReason string
+		var useAllowance bool
+		if GlobalAllowanceStore != nil {
+			if allowed, reason, found := GlobalAllowanceStore.CheckAllowance(cmd, args); found {
+				gLogger.Log(2, "ALLOWANCE HIT: %s %v -> %s (%s)", cmd, args, allowed, reason)
+				if allowed {
+					allowanceDecision = ROBO_DECISION_ALLOW
+				} else {
+					allowanceDecision = ROBO_DECISION_DENY
+				}
+				allowanceReason = reason + " (cached)"
+				useAllowance = true
+			}
+		}
+
 		// Add to request queue and notify TUI
 		pendingReq := GlobalRequestQueue.Add(remoteAddr, cmd, args, env)
 		if s.onRequest != nil {
@@ -756,6 +773,15 @@ func (s *Server) HandleConnection(conn net.Conn) {
 
 		// Make decision
 		decision, reason := makeDecision(cmd, args)
+
+		// Use cached allowance if available (overrides makeDecision)
+		if useAllowance {
+			decision = allowanceDecision
+			reason = allowanceReason
+			// Don't add to queue - respond directly
+			goto skipQueueAndRespond
+		}
+
 		gLogger.Log(3, "DECISION #%d: initial decision=%d reason=%s", pendingReq.ID, decision, reason)
 
 		// Auto-deny for testing
@@ -854,6 +880,8 @@ func (s *Server) HandleConnection(conn net.Conn) {
 				fmt.Fprintf(os.Stderr, "[DEBUG] onCommand callback done for request #%d\n", pendingReq.ID)
 			}
 		}
+
+	skipQueueAndRespond:
 
 		// Log based on mode
 		if *veryVerbose || *verbose || decision == ROBO_DECISION_DENY {
@@ -1062,4 +1090,166 @@ func main() {
 	fmt.Println("\nShutting down...")
 	server.Stop()
 	gLogger.Log(2, "Server stopped")
+}
+
+// TemporaryAllowance stores commands that have been allowed for a duration
+type TemporaryAllowance struct {
+	Command   string
+	Decision  uint8
+	Reason    string
+	ExpiresAt time.Time
+}
+
+type AllowanceStore struct {
+	mu            sync.RWMutex
+	allowances    map[string]TemporaryAllowance
+	cleanupTicker *time.Ticker
+	stopCleanup   chan struct{}
+}
+
+var GlobalAllowanceStore *AllowanceStore
+
+func init() {
+	GlobalAllowanceStore = NewAllowanceStore()
+}
+
+func NewAllowanceStore() *AllowanceStore {
+	store := &AllowanceStore{
+		allowances:  make(map[string]TemporaryAllowance),
+		stopCleanup: make(chan struct{}),
+	}
+	store.cleanupTicker = time.NewTicker(1 * time.Minute)
+	go store.cleanupExpired()
+	return store
+}
+
+func (s *AllowanceStore) cleanupExpired() {
+	for {
+		select {
+		case <-s.cleanupTicker.C:
+			s.mu.Lock()
+			now := time.Now()
+			for cmd, allowance := range s.allowances {
+				if now.After(allowance.ExpiresAt) {
+					delete(s.allowances, cmd)
+					gLogger.Log(2, "ALLOWANCE EXPIRED: %s", cmd)
+				}
+			}
+			s.mu.Unlock()
+		case <-s.stopCleanup:
+			s.cleanupTicker.Stop()
+			return
+		}
+	}
+}
+
+func (s *AllowanceStore) Stop() {
+	close(s.stopCleanup)
+}
+
+func (s *AllowanceStore) AddAllowance(cmd string, args []string, decision uint8, reason string, duration time.Duration) {
+	fullCmd := s.buildCommandKey(cmd, args)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.allowances[fullCmd] = TemporaryAllowance{
+		Command:   fullCmd,
+		Decision:  decision,
+		Reason:    reason,
+		ExpiresAt: time.Now().Add(duration),
+	}
+
+	var decisionStr string
+	if decision == ROBO_DECISION_ALLOW {
+		decisionStr = "ALLOW"
+	} else {
+		decisionStr = "DENY"
+	}
+	gLogger.Log(2, "ALLOWANCE ADDED: %s -> %s (%s) expires at %s",
+		fullCmd, decisionStr, reason,
+		s.allowances[fullCmd].ExpiresAt.Format("15:04:05"))
+}
+
+func (s *AllowanceStore) CheckAllowance(cmd string, args []string) (bool, string, bool) {
+	fullCmd := s.buildCommandKey(cmd, args)
+
+	s.mu.RLock()
+	allowance, found := s.allowances[fullCmd]
+	s.mu.RUnlock()
+
+	if !found {
+		return false, "", false
+	}
+
+	if time.Now().After(allowance.ExpiresAt) {
+		s.mu.Lock()
+		delete(s.allowances, fullCmd)
+		s.mu.Unlock()
+		return false, "", false
+	}
+
+	return allowance.Decision == ROBO_DECISION_ALLOW, allowance.Reason, true
+}
+
+func (s *AllowanceStore) GetAllAllowances() []TemporaryAllowance {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	allowances := make([]TemporaryAllowance, 0, len(s.allowances))
+	for _, a := range s.allowances {
+		if time.Now().Before(a.ExpiresAt) {
+			allowances = append(allowances, a)
+		}
+	}
+	return allowances
+}
+
+func (s *AllowanceStore) buildCommandKey(cmd string, args []string) string {
+	if len(args) == 0 {
+		return strings.ToLower(cmd)
+	}
+	return strings.ToLower(cmd) + " " + strings.Join(args, " ")
+}
+
+func GetAllowanceDuration(reason string) time.Duration {
+	switch reason {
+	case "15m":
+		return 15 * time.Minute
+	case "1h":
+		return 1 * time.Hour
+	case "4h":
+		return 4 * time.Hour
+	case "session":
+		return 24 * time.Hour
+	case "always":
+		return 365 * 24 * time.Hour
+	default:
+		return 0
+	}
+}
+
+func SetDecisionWithAllowance(requestID int, allowed bool, reason string) {
+	var status RequestStatus
+	if allowed {
+		status = RequestAllowed
+	} else {
+		status = RequestDenied
+	}
+
+	GlobalRequestQueue.SetDecision(requestID, status, reason)
+
+	duration := GetAllowanceDuration(reason)
+	if duration > 0 {
+		req := GlobalRequestQueue.GetRequest(requestID)
+		if req != nil {
+			var decision uint8
+			if allowed {
+				decision = ROBO_DECISION_ALLOW
+			} else {
+				decision = ROBO_DECISION_DENY
+			}
+			GlobalAllowanceStore.AddAllowance(req.Command, req.Args, decision, reason, duration)
+		}
+	}
 }

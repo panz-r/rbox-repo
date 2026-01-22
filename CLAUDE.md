@@ -13,13 +13,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Each wrapper was a standalone binary
 - Total: 26+ individual binaries
 
-**After (ReadOnlyBox Single Binary):**
+**Current (ReadOnlyBox with LD_PRELOAD Client):**
 - Single consolidated binary: `readonlybox`
 - BusyBox-like interface: `readonlybox <command> [args...]`
-- All 26+ commands available through one binary
-- Maintains all security features and backward compatibility
+- LD_PRELOAD client: `libreadonlybox_client.so` with DFA fast path
+- Safe commands execute immediately via DFA
+- Unknown commands redirect through `readonlybox --run`
+- Legacy ro-* binaries have been removed
 
-## Build System
+**Before (ReadOnlyBox Single Binary):**
 
 This project uses **Mage** build system. Mage is a modern Go-based build tool that provides better integration with Go projects.
 
@@ -41,13 +43,6 @@ mage build
 
 # Build ReadOnlyBox single binary (using Make)
 make build
-
-# Build individual tools (legacy - still supported)
-go build -o bin/ro-git ./cmd/ro-git
-go build -o bin/ro-find ./cmd/ro-find
-
-# Build new ReadOnlyBox binary
-go build -o readonlybox ./cmd/readonlybox
 
 # Clean build artifacts (using Mage)
 mage clean
@@ -94,10 +89,6 @@ mage integrationTest
 # Quick test (using Mage)
 mage quickTest
 
-# Test individual commands (legacy)
-./bin/ro-git --version
-./bin/ro-find . -name "*.go"
-
 # Test ReadOnlyBox single binary
 ./readonlybox --help
 ./readonlybox git --version
@@ -110,16 +101,11 @@ mage quickTest
 ### Project Structure
 ```
 cmd/
-  readonlybox/  # ReadOnlyBox single binary (NEW!)
+  readonlybox/  # ReadOnlyBox single binary
     main.go
-  ro-git/      # Read-only git wrapper (legacy)
-    main.go
-  ro-find/     # Read-only find wrapper (legacy)
-    main.go
-  # ... 26+ other individual wrappers (legacy)
 bin/           # Built binaries (created by make build)
 internal/
-  readonlybox/ # ReadOnlyBox core logic (NEW!)
+  readonlybox/ # ReadOnlyBox core logic
     commands.go # Command registry and routing
   rogit/       # Git security validation
   rofind/      # Find security validation
@@ -128,28 +114,14 @@ internal/
 
 ### Key Components
 
-#### readonlybox (NEW!)
+#### readonlybox
 - **Purpose**: Single binary providing all read-only command wrappers
 - **Implementation**: BusyBox-like command router with security validation
 - **Security**: Centralized security validation for all commands
 - **Location**: `cmd/readonlybox/main.go` and `internal/readonlybox/commands.go`
 - **Commands Supported**: 26+ read-only commands (ps, df, du, git, find, etc.)
 
-#### ro-git (legacy)
-- **Purpose**: Prevents any git commands that could modify the repository
-- **Implementation**: Go program that validates git commands before execution
-- **Security**: Blocks write operations like commit, push, add, reset, etc.
-- **Location**: `cmd/ro-git/main.go`
-- **Status**: Legacy - functionality now available via `readonlybox git`
-
-#### ro-find (legacy)
-- **Purpose**: Prevents any find commands that could execute or delete files
-- **Implementation**: Go program that validates find options before execution
-- **Security**: Blocks dangerous options like -exec, -delete, -ok, etc.
-- **Location**: `cmd/ro-find/main.go`
-- **Status**: Legacy - functionality now available via `readonlybox find`
-
-### ReadOnlyBox Architecture (NEW!)
+### ReadOnlyBox Architecture
 
 The ReadOnlyBox single binary follows a modular, security-first architecture:
 
@@ -281,10 +253,6 @@ mage build && mage test
 # Build and test (using Make)
 make build && make test
 
-# Run specific wrapper (legacy)
-./bin/ro-git log --oneline
-./bin/ro-find . -name "*.go" -type f
-
 # Use ReadOnlyBox single binary
 ./readonlybox --help
 ./readonlybox git log --oneline
@@ -338,16 +306,8 @@ func TestParseFailures(t *testing.T) {
 - **Benefits**: Easy distribution, single installation, BusyBox-like interface
 - **Status**: Active development, recommended approach
 
-### Individual Wrappers (Legacy - Still Supported)
-
-#### ro-git
-- **Safe commands**: log, show, diff, status, grep, blame, etc.
-- **Blocked commands**: add, commit, push, pull, merge, rebase, etc.
-- **Special handling**: config commands are analyzed for write operations
-- **Status**: Legacy - use `readonlybox git` instead
-
-#### ro-find
-- **Safe options**: -name, -type, -size, -mtime, etc.
-- **Blocked options**: -exec, -execdir, -ok, -okdir, -delete
-- **Special handling**: -printf/-fprintf with file redirection is blocked
-- **Status**: Legacy - use `readonlybox find` instead
+### LD_PRELOAD Client
+- **Interface**: `LD_PRELOAD=libreadonlybox_client.so <command>`
+- **Fast path**: DFA validates safe commands immediately
+- **Fallback**: Unknown commands redirect through `readonlybox --run`
+- **Status**: Active development, recommended for production use

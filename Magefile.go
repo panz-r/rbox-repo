@@ -39,7 +39,9 @@ func BuildClient() error {
 	wd, _ := os.Getwd()
 	cdfaDir := filepath.Join(wd, "c-dfa")
 	cdfaToolsDir := filepath.Join(cdfaDir, "tools")
+	cdfaSrcDir := filepath.Join(cdfaDir, "src")
 	patternsFile := filepath.Join(cdfaDir, "patterns_safe_commands.txt")
+	alphabetFile := filepath.Join(cdfaDir, "alphabet_per_char.map")
 	nfaFile := filepath.Join(cdfaDir, "readonlybox.nfa")
 	dfaFile := filepath.Join(cdfaDir, "readonlybox.dfa")
 	dfaCArray := filepath.Join(cdfaToolsDir, "readonlybox_dfa.c")
@@ -58,30 +60,16 @@ func BuildClient() error {
 		}
 	}
 
-	// Build alphabet_constructor if needed
-	alphabetConstructor := filepath.Join(cdfaToolsDir, "alphabet_constructor")
-	if _, err := os.Stat(alphabetConstructor); os.IsNotExist(err) {
-		fmt.Println("Building alphabet_constructor...")
-		buildCmd := exec.Command("gcc", "-o", alphabetConstructor, filepath.Join(cdfaToolsDir, "alphabet_constructor.c"),
-			"-Wall", "-Wextra", "-std=c11", "-O2")
-		buildCmd.Stdout = os.Stdout
-		buildCmd.Stderr = os.Stderr
-		if err := buildCmd.Run(); err != nil {
-			return fmt.Errorf("failed to build alphabet_constructor: %w", err)
-		}
-	}
-
-	// Build nfa2dfa if needed
+	// Build nfa2dfa (always rebuild to ensure latest version)
 	nfa2dfa := filepath.Join(cdfaToolsDir, "nfa2dfa")
-	if _, err := os.Stat(nfa2dfa); os.IsNotExist(err) {
-		fmt.Println("Building nfa2dfa...")
-		buildCmd := exec.Command("gcc", "-o", nfa2dfa, filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
-			"-Wall", "-Wextra", "-std=c11", "-O2")
-		buildCmd.Stdout = os.Stdout
-		buildCmd.Stderr = os.Stderr
-		if err := buildCmd.Run(); err != nil {
-			return fmt.Errorf("failed to build nfa2dfa: %w", err)
-		}
+	os.Remove(nfa2dfa)
+	fmt.Println("Building nfa2dfa...")
+	buildCmd := exec.Command("gcc", "-o", nfa2dfa, filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
+		"-Wall", "-Wextra", "-std=c11", "-O2")
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("failed to build nfa2dfa: %w", err)
 	}
 
 	// Build dfa2c_array if needed
@@ -97,19 +85,8 @@ func BuildClient() error {
 		}
 	}
 
-	// Step 2a: Generate alphabet from patterns
-	alphabetFile := filepath.Join(cdfaDir, "alphabet.map")
-	fmt.Println("Generating alphabet from patterns...")
-	genAlphabet := exec.Command(alphabetConstructor, patternsFile, alphabetFile)
-	genAlphabet.Dir = cdfaDir
-	genAlphabet.Stdout = os.Stdout
-	genAlphabet.Stderr = os.Stderr
-	if err := genAlphabet.Run(); err != nil {
-		return fmt.Errorf("failed to generate alphabet: %w", err)
-	}
-
-	// Step 2b: Generate NFA from patterns using alphabet
-	fmt.Println("Generating NFA from patterns...")
+	// Step 1: Generate NFA from patterns with per-character alphabet
+	fmt.Println("Generating NFA from patterns (per-character alphabet)...")
 	genNfa := exec.Command(nfaBuilder, alphabetFile, patternsFile, nfaFile)
 	genNfa.Dir = cdfaDir
 	genNfa.Stdout = os.Stdout
@@ -118,8 +95,8 @@ func BuildClient() error {
 		return fmt.Errorf("failed to generate NFA: %w", err)
 	}
 
-	// Step 3: Convert NFA to DFA
-	fmt.Println("Converting NFA to DFA...")
+	// Step 2: Convert NFA to DFA (version 3 - character-based)
+	fmt.Println("Converting NFA to DFA (v3)...")
 	genDfa := exec.Command(nfa2dfa, nfaFile, dfaFile)
 	genDfa.Dir = cdfaDir
 	genDfa.Stdout = os.Stdout
@@ -128,7 +105,7 @@ func BuildClient() error {
 		return fmt.Errorf("failed to generate DFA: %w", err)
 	}
 
-	// Step 4: Convert DFA binary to C array
+	// Step 3: Convert DFA binary to C array
 	fmt.Println("Generating C array from DFA...")
 	convCmd := exec.Command(dfa2cArray, dfaFile, dfaCArray, "readonlybox_dfa")
 	convCmd.Dir = cdfaDir
@@ -138,17 +115,19 @@ func BuildClient() error {
 		return fmt.Errorf("failed to convert DFA to C array: %w", err)
 	}
 
-	// Step 5: Copy DFA C array to client directory
+	// Step 4: Copy DFA C array to client directory
 	if err := copyFile(dfaCArray, clientDfaData); err != nil {
 		return fmt.Errorf("failed to copy DFA to client: %w", err)
 	}
 
-	// Step 6: Build the client library with DFA
+	// Step 5: Build the client library with c-dfa evaluation code
 	outputFile := filepath.Join(wd, "bin", "libreadonlybox_client.so")
 	buildClient := exec.Command("gcc", "-shared", "-fPIC", "-O2", "-o", outputFile,
 		filepath.Join(wd, "internal/client", "client.c"),
 		filepath.Join(wd, "internal/client", "dfa.c"),
 		filepath.Join(wd, "internal/client", "dfa_static_data.c"),
+		filepath.Join(cdfaSrcDir, "dfa_eval.c"),
+		"-I"+filepath.Join(cdfaDir, "include"),
 		"-lpthread", "-ldl")
 	buildClient.Stdout = os.Stdout
 	buildClient.Stderr = os.Stderr
@@ -334,39 +313,31 @@ func IntegrationTest() error {
 	return cmd.Run()
 }
 
-// Quick test (original simple test)
+// Quick test (tests the LD_PRELOAD client with DFA)
 func QuickTest() error {
 	mg.Deps(Build)
 
-	fmt.Println("Testing ro-git with safe commands...")
-	runCmd("./bin/ro-git", "--version")
+	fmt.Println("Testing readonlybox DFA fast path...")
 
-	fmt.Println("Testing ro-git with blocked commands...")
-	runCmd("./bin/ro-git", "add", ".")
+	// Test DFA-allowed commands (fast path)
+	fmt.Println("Testing git log (should be allowed via DFA)...")
+	runCmd("./readonlybox", "git", "log", "--oneline", "-n", "3")
 
-	fmt.Println("Testing ro-find with safe commands...")
-	runCmd("./bin/ro-find", ".", "-name", "*.go", "-type", "f")
+	fmt.Println("Testing cat (should be allowed via DFA)...")
+	runCmd("./readonlybox", "cat", "Makefile")
 
-	fmt.Println("Testing ro-find with blocked commands...")
-	runCmd("./bin/ro-find", ".", "-name", "*.tmp", "-exec", "rm", "{}", `;`)
+	fmt.Println("Testing ps aux (should be allowed via DFA)...")
+	runCmd("./readonlybox", "ps", "aux", "-n", "3")
 
-	fmt.Println("Testing ro-ls with safe commands...")
-	runCmd("./bin/ro-ls", "-la")
+	fmt.Println("Testing df -h (should be allowed via DFA)...")
+	runCmd("./readonlybox", "df", "-h")
 
-	fmt.Println("Testing ro-ls with blocked commands...")
-	runCmd("./bin/ro-ls", ">output.txt")
+	// Test that blocked commands go through --run validation
+	fmt.Println("Testing git add (should be blocked by server)...")
+	runCmd("./readonlybox", "--run", "git", "add", ".")
 
-	fmt.Println("Testing ro-cat with safe commands...")
-	runCmd("./bin/ro-cat", "Makefile")
-
-	fmt.Println("Testing ro-cat with blocked commands...")
-	runCmd("./bin/ro-cat", ">output.txt")
-
-	fmt.Println("Testing ro-grep with safe commands...")
-	runCmd("./bin/ro-grep", "-r", "package", ".")
-
-	fmt.Println("Testing ro-grep with blocked commands...")
-	runCmd("./bin/ro-grep", ">output.txt")
+	fmt.Println("Testing rm (should be blocked by server)...")
+	runCmd("./readonlybox", "--run", "rm", "file.txt")
 
 	return nil
 }

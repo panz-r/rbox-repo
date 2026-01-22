@@ -416,8 +416,8 @@ func (m *Model) executeDecision() {
 	decision, reason := durationToReason(allow, m.cursor)
 	fmt.Printf("Executing: %s %s for %s %s\n", decision, reason, pendingCmd.Command, pendingCmd.Args)
 
-	// Set the decision in the server's request queue
-	SetRequestDecision(requestID, allow, reason)
+	// Set the decision in the server's request queue (with allowance tracking)
+	SetDecisionWithAllowance(requestID, allow, reason)
 
 	// Find and update the pending command in our list
 	for i := range m.commands {
