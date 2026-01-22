@@ -136,7 +136,12 @@ func handleRun() {
 	}
 
 	if !allowed {
-		fmt.Fprintf(os.Stderr, "readonlybox: %s\n", reason)
+		/* Strip duration suffixes from reason for consistent error message */
+		switch reason {
+		case "once", "15m", "1h", "4h", "session", "always", "pattern":
+			reason = "unsafe command"
+		}
+		fmt.Fprintf(os.Stderr, "readonlybox: Permission denied, possibly unsafe command.\n")
 		os.Exit(1)
 	}
 
@@ -149,7 +154,7 @@ func handleRunLocal(command, originalPath string, originalArgs []string) {
 	/* Check if command is in readonlybox registry */
 	cmd, exists := readonlybox.CommandRegistry[command]
 	if !exists {
-		fmt.Fprintf(os.Stderr, "readonlybox: Permission denied: '%s' is not a read-only command\n", command)
+		fmt.Fprintf(os.Stderr, "readonlybox: Permission denied, possibly unsafe command.\n")
 		os.Exit(1)
 	}
 
@@ -158,7 +163,7 @@ func handleRunLocal(command, originalPath string, originalArgs []string) {
 
 	/* Call the handler to validate and execute */
 	if err := cmd.Handler(args); err != nil {
-		fmt.Fprintf(os.Stderr, "readonlybox: %v\n", err)
+		fmt.Fprintf(os.Stderr, "readonlybox: Permission denied, possibly unsafe command.\n")
 		os.Exit(1)
 	}
 

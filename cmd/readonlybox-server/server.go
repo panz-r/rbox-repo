@@ -883,6 +883,16 @@ func (s *Server) HandleConnection(conn net.Conn) {
 
 	skipQueueAndRespond:
 
+		// For DENY responses, strip the duration reason - client only needs generic message
+		sendReason := reason
+		if decision == ROBO_DECISION_DENY {
+			// Strip duration suffixes like "once", "15m", "1h", "4h", "session", "always", "pattern"
+			switch reason {
+			case "once", "15m", "1h", "4h", "session", "always", "pattern":
+				sendReason = "unsafe command"
+			}
+		}
+
 		// Log based on mode
 		if *veryVerbose || *verbose || decision == ROBO_DECISION_DENY {
 			if decision == ROBO_DECISION_DENY {
@@ -904,12 +914,12 @@ func (s *Server) HandleConnection(conn net.Conn) {
 			ServerID:  ServerUUID,
 			ID:        hdr.ID,
 			Decision:  decision,
-			ReasonLen: uint32(len(reason) + 1),
+			ReasonLen: uint32(len(sendReason) + 1),
 		}
 
 		var buf bytes.Buffer
 		binary.Write(&buf, binary.LittleEndian, &response)
-		buf.WriteString(reason)
+		buf.WriteString(sendReason)
 		buf.WriteByte(0)
 
 		if _, err := conn.Write(buf.Bytes()); err != nil {

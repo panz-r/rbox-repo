@@ -926,7 +926,7 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     /* Check and execute - returns 0 to proceed, -1 to block */
     if (check_and_execute("execve", path, argv, envp) < 0) {
         /* Blocked - print error and return error code */
-        fprintf(stderr, "readonlybox: Permission denied\n");
+        fprintf(stderr, "readonlybox: Permission denied, possibly unsafe command.\n");
         errno = EACCES;
         return -1;
     }
@@ -944,7 +944,7 @@ int execvpe(const char *file, char *const argv[], char *const envp[]) {
 
     /* Check and execute - returns 0 to proceed, -1 to block */
     if (check_and_execute("execvpe", file, argv, envp) < 0) {
-        fprintf(stderr, "readonlybox: Permission denied\n");
+        fprintf(stderr, "readonlybox: Permission denied, possibly unsafe command.\n");
         errno = EACCES;
         return -1;
     }

@@ -16,9 +16,7 @@
 [fragment:git:reftype] heads/|tags/|remotes/
 
 # Git read-only operations
-[safe:git:read] git log
-[safe:git:read] git log --oneline
-[safe:git:read] git log --graph
+[safe:git:read] git log (--oneline|--graph|--oneline --decorate|--graph --oneline)?
 [safe:git:read] git status
 [safe:git:read] git show
 [safe:git:read] git diff
@@ -26,10 +24,7 @@
 [safe:git:read] git blame *
 [safe:git:read] git grep *
 [safe:git:read] git ls-files
-[safe:git:read] git tag
-[safe:git:read] git tag -l
-[safe:git:read] git branch
-[safe:git:read] git branch -a
+[safe:git:read] git (tag|branch) (-[al])?
 [safe:git:read] git remote -v
 [safe:git:read] git config --list
 [safe:git:read] git rev-parse --abbrev-ref *
@@ -69,9 +64,7 @@
 [safe:file:read] pwd
 [safe:file:read] stat file.txt
 [safe:file:read] file file.txt
-[safe:file:read] wc -l file.txt
-[safe:file:read] wc -w file.txt
-[safe:file:read] wc -c file.txt
+[safe:file:read] wc -[lwc] file.txt
 [safe:file:read] du -sh .
 [safe:file:read] du -sh *
 [safe:file:read] df -h
@@ -141,3 +134,11 @@
 [safe:file:read] find . -type f -name "*.txt"
 [safe:file:read] ls -la -h
 [safe:file:read] ps aux --sort=-%mem
+
+# Additional safe patterns (consolidated variations)
+[safe:system:read] uname -(sr|srn)?
+[safe:system:read] ps (-o (command= -p *|pid,command *|pid,comm,cmd)|-eo (pid,command *|pid,comm,cmd))
+[safe:system:read] cat /proc(/\*|/self)/cmdline
+[safe:file:read] pwd -[PL]?
+[safe:file:read] grep (-E * *|-E *|-rn * *|-r -E * .)
+[safe:git:read] git worktree list
