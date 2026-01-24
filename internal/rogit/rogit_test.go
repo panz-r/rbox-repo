@@ -20,7 +20,6 @@ func TestIsWriteCommand(t *testing.T) {
 		{"reset", true},
 		{"rm", true},
 		{"mv", true},
-		{"branch", true},
 		{"tag", true},
 		{"stash", true},
 		{"checkout", true},
@@ -28,8 +27,11 @@ func TestIsWriteCommand(t *testing.T) {
 		{"clone", true},
 		{"init", true},
 		{"submodule", true},
-		{"remote", true},
 		{"config", false}, // config needs special handling
+
+		// Read commands that should be allowed
+		{"branch", false}, // git branch is a read operation
+		{"remote", false}, // git remote is a read operation
 
 		// Read commands that should be allowed
 		{"log", false},

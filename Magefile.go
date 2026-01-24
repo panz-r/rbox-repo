@@ -16,8 +16,8 @@ import (
 // Build all tools - now just readonlybox with symlinks
 var tools = []string{}
 
-// Default target to run when none is specified
-var Default = Build
+// Default target - build and test
+var Default = Test
 
 // Build all tools
 func Build() error {
@@ -246,8 +246,9 @@ func Uninstall() error {
 	return nil
 }
 
-// Test all tools
+// Test all tools - builds first, then runs all tests
 func Test() error {
+	mg.Deps(Build)
 	if err := UnitTest(); err != nil {
 		return err
 	}

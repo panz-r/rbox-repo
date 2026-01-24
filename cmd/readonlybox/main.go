@@ -39,6 +39,34 @@ func main() {
 			handleRun()
 			return
 		}
+		/* Handle --caller with format "appname:syscall"
+		 * Format: readonlybox --caller <appname:syscall> --cwd <path> --run <path> <args...>
+		 * Args: [0]=readonlybox, [1]=--caller, [2]=<info>, [3]=--cwd, [4]=<cwd>, [5]=--run, [6]=<path>, [7...]=args
+		 */
+		if os.Args[1] == "--caller" && len(os.Args) > 6 && os.Args[3] == "--cwd" && os.Args[5] == "--run" {
+			callerInfo := os.Args[2]
+			/* Parse "appname:syscall" format */
+			parts := strings.SplitN(callerInfo, ":", 2)
+			if len(parts) >= 1 {
+				os.Setenv("READONLYBOX_CALLER", parts[0])
+			}
+			if len(parts) >= 2 {
+				os.Setenv("READONLYBOX_SYSCALL", parts[1])
+			}
+			/* Set Cwd from --cwd argument */
+			os.Setenv("READONLYBOX_CWD", os.Args[4])
+			/* Rewrite args to: readonlybox --run <path> <args...> */
+			/* os.Args was: [readonlybox, --caller, <info>, --cwd, <cwd>, --run, <path>, arg1, arg2, ...] */
+			/* We want:   [readonlybox, --run, <path>, arg1, arg2, ...] */
+			newArgs := make([]string, 0, len(os.Args)-5)
+			newArgs = append(newArgs, os.Args[0]) /* executable name */
+			newArgs = append(newArgs, "--run")
+			newArgs = append(newArgs, os.Args[6])     /* path */
+			newArgs = append(newArgs, os.Args[7:]...) /* remaining args */
+			os.Args = newArgs
+			handleRun()
+			return
+		}
 	}
 
 	command := ""
@@ -518,6 +546,25 @@ func (c *serverClient) requestDecision(command string, args []string) (bool, str
 	/* Build request packet */
 	var buf bytes.Buffer
 
+	/* Get caller info and cwd from environment (set by LD_PRELOAD client) */
+	caller := os.Getenv("READONLYBOX_CALLER")
+	syscall := os.Getenv("READONLYBOX_SYSCALL")
+	cwd := os.Getenv("READONLYBOX_CWD")
+
+	/* Build full command with args for server */
+	fullCommand := command
+	if len(args) > 0 {
+		fullCommand = command + " " + strings.Join(args, " ")
+	}
+
+	/* Build augmented command with caller info for server-side parsing */
+	augmentedCmd := fullCommand
+	if caller != "" && syscall != "" {
+		augmentedCmd = fmt.Sprintf("[%s:%s] %s", caller, syscall, fullCommand)
+	} else if caller != "" {
+		augmentedCmd = fmt.Sprintf("[%s] %s", caller, fullCommand)
+	}
+
 	/* Header: magic(4) + version(4) + clientUUID(16) + requestUUID(16) + serverUUID(16) + id(4) + argc(4) + envc(4) + checksum(4) = 72 bytes */
 	/* Generate client UUID (static for this process) */
 	clientUUID := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}
@@ -537,25 +584,30 @@ func (c *serverClient) requestDecision(command string, args []string) (bool, str
 	buf.Write(requestUUID)
 	buf.Write(make([]byte, 16)) /* serverUUID (filled by server) */
 	binary.Write(&buf, binary.LittleEndian, uint32(ROBO_MSG_REQ))
-	binary.Write(&buf, binary.LittleEndian, uint32(len(args)))
-	binary.Write(&buf, binary.LittleEndian, uint32(0)) /* envc */
-	binary.Write(&buf, binary.LittleEndian, uint32(0)) /* checksum placeholder */
+	binary.Write(&buf, binary.LittleEndian, uint32(0)) /* argc = 0, args included in augmentedCmd */
 
-	/* Write command and args */
-	buf.WriteString(command)
+	/* Send Cwd as environment variable (count: 1 if cwd provided, 0 otherwise) */
+	envc := 0
+	if cwd != "" {
+		envc = 1
+	}
+	binary.Write(&buf, binary.LittleEndian, uint32(envc))
+	binary.Write(&buf, binary.LittleEndian, uint32(0)) /* header checksum placeholder (at offset 68) */
+
+	/* Write augmented command (with caller info and full args) */
+	buf.WriteString(augmentedCmd)
 	buf.WriteByte(0)
-	for _, arg := range args {
-		buf.WriteString(arg)
+
+	/* Write CWD environment variable if provided - immediately after command null */
+	if cwd != "" {
+		buf.WriteString("READONLYBOX_CWD=" + cwd)
 		buf.WriteByte(0)
 	}
-	buf.WriteByte(0) /* end of args */
 
-	/* Calculate checksum (CRC32 over entire packet excluding checksum field at offset 68) */
+	/* Calculate header checksum (over first 68 bytes, excluding header checksum at 68-71) */
 	packetBytes := buf.Bytes()
-	checksum := calculateChecksum(packetBytes)
-
-	/* Write checksum at offset 68 */
-	binary.LittleEndian.PutUint32(packetBytes[68:], checksum)
+	headerChecksum := calculateChecksum(packetBytes[:68])
+	binary.LittleEndian.PutUint32(packetBytes[68:], headerChecksum)
 
 	/* Send request */
 	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))

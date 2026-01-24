@@ -7,11 +7,11 @@ import (
 // List of git commands that are considered write operations
 var writeCommands = map[string]bool{
 	"add": true, "am": true, "apply": true, "archive": true, "bisect": true,
-	"branch": true, "bundle": true, "checkout": true, "cherry-pick": true,
+	"bundle": true, "checkout": true, "cherry-pick": true,
 	"clean": true, "clone": true, "commit": true, "fetch": true,
 	"format-patch": true, "gc": true, "init": true, "merge": true,
 	"mv": true, "notes": true, "pull": true, "push": true, "rebase": true,
-	"reflog": true, "remote": true, "repair": true, "replace": true,
+	"reflog": true, "repair": true, "replace": true,
 	"request-pull": true, "reset": true, "restore": true, "revert": true,
 	"rm": true, "send-email": true, "stash": true, "submodule": true,
 	"switch": true, "tag": true, "worktree": true, "write-tree": true,

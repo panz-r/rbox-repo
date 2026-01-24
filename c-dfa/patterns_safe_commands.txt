@@ -142,3 +142,10 @@
 [safe:file:read] pwd -[PL]?
 [safe:file:read] grep (-E * *|-E *|-rn * *|-r -E * .)
 [safe:git:read] git worktree list
+
+# Additional git patterns needed for TUI testing
+[safe:git:read] git remote get-url *
+[safe:git:read] git status (-s|--short)?
+[safe:git:read] git status
+[safe:git:read] git branch
+[safe:git:read] git tag

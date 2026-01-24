@@ -145,6 +145,15 @@ func init() {
 	}
 }
 
+// Calculate simple checksum (matches client calculateChecksum)
+func calculateChecksum(data []byte) uint32 {
+	var sum uint32
+	for _, b := range data {
+		sum += uint32(b)
+	}
+	return sum
+}
+
 // Calculate CRC32 checksum
 func calculateCRC32(data []byte) uint32 {
 	crc := uint32(0xFFFFFFFF)
@@ -211,6 +220,7 @@ type Request struct {
 	Cmd  string
 	Args []string
 	Env  []string
+	Cwd  string
 }
 
 type Response struct {
@@ -226,9 +236,9 @@ type Server struct {
 	shutdown     chan struct{}
 	onConnect    func()
 	onDisconnect func()
-	onCommand    func(requestID int, decision string, cmd string, args []string, reason string)
+	onCommand    func(requestID int, decision string, cmd string, args []string, reason string, cwd string)
 	onLog        func(log string)
-	onRequest    func(requestID int, clientID string, cmd string, args []string)
+	onRequest    func(requestID int, clientID string, cmd string, args []string, cwd string)
 	onDecision   func(requestID int, allowed bool, reason string)
 }
 
@@ -251,6 +261,7 @@ type PendingRequest struct {
 	Command      string
 	Args         []string
 	Env          []string
+	Cwd          string
 	Timestamp    time.Time
 	Status       RequestStatus
 	Reason       string
@@ -302,7 +313,7 @@ func NewRequestQueue() *RequestQueue {
 	}
 }
 
-func (q *RequestQueue) Add(clientID, cmd string, args, env []string) *PendingRequest {
+func (q *RequestQueue) Add(clientID, cmd string, args, env []string, cwd string) *PendingRequest {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -312,6 +323,7 @@ func (q *RequestQueue) Add(clientID, cmd string, args, env []string) *PendingReq
 		Command:      cmd,
 		Args:         args,
 		Env:          env,
+		Cwd:          cwd,
 		Timestamp:    time.Now(),
 		Status:       RequestPending,
 		DecisionCond: sync.NewCond(&q.mu),
@@ -703,7 +715,22 @@ func (s *Server) HandleConnection(conn net.Conn) {
 			env = append(env, strings.TrimSuffix(envVar, "\x00"))
 		}
 		if *debugMode {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Read %d env vars\n", len(env))
+			fmt.Fprintf(os.Stderr, "[DEBUG] Read %d env vars (envc=%d)\n", len(env), hdr.Envc)
+		}
+
+		// Extract Cwd from READONLYBOX_CWD env var (sent by client via readonlybox)
+		cwd := ""
+		if *debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Looking for READONLYBOX_CWD in %d env vars\n", len(env))
+		}
+		for _, e := range env {
+			if strings.HasPrefix(e, "READONLYBOX_CWD=") {
+				cwd = strings.TrimPrefix(e, "READONLYBOX_CWD=")
+				if *debugMode {
+					fmt.Fprintf(os.Stderr, "[DEBUG] Found CWD: %s\n", cwd)
+				}
+				break
+			}
 		}
 
 		// Check request cache first (for retries after server restart)
@@ -759,12 +786,12 @@ func (s *Server) HandleConnection(conn net.Conn) {
 		}
 
 		// Add to request queue and notify TUI
-		pendingReq := GlobalRequestQueue.Add(remoteAddr, cmd, args, env)
+		pendingReq := GlobalRequestQueue.Add(remoteAddr, cmd, args, env, cwd)
 		if s.onRequest != nil {
 			if *debugMode {
 				fmt.Fprintf(os.Stderr, "[DEBUG] Sending onCommand callback for request #%d\n", pendingReq.ID)
 			}
-			s.onRequest(pendingReq.ID, remoteAddr, cmd, args)
+			s.onRequest(pendingReq.ID, remoteAddr, cmd, args, cwd)
 			if *debugMode {
 				fmt.Fprintf(os.Stderr, "[DEBUG] onCommand callback done for request #%d\n", pendingReq.ID)
 			}
@@ -875,7 +902,7 @@ func (s *Server) HandleConnection(conn net.Conn) {
 			if *debugMode {
 				fmt.Fprintf(os.Stderr, "[DEBUG] Sending onCommand callback for request #%d\n", pendingReq.ID)
 			}
-			s.onCommand(pendingReq.ID, decisionStr, cmd, args, reason)
+			s.onCommand(pendingReq.ID, decisionStr, cmd, args, reason, cwd)
 			if *debugMode {
 				fmt.Fprintf(os.Stderr, "[DEBUG] onCommand callback done for request #%d\n", pendingReq.ID)
 			}

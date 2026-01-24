@@ -14,6 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdarg.h>
 #include <pthread.h>
 #include <errno.h>
@@ -48,6 +49,149 @@ static struct timeval g_recv_timeout = {30, 0}; /* 30 second timeout for recv */
 static struct timeval g_conn_timeout = {5, 0}; /* 5 second timeout for connect */
 static FILE *g_logfile = NULL;
 static int g_verbose_logging = 1; /* Verbose logging enabled by default */
+
+/* Detected parent application name (set once at library load) */
+static char g_parent_app_name[256] = {0};
+static char g_cwd[512] = {0};
+
+/* Initialization states for atomic state machine */
+#define STATE_NOT_STARTED   0
+#define STATE_IN_PROGRESS   1
+#define STATE_COMPLETED     2
+
+static atomic_int g_init_state = 0;
+
+/* Forward declaration */
+static void detect_parent_app_once(void);
+
+/* Extract basename from path */
+static const char *extract_basename(const char *path) {
+    if (!path) return "unknown";
+    const char *base = strrchr(path, '/');
+    if (base && base[1]) {
+        return base + 1;
+    }
+    return path;
+}
+
+/* Check if string looks like a version number (X.Y.Z format) */
+static int is_version_number(const char *str) {
+    if (!str || strlen(str) < 3) return 0;
+    /* Check for X.Y.Z or X.Y.Z.Z format */
+    int dots = 0;
+    for (int i = 0; str[i]; i++) {
+        if (str[i] == '.') {
+            dots++;
+        } else if (str[i] < '0' || str[i] > '9') {
+            return 0;
+        }
+    }
+    return dots >= 2; /* At least X.Y */
+}
+
+/* Try to resolve a version number to an app name */
+static void resolve_app_name(char *buf, size_t buf_size, const char *exe_path) {
+    const char *basename = extract_basename(exe_path);
+    
+    /* If not a version number, just use the basename */
+    if (!is_version_number(basename)) {
+        snprintf(buf, buf_size, "%s", basename);
+        return;
+    }
+    
+    /* Check if this version matches known apps by checking path pattern */
+    /* Format: /home/panz/.local/share/claude/versions/X.Y.Z */
+    if (strstr(exe_path, "/claude/versions/") != NULL) {
+        snprintf(buf, buf_size, "claude");
+        return;
+    } else if (strstr(exe_path, "/cursor/versions/") != NULL) {
+        snprintf(buf, buf_size, "cursor");
+        return;
+    } else if (strstr(exe_path, "/code/versions/") != NULL) {
+        snprintf(buf, buf_size, "code");
+        return;
+    }
+    
+    /* Fallback to basename */
+    snprintf(buf, buf_size, "%s", basename);
+}
+
+/* Thread-safe parent app detection using C11 atomics */
+static void detect_parent_app_once(void) {
+    /* Check if already completed (relaxed read - no synchronization needed yet) */
+    int state = atomic_load_explicit(&g_init_state, memory_order_relaxed);
+    
+    if (state == STATE_COMPLETED) {
+        return; /* Already done, nothing to do */
+    }
+    
+    /* Not completed - try to claim initialization work using fetch-or */
+    int old_val = atomic_fetch_or_explicit(&g_init_state, STATE_IN_PROGRESS, memory_order_acq_rel);
+    
+    if (old_val == STATE_NOT_STARTED) {
+        /* We won the race - we are responsible for initialization */
+        
+        /* First, try /proc/self/exe to get the actual running binary */
+        char exe_buf[256] = {0};
+        ssize_t exe_len = readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
+        if (exe_len > 0) {
+            exe_buf[exe_len] = '\0';
+            /* Try to resolve version numbers to app names via symlinks */
+            resolve_app_name(g_parent_app_name, sizeof(g_parent_app_name), exe_buf);
+            /* If resolution didn't find a name, use basename */
+            if (!g_parent_app_name[0]) {
+                const char *exe_name = extract_basename(exe_buf);
+                if (exe_name && strlen(exe_name) > 3 && 
+                    strncmp(exe_name, "ld-", 3) != 0 &&
+                    strncmp(exe_name, "libc", 4) != 0 &&
+                    strcmp(exe_name, "[heap]") != 0 &&
+                    strcmp(exe_name, "[stack]") != 0) {
+                    snprintf(g_parent_app_name, sizeof(g_parent_app_name), "%s", exe_name);
+                }
+            }
+        }
+        
+        /* Also capture current working directory */
+        if (getcwd(g_cwd, sizeof(g_cwd)) == NULL) {
+            g_cwd[0] = '\0';
+        }
+        
+        /* Mark initialization as complete with release ordering */
+        /* This ensures all our writes are visible to other threads */
+        atomic_store_explicit(&g_init_state, STATE_COMPLETED, memory_order_release);
+    } else {
+        /* Someone else is already doing initialization (or completed) */
+        /* Spin-wait until they finish with acquire ordering */
+        while (atomic_load_explicit(&g_init_state, memory_order_acquire) != STATE_COMPLETED) {
+            /* Spin - could add small sleep/yield here if needed */
+        }
+    }
+}
+
+/* Get cached parent app name (thread-safe, always fast after first call) */
+static const char *get_parent_app_name(void) {
+    /* Ensure initialization happened (spins if another thread is initializing) */
+    while (atomic_load_explicit(&g_init_state, memory_order_acquire) != STATE_COMPLETED) {
+        detect_parent_app_once();
+    }
+    return g_parent_app_name[0] ? g_parent_app_name : "unknown";
+}
+
+/* Get cached CWD (thread-safe, always fast after first call) */
+static const char *get_cwd(void) {
+    /* Ensure initialization happened */
+    while (atomic_load_explicit(&g_init_state, memory_order_acquire) != STATE_COMPLETED) {
+        detect_parent_app_once();
+    }
+    return g_cwd[0] ? g_cwd : "";
+}
+
+__attribute__((constructor))
+static void init_readonlybox_client(void) {
+    /* Detect and store parent app name at load time */
+    detect_parent_app_once();
+}
+
 
 /* UUIDs for request matching across reconnects */
 static unsigned char g_client_uuid[16];
@@ -471,6 +615,9 @@ static int send_request(const char *cmd, char *const argv[], char *const envp[],
     if (argv) { while (argv[argc]) argc++; }
     if (envp) { while (envp[envc]) envc++; }
 
+    /* Get cached Cwd to include in packet */
+    const char *cwd = get_cwd();
+
     /* Build packet */
     char packet[8192];
     size_t pos = 0;
@@ -494,7 +641,9 @@ static int send_request(const char *cmd, char *const argv[], char *const envp[],
     pos += 4;
     memcpy(packet + pos, &argc, 4);
     pos += 4;
-    memcpy(packet + pos, &envc, 4);
+    /* Include Cwd as extra env var if available */
+    int envcWithCwd = envc + (cwd && cwd[0] ? 1 : 0);
+    memcpy(packet + pos, &envcWithCwd, 4);
     pos += 4;
 
     /* Command */
@@ -509,7 +658,6 @@ static int send_request(const char *cmd, char *const argv[], char *const envp[],
             pos += len;
         }
     }
-    packet[pos++] = '\0';
 
     /* Environment */
     for (int i = 0; i < envc && pos < sizeof(packet) - 256; i++) {
@@ -519,7 +667,17 @@ static int send_request(const char *cmd, char *const argv[], char *const envp[],
             pos += len;
         }
     }
-    packet[pos++] = '\0';
+    /* Add READONLYBOX_CWD if we have it */
+    if (cwd && cwd[0] && pos < sizeof(packet) - 256) {
+        char cwdEnv[1024];
+        snprintf(cwdEnv, sizeof(cwdEnv), "READONLYBOX_CWD=%s", cwd);
+        size_t len = strlen(cwdEnv) + 1;
+        if (pos + len < sizeof(packet)) {
+            memcpy(packet + pos, cwdEnv, len);
+            pos += len;
+        }
+    }
+    /* No extra null - server reads exactly envc env vars */
 
     /* Send */
     pthread_mutex_lock(&g_socket_mutex);
@@ -786,6 +944,26 @@ static const char *get_basename(const char *path) {
 }
 
 /* Fast path check - allow using DFA */
+
+/* Modify command string to include parent app name if it's a known app */
+static void augment_command_with_app(char *cmd_str, size_t max_len, const char *parent_app) {
+    if (!cmd_str || !parent_app || !parent_app[0]) {
+        return;
+    }
+    
+    /* Known apps that use claude-style syntax */
+    if (strcmp(parent_app, "claude") == 0 || 
+        strcmp(parent_app, "cursor") == 0 ||
+        strcmp(parent_app, "code") == 0 ||
+        strstr(parent_app, "claude") != NULL) {
+        /* Prepend app name to command for server-side detection */
+        char augmented[512];
+        snprintf(augmented, sizeof(augmented), "[app:%s] %s", parent_app, cmd_str);
+        strncpy(cmd_str, augmented, max_len - 1);
+        cmd_str[max_len - 1] = '\0';
+    }
+}
+
 static int should_fast_allow(const char *cmd) {
     return dfa_should_allow(cmd);
 }
@@ -839,7 +1017,7 @@ static int redirect_through_readonlybox(const char *path, char *const argv[], ch
 
 /* Common execution check - returns 0 to proceed, -1 to block */
 static int check_and_execute(const char *syscall_name, const char *path, char *const argv[], char *const envp[]) {
-    const char *base_cmd = get_basename(path);
+    const char *base_cmd = extract_basename(path);
 
     if (!base_cmd) {
         return 0;
@@ -854,6 +1032,10 @@ static int check_and_execute(const char *syscall_name, const char *path, char *c
             strncat(cmd_str, argv[i], sizeof(cmd_str) - strlen(cmd_str) - 1);
         }
     }
+
+    /* Augment command with parent app name for server-side parsing */
+    const char *parent_app = get_parent_app_name();
+    augment_command_with_app(cmd_str, sizeof(cmd_str), parent_app);
 
     /* Fast allow - only for known safe commands via DFA */
     if (should_fast_allow(cmd_str)) {
@@ -875,33 +1057,84 @@ static int redirect_through_readonlybox(const char *path, char *const argv[], ch
     char readonlybox_path[1024];
     snprintf(readonlybox_path, sizeof(readonlybox_path), "%s/readonlybox", "/home/panz/osrc/lms-test/readonlybox/bin");
 
-    /* Build args: readonlybox --run <original-path> <original-args...> */
-    char *new_argv[128];
-    new_argv[0] = "readonlybox";
-    new_argv[1] = "--run";
-    new_argv[2] = (char*)path;
+    /* Get parent app name and syscall info to pass to readonlybox */
+    const char *parent_app = get_parent_app_name();
+    const char *cwd = get_cwd();
     
-    /* Copy original args starting from argv[1] (skip argv[0] which is the command name) */
-    int i;
-    for (i = 1; argv && argv[i] && i < 125; i++) {
-        new_argv[2 + i] = argv[i];
+    /* Build args: readonlybox --caller <appname:syscall> --cwd <path> --run <original-path> <original-args...> */
+    /* Format: [caller:appname:syscall] */
+    char caller_info[320];
+    if (parent_app && parent_app[0]) {
+        snprintf(caller_info, sizeof(caller_info), "%s:execve", parent_app);
+    } else {
+        snprintf(caller_info, sizeof(caller_info), "unknown:execve");
     }
-    new_argv[2 + i] = NULL;
+    
+    char *new_argv[130]; /* Extra slots for --caller, --cwd, --run */
+    int idx = 0;
+    new_argv[idx++] = "readonlybox";
+    new_argv[idx++] = "--caller";
+    new_argv[idx++] = caller_info;
+    new_argv[idx++] = "--cwd";
+    new_argv[idx++] = (char*)cwd;
+    new_argv[idx++] = "--run";
+    new_argv[idx++] = (char*)path;
+
+    /* Copy original args (skip argv[0] since path is already the command) */
+    int i;
+    for (i = 1; argv && argv[i] && idx < 127; i++) {
+        new_argv[idx++] = argv[i];
+    }
+    new_argv[idx++] = NULL;
 
     /* If envp is NULL, use current environment from environ global */
     char **exec_env_to_free = NULL;
     char **exec_env = (char **)envp;
+    
     if (envp == NULL) {
         /* Count environment variables */
         int envc = 0;
         for (char **e = environ; *e; e++) envc++;
         
-        /* Allocate new environment array and copy */
-        exec_env_to_free = malloc((envc + 1) * sizeof(char*));
+        /* Allocate new environment array (+2 for CWD env and NULL) */
+        exec_env_to_free = malloc((envc + 2) * sizeof(char*));
         for (int j = 0; j < envc; j++) {
             exec_env_to_free[j] = environ[j];
         }
-        exec_env_to_free[envc] = NULL;
+        /* Add READONLYBOX_CWD - must be allocated since we're freeing later */
+        char *cwd_env_alloc = malloc(1024);
+        snprintf(cwd_env_alloc, 1024, "READONLYBOX_CWD=%s", cwd);
+        exec_env_to_free[envc] = cwd_env_alloc;
+        exec_env_to_free[envc + 1] = NULL;
+        exec_env = exec_env_to_free;
+    } else {
+        /* Count envp variables */
+        int envc = 0;
+        for (char *const *e = envp; *e; e++) envc++;
+        
+        /* Allocate new environment array (+2 for CWD env and NULL) */
+        exec_env_to_free = malloc((envc + 2) * sizeof(char*));
+        int cwd_env_idx = -1;
+        for (int j = 0; j < envc; j++) {
+            exec_env_to_free[j] = envp[j];
+            /* Check if READONLYBOX_CWD already exists and replace it */
+            if (strncmp(envp[j], "READONLYBOX_CWD=", 16) == 0) {
+                cwd_env_idx = j;
+                /* Allocate new string since we're freeing envp */
+                char *cwd_env_alloc = malloc(1024);
+                snprintf(cwd_env_alloc, 1024, "READONLYBOX_CWD=%s", cwd);
+                exec_env_to_free[j] = cwd_env_alloc;
+            }
+        }
+        /* If not found, add it at the end */
+        if (cwd_env_idx < 0) {
+            char *cwd_env_alloc = malloc(1024);
+            snprintf(cwd_env_alloc, 1024, "READONLYBOX_CWD=%s", cwd);
+            exec_env_to_free[envc] = cwd_env_alloc;
+            exec_env_to_free[envc + 1] = NULL;
+        } else {
+            exec_env_to_free[envc + 1] = NULL;
+        }
         exec_env = exec_env_to_free;
     }
 

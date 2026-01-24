@@ -8,6 +8,11 @@ import (
 	"testing"
 )
 
+func getReadonlyboxPath() string {
+	wd, _ := os.Getwd()
+	return filepath.Join(wd, "..", "bin", "readonlybox")
+}
+
 // TestReadonlyboxGitIntegration tests the readonlybox git subcommand end-to-end
 func TestReadonlyboxGitIntegration(t *testing.T) {
 	tests := []struct {
@@ -43,9 +48,11 @@ func TestReadonlyboxGitIntegration(t *testing.T) {
 		{"remote", []string{"git", "remote", "-v"}, false, ""},
 	}
 
+	readonlyboxPath := getReadonlyboxPath()
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command("./readonlybox", tt.args...)
+			cmd := exec.Command(readonlyboxPath, tt.args...)
 			cmd.Dir = ".."
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
@@ -128,9 +135,11 @@ func TestReadonlyboxFindIntegration(t *testing.T) {
 		{"negated search", []string{"find", tmpDir, "!", "-name", "*.tmp"}, false, "", []string{"test.go", "test.txt", "subdir/test2.go"}},
 	}
 
+	readonlyboxPath := getReadonlyboxPath()
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command("./readonlybox", tt.args...)
+			cmd := exec.Command(readonlyboxPath, tt.args...)
 			cmd.Dir = ".."
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
@@ -189,9 +198,11 @@ func TestReadonlyboxSafeCommands(t *testing.T) {
 		{"tr", []string{"tr", "a-z", "A-Z", "<<<hello"}, false},
 	}
 
+	readonlyboxPath := getReadonlyboxPath()
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command("./readonlybox", tt.args...)
+			cmd := exec.Command(readonlyboxPath, tt.args...)
 			cmd.Dir = ".."
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
