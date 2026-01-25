@@ -14,4 +14,14 @@
 #define MAX_TAGS 16
 #define SIGNATURE_TABLE_SIZE 1024
 
+/* Category bitmask constants (8 categories, one bit each) */
+#define CAT_MASK_SAFE       0x01
+#define CAT_MASK_CAUTION    0x02
+#define CAT_MASK_MODIFYING  0x04
+#define CAT_MASK_DANGEROUS  0x08
+#define CAT_MASK_NETWORK    0x10
+#define CAT_MASK_ADMIN      0x20
+#define CAT_MASK_BUILD      0x40
+#define CAT_MASK_CONTAINER  0x80
+
 #endif // NFA_H

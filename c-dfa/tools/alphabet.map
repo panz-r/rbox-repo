@@ -1,0 +1,36 @@
+# Alphabet map for ReadOnlyBox DFA
+# Format: symbol_id start_char end_char [special]
+# Special characters: any, epsilon, eos, whitespace, normalizing_space
+
+0 0 0 any
+1 32 32 space
+2 9 9 tab
+3 97 122 a-z
+4 65 90 A-Z
+5 48 57 digit
+6 45 45 dash
+7 46 46 dot
+8 95 95 underscore
+9 47 47 slash
+10 64 64 at
+11 43 43 plus
+12 42 42 star
+13 35 35 hash
+14 124 124 pipe
+15 38 38 amp
+16 59 59 semicolon
+17 60 60 less
+18 62 62 greater
+19 61 61 equals
+20 39 39 quote
+21 34 34 doublequote
+22 96 96 backtick
+23 123 123 openbrace
+24 125 125 closebrace
+25 91 91 openbracket
+26 93 93 closebracket
+27 40 40 openparen
+28 41 41 closeparen
+29 10 10 newline
+30 13 13 cr
+31 5 5 eos

@@ -39,6 +39,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
     }
 
     result->category = DFA_CMD_UNKNOWN;
+    result->category_mask = 0;
     result->final_state = 0;
     result->matched = false;
     result->matched_length = 0;
@@ -93,6 +94,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                 if (trans_char == DFA_CHAR_ANY || trans_char == c) {
                     if (next_trans_offset == 0) {
                         result->final_state = current_state->flags;
+                        result->category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
                         result->matched_length = pos;
                         return true;
                     }
@@ -108,6 +110,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
 
         if (!transition_found) {
             result->final_state = current_state->flags;
+            result->category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
             result->matched_length = pos;
             return true;
         }
@@ -116,7 +119,15 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
             result->matched = true;
             result->final_state = current_state->flags;
             result->matched_length = pos + 1;
-            result->category = DFA_CMD_READONLY_SAFE;
+            result->category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
+            
+            // Derive legacy category enum from mask for backward compatibility
+            if (result->category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+            else if (result->category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+            else if (result->category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+            else if (result->category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+            else if (result->category_mask & 0x10) result->category = DFA_CMD_NETWORK;
+            else if (result->category_mask & 0x20) result->category = DFA_CMD_ADMIN;
         }
     }
 
@@ -133,7 +144,15 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                     result->matched = true;
                     result->matched_length = pos;
                     result->final_state = trans[i].next_state_offset;
-                    result->category = DFA_CMD_READONLY_SAFE;
+                    result->category_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
+                    
+                    // Derive legacy category enum from mask for backward compatibility
+                    if (result->category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+                    else if (result->category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+                    else if (result->category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+                    else if (result->category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+                    else if (result->category_mask & 0x10) result->category = DFA_CMD_NETWORK;
+                    else if (result->category_mask & 0x20) result->category = DFA_CMD_ADMIN;
                     return true;
                 }
             }
@@ -155,6 +174,10 @@ const char* dfa_category_string(dfa_command_category_t category) {
         case DFA_CMD_ADMIN: return "Admin";
         default: return "Invalid";
     }
+}
+
+const dfa_t* dfa_get_current(void) {
+    return current_dfa;
 }
 
 bool dfa_is_valid(void) {

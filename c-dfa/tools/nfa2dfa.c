@@ -27,7 +27,7 @@ typedef struct {
 
 // NFA State for reading NFA files
 typedef struct {
-    bool accepting;
+    uint8_t category_mask;  // Bitmask of accepting categories
     char* tags[MAX_STATES];
     int tag_count;
     int transitions[MAX_SYMBOLS];
@@ -41,8 +41,7 @@ typedef struct {
 typedef struct {
     uint32_t transitions_offset;
     uint16_t transition_count;
-    uint16_t flags;
-    bool accepting;
+    uint16_t flags;  // Bits 0-7: state flags, Bits 8-15: category_mask
     int transitions[MAX_SYMBOLS];
     bool transitions_from_any[MAX_SYMBOLS];
     int nfa_states[MAX_STATES];
@@ -60,7 +59,7 @@ static int alphabet_size = 0;
 // Initialize NFA
 void nfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
-        nfa[i].accepting = false;
+        nfa[i].category_mask = 0;
         nfa[i].tag_count = 0;
         for (int j = 0; j < MAX_STATES; j++) {
             nfa[i].tags[j] = NULL;
@@ -78,7 +77,6 @@ void nfa_init(void) {
 // Initialize DFA
 void dfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
-        dfa[i].accepting = false;
         dfa[i].flags = 0;
         dfa[i].transition_count = 0;
         dfa[i].nfa_state_count = 0;
@@ -94,14 +92,17 @@ void dfa_init(void) {
 }
 
 // Add DFA state
-int dfa_add_state(bool accepting, int* nfa_states, int nfa_count) {
+int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
     if (dfa_state_count >= MAX_STATES) {
         fprintf(stderr, "Error: Maximum DFA states reached\n");
         exit(1);
     }
     int state = dfa_state_count;
-    dfa[state].accepting = accepting;
-    dfa[state].flags = accepting ? DFA_STATE_ACCEPTING : 0;
+    // Store category_mask in bits 8-15, set DFA_STATE_ACCEPTING if category_mask != 0
+    dfa[state].flags = (category_mask << 8);
+    if (category_mask != 0) {
+        dfa[state].flags |= DFA_STATE_ACCEPTING;
+    }
     dfa[state].transition_count = 0;
     dfa[state].nfa_state_count = 0;
     for (int i = 0; i < nfa_count && i < MAX_STATES; i++) {
@@ -207,14 +208,11 @@ void nfa_to_dfa(void) {
     initial_nfa_states[0] = 0;
     int initial_count = 1;
     epsilon_closure(initial_nfa_states, &initial_count, MAX_STATES);
-    bool accepting = false;
+    uint8_t initial_accepting_mask = 0;
     for (int i = 0; i < initial_count; i++) {
-        if (nfa[initial_nfa_states[i]].accepting) {
-            accepting = true;
-            break;
-        }
+        initial_accepting_mask |= nfa[initial_nfa_states[i]].category_mask;
     }
-    int initial_dfa = dfa_add_state(accepting, initial_nfa_states, initial_count);
+    int initial_dfa = dfa_add_state(initial_accepting_mask, initial_nfa_states, initial_count);
     int queue[MAX_STATES];
     int queue_start = 0;
     int queue_end = 1;
@@ -232,12 +230,9 @@ void nfa_to_dfa(void) {
             nfa_move(move_states, &move_count, symbol_id, MAX_STATES);
             if (move_count == 0) continue;
             epsilon_closure(move_states, &move_count, MAX_STATES);
-            bool move_accepting = false;
+            uint8_t move_accepting_mask = 0;
             for (int i = 0; i < move_count; i++) {
-                if (nfa[move_states[i]].accepting) {
-                    move_accepting = true;
-                    break;
-                }
+                move_accepting_mask |= nfa[move_states[i]].category_mask;
             }
             int existing_state = -1;
             for (int i = 0; i < dfa_state_count; i++) {
@@ -265,7 +260,7 @@ void nfa_to_dfa(void) {
                 dfa[current_dfa].transitions[symbol_id] = existing_state;
                 dfa[current_dfa].transition_count++;
             } else {
-                int new_dfa = dfa_add_state(move_accepting, move_states, move_count);
+                int new_dfa = dfa_add_state(move_accepting_mask, move_states, move_count);
                 dfa[current_dfa].transitions[symbol_id] = new_dfa;
                 dfa[current_dfa].transition_count++;
                 if (queue_end < MAX_STATES) {
@@ -402,10 +397,16 @@ void load_nfa_file(const char* filename) {
             }
         }
         if (current_state >= 0) {
-            if (strstr(line, "Accepting:") != NULL) {
+            if (strstr(line, "CategoryMask:") != NULL) {
+                unsigned int category_mask;
+                sscanf(line, "  CategoryMask: %x", &category_mask);
+                nfa[current_state].category_mask = (uint8_t)category_mask;
+            } else if (strstr(line, "Accepting:") != NULL) {
+                // Backward compatibility: old NFA format uses "Accepting: yes/no"
+                // Map to CAT_MASK_SAFE (0x01) for accepting states
                 char accepting_str[16];
                 sscanf(line, "  Accepting: %15s", accepting_str);
-                nfa[current_state].accepting = (strcmp(accepting_str, "yes") == 0);
+                nfa[current_state].category_mask = (strcmp(accepting_str, "yes") == 0) ? 0x01 : 0x00;
             } else if (strstr(line, "Symbol") != NULL) {
                 int symbol_id;
                 // Parse format: "Symbol %d -> %d[,%d[,%d...]]" or "Symbol %d -> ,%d[,%d...]"
@@ -511,7 +512,8 @@ void write_dfa_file(const char* filename) {
         states[i].transitions_offset = state_trans_offsets[i];
         states[i].transition_count = dfa[i].transition_count;
         states[i].flags = dfa[i].flags;
-        if (dfa[i].accepting) {
+        // Check accepting mask (bits 8-15 of flags)
+        if (dfa[i].flags & 0xFF00) {
             accepting_mask |= (1 << i);
         }
         // FIRST PASS: specific character transitions

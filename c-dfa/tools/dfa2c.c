@@ -11,7 +11,7 @@
 #define MAX_LINE_LENGTH 1024
 
 typedef struct {
-    bool accepting;
+    uint8_t category_mask;
     int next_state[MAX_CHARS];
     int transition_count;
 } dfa_state_t;
@@ -28,7 +28,7 @@ static int pattern_count = 0;
 
 void dfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
-        dfa[i].accepting = false;
+        dfa[i].category_mask = 0;
         for (int j = 0; j < MAX_CHARS; j++) {
             dfa[i].next_state[j] = -1;
         }
@@ -37,13 +37,13 @@ void dfa_init(void) {
     dfa_state_count = 1;
 }
 
-int dfa_add_state(bool accepting) {
+int dfa_add_state(uint8_t category_mask) {
     if (dfa_state_count >= MAX_STATES) {
         fprintf(stderr, "Error: Maximum states reached\n");
         exit(1);
     }
     int state = dfa_state_count;
-    dfa[state].accepting = accepting;
+    dfa[state].category_mask = category_mask;
     dfa_state_count++;
     return state;
 }
@@ -105,23 +105,23 @@ void read_spec_file(const char* filename) {
         for (int i = 0; i < pattern_len; i++) {
             unsigned char c = (unsigned char)pattern[i];
 
-            if (c == '*') {
-                int star_state = dfa_add_state(true);
-                dfa_add_transition(current_state, star_state, c);
-                dfa_add_transition(star_state, star_state, c);
-                current_state = star_state;
+        if (c == '*') {
+            int star_state = dfa_add_state(1);  // CAT_MASK_SAFE = 1
+            dfa_add_transition(current_state, star_state, c);
+            dfa_add_transition(star_state, star_state, c);
+            current_state = star_state;
+        } else {
+            if (dfa[current_state].next_state[c] < 0) {
+                int new_state = dfa_add_state(0);
+                dfa_add_transition(current_state, new_state, c);
+                current_state = new_state;
             } else {
-                if (dfa[current_state].next_state[c] < 0) {
-                    int new_state = dfa_add_state(false);
-                    dfa_add_transition(current_state, new_state, c);
-                    current_state = new_state;
-                } else {
-                    current_state = dfa[current_state].next_state[c];
-                }
+                current_state = dfa[current_state].next_state[c];
             }
         }
+    }
 
-        dfa[current_state].accepting = true;
+    dfa[current_state].category_mask = 1;  // Mark as accepting with CAT_MASK_SAFE
     }
 
     fclose(file);
@@ -163,9 +163,9 @@ void write_binary(const char* filename) {
     for (int i = 0; i < dfa_state_count; i++) {
         uint32_t trans_offset = (uint32_t)state_offsets[i];
         uint16_t trans_count = (uint16_t)dfa[i].transition_count;
-        uint16_t flags = dfa[i].accepting ? 1 : 0;
+        uint16_t flags = dfa[i].category_mask;  // Store category_mask as flags
 
-        fprintf(stderr, "State %d header: trans_offset=%u trans_count=%u flags=%u\n",
+        fprintf(stderr, "State %d header: trans_offset=%u trans_count=%u flags=0x%02x\n",
                i, trans_offset, trans_count, flags);
         fwrite(&trans_offset, sizeof(uint32_t), 1, out);
         fwrite(&trans_count, sizeof(uint16_t), 1, out);
@@ -173,8 +173,8 @@ void write_binary(const char* filename) {
     }
 
     for (int i = 0; i < dfa_state_count; i++) {
-        fprintf(stderr, "State %d: transitions_count=%d, accepting=%s\n",
-               i, dfa[i].transition_count, dfa[i].accepting ? "YES" : "NO");
+        fprintf(stderr, "State %d: transitions_count=%d, category_mask=0x%02x\n",
+               i, dfa[i].transition_count, dfa[i].category_mask);
         for (int c = 1; c < 127; c++) {
             if (dfa[i].next_state[c] >= 0) {
                 fprintf(stderr, "  '%c' (0x%02X) -> state %d\n", c >= 32 ? c : '?', c, dfa[i].next_state[c]);

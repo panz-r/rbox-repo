@@ -29,12 +29,22 @@ typedef struct {
     int excluded_count;
 } negated_transition_t;
 
-// NFA State with termination tags and negated transitions
+// Category bitmask constants (8 categories, one bit each)
+#define CAT_MASK_SAFE       0x01
+#define CAT_MASK_CAUTION    0x02
+#define CAT_MASK_MODIFYING  0x04
+#define CAT_MASK_DANGEROUS  0x08
+#define CAT_MASK_NETWORK    0x10
+#define CAT_MASK_ADMIN      0x20
+#define CAT_MASK_BUILD      0x40
+#define CAT_MASK_CONTAINER  0x80
+
+// NFA State with category bitmask for 8-way parallel acceptance
 typedef struct {
-    bool accepting;
-    char* tags[MAX_TAGS];          // Termination tags
+    uint8_t category_mask;           // Bitmask of accepting categories (0-7)
+    char* tags[MAX_TAGS];             // Termination tags
     int tag_count;
-    int transitions[MAX_SYMBOLS];  // -1 = no transition, otherwise state index
+    int transitions[MAX_SYMBOLS];     // -1 = no transition, otherwise state index
     int transition_count;
     char multi_targets[MAX_SYMBOLS][256];  // For storing multiple targets as CSV strings
 
@@ -170,7 +180,7 @@ static void expand_fragments(char* pattern, size_t max_len) {
 // Initialize NFA
 void nfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
-        nfa[i].accepting = false;
+        nfa[i].category_mask = 0;
         nfa[i].tag_count = 0;
         for (int j = 0; j < MAX_TAGS; j++) {
             nfa[i].tags[j] = NULL;
@@ -330,10 +340,10 @@ static int nfa_finalize_state(int state);
 // Add NFA state with on-the-fly minimization
 // NOTE: We do NOT compute signature here because transitions haven't been added yet.
 // The caller must call nfa_finalize_state() after adding all transitions.
-int nfa_add_state_with_minimization(bool accepting) {
+int nfa_add_state_with_category(uint8_t category_mask) {
     // First create the state normally
     int new_state = nfa_state_count;
-    nfa[new_state].accepting = accepting;
+    nfa[new_state].category_mask = category_mask;
     nfa[new_state].tag_count = 0;
     for (int j = 0; j < MAX_TAGS; j++) {
         nfa[new_state].tags[j] = NULL;
@@ -348,6 +358,11 @@ int nfa_add_state_with_minimization(bool accepting) {
     // The caller will call nfa_finalize_state() after adding all transitions.
 
     return new_state;
+}
+
+// Backward-compatible wrapper
+int nfa_add_state_with_minimization(bool accepting) {
+    return nfa_add_state_with_category(accepting ? CAT_MASK_SAFE : 0);
 }
 
 // Finalize state after all transitions have been added
@@ -412,9 +427,10 @@ static uint64_t compute_state_signature(int state) {
         signature = signature * 31 + current_pattern_index;
     }
 
-    // Include accepting status in signature
-    if (nfa[state].accepting) {
+    // Include category_mask in signature (8-bit category bits)
+    if (nfa[state].category_mask != 0) {
         signature |= 0x8000000000000000ULL;
+        signature = signature * 31 + nfa[state].category_mask;
     }
 
     // Include tags in signature (simple hash of tag strings)
@@ -450,7 +466,7 @@ static int find_equivalent_state(uint64_t signature, int current_state) {
             int candidate_state = entry->state_index;
 
             // Check if states are truly equivalent
-            if (nfa[current_state].accepting == nfa[candidate_state].accepting &&
+            if (nfa[current_state].category_mask == nfa[candidate_state].category_mask &&
                 nfa[current_state].tag_count == nfa[candidate_state].tag_count) {
 
                 // Check tags
@@ -1147,7 +1163,7 @@ void write_nfa_file(const char* filename) {
     // Write states
     for (int i = 0; i < nfa_state_count; i++) {
         fprintf(file, "State %d:\n", i);
-        fprintf(file, "  Accepting: %s\n", nfa[i].accepting ? "yes" : "no");
+        fprintf(file, "  CategoryMask: 0x%02x\n", nfa[i].category_mask);
 
         if (nfa[i].tag_count > 0) {
             fprintf(file, "  Tags:");

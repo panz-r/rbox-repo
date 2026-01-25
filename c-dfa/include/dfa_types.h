@@ -12,6 +12,10 @@
  * - States are stored in a contiguous array
  * - Transitions use offsets from the start of the structure
  * - This allows direct memory mapping without deserialization
+ *
+ * Flags field encoding (16 bits):
+ * - Bits 0-7: State flags (DFA_STATE_*)
+ * - Bits 8-15: Category mask (8-way parallel acceptance)
  */
 typedef struct {
     /**
@@ -21,7 +25,7 @@ typedef struct {
      */
     uint32_t transitions_offset;  // Offset to transition table
     uint16_t transition_count;    // Number of transitions
-    uint16_t flags;               // State flags (accepting, error, etc.)
+    uint16_t flags;               // State flags (lower 8 bits) | category_mask (upper 8 bits)
 } dfa_state_t;
 
 /**
@@ -62,6 +66,12 @@ typedef struct {
 #define DFA_STATE_ACCEPTING  0x0001  // This is an accepting state
 #define DFA_STATE_ERROR      0x0002  // This is an error state
 #define DFA_STATE_DEAD       0x0004  // No transitions from this state
+
+/**
+ * Category mask extraction from flags
+ */
+#define DFA_GET_CATEGORY_MASK(flags) ((flags) >> 8)
+#define DFA_SET_CATEGORY_MASK(flags, mask) ((flags) = ((flags) & 0x00FF) | ((mask) << 8))
 
 /**
  * Magic number for DFA validation
@@ -111,10 +121,11 @@ typedef enum {
  * Result of DFA evaluation
  */
 typedef struct {
-    dfa_command_category_t category;  // Command category
-    uint32_t final_state;             // Final state offset
-    bool matched;                     // Whether the input matched completely
-    size_t matched_length;            // Number of characters matched
+    dfa_command_category_t category;   // Command category (legacy enum, derived from mask)
+    uint8_t category_mask;             // 8-bit category mask for parallel acceptance
+    uint32_t final_state;              // Final state offset
+    bool matched;                      // Whether the input matched completely
+    size_t matched_length;             // Number of characters matched
 } dfa_result_t;
 
 #endif // DFA_TYPES_H

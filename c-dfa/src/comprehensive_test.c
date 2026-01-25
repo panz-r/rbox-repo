@@ -3,6 +3,10 @@
 #include "shell_tokenizer.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+
+// Forward declaration for DFA loader
+void* load_dfa_from_file(const char* filename, size_t* size);
 
 int main(int argc, char* argv[]) {
     printf("ReadOnlyBox Comprehensive Test\n");
