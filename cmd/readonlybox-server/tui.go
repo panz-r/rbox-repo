@@ -342,7 +342,7 @@ var (
 )
 
 type Model struct {
-	commands      []CommandLog
+	commands      []*CommandLog // store by reference for stable pointers
 	logs          []string
 	width         int
 	height        int
@@ -361,11 +361,12 @@ type Model struct {
 	focus         string      // "history" or "actions"
 	detailsScroll int         // scroll position in details view
 	expandedCmd   *CommandLog // currently expanded command
+	decisionReqID int         // request ID being decided - prevents switching to different request
 }
 
 func NewModel() *Model {
 	return &Model{
-		commands:  make([]CommandLog, 0),
+		commands:  make([]*CommandLog, 0),
 		logs:      make([]string, 0),
 		stats:     Stats{},
 		eventChan: make(chan Event, 100),
@@ -395,12 +396,16 @@ func (m *Model) AddCommand(decision, cmd, args, reason, clientID, cwd string, re
 		RequestID: requestID,
 		Cwd:       cwd,
 	}
-	m.commands = append(m.commands, log)
+	m.commands = append(m.commands, &log)
 
-	// Select the new command
-	m.selectedIdx = len(m.commands) - 1
-	m.expandedCmd = &m.commands[m.selectedIdx]
-	m.detailsScroll = 0
+	// Only select the new command if we're NOT in decision mode (step 2)
+	// This prevents the decision view from switching to a different request
+	// while the user is making a decision
+	if m.step != 2 {
+		m.selectedIdx = len(m.commands) - 1
+		m.expandedCmd = m.commands[m.selectedIdx]
+		m.decisionReqID = 0 // Clear decision mode tracking
+	}
 
 	// Count pending commands in unknown
 	if decision == "PENDING" {
@@ -451,13 +456,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == 1 && len(m.commands) > 0 {
 				m.selectedIdx = 0
 				m.scrollY = 0
-				m.expandedCmd = &m.commands[0]
+				m.expandedCmd = m.commands[0]
 				m.detailsScroll = 0
 			}
 		case "end":
 			if m.step == 1 && len(m.commands) > 0 {
 				m.selectedIdx = len(m.commands) - 1
-				m.expandedCmd = &m.commands[m.selectedIdx]
+				m.expandedCmd = m.commands[m.selectedIdx]
 				m.detailsScroll = 0
 			}
 		case "left":
@@ -503,6 +508,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cursor = 0
 					m.allowChosen = true
 					m.focus = "actions"
+					// Track which request we're deciding (prevents switching on new requests)
+					if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
+						m.expandedCmd = m.commands[m.selectedIdx]
+						m.decisionReqID = m.commands[m.selectedIdx].RequestID
+					}
 				}
 			} else if m.step == 2 {
 				m.executeDecision()
@@ -514,7 +524,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = 0
 				m.allowChosen = true
 				m.focus = "actions"
-				m.expandedCmd = &m.commands[m.selectedIdx]
+				// Track which request we're deciding (prevents switching on new requests)
+				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
+					m.expandedCmd = m.commands[m.selectedIdx]
+					m.decisionReqID = m.commands[m.selectedIdx].RequestID
+				}
 			} else if m.step == 2 {
 				// Switch to Allow mode
 				m.allowChosen = true
@@ -528,7 +542,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = 0
 				m.allowChosen = false
 				m.focus = "actions"
-				m.expandedCmd = &m.commands[m.selectedIdx]
+				// Track which request we're deciding (prevents switching on new requests)
+				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
+					m.expandedCmd = m.commands[m.selectedIdx]
+					m.decisionReqID = m.commands[m.selectedIdx].RequestID
+				}
 			} else if m.step == 2 {
 				// Switch to Deny mode
 				m.allowChosen = false
@@ -595,6 +613,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.step = 1
 				m.cursor = 0
 				m.focus = "history"
+				m.decisionReqID = 0 // Clear decision mode tracking
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -722,45 +741,38 @@ func (m *Model) executeDecision() {
 		return
 	}
 
-	requestID := m.expandedCmd.RequestID
 	allow := m.allowChosen
 	decision, reason := durationToReason(allow, m.cursor)
 	baseCmd := extractBaseName(m.expandedCmd.Command)
 	fmt.Printf("Executing: %s %s for %s %s\n", decision, reason, baseCmd, m.expandedCmd.Args)
 
-	SetDecisionWithAllowance(requestID, allow, reason)
+	SetDecisionWithAllowance(m.expandedCmd.RequestID, allow, reason)
 
-	// Find and update the command in our list
-	for i := range m.commands {
-		if m.commands[i].RequestID == requestID {
-			oldDecision := m.commands[i].Decision
-			m.commands[i].Decision = decision
-			m.commands[i].Reason = reason
-			m.lastDecision = decision
-			m.lastTime = time.Now()
-			m.flashTimer = 3
-
-			// Update stats only if it was previously pending
-			if oldDecision == "PENDING" {
-				m.stats.totalUnknown--
-				switch decision {
-				case "ALLOW":
-					m.stats.totalAllowed++
-				case "DENY":
-					m.stats.totalDenied++
-				}
-			}
-			break
-		}
-	}
+	// Direct pointer update - O(1), no ID lookup needed
+	oldDecision := m.expandedCmd.Decision
+	m.expandedCmd.Decision = decision
+	m.expandedCmd.Reason = reason
+	m.lastDecision = decision
+	m.lastTime = time.Now()
+	m.flashTimer = 3
 
 	// Update stats only if command was previously pending
+	if oldDecision == "PENDING" {
+		m.stats.totalUnknown--
+		switch decision {
+		case "ALLOW":
+			m.stats.totalAllowed++
+		case "DENY":
+			m.stats.totalDenied++
+		}
+	}
 
 	// Go back to history view
 	m.step = 1
 	m.cursor = 0
 	m.focus = "history"
 	m.expandedCmd = nil
+	m.decisionReqID = 0
 }
 
 func (m *Model) View() string {
