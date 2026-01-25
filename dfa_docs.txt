@@ -1,0 +1,36 @@
+Friendly recap:
+
+Patterns have many special characters, that can be scaped or single quited if used litterarly. The support of these special character may not be entirely complete in the NFA builder yet. Please add any such support that is missing.
+
+The NFA is a nondeterministic automaton where a pattern matches an input string if there is a path from entry to an accepting state, having one transiton per input byte sequence. The path of a match may be cyclic, or there may be several path. Its a match if there exist at least one such path.
+
+The special end-of-string transition/symbol can be used in the NFA to accept after a full match. When matching in input we implicitly add this
+ end-of-string marker at the end of input. In the same spirit, we have the special beginning state. This way we can
+ have transitions that are only happen at the beginning of a string, and transitions that only happen at the end of a string.
+ Similarly, we might need a special terminal error state, that patterns can transition into to disallow any further transitions.
+
+Alphabet symbols are flattened into characters (byte-values) in the final binary dfa construction. Special symbols get flattened into rules, an opcode with parameters.
+
+Note that there are two stages of DFA building, the NFA to DFA conversion using symbols, then the DFA to binary flattened DFA
+conversion.
+NFA to DFA conversions results in a deterministic automaton still uses the symbol alphabet.
+DFA to binary-flattened DFA results in a DFA that transitions using byte-values and rule op-codes, represented in a compact binary format. This binary format can be loaded from disk into memory and directly used to evaluate the dfa on strings or byte sequences. Without any deserialization step, so all internal "pointers" are expressed as relative offsets or indices.
+
+Ok, so in the binary DFA format the transitions must be listed in order of priority for short-circuit first-match processing. And
+ there are TWO types of transitions:
+ - by exact character/byte value (the simple kind)
+ - by rule (the wildcard kind)
+Rules are represented by opcode and and any neccesary parameter values. The binary representation must be compact, but using parametrized rules can be more compact than long character lists.
+
+So transitions on symbols are flattened into lists of simple and rule matches listed in a first-match order.
+The EOF is simply a rule that can only be activated by teh input being consumed, not by any character. Whilecard is a rule that
+matches **a character** but not caring which character.
+We will need parametrized rules of many kinds, but the first-match shortcircuited evaluation of simple and rule matches must always
+hold:
+- rule: not 'c', matches one character with a byte value different from c
+- rule: char-range: 'a'-'b', matches one character with a byte value >= 'a' and <= 'b'
+- wildcard, EOF, etc
+
+
+When testing the client, you must preload into sh -c 'command' and not directly into command.
+We know the so client is working. Focus on debugging the DFA conversion, flattning into binary format and evaluation of a binary DFA on input strings.

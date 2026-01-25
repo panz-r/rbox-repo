@@ -1,6 +1,7 @@
 # Per-character alphabet for precise DFA matching
 # Each character gets its own symbol ID
 0 0 0 special  # ANY (wildcard)
+70 5 5 special # EOS (End of String marker)
 1 32 32        # space
 2 9 9          # tab
 3 97 97        # a

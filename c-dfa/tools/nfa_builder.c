@@ -214,10 +214,14 @@ void load_alphabet(const char* filename) {
                 exit(1);
             }
 
+            fprintf(stderr, "DEBUG load_alphabet: line='%s', symbol_id=%d, start_char=%d, end_char=%d, special='%s'\n",
+                    line, symbol_id, start_char, end_char, special);
+
             alphabet[alphabet_size].symbol_id = symbol_id;
             alphabet[alphabet_size].start_char = start_char;
             alphabet[alphabet_size].end_char = end_char;
             alphabet[alphabet_size].is_special = (strcmp(special, "special") == 0);
+            fprintf(stderr, "DEBUG load_alphabet: is_special=%d\n", alphabet[alphabet_size].is_special);
             alphabet_size++;
         }
     }
@@ -686,18 +690,34 @@ void parse_advanced_pattern(const char* line) {
             nfa_add_transition(current_state, new_state, symbol_id);
             current_state = new_state;
         } else if (c == '*') {
-            // Wildcard: create epsilon transitions
-            int symbol_id = find_symbol_id(DFA_CHAR_ANY);
-            if (symbol_id == -1) {
-                // ANY symbol not found, this is a problem
+            // Wildcard: matches one character and can continue matching more
+            // Key: After *, we need to be able to match the next char in pattern
+            int any_symbol_id = find_symbol_id(DFA_CHAR_ANY);
+            if (any_symbol_id == -1) {
                 fprintf(stderr, "Error: ANY symbol not found in alphabet\n");
                 exit(1);
             }
 
-            int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, symbol_id);
-            nfa_add_transition(new_state, new_state, symbol_id);
-            current_state = new_state;
+            fprintf(stderr, "DEBUG WILDCARD: pattern='%s', current_state=%d, any_symbol_id=%d\n",
+                    pattern, current_state, any_symbol_id);
+
+            // Create state that can both:
+            // 1. Consume another char (self-loop on ANY)
+            // 2. Continue to next pattern char (transition will be added by next char)
+            int star_state = nfa_add_state_with_minimization(false);
+            fprintf(stderr, "DEBUG WILDCARD: created star_state=%d\n", star_state);
+
+            // Self-loop for consuming more chars
+            nfa_add_transition(star_state, star_state, any_symbol_id);
+            fprintf(stderr, "DEBUG WILDCARD: added self-loop on star_state %d for ANY\n", star_state);
+
+            // Transition from current to star_state (consumes one char)
+            nfa_add_transition(current_state, star_state, any_symbol_id);
+            fprintf(stderr, "DEBUG WILDCARD: added transition from %d to %d on ANY\n", current_state, star_state);
+
+            // Stay at star_state so next char adds transition from here
+            current_state = star_state;
+            fprintf(stderr, "DEBUG WILDCARD: current_state now=%d\n", current_state);
         } else if (c == '?') {
             // Single character wildcard
             int symbol_id = find_symbol_id(DFA_CHAR_ANY);
@@ -724,18 +744,45 @@ void parse_advanced_pattern(const char* line) {
     }
 
     // Mark final state as accepting and add tags
-    nfa[current_state].accepting = true;
-    nfa_add_tag(current_state, category);
-    if (subcategory[0] != '\0') {
-        nfa_add_tag(current_state, subcategory);
-    }
-    if (operations[0] != '\0') {
-        nfa_add_tag(current_state, operations);
-    }
-    nfa_add_tag(current_state, action);
+    // Add transition on EOS marker to a new accepting state
+    // This ensures the pattern only accepts when the full input is consumed
+    int eos_symbol_id = find_symbol_id(DFA_CHAR_EOS);
+    fprintf(stderr, "DEBUG EOS: pattern='%s', current_state=%d, DFA_CHAR_EOS=%d, eos_symbol_id=%d\n",
+            pattern, current_state, DFA_CHAR_EOS, eos_symbol_id);
+    if (eos_symbol_id == -1) {
+        // EOS not in alphabet - fall back to direct accepting
+        fprintf(stderr, "DEBUG EOS: Using fallback accepting state\n");
+        nfa[current_state].accepting = true;
+        nfa_add_tag(current_state, category);
+        if (subcategory[0] != '\0') {
+            nfa_add_tag(current_state, subcategory);
+        }
+        if (operations[0] != '\0') {
+            nfa_add_tag(current_state, operations);
+        }
+        nfa_add_tag(current_state, action);
+        nfa_finalize_state(current_state);
+    } else {
+        // Create accepting state with EOS transition
+        fprintf(stderr, "DEBUG EOS: Creating accepting state, transition from %d on symbol %d\n",
+                current_state, eos_symbol_id);
+        int accepting_state = nfa_add_state_with_minimization(true);
+        nfa_add_transition(current_state, accepting_state, eos_symbol_id);
 
-    // Finalize the accepting state
-    nfa_finalize_state(current_state);
+        // Add tags to the accepting state
+        nfa_add_tag(accepting_state, category);
+        if (subcategory[0] != '\0') {
+            nfa_add_tag(accepting_state, subcategory);
+        }
+        if (operations[0] != '\0') {
+            nfa_add_tag(accepting_state, operations);
+        }
+        nfa_add_tag(accepting_state, action);
+
+        // Finalize states
+        nfa_finalize_state(current_state);
+        nfa_finalize_state(accepting_state);
+    }
 }
 
 // Read advanced command specification file

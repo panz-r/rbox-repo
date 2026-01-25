@@ -92,6 +92,7 @@ typedef struct {
 #define DFA_CHAR_WHITESPACE 0x02        // Matches any whitespace character (space, tab, newline)
 #define DFA_CHAR_VERBATIM_SPACE 0x03    // Matches exactly one space character
 #define DFA_CHAR_NORMALIZING_SPACE 0x04 // Matches one or more space/tab characters (normalizing)
+#define DFA_CHAR_EOS 0x05               // End of String marker (used for accepting)
 
 /**
  * Command categories for accepting states

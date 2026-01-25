@@ -51,9 +51,13 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
         return true;
     }
 
-    const dfa_state_t* current_state = (const dfa_state_t*)((const char*)current_dfa + current_dfa->initial_state);
     size_t states_size = current_dfa->state_count * sizeof(dfa_state_t);
-    size_t transitions_base = (size_t)current_dfa + sizeof(dfa_t) + states_size;
+    size_t dfa_header_size = sizeof(dfa_t);
+    size_t raw_base = (size_t)current_dfa;
+
+    size_t transitions_base = raw_base + dfa_header_size + states_size;
+
+    const dfa_state_t* current_state = (const dfa_state_t*)((const char*)current_dfa + current_dfa->initial_state);
 
     size_t pos = 0;
     for (pos = 0; pos < length; pos++) {
@@ -62,57 +66,23 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
 
         if (current_state->transition_count > 0) {
             size_t trans_addr = transitions_base + current_state->transitions_offset;
+
             const dfa_transition_t* trans = (const dfa_transition_t*)trans_addr;
 
             for (uint16_t i = 0; i < current_state->transition_count; i++) {
                 unsigned char trans_char = (unsigned char)trans[i].character;
+                uint32_t next_offset = trans[i].next_state_offset;
 
                 if (trans_char == DFA_CHAR_ANY || trans_char == c) {
-                    if (trans[i].next_state_offset == 0) {
+                    if (next_offset == 0) {
                         result->final_state = current_state->flags;
                         result->matched_length = pos;
                         return true;
                     }
 
-                    current_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
+                    current_state = (const dfa_state_t*)((const char*)current_dfa + next_offset);
                     transition_found = true;
                     break;
-                } else if (trans_char == DFA_CHAR_WHITESPACE) {
-                    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                        if (trans[i].next_state_offset == 0) {
-                            result->final_state = current_state->flags;
-                            result->matched_length = pos;
-                            return true;
-                        }
-
-                        current_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
-                        transition_found = true;
-                        break;
-                    }
-                } else if (trans_char == DFA_CHAR_VERBATIM_SPACE) {
-                    if (c == ' ') {
-                        if (trans[i].next_state_offset == 0) {
-                            result->final_state = current_state->flags;
-                            result->matched_length = pos;
-                            return true;
-                        }
-
-                        current_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
-                        transition_found = true;
-                        break;
-                    }
-                } else if (trans_char == DFA_CHAR_NORMALIZING_SPACE) {
-                    if (c == ' ' || c == '\t') {
-                        if (trans[i].next_state_offset == 0) {
-                            result->final_state = current_state->flags;
-                            result->matched_length = pos;
-                            return true;
-                        }
-
-                        current_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
-                        transition_found = true;
-                        break;
-                    }
                 }
             }
         }
@@ -128,23 +98,40 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
             result->final_state = current_state->flags;
             result->matched_length = pos + 1;
             result->category = DFA_CMD_READONLY_SAFE;
-            return true;
         }
     }
 
-    result->final_state = current_state->flags;
-    result->matched_length = pos;
+    result->final_state = (char*)current_state - (char*)current_dfa;
+
+    // Check for EOS transition at end of input
+    if (current_state->transition_count > 0) {
+        size_t trans_addr = transitions_base + current_state->transitions_offset;
+        const dfa_transition_t* trans = (const dfa_transition_t*)trans_addr;
+
+        for (uint16_t i = 0; i < current_state->transition_count; i++) {
+            if (trans[i].character == DFA_CHAR_EOS && trans[i].next_state_offset != 0) {
+                // EOS transition found - check if it leads to accepting state
+                const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
+                if (eos_state->flags & DFA_STATE_ACCEPTING) {
+                    result->matched = true;
+                    result->matched_length = pos;
+                    result->final_state = trans[i].next_state_offset;
+                    result->category = DFA_CMD_READONLY_SAFE;
+                    return true;
+                }
+            }
+        }
+    }
 
     if (current_state->flags & DFA_STATE_ACCEPTING) {
         result->matched = true;
+        result->matched_length = pos;
         result->category = DFA_CMD_READONLY_SAFE;
+    } else {
+        result->matched_length = pos;
     }
 
     return true;
-}
-
-const dfa_t* dfa_get_current(void) {
-    return current_dfa;
 }
 
 const char* dfa_category_string(dfa_command_category_t category) {
