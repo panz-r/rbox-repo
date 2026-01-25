@@ -362,6 +362,7 @@ type Model struct {
 	detailsScroll int         // scroll position in details view
 	expandedCmd   *CommandLog // currently expanded command
 	decisionReqID int         // request ID being decided - prevents switching to different request
+	logDecision   bool        // true = mark decision for logging to user_log.txt
 }
 
 func NewModel() *Model {
@@ -552,6 +553,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.allowChosen = false
 				m.cursor = 0
 				m.focus = "actions"
+			}
+		case "l", "L":
+			if m.step == 2 {
+				// Toggle logging for this decision
+				m.logDecision = !m.logDecision
 			}
 		case "1":
 			if m.step == 2 && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
@@ -748,6 +754,11 @@ func (m *Model) executeDecision() {
 
 	SetDecisionWithAllowance(m.expandedCmd.RequestID, allow, reason)
 
+	// Log decision to user_log.xml if marked
+	if m.logDecision {
+		m.logDecisionToFile(decision, reason)
+	}
+
 	// Direct pointer update - O(1), no ID lookup needed
 	oldDecision := m.expandedCmd.Decision
 	m.expandedCmd.Decision = decision
@@ -773,6 +784,52 @@ func (m *Model) executeDecision() {
 	m.focus = "history"
 	m.expandedCmd = nil
 	m.decisionReqID = 0
+	m.logDecision = false
+}
+
+func (m *Model) logDecisionToFile(decision, reason string) {
+	logFile := "user_log.xml"
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+
+	// Escape XML special characters in command/args
+	escapeXML := func(s string) string {
+		s = strings.ReplaceAll(s, "&", "&amp;")
+		s = strings.ReplaceAll(s, "<", "&lt;")
+		s = strings.ReplaceAll(s, ">", "&gt;")
+		s = strings.ReplaceAll(s, "\"", "&quot;")
+		s = strings.ReplaceAll(s, "'", "&apos;")
+		return s
+	}
+
+	logEntry := fmt.Sprintf(`<response timestamp="%s">
+  <request id="%d" client="%s" cwd="%s">
+    <command>%s</command>
+    <args>%s</args>
+  </request>
+  <decision action="%s" duration="%s"/>
+</response>
+`,
+		timestamp,
+		m.expandedCmd.RequestID,
+		escapeXML(m.expandedCmd.ClientID),
+		escapeXML(m.expandedCmd.Cwd),
+		escapeXML(m.expandedCmd.Command),
+		escapeXML(m.expandedCmd.Args),
+		decision,
+		reason,
+	)
+
+	// Append to file
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open user_log.xml: %v\n", err)
+		return
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(logEntry); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write to user_log.xml: %v\n", err)
+	}
 }
 
 func (m *Model) View() string {
@@ -1457,6 +1514,17 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 	} else {
 		sb.WriteString("           " + equalsPrefix + dimStyle.Render(equalsContent) + "\n")
 		sb.WriteString("           " + plusPrefix + dimStyle.Render(plusContent) + "\n")
+	}
+
+	// Log toggle indicator
+	if m.step == 2 {
+		if m.logDecision {
+			logStr := infoStyle.Render("[L] Log to user_log.xml")
+			sb.WriteString(fmt.Sprintf("           %s\n", logStr))
+		} else {
+			logStr := dimStyle.Render("[L] Log to user_log.xml")
+			sb.WriteString(fmt.Sprintf("           %s\n", logStr))
+		}
 	}
 
 	// Focus indicator
