@@ -7,6 +7,9 @@
 #include "../include/dfa_types.h"
 #include "../include/nfa.h"
 
+// Forward declaration
+int find_symbol_id(char c);
+
 // Character class definition
 typedef struct {
     int start_char;
@@ -29,6 +32,7 @@ typedef struct {
     int tag_count;
     int transitions[MAX_SYMBOLS];
     int transition_count;
+    char multi_targets[MAX_SYMBOLS][256];  // For storing additional targets as CSV
     negated_transition_t negated_transitions[MAX_SYMBOLS];
     int negated_transition_count;
 } nfa_state_t;
@@ -63,6 +67,7 @@ void nfa_init(void) {
         }
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             nfa[i].transitions[j] = -1;
+            nfa[i].multi_targets[j][0] = '\0';
         }
         nfa[i].transition_count = 0;
         nfa[i].negated_transition_count = 0;
@@ -148,6 +153,8 @@ void nfa_move(int* states, int* count, int symbol_id, int max_states) {
     for (int i = 0; i < *count; i++) {
         int state = states[i];
         if (state < 0 || state >= nfa_state_count) continue;
+
+        // Check first transition
         if (nfa[state].transitions[symbol_id] != -1) {
             int target = nfa[state].transitions[symbol_id];
             bool found = false;
@@ -160,6 +167,30 @@ void nfa_move(int* states, int* count, int symbol_id, int max_states) {
             if (!found && new_count < max_states) {
                 new_states[new_count] = target;
                 new_count++;
+            }
+        }
+
+        // Check additional targets in multi_targets
+        if (nfa[state].multi_targets[symbol_id][0] != '\0') {
+            char* p = nfa[state].multi_targets[symbol_id];
+            while (p != NULL && *p != '\0') {
+                if (*p == ',') p++;  // Skip leading comma
+                int target = atoi(p);
+                if (target >= 0 && target < MAX_STATES) {
+                    bool found = false;
+                    for (int j = 0; j < new_count; j++) {
+                        if (new_states[j] == target) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found && new_count < max_states) {
+                        new_states[new_count] = target;
+                        new_count++;
+                    }
+                }
+                p = strchr(p, ',');
+                if (p) p++;
             }
         }
     }
@@ -305,6 +336,16 @@ void flatten_dfa(void) {
 }
 
 // Load NFA file
+// Find symbol ID for a character
+int find_symbol_id(char c) {
+    for (int i = 0; i < alphabet_size; i++) {
+        if (c >= alphabet[i].start_char && c <= alphabet[i].end_char) {
+            return alphabet[i].symbol_id;
+        }
+    }
+    return -1; // Not found
+}
+
 void load_nfa_file(const char* filename) {
     FILE* file = fopen(filename, "r");
     if (file == NULL) {
@@ -366,11 +407,57 @@ void load_nfa_file(const char* filename) {
                 sscanf(line, "  Accepting: %15s", accepting_str);
                 nfa[current_state].accepting = (strcmp(accepting_str, "yes") == 0);
             } else if (strstr(line, "Symbol") != NULL) {
-                int symbol_id, target_state;
-                if (sscanf(line, "    Symbol %d -> %d", &symbol_id, &target_state) == 2) {
-                    if (symbol_id < MAX_SYMBOLS && target_state < MAX_STATES) {
-                        nfa[current_state].transitions[symbol_id] = target_state;
-                        nfa[current_state].transition_count++;
+                int symbol_id;
+                // Parse format: "Symbol %d -> %d[,%d[,%d...]]" or "Symbol %d -> ,%d[,%d...]"
+                char* arrow = strstr(line, "->");
+                if (arrow != NULL) {
+                    if (sscanf(line, "    Symbol %d", &symbol_id) == 1) {
+                        char* targets_str = arrow + 2;
+                        // Skip leading whitespace
+                        while (*targets_str == ' ') targets_str++;
+
+                        // Parse targets separated by commas
+                        char* p = targets_str;
+                        int target_count = 0;
+
+                        while (p != NULL && *p != '\0' && *p != '\n') {
+                            // Find next comma or end
+                            char* comma = strchr(p, ',');
+                            size_t len = comma ? (comma - p) : strlen(p);
+
+                            // Skip trailing spaces
+                            while (len > 0 && p[len-1] == ' ') len--;
+
+                            if (len > 0) {
+                                char target_str[32];
+                                strncpy(target_str, p, len);
+                                target_str[len] = '\0';
+
+                                int target = atoi(target_str);
+                                if (target >= 0 && target < MAX_STATES) {
+                                    if (target_count == 0) {
+                                        // First target goes in transitions array
+                                        nfa[current_state].transitions[symbol_id] = target;
+                                        nfa[current_state].transition_count++;
+                                    } else {
+                                        // Additional targets go to multi_targets
+                                        char num_str[32];
+                                        sprintf(num_str, ",%d", target);
+                                        if (strlen(nfa[current_state].multi_targets[symbol_id]) + strlen(num_str) < 255) {
+                                            strcat(nfa[current_state].multi_targets[symbol_id], num_str);
+                                            nfa[current_state].transition_count++;
+                                        }
+                                    }
+                                    target_count++;
+                                }
+                            }
+
+                            if (comma) {
+                                p = comma + 1;
+                            } else {
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -413,8 +500,15 @@ void write_dfa_file(const char* filename) {
     dfa_transition_t* transitions = (dfa_transition_t*)((char*)states + states_size);
     size_t current_transition = 0;
     uint32_t accepting_mask = 0;
+    // Pre-calculate all transition offsets for each state
+    int state_trans_offsets[MAX_STATES];
     for (int i = 0; i < dfa_state_count; i++) {
-        states[i].transitions_offset = current_transition * sizeof(dfa_transition_t);
+        state_trans_offsets[i] = current_transition * sizeof(dfa_transition_t);
+        current_transition += dfa[i].transition_count + 1; // +1 for end marker
+    }
+    current_transition = 0;
+    for (int i = 0; i < dfa_state_count; i++) {
+        states[i].transitions_offset = state_trans_offsets[i];
         states[i].transition_count = dfa[i].transition_count;
         states[i].flags = dfa[i].flags;
         if (dfa[i].accepting) {
@@ -430,10 +524,11 @@ void write_dfa_file(const char* filename) {
                     return;
                 }
                 transitions[current_transition].character = (char)c;
-                // next_state_offset is the offset from the START OF THE DFA STRUCTURE
-                // to the next state, which is: sizeof(dfa_t) + (state_index * sizeof(dfa_state_t))
+                int target_state = dfa[i].transitions[c];
+                // next_state_offset is the offset from start of DFA structure to the TARGET STATE's structure
+                // which is: sizeof(dfa_t) + (state_index * sizeof(dfa_state_t))
                 transitions[current_transition].next_state_offset =
-                    sizeof(dfa_t) + (dfa[i].transitions[c] * sizeof(dfa_state_t));
+                    sizeof(dfa_t) + (target_state * sizeof(dfa_state_t));
                 current_transition++;
             }
         }
@@ -447,8 +542,9 @@ void write_dfa_file(const char* filename) {
                     return;
                 }
                 transitions[current_transition].character = (char)c;
+                int target_state = dfa[i].transitions[c];
                 transitions[current_transition].next_state_offset =
-                    sizeof(dfa_t) + (dfa[i].transitions[c] * sizeof(dfa_state_t));
+                    sizeof(dfa_t) + (target_state * sizeof(dfa_state_t));
                 current_transition++;
             }
         }

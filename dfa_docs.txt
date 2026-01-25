@@ -2,7 +2,11 @@ Friendly recap:
 
 Patterns have many special characters, that can be scaped or single quited if used litterarly. The support of these special character may not be entirely complete in the NFA builder yet. Please add any such support that is missing.
 
-The NFA is a nondeterministic automaton where a pattern matches an input string if there is a path from entry to an accepting state, having one transiton per input byte sequence. The path of a match may be cyclic, or there may be several path. Its a match if there exist at least one such path.
+Pattern parsing needs to be 100% correct. Maybe using recursive descent parsing with proper tokenization.
+
+The NFA is a nondeterministic automaton where a pattern matches an input string if there is a path from entry to an accepting state, having one transiton per input byte sequence. The path of a match may be cyclic, or there may be several paths. Its a match if there exist at least one such path. In an NFA there can be any number of transitions on the same character from one state into other states.
+
+When building an NFA for a pattern, we do on-the-fly equivalence checking before adding a new state. Equivlance means the state has the same out transitions. So we can reuse an existing state if we already have an equivalent one, reducing the NFA size.
 
 The special end-of-string transition/symbol can be used in the NFA to accept after a full match. When matching in input we implicitly add this
  end-of-string marker at the end of input. In the same spirit, we have the special beginning state. This way we can
@@ -24,8 +28,8 @@ Rules are represented by opcode and and any neccesary parameter values. The bina
 
 So transitions on symbols are flattened into lists of simple and rule matches listed in a first-match order.
 The EOF is simply a rule that can only be activated by teh input being consumed, not by any character. Whilecard is a rule that
-matches **a character** but not caring which character.
-We will need parametrized rules of many kinds, but the first-match shortcircuited evaluation of simple and rule matches must always
+matches **a character** but not caring which character. The aokppropriate use of rules can reduce final binary dfa size.
+We will need parametrized rules of many kinds, but the first-match shortcircuited evaluation of simple and rule transitions must always
 hold:
 - rule: not 'c', matches one character with a byte value different from c
 - rule: char-range: 'a'-'b', matches one character with a byte value >= 'a' and <= 'b'

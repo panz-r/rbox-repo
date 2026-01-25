@@ -53,34 +53,53 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
 
     size_t states_size = current_dfa->state_count * sizeof(dfa_state_t);
     size_t dfa_header_size = sizeof(dfa_t);
+    size_t dfa_total_size = dfa_header_size + states_size;
     size_t raw_base = (size_t)current_dfa;
+    size_t transitions_base = raw_base + dfa_total_size;
 
-    size_t transitions_base = raw_base + dfa_header_size + states_size;
+    size_t initial_state_offset = current_dfa->initial_state;
+    if (initial_state_offset == 0 || initial_state_offset >= dfa_total_size) {
+        return false;
+    }
 
-    const dfa_state_t* current_state = (const dfa_state_t*)((const char*)current_dfa + current_dfa->initial_state);
+    const dfa_state_t* current_state = (const dfa_state_t*)((const char*)current_dfa + initial_state_offset);
 
     size_t pos = 0;
-    for (pos = 0; pos < length; pos++) {
+    for (pos = 0; pos < length && pos < 1000; pos++) {
+        size_t current_offset = (size_t)current_state - raw_base;
         unsigned char c = (unsigned char)input[pos];
+        
+        if (current_offset >= 100000) {
+            result->matched_length = pos;
+            return true;
+        }
+
         bool transition_found = false;
 
         if (current_state->transition_count > 0) {
-            size_t trans_addr = transitions_base + current_state->transitions_offset;
+            size_t trans_offset = current_state->transitions_offset;
+            if (trans_offset >= 100000) {
+                result->matched_length = pos;
+                return true;
+            }
 
+            size_t trans_addr = transitions_base + trans_offset;
             const dfa_transition_t* trans = (const dfa_transition_t*)trans_addr;
 
             for (uint16_t i = 0; i < current_state->transition_count; i++) {
                 unsigned char trans_char = (unsigned char)trans[i].character;
-                uint32_t next_offset = trans[i].next_state_offset;
+                uint32_t next_trans_offset = trans[i].next_state_offset;
 
                 if (trans_char == DFA_CHAR_ANY || trans_char == c) {
-                    if (next_offset == 0) {
+                    if (next_trans_offset == 0) {
                         result->final_state = current_state->flags;
                         result->matched_length = pos;
                         return true;
                     }
 
-                    current_state = (const dfa_state_t*)((const char*)current_dfa + next_offset);
+                    const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_trans_offset);
+
+                    current_state = next_state;
                     transition_found = true;
                     break;
                 }
@@ -101,17 +120,15 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
         }
     }
 
-    result->final_state = (char*)current_state - (char*)current_dfa;
-
     // Check for EOS transition at end of input
     if (current_state->transition_count > 0) {
-        size_t trans_addr = transitions_base + current_state->transitions_offset;
+        size_t trans_offset = current_state->transitions_offset;
+        size_t trans_addr = transitions_base + trans_offset;
         const dfa_transition_t* trans = (const dfa_transition_t*)trans_addr;
 
         for (uint16_t i = 0; i < current_state->transition_count; i++) {
             if (trans[i].character == DFA_CHAR_EOS && trans[i].next_state_offset != 0) {
-                // EOS transition found - check if it leads to accepting state
-                const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)current_dfa + trans[i].next_state_offset);
+                const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)raw_base + trans[i].next_state_offset);
                 if (eos_state->flags & DFA_STATE_ACCEPTING) {
                     result->matched = true;
                     result->matched_length = pos;
@@ -123,14 +140,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
         }
     }
 
-    if (current_state->flags & DFA_STATE_ACCEPTING) {
-        result->matched = true;
-        result->matched_length = pos;
-        result->category = DFA_CMD_READONLY_SAFE;
-    } else {
-        result->matched_length = pos;
-    }
-
+    result->matched_length = pos;
     return true;
 }
 

@@ -2,6 +2,7 @@
 
 # Character set definitions for reuse (MUST come before patterns that use them)
 # These define valid single characters in each category
+# Use | for alternation within character sets
 [characterset:git:UPPERCASE] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
 [characterset:git:LOWERCASE] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 [characterset:git:DIGIT] 0|1|2|3|4|5|6|7|8|9
@@ -11,10 +12,10 @@
 
 # Fragment definitions using character sets
 # These define complete patterns that can be referenced with ((namespace::name))
-[fragment:git:shortref] ((UPPERCASE))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))
-[fragment:git:longref] ((UPPERCASE))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))((DIGIT))
-[fragment:git:refname] ((UPPERCASE))|((LOWERCASE))|((DIGIT))
-[fragment:git:reforigin] refs/((UPPERCASE))|((LOWERCASE))|((DIGIT))
+[fragment:git:shortref] ((git::UPPERCASE))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))
+[fragment:git:longref] ((git::UPPERCASE))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))
+[fragment:git:refname] ((git::UPPERCASE))|((git::LOWERCASE))|((git::DIGIT))
+[fragment:git:reforigin] refs/((git::UPPERCASE))|((git::LOWERCASE))|((git::DIGIT))
 [fragment:git:reftype] heads/|tags/|remotes/
 
 # Git read-only operations - very specific safe patterns
@@ -68,12 +69,12 @@
 [safe:file:read] head -n * *
 [safe:file:read] tail -n * *
 [safe:file:read] cat *
-[safe:file:read] cat *| head -n *
-[safe:file:read] cat *| tail -n *
-[safe:file:read] git log --oneline | head -n *
-[safe:file:read] ls -la | head -n *
-[safe:file:read] ps aux | head -n *
-[safe:file:read] ps aux | grep ((SAFE::FILENAME))+
+[safe:file:read] cat *\| head -n *
+[safe:file:read] cat *\| tail -n *
+[safe:file:read] git log --oneline \| head -n *
+[safe:file:read] ls -la \| head -n *
+[safe:file:read] ps aux \| head -n *
+[safe:file:read] ps aux \| grep ((SAFE::FILENAME))+
 
 # Git-specific safe refs and origins
 [safe:git:read] git rev-parse --abbrev-ref HEAD
@@ -81,4 +82,4 @@
 [safe:git:read] git rev-parse --short HEAD
 [safe:git:read] git rev-parse ((git::shortref))
 [safe:git:read] git show HEAD:((SAFE::FILENAME))+
-[safe:git:read] git ls-tree HEAD | grep ((SAFE::FILENAME))+
+[safe:git:read] git ls-tree HEAD \| grep ((SAFE::FILENAME))+

@@ -36,7 +36,8 @@ typedef struct {
     int tag_count;
     int transitions[MAX_SYMBOLS];  // -1 = no transition, otherwise state index
     int transition_count;
-    
+    char multi_targets[MAX_SYMBOLS][256];  // For storing multiple targets as CSV strings
+
     // Negated transitions: target state + excluded characters
     negated_transition_t negated_transitions[MAX_SYMBOLS];
     int negated_transition_count;
@@ -88,6 +89,84 @@ const char* category_names[CAT_COUNT] = {
     "network", "admin", "build", "container"
 };
 
+// Fragment storage for expansion
+#define MAX_FRAGMENTS 100
+#define MAX_FRAGMENT_NAME 64
+#define MAX_FRAGMENT_VALUE 512
+
+typedef struct {
+    char name[MAX_FRAGMENT_NAME];
+    char value[MAX_FRAGMENT_VALUE];
+} fragment_t;
+
+static fragment_t fragments[MAX_FRAGMENTS];
+static int fragment_count = 0;
+
+// Find a fragment by name
+static const char* find_fragment(const char* name) {
+    for (int i = 0; i < fragment_count; i++) {
+        if (strcmp(fragments[i].name, name) == 0) {
+            return fragments[i].value;
+        }
+    }
+    return NULL;
+}
+
+// Expand fragment references in a pattern
+// Handles ((namespace::name)) syntax recursively
+static void expand_fragments(char* pattern, size_t max_len) {
+    char result[MAX_LINE_LENGTH * 2]; // Allow for expansion
+    result[0] = '\0';
+    bool changed = false;
+
+    size_t i = 0;
+    while (pattern[i] != '\0' && strlen(result) < max_len - 1) {
+        // Check for fragment reference ((namespace::name))
+        if (pattern[i] == '(' && pattern[i+1] == '(') {
+            // Find the end of the fragment reference
+            size_t j = i + 2;
+            while (pattern[j] != '\0' && !(pattern[j] == ')' && pattern[j+1] == ')')) {
+                j++;
+            }
+
+            if (pattern[j] == ')' && pattern[j+1] == ')') {
+                // Extract fragment name
+                char frag_name[MAX_FRAGMENT_NAME];
+                size_t name_len = j - (i + 2);
+                if (name_len < sizeof(frag_name)) {
+                    strncpy(frag_name, &pattern[i + 2], name_len);
+                    frag_name[name_len] = '\0';
+
+                    // Find and expand the fragment
+                    const char* frag_value = find_fragment(frag_name);
+                    if (frag_value != NULL) {
+                        strncat(result, frag_value, max_len - strlen(result) - 1);
+                        changed = true;
+                    }
+                    // If fragment not found, skip it (silently)
+                }
+
+                i = j + 2; // Skip past the fragment reference
+            } else {
+                // Malformed fragment reference, copy as-is
+                strncat(result, &pattern[i], 1);
+                i++;
+            }
+        } else {
+            // Regular character
+            strncat(result, &pattern[i], 1);
+            i++;
+        }
+    }
+
+    strncpy(pattern, result, max_len);
+
+    // Recursively expand if we made changes (to handle nested fragments)
+    if (changed) {
+        expand_fragments(pattern, max_len);
+    }
+}
+
 // Initialize NFA
 void nfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
@@ -98,9 +177,10 @@ void nfa_init(void) {
         }
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             nfa[i].transitions[j] = -1;
+            nfa[i].multi_targets[j][0] = '\0';  // Initialize multi-targets
         }
         nfa[i].transition_count = 0;
-        
+
         // Initialize negated transitions
         nfa[i].negated_transition_count = 0;
         for (int j = 0; j < MAX_SYMBOLS; j++) {
@@ -112,6 +192,7 @@ void nfa_init(void) {
         }
     }
     nfa_state_count = 1; // State 0 is initial state
+    fragment_count = 0; // Reset fragments
 }
 
 // Negated transition helper functions
@@ -270,8 +351,7 @@ int nfa_add_state_with_minimization(bool accepting) {
 }
 
 // Finalize state after all transitions have been added
-// NOTE: State minimization is DISABLED to prevent states from different patterns
-// from being incorrectly merged. Each pattern keeps its own distinct states.
+// Enables state minimization for non-tagged states to allow prefix sharing
 int nfa_finalize_state(int state) {
     // Compute signature for this state (NOW transitions are set)
     uint64_t signature = compute_state_signature(state);
@@ -279,18 +359,24 @@ int nfa_finalize_state(int state) {
     // Check if an equivalent state already exists
     int equivalent_state = find_equivalent_state(signature, state);
 
-    if (equivalent_state != -1) {
-        // DISABLED: Don't merge states - we want each pattern to have distinct states
-        // This prevents patterns like "git log" and "git status" from sharing
-        // intermediate states, which causes incorrect transitions.
-        //
-        // If we wanted to re-enable minimization, we'd uncomment this:
-        // return equivalent_state;
-
-        // Instead, just add this state to the signature table without merging
+    if (equivalent_state != -1 && equivalent_state != state) {
+        // Found an equivalent state - redirect all transitions to it
+        // First, find all transitions pointing to 'state' and update them
+        for (int s = 0; s < nfa_state_count; s++) {
+            for (int t = 0; t < MAX_SYMBOLS; t++) {
+                if (nfa[s].transitions[t] == state) {
+                    nfa[s].transitions[t] = equivalent_state;
+                    fprintf(stderr, "DEBUG: Redirected transition from State %d on Symbol %d to State %d\n",
+                            s, t, equivalent_state);
+                }
+            }
+        }
+        fprintf(stderr, "DEBUG: State %d merged into %d (signature=%llu)\n",
+                state, equivalent_state, (unsigned long long)signature);
+        return equivalent_state;
     }
 
-    // Add this state to signature table
+    // No equivalent found - add this state to signature table
     add_state_to_signature_table(state, signature);
 
     return state;
@@ -315,12 +401,16 @@ static unsigned int hash_signature(uint64_t signature) {
 // Compute state signature for equivalence detection
 // IMPORTANT: Includes current_pattern_index to prevent states from different patterns
 // from being merged, even if they have the same structure
+// HOWEVER: For non-tagged states (intermediate states), we allow sharing to enable
+// prefix sharing between patterns like "git log --oneline" and "git log --graph"
 static uint64_t compute_state_signature(int state) {
     uint64_t signature = 0;
 
-    // Include pattern index in signature - this ensures states from different patterns
-    // are never considered equivalent, even if they have identical structure
-    signature = signature * 31 + current_pattern_index;
+    // Only include pattern index if this state has tags (i.e., it's an accepting state
+    // or has category/operation info). This allows intermediate states to be shared.
+    if (nfa[state].tag_count > 0) {
+        signature = signature * 31 + current_pattern_index;
+    }
 
     // Include accepting status in signature
     if (nfa[state].accepting) {
@@ -422,6 +512,7 @@ void nfa_add_tag(int state, const char* tag) {
 }
 
 // Add NFA transition using symbol ID
+// For State 0, if a transition already exists, create an intermediate dispatch state
 void nfa_add_transition(int from, int to, int symbol_id) {
     if (from < 0 || from >= nfa_state_count || to < 0 || to >= nfa_state_count) {
         fprintf(stderr, "Error: Invalid state index\n");
@@ -436,11 +527,42 @@ void nfa_add_transition(int from, int to, int symbol_id) {
     // Check if we should use a negated transition instead
     if (should_use_negation(from, to, symbol_id)) {
         add_negated_transition(from, to, symbol_id);
-    } else {
-        // Use regular transition
-        nfa[from].transitions[symbol_id] = to;
-        nfa[from].transition_count++;
+        return;
     }
+
+    // For State 0, store multiple targets per symbol
+    if (from == 0) {
+        if (nfa[0].transitions[symbol_id] == -1) {
+            // First transition on this symbol - store in transitions array
+            nfa[0].transitions[symbol_id] = to;
+            nfa[0].transition_count++;
+        } else if (nfa[0].transitions[symbol_id] != to) {
+            // Additional transition - append to multi_targets
+            char existing[256];
+            sprintf(existing, "%d", nfa[0].transitions[symbol_id]);
+
+            // Check if target already exists
+            if (strstr(existing, ",") != NULL ||
+                (nfa[0].transitions[symbol_id] != to &&
+                 strstr(nfa[0].multi_targets[symbol_id], ",") == NULL &&
+                 nfa[0].transitions[symbol_id] != to)) {
+
+                // Append to multi_targets
+                char new_target[32];
+                sprintf(new_target, ",%d", to);
+
+                if (strlen(nfa[0].multi_targets[symbol_id]) + strlen(new_target) < 255) {
+                    strcat(nfa[0].multi_targets[symbol_id], new_target);
+                    nfa[0].transition_count++;
+                }
+            }
+        }
+        return;
+    }
+
+    // Use regular transition for non-State-0
+    nfa[from].transitions[symbol_id] = to;
+    nfa[from].transition_count++;
 }
 
 // Parse category ID
@@ -451,6 +573,386 @@ int parse_category(const char* name) {
         }
     }
     return CAT_SAFE; // Default to safe
+}
+
+// ============================================================================
+// Recursive Descent Pattern Parser
+// ============================================================================
+//
+// Pattern Syntax:
+//   - Literal character: matches itself
+//   - \x: escaped character (matches x literally)
+//   - 'x': quoted character (matches x literally)
+//   - [abc]: character class (matches any one of a, b, or c)
+//   - [a-z]: character range (matches any character from a to z)
+//   - *: zero or more of preceding element
+//   - +: one or more of preceding element
+//   - ?: zero or one of preceding element
+//   - (expr): grouping
+//   - a|b|c: alternation (matches a or b or c)
+//   - Space normalizes to [ \t]+ (one or more whitespace)
+//
+// Character classes use | for alternation, e.g., [a|b|c] means a OR b OR c
+// To match literal | outside character classes, escape it as \|
+//
+// Grammar (recursive descent):
+//   pattern      ::= alternation
+//   alternation  ::= sequence ('|' sequence)*
+//   sequence     ::= element+
+//   element      ::= primary quantifier?
+//   primary      ::= char | escaped | quoted | class | group
+//   quantifier   ::= '*' | '+' | '?'
+//   char         ::= any non-special character
+//   escaped      ::= '\' any_char
+//   quoted       ::= '\'' char '\''
+//   class        ::= '[' class_body ']'
+//   group        ::= '(' pattern ')'
+//   class_body   ::= alternation (within class)
+
+static int parse_rdp_element(const char* pattern, int* pos, int start_state);
+static int parse_rdp_class(const char* pattern, int* pos, int start_state);
+static int parse_rdp_postfix(const char* pattern, int* pos, int start_state);
+static int parse_rdp_sequence(const char* pattern, int* pos, int start_state);
+static int parse_rdp_alternation(const char* pattern, int* pos, int start_state);
+
+// Parse character class like [abc] or [a-z]
+static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
+    int class_state = nfa_add_state_with_minimization(false);
+
+    (*pos)++; // Skip opening [
+
+    // Check for negation like [^abc]
+    bool negated = false;
+    if (pattern[*pos] == '^') {
+        negated = true;
+        (*pos)++;
+    }
+
+    // Collect all characters/alternatives in the class
+    char alt_chars[256];
+    int alt_count = 0;
+
+    while (pattern[*pos] != '\0' && pattern[*pos] != ']') {
+        if (pattern[*pos] == '\\' && pattern[*pos + 1] != '\0') {
+            // Escaped character
+            alt_chars[alt_count++] = pattern[*pos + 1];
+            *pos += 2;
+        } else if (pattern[*pos] == '|' || pattern[*pos] == ' ') {
+            // Skip alternation markers and spaces within class
+            (*pos)++;
+        } else if (pattern[*pos] == '-' && alt_count > 0 &&
+                   isalnum(alt_chars[alt_count - 1]) &&
+                   isalnum(pattern[*pos + 1])) {
+            // Range: previous char to next char
+            char start_c = alt_chars[alt_count - 1];
+            char end_c = pattern[*pos + 1];
+            alt_chars[alt_count - 1] = start_c; // Keep start
+            // Add range characters
+            for (char c = start_c + 1; c <= end_c && alt_count < 250; c++) {
+                alt_chars[alt_count++] = c;
+            }
+            *pos += 2;
+        } else if (pattern[*pos] != ']') {
+            alt_chars[alt_count++] = pattern[*pos];
+            (*pos)++;
+        }
+    }
+
+    // Add transitions for each unique character
+    bool seen[256] = {false};
+    for (int i = 0; i < alt_count; i++) {
+        unsigned char uc = (unsigned char)alt_chars[i];
+        if (!seen[uc]) {
+            seen[uc] = true;
+            int sid = find_symbol_id(alt_chars[i]);
+            if (sid != -1) {
+                nfa_add_transition(start_state, class_state, sid);
+            }
+        }
+    }
+
+    if (pattern[*pos] == ']') {
+        (*pos)++; // Skip closing ]
+    }
+
+    nfa_finalize_state(class_state);
+    return class_state;
+}
+
+// Parse primary element: char, escaped, quoted, class, or group
+static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
+    char c = pattern[*pos];
+
+    switch (c) {
+        case '\\':
+            // Escaped character
+            if (pattern[*pos + 1] != '\0') {
+                char ec = pattern[*pos + 1];
+                int sid = find_symbol_id(ec);
+                if (sid != -1) {
+                    int new_state = nfa_add_state_with_minimization(false);
+                    nfa_add_transition(start_state, new_state, sid);
+                    int finalized_state = nfa_finalize_state(new_state);
+                    *pos += 2;
+                    return finalized_state;
+                }
+                *pos += 2;
+            } else {
+                (*pos)++;
+            }
+            break;
+
+        case '\'':
+            // Quoted character
+            (*pos)++;
+            if (pattern[*pos] != '\0' && pattern[*pos] != '\'') {
+                char qc = pattern[*pos];
+                int sid = find_symbol_id(qc);
+                if (sid != -1) {
+                    int new_state = nfa_add_state_with_minimization(false);
+                    nfa_add_transition(start_state, new_state, sid);
+                    int finalized_state = nfa_finalize_state(new_state);
+                    (*pos)++;
+                    return finalized_state;
+                }
+                (*pos)++;
+            } else if (pattern[*pos] == '\'') {
+                (*pos)++; // Skip empty ''
+            }
+            break;
+
+        case '[':
+            return parse_rdp_class(pattern, pos, start_state);
+
+        case '(':
+            (*pos)++;
+            return parse_rdp_alternation(pattern, pos, start_state);
+
+        default:
+            if (c != ' ' && c != '\t' && c != '\0') {
+                int sid = find_symbol_id(c);
+                if (sid != -1) {
+                    int new_state = nfa_add_state_with_minimization(false);
+                    nfa_add_transition(start_state, new_state, sid);
+                    int finalized_state = nfa_finalize_state(new_state);
+                    (*pos)++;
+                    return finalized_state;
+                }
+            }
+            (*pos)++;
+            break;
+    }
+
+    return start_state;
+}
+
+// Parse postfix quantifier: * + ?
+static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
+    int current = parse_rdp_element(pattern, pos, start_state);
+
+    while (pattern[*pos] != '\0') {
+        char op = pattern[*pos];
+
+        if (op == '*') {
+            (*pos)++;
+            int any_sid = find_symbol_id(DFA_CHAR_ANY);
+            if (any_sid == -1) return current;
+
+            int star_state = nfa_add_state_with_minimization(false);
+            nfa_add_transition(current, star_state, any_sid);
+            nfa_add_transition(star_state, star_state, any_sid);
+            int finalized_star = nfa_finalize_state(star_state);
+            current = finalized_star;
+
+        } else if (op == '+') {
+            (*pos)++;
+            int any_sid = find_symbol_id(DFA_CHAR_ANY);
+            if (any_sid == -1) return current;
+
+            int first_state = nfa_add_state_with_minimization(false);
+            nfa_add_transition(current, first_state, any_sid);
+
+            int star_state = nfa_add_state_with_minimization(false);
+            nfa_add_transition(first_state, star_state, any_sid);
+            nfa_add_transition(star_state, star_state, any_sid);
+            int finalized_first = nfa_finalize_state(first_state);
+            int finalized_star = nfa_finalize_state(star_state);
+            current = finalized_star;
+
+        } else if (op == '?') {
+            (*pos)++;
+            // Optional - for now just continue (would need parallel path for proper support)
+
+        } else {
+            break;
+        }
+    }
+
+    return current;
+}
+
+// Parse sequence of elements (concatenation)
+static int parse_rdp_sequence(const char* pattern, int* pos, int start_state) {
+    int current = start_state;
+
+    while (pattern[*pos] != '\0' && pattern[*pos] != ')' && pattern[*pos] != '|') {
+        if (pattern[*pos] == ' ' || pattern[*pos] == '\t') {
+            // Normalizing whitespace
+            int sid = find_symbol_id(DFA_CHAR_NORMALIZING_SPACE);
+            if (sid == -1) sid = find_symbol_id(' ');
+
+            int ws_state = nfa_add_state_with_minimization(false);
+            nfa_add_transition(current, ws_state, sid);
+            nfa_add_transition(ws_state, ws_state, sid);
+            int finalized_ws = nfa_finalize_state(ws_state);
+            current = finalized_ws;
+            (*pos)++;
+        } else {
+            current = parse_rdp_postfix(pattern, pos, current);
+        }
+    }
+
+    return current;
+}
+
+// Parse alternation: sequence ('|' sequence)*
+static int parse_rdp_alternation(const char* pattern, int* pos, int start_state) {
+    // Parse first alternative
+    int first_end = parse_rdp_sequence(pattern, pos, start_state);
+
+    // Check for alternation operator
+    if (pattern[*pos] == '|') {
+        // Create merge state for alternation
+        int merge_state = nfa_add_state_with_minimization(false);
+        int finalized_first = nfa_finalize_state(first_end);
+
+        // Connect first branch to merge via ANY (since we don't have epsilon)
+        int any_sid = find_symbol_id(DFA_CHAR_ANY);
+        if (any_sid != -1) {
+            nfa_add_transition(finalized_first, merge_state, any_sid);
+        }
+
+        // Parse remaining alternatives
+        while (pattern[*pos] == '|') {
+            (*pos)++; // Skip |
+            int branch_end = parse_rdp_sequence(pattern, pos, start_state);
+            int finalized_branch = nfa_finalize_state(branch_end);
+
+            if (any_sid != -1) {
+                nfa_add_transition(finalized_branch, merge_state, any_sid);
+            }
+        }
+
+        int finalized_merge = nfa_finalize_state(merge_state);
+        return finalized_merge;
+    }
+
+    // Close paren if present
+    if (pattern[*pos] == ')') {
+        (*pos)++;
+    }
+
+    int finalized_end = nfa_finalize_state(first_end);
+    return finalized_end;
+}
+
+// Main entry point: parse pattern and build NFA
+static void parse_pattern_full(const char* pattern, const char* category,
+                               const char* subcategory, const char* operations,
+                               const char* action) {
+    int pos = 0;
+
+    // Find entry state - try to share prefix with existing patterns
+    int start_state;
+    int pattern_start_pos = 0;
+
+    fprintf(stderr, "DEBUG parse_pattern_full: pattern='%s', nfa_state_count=%d\n", pattern, nfa_state_count);
+
+    if (nfa_state_count > 1 && pattern[0] != '\0') {
+        // Try to find a common prefix with existing NFA paths
+        int shared_state = 0;
+        int shared_pos = 0;
+
+        int first_char_sid = find_symbol_id(pattern[0]);
+        fprintf(stderr, "DEBUG: first_char='%c', sid=%d, transition=%d\n", 
+                pattern[0], first_char_sid, 
+                first_char_sid != -1 ? nfa[0].transitions[first_char_sid] : -1);
+
+        if (first_char_sid != -1 && nfa[0].transitions[first_char_sid] != -1) {
+            // Try following existing transitions to find longest common prefix
+            shared_state = nfa[0].transitions[first_char_sid];
+            shared_pos = 1;
+
+            while (shared_pos < (int)strlen(pattern)) {
+                int c = pattern[shared_pos];
+                int sid = find_symbol_id(c);
+                if (sid == -1 || nfa[shared_state].transitions[sid] == -1) {
+                    break;
+                }
+                shared_state = nfa[shared_state].transitions[sid];
+                shared_pos++;
+            }
+
+            if (shared_pos > 1) {
+                // Found common prefix - start from there
+                start_state = shared_state;
+                pattern_start_pos = shared_pos;
+                fprintf(stderr, "DEBUG: Found common prefix of %d chars, state=%d\n", 
+                        shared_pos, start_state);
+            } else {
+                // No common prefix - create new start state
+                start_state = nfa_add_state_with_minimization(false);
+                nfa_add_transition(0, start_state, first_char_sid);
+                pattern_start_pos = 1;  // Skip first character (already consumed)
+                fprintf(stderr, "DEBUG: No prefix match, created new state %d from State 0\n", start_state);
+            }
+        } else {
+            // First character has no transition from state 0 - create new entry
+            start_state = nfa_add_state_with_minimization(false);
+            if (first_char_sid != -1) {
+                nfa_add_transition(0, start_state, first_char_sid);
+                pattern_start_pos = 1;  // Skip first character (already consumed)
+                fprintf(stderr, "DEBUG: Created new entry state %d from State 0 on '%c'\n", 
+                        start_state, pattern[0]);
+            } else {
+                fprintf(stderr, "DEBUG: First char '%c' not in alphabet\n", pattern[0]);
+            }
+        }
+    } else {
+        // First pattern - use state 0 as start
+        start_state = 0;
+        fprintf(stderr, "DEBUG: First pattern, using state 0\n");
+    }
+
+    // Parse the remaining pattern starting from pattern_start_pos
+    char remaining[512];
+    strncpy(remaining, pattern + pattern_start_pos, sizeof(remaining) - 1);
+    remaining[sizeof(remaining) - 1] = '\0';
+
+    fprintf(stderr, "DEBUG: Parsing remaining='%s' from state %d\n", remaining, start_state);
+
+    int parse_pos = 0;
+    int end_state;
+    if (remaining[0] != '\0') {
+        end_state = parse_rdp_alternation(remaining, &parse_pos, start_state);
+    } else {
+        end_state = start_state;
+    }
+
+    // Add EOS transition to accepting state
+    int eos_sid = find_symbol_id(DFA_CHAR_EOS);
+    if (eos_sid != -1) {
+        int accepting = nfa_add_state_with_minimization(true);
+        nfa_add_transition(end_state, accepting, eos_sid);
+
+        nfa_add_tag(accepting, category);
+        if (subcategory[0] != '\0') nfa_add_tag(accepting, subcategory);
+        if (operations[0] != '\0') nfa_add_tag(accepting, operations);
+        nfa_add_tag(accepting, action);
+
+        nfa_finalize_state(end_state);
+        nfa_finalize_state(accepting);
+    }
 }
 
 // Parse advanced pattern
@@ -498,6 +1000,29 @@ void parse_advanced_pattern(const char* line) {
     // Skip whitespace after category
     while (*line == ' ' || *line == '\t') line++;
 
+    // Check if this is a fragment definition
+    if (strncmp(line, "fragment:", 9) == 0) {
+        // Extract fragment name and value
+        const char* name_start = line + 9;
+        const char* name_end = strchr(name_start, ' ');
+        if (name_end != NULL && fragment_count < MAX_FRAGMENTS) {
+            size_t name_len = name_end - name_start;
+            if (name_len < MAX_FRAGMENT_NAME) {
+                strncpy(fragments[fragment_count].name, name_start, name_len);
+                fragments[fragment_count].name[name_len] = '\0';
+
+                // Skip whitespace and get value
+                const char* value_start = name_end;
+                while (*value_start == ' ' || *value_start == '\t') value_start++;
+                strncpy(fragments[fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
+                fragments[fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
+
+                fragment_count++;
+            }
+        }
+        return; // Don't process fragment definitions as patterns
+    }
+
     // Parse pattern
     char* arrow = strstr(line, "->");
     if (arrow != NULL) {
@@ -532,6 +1057,9 @@ void parse_advanced_pattern(const char* line) {
         return;
     }
 
+    // Expand fragment references in the pattern
+    expand_fragments(pattern, sizeof(pattern));
+
     // Store pattern
     if (pattern_count < MAX_PATTERNS) {
         strncpy(patterns[pattern_count].pattern, pattern, MAX_LINE_LENGTH - 1);
@@ -546,243 +1074,10 @@ void parse_advanced_pattern(const char* line) {
     // Set the pattern index for this NFA construction
     // This prevents states from different patterns from being merged
     current_pattern_index = pattern_count;
-    
-    fprintf(stderr, "DEBUG: Processing pattern %d: %s\n", pattern_count, pattern);
 
-    // Build NFA for this pattern with alphabet support
-    // For pattern 0 (first pattern), start fresh from state 0
-    // For subsequent patterns, try to share states for common prefixes
-    int current_state = 0;
-    int divergence_point = 0;  // Point where this pattern diverges from existing paths
-    int prefix_end_state = 0;  // The state at the end of the shared prefix
-    int pattern_len = strlen(pattern);
-    bool in_quote = false;
-    
-    // For the first pattern, build a simple chain
-    // For subsequent patterns, find the longest common prefix with existing paths
-    if (pattern_count > 0) {
-        // Find how much of this pattern can share existing states
-        int temp_state = 0;
-        int shared_length = 0;
-        
-        for (int i = 0; i < pattern_len; i++) {
-            char c = pattern[i];
-            
-            // Skip whitespace handling for prefix matching
-            if (c == ' ' && !in_quote) {
-                int symbol_id = find_symbol_id(DFA_CHAR_NORMALIZING_SPACE);
-                if (symbol_id == -1) symbol_id = find_symbol_id(' ');
-                if (nfa[temp_state].transitions[symbol_id] != -1) {
-                    temp_state = nfa[temp_state].transitions[symbol_id];
-                    shared_length++;
-                } else {
-                    break;
-                }
-            } else if (c == '\\' && i + 1 < pattern_len) {
-                i++;
-                char escaped_char = pattern[i];
-                int symbol_id = find_symbol_id(escaped_char);
-                if (symbol_id == -1) break;
-                if (nfa[temp_state].transitions[symbol_id] != -1) {
-                    temp_state = nfa[temp_state].transitions[symbol_id];
-                    shared_length++;
-                } else {
-                    break;
-                }
-            } else if (c == '\'' && !in_quote) {
-                in_quote = true;
-                continue;
-            } else if (c == '\'' && in_quote) {
-                in_quote = false;
-                continue;
-            } else {
-                // Regular character
-                int symbol_id = find_symbol_id(c);
-                if (symbol_id == -1) break;
-                if (nfa[temp_state].transitions[symbol_id] != -1) {
-                    temp_state = nfa[temp_state].transitions[symbol_id];
-                    shared_length++;
-                } else {
-                    break;
-                }
-            }
-        }
-        
-        if (shared_length > 0) {
-            // Found shared prefix - continue from the end of the shared prefix
-            // The normal loop will add new transitions from there
-            divergence_point = shared_length;
-            prefix_end_state = temp_state;
-            current_state = temp_state;
-
-            fprintf(stderr, "DEBUG: Pattern %d shares prefix of length %d, continuing from state %d\n",
-                    pattern_count, shared_length, prefix_end_state);
-        }
-    }
-
-    // Reset quote state after prefix matching
-    in_quote = false;
-
-    for (int i = divergence_point; i < pattern_len; i++) {
-        char c = pattern[i];
-
-        // Handle quoted verbatim sections
-        if (c == '\'' && !in_quote) {
-            // Start of quoted section - skip the quote character
-            in_quote = true;
-            continue;
-        } else if (c == '\'' && in_quote) {
-            // End of quoted section - skip the quote character
-            in_quote = false;
-            continue;
-        }
-
-        // Handle escape sequences
-        if (c == '\\' && i + 1 < pattern_len) {
-            i++;
-            char escaped_char = pattern[i];
-
-            // Handle special escape sequences
-            switch (escaped_char) {
-                case 't': escaped_char = '\t'; break;
-                case 'n': escaped_char = '\n'; break;
-                case 'r': escaped_char = '\r'; break;
-                case 's': escaped_char = ' '; break;  // space
-                case '\'': escaped_char = '\''; break; // single quote
-                case '\\': escaped_char = '\\'; break; // backslash
-                // Add more escape sequences as needed
-            }
-
-            int symbol_id = find_symbol_id(escaped_char);
-            if (symbol_id == -1) {
-                // Character not in alphabet, skip or handle error
-                continue;
-            }
-
-            int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, symbol_id);
-            nfa_finalize_state(new_state);
-            current_state = new_state;
-            continue;
-        }
-
-        // Handle whitespace based on quote context
-        if (c == ' ' && !in_quote) {
-            // Normalizing whitespace - matches any sequence of 1+ space/tab chars
-            int symbol_id = find_symbol_id(DFA_CHAR_NORMALIZING_SPACE);
-            if (symbol_id == -1) {
-                symbol_id = find_symbol_id(' '); // Fallback to regular space
-            }
-
-            int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, symbol_id);
-            // Add self-loop for additional whitespace characters
-            nfa_add_transition(new_state, new_state, symbol_id);
-            current_state = new_state;
-        } else if (c == ' ' && in_quote) {
-            // Verbatim whitespace - matches exactly one space character
-            int symbol_id = find_symbol_id(DFA_CHAR_VERBATIM_SPACE);
-            if (symbol_id == -1) {
-                symbol_id = find_symbol_id(' '); // Fallback to regular space
-            }
-
-            int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, symbol_id);
-            current_state = new_state;
-        } else if (c == '*') {
-            // Wildcard: matches one character and can continue matching more
-            // Key: After *, we need to be able to match the next char in pattern
-            int any_symbol_id = find_symbol_id(DFA_CHAR_ANY);
-            if (any_symbol_id == -1) {
-                fprintf(stderr, "Error: ANY symbol not found in alphabet\n");
-                exit(1);
-            }
-
-            fprintf(stderr, "DEBUG WILDCARD: pattern='%s', current_state=%d, any_symbol_id=%d\n",
-                    pattern, current_state, any_symbol_id);
-
-            // Create state that can both:
-            // 1. Consume another char (self-loop on ANY)
-            // 2. Continue to next pattern char (transition will be added by next char)
-            int star_state = nfa_add_state_with_minimization(false);
-            fprintf(stderr, "DEBUG WILDCARD: created star_state=%d\n", star_state);
-
-            // Self-loop for consuming more chars
-            nfa_add_transition(star_state, star_state, any_symbol_id);
-            fprintf(stderr, "DEBUG WILDCARD: added self-loop on star_state %d for ANY\n", star_state);
-
-            // Transition from current to star_state (consumes one char)
-            nfa_add_transition(current_state, star_state, any_symbol_id);
-            fprintf(stderr, "DEBUG WILDCARD: added transition from %d to %d on ANY\n", current_state, star_state);
-
-            // Stay at star_state so next char adds transition from here
-            current_state = star_state;
-            fprintf(stderr, "DEBUG WILDCARD: current_state now=%d\n", current_state);
-        } else if (c == '?') {
-            // Single character wildcard
-            int symbol_id = find_symbol_id(DFA_CHAR_ANY);
-            if (symbol_id == -1) {
-                fprintf(stderr, "Error: ANY symbol not found in alphabet\n");
-                exit(1);
-            }
-
-            int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, symbol_id);
-            current_state = new_state;
-        } else {
-            // Regular character
-            int symbol_id = find_symbol_id(c);
-            if (symbol_id == -1) {
-                // Character not in alphabet, skip or handle error
-                continue;
-            }
-
-            int new_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current_state, new_state, symbol_id);
-            current_state = new_state;
-        }
-    }
-
-    // Mark final state as accepting and add tags
-    // Add transition on EOS marker to a new accepting state
-    // This ensures the pattern only accepts when the full input is consumed
-    int eos_symbol_id = find_symbol_id(DFA_CHAR_EOS);
-    fprintf(stderr, "DEBUG EOS: pattern='%s', current_state=%d, DFA_CHAR_EOS=%d, eos_symbol_id=%d\n",
-            pattern, current_state, DFA_CHAR_EOS, eos_symbol_id);
-    if (eos_symbol_id == -1) {
-        // EOS not in alphabet - fall back to direct accepting
-        fprintf(stderr, "DEBUG EOS: Using fallback accepting state\n");
-        nfa[current_state].accepting = true;
-        nfa_add_tag(current_state, category);
-        if (subcategory[0] != '\0') {
-            nfa_add_tag(current_state, subcategory);
-        }
-        if (operations[0] != '\0') {
-            nfa_add_tag(current_state, operations);
-        }
-        nfa_add_tag(current_state, action);
-        nfa_finalize_state(current_state);
-    } else {
-        // Create accepting state with EOS transition
-        fprintf(stderr, "DEBUG EOS: Creating accepting state, transition from %d on symbol %d\n",
-                current_state, eos_symbol_id);
-        int accepting_state = nfa_add_state_with_minimization(true);
-        nfa_add_transition(current_state, accepting_state, eos_symbol_id);
-
-        // Add tags to the accepting state
-        nfa_add_tag(accepting_state, category);
-        if (subcategory[0] != '\0') {
-            nfa_add_tag(accepting_state, subcategory);
-        }
-        if (operations[0] != '\0') {
-            nfa_add_tag(accepting_state, operations);
-        }
-        nfa_add_tag(accepting_state, action);
-
-        // Finalize states
-        nfa_finalize_state(current_state);
-        nfa_finalize_state(accepting_state);
-    }
+    // Use the new recursive descent parser to build NFA
+    // parse_pattern_full handles NFA building, EOS transition, and tagging internally
+    parse_pattern_full(pattern, category, subcategory, operations, action);
 }
 
 // Read advanced command specification file
@@ -865,8 +1160,19 @@ void write_nfa_file(const char* filename) {
         fprintf(file, "  Transitions: %d\n", nfa[i].transition_count);
 
         for (int s = 0; s < MAX_SYMBOLS; s++) {
-            if (nfa[i].transitions[s] != -1) {
-                fprintf(file, "    Symbol %d -> %d\n", s, nfa[i].transitions[s]);
+            if (nfa[i].transitions[s] != -1 || nfa[i].multi_targets[s][0] != '\0') {
+                fprintf(file, "    Symbol %d", s);
+                // Write first target from transitions array
+                if (nfa[i].transitions[s] != -1) {
+                    fprintf(file, " -> %d", nfa[i].transitions[s]);
+                    // Write additional targets from multi_targets
+                    if (nfa[i].multi_targets[s][0] != '\0') {
+                        fprintf(file, ",%s", nfa[i].multi_targets[s]);
+                    }
+                } else if (nfa[i].multi_targets[s][0] != '\0') {
+                    fprintf(file, " -> %s", nfa[i].multi_targets[s]);
+                }
+                fprintf(file, "\n");
             }
         }
 
