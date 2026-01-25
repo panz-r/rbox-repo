@@ -105,6 +105,19 @@ typedef struct {
 #define DFA_CHAR_EOS 0x05               // End of String marker (used for accepting)
 
 /**
+ * Category bitmask constants (8 categories, one bit each)
+ * These match the values used during NFA/DFA construction
+ */
+#define CAT_MASK_SAFE       0x01
+#define CAT_MASK_CAUTION    0x02
+#define CAT_MASK_MODIFYING  0x04
+#define CAT_MASK_DANGEROUS  0x08
+#define CAT_MASK_NETWORK    0x10
+#define CAT_MASK_ADMIN      0x20
+#define CAT_MASK_BUILD      0x40
+#define CAT_MASK_CONTAINER  0x80
+
+/**
  * Command categories for accepting states
  */
 typedef enum {

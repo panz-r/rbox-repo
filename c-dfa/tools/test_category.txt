@@ -1,0 +1,10 @@
+# Test to verify category_mask prevents incorrect merging
+
+# Define fragments
+SAFE::FILENAME = [a-zA-Z0-9_.]+
+
+# Safe command with category_mask = 0x01
+[safe] cat ((SAFE::FILENAME))
+
+# Modifying command with category_mask = 0x04 (should NOT merge with safe)
+[modifying] write ((SAFE::FILENAME))

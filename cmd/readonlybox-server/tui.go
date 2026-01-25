@@ -679,16 +679,22 @@ func extractBaseName(path string) string {
 			path = strings.TrimPrefix(path, " ")
 		}
 	}
-	// Extract basename from path (e.g., /usr/bin/git -> git)
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
-		return path[idx+1:]
-	}
-	// No path separator - return first word (command name)
+	// First, extract the first whitespace-delimited token (the command name)
 	// e.g., "git rev-parse --abbrev-ref HEAD" -> "git"
+	// e.g., "/usr/bin/git remote get-url origin" -> "/usr/bin/git"
+	firstToken := path
 	if idx := strings.Index(path, " "); idx > 0 {
-		return path[:idx]
+		firstToken = path[:idx]
 	}
-	return path
+
+	// Now extract basename from the first token only
+	// e.g., "/usr/bin/git" -> "git"
+	// e.g., "git" -> "git"
+	// This avoids incorrectly matching / in git refs like "origin/HEAD"
+	if idx := strings.LastIndex(firstToken, "/"); idx >= 0 {
+		return firstToken[idx+1:]
+	}
+	return firstToken
 }
 
 func truncateString(s string, maxWidth int) string {

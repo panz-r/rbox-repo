@@ -21,7 +21,7 @@ int dfa_should_allow(const char* cmd) {
 
     dfa_result_t result;
     if (dfa_evaluate(cmd, 0, &result)) {
-        return result.category == DFA_CMD_READONLY_SAFE && result.matched;
+        return (result.category_mask & CAT_MASK_SAFE) && result.matched;
     }
     return 0;
 }
@@ -41,9 +41,9 @@ void dfa_debug(const char* cmd) {
 
     dfa_result_t result;
     if (dfa_evaluate(cmd, 0, &result)) {
-        fprintf(stderr, "DFA result for '%s': matched=%s, category=%s, length=%zu\n",
+        fprintf(stderr, "DFA result for '%s': matched=%s, category_mask=0x%02x, length=%zu\n",
                 cmd, result.matched ? "yes" : "no",
-                dfa_category_string(result.category),
+                result.category_mask,
                 result.matched_length);
     }
 }

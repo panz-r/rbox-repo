@@ -80,6 +80,14 @@
 [safe] git ls-files *
 [safe] git rev-parse
 [safe] git rev-parse *
+[safe] git worktree list
+[safe] git branch --show-current
+[safe] git remote get-url origin
+[safe] git rev-parse --is-inside-work-tree
+[safe] git status --short
+[safe] git log --oneline -n *
+[safe] which bwrap
+[safe] which socat
 
 # Note: 'find' commands are NOT in the DFA because they require detailed
 # argument validation to detect dangerous options like -exec, -delete, etc.

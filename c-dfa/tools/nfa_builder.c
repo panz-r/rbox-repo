@@ -122,61 +122,6 @@ static const char* find_fragment(const char* name) {
     return NULL;
 }
 
-// Expand fragment references in a pattern
-// Handles ((namespace::name)) syntax recursively
-static void expand_fragments(char* pattern, size_t max_len) {
-    char result[MAX_LINE_LENGTH * 2]; // Allow for expansion
-    result[0] = '\0';
-    bool changed = false;
-
-    size_t i = 0;
-    while (pattern[i] != '\0' && strlen(result) < max_len - 1) {
-        // Check for fragment reference ((namespace::name))
-        if (pattern[i] == '(' && pattern[i+1] == '(') {
-            // Find the end of the fragment reference
-            size_t j = i + 2;
-            while (pattern[j] != '\0' && !(pattern[j] == ')' && pattern[j+1] == ')')) {
-                j++;
-            }
-
-            if (pattern[j] == ')' && pattern[j+1] == ')') {
-                // Extract fragment name
-                char frag_name[MAX_FRAGMENT_NAME];
-                size_t name_len = j - (i + 2);
-                if (name_len < sizeof(frag_name)) {
-                    strncpy(frag_name, &pattern[i + 2], name_len);
-                    frag_name[name_len] = '\0';
-
-                    // Find and expand the fragment
-                    const char* frag_value = find_fragment(frag_name);
-                    if (frag_value != NULL) {
-                        strncat(result, frag_value, max_len - strlen(result) - 1);
-                        changed = true;
-                    }
-                    // If fragment not found, skip it (silently)
-                }
-
-                i = j + 2; // Skip past the fragment reference
-            } else {
-                // Malformed fragment reference, copy as-is
-                strncat(result, &pattern[i], 1);
-                i++;
-            }
-        } else {
-            // Regular character
-            strncat(result, &pattern[i], 1);
-            i++;
-        }
-    }
-
-    strncpy(pattern, result, max_len);
-
-    // Recursively expand if we made changes (to handle nested fragments)
-    if (changed) {
-        expand_fragments(pattern, max_len);
-    }
-}
-
 // Initialize NFA
 void nfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
@@ -607,6 +552,8 @@ int parse_category(const char* name) {
 //   - (expr): grouping
 //   - a|b|c: alternation (matches a or b or c)
 //   - Space normalizes to [ \t]+ (one or more whitespace)
+//   - ((namespace::name)): fragment reference (expands to predefined pattern)
+//   - ((namespace::name))+ : fragment reference with one-or-more quantifier
 //
 // Character classes use | for alternation, e.g., [a|b|c] means a OR b OR c
 // To match literal | outside character classes, escape it as \|
@@ -616,22 +563,96 @@ int parse_category(const char* name) {
 //   alternation  ::= sequence ('|' sequence)*
 //   sequence     ::= element+
 //   element      ::= primary quantifier?
-//   primary      ::= char | escaped | quoted | class | group
+//   primary      ::= char | escaped | quoted | class | group | fragment
 //   quantifier   ::= '*' | '+' | '?'
 //   char         ::= any non-special character
 //   escaped      ::= '\' any_char
 //   quoted       ::= '\'' char '\''
 //   class        ::= '[' class_body ']'
 //   group        ::= '(' pattern ')'
+//   fragment     ::= '(' '(' NAME ('::' NAME)? ')' ')'
 //   class_body   ::= alternation (within class)
 
 static int parse_rdp_element(const char* pattern, int* pos, int start_state);
 static int parse_rdp_class(const char* pattern, int* pos, int start_state);
+static int parse_rdp_fragment(const char* pattern, int* pos, int start_state);
 static int parse_rdp_postfix(const char* pattern, int* pos, int start_state);
 static int parse_rdp_sequence(const char* pattern, int* pos, int start_state);
 static int parse_rdp_alternation(const char* pattern, int* pos, int start_state);
 
-// Parse character class like [abc] or [a-z]
+// Parse fragment reference like ((SAFE::FILENAME)) or ((FILENAME))
+// The fragment value is treated as a pattern and parsed recursively
+// Returns the end state of the fragment, having connected start_state to it
+static int parse_rdp_fragment(const char* pattern, int* pos, int start_state) {
+    // Check for fragment reference ((name::subname)) or ((name))
+    if (pattern[*pos] != '(' || pattern[*pos + 1] != '(') {
+        return start_state;
+    }
+
+    size_t j = *pos + 2;
+
+    // Find the end of fragment reference ))
+    while (pattern[j] != '\0' && !(pattern[j] == ')' && pattern[j + 1] == ')')) {
+        j++;
+    }
+
+    // Check for proper closing
+    if (pattern[j] != ')' || pattern[j + 1] != ')') {
+        fprintf(stderr, "WARNING: Malformed fragment reference at position %d\n", *pos);
+        return start_state;
+    }
+
+    // Extract fragment name
+    char frag_name[MAX_FRAGMENT_NAME];
+    size_t name_len = j - (*pos + 2);
+    if (name_len >= sizeof(frag_name)) {
+        fprintf(stderr, "WARNING: Fragment name too long at position %d\n", *pos);
+        *pos = j + 2;
+        return start_state;
+    }
+
+    strncpy(frag_name, &pattern[*pos + 2], name_len);
+    frag_name[name_len] = '\0';
+
+    // Look up fragment
+    const char* frag_value = find_fragment(frag_name);
+    if (frag_value == NULL) {
+        fprintf(stderr, "WARNING: Fragment '%s' not found, skipping\n", frag_name);
+        *pos = j + 2;
+        return start_state;
+    }
+
+    // Create a clean start state for the fragment
+    int frag_start = nfa_add_state_with_minimization(false);
+
+    // Add transition from start_state to frag_start using first char of fragment value
+    if (frag_value[0] != '\0') {
+        int first_sid = find_symbol_id(frag_value[0]);
+        if (first_sid != -1) {
+            nfa_add_transition(start_state, frag_start, first_sid);
+        }
+    }
+
+    // Parse the fragment value starting from frag_start
+    int frag_pos = 0;
+    int frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
+
+    // Add EOS transition to make it a proper accepting state
+    int eos_sid = find_symbol_id(DFA_CHAR_EOS);
+    if (eos_sid != -1) {
+        int accepting = nfa_add_state_with_minimization(false);
+        nfa_add_transition(frag_end, accepting, eos_sid);
+        nfa_finalize_state(frag_end);
+        nfa_finalize_state(accepting);
+        frag_end = accepting;
+    }
+
+    *pos = j + 2; // Skip past the fragment reference
+
+    // Return frag_start - the sequence parser will handle transitions
+    return frag_start;
+}
+
 static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
     int class_state = nfa_add_state_with_minimization(false);
 
@@ -741,6 +762,11 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
             return parse_rdp_class(pattern, pos, start_state);
 
         case '(':
+            // Check for fragment reference ((name::subname))
+            if (pattern[*pos + 1] == '(') {
+                return parse_rdp_fragment(pattern, pos, start_state);
+            }
+            // Regular grouping
             (*pos)++;
             return parse_rdp_alternation(pattern, pos, start_state);
 
@@ -974,6 +1000,8 @@ static void parse_pattern_full(const char* pattern, const char* category,
 // Parse advanced pattern
 void parse_advanced_pattern(const char* line) {
     // Format: [category:subcategory:operations] pattern -> action
+    // Or: [fragment:name] value
+    // Or: [characterset:name] value
 
     char category[64] = "safe";
     char subcategory[64] = "";
@@ -983,6 +1011,36 @@ void parse_advanced_pattern(const char* line) {
 
     // Skip leading whitespace
     while (*line == ' ' || *line == '\t') line++;
+
+    // Check if this is a fragment or character set definition BEFORE category parsing
+    // Syntax: [fragment:name] value
+    //         [fragment:namespace:name] value
+    //         [characterset:name] value
+    //         [characterset:namespace:name] value
+    if (strncmp(line, "[fragment:", 10) == 0 || strncmp(line, "[characterset:", 14) == 0) {
+        // Determine prefix length
+        int prefix_len = (line[1] == 'f') ? 10 : 14;  // "[fragment:" or "[characterset:"
+        
+        // Extract fragment name (between [fragment: or [characterset: and ])
+        const char* name_start = line + prefix_len;
+        const char* name_end = strchr(name_start, ']');
+        if (name_end != NULL && fragment_count < MAX_FRAGMENTS) {
+            size_t name_len = name_end - name_start;
+            if (name_len < MAX_FRAGMENT_NAME) {
+                strncpy(fragments[fragment_count].name, name_start, name_len);
+                fragments[fragment_count].name[name_len] = '\0';
+
+                // Skip past ] and whitespace to get value
+                const char* value_start = name_end + 1;
+                while (*value_start == ' ' || *value_start == '\t') value_start++;
+                strncpy(fragments[fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
+                fragments[fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
+
+                fragment_count++;
+            }
+        }
+        return; // Don't process fragment/characterset definitions as patterns
+    }
 
     // Parse category section
     if (*line == '[') {
@@ -1016,27 +1074,38 @@ void parse_advanced_pattern(const char* line) {
     // Skip whitespace after category
     while (*line == ' ' || *line == '\t') line++;
 
-    // Check if this is a fragment definition
-    if (strncmp(line, "fragment:", 9) == 0) {
-        // Extract fragment name and value
-        const char* name_start = line + 9;
-        const char* name_end = strchr(name_start, ' ');
-        if (name_end != NULL && fragment_count < MAX_FRAGMENTS) {
+    // Check if this is a scoped fragment definition (deprecated, use [fragment:...] format)
+    // Syntax: SAFE::FILENAME = pattern
+    //         SAFE::FILENAME = [a-zA-Z_.]+
+    if (strchr(line, '=') != NULL) {
+        char* eq = strchr(line, '=');
+        char* name_start = (char*)line;
+        char* name_end = eq;
+        
+        // Check if it looks like a scoped name (contains ::)
+        if (strstr(name_start, "::") != NULL && fragment_count < MAX_FRAGMENTS) {
+            // name_end points to '=', so name_len includes trailing space if present
             size_t name_len = name_end - name_start;
-            if (name_len < MAX_FRAGMENT_NAME) {
+            // Trim trailing whitespace from name
+            while (name_len > 0 && (name_start[name_len - 1] == ' ' || name_start[name_len - 1] == '\t')) {
+                name_len--;
+            }
+            if (name_len > 0 && name_len < MAX_FRAGMENT_NAME) {
                 strncpy(fragments[fragment_count].name, name_start, name_len);
                 fragments[fragment_count].name[name_len] = '\0';
 
-                // Skip whitespace and get value
-                const char* value_start = name_end;
+                // Skip past = and whitespace
+                const char* value_start = eq + 1;
                 while (*value_start == ' ' || *value_start == '\t') value_start++;
                 strncpy(fragments[fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
                 fragments[fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
 
                 fragment_count++;
             }
+            return; // Don't process scoped fragment definitions as patterns
+        } else {
+            fprintf(stderr, "DEBUG: Line has '=' but not scoped fragment: '%s'\n", line);
         }
-        return; // Don't process fragment definitions as patterns
     }
 
     // Parse pattern
@@ -1072,9 +1141,6 @@ void parse_advanced_pattern(const char* line) {
     if (pattern[0] == '\0') {
         return;
     }
-
-    // Expand fragment references in the pattern
-    expand_fragments(pattern, sizeof(pattern));
 
     // Store pattern
     if (pattern_count < MAX_PATTERNS) {

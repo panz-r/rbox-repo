@@ -1033,14 +1033,14 @@ static int check_and_execute(const char *syscall_name, const char *path, char *c
         }
     }
 
-    /* Augment command with parent app name for server-side parsing */
-    const char *parent_app = get_parent_app_name();
-    augment_command_with_app(cmd_str, sizeof(cmd_str), parent_app);
-
-    /* Fast allow - only for known safe commands via DFA */
+    /* Fast allow - only for known safe commands via DFA (check BEFORE augmentation) */
     if (should_fast_allow(cmd_str)) {
         return 0;
     }
+
+    /* Augment command with parent app name for server-side parsing */
+    const char *parent_app = get_parent_app_name();
+    augment_command_with_app(cmd_str, sizeof(cmd_str), parent_app);
 
     /* DFA didn't match - redirect through readonlybox --run for validation */
     return redirect_through_readonlybox(path, argv, envp);

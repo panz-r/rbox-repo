@@ -23,11 +23,15 @@
 [safe:git:read] git log --graph
 [safe:git:read] git log --oneline --decorate
 [safe:git:read] git log --graph --oneline
-[safe:git:read] git log -n *
-[safe:git:read] git log --oneline -n *
-[safe:git:read] git log --oneline --graph -n *
-[safe:git:read] git log --oneline --decorate -n *
-[safe:git:read] git log --graph --oneline -n *
+[safe:git:read] git log -n ((git::DIGIT))+
+[safe:git:read] git log --oneline -n ((git::DIGIT))+
+[safe:git:read] git log --oneline -n
+[safe:git:read] git log --oneline --graph -n ((git::DIGIT))+
+[safe:git:read] git log --oneline --graph -n
+[safe:git:read] git log --oneline --decorate -n ((git::DIGIT))+
+[safe:git:read] git log --oneline --decorate -n
+[safe:git:read] git log --graph --oneline -n ((git::DIGIT))+
+[safe:git:read] git log --graph --oneline -n
 [safe:git:read] git status
 [safe:git:read] git status (-s|--short)?
 [safe:git:read] git show
@@ -83,3 +87,7 @@
 [safe:git:read] git rev-parse ((git::shortref))
 [safe:git:read] git show HEAD:((SAFE::FILENAME))+
 [safe:git:read] git ls-tree HEAD \| grep ((SAFE::FILENAME))+
+
+# Commands from user_log.xml
+[safe:system:read] which bwrap
+[safe:system:read] which socat
