@@ -189,6 +189,31 @@ static void test_unsafe_commands_not_matched(void) {
     TEST_ASSERT(result.matched == false, "git commit does NOT match");
 }
 
+static void test_capture_support(void) {
+    printf("\nTest: Capture Support\n");
+
+    dfa_result_t result;
+
+    // Test cat with filename capture
+    TEST_ASSERT(dfa_evaluate("cat test.txt", 0, &result) && result.matched,
+                "cat test.txt matches");
+
+    // Check capture count
+    TEST_ASSERT(result.capture_count >= 1, "Has at least one capture");
+    if (result.capture_count >= 1) {
+        TEST_ASSERT(result.captures[0].start > 0, "Capture has valid start position");
+        TEST_ASSERT(result.captures[0].end > result.captures[0].start, "Capture has valid end position");
+        TEST_ASSERT(result.captures[0].completed, "Capture is completed");
+    }
+
+    // Test capture with path
+    TEST_ASSERT(dfa_evaluate("cat /path/to/file.txt", 0, &result) && result.matched,
+                "cat /path/to/file.txt matches");
+    if (result.capture_count >= 1) {
+        TEST_ASSERT(result.captures[0].start > 0, "Path capture has valid start");
+    }
+}
+
 int main(int argc, char* argv[]) {
     printf("=================================================\n");
     printf("ReadOnlyBox DFA Unit Tests\n");
@@ -204,6 +229,7 @@ int main(int argc, char* argv[]) {
     test_whitespace_handling();
     test_category_mask_extraction();
     test_unsafe_commands_not_matched();
+    test_capture_support();
 
     printf("\n=================================================\n");
     printf("Results: %d/%d tests passed\n", tests_passed, tests_run);

@@ -104,8 +104,9 @@ typedef struct {
 #define DFA_CHAR_VERBATIM_SPACE 0x04    // Matches exactly one space character
 #define DFA_CHAR_NORMALIZING_SPACE 0xFE // Matches one or more space/tab characters (normalizing)
 #define DFA_CHAR_EOS 0x05               // End of String marker (used for accepting) - matches alphabet symbol 1
-#define DFA_CHAR_CAPTURE_START 0xF0     // Capture start marker (next byte is kind, 0xF0-0xFF)
-#define DFA_CHAR_CAPTURE_END 0xF1       // Capture end marker (next byte is kind, 0xF0-0xFF)
+#define DFA_CHAR_CAPTURE_START 0xF0     // Capture start marker
+#define DFA_CHAR_CAPTURE_END 0xF1       // Capture end marker
+#define DFA_CHAR_CAPTURE_ID_BASE 0xF2   // Base for capture ID encoding (0xF2 + capture_id)
 
 #define DFA_MAX_CAPTURES 16             // Maximum number of concurrent captures
 

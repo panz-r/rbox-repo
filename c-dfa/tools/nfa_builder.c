@@ -280,7 +280,7 @@ void load_alphabet(const char* filename) {
 }
 
 // Find symbol ID for a character
-int find_symbol_id(char c) {
+int find_symbol_id(unsigned char c) {
     for (int i = 0; i < alphabet_size; i++) {
         if (c >= alphabet[i].start_char && c <= alphabet[i].end_char) {
             return alphabet[i].symbol_id;
@@ -662,9 +662,9 @@ static int parse_capture_start(const char* pattern, int* pos, int start_state) {
         nfa_add_transition(start_state, cap_state, start_sid);
     }
     
-    // Add capture ID as a character transition (emit ID byte)
-    int id_char = cap_id;
-    int id_sid = find_symbol_id(id_char);
+    // Add capture ID as a special symbol (0xF2 + capture_id)
+    int capture_id_char = 0xF2 + cap_id;
+    int id_sid = find_symbol_id(capture_id_char);
     if (id_sid != -1) {
         nfa_add_transition(cap_state, cap_state, id_sid);
     }
@@ -706,9 +706,9 @@ static int parse_capture_end(const char* pattern, int* pos, int start_state) {
         nfa_add_transition(start_state, cap_state, end_sid);
     }
     
-    // Add capture ID as a character transition (emit ID byte)
-    int id_char = cap_id;
-    int id_sid = find_symbol_id(id_char);
+    // Add capture ID as a special symbol (0xF2 + capture_id)
+    int capture_id_char = 0xF2 + cap_id;
+    int id_sid = find_symbol_id(capture_id_char);
     if (id_sid != -1) {
         nfa_add_transition(cap_state, cap_state, id_sid);
     }
@@ -1132,10 +1132,26 @@ static void parse_pattern_full(const char* pattern, const char* category,
             while (shared_pos < (int)strlen(pattern)) {
                 int c = pattern[shared_pos];
                 int sid = find_symbol_id(c);
-                if (sid == -1 || nfa[shared_state].transitions[sid] == -1) {
+                int nsid = -1;
+
+                // For space/tab, also check NORMALIZING_SPACE as fallback
+                if (c == ' ' || c == '\t') {
+                    nsid = find_symbol_id(DFA_CHAR_NORMALIZING_SPACE);
+                }
+
+                // Check if either the direct symbol or NORMALIZING_SPACE has a transition
+                int next_state = -1;
+                if (sid != -1 && nfa[shared_state].transitions[sid] != -1) {
+                    next_state = nfa[shared_state].transitions[sid];
+                } else if (nsid != -1 && nfa[shared_state].transitions[nsid] != -1) {
+                    next_state = nfa[shared_state].transitions[nsid];
+                }
+
+                if (next_state == -1) {
                     break;
                 }
-                shared_state = nfa[shared_state].transitions[sid];
+
+                shared_state = next_state;
                 shared_pos++;
             }
 
@@ -1166,6 +1182,10 @@ static void parse_pattern_full(const char* pattern, const char* category,
     char remaining[512];
     strncpy(remaining, pattern + pattern_start_pos, sizeof(remaining) - 1);
     remaining[sizeof(remaining) - 1] = '\0';
+
+    // DEBUG: Log pattern parsing
+    fprintf(stderr, "DEBUG: parse_pattern_full '%s': start_state=%d, pattern_start_pos=%d, remaining='%s'\n",
+            pattern, start_state, pattern_start_pos, remaining);
 
     int parse_pos = 0;
     int end_state;

@@ -121,18 +121,32 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                     continue; // Skip to next transition which should have the ID
                 }
 
-                // Check for capture ID byte
-                bool is_capture_id = false;
-                int cap_id = -1;
-                for (int ci = 0; ci < DFA_MAX_CAPTURES; ci++) {
-                    if (active_captures[ci].capture_id == trans_char && active_captures[ci].active) {
-                        is_capture_id = true;
-                        break;
-                    }
+                // Check for CAPTURE_END (0xF1)
+                if (trans_char == DFA_CHAR_CAPTURE_END) {
+                    // Next character is the capture ID
+                    continue; // Skip to next transition which should have the ID
                 }
-                if (!is_capture_id && trans_char >= 0 && trans_char < DFA_MAX_CAPTURES) {
-                    // This might be a capture ID we're starting
-                    cap_id = trans_char;
+
+                // Check for capture ID markers (0xF2 = CAPTURE_ID_BASE + capture_id)
+                if (trans_char >= DFA_CHAR_CAPTURE_ID_BASE && trans_char < DFA_CHAR_CAPTURE_ID_BASE + DFA_MAX_CAPTURES) {
+                    // This is a capture ID transition
+                    int cap_id = trans_char - DFA_CHAR_CAPTURE_ID_BASE;
+                    
+                    // Find an inactive capture slot and activate it
+                    for (int ci = 0; ci < DFA_MAX_CAPTURES; ci++) {
+                        if (!active_captures[ci].active) {
+                            active_captures[ci].capture_id = cap_id;
+                            active_captures[ci].start_pos = pos;
+                            active_captures[ci].active = true;
+                            break;
+                        }
+                    }
+                    
+                    // Move to next state (capture markers don't consume input)
+                    const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_trans_offset);
+                    current_state = next_state;
+                    transition_found = true;
+                    break;
                 }
 
                 if (trans_char == DFA_CHAR_ANY || trans_char == c) {

@@ -392,8 +392,8 @@ void load_nfa_file(const char* filename) {
                           &symbol_id, &start_char, &end_char, special) >= 3) {
                     if (symbol_id < MAX_SYMBOLS) {
                         alphabet[symbol_id].symbol_id = symbol_id;
-                        alphabet[symbol_id].start_char = (char)start_char;
-                        alphabet[symbol_id].end_char = (char)end_char;
+                        alphabet[symbol_id].start_char = start_char;
+                        alphabet[symbol_id].end_char = end_char;
                         alphabet[symbol_id].is_special = (strcmp(special, "special") == 0);
                     }
                 }
