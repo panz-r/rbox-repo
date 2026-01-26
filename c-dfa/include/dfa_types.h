@@ -102,10 +102,23 @@ typedef struct {
 #define DFA_CHAR_END 0x02               // End of transition table marker (NOT the same as ANY!)
 #define DFA_CHAR_WHITESPACE 0x03        // Matches any whitespace character (space, tab, newline)
 #define DFA_CHAR_VERBATIM_SPACE 0x04    // Matches exactly one space character
-#define DFA_CHAR_NORMALIZING_SPACE 0x05 // Matches one or more space/tab characters (normalizing)
-#define DFA_CHAR_EOS 0x05               // End of String marker (used for accepting)
-#define DFA_CHAR_CAPTURE_START 0xF0     // Capture start marker (next byte is kind)
-#define DFA_CHAR_CAPTURE_END 0xF1       // Capture end marker
+#define DFA_CHAR_NORMALIZING_SPACE 0xFE // Matches one or more space/tab characters (normalizing)
+#define DFA_CHAR_EOS 0x05               // End of String marker (used for accepting) - matches alphabet symbol 1
+#define DFA_CHAR_CAPTURE_START 0xF0     // Capture start marker (next byte is kind, 0xF0-0xFF)
+#define DFA_CHAR_CAPTURE_END 0xF1       // Capture end marker (next byte is kind, 0xF0-0xFF)
+
+#define DFA_MAX_CAPTURES 16             // Maximum number of concurrent captures
+
+/**
+ * Single capture result
+ */
+typedef struct {
+    size_t start;              // Start position in input (0 = not started)
+    size_t end;                // End position in input
+    char name[32];             // Capture name (for debugging/API)
+    bool active;               // Is capture currently in progress?
+    bool completed;            // Was capture successfully completed?
+} dfa_capture_t;
 
 /**
  * Category bitmask constants (8 categories, one bit each)
@@ -142,6 +155,8 @@ typedef struct {
     uint32_t final_state;              // Final state offset
     bool matched;                      // Whether the input matched completely
     size_t matched_length;             // Number of characters matched
+    dfa_capture_t captures[DFA_MAX_CAPTURES];  // Capture results
+    int capture_count;                 // Number of captures found
 } dfa_result_t;
 
 #endif // DFA_TYPES_H

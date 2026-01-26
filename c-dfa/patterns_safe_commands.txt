@@ -18,6 +18,13 @@
 [fragment:git:reforigin] refs/((git::UPPERCASE))|((git::LOWERCASE))|((git::DIGIT))
 [fragment:git:reftype] heads/|tags/|remotes/
 
+# Additional fragment definitions for capture patterns
+[fragment:filename] ((SAFE::FILENAME))|/|=
+[fragment:count] ((git::DIGIT))+
+[fragment:commit] ((git::LOWERCASE))|((git::DIGIT))+
+[fragment:branch] ((SAFE::FILENAME))|/
+[fragment:username] (((git::LOWERCASE))|((git::UPPERCASE))|((git::DIGIT))|_)+
+
 # Git read-only operations - very specific safe patterns
 [safe:git:read] git log --oneline
 [safe:git:read] git log --graph
@@ -98,10 +105,3 @@
 # [safe:git:read] git show <commit>((commit))</commit>
 # [safe:git:read] git checkout <branch>((branch))</branch>
 # [safe:system:read] whoami <username>((username))</username>
-
-# Fragment definitions for capture patterns
-[fragment:filename] ((SAFE::FILENAME))|/|=
-[fragment:count] ((git::DIGIT))+
-[fragment:commit] ((git::LOWERCASE))|((git::DIGIT))+
-[fragment:branch] ((SAFE::FILENAME))|/
-[fragment:username] (((git::LOWERCASE))|((git::UPPERCASE))|((git::DIGIT))|_)+

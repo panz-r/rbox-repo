@@ -220,13 +220,15 @@ void nfa_to_dfa(void) {
     while (queue_start < queue_end) {
         int current_dfa = queue[queue_start];
         queue_start++;
-        for (int symbol_id = 0; symbol_id < alphabet_size; symbol_id++) {
+        for (int array_idx = 0; array_idx < alphabet_size; array_idx++) {
             int move_states[MAX_STATES];
             int move_count = 0;
             for (int i = 0; i < dfa[current_dfa].nfa_state_count; i++) {
                 move_states[i] = dfa[current_dfa].nfa_states[i];
                 move_count++;
             }
+            // Use the actual symbol_id from the alphabet entry, not the array index
+            int symbol_id = alphabet[array_idx].symbol_id;
             nfa_move(move_states, &move_count, symbol_id, MAX_STATES);
             if (move_count == 0) continue;
             epsilon_closure(move_states, &move_count, MAX_STATES);
@@ -257,11 +259,11 @@ void nfa_to_dfa(void) {
                 }
             }
             if (existing_state != -1) {
-                dfa[current_dfa].transitions[symbol_id] = existing_state;
+                dfa[current_dfa].transitions[array_idx] = existing_state;
                 dfa[current_dfa].transition_count++;
             } else {
                 int new_dfa = dfa_add_state(move_accepting_mask, move_states, move_count);
-                dfa[current_dfa].transitions[symbol_id] = new_dfa;
+                dfa[current_dfa].transitions[array_idx] = new_dfa;
                 dfa[current_dfa].transition_count++;
                 if (queue_end < MAX_STATES) {
                     queue[queue_end] = new_dfa;
@@ -300,6 +302,7 @@ void flatten_dfa(void) {
             if (s == any_symbol) continue;  // Skip ANY in first pass
             if (dfa[state].transitions[s] != -1) {
                 int target = dfa[state].transitions[s];
+                // Find the alphabet entry for this symbol position
                 int start_char = alphabet[s].start_char;
                 int end_char = alphabet[s].end_char;
                 for (int c = start_char; c <= end_char; c++) {

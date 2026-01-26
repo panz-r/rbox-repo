@@ -104,6 +104,9 @@ const char* category_names[CAT_COUNT] = {
 #define MAX_FRAGMENT_NAME 64
 #define MAX_FRAGMENT_VALUE 512
 
+#define MAX_CAPTURES 16
+#define MAX_CAPTURE_NAME 32
+
 typedef struct {
     char name[MAX_FRAGMENT_NAME];
     char value[MAX_FRAGMENT_VALUE];
@@ -111,6 +114,18 @@ typedef struct {
 
 static fragment_t fragments[MAX_FRAGMENTS];
 static int fragment_count = 0;
+
+// Capture name to ID mapping
+typedef struct {
+    char name[MAX_CAPTURE_NAME];
+    int id;
+    bool used;
+} capture_mapping_t;
+
+static capture_mapping_t capture_map[MAX_CAPTURES];
+static int capture_count = 0;
+static int capture_stack[MAX_CAPTURES];
+static int capture_stack_depth = 0;
 
 // Find a fragment by name
 static const char* find_fragment(const char* name) {
@@ -148,6 +163,8 @@ void nfa_init(void) {
     }
     nfa_state_count = 1; // State 0 is initial state
     fragment_count = 0; // Reset fragments
+    capture_count = 0;
+    capture_stack_depth = 0;
 }
 
 // Negated transition helper functions
@@ -277,6 +294,11 @@ static uint64_t compute_state_signature(int state);
 static int find_equivalent_state(uint64_t signature, int current_state);
 static void add_state_to_signature_table(int state, uint64_t signature);
 static int nfa_finalize_state(int state);
+
+// Forward declarations for capture functions
+static int parse_capture_start(const char* pattern, int* pos, int start_state);
+static int parse_capture_end(const char* pattern, int* pos, int start_state);
+static int get_capture_id(const char* name);
 
 // Add NFA state with on-the-fly minimization
 // NOTE: We do NOT compute signature here because transitions haven't been added yet.
@@ -518,6 +540,190 @@ void nfa_add_transition(int from, int to, int symbol_id) {
     nfa[from].transition_count++;
 }
 
+// ============================================================================
+// Capture Support
+// ============================================================================
+//
+// Capture Syntax:
+//   - <capname>pattern</capname>: capture named 'capname' around pattern
+//   - Multiple </capname> alternatives allowed in alternations
+//   - Each </capname> closes the same capture
+//
+// Examples:
+//   cat <filename>((SAFE::FILENAME))+</filename>
+//   git log -n <count>((git::DIGIT))+</count>
+//   <cmd>git|svn|hg</cmd> <op>status|log</op>
+
+// Get or create capture ID from name
+static int get_capture_id(const char* name) {
+    // Check if already registered
+    for (int i = 0; i < capture_count; i++) {
+        if (strcmp(capture_map[i].name, name) == 0) {
+            return capture_map[i].id;
+        }
+    }
+    
+    // Register new capture
+    if (capture_count >= MAX_CAPTURES) {
+        fprintf(stderr, "Error: Maximum captures (%d) reached\n", MAX_CAPTURES);
+        return -1;
+    }
+    
+    strncpy(capture_map[capture_count].name, name, MAX_CAPTURE_NAME - 1);
+    capture_map[capture_count].name[MAX_CAPTURE_NAME - 1] = '\0';
+    capture_map[capture_count].id = capture_count;
+    capture_map[capture_count].used = true;
+    
+    return capture_count++;
+}
+
+// Check if current position starts a capture end tag
+static bool is_capture_end(const char* pattern, int pos, char* cap_name) {
+    if (pattern[pos] != '<' || pattern[pos + 1] != '/') {
+        return false;
+    }
+    
+    // Find the closing >
+    int j = pos + 2;
+    while (pattern[j] != '\0' && pattern[j] != '>') {
+        j++;
+    }
+    
+    if (pattern[j] != '>') {
+        return false;
+    }
+    
+    // Extract capture name
+    int name_len = j - (pos + 2);
+    if (name_len >= MAX_CAPTURE_NAME) {
+        return false;
+    }
+    
+    strncpy(cap_name, &pattern[pos + 2], name_len);
+    cap_name[name_len] = '\0';
+    
+    return true;
+}
+
+// Check if current position starts a capture start tag
+static bool is_capture_start(const char* pattern, int pos, char* cap_name) {
+    if (pattern[pos] != '<') {
+        return false;
+    }
+    
+    // Skip </ which is end tag
+    if (pattern[pos + 1] == '/') {
+        return false;
+    }
+    
+    // Find the closing >
+    int j = pos + 1;
+    while (pattern[j] != '\0' && pattern[j] != '>') {
+        j++;
+    }
+    
+    if (pattern[j] != '>') {
+        return false;
+    }
+    
+    // Extract capture name
+    int name_len = j - (pos + 1);
+    if (name_len >= MAX_CAPTURE_NAME) {
+        return false;
+    }
+    
+    strncpy(cap_name, &pattern[pos + 1], name_len);
+    cap_name[name_len] = '\0';
+    
+    return true;
+}
+
+// Parse capture start tag and emit CAPTURE_START transition
+static int parse_capture_start(const char* pattern, int* pos, int start_state) {
+    char cap_name[MAX_CAPTURE_NAME];
+    if (!is_capture_start(pattern, *pos, cap_name)) {
+        return start_state;
+    }
+    
+    int cap_id = get_capture_id(cap_name);
+    if (cap_id < 0) {
+        return start_state;
+    }
+    
+    // Create a state for the capture start
+    int cap_state = nfa_add_state_with_minimization(false);
+    
+    // Push capture ID onto stack
+    capture_stack[capture_stack_depth++] = cap_id;
+    
+    // Emit CAPTURE_START transition: CAPTURE_START followed by capture ID
+    int start_sid = find_symbol_id(DFA_CHAR_CAPTURE_START);
+    if (start_sid != -1) {
+        nfa_add_transition(start_state, cap_state, start_sid);
+    }
+    
+    // Add capture ID as a character transition (emit ID byte)
+    int id_char = cap_id;
+    int id_sid = find_symbol_id(id_char);
+    if (id_sid != -1) {
+        nfa_add_transition(cap_state, cap_state, id_sid);
+    }
+    
+    // Skip past the tag
+    while (pattern[*pos] != '\0' && pattern[*pos] != '>') {
+        (*pos)++;
+    }
+    if (pattern[*pos] == '>') {
+        (*pos)++;
+    }
+    
+    return cap_state;
+}
+
+// Parse capture end tag and emit CAPTURE_END transition
+static int parse_capture_end(const char* pattern, int* pos, int start_state) {
+    char cap_name[MAX_CAPTURE_NAME];
+    if (!is_capture_end(pattern, *pos, cap_name)) {
+        return start_state;
+    }
+    
+    int cap_id = get_capture_id(cap_name);
+    if (cap_id < 0) {
+        return start_state;
+    }
+    
+    // Create a state for the capture end
+    int cap_state = nfa_add_state_with_minimization(false);
+    
+    // Pop capture ID from stack (verify it matches)
+    if (capture_stack_depth > 0) {
+        capture_stack_depth--;
+    }
+    
+    // Emit CAPTURE_END transition
+    int end_sid = find_symbol_id(DFA_CHAR_CAPTURE_END);
+    if (end_sid != -1) {
+        nfa_add_transition(start_state, cap_state, end_sid);
+    }
+    
+    // Add capture ID as a character transition (emit ID byte)
+    int id_char = cap_id;
+    int id_sid = find_symbol_id(id_char);
+    if (id_sid != -1) {
+        nfa_add_transition(cap_state, cap_state, id_sid);
+    }
+    
+    // Skip past the tag
+    while (pattern[*pos] != '\0' && pattern[*pos] != '>') {
+        (*pos)++;
+    }
+    if (pattern[*pos] == '>') {
+        (*pos)++;
+    }
+    
+    return cap_state;
+}
+
 // Parse category ID
 int parse_category(const char* name) {
     for (int i = 0; i < CAT_COUNT; i++) {
@@ -708,9 +914,20 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
     return class_state;
 }
 
-// Parse primary element: char, escaped, quoted, class, or group
+// Parse primary element: char, escaped, quoted, class, group, or capture tag
 static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
     char c = pattern[*pos];
+
+    // Check for capture start tag <name>
+    char cap_name[MAX_CAPTURE_NAME];
+    if (is_capture_start(pattern, *pos, cap_name)) {
+        return parse_capture_start(pattern, pos, start_state);
+    }
+
+    // Check for capture end tag </name>
+    if (is_capture_end(pattern, *pos, cap_name)) {
+        return parse_capture_end(pattern, pos, start_state);
+    }
 
     switch (c) {
         case '\\':
@@ -961,15 +1178,35 @@ static void parse_pattern_full(const char* pattern, const char* category,
     // Add EOS transition to accepting state
     int eos_sid = find_symbol_id(DFA_CHAR_EOS);
     if (eos_sid != -1) {
+        int eos_target_state = end_state;
+
+        // Check if end_state is a shared state with outgoing transitions
+        // If so, create a fork state to avoid marking the shared state as accepting
+        bool has_outgoing = false;
+        for (int s = 0; s < MAX_SYMBOLS; s++) {
+            if (nfa[end_state].transitions[s] != -1 || nfa[end_state].multi_targets[s][0] != '\0') {
+                has_outgoing = true;
+                break;
+            }
+        }
+
+        if (has_outgoing) {
+            // Create a fork state - this is where the pattern can end
+            // The shared end_state continues to its other transitions
+            eos_target_state = nfa_add_state_with_minimization(false);
+            nfa_add_transition(end_state, eos_target_state, eos_sid);
+            nfa_finalize_state(end_state);
+        }
+
         int accepting = nfa_add_state_with_minimization(true);
-        nfa_add_transition(end_state, accepting, eos_sid);
+        nfa_add_transition(eos_target_state, accepting, eos_sid);
 
         nfa_add_tag(accepting, category);
         if (subcategory[0] != '\0') nfa_add_tag(accepting, subcategory);
         if (operations[0] != '\0') nfa_add_tag(accepting, operations);
         nfa_add_tag(accepting, action);
 
-        nfa_finalize_state(end_state);
+        nfa_finalize_state(eos_target_state);
         nfa_finalize_state(accepting);
     }
 }
@@ -1004,9 +1241,22 @@ void parse_advanced_pattern(const char* line) {
         if (name_end != NULL && fragment_count < MAX_FRAGMENTS) {
             size_t name_len = name_end - name_start;
             if (name_len < MAX_FRAGMENT_NAME) {
+                // Normalize separator from single colon to double colon for consistency
                 strncpy(fragments[fragment_count].name, name_start, name_len);
                 fragments[fragment_count].name[name_len] = '\0';
-
+                // Replace first single colon with double colon
+                for (int i = 0; fragments[fragment_count].name[i]; i++) {
+                    if (fragments[fragment_count].name[i] == ':') {
+                        // Shift remaining characters to make room for second colon
+                        int len = strlen(fragments[fragment_count].name);
+                        for (int k = len; k > i; k--) {
+                            fragments[fragment_count].name[k] = fragments[fragment_count].name[k - 1];
+                        }
+                        fragments[fragment_count].name[i] = ':';
+                        fragments[fragment_count].name[i + 1] = ':';
+                        break;  // Only replace first colon (namespace separator)
+                    }
+                }
                 // Skip past ] and whitespace to get value
                 const char* value_start = name_end + 1;
                 while (*value_start == ' ' || *value_start == '\t') value_start++;

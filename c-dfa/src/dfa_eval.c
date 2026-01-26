@@ -5,6 +5,13 @@
 
 static const dfa_t* current_dfa = NULL;
 
+// Capture tracking during evaluation
+typedef struct {
+    size_t start_pos;    // Start position of capture
+    bool active;         // Is capture currently active?
+    int capture_id;      // Capture ID for lookup
+} eval_capture_t;
+
 bool dfa_init(const void* dfa_data, size_t size) {
     if (dfa_data == NULL || size < sizeof(dfa_t)) {
         return false;
@@ -38,11 +45,20 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
         return false;
     }
 
+    // Initialize result
     result->category = DFA_CMD_UNKNOWN;
     result->category_mask = 0;
     result->final_state = 0;
     result->matched = false;
     result->matched_length = 0;
+    result->capture_count = 0;
+    for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
+        result->captures[i].start = 0;
+        result->captures[i].end = 0;
+        result->captures[i].name[0] = '\0';
+        result->captures[i].active = false;
+        result->captures[i].completed = false;
+    }
 
     if (length == 0) {
         length = strlen(input);
@@ -64,6 +80,14 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
     }
 
     const dfa_state_t* current_state = (const dfa_state_t*)((const char*)current_dfa + initial_state_offset);
+
+    // Initialize capture tracking
+    eval_capture_t active_captures[DFA_MAX_CAPTURES];
+    for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
+        active_captures[i].start_pos = 0;
+        active_captures[i].active = false;
+        active_captures[i].capture_id = -1;
+    }
 
     size_t pos = 0;
     for (pos = 0; pos < length && pos < 1000; pos++) {
@@ -91,14 +115,27 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                 unsigned char trans_char = (unsigned char)trans[i].character;
                 uint32_t next_trans_offset = trans[i].next_state_offset;
 
-                if (trans_char == DFA_CHAR_ANY || trans_char == c) {
-                    if (next_trans_offset == 0) {
-                        result->final_state = current_state->flags;
-                        result->category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-                        result->matched_length = pos;
-                        return true;
-                    }
+                // Check for CAPTURE_START (0xF0)
+                if (trans_char == DFA_CHAR_CAPTURE_START) {
+                    // Next character is the capture ID
+                    continue; // Skip to next transition which should have the ID
+                }
 
+                // Check for capture ID byte
+                bool is_capture_id = false;
+                int cap_id = -1;
+                for (int ci = 0; ci < DFA_MAX_CAPTURES; ci++) {
+                    if (active_captures[ci].capture_id == trans_char && active_captures[ci].active) {
+                        is_capture_id = true;
+                        break;
+                    }
+                }
+                if (!is_capture_id && trans_char >= 0 && trans_char < DFA_MAX_CAPTURES) {
+                    // This might be a capture ID we're starting
+                    cap_id = trans_char;
+                }
+
+                if (trans_char == DFA_CHAR_ANY || trans_char == c) {
                     const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_trans_offset);
 
                     current_state = next_state;
@@ -115,6 +152,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
             return true;
         }
 
+        // Check for accepting state
         if (current_state->flags & DFA_STATE_ACCEPTING) {
             result->matched = true;
             result->final_state = current_state->flags;
@@ -128,6 +166,17 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
             else if (result->category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
             else if (result->category_mask & 0x10) result->category = DFA_CMD_NETWORK;
             else if (result->category_mask & 0x20) result->category = DFA_CMD_ADMIN;
+        }
+    }
+
+    // Process captures at end of input
+    for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
+        if (active_captures[i].active) {
+            result->captures[result->capture_count].start = active_captures[i].start_pos;
+            result->captures[result->capture_count].end = pos;
+            result->captures[result->capture_count].active = true;
+            result->captures[result->capture_count].completed = true;
+            result->capture_count++;
         }
     }
 
@@ -145,7 +194,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                     result->matched_length = pos;
                     result->final_state = trans[i].next_state_offset;
                     result->category_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
-                    
+
                     // Derive legacy category enum from mask for backward compatibility
                     if (result->category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
                     else if (result->category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
@@ -196,6 +245,36 @@ uint16_t dfa_get_state_count(void) {
         return 0;
     }
     return current_dfa->state_count;
+}
+
+int dfa_get_capture(const dfa_result_t* result, int index, const char** out_start, size_t* out_length) {
+    if (result == NULL || index < 0 || index >= result->capture_count) {
+        return -1;
+    }
+
+    const dfa_capture_t* cap = &result->captures[index];
+    if (!cap->completed || cap->start >= cap->end) {
+        return -1;
+    }
+
+    // We need the original input to extract the capture
+    // This is a limitation - the input is not stored in result
+    // For now, return the indices
+    if (out_start != NULL) {
+        *out_start = NULL; // Would need input to provide this
+    }
+    if (out_length != NULL) {
+        *out_length = cap->end - cap->start;
+    }
+
+    return (int)(cap->end - cap->start);
+}
+
+const char* dfa_get_capture_name(const dfa_result_t* result, int index) {
+    if (result == NULL || index < 0 || index >= result->capture_count) {
+        return NULL;
+    }
+    return result->captures[index].name[0] != '\0' ? result->captures[index].name : NULL;
 }
 
 bool dfa_reset(void) {
