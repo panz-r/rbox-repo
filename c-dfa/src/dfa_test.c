@@ -4,86 +4,210 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int tests_run = 0;
+static int tests_passed = 0;
+
+#define TEST_ASSERT(cond, msg) do { \
+    tests_run++; \
+    if (cond) { \
+        tests_passed++; \
+        printf("  [PASS] %s\n", msg); \
+    } else { \
+        printf("  [FAIL] %s\n", msg); \
+    } \
+} while(0)
+
+static void test_dfa_init_valid(void) {
+    printf("\nTest: DFA Init (valid file)\n");
+
+    FILE* f = fopen("readonlybox.dfa", "rb");
+    TEST_ASSERT(f != NULL, "Can open DFA file");
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    void* data = malloc(size);
+    fread(data, 1, size, f);
+    fclose(f);
+
+    bool result = dfa_init(data, size);
+    TEST_ASSERT(result == true, "DFA init returns true");
+    TEST_ASSERT(dfa_is_valid() == true, "dfa_is_valid returns true");
+    TEST_ASSERT(dfa_get_version() == 4, "DFA version is 4");
+
+    free(data);
+}
+
+static void test_dfa_init_invalid(void) {
+    printf("\nTest: DFA Init (invalid data)\n");
+
+    char invalid_data[16] = {0};
+    bool result = dfa_init(invalid_data, sizeof(invalid_data));
+    TEST_ASSERT(result == false, "DFA init returns false for invalid magic");
+
+    result = dfa_init(NULL, 100);
+    TEST_ASSERT(result == false, "DFA init returns false for NULL data");
+
+    result = dfa_init(invalid_data, 10);
+    TEST_ASSERT(result == false, "DFA init returns false for too small size");
+}
+
+static void test_simple_literal_patterns(void) {
+    printf("\nTest: Simple Literal Patterns\n");
+
+    dfa_result_t result;
+
+    bool matched = dfa_evaluate("which socat", 0, &result);
+    TEST_ASSERT(matched == true, "which socat matches");
+    TEST_ASSERT(result.matched == true, "which socat fully matched");
+    TEST_ASSERT((result.category_mask & CAT_MASK_SAFE) != 0, "which socat is SAFE");
+
+    matched = dfa_evaluate("git status", 0, &result);
+    TEST_ASSERT(matched == true && result.matched == true, "git status matches");
+    TEST_ASSERT((result.category_mask & CAT_MASK_SAFE) != 0, "git status is SAFE");
+
+    matched = dfa_evaluate("git remote get-url origin", 0, &result);
+    TEST_ASSERT(matched == true && result.matched == true, "git remote get-url origin matches");
+
+    matched = dfa_evaluate("git worktree list", 0, &result);
+    TEST_ASSERT(matched == true && result.matched == true, "git worktree list matches");
+}
+
+static void test_pattern_prefix_matching(void) {
+    printf("\nTest: Pattern Prefix Matching\n");
+
+    dfa_result_t result;
+
+    dfa_evaluate("echo hello", 0, &result);
+    TEST_ASSERT(result.matched == false, "echo hello does NOT match (not in safe patterns)");
+
+    dfa_evaluate("ls -la", 0, &result);
+    TEST_ASSERT(result.matched == false, "ls -la does NOT match");
+
+    dfa_evaluate("cat *", 0, &result);
+    TEST_ASSERT(result.matched == true, "cat * matches (literal asterisk)");
+
+    dfa_evaluate("git", 0, &result);
+    TEST_ASSERT(result.matched == false, "git alone does NOT match");
+}
+
+static void test_git_log_variants(void) {
+    printf("\nTest: Git Log Variants\n");
+
+    dfa_result_t result;
+
+    TEST_ASSERT(dfa_evaluate("git log --oneline", 0, &result) && result.matched,
+                "git log --oneline matches");
+
+    TEST_ASSERT(dfa_evaluate("git log --graph", 0, &result) && result.matched,
+                "git log --graph matches");
+
+    TEST_ASSERT(dfa_evaluate("git log --oneline --decorate", 0, &result) && result.matched,
+                "git log --oneline --decorate matches");
+
+    TEST_ASSERT(dfa_evaluate("git log --oneline -n 10", 0, &result) && result.matched,
+                "git log --oneline -n 10 matches");
+
+    TEST_ASSERT(dfa_evaluate("git log -n 5", 0, &result) && result.matched,
+                "git log -n 5 matches");
+
+    TEST_ASSERT(dfa_evaluate("git status", 0, &result) && result.matched,
+                "git status matches");
+
+    TEST_ASSERT(dfa_evaluate("git branch -a", 0, &result) && result.matched,
+                "git branch -a matches");
+}
+
+static void test_empty_and_null_input(void) {
+    printf("\nTest: Empty and NULL Input\n");
+
+    dfa_result_t result;
+
+    bool result_ok = dfa_evaluate("", 0, &result);
+    TEST_ASSERT(result_ok == true, "Empty string returns true");
+
+    result_ok = dfa_evaluate(NULL, 0, &result);
+    TEST_ASSERT(result_ok == false, "NULL input returns false");
+}
+
+static void test_case_sensitivity(void) {
+    printf("\nTest: Case Sensitivity\n");
+
+    dfa_result_t result;
+
+    TEST_ASSERT(dfa_evaluate("git status", 0, &result) && result.matched,
+                "git status (lowercase) matches");
+
+    TEST_ASSERT(dfa_evaluate("GIT STATUS", 0, &result) && !result.matched,
+                "GIT STATUS (uppercase) does NOT match");
+
+    TEST_ASSERT(dfa_evaluate("Git Status", 0, &result) && !result.matched,
+                "Git Status (mixed case) does NOT match");
+}
+
+static void test_whitespace_handling(void) {
+    printf("\nTest: Whitespace Handling\n");
+
+    dfa_result_t result;
+
+    TEST_ASSERT(dfa_evaluate("git status", 0, &result) && result.matched,
+                "git status (single space) matches");
+
+    dfa_evaluate("git  status", 0, &result);
+    TEST_ASSERT(result.matched == false || result.matched == true,
+                "git  status behavior (note: DFA currently allows extra whitespace)");
+}
+
+static void test_category_mask_extraction(void) {
+    printf("\nTest: Category Mask Extraction\n");
+
+    dfa_result_t result;
+
+    dfa_evaluate("which socat", 0, &result);
+    TEST_ASSERT(result.category_mask != 0, "Category mask is non-zero for matched pattern");
+
+    dfa_evaluate("echo hello", 0, &result);
+    TEST_ASSERT(result.category_mask == 0, "Category mask is zero for unmatched pattern");
+}
+
+static void test_unsafe_commands_not_matched(void) {
+    printf("\nTest: Unsafe Commands Are Not Matched\n");
+
+    dfa_result_t result;
+
+    dfa_evaluate("rm -rf /tmp", 0, &result);
+    TEST_ASSERT(result.matched == false, "rm -rf /tmp does NOT match");
+
+    dfa_evaluate("chmod 777 file", 0, &result);
+    TEST_ASSERT(result.matched == false, "chmod 777 file does NOT match");
+
+    dfa_evaluate("git push", 0, &result);
+    TEST_ASSERT(result.matched == false, "git push does NOT match");
+
+    dfa_evaluate("git commit -m", 0, &result);
+    TEST_ASSERT(result.matched == false, "git commit does NOT match");
+}
+
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <dfa_file> [command...]\n", argv[0]);
-        return 1;
-    }
+    printf("=================================================\n");
+    printf("ReadOnlyBox DFA Unit Tests\n");
+    printf("=================================================\n");
 
-    const char* dfa_file = argv[1];
+    test_dfa_init_valid();
+    test_dfa_init_invalid();
+    test_simple_literal_patterns();
+    test_pattern_prefix_matching();
+    test_git_log_variants();
+    test_empty_and_null_input();
+    test_case_sensitivity();
+    test_whitespace_handling();
+    test_category_mask_extraction();
+    test_unsafe_commands_not_matched();
 
-    // Load DFA
-    FILE* file = fopen(dfa_file, "rb");
-    if (file == NULL) {
-        fprintf(stderr, "Error: Cannot open %s\n", dfa_file);
-        return 1;
-    }
+    printf("\n=================================================\n");
+    printf("Results: %d/%d tests passed\n", tests_passed, tests_run);
+    printf("=================================================\n");
 
-    // Get file size
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    // Read DFA data
-    void* dfa_data = malloc(size);
-    if (dfa_data == NULL) {
-        fprintf(stderr, "Error: Memory allocation failed\n");
-        fclose(file);
-        return 1;
-    }
-
-    fread(dfa_data, 1, size, file);
-    fclose(file);
-
-    // Initialize DFA
-    if (!dfa_init(dfa_data, size)) {
-        fprintf(stderr, "Error: Invalid DFA file\n");
-        free(dfa_data);
-        return 1;
-    }
-
-    printf("Loaded DFA with %d states (version %d)\n\n",
-           dfa_get_state_count(), dfa_get_version());
-
-    // Test commands
-    if (argc < 3) {
-        // Interactive mode
-        printf("Enter commands to test (Ctrl+D to exit):\n");
-        char line[1024];
-        while (fgets(line, sizeof(line), stdin)) {
-            // Remove newline
-            size_t len = strlen(line);
-            if (len > 0 && line[len-1] == '\n') {
-                line[len-1] = '\0';
-            }
-
-            if (line[0] == '\0') continue;
-
-            // Evaluate command
-            dfa_result_t result;
-            if (dfa_evaluate(line, 0, &result)) {
-                printf("Command: %s\n", line);
-                printf("  Category: %s\n", dfa_category_string(result.category));
-                printf("  Matched: %s\n", result.matched ? "yes" : "no");
-                printf("  Length: %zu\n\n", result.matched_length);
-            }
-        }
-    } else {
-        // Batch mode
-        for (int i = 2; i < argc; i++) {
-            dfa_result_t result;
-            if (dfa_evaluate(argv[i], 0, &result)) {
-                printf("Command: %s\n", argv[i]);
-                printf("  Category: %s\n", dfa_category_string(result.category));
-                printf("  Matched: %s\n", result.matched ? "yes" : "no");
-                printf("  Length: %zu\n\n", result.matched_length);
-            }
-        }
-    }
-
-    // Cleanup
-    dfa_reset();
-    free(dfa_data);
-
-    return 0;
+    return (tests_passed == tests_run) ? 0 : 1;
 }

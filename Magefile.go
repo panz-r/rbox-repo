@@ -127,6 +127,8 @@ func BuildClient() error {
 		filepath.Join(wd, "internal/client", "dfa.c"),
 		filepath.Join(wd, "internal/client", "dfa_static_data.c"),
 		filepath.Join(cdfaSrcDir, "dfa_eval.c"),
+		filepath.Join(cdfaSrcDir, "shell_tokenizer.c"),
+		filepath.Join(cdfaSrcDir, "shell_tokenizer_ext.c"),
 		"-I"+filepath.Join(cdfaDir, "include"),
 		"-lpthread", "-ldl")
 	buildClient.Stdout = os.Stdout
@@ -249,6 +251,9 @@ func Uninstall() error {
 // Test all tools - builds first, then runs all tests
 func Test() error {
 	mg.Deps(Build)
+	if err := DfaTest(); err != nil {
+		return err
+	}
 	if err := UnitTest(); err != nil {
 		return err
 	}
@@ -302,6 +307,69 @@ func UnitTest() error {
 	}
 
 	return nil
+}
+
+// Run C DFA unit tests
+func DfaTest() error {
+	fmt.Println("Running DFA unit tests...")
+
+	wd, _ := os.Getwd()
+	cdfaDir := filepath.Join(wd, "c-dfa")
+	cdfaSrcDir := filepath.Join(cdfaDir, "src")
+	dfaTest := filepath.Join(cdfaDir, "dfa_test")
+	shellTest := filepath.Join(cdfaDir, "shell_tokenizer_test")
+
+	// Build dfa_test if needed
+	if _, err := os.Stat(dfaTest); os.IsNotExist(err) {
+		fmt.Println("Building dfa_test...")
+		buildCmd := exec.Command("gcc", "-o", dfaTest,
+			filepath.Join(cdfaSrcDir, "dfa_test.c"),
+			filepath.Join(cdfaSrcDir, "dfa_eval.c"),
+			filepath.Join(cdfaDir, "tools", "readonlybox_dfa.c"),
+			"-I"+filepath.Join(cdfaDir, "include"),
+			"-O2")
+		buildCmd.Dir = cdfaDir
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			return fmt.Errorf("failed to build dfa_test: %w", err)
+		}
+	}
+
+	// Run dfa_test
+	fmt.Println("\n--- DFA Tests ---")
+	cmd := exec.Command(dfaTest)
+	cmd.Dir = cdfaDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	// Build shell_tokenizer_test if needed
+	if _, err := os.Stat(shellTest); os.IsNotExist(err) {
+		fmt.Println("\nBuilding shell_tokenizer_test...")
+		buildCmd := exec.Command("gcc", "-o", shellTest,
+			filepath.Join(cdfaSrcDir, "shell_tokenizer_test.c"),
+			filepath.Join(cdfaSrcDir, "shell_tokenizer.c"),
+			filepath.Join(cdfaSrcDir, "shell_tokenizer_ext.c"),
+			"-I"+filepath.Join(cdfaDir, "include"),
+			"-O2")
+		buildCmd.Dir = cdfaDir
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			return fmt.Errorf("failed to build shell_tokenizer_test: %w", err)
+		}
+	}
+
+	// Run shell_tokenizer_test
+	fmt.Println("\n--- Shell Tokenizer Tests ---")
+	cmd = exec.Command(shellTest)
+	cmd.Dir = cdfaDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // Run integration tests

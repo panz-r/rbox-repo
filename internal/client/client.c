@@ -25,6 +25,7 @@
 #include <sys/select.h>
 
 #include "dfa.h"
+#include <shell_tokenizer.h>
 
 /* Protocol constants */
 #define ROBO_MAGIC      0x524F424F
@@ -964,8 +965,95 @@ static void augment_command_with_app(char *cmd_str, size_t max_len, const char *
     }
 }
 
+/* Wrapper around c-dfa shell tokenizer - extracts individual commands */
+static int extract_commands_from_shell(const char* cmd, char commands[][256], int max_commands) {
+    shell_command_t* shell_cmds = NULL;
+    size_t cmd_count = 0;
+
+    if (!shell_tokenize_commands(cmd, &shell_cmds, &cmd_count)) {
+        return 0;
+    }
+
+    int result = 0;
+    for (size_t i = 0; i < cmd_count && result < max_commands; i++) {
+        shell_command_t* sc = &shell_cmds[i];
+        /* Extract command by concatenating tokens up to first pipe/semicolon */
+        char buf[256] = "";
+        size_t buf_len = 0;
+
+        for (size_t j = 0; j < sc->token_count && buf_len < sizeof(buf) - 1; j++) {
+            shell_token_t* tok = &sc->tokens[j];
+            /* Skip operator tokens */
+            if (tok->type == TOKEN_PIPE || tok->type == TOKEN_SEMICOLON ||
+                tok->type == TOKEN_AND || tok->type == TOKEN_OR ||
+                tok->type == TOKEN_REDIRECT_IN || tok->type == TOKEN_REDIRECT_OUT ||
+                tok->type == TOKEN_REDIRECT_APPEND) {
+                break;
+            }
+            /* Add space between arguments */
+            if (buf_len > 0 && buf_len < sizeof(buf) - 1) {
+                buf[buf_len++] = ' ';
+            }
+            /* Copy token */
+            size_t tok_len = tok->length;
+            if (buf_len + tok_len >= sizeof(buf)) {
+                tok_len = sizeof(buf) - buf_len - 1;
+            }
+            memcpy(buf + buf_len, tok->start, tok_len);
+            buf_len += tok_len;
+        }
+
+        if (buf_len > 0) {
+            strncpy(commands[result], buf, 255);
+            commands[result][255] = '\0';
+            result++;
+        }
+    }
+
+    shell_free_commands(shell_cmds, cmd_count);
+    return result;
+}
+
+/* Fast path check - handles shell constructs (pipes, semicolons, etc.) */
 static int should_fast_allow(const char *cmd) {
-    return dfa_should_allow(cmd);
+    /* First check the whole command as-is */
+    if (dfa_should_allow(cmd)) {
+        return 1;
+    }
+
+    /* Check if this is a simple command (no shell operators) */
+    int has_operator = 0;
+    const char* p = cmd;
+    int in_quote = 0;
+    while (*p) {
+        if (*p == '"' || *p == '\'') {
+            in_quote = !in_quote;
+        } else if (!in_quote && (*p == '|' || *p == ';' ||
+                   (*p == '&' && p[1] == '&') ||
+                   (*p == '|' && p[1] == '|'))) {
+            has_operator = 1;
+            break;
+        }
+        p++;
+    }
+
+    /* If no shell operators and dfa_should_allow failed, deny */
+    if (!has_operator) {
+        return 0;
+    }
+
+    /* Tokenize and check each command separately */
+    char commands[8][256];
+    int cmd_count = extract_commands_from_shell(cmd, commands, 8);
+
+    /* All commands must be allowed */
+    for (int i = 0; i < cmd_count; i++) {
+        if (!dfa_should_allow(commands[i])) {
+            return 0;
+        }
+    }
+
+    return 1;
 }
 
 /* Request decision from server - returns 0 on allow, -1 on deny, 1 on error (retry) */
