@@ -13,7 +13,7 @@
 # Fragment definitions using character sets
 # These define complete patterns that can be referenced with ((namespace::name))
 [fragment:git:shortref] ((git::UPPERCASE))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))
-[fragment:git:longref] ((git::UPPERCASE))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))
+[fragment:git:longref] ((git::UPPERCASE))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))
 [fragment:git:refname] ((git::UPPERCASE))|((git::LOWERCASE))|((git::DIGIT))
 [fragment:git:reforigin] refs/((git::UPPERCASE))|((git::LOWERCASE))|((git::DIGIT))
 [fragment:git:reftype] heads/|tags/|remotes/
@@ -91,3 +91,17 @@
 # Commands from user_log.xml
 [safe:system:read] which bwrap
 [safe:system:read] which socat
+
+# Test patterns with captures - capture tags wrap content
+[safe:file:read] cat <filename>((filename))</filename>
+# [safe:git:read] git log -n <count>((count))</count>
+# [safe:git:read] git show <commit>((commit))</commit>
+# [safe:git:read] git checkout <branch>((branch))</branch>
+# [safe:system:read] whoami <username>((username))</username>
+
+# Fragment definitions for capture patterns
+[fragment:filename] ((SAFE::FILENAME))|/|=
+[fragment:count] ((git::DIGIT))+
+[fragment:commit] ((git::LOWERCASE))|((git::DIGIT))+
+[fragment:branch] ((SAFE::FILENAME))|/
+[fragment:username] (((git::LOWERCASE))|((git::UPPERCASE))|((git::DIGIT))|_)+

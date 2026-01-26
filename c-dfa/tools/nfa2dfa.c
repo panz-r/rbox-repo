@@ -42,8 +42,8 @@ typedef struct {
     uint32_t transitions_offset;
     uint16_t transition_count;
     uint16_t flags;  // Bits 0-7: state flags, Bits 8-15: category_mask
-    int transitions[MAX_SYMBOLS];
-    bool transitions_from_any[MAX_SYMBOLS];
+    int transitions[256];            // Character-based transitions (0-255)
+    bool transitions_from_any[256];
     int nfa_states[MAX_STATES];
     int nfa_state_count;
 } build_dfa_state_t;
@@ -287,10 +287,10 @@ void flatten_dfa(void) {
         }
     }
     for (int state = 0; state < dfa_state_count; state++) {
-        int new_transitions[MAX_SYMBOLS];
-        bool new_from_any[MAX_SYMBOLS];
+        int new_transitions[256];  // Character-based (0-255)
+        bool new_from_any[256];
         int new_count = 0;
-        for (int i = 0; i < MAX_SYMBOLS; i++) {
+        for (int i = 0; i < 256; i++) {
             new_transitions[i] = -1;
             new_from_any[i] = false;
         }
@@ -303,7 +303,7 @@ void flatten_dfa(void) {
                 int start_char = alphabet[s].start_char;
                 int end_char = alphabet[s].end_char;
                 for (int c = start_char; c <= end_char; c++) {
-                    if (c >= 0 && c < MAX_SYMBOLS && new_transitions[c] == -1) {
+                    if (c >= 0 && c < 256 && new_transitions[c] == -1) {
                         new_transitions[c] = target;
                         new_from_any[c] = false;
                         new_count++;
@@ -314,7 +314,7 @@ void flatten_dfa(void) {
         // SECOND PASS: ANY symbol to fill missing characters
         if (any_symbol >= 0 && dfa[state].transitions[any_symbol] != -1) {
             int any_target = dfa[state].transitions[any_symbol];
-            for (int c = 0; c < MAX_SYMBOLS; c++) {
+            for (int c = 0; c < 256; c++) {
                 if (new_transitions[c] == -1) {
                     new_transitions[c] = any_target;
                     new_from_any[c] = true;
@@ -322,7 +322,7 @@ void flatten_dfa(void) {
                 }
             }
         }
-        for (int i = 0; i < MAX_SYMBOLS; i++) {
+        for (int i = 0; i < 256; i++) {
             dfa[state].transitions[i] = new_transitions[i];
             dfa[state].transitions_from_any[i] = new_from_any[i];
         }
@@ -517,7 +517,7 @@ void write_dfa_file(const char* filename) {
             accepting_mask |= (1 << i);
         }
         // FIRST PASS: specific character transitions
-        for (int c = 0; c < MAX_SYMBOLS; c++) {
+        for (int c = 0; c < 256; c++) {
             if (dfa[i].transitions[c] != -1 && !dfa[i].transitions_from_any[c]) {
                 if (current_transition >= total_transitions) {
                     fprintf(stderr, "Error: Transition count mismatch for state %d\n", i);
@@ -535,7 +535,7 @@ void write_dfa_file(const char* filename) {
             }
         }
         // SECOND PASS: ANY wildcard transitions
-        for (int c = 0; c < MAX_SYMBOLS; c++) {
+        for (int c = 0; c < 256; c++) {
             if (dfa[i].transitions[c] != -1 && dfa[i].transitions_from_any[c]) {
                 if (current_transition >= total_transitions) {
                     fprintf(stderr, "Error: Transition count mismatch for state %d\n", i);

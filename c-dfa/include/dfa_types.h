@@ -81,7 +81,7 @@ typedef struct {
 /**
  * Current DFA version
  */
-#define DFA_VERSION 3  // Version 3: character-based transitions, no alphabet_map
+#define DFA_VERSION 4  // Version 4: character-based transitions with capture support
 
 /**
  * Maximum number of states in a single DFA
@@ -95,14 +95,17 @@ typedef struct {
 
 /**
  * Special character values
+ * Note: Capture markers use high values (>= 0xF0) to avoid conflicts with normal characters
  */
 #define DFA_CHAR_ANY 0x00               // Wildcard (matches any character)
 #define DFA_CHAR_EPSILON 0x01           // Epsilon transition
-#define DFA_CHAR_END 0x00               // End of transition table marker
-#define DFA_CHAR_WHITESPACE 0x02        // Matches any whitespace character (space, tab, newline)
-#define DFA_CHAR_VERBATIM_SPACE 0x03    // Matches exactly one space character
-#define DFA_CHAR_NORMALIZING_SPACE 0x04 // Matches one or more space/tab characters (normalizing)
+#define DFA_CHAR_END 0x02               // End of transition table marker (NOT the same as ANY!)
+#define DFA_CHAR_WHITESPACE 0x03        // Matches any whitespace character (space, tab, newline)
+#define DFA_CHAR_VERBATIM_SPACE 0x04    // Matches exactly one space character
+#define DFA_CHAR_NORMALIZING_SPACE 0x05 // Matches one or more space/tab characters (normalizing)
 #define DFA_CHAR_EOS 0x05               // End of String marker (used for accepting)
+#define DFA_CHAR_CAPTURE_START 0xF0     // Capture start marker (next byte is kind)
+#define DFA_CHAR_CAPTURE_END 0xF1       // Capture end marker
 
 /**
  * Category bitmask constants (8 categories, one bit each)

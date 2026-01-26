@@ -16,8 +16,8 @@ bool dfa_init(const void* dfa_data, size_t size) {
         return false;
     }
 
-    if (dfa->version != 3) {
-        fprintf(stderr, "Error: Only DFA version 3 is supported (got version %d)\n", dfa->version);
+    if (dfa->version != 3 && dfa->version != 4) {
+        fprintf(stderr, "Error: Only DFA version 3 or 4 is supported (got version %d)\n", dfa->version);
         return false;
     }
 

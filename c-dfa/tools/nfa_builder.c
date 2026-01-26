@@ -250,14 +250,10 @@ void load_alphabet(const char* filename) {
                 exit(1);
             }
 
-            fprintf(stderr, "DEBUG load_alphabet: line='%s', symbol_id=%d, start_char=%d, end_char=%d, special='%s'\n",
-                    line, symbol_id, start_char, end_char, special);
-
             alphabet[alphabet_size].symbol_id = symbol_id;
             alphabet[alphabet_size].start_char = start_char;
             alphabet[alphabet_size].end_char = end_char;
             alphabet[alphabet_size].is_special = (strcmp(special, "special") == 0);
-            fprintf(stderr, "DEBUG load_alphabet: is_special=%d\n", alphabet[alphabet_size].is_special);
             alphabet_size++;
         }
     }
@@ -326,13 +322,9 @@ int nfa_finalize_state(int state) {
             for (int t = 0; t < MAX_SYMBOLS; t++) {
                 if (nfa[s].transitions[t] == state) {
                     nfa[s].transitions[t] = equivalent_state;
-                    fprintf(stderr, "DEBUG: Redirected transition from State %d on Symbol %d to State %d\n",
-                            s, t, equivalent_state);
                 }
             }
         }
-        fprintf(stderr, "DEBUG: State %d merged into %d (signature=%llu)\n",
-                state, equivalent_state, (unsigned long long)signature);
         return equivalent_state;
     }
 
@@ -908,17 +900,12 @@ static void parse_pattern_full(const char* pattern, const char* category,
     int start_state;
     int pattern_start_pos = 0;
 
-    fprintf(stderr, "DEBUG parse_pattern_full: pattern='%s', nfa_state_count=%d\n", pattern, nfa_state_count);
-
     if (nfa_state_count > 1 && pattern[0] != '\0') {
         // Try to find a common prefix with existing NFA paths
         int shared_state = 0;
         int shared_pos = 0;
 
         int first_char_sid = find_symbol_id(pattern[0]);
-        fprintf(stderr, "DEBUG: first_char='%c', sid=%d, transition=%d\n", 
-                pattern[0], first_char_sid, 
-                first_char_sid != -1 ? nfa[0].transitions[first_char_sid] : -1);
 
         if (first_char_sid != -1 && nfa[0].transitions[first_char_sid] != -1) {
             // Try following existing transitions to find longest common prefix
@@ -939,14 +926,11 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 // Found common prefix - start from there
                 start_state = shared_state;
                 pattern_start_pos = shared_pos;
-                fprintf(stderr, "DEBUG: Found common prefix of %d chars, state=%d\n", 
-                        shared_pos, start_state);
             } else {
                 // No common prefix - create new start state
                 start_state = nfa_add_state_with_minimization(false);
                 nfa_add_transition(0, start_state, first_char_sid);
                 pattern_start_pos = 1;  // Skip first character (already consumed)
-                fprintf(stderr, "DEBUG: No prefix match, created new state %d from State 0\n", start_state);
             }
         } else {
             // First character has no transition from state 0 - create new entry
@@ -954,24 +938,17 @@ static void parse_pattern_full(const char* pattern, const char* category,
             if (first_char_sid != -1) {
                 nfa_add_transition(0, start_state, first_char_sid);
                 pattern_start_pos = 1;  // Skip first character (already consumed)
-                fprintf(stderr, "DEBUG: Created new entry state %d from State 0 on '%c'\n", 
-                        start_state, pattern[0]);
-            } else {
-                fprintf(stderr, "DEBUG: First char '%c' not in alphabet\n", pattern[0]);
             }
         }
     } else {
         // First pattern - use state 0 as start
         start_state = 0;
-        fprintf(stderr, "DEBUG: First pattern, using state 0\n");
     }
 
     // Parse the remaining pattern starting from pattern_start_pos
     char remaining[512];
     strncpy(remaining, pattern + pattern_start_pos, sizeof(remaining) - 1);
     remaining[sizeof(remaining) - 1] = '\0';
-
-    fprintf(stderr, "DEBUG: Parsing remaining='%s' from state %d\n", remaining, start_state);
 
     int parse_pos = 0;
     int end_state;
@@ -1103,8 +1080,6 @@ void parse_advanced_pattern(const char* line) {
                 fragment_count++;
             }
             return; // Don't process scoped fragment definitions as patterns
-        } else {
-            fprintf(stderr, "DEBUG: Line has '=' but not scoped fragment: '%s'\n", line);
         }
     }
 

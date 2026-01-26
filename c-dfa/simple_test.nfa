@@ -1,8 +1,0 @@
-State 0:
-  Accepting: no
-  Transitions: 1
-    'a' -> 1
-State 1:
-  Accepting: yes
-  Transitions: 0
-States: 2
