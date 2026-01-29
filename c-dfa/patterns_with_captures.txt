@@ -1,0 +1,6 @@
+[fragment:SAFE::FILENAME] [a-zA-Z0-9_./-]+
+[fragment:CAUTION::PATTERN] -[a-zA-Z0-9]+
+[fragment:SAFE::OPTION] -[a-zA-Z]+
+[safe:test] cat ((SAFE::FILENAME))+
+[caution:test] grep ((SAFE::FILENAME))+ ((CAUTION::PATTERN))*
+[safe:test] ls ((SAFE::OPTION))*

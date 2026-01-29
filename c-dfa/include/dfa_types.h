@@ -26,6 +26,7 @@ typedef struct {
     uint32_t transitions_offset;  // Offset to transition table
     uint16_t transition_count;    // Number of transitions
     uint16_t flags;               // State flags (lower 8 bits) | category_mask (upper 8 bits)
+    uint32_t eos_target;          // EOS transition target (0 = no EOS transition)
 } dfa_state_t;
 
 /**
@@ -103,6 +104,7 @@ typedef struct {
 #define DFA_CHAR_WHITESPACE 0x03        // Matches any whitespace character (space, tab, newline)
 #define DFA_CHAR_VERBATIM_SPACE 0x04    // Matches exactly one space character
 #define DFA_CHAR_NORMALIZING_SPACE 0xFE // Matches one or more space/tab characters (normalizing)
+#define DFA_CHAR_INSTANT 0xFF           // Non-consuming transition (for + quantifier loop-back)
 #define DFA_CHAR_EOS 0x05               // End of String marker (used for accepting) - matches alphabet symbol 1
 #define DFA_CHAR_CAPTURE_START 0xF0     // Capture start marker
 #define DFA_CHAR_CAPTURE_END 0xF1       // Capture end marker

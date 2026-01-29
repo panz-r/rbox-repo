@@ -42,6 +42,7 @@ typedef struct {
 // NFA State with category bitmask for 8-way parallel acceptance
 typedef struct {
     uint8_t category_mask;           // Bitmask of accepting categories (0-7)
+    bool is_eos_target;              // This state can accept via EOS transition
     char* tags[MAX_TAGS];             // Termination tags
     int tag_count;
     int transitions[MAX_SYMBOLS];     // -1 = no transition, otherwise state index
@@ -127,6 +128,10 @@ static int capture_count = 0;
 static int capture_stack[MAX_CAPTURES];
 static int capture_stack_depth = 0;
 
+// For + quantifier on single-char fragments: communicates the char from parse_rdp_fragment to parse_rdp_postfix
+static char pending_loop_char = '\0';
+static int pending_loop_state = -1;
+
 // Find a fragment by name
 static const char* find_fragment(const char* name) {
     for (int i = 0; i < fragment_count; i++) {
@@ -137,10 +142,37 @@ static const char* find_fragment(const char* name) {
     return NULL;
 }
 
+// Normalize fragment name: convert single colon to double colon for namespace separator
+// e.g., "git:DIGIT" -> "git::DIGIT"
+// Only normalizes if the name contains a single colon not followed by another colon
+static void normalize_fragment_name(char* name) {
+    // Check if already normalized (contains ::)
+    if (strstr(name, "::") != NULL) {
+        return; // Already has double colon, no normalization needed
+    }
+    // Find the first single colon (not followed by another colon)
+    for (int i = 0; name[i] != '\0'; i++) {
+        if (name[i] == ':' && name[i + 1] != ':') {
+            // Shift remaining characters right by one position to make room
+            int len = strlen(name);
+            if (len + 1 < MAX_FRAGMENT_NAME) {
+                for (int k = len; k > i; k--) {
+                    name[k] = name[k - 1];
+                }
+                // Insert double colon
+                name[i] = ':';
+                name[i + 1] = ':';
+            }
+            break;
+        }
+    }
+}
+
 // Initialize NFA
 void nfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
         nfa[i].category_mask = 0;
+        nfa[i].is_eos_target = false;
         nfa[i].tag_count = 0;
         for (int j = 0; j < MAX_TAGS; j++) {
             nfa[i].tags[j] = NULL;
@@ -812,6 +844,13 @@ static int parse_rdp_fragment(const char* pattern, int* pos, int start_state) {
     strncpy(frag_name, &pattern[*pos + 2], name_len);
     frag_name[name_len] = '\0';
 
+    // fprintf(stderr, "DEBUG: Looking up fragment (raw): '%s'\n", frag_name);
+
+    // Normalize fragment name (convert single colon to double colon)
+    normalize_fragment_name(frag_name);
+
+    // fprintf(stderr, "DEBUG: Looking up fragment (normalized): '%s'\n", frag_name);
+
     // Look up fragment
     const char* frag_value = find_fragment(frag_name);
     if (frag_value == NULL) {
@@ -829,17 +868,36 @@ static int parse_rdp_fragment(const char* pattern, int* pos, int start_state) {
         if (first_sid != -1) {
             nfa_add_transition(start_state, frag_start, first_sid);
         }
+
+        // Check if this is a single-character fragment (for + quantifier optimization)
+        if (frag_value[1] == '\0') {
+            // Single-char fragment: remember the char for + quantifier
+            pending_loop_char = frag_value[0];
+            pending_loop_state = frag_start;
+            // fprintf(stderr, "DEBUG: Single-char fragment '%s'='%c' (sid=%d), pending_loop_state=%d, returns frag_start=%d\n", frag_name, frag_value[0], first_sid, pending_loop_state, frag_start);
+        } else {
+            // fprintf(stderr, "DEBUG: Multi-char fragment '%s'='%s', NOT single-char\n", frag_name, frag_value);
+        }
     }
 
     // Parse the fragment value starting from frag_start
     int frag_pos = 0;
     int frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
 
+    // For + quantifier: store the fragment's end state BEFORE adding EOS transition
+    // pending_loop_char was set above for single-char fragments
+    // pending_loop_state should be the END of the fragment (frag_end)
+    if (pending_loop_char != '\0') {
+        pending_loop_state = frag_end;
+        // fprintf(stderr, "DEBUG: Fragment parsed, pending_loop_state set to frag_end=%d (was frag_start=%d)\n", pending_loop_state, frag_start);
+    }
+
     // Add EOS transition to make it a proper accepting state
     int eos_sid = find_symbol_id(DFA_CHAR_EOS);
     if (eos_sid != -1) {
         int accepting = nfa_add_state_with_minimization(false);
         nfa_add_transition(frag_end, accepting, eos_sid);
+        nfa[accepting].is_eos_target = true;  // This state can accept via EOS
         nfa_finalize_state(frag_end);
         nfa_finalize_state(accepting);
         frag_end = accepting;
@@ -981,6 +1039,18 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
 
         default:
             if (c != ' ' && c != '\t' && c != '\0') {
+                // Special handling for * as wildcard (matches any argument)
+                if (c == '*') {
+                    int any_sid = find_symbol_id(DFA_CHAR_ANY);
+                    if (any_sid != -1) {
+                        int star_state = nfa_add_state_with_minimization(false);
+                        nfa_add_transition(start_state, star_state, any_sid);
+                        nfa_add_transition(star_state, star_state, any_sid);
+                        int finalized_star = nfa_finalize_state(star_state);
+                        (*pos)++;
+                        return finalized_star;
+                    }
+                }
                 int sid = find_symbol_id(c);
                 if (sid != -1) {
                     int new_state = nfa_add_state_with_minimization(false);
@@ -1017,18 +1087,64 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 
         } else if (op == '+') {
             (*pos)++;
-            int any_sid = find_symbol_id(DFA_CHAR_ANY);
-            if (any_sid == -1) return current;
 
-            int first_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(current, first_state, any_sid);
+            // For + quantifier: fragment's end state becomes the loop entry
+            // The pattern X+ means: X followed by zero or more X
+            // Structure: current (from prev element) --frag--> frag_end (loop entry)
+            //            frag_end --char--> frag_end (loop)
+            //            frag_end --EOS--> accepting (exit)
 
-            int star_state = nfa_add_state_with_minimization(false);
-            nfa_add_transition(first_state, star_state, any_sid);
-            nfa_add_transition(star_state, star_state, any_sid);
-            int finalized_first = nfa_finalize_state(first_state);
-            int finalized_star = nfa_finalize_state(star_state);
-            current = finalized_star;
+            // pending_loop_char is set by parse_rdp_fragment for single-char fragments
+            // pending_loop_state is the fragment's end state (frag_end)
+
+            if (pending_loop_char != '\0' && pending_loop_state != -1) {
+                int char_sid = find_symbol_id(pending_loop_char);
+                int eos_sid = find_symbol_id(DFA_CHAR_EOS);
+
+                if (char_sid != -1 && eos_sid != -1) {
+                    // frag_end (pending_loop_state) becomes the loop entry
+                    // Add loop transition: frag_end --char--> frag_end
+                    nfa_add_transition(pending_loop_state, pending_loop_state, char_sid);
+
+                    // Create accepting state
+                    int accepting = nfa_add_state_with_minimization(true);
+                    nfa_add_transition(pending_loop_state, accepting, eos_sid);
+                    nfa[pending_loop_state].is_eos_target = true;
+
+                    nfa_finalize_state(pending_loop_state);
+                    nfa_finalize_state(accepting);
+
+                    // fprintf(stderr, "DEBUG: + quantifier: pending_loop_state=%d becomes loop entry, char='%c', accepting=%d\n", pending_loop_state, pending_loop_char, accepting);
+
+                    // Return accepting as the final state
+                    current = accepting;
+                }
+
+                // Clear the pending loop info
+                pending_loop_char = '\0';
+                pending_loop_state = -1;
+            } else {
+                // No pending loop state (no fragment with + quantifier)
+                // Fall back to ANY-based loop for complex patterns
+                int any_sid = find_symbol_id(DFA_CHAR_ANY);
+                int eos_sid = find_symbol_id(DFA_CHAR_EOS);
+                if (any_sid == -1 || eos_sid == -1) return current;
+
+                // current is the end of the previous element
+                // We need to loop on current
+                int star_state = nfa_add_state_with_minimization(false);
+                nfa_add_transition(current, star_state, any_sid);
+                nfa_add_transition(star_state, star_state, any_sid);
+
+                int accepting = nfa_add_state_with_minimization(true);
+                nfa_add_transition(star_state, accepting, eos_sid);
+                nfa[accepting].is_eos_target = true;
+
+                nfa_finalize_state(star_state);
+                nfa_finalize_state(accepting);
+
+                current = accepting;
+            }
 
         } else if (op == '?') {
             (*pos)++;
@@ -1117,6 +1233,8 @@ static void parse_pattern_full(const char* pattern, const char* category,
     int start_state;
     int pattern_start_pos = 0;
 
+    // fprintf(stderr, "DEBUG: parse_pattern_full '%s': nfa_state_count=%d, pattern[0]='%c' (sid=%d)\n", pattern, nfa_state_count, pattern[0], find_symbol_id(pattern[0]));
+
     if (nfa_state_count > 1 && pattern[0] != '\0') {
         // Try to find a common prefix with existing NFA paths
         int shared_state = 0;
@@ -1124,39 +1242,76 @@ static void parse_pattern_full(const char* pattern, const char* category,
 
         int first_char_sid = find_symbol_id(pattern[0]);
 
-        if (first_char_sid != -1 && nfa[0].transitions[first_char_sid] != -1) {
-            // Try following existing transitions to find longest common prefix
-            shared_state = nfa[0].transitions[first_char_sid];
-            shared_pos = 1;
+        // Check if this is a single-character symbol (not a range)
+        // For ranges like 'a'-'z', we can't safely use prefix sharing because
+        // the transition might have been built for a different character in the range
+        bool is_single_char_symbol = (first_char_sid != -1 &&
+                                       alphabet[first_char_sid].start_char == alphabet[first_char_sid].end_char);
 
-            while (shared_pos < (int)strlen(pattern)) {
-                int c = pattern[shared_pos];
-                int sid = find_symbol_id(c);
-                int nsid = -1;
-
-                // For space/tab, also check NORMALIZING_SPACE as fallback
-                if (c == ' ' || c == '\t') {
-                    nsid = find_symbol_id(DFA_CHAR_NORMALIZING_SPACE);
+        if (first_char_sid != -1 && nfa[0].transitions[first_char_sid] != -1 && is_single_char_symbol) {
+            // Collect all target states for this transition (handles multi-target transitions)
+            int targets[100];
+            int target_count = 0;
+            targets[target_count++] = nfa[0].transitions[first_char_sid];
+            // Check for additional targets in multi_targets
+            if (nfa[0].multi_targets[first_char_sid][0] != '\0') {
+                char* p = nfa[0].multi_targets[first_char_sid];
+                while (p != NULL && *p != '\0') {
+                    if (*p == ',') p++;
+                    int target = atoi(p);
+                    if (target > 0 && target < MAX_STATES) {
+                        targets[target_count++] = target;
+                    }
+                    p = strchr(p, ',');
+                    if (p) p++;
                 }
-
-                // Check if either the direct symbol or NORMALIZING_SPACE has a transition
-                int next_state = -1;
-                if (sid != -1 && nfa[shared_state].transitions[sid] != -1) {
-                    next_state = nfa[shared_state].transitions[sid];
-                } else if (nsid != -1 && nfa[shared_state].transitions[nsid] != -1) {
-                    next_state = nfa[shared_state].transitions[nsid];
-                }
-
-                if (next_state == -1) {
-                    break;
-                }
-
-                shared_state = next_state;
-                shared_pos++;
             }
 
-            if (shared_pos > 1) {
+            // Try following each target to find longest common prefix
+            int best_shared_state = -1;
+            int best_shared_pos = 0;
+
+            for (int t = 0; t < target_count; t++) {
+                int curr_state = targets[t];
+                int curr_pos = 1;
+
+                while (curr_pos < (int)strlen(pattern)) {
+                    int c = pattern[curr_pos];
+                    int sid = find_symbol_id(c);
+                    int nsid = -1;
+
+                    // For space/tab, also check NORMALIZING_SPACE as fallback
+                    if (c == ' ' || c == '\t') {
+                        nsid = find_symbol_id(DFA_CHAR_NORMALIZING_SPACE);
+                    }
+
+                    // Check if either the direct symbol or NORMALIZING_SPACE has a transition
+                    int next_state = -1;
+                    if (sid != -1 && nfa[curr_state].transitions[sid] != -1) {
+                        next_state = nfa[curr_state].transitions[sid];
+                    } else if (nsid != -1 && nfa[curr_state].transitions[nsid] != -1) {
+                        next_state = nfa[curr_state].transitions[nsid];
+                    }
+
+                    if (next_state == -1) {
+                        break;
+                    }
+
+                    curr_state = next_state;
+                    curr_pos++;
+                }
+
+                // Track the best (longest) match
+                if (curr_pos > best_shared_pos) {
+                    best_shared_pos = curr_pos;
+                    best_shared_state = curr_state;
+                }
+            }
+
+            if (best_shared_pos > 1) {
                 // Found common prefix - start from there
+                shared_state = best_shared_state;
+                shared_pos = best_shared_pos;
                 start_state = shared_state;
                 pattern_start_pos = shared_pos;
             } else {
@@ -1166,7 +1321,8 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 pattern_start_pos = 1;  // Skip first character (already consumed)
             }
         } else {
-            // First character has no transition from state 0 - create new entry
+            // First character has no transition from state 0, or it's a range symbol
+            // Create new start state
             start_state = nfa_add_state_with_minimization(false);
             if (first_char_sid != -1) {
                 nfa_add_transition(0, start_state, first_char_sid);
@@ -1184,8 +1340,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
     remaining[sizeof(remaining) - 1] = '\0';
 
     // DEBUG: Log pattern parsing
-    fprintf(stderr, "DEBUG: parse_pattern_full '%s': start_state=%d, pattern_start_pos=%d, remaining='%s'\n",
-            pattern, start_state, pattern_start_pos, remaining);
+    // fprintf(stderr, "DEBUG: parse_pattern_full '%s': start_state=%d, pattern_start_pos=%d, remaining='%s'\n", pattern, start_state, pattern_start_pos, remaining);
 
     int parse_pos = 0;
     int end_state;
@@ -1214,12 +1369,21 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // Create a fork state - this is where the pattern can end
             // The shared end_state continues to its other transitions
             eos_target_state = nfa_add_state_with_minimization(false);
+            nfa[eos_target_state].is_eos_target = true;  // This state can accept via EOS
             nfa_add_transition(end_state, eos_target_state, eos_sid);
             nfa_finalize_state(end_state);
+            // Also mark end_state as EOS target so DFA recognizes it can accept at end of input
+            nfa[end_state].is_eos_target = true;
         }
 
         int accepting = nfa_add_state_with_minimization(true);
+        nfa[accepting].is_eos_target = true;  // This state can accept via EOS
         nfa_add_transition(eos_target_state, accepting, eos_sid);
+
+        // When has_outgoing=false, eos_target_state == end_state, so mark it as EOS target
+        if (!has_outgoing) {
+            nfa[eos_target_state].is_eos_target = true;
+        }
 
         nfa_add_tag(accepting, category);
         if (subcategory[0] != '\0') nfa_add_tag(accepting, subcategory);
@@ -1264,18 +1428,25 @@ void parse_advanced_pattern(const char* line) {
                 // Normalize separator from single colon to double colon for consistency
                 strncpy(fragments[fragment_count].name, name_start, name_len);
                 fragments[fragment_count].name[name_len] = '\0';
+                // fprintf(stderr, "DEBUG: Storing fragment (before normalization): '%s'\n", fragments[fragment_count].name);
                 // Replace first single colon with double colon
-                for (int i = 0; fragments[fragment_count].name[i]; i++) {
-                    if (fragments[fragment_count].name[i] == ':') {
-                        // Shift remaining characters to make room for second colon
-                        int len = strlen(fragments[fragment_count].name);
-                        for (int k = len; k > i; k--) {
-                            fragments[fragment_count].name[k] = fragments[fragment_count].name[k - 1];
+                // Only do this if the name contains a single colon (not already double colon)
+                if (strstr(fragments[fragment_count].name, "::") == NULL) {
+                    for (int i = 0; fragments[fragment_count].name[i]; i++) {
+                        if (fragments[fragment_count].name[i] == ':') {
+                            // Shift remaining characters to make room for second colon
+                            int len = strlen(fragments[fragment_count].name);
+                            for (int k = len; k > i; k--) {
+                                fragments[fragment_count].name[k] = fragments[fragment_count].name[k - 1];
+                            }
+                            fragments[fragment_count].name[i] = ':';
+                            fragments[fragment_count].name[i + 1] = ':';
+                            // fprintf(stderr, "DEBUG: Storing fragment (after normalization): '%s'\n", fragments[fragment_count].name);
+                            break;  // Only replace first colon (namespace separator)
                         }
-                        fragments[fragment_count].name[i] = ':';
-                        fragments[fragment_count].name[i + 1] = ':';
-                        break;  // Only replace first colon (namespace separator)
                     }
+                } else {
+                    // fprintf(stderr, "DEBUG: Fragment '%s' already has ::, skipping normalization\n", fragments[fragment_count].name);
                 }
                 // Skip past ] and whitespace to get value
                 const char* value_start = name_end + 1;
@@ -1475,6 +1646,7 @@ void write_nfa_file(const char* filename) {
     for (int i = 0; i < nfa_state_count; i++) {
         fprintf(file, "State %d:\n", i);
         fprintf(file, "  CategoryMask: 0x%02x\n", nfa[i].category_mask);
+        fprintf(file, "  EosTarget: %s\n", nfa[i].is_eos_target ? "yes" : "no");
 
         if (nfa[i].tag_count > 0) {
             fprintf(file, "  Tags:");

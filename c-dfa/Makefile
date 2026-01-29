@@ -13,19 +13,19 @@ INCLUDE_DIR = include
 BUILD_DIR = build
 
 # Targets
-TARGETS = tokenizer_test comprehensive_test
+TARGETS = dfa_test
 
 .PHONY: all clean test
 
-all: $(TARGETS)
+all: dfa_test
 
 # Create build directory
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# Build tokenizer test
-tokenizer_test: $(BUILD_DIR) src/shell_tokenizer.c src/tokenizer_test.c
-	$(CC) $(CFLAGS) -o $@ src/shell_tokenizer.c src/tokenizer_test.c
+# Build DFA test
+dfa_test: src/dfa_eval.c src/dfa_loader.c src/dfa_test.c
+	$(CC) $(CFLAGS) -o $@ src/dfa_eval.c src/dfa_loader.c src/dfa_test.c $(LDFLAGS)
 
 # Build comprehensive test
 comprehensive_test: $(BUILD_DIR) src/shell_tokenizer.c src/shell_tokenizer_ext.c src/shell_processor.c src/shell_transform.c src/readonlybox.c src/dfa_eval.c src/dfa_loader.c src/comprehensive_test.c
@@ -37,12 +37,9 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # Test
-test: $(TARGETS)
-	@echo "Running tokenizer test..."
-	@./tokenizer_test "cat xx | less -G > rsr"
-	@echo ""
-	@echo "Running comprehensive test..."
-	@./comprehensive_test
+test: dfa_test
+	@echo "Running DFA test..."
+	@./dfa_test
 
 # Build DFA (if tools are available)
 dfa: $(BUILD_DIR)
@@ -58,25 +55,5 @@ dfa-alphabet: $(BUILD_DIR)
 	@cd $(BUILD_DIR) && ../tools/nfa2dfa_with_alphabet readonlybox_alphabet.nfa readonlybox_alphabet.dfa
 
 # Quick test
-quick: tokenizer_test
-	@./tokenizer_test "cat xx | less -G > rsr"
-
-# Specific example test
-specific: specific_test
-	@./specific_test
-
-# Separation test
-separation: separation_test
-	@./separation_test
-
-# Extended tokenizer test
-extended: extended_test
-	@./extended_test
-
-# Transformation test
-transform: transform_test
-	@./transform_test
-
-# Pipeline test
-pipeline: pipeline_test
-	@./pipeline_test
+quick: dfa_test
+	@./dfa_test

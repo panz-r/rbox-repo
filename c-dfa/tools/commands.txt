@@ -92,3 +92,17 @@
 # Note: 'find' commands are NOT in the DFA because they require detailed
 # argument validation to detect dangerous options like -exec, -delete, etc.
 # All 'find' commands go to the server where rofind module does full validation.
+
+# ============ TEST PATTERNS FOR + QUANTIFIER ============
+# Fragment definitions for + quantifier testing
+[fragment:TEST::B] b
+[fragment:TEST::Y] y
+[fragment:TEST::TWO] 2
+
+# Test patterns with + quantifier
+# a((b))+ should match "ab", "abb", "abbb" but NOT "ac" or "abx"
+[safe:quantifier:test] a((TEST::B))+
+# x((y))+ should match "xy", "xyy", "xyyy" but NOT "xz"
+[safe:quantifier:test] x((TEST::Y))+
+# 1((2))+ should match "12", "12345" but NOT "13"
+[safe:quantifier:test] 1((TEST::TWO))+

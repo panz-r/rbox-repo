@@ -1,8 +1,11 @@
 # ReadOnlyBox Test Commands
 # Comprehensive test cases for DFA validation
 
+# Fragment definitions for reuse
+[fragment:SAFE::FILENAME] [a-zA-Z0-9_./-]
+
 # Safe file operations (read-only)
-[safe:file:read] cat file.txt
+[safe:file:read] cat ((SAFE::FILENAME))+
 [safe:file:read] cat *.txt
 [safe:file:read] cat file1.txt file2.txt
 [safe:file:read] less file.txt

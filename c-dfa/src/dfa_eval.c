@@ -3,7 +3,19 @@
 #include <stdio.h>
 #include <string.h>
 
+// Debug output control - set to 1 to enable debug prints
+#ifndef PRINT_DEBUG
+#define PRINT_DEBUG 0
+#endif
+
 static const dfa_t* current_dfa = NULL;
+
+// Size of dfa_state_t structure - used to compute state offsets from indices
+#define DFA_STATE_SIZE (sizeof(dfa_state_t))
+
+// Compute absolute offset from state index
+// next_state_offset now stores state index, we compute: sizeof(dfa_t) + state_index * sizeof(dfa_state_t)
+#define STATE_INDEX_TO_OFFSET(idx) (sizeof(dfa_t) + ((size_t)(idx) * DFA_STATE_SIZE))
 
 // Capture tracking during evaluation
 typedef struct {
@@ -14,12 +26,18 @@ typedef struct {
 
 bool dfa_init(const void* dfa_data, size_t size) {
     if (dfa_data == NULL || size < sizeof(dfa_t)) {
+#if PRINT_DEBUG
+        fprintf(stderr, "DEBUG: dfa_init failed - null data or size too small\n");
+#endif
         return false;
     }
 
     const dfa_t* dfa = (const dfa_t*)dfa_data;
 
     if (dfa->magic != DFA_MAGIC) {
+#if PRINT_DEBUG
+        fprintf(stderr, "DEBUG: dfa_init failed - invalid magic\n");
+#endif
         return false;
     }
 
@@ -29,19 +47,35 @@ bool dfa_init(const void* dfa_data, size_t size) {
     }
 
     if (dfa->state_count == 0 || dfa->state_count > DFA_MAX_STATES) {
+#if PRINT_DEBUG
+        fprintf(stderr, "DEBUG: dfa_init failed - state_count=%d (max=%d)\n", dfa->state_count, DFA_MAX_STATES);
+#endif
         return false;
     }
 
     if (dfa->initial_state == 0 || dfa->initial_state >= size) {
+#if PRINT_DEBUG
+        fprintf(stderr, "DEBUG: dfa_init failed - initial_state=%d, size=%zu\n", dfa->initial_state, size);
+#endif
         return false;
     }
 
     current_dfa = dfa;
+#if PRINT_DEBUG
+    fprintf(stderr, "DEBUG: dfa_init succeeded - states=%d, initial=%d, size=%zu\n",
+            dfa->state_count, dfa->initial_state, size);
+#endif
     return true;
 }
 
 bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
+#if PRINT_DEBUG
+    fprintf(stderr, "DEBUG: dfa_evaluate called with input='%s'\n", input);
+#endif
     if (current_dfa == NULL || input == NULL || result == NULL) {
+#if PRINT_DEBUG
+        fprintf(stderr, "DEBUG: early return - null pointer\n");
+#endif
         return false;
     }
 
@@ -72,7 +106,6 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
     size_t dfa_header_size = sizeof(dfa_t);
     size_t dfa_total_size = dfa_header_size + states_size;
     size_t raw_base = (size_t)current_dfa;
-    size_t transitions_base = raw_base + dfa_total_size;
 
     size_t initial_state_offset = current_dfa->initial_state;
     if (initial_state_offset == 0 || initial_state_offset >= dfa_total_size) {
@@ -90,16 +123,40 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
     }
 
     size_t pos = 0;
+#if PRINT_DEBUG
+    fprintf(stderr, "DEBUG: Starting evaluation, initial_state at offset %zu\n", initial_state_offset);
+#endif
     for (pos = 0; pos < length && pos < 1000; pos++) {
-        size_t current_offset = (size_t)current_state - raw_base;
         unsigned char c = (unsigned char)input[pos];
+        size_t current_offset = (size_t)current_state - raw_base;
+
+#if PRINT_DEBUG
+        fprintf(stderr, "DEBUG: pos=%zu, char='%c'(%d), state_offset=%zu, trans_count=%d, flags=0x%x\n",
+                pos, c, c, current_offset, current_state->transition_count, current_state->flags);
+#endif
         
-        if (current_offset >= 100000) {
+        // Debug: show transitions from this state
+        if (current_state->transition_count > 0) {
+            size_t trans_offset = current_state->transitions_offset;
+            const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
+            for (uint16_t i = 0; i < current_state->transition_count && i < 5; i++) {
+                unsigned char trans_char = (unsigned char)trans[i].character;
+#if PRINT_DEBUG
+                fprintf(stderr, "    DEBUG: trans[%d]: char=%d, next_offset=%u\n",
+                        i, trans_char, trans[i].next_state_offset);
+#endif
+            }
+        }
+
+        if (current_offset >= 1000000) {
             result->matched_length = pos;
             return true;
         }
 
         bool transition_found = false;
+#if PRINT_DEBUG
+        fprintf(stderr, "DEBUG: Looking for transition on char=%d ('%c') from state_offset=%zu\n", c, c, current_offset);
+#endif
 
         if (current_state->transition_count > 0) {
             size_t trans_offset = current_state->transitions_offset;
@@ -108,8 +165,8 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                 return true;
             }
 
-            size_t trans_addr = transitions_base + trans_offset;
-            const dfa_transition_t* trans = (const dfa_transition_t*)trans_addr;
+            // transitions_offset is an absolute offset from start of DFA structure
+            const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
 
             for (uint16_t i = 0; i < current_state->transition_count; i++) {
                 unsigned char trans_char = (unsigned char)trans[i].character;
@@ -131,7 +188,7 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                 if (trans_char >= DFA_CHAR_CAPTURE_ID_BASE && trans_char < DFA_CHAR_CAPTURE_ID_BASE + DFA_MAX_CAPTURES) {
                     // This is a capture ID transition
                     int cap_id = trans_char - DFA_CHAR_CAPTURE_ID_BASE;
-                    
+
                     // Find an inactive capture slot and activate it
                     for (int ci = 0; ci < DFA_MAX_CAPTURES; ci++) {
                         if (!active_captures[ci].active) {
@@ -141,16 +198,20 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
                             break;
                         }
                     }
-                    
+
                     // Move to next state (capture markers don't consume input)
-                    const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_trans_offset);
+                    // next_trans_offset is now a state index, compute actual offset
+                    size_t next_offset = STATE_INDEX_TO_OFFSET(next_trans_offset);
+                    const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
                     current_state = next_state;
                     transition_found = true;
                     break;
                 }
 
                 if (trans_char == DFA_CHAR_ANY || trans_char == c) {
-                    const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_trans_offset);
+                    // next_trans_offset is now a state index, compute actual offset
+                    size_t next_offset = STATE_INDEX_TO_OFFSET(next_trans_offset);
+                    const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
 
                     current_state = next_state;
                     transition_found = true;
@@ -160,9 +221,12 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
         }
 
         if (!transition_found) {
+            // No transition found - pattern doesn't match
+            // Don't return a match just because we're in some state
             result->final_state = current_state->flags;
             result->category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
             result->matched_length = pos;
+            result->matched = false;
             return true;
         }
 
@@ -194,31 +258,29 @@ bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {
         }
     }
 
-    // Check for EOS transition at end of input
-    if (current_state->transition_count > 0) {
-        size_t trans_offset = current_state->transitions_offset;
-        size_t trans_addr = transitions_base + trans_offset;
-        const dfa_transition_t* trans = (const dfa_transition_t*)trans_addr;
+    // Check for EOS target at end of input
+    // The eos_target field points to an accepting state if one exists
+    // Only check EOS target if we've consumed all input (pos >= length)
+    if (pos >= length && current_state->eos_target != 0) {
+        fprintf(stderr, "DEBUG: EOS check: pos=%zu, length=%zu, eos_target=%u\n", pos, length, current_state->eos_target);
+        size_t eos_offset = STATE_INDEX_TO_OFFSET(current_state->eos_target);
+        const dfa_state_t* eos_accepting_state = (const dfa_state_t*)((const char*)raw_base + eos_offset);
+        fprintf(stderr, "DEBUG: EOS state flags=0x%04x, accepting=%s\n", 
+                eos_accepting_state->flags, (eos_accepting_state->flags & DFA_STATE_ACCEPTING) ? "yes" : "no");
+        if (eos_accepting_state->flags & DFA_STATE_ACCEPTING) {
+            result->matched = true;
+            result->matched_length = pos;
+            result->final_state = eos_accepting_state->flags;
+            result->category_mask = DFA_GET_CATEGORY_MASK(eos_accepting_state->flags);
 
-        for (uint16_t i = 0; i < current_state->transition_count; i++) {
-            if (trans[i].character == DFA_CHAR_EOS && trans[i].next_state_offset != 0) {
-                const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)raw_base + trans[i].next_state_offset);
-                if (eos_state->flags & DFA_STATE_ACCEPTING) {
-                    result->matched = true;
-                    result->matched_length = pos;
-                    result->final_state = trans[i].next_state_offset;
-                    result->category_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
-
-                    // Derive legacy category enum from mask for backward compatibility
-                    if (result->category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-                    else if (result->category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-                    else if (result->category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-                    else if (result->category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-                    else if (result->category_mask & 0x10) result->category = DFA_CMD_NETWORK;
-                    else if (result->category_mask & 0x20) result->category = DFA_CMD_ADMIN;
-                    return true;
-                }
-            }
+            // Derive legacy category enum from mask for backward compatibility
+            if (result->category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+            else if (result->category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+            else if (result->category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+            else if (result->category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+            else if (result->category_mask & 0x10) result->category = DFA_CMD_NETWORK;
+            else if (result->category_mask & 0x20) result->category = DFA_CMD_ADMIN;
+            fprintf(stderr, "DEBUG: Match via EOS! matched=%d, len=%zu\n", result->matched, result->matched_length);
         }
     }
 
