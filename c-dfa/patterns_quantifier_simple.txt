@@ -1,0 +1,2 @@
+# Simple + quantifier test
+a(B)+ :one :cat :ops

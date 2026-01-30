@@ -1,0 +1,31 @@
+# ============================================================================
+# Test Patterns for Space and Tab Character Handling
+# ============================================================================
+#
+# These patterns specifically test that space and tab characters are properly
+# handled in the NFA/DFA construction. This test group exists to catch regressions
+# where spaces might be skipped instead of creating proper transitions.
+#
+# Expected behavior:
+# - Commands with spaces like "git status" should match the full pattern
+# - The space character (ASCII 32) should create transitions on Symbol 2
+# - The tab character (ASCII 9) should create transitions on Symbol 3
+# - Multiple consecutive spaces should create multiple space transitions
+# - Mixed spaces and tabs should both work
+# ============================================================================
+
+# Basic space handling tests
+[safe:space:test] git status
+[safe:space:test] ls -la
+[safe:space:test] cat file.txt
+[safe:space:test] echo hello world
+[safe:space:test] mkdir new folder
+
+# Multiple spaces
+[safe:space:test] git  status
+[safe:space:test] ls   -la
+
+# Commands that should NOT match (wrong spacing)
+# These are negative test cases to ensure we don't over-match
+
+# End of test patterns

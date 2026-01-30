@@ -9,6 +9,27 @@
 [safe] cat *
 [safe] /usr/bin/cat
 [safe] /usr/bin/cat *
+
+# ============ FILENAME FRAGMENT ============
+# Fragment for matching filenames (used in capture patterns)
+[fragment:FILENAME] [a-zA-Z0-9_./-]+
+
+# ============ CAT WITH CAPTURE PATTERNS ============
+# These patterns capture the filename argument for later analysis
+# Use <tagname>...</tagname> syntax for capture tags
+[safe:cat:capture] cat <filename>((FILENAME))</filename>
+[safe:cat:capture] /usr/bin/cat <filename>((FILENAME))</filename>
+
+# ============ DEBUG TEST PATTERNS ============
+# Simple pattern for testing captures with quantifiers:
+# a<b>b+</b>c<d>d*</d> should match:
+#   - "abbbcd" -> capture "bbb" (pos 1-4) and "d" (pos 6)
+#   - "abc" -> capture "b" (pos 1-2)
+[debug:simple] a<b>b+</b>c<d>d*</d>
+
+# ============ TEST PATTERNS FOR CAPTURES ============
+# Simple capture pattern for testing
+[safe:capture:test] cat \x3c<filename>((FILENAME))\x3e
 [safe] head
 [safe] head *
 [safe] /usr/bin/head

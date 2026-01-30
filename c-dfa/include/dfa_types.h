@@ -18,15 +18,13 @@
  * - Bits 8-15: Category mask (8-way parallel acceptance)
  */
 typedef struct {
-    /**
-     * Transition table for this state.
-     * Array of (character, next_state_offset) pairs.
-     * Terminated by a special marker (character = 0, next_state_offset = 0).
-     */
-    uint32_t transitions_offset;  // Offset to transition table
-    uint16_t transition_count;    // Number of transitions
-    uint16_t flags;               // State flags (lower 8 bits) | category_mask (upper 8 bits)
-    uint32_t eos_target;          // EOS transition target (0 = no EOS transition)
+    uint32_t transitions_offset;      // Offset to transition table (relative to DFA base, 0 = no transitions)
+    uint16_t transition_count;        // Number of transitions
+    uint16_t flags;                   // State flags (accepting, capture markers, etc.)
+    int8_t capture_start_id;          // Capture ID for CAPTURE_START (-1 = none)
+    int8_t capture_end_id;            // Capture ID for CAPTURE_END (-1 = none)
+    int8_t capture_defer_id;          // Capture ID for deferred CAPTURE_END (-1 = none)
+    int8_t eos_target;                // Target state for EOS (end of string) transition (-1 = none)
 } dfa_state_t;
 
 /**
@@ -64,9 +62,12 @@ typedef struct {
 /**
  * DFA State Flags
  */
-#define DFA_STATE_ACCEPTING  0x0001  // This is an accepting state
-#define DFA_STATE_ERROR      0x0002  // This is an error state
-#define DFA_STATE_DEAD       0x0004  // No transitions from this state
+#define DFA_STATE_ACCEPTING      0x0001  // This is an accepting state
+#define DFA_STATE_ERROR          0x0002  // This is an error state
+#define DFA_STATE_DEAD           0x0004  // No transitions from this state
+#define DFA_STATE_CAPTURE_START  0x0008  // State has CAPTURE_START marker (begin capture at this position)
+#define DFA_STATE_CAPTURE_END    0x0010  // State has CAPTURE_END marker (end capture at this position)
+#define DFA_STATE_CAPTURE_DEFER  0x0020  // Defer CAPTURE_END until leaving this state (for loops)
 
 /**
  * Category mask extraction from flags
@@ -108,7 +109,8 @@ typedef struct {
 #define DFA_CHAR_EOS 0x05               // End of String marker (used for accepting) - matches alphabet symbol 1
 #define DFA_CHAR_CAPTURE_START 0xF0     // Capture start marker
 #define DFA_CHAR_CAPTURE_END 0xF1       // Capture end marker
-#define DFA_CHAR_CAPTURE_ID_BASE 0xF2   // Base for capture ID encoding (0xF2 + capture_id)
+#define DFA_CHAR_CAPTURE_ID_BASE 0xF2   // Base for capture START ID encoding (0xF2 + capture_id)
+#define DFA_CHAR_CAPTURE_END_ID_BASE 0xF6 // Base for capture END ID encoding (0xF6 + capture_id)
 
 #define DFA_MAX_CAPTURES 16             // Maximum number of concurrent captures
 
@@ -121,6 +123,7 @@ typedef struct {
     char name[32];             // Capture name (for debugging/API)
     bool active;               // Is capture currently in progress?
     bool completed;            // Was capture successfully completed?
+    int capture_id;            // Capture ID for lookup
 } dfa_capture_t;
 
 /**

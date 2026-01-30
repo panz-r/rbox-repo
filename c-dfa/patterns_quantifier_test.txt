@@ -1,0 +1,23 @@
+# ============================================================================
+# Test Patterns for + Quantifier with Single-Character Fragments
+# ============================================================================
+#
+# These patterns test that the + quantifier correctly handles single-character
+# fragments where the fragment must be re-matched after each iteration.
+#
+# Expected behavior:
+# - a((b))+ should match "ab", "abb", "abbb" but NOT "ac" or "abx"
+# - x((y))+ should match "xy", "xyy", "xyyy" but NOT "xz"
+# - p+ should match "p", "pp", "ppp" but NOT "c" or "px"
+# - abc((b))+ should match "abcb", "abcbb" but NOT "abcd"
+# ============================================================================
+
+[fragment:TQ::B] b
+[fragment:TQ::Y] y
+[fragment:TQ::Z] z
+
+[safe:quantifier:test] a((TQ::B))+
+[safe:quantifier:test] x((TQ::Y))+
+[safe:quantifier:test] w((TQ::Z))+
+[safe:quantifier:test] p+
+[safe:quantifier:test] abc((TQ::B))+

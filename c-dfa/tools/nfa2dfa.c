@@ -35,6 +35,10 @@ typedef struct {
     char multi_targets[MAX_SYMBOLS][256];  // For storing additional targets as CSV
     negated_transition_t negated_transitions[MAX_SYMBOLS];
     int negated_transition_count;
+    int8_t capture_start_id;   // Capture ID to emit at this state (-1 = none)
+    int8_t capture_end_id;     // Capture ID to emit at this state (-1 = none)
+    int8_t capture_defer_id;   // Capture ID to defer until leaving this state (-1 = none)
+    bool is_eos_target;        // This state can accept via EOS transition
 } nfa_state_t;
 
 // Build-time DFA State
@@ -46,6 +50,10 @@ typedef struct {
     bool transitions_from_any[256];
     int nfa_states[MAX_STATES];
     int nfa_state_count;
+    int8_t capture_start_id;   // Capture ID for CAPTURE_START transition (-1 = none)
+    int8_t capture_end_id;     // Capture ID for CAPTURE_END transition (-1 = none)
+    int8_t capture_defer_id;   // Capture ID for deferred CAPTURE_END (-1 = none)
+    int8_t eos_target;         // Target state index for EOS transition (-1 = none)
 } build_dfa_state_t;
 
 // Global variables
@@ -70,6 +78,10 @@ void nfa_init(void) {
         }
         nfa[i].transition_count = 0;
         nfa[i].negated_transition_count = 0;
+        nfa[i].capture_start_id = -1;
+        nfa[i].capture_end_id = -1;
+        nfa[i].capture_defer_id = -1;
+        nfa[i].is_eos_target = false;
     }
     nfa_state_count = 0;
 }
@@ -80,6 +92,10 @@ void dfa_init(void) {
         dfa[i].flags = 0;
         dfa[i].transition_count = 0;
         dfa[i].nfa_state_count = 0;
+        dfa[i].capture_start_id = -1;
+        dfa[i].capture_end_id = -1;
+        dfa[i].capture_defer_id = -1;
+        dfa[i].eos_target = -1;
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             dfa[i].transitions[j] = -1;
             dfa[i].transitions_from_any[j] = false;
@@ -98,21 +114,71 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
         exit(1);
     }
     int state = dfa_state_count;
+
+    // Check for capture markers in NFA states (stored directly on states)
+    uint16_t capture_flags = 0;
+    int8_t capture_start_id = -1;
+    int8_t capture_end_id = -1;
+    int8_t capture_defer_id = -1;
+    int8_t eos_target = -1;
+
+    for (int i = 0; i < nfa_count; i++) {
+        int nfa_state = nfa_states[i];
+        if (nfa_state < 0 || nfa_state >= nfa_state_count) continue;
+
+        // Check for capture start marker on this NFA state
+        if (nfa[nfa_state].capture_start_id >= 0) {
+            capture_flags |= DFA_STATE_CAPTURE_START;
+            capture_start_id = nfa[nfa_state].capture_start_id;
+            fprintf(stderr, "DEBUG: DFA state %d gets capture_start_id=%d from NFA state %d\n",
+                    state, capture_start_id, nfa_state);
+        }
+
+        // Check for capture end marker on this NFA state
+        if (nfa[nfa_state].capture_end_id >= 0) {
+            capture_flags |= DFA_STATE_CAPTURE_END;
+            capture_end_id = nfa[nfa_state].capture_end_id;
+            fprintf(stderr, "DEBUG: DFA state %d gets capture_end_id=%d from NFA state %d\n",
+                    state, capture_end_id, nfa_state);
+        }
+
+        // Check for capture defer marker on this NFA state
+        if (nfa[nfa_state].capture_defer_id >= 0) {
+            capture_flags |= DFA_STATE_CAPTURE_DEFER;
+            capture_defer_id = nfa[nfa_state].capture_defer_id;
+            fprintf(stderr, "DEBUG: DFA state %d gets capture_defer_id=%d from NFA state %d\n",
+                    state, capture_defer_id, nfa_state);
+        }
+
+        // Check for EOS target marker on this NFA state
+        if (nfa[nfa_state].is_eos_target) {
+            eos_target = 0;  // Will be resolved during DFA construction
+        }
+    }
+
     // Store category_mask in bits 8-15, set DFA_STATE_ACCEPTING if category_mask != 0
-    dfa[state].flags = (category_mask << 8);
+    dfa[state].flags = (category_mask << 8) | capture_flags;
     if (category_mask != 0) {
         dfa[state].flags |= DFA_STATE_ACCEPTING;
     }
+    if (capture_flags != 0) {
+        fprintf(stderr, "DEBUG: State %d has capture flags 0x%x (start_id=%d, end_id=%d, defer_id=%d)\n",
+                state, capture_flags, capture_start_id, capture_end_id, capture_defer_id);
+    }
     dfa[state].transition_count = 0;
     dfa[state].nfa_state_count = 0;
+    dfa[state].capture_start_id = capture_start_id;
+    dfa[state].capture_end_id = capture_end_id;
+    dfa[state].capture_defer_id = capture_defer_id;
+    dfa[state].eos_target = eos_target;
     for (int i = 0; i < nfa_count && i < MAX_STATES; i++) {
         dfa[state].nfa_states[i] = nfa_states[i];
         dfa[state].nfa_state_count++;
     }
-#if 0
-    fprintf(stderr, "DEBUG: dfa_add_state(%d): nfa_count=%d, nfa_states={", state, nfa_count);
+#if 1
+    fprintf(stderr, "DEBUG: dfa_add_state(%d): category_mask=0x%02x, nfa_count=%d, nfa_states={", state, category_mask, nfa_count);
     for (int i = 0; i < nfa_count; i++) {
-        fprintf(stderr, "%d%s", nfa_states[i], i < nfa_count-1 ? ", " : "");
+        fprintf(stderr, "%d(cat=0x%02x)%s", nfa_states[i], nfa[nfa_states[i]].category_mask, i < nfa_count-1 ? ", " : "");
     }
     fprintf(stderr, "}\n");
 #endif
@@ -516,6 +582,22 @@ void load_nfa_file(const char* filename) {
                 unsigned int category_mask;
                 sscanf(line, "  CategoryMask: %x", &category_mask);
                 nfa[current_state].category_mask = (uint8_t)category_mask;
+            } else if (strstr(line, "CaptureStart:") != NULL) {
+                int cap_id;
+                sscanf(line, "  CaptureStart: %d", &cap_id);
+                nfa[current_state].capture_start_id = (int8_t)cap_id;
+            } else if (strstr(line, "CaptureEnd:") != NULL) {
+                int cap_id;
+                sscanf(line, "  CaptureEnd: %d", &cap_id);
+                nfa[current_state].capture_end_id = (int8_t)cap_id;
+            } else if (strstr(line, "CaptureDefer:") != NULL) {
+                int cap_id;
+                sscanf(line, "  CaptureDefer: %d", &cap_id);
+                nfa[current_state].capture_defer_id = (int8_t)cap_id;
+            } else if (strstr(line, "EosTarget:") != NULL) {
+                char eos_str[16];
+                sscanf(line, "  EosTarget: %15s", eos_str);
+                nfa[current_state].is_eos_target = (strcmp(eos_str, "yes") == 0);
             } else if (strstr(line, "Accepting:") != NULL) {
                 // Backward compatibility: old NFA format uses "Accepting: yes/no"
                 // Map to CAT_MASK_SAFE (0x01) for accepting states
@@ -631,6 +713,14 @@ void write_dfa_file(const char* filename) {
         states[i].transitions_offset = state_trans_offsets[i];
         states[i].transition_count = dfa[i].transition_count;
         states[i].flags = dfa[i].flags;
+        states[i].capture_start_id = dfa[i].capture_start_id;
+        states[i].capture_end_id = dfa[i].capture_end_id;
+        states[i].capture_defer_id = dfa[i].capture_defer_id;
+        states[i].eos_target = dfa[i].eos_target;
+        if (dfa[i].capture_start_id >= 0 || dfa[i].capture_end_id >= 0 || dfa[i].capture_defer_id >= 0) {
+            fprintf(stderr, "DEBUG: Writing state %d: capture_start_id=%d, capture_end_id=%d, capture_defer_id=%d\n",
+                    i, dfa[i].capture_start_id, dfa[i].capture_end_id, dfa[i].capture_defer_id);
+        }
         // Check accepting mask (bits 8-15 of flags)
         if (dfa[i].flags & 0xFF00) {
             accepting_mask |= (1 << i);
@@ -646,7 +736,9 @@ void write_dfa_file(const char* filename) {
                 }
                 transitions[current_transition].character = (char)c;
                 int target_state = dfa[i].transitions[c];
-                transitions[current_transition].next_state_offset = (uint32_t)target_state;
+                // Convert state index to absolute offset
+                size_t target_offset = sizeof(dfa_t) + (size_t)target_state * sizeof(dfa_state_t);
+                transitions[current_transition].next_state_offset = (uint32_t)target_offset;
                 current_transition++;
             }
         }
@@ -661,7 +753,9 @@ void write_dfa_file(const char* filename) {
                 }
                 transitions[current_transition].character = (char)c;
                 int target_state = dfa[i].transitions[c];
-                transitions[current_transition].next_state_offset = (uint32_t)target_state;
+                // Convert state index to absolute offset
+                size_t target_offset = sizeof(dfa_t) + (size_t)target_state * sizeof(dfa_state_t);
+                transitions[current_transition].next_state_offset = (uint32_t)target_offset;
                 current_transition++;
             }
         }

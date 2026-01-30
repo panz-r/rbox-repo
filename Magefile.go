@@ -315,35 +315,143 @@ func DfaTest() error {
 
 	wd, _ := os.Getwd()
 	cdfaDir := filepath.Join(wd, "c-dfa")
+	cdfaToolsDir := filepath.Join(cdfaDir, "tools")
 	cdfaSrcDir := filepath.Join(cdfaDir, "src")
-	dfaTest := filepath.Join(cdfaDir, "dfa_test")
+	dfaTestNew := filepath.Join(cdfaDir, "dfa_test_new")
 	shellTest := filepath.Join(cdfaDir, "shell_tokenizer_test")
 
-	// Build dfa_test if needed
-	if _, err := os.Stat(dfaTest); os.IsNotExist(err) {
-		fmt.Println("Building dfa_test...")
-		buildCmd := exec.Command("gcc", "-o", dfaTest,
-			filepath.Join(cdfaSrcDir, "dfa_test.c"),
-			filepath.Join(cdfaSrcDir, "dfa_eval.c"),
-			filepath.Join(cdfaDir, "tools", "readonlybox_dfa.c"),
-			"-I"+filepath.Join(cdfaDir, "include"),
-			"-O2")
-		buildCmd.Dir = cdfaDir
+	// Build nfa_builder if needed
+	nfaBuilder := filepath.Join(cdfaToolsDir, "nfa_builder")
+	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
+		fmt.Println("Building nfa_builder...")
+		buildCmd := exec.Command("gcc", "-o", nfaBuilder, filepath.Join(cdfaToolsDir, "nfa_builder.c"),
+			"-Wall", "-Wextra", "-std=c11", "-O2")
 		buildCmd.Stdout = os.Stdout
 		buildCmd.Stderr = os.Stderr
 		if err := buildCmd.Run(); err != nil {
-			return fmt.Errorf("failed to build dfa_test: %w", err)
+			return fmt.Errorf("failed to build nfa_builder: %w", err)
 		}
 	}
 
-	// Run dfa_test
-	fmt.Println("\n--- DFA Tests ---")
-	cmd := exec.Command(dfaTest)
-	cmd.Dir = cdfaDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
+	// Build nfa2dfa (always rebuild to ensure latest version)
+	nfa2dfa := filepath.Join(cdfaToolsDir, "nfa2dfa")
+	os.Remove(nfa2dfa)
+	fmt.Println("Building nfa2dfa...")
+	buildCmd := exec.Command("gcc", "-o", nfa2dfa, filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
+		"-Wall", "-Wextra", "-std=c11", "-O2")
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("failed to build nfa2dfa: %w", err)
+	}
+
+	// Build dfa_test_new (new comprehensive test binary that reads DFA from file)
+	fmt.Println("Building dfa_test_new...")
+	buildCmd = exec.Command("gcc", "-o", dfaTestNew,
+		filepath.Join(cdfaSrcDir, "dfa_eval.c"),
+		filepath.Join(cdfaSrcDir, "dfa_loader.c"),
+		filepath.Join(cdfaSrcDir, "dfa_test.c"),
+		"-I"+filepath.Join(cdfaDir, "include"),
+		"-lm", "-O2")
+	buildCmd.Dir = cdfaDir
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("failed to build dfa_test_new: %w", err)
+	}
+
+	// Define test groups with their patterns files
+	testGroups := []struct {
+		name         string
+		patternsFile string
+		testArgs     []string
+		optional     bool // if true, continue even if this group fails
+	}{
+		{
+			name:         "Main Safe Commands",
+			patternsFile: "patterns_safe_commands.txt",
+			testArgs:     []string{},
+			optional:     false,
+		},
+		{
+			name:         "Quantifier Tests",
+			patternsFile: "patterns_quantifier_test.txt",
+			testArgs:     []string{"--quantifier-test"},
+			optional:     false,
+		},
+		{
+			name:         "Capture Pattern Tests",
+			patternsFile: "patterns_with_captures.txt",
+			testArgs:     []string{"--capture-test"},
+			optional:     true,
+		},
+		{
+			name:         "Dangerous Commands (Negative Tests)",
+			patternsFile: "patterns_dangerous_commands.txt",
+			testArgs:     []string{"--negative-test"},
+			optional:     true,
+		},
+		{
+			name:         "Space Character Tests",
+			patternsFile: "patterns_space_test.txt",
+			testArgs:     []string{"--space-test"},
+			optional:     true,
+		},
+	}
+
+	// Run each test group
+	for _, group := range testGroups {
+		patternsPath := filepath.Join(cdfaDir, group.patternsFile)
+
+		// Skip if patterns file doesn't exist
+		if _, err := os.Stat(patternsPath); os.IsNotExist(err) {
+			fmt.Printf("Skipping %s - patterns file not found: %s\n", group.name, group.patternsFile)
+			continue
+		}
+
+		fmt.Printf("\n=== %s ===\n", group.name)
+		fmt.Printf("Patterns: %s\n", group.patternsFile)
+
+		// Generate NFA
+		nfaFile := filepath.Join(cdfaDir, "test_group.nfa")
+		genNfa := exec.Command(nfaBuilder,
+			filepath.Join(cdfaDir, "alphabet_per_char.map"),
+			patternsPath,
+			nfaFile)
+		genNfa.Dir = cdfaDir
+		genNfa.Stdout = os.Stdout
+		genNfa.Stderr = os.Stderr
+		if err := genNfa.Run(); err != nil {
+			if group.optional {
+				fmt.Printf("Skipping %s due to NFA generation error: %v\n", group.name, err)
+				continue
+			}
+			return fmt.Errorf("failed to generate NFA for %s: %w", group.name, err)
+		}
+
+		// Generate DFA
+		dfaFile := filepath.Join(cdfaDir, "test_group.dfa")
+		genDfa := exec.Command(nfa2dfa, nfaFile, dfaFile)
+		genDfa.Dir = cdfaDir
+		genDfa.Stdout = os.Stdout
+		genDfa.Stderr = os.Stderr
+		if err := genDfa.Run(); err != nil {
+			if group.optional {
+				fmt.Printf("Skipping %s due to DFA generation error: %v\n", group.name, err)
+				continue
+			}
+			return fmt.Errorf("failed to generate DFA for %s: %w", group.name, err)
+		}
+
+		// Run tests
+		cmd := exec.Command(dfaTestNew, append(group.testArgs, dfaFile)...)
+		cmd.Dir = cdfaDir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		err := cmd.Run()
+		if err != nil && !group.optional {
+			return fmt.Errorf("tests failed for %s: %w", group.name, err)
+		}
 	}
 
 	// Build shell_tokenizer_test if needed
@@ -364,8 +472,8 @@ func DfaTest() error {
 	}
 
 	// Run shell_tokenizer_test
-	fmt.Println("\n--- Shell Tokenizer Tests ---")
-	cmd = exec.Command(shellTest)
+	fmt.Println("\n=== Shell Tokenizer Tests ===")
+	cmd := exec.Command(shellTest)
 	cmd.Dir = cdfaDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

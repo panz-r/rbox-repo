@@ -2,53 +2,18 @@
 # Safe Commands - Read-only operations that are completely safe
 # ============================================================================
 #
-# SYNTAX REFERENCE
-# ============================================================================
-#
 # This file defines safe command patterns for the ReadOnlyBox DFA.
-#
-# FRAGMENT DEFINITIONS
-# --------------------
-# Fragments define reusable patterns using [fragment:name] syntax
-# They can contain character literals, character classes, or alternation
-# Referenced in patterns using ((name)) with double colon for namespaced fragments
-#
-# Examples:
-# [fragment:SAFE::FILENAME] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|-|.|_|/
-# [fragment:SAFE::ALPHANUM] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
-#
-# PATTERN REFERENCE SYNTAX
-# ------------------------
-# ((name))          - Reference a fragment by name
-# ((namespace::name)) - Reference a namespaced fragment
-# ((name))+         - One or more occurrences
-# ((name))*         - Zero or more occurrences
+# Used by the main project for production.
 # ============================================================================
 
-# Character set fragments using alternation (replaces characterset syntax)
+# Character set fragments using alternation
 [fragment:git::UPPERCASE] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
 [fragment:git::LOWERCASE] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 [fragment:git::DIGIT] 0|1|2|3|4|5|6|7|8|9
-[fragment:git::HEXDIGIT] 0|1|2|3|4|5|6|7|8|9|a|b|c|d|e|f
 [fragment:SAFE::ALPHANUM] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
 [fragment:SAFE::FILENAME] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|-|.|_|/
 
-# Fragment definitions using character set fragments
-[fragment:git::shortref] ((git::UPPERCASE))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))
-[fragment:git::longref] ((git::UPPERCASE))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))((git::DIGIT))
-[fragment:git::refname] ((git::UPPERCASE))|((git::LOWERCASE))|((git::DIGIT))
-[fragment:git::reforigin] refs/((git::UPPERCASE))|((git::LOWERCASE))|((git::DIGIT))
-[fragment:git::reftype] heads/|tags/|remotes/
-
-# Additional fragment definitions for capture patterns
-[fragment:SAFE::FILENAME_CHAR] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|_|-|.|/
-[fragment:filename] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|_|-|.|/|=|
-[fragment:count] ((git::DIGIT))
-[fragment:commit] ((git::LOWERCASE))|((git::DIGIT))
-[fragment:branch] ((SAFE::FILENAME))|/
-[fragment:username] (((git::LOWERCASE))|((git::UPPERCASE))|((git::DIGIT))|_)
-
-# Git read-only operations - very specific safe patterns
+# Git read-only operations
 [safe:git:read] git log --oneline
 [safe:git:read] git log --graph
 [safe:git:read] git log --oneline --decorate
@@ -90,14 +55,8 @@
 [safe:git:read] git rev-parse --is-inside-work-tree
 [safe:git:read] git rev-parse --is-bare-repository
 [safe:git:read] git worktree list
-[safe:git:read] git log --oneline --decorate
-[safe:git:read] git log --graph --oneline
-[safe:git:read] git log -n 1
-[safe:git:read] git log -n 3
-[safe:git:read] git log -n 5
-[safe:git:read] git log -n 10
 
-# File reading operations - specific file patterns, no arbitrary wildcards
+# File reading operations
 [safe:file:read] cat ((SAFE::FILENAME))+
 [safe:file:read] less ((SAFE::FILENAME))+
 [safe:file:read] head -n * *
@@ -105,60 +64,16 @@
 [safe:file:read] ls *
 [safe:file:read] ls -la *
 [safe:file:read] cat *
-[safe:file:read] git log --oneline \| head -n *
-[safe:file:read] ls -la \| head -n *
-[safe:file:read] ps aux \| head -n *
-[safe:file:read] ps aux \| grep ((SAFE::FILENAME))+
+[safe:file:read] git log --oneline | head -n *
+[safe:file:read] ls -la | head -n *
+[safe:file:read] ps aux | head -n *
+[safe:file:read] ps aux | grep ((SAFE::FILENAME))+
 
-# Git-specific safe refs and origins
-[safe:git:read] git rev-parse --abbrev-ref HEAD
-[safe:git:read] git rev-parse --abbrev-ref origin/HEAD
-[safe:git:read] git rev-parse --short HEAD
-[safe:git:read] git rev-parse ((git::shortref))
-[safe:git:read] git show HEAD:((SAFE::FILENAME))+
-[safe:git:read] git ls-tree HEAD \| grep ((SAFE::FILENAME))+
-
-# Commands from user_log.xml
+# System read-only operations
 [safe:system:read] which bwrap
 [safe:system:read] which socat
 
-# Test patterns with captures - capture tags wrap content
-[safe:file:read] cat <filename>((filename))</filename>
-# [safe:git:read] git log -n <count>((count))</count>
-# [safe:git:read] git show <commit>((commit))</commit>
-# [safe:git:read] git checkout <branch>((branch))</branch>
-# [safe:system:read] whoami <username>((username))</username>
-
-# ============================================================================
-# TEST PATTERNS: Plus Quantifier General Case Tests
-# ============================================================================
-# These patterns test the + quantifier with single-character fragments.
-# They verify that the DFA correctly handles "one or more" semantics
-# where the fragment must be re-matched after each iteration.
-#
-# CURRENT LIMITATION: The ANY-based back-loop consumes the next character
-# before the fragment can re-match it. This causes single-char fragments
-# like 'b' in a((b))+ to fail matching 'abbb' correctly.
-#
-# EXPECTED BEHAVIOR (once instant transitions are implemented):
-# - a((b))+ should match "ab", "abb", "abbb" but NOT "ac" or "abx"
-# - x((y))+ should match "xy", "xyy", "xyyy" but NOT "xz"
-# - 1((2))+ should match "12", "122", "1222" but NOT "13" or "123"
-# ============================================================================
-
-[fragment:B] b
-[safe:test:plus] a((B))+
-
-# ============================================================================
-# Test patterns for + quantifier on single-character fragments
-# ============================================================================
-
-# Fragment definitions for + quantifier testing
-[fragment:TEST::B] b
-[fragment:TEST::Y] y
-[fragment:TEST::ONE] 1
-
-# Test patterns with + quantifier
-[safe:quantifier:test] a((TEST::B))+
-[safe:quantifier:test] x((TEST::Y))+
-[safe:quantifier:test] 1((TEST::B))+
+# Git-specific safe refs and origins
+[safe:git:read] git rev-parse --abbrev-ref origin/HEAD
+[safe:git:read] git show HEAD:((SAFE::FILENAME))+
+[safe:git:read] git ls-tree HEAD | grep ((SAFE::FILENAME))+
