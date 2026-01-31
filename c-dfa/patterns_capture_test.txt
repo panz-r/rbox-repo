@@ -1,0 +1,27 @@
+# ============================================================================
+# Test Patterns for Capture Functionality  
+# ============================================================================
+#
+# These patterns test that capture groups work correctly with the DFA.
+# Captures extract specific parts of matched input using <name>...</name> syntax.
+#
+# Syntax: <name>pattern</name> creates a capture group named "name"
+# The captured text is the substring matching the pattern inside the tags.
+#
+# ============================================================================
+
+# Single capture tests
+[safe:capture:single] git log -n <num>[0-9]+</num>
+[safe:capture:single] cat <file>[a-zA-Z0-9_.]+</file>
+[safe:capture:single] echo <msg>[a-z]+</msg>
+[safe:capture:single] head -n <lines>[0-9]+</lines>
+
+# Multiple captures in one pattern
+[safe:capture:multi] cp <src>[a-zA-Z0-9_.]+</src> <dst>[a-zA-Z0-9_.]+</dst>
+
+# Capture at different positions
+[safe:capture:pos1] mkdir <dir>[a-z]+</dir>
+[safe:capture:pos2] rmdir <dir>[a-z]+</dir>
+[safe:capture:pos3] touch <file>[a-zA-Z0-9_.]+</file>
+
+# End of capture test patterns

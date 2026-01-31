@@ -6,6 +6,7 @@
 
 int main() {
     FILE* f = fopen("safe_final.dfa", "rb");
+    if (!f) { printf("Cannot open file\n"); return 1; }
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -15,18 +16,13 @@ int main() {
     
     dfa_init(data, size);
     
-    const char* tests[] = {
-        "git status",
-        "git",
-        "git status ",
-        "git status -s",
-        NULL
-    };
+    // Test inputs
+    const char* tests[] = {"git", "git ", "git s", "git st", "git sta", "git stat", "git statu", "git status", NULL};
     
     for (int i = 0; tests[i]; i++) {
         dfa_result_t res;
         bool matched = dfa_evaluate(tests[i], strlen(tests[i]), &res);
-        printf("'%s' -> matched=%s, len=%zu, cat=%d\n", 
+        printf("'%-10s' -> matched=%s, len=%2zu, cat=%d\n", 
                tests[i], matched && res.matched ? "yes" : "no", 
                res.matched_length, res.category);
     }

@@ -447,8 +447,8 @@ static void test_plus_quantifier_comprehensive(void) {
     };
     int group1_count = sizeof(group1) / sizeof(group1[0]);
     for (int i = 0; i < group1_count; i++) {
-        bool matched = dfa_evaluate(group1[i].input, 0, &result);
-        bool passed = (matched == group1[i].should_match);
+        dfa_evaluate(group1[i].input, 0, &result);
+        bool passed = (result.matched == group1[i].should_match);
         if (passed && group1[i].should_match) {
             passed = (result.matched_length == group1[i].expected_len);
         }
@@ -457,7 +457,7 @@ static void test_plus_quantifier_comprehensive(void) {
             pass_count++;
         } else {
             printf("  [FAIL] %s - got %s (len=%zu)\n", group1[i].description,
-                   (matched && result.matched) ? "MATCH" : "NO MATCH",
+                   result.matched ? "MATCH" : "NO MATCH",
                    result.matched_length);
             fail_count++;
         }
@@ -479,8 +479,8 @@ static void test_plus_quantifier_comprehensive(void) {
     };
     int group2_count = sizeof(group2) / sizeof(group2[0]);
     for (int i = 0; i < group2_count; i++) {
-        bool matched = dfa_evaluate(group2[i].input, 0, &result);
-        bool passed = (matched == group2[i].should_match);
+        dfa_evaluate(group2[i].input, 0, &result);
+        bool passed = (result.matched == group2[i].should_match);
         if (passed && group2[i].should_match) {
             passed = (result.matched_length == group2[i].expected_len);
         }
@@ -489,7 +489,7 @@ static void test_plus_quantifier_comprehensive(void) {
             pass_count++;
         } else {
             printf("  [FAIL] %s - got %s (len=%zu)\n", group2[i].description,
-                   (matched && result.matched) ? "MATCH" : "NO MATCH",
+                   result.matched ? "MATCH" : "NO MATCH",
                    result.matched_length);
             fail_count++;
         }
@@ -513,8 +513,8 @@ static void test_plus_quantifier_comprehensive(void) {
     };
     int group3_count = sizeof(group3) / sizeof(group3[0]);
     for (int i = 0; i < group3_count; i++) {
-        bool matched = dfa_evaluate(group3[i].input, 0, &result);
-        bool passed = (matched == group3[i].should_match);
+        dfa_evaluate(group3[i].input, 0, &result);
+        bool passed = (result.matched == group3[i].should_match);
         if (passed && group3[i].should_match) {
             passed = (result.matched_length == group3[i].expected_len);
         }
@@ -523,7 +523,7 @@ static void test_plus_quantifier_comprehensive(void) {
             pass_count++;
         } else {
             printf("  [FAIL] %s - got %s (len=%zu)\n", group3[i].description,
-                   (matched && result.matched) ? "MATCH" : "NO MATCH",
+                   result.matched ? "MATCH" : "NO MATCH",
                    result.matched_length);
             fail_count++;
         }
@@ -546,8 +546,8 @@ static void test_plus_quantifier_comprehensive(void) {
     };
     int group4_count = sizeof(group4) / sizeof(group4[0]);
     for (int i = 0; i < group4_count; i++) {
-        bool matched = dfa_evaluate(group4[i].input, 0, &result);
-        bool passed = (matched == group4[i].should_match);
+        dfa_evaluate(group4[i].input, 0, &result);
+        bool passed = (result.matched == group4[i].should_match);
         if (passed && group4[i].should_match) {
             passed = (result.matched_length == group4[i].expected_len);
         }
@@ -556,7 +556,7 @@ static void test_plus_quantifier_comprehensive(void) {
             pass_count++;
         } else {
             printf("  [FAIL] %s - got %s (len=%zu)\n", group4[i].description,
-                   (matched && result.matched) ? "MATCH" : "NO MATCH",
+                   result.matched ? "MATCH" : "NO MATCH",
                    result.matched_length);
             fail_count++;
         }
@@ -753,21 +753,54 @@ static void test_space_handling(void) {
     TEST_ASSERT(!t6 || !result.matched, "  'status' alone should NOT match");
 }
 
+static void test_digit_specificity(void) {
+    printf("\nTest: Digit Specificity in Patterns\n");
+    printf("  Testing that specific digits (1, 2, 5) match only their exact values\n\n");
+
+    dfa_result_t result;
+
+    printf("  1. 'git log -n 1' (digit 1 should match)\n");
+    bool t1 = dfa_evaluate("git log -n 1", 0, &result);
+    TEST_ASSERT(t1 && result.matched, "  'git log -n 1' should match");
+
+    printf("  2. 'git log -n 2' (digit 2 should match)\n");
+    bool t2 = dfa_evaluate("git log -n 2", 0, &result);
+    TEST_ASSERT(t2 && result.matched, "  'git log -n 2' should match");
+
+    printf("  3. 'git log -n 5' (digit 5 should match)\n");
+    bool t3 = dfa_evaluate("git log -n 5", 0, &result);
+    TEST_ASSERT(t3 && result.matched, "  'git log -n 5' should match");
+
+    printf("  4. 'git log -n 3' (digit 3 should NOT match)\n");
+    bool t4 = dfa_evaluate("git log -n 3", 0, &result);
+    TEST_ASSERT(!t4 || !result.matched, "  'git log -n 3' should NOT match (wrong digit)");
+
+    printf("  5. 'git log -n 0' (digit 0 should NOT match)\n");
+    bool t5 = dfa_evaluate("git log -n 0", 0, &result);
+    TEST_ASSERT(!t5 || !result.matched, "  'git log -n 0' should NOT match (wrong digit)");
+}
+
 int main(int argc, char* argv[]) {
     // Check for test mode argument and DFA file path
     bool quantifier_mode = false;
+    bool comprehensive_quantifier_mode = false;
     bool capture_mode = false;
     bool negative_mode = false;
     bool space_mode = false;
+    bool digit_mode = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--quantifier-test") == 0) {
             quantifier_mode = true;
+        } else if (strcmp(argv[i], "--comprehensive-quantifier-test") == 0) {
+            comprehensive_quantifier_mode = true;
         } else if (strcmp(argv[i], "--capture-test") == 0) {
             capture_mode = true;
         } else if (strcmp(argv[i], "--negative-test") == 0) {
             negative_mode = true;
         } else if (strcmp(argv[i], "--space-test") == 0) {
             space_mode = true;
+        } else if (strcmp(argv[i], "--digit-test") == 0) {
+            digit_mode = true;
         } else if (i == argc - 1 && argv[i][0] != '-') {
             // Last argument is the DFA file path
             dfa_file_path = argv[i];
@@ -778,6 +811,8 @@ int main(int argc, char* argv[]) {
     printf("ReadOnlyBox DFA Unit Tests\n");
     if (quantifier_mode) {
         printf("Mode: Quantifier Tests Only\n");
+    } else if (comprehensive_quantifier_mode) {
+        printf("Mode: Comprehensive Quantifier Tests Only\n");
     } else if (capture_mode) {
         printf("Mode: Capture Pattern Tests\n");
     } else if (negative_mode) {
@@ -796,6 +831,16 @@ int main(int argc, char* argv[]) {
 
         printf("\n=================================================\n");
         printf("Quantifier Test Results: %d/%d tests passed\n", tests_passed, tests_run);
+        printf("=================================================\n");
+        return (tests_passed == tests_run) ? 0 : 1;
+    }
+
+    if (comprehensive_quantifier_mode) {
+        // In comprehensive quantifier test mode, only run comprehensive tests
+        test_plus_quantifier_comprehensive();
+
+        printf("\n=================================================\n");
+        printf("Comprehensive Quantifier Test Results: %d/%d tests passed\n", tests_passed, tests_run);
         printf("=================================================\n");
         return (tests_passed == tests_run) ? 0 : 1;
     }
@@ -830,6 +875,16 @@ int main(int argc, char* argv[]) {
         return (tests_passed == tests_run) ? 0 : 1;
     }
 
+    if (digit_mode) {
+        // In digit test mode, only run digit specificity tests
+        test_digit_specificity();
+
+        printf("\n=================================================\n");
+        printf("Digit Specificity Test Results: %d/%d tests passed\n", tests_passed, tests_run);
+        printf("=================================================\n");
+        return (tests_passed == tests_run) ? 0 : 1;
+    }
+
     // Normal test mode - run all tests
     test_simple_literal_patterns();
     test_pattern_prefix_matching();
@@ -841,7 +896,7 @@ int main(int argc, char* argv[]) {
     test_unsafe_commands_not_matched();
     test_capture_support();
     test_plus_quantifier_general();
-    test_plus_quantifier_comprehensive();
+    // Note: test_plus_quantifier_comprehensive() now runs as separate test group with its own DFA
     test_capture_comprehensive();
 
     printf("\n=================================================\n");

@@ -1,0 +1,19 @@
+# Comprehensive Quantifier Test Patterns
+# These patterns are used for the comprehensive quantifier test suite
+# which tests single-character fragment quantifiers with specific loops
+
+[fragment:TQ::B] b
+[fragment:TQ::Y] y
+[fragment:TQ::Z] z
+
+# Group 1: Fragment-based + quantifier with 'b' character
+[safe:quantifier:comprehensive] a((TQ::B))+
+
+# Group 2: Fragment-based + quantifier with 'y' character  
+[safe:quantifier:comprehensive] x((TQ::Y))+
+
+# Group 3: Literal + quantifier (not fragment)
+[safe:quantifier:comprehensive] p+
+
+# Group 4: Multiple chars before + quantifier
+[safe:quantifier:comprehensive] abc((TQ::B))+

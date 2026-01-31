@@ -1,0 +1,92 @@
+# Pattern-Aware Alphabet Map
+# Generated based on pattern file analysis
+# Symbol IDs must match array indices (0, 1, 2, ...) for DFA construction
+#
+# Individual chars detected: [' ', '-', '1', '2', '5', 'g', 'i', 'l', 'n', 'o', 't']
+# Class chars detected: []
+#
+0 0 0       # ANY (wildcard - matches any character)
+1 5 5       # EOS (End of String marker)
+2 32 32       # space
+3 9 9       # tab
+4 103 103       # g
+5 105 105       # i
+6 108 108       # l
+7 110 110       # n
+8 111 111       # o
+9 116 116       # t
+10 97 97       # a
+11 98 98       # b
+12 99 99       # c
+13 100 100       # d
+14 101 101       # e
+15 102 102       # f
+16 104 104       # h
+17 106 106       # j
+18 107 107       # k
+19 109 109       # m
+20 112 112       # p
+21 113 113       # q
+22 114 114       # r
+23 115 115       # s
+24 117 117       # u
+25 118 118       # v
+26 119 119       # w
+27 120 120       # x
+28 121 121       # y
+29 122 122       # z
+30 65 65       # A
+31 66 66       # B
+32 67 67       # C
+33 68 68       # D
+34 69 69       # E
+35 70 70       # F
+36 71 71       # G
+37 72 72       # H
+38 73 73       # I
+39 74 74       # J
+40 75 75       # K
+41 76 76       # L
+42 77 77       # M
+43 78 78       # N
+44 79 79       # O
+45 80 80       # P
+46 81 81       # Q
+47 82 82       # R
+48 83 83       # S
+49 84 84       # T
+50 85 85       # U
+51 86 86       # V
+52 87 87       # W
+53 88 88       # X
+54 89 89       # Y
+55 90 90       # Z
+56 49 49       # 1
+57 50 50       # 2
+58 53 53       # 5
+59 48 57       # 0-9
+60 45 45       # -
+61 46 46       # .
+62 47 47       # /
+63 95 95       # _
+64 10 10       # \n
+65 64 64       # @
+66 58 58       # :
+67 39 39       # '
+68 34 34       # "
+69 124 124       # |
+70 42 42       # *
+71 126 126       # ~
+72 35 35       # #
+73 33 33       # !
+74 240 240       # CAPTURE_START (0xF0)
+75 241 241       # CAPTURE_END (0xF1)
+76 254 254       # NORMALIZING_SPACE (matches space/tab sequences)
+77 242 242       # CAPTURE_ID_0 (0xF2)
+78 243 243       # CAPTURE_ID_1 (0xF3)
+79 244 244       # CAPTURE_ID_2 (0xF4)
+80 245 245       # CAPTURE_ID_3 (0xF5)
+81 246 246       # CAPTURE_ID_4 (0xF6)
+82 247 247       # CAPTURE_ID_5 (0xF7)
+83 248 248       # CAPTURE_ID_6 (0xF8)
+84 249 249       # CAPTURE_ID_7 (0xF9)

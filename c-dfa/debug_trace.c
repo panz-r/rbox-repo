@@ -5,7 +5,7 @@
 #include <string.h>
 
 int main() {
-    FILE* f = fopen("readonlybox.dfa", "rb");
+    FILE* f = fopen("safe_final.dfa", "rb");
     fseek(f, 0, SEEK_END);
     long file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -15,7 +15,7 @@ int main() {
     
     dfa_init(data, file_size);
     
-    const char* input = "git status";
+    const char* input = "git";
     uint32_t state_offset = 20;
     
     printf("Initial state offset: %u\n", state_offset);
@@ -55,6 +55,12 @@ int main() {
             break;
         }
     }
+    
+    // Check final state flags
+    uint16_t final_flags = *((uint16_t*)((char*)data + state_offset + 6));
+    uint8_t accepting_mask = (final_flags >> 8) & 0xFF;
+    printf("\nFinal state: offset=%u, flags=0x%04X, accepting_mask=0x%02X\n", 
+           state_offset, final_flags, accepting_mask);
     
     free(data);
     return 0;

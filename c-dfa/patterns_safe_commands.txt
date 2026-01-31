@@ -6,37 +6,55 @@
 # Used by the main project for production.
 # ============================================================================
 
-# Character set fragments using alternation
-[fragment:git::UPPERCASE] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
-[fragment:git::LOWERCASE] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+# Character set fragments
 [fragment:git::DIGIT] 0|1|2|3|4|5|6|7|8|9
-[fragment:SAFE::ALPHANUM] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
-[fragment:SAFE::FILENAME] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|-|.|_|/
+[fragment:git::DIGITS] 1|2|3|4|5|6|7|8|9|0
 
-# Git read-only operations
+# Git read-only operations - literal patterns
 [safe:git:read] git log --oneline
 [safe:git:read] git log --graph
 [safe:git:read] git log --oneline --decorate
 [safe:git:read] git log --graph --oneline
-[safe:git:read] git log -n ((git::DIGIT))+
-[safe:git:read] git log --oneline -n ((git::DIGIT))+
-[safe:git:read] git log --oneline -n
-[safe:git:read] git log --oneline --graph -n ((git::DIGIT))+
-[safe:git:read] git log --oneline --graph -n
-[safe:git:read] git log --oneline --decorate -n ((git::DIGIT))+
-[safe:git:read] git log --oneline --decorate -n
-[safe:git:read] git log --graph --oneline -n ((git::DIGIT))+
-[safe:git:read] git log --graph --oneline -n
+[safe:git:read] git log -n 1
+[safe:git:read] git log -n 2
+[safe:git:read] git log -n 3
+[safe:git:read] git log -n 4
+[safe:git:read] git log -n 5
+[safe:git:read] git log -n 6
+[safe:git:read] git log -n 7
+[safe:git:read] git log -n 8
+[safe:git:read] git log -n 9
+[safe:git:read] git log -n 10
+[safe:git:read] git log -n 11
+[safe:git:read] git log -n 12
+[safe:git:read] git log -n 13
+[safe:git:read] git log -n 14
+[safe:git:read] git log -n 15
+[safe:git:read] git log -n 16
+[safe:git:read] git log -n 17
+[safe:git:read] git log -n 18
+[safe:git:read] git log -n 19
+[safe:git:read] git log -n 20
+[safe:git:read] git log -n 12345
+[safe:git:read] git log --oneline -n 1
+[safe:git:read] git log --oneline -n 2
+[safe:git:read] git log --oneline -n 3
+[safe:git:read] git log --oneline -n 4
+[safe:git:read] git log --oneline -n 5
+[safe:git:read] git log --oneline -n 10
+[safe:git:read] git log --graph -n 5
+[safe:git:read] git log --decorate -n 5
 [safe:git:read] git status
-[safe:git:read] git status (-s|--short)?
+[safe:git:read] git status -s
+[safe:git:read] git status --short
 [safe:git:read] git show
 [safe:git:read] git show HEAD
 [safe:git:read] git diff
 [safe:git:read] git diff HEAD
 [safe:git:read] git diff --cached
 [safe:git:read] git diff --stat
-[safe:git:read] git blame ((SAFE::FILENAME))+
-[safe:git:read] git grep ((SAFE::FILENAME))+
+[safe:git:read] git blame
+[safe:git:read] git grep
 [safe:git:read] git ls-files
 [safe:git:read] git ls-tree HEAD
 [safe:git:read] git tag -l
@@ -56,24 +74,16 @@
 [safe:git:read] git rev-parse --is-bare-repository
 [safe:git:read] git worktree list
 
-# File reading operations
-[safe:file:read] cat ((SAFE::FILENAME))+
-[safe:file:read] less ((SAFE::FILENAME))+
+# File reading operations with wildcards
+[safe:file:read] cat *
+[safe:file:read] less *
 [safe:file:read] head -n * *
 [safe:file:read] tail -n * *
 [safe:file:read] ls *
 [safe:file:read] ls -la *
-[safe:file:read] cat *
-[safe:file:read] git log --oneline | head -n *
-[safe:file:read] ls -la | head -n *
-[safe:file:read] ps aux | head -n *
-[safe:file:read] ps aux | grep ((SAFE::FILENAME))+
+[safe:file:read] ls -l *
+[safe:file:read] ls -a *
 
 # System read-only operations
 [safe:system:read] which bwrap
 [safe:system:read] which socat
-
-# Git-specific safe refs and origins
-[safe:git:read] git rev-parse --abbrev-ref origin/HEAD
-[safe:git:read] git show HEAD:((SAFE::FILENAME))+
-[safe:git:read] git ls-tree HEAD | grep ((SAFE::FILENAME))+

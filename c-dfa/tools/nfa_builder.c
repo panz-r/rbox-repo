@@ -149,6 +149,11 @@ static int last_element_sid = -1;
 // For + quantifier: tracks if we're inside a capture (capture ID to defer)
 static int8_t pending_capture_defer_id = -1;
 
+// For + quantifier on character classes: track ALL symbols that need loop transitions
+#define MAX_CLASS_SYMBOLS 64
+static int pending_class_symbols[MAX_CLASS_SYMBOLS];
+static int pending_class_symbol_count = 0;
+
 // Find a fragment by name
 static const char* find_fragment(const char* name) {
     fprintf(stderr, "//DEBUG: find_fragment looking for: '%s'\n", name);
@@ -270,9 +275,9 @@ bool should_use_negation(int from_state, int to_state, char input_char) {
         }
     }
     
-    // Use negation if we'd have 2 or more transitions to the same target
-    // This is more aggressive than the previous threshold of 3
-    return transitions_to_target >= 1; // Use negation for any duplicate target
+    // DISABLE negation to ensure nfa2dfa compatibility
+    // nfa2dfa does not support NotSymbol transitions
+    return false;
 }
 
 void add_negated_transition(int from_state, int to_state, char excluded_char) {
@@ -971,6 +976,7 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
 
     // Add transitions for each unique character
     bool seen[256] = {false};
+    pending_class_symbol_count = 0;  // Clear previous class symbols
     for (int i = 0; i < alt_count; i++) {
         unsigned char uc = (unsigned char)alt_chars[i];
         if (!seen[uc]) {
@@ -978,6 +984,10 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
             int sid = find_symbol_id(alt_chars[i]);
             if (sid != -1) {
                 nfa_add_transition(start_state, class_state, sid);
+                // Track this symbol for + quantifier loop creation
+                if (pending_class_symbol_count < MAX_CLASS_SYMBOLS) {
+                    pending_class_symbols[pending_class_symbol_count++] = sid;
+                }
             }
         }
     }
@@ -987,6 +997,7 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
     }
 
     nfa_finalize_state(class_state);
+    pending_loop_state = class_state;  // Track for + quantifier loop creation
     return class_state;
 }
 
@@ -1174,9 +1185,8 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
         } else if (op == '+') {
             (*pos)++;
 
-            fprintf(stderr, "DEBUG: + handler entered: pending_loop_char='%c'(%d), pending_loop_state=%d\n",
-                    pending_loop_char, pending_loop_char, pending_loop_state);
-
+            // Check if we're inside a fragment being parsed for an outer quantifier
+            // If so, DON'T clear pending_loop_* - the outer quantifier needs them
             // Check if we're inside a fragment being parsed for an outer quantifier
             // If so, DON'T clear pending_loop_* - the outer quantifier needs them
             if (pending_loop_char != '\0' && pending_loop_state != -1 && pending_loop_char != '*') {
@@ -1209,13 +1219,33 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                 pending_loop_state = outer_pending_loop_state;
             }
 
-            if (pending_loop_char != '\0' && pending_loop_state != -1 && pending_loop_char != '*') {
+            if ((pending_loop_char != '\0' || pending_class_symbol_count > 0) && pending_loop_state != -1 && pending_loop_char != '*') {
                 int char_sid = find_symbol_id(pending_loop_char);
 
                 if (char_sid != -1) {
                     // frag_end (pending_loop_state) becomes the loop entry
                     // Add loop transition: frag_end --char--> frag_end
                     nfa_add_transition(pending_loop_state, pending_loop_state, char_sid);
+                    
+                    // Also add loop transitions for all character class symbols
+                    if (pending_class_symbol_count > 0) {
+                        for (int i = 0; i < pending_class_symbol_count; i++) {
+                            int class_sid = pending_class_symbols[i];
+                            if (class_sid != char_sid) {  // Avoid duplicate
+                                nfa_add_transition(pending_loop_state, pending_loop_state, class_sid);
+                            }
+                        }
+                    }
+
+                    // Mark the entry state (current) as non-accepting
+                    // This ensures patterns like abc((b))+ don't match just "abc"
+                    // The only way to accept is through the loop state after matching at least one char
+                    fprintf(stderr, "DEBUG: Marking state %d as non-accepting (was eos_target=%d, cat_mask=%d)\n", 
+                            current, nfa[current].is_eos_target, nfa[current].category_mask);
+                    nfa[current].is_eos_target = false;
+                    nfa[current].category_mask = 0x00;
+                    fprintf(stderr, "DEBUG: State %d now eos_target=%d, cat_mask=%d\n", 
+                            current, nfa[current].is_eos_target, nfa[current].category_mask);
 
                     // Check if we're inside a capture - if so, defer the capture end
                     // until we actually leave the loop state
@@ -1312,10 +1342,10 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     last_element_sid = -1;
                 } else {
                     // Fall back to ANY-based loop for complex patterns
+                    fprintf(stderr, "DEBUG: FALLBACK TO ANY-BASED LOOP (incorrect for specific chars)\n");
                     int any_sid = find_symbol_id(DFA_CHAR_ANY);
                     int eos_sid = find_symbol_id(DFA_CHAR_EOS);
                     if (any_sid == -1 || eos_sid == -1) return current;
-
                     int star_state = nfa_add_state_with_minimization(false);
                     nfa_add_transition(current, star_state, any_sid);
                     nfa_add_transition(star_state, star_state, any_sid);
@@ -1347,8 +1377,20 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 static int parse_rdp_sequence(const char* pattern, int* pos, int start_state) {
     int current = start_state;
 
-    while (*pos < (int)strlen(pattern) && pattern[*pos] != ')' && pattern[*pos] != '|' && pattern[*pos] != '+' && pattern[*pos] != '*' && pattern[*pos] != '?') {
+    while (*pos < (int)strlen(pattern) && pattern[*pos] != ')' && pattern[*pos] != '|') {
+        // Check for postfix operators after parsing each element
+        char next_char = pattern[*pos];
+        if (next_char == '+' || next_char == '*' || next_char == '?') {
+            // Postfix operator applies to the previous element - break and let caller handle it
+            break;
+        }
         current = parse_rdp_element(pattern, pos, current);
+        
+        // After parsing element, check if next char is a postfix operator
+        // If so, we need to handle it before continuing
+        if (pattern[*pos] == '+' || pattern[*pos] == '*' || pattern[*pos] == '?') {
+            current = parse_rdp_postfix(pattern, pos, current);
+        }
     }
 
     return current;
@@ -1414,6 +1456,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
     outer_pending_loop_char = '\0';
     outer_pending_loop_state = -1;
     pending_capture_defer_id = -1;
+    pending_class_symbol_count = 0;  // Clear class symbol tracking
 
     // Find entry state - try to share prefix with existing patterns
     int start_state;

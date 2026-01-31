@@ -1,0 +1,14 @@
+# Simple Capture Test Pattern
+# Tests basic capture extraction
+
+# Capture a number after -n flag
+[safe:capture:num] git log -n <num>[0-9]+</num>
+
+# Simple version without category
+git log -n <n>[0-9]+</n>
+
+# Capture a filename  
+[safe:capture:file] cat <file>[a-zA-Z0-9_.]+</file>
+
+# Simple word capture
+[safe:capture:word] echo <msg>[a-z]+</msg>

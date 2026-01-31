@@ -2,6 +2,7 @@
 #include "dfa_types.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 
 static const dfa_t* current_dfa = NULL;
 
@@ -12,6 +13,7 @@ typedef struct {
     size_t start_pos;
     bool active;
     int capture_id;
+    uint8_t category;  // Category mask when capture started
 } eval_capture_t;
 
 typedef struct {
@@ -250,6 +252,9 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         return true;
     }
 
+    // Reset defer stack for this evaluation
+    defer_stack_depth = 0;
+
     size_t states_size = current_dfa->state_count * sizeof(dfa_state_t);
     size_t dfa_header_size = sizeof(dfa_t);
     size_t dfa_total_size = dfa_header_size + states_size;
@@ -323,17 +328,27 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
         uint8_t category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
         if (category_mask != 0) {
-            result->matched = true;
-            result->final_state = current_state->flags;
-            result->matched_length = pos + 1;
-            result->category_mask = category_mask;
+            // Track the best match so far, but only mark as matched if:
+            // 1. We're at the end of input (pos == length - 1), OR
+            // 2. The state has no outgoing transitions (dead end)
+            // This prevents partial matches like "git" matching "git status"
+            bool is_at_end = (pos == length - 1);
+            bool has_no_outgoing = (current_state->transition_count == 0);
+            bool has_eos_transition = (current_state->eos_target >= 0);
             
-            if (category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-            else if (category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-            else if (category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-            else if (category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-            else if (category_mask & 0x10) result->category = DFA_CMD_NETWORK;
-            else if (category_mask & 0x20) result->category = DFA_CMD_ADMIN;
+            if (is_at_end || has_no_outgoing || has_eos_transition) {
+                result->matched = true;
+                result->final_state = current_state->flags;
+                result->matched_length = pos + 1;
+                result->category_mask = category_mask;
+                
+                if (category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+                else if (category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+                else if (category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+                else if (category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+                else if (category_mask & 0x10) result->category = DFA_CMD_NETWORK;
+                else if (category_mask & 0x20) result->category = DFA_CMD_ADMIN;
+            }
         }
     }
 
@@ -347,7 +362,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         }
     }
 
-    if (pos >= length && current_state->eos_target != 0) {
+    if (pos >= length && current_state->eos_target >= 0) {
         size_t eos_offset = STATE_INDEX_TO_OFFSET(current_state->eos_target);
         const dfa_state_t* eos_accepting_state = (const dfa_state_t*)((const char*)raw_base + eos_offset);
         uint8_t eos_category_mask = DFA_GET_CATEGORY_MASK(eos_accepting_state->flags);

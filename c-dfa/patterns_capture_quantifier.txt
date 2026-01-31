@@ -1,0 +1,33 @@
+# ============================================================================
+# Test Patterns for Capture + Quantifier Combinations
+# ============================================================================
+#
+# These patterns test the interaction between capture groups and quantifiers.
+# This is a known challenge area that needs thorough testing.
+#
+# Test cases:
+# 1. Capture around a quantified group: <name>(pattern)+</name>
+# 2. Capture with + quantifier on the captured content itself
+# 3. Multiple captures with different quantifiers
+# 4. Optional captures with ? quantifier
+# ============================================================================
+
+# Capture + quantifier: capture the entire repeated sequence
+[safe:capture:quant1] words <w>([a-z]+ )+</w>
+
+# Capture filename that can have multiple extensions: file.tar.gz
+[safe:capture:quant2] cat <file>[a-z]+(\.[a-z]+)+</file>
+
+# Capture repeated digit sequences
+[safe:capture:quant3] nums <digits>([0-9]+ )+</digits>
+
+# Simple capture (baseline - should always work)
+[safe:capture:simple] single <word>[a-z]+</word>
+
+# Capture with optional part (zero or one)
+[safe:capture:opt] greet <name>[a-z]+( [a-z]+)?</name>
+
+# Multiple captures with quantifiers
+[safe:capture:multiq] copy <src>[a-z]+</src> to <dst>[a-z]+</dst>
+
+# End of capture + quantifier test patterns

@@ -47,17 +47,16 @@ func BuildClient() error {
 	dfaCArray := filepath.Join(cdfaToolsDir, "readonlybox_dfa.c")
 	clientDfaData := filepath.Join(wd, "internal/client", "dfa_static_data.c")
 
-	// Build nfa_builder if needed
+	// Build nfa_builder (always rebuild to ensure latest version)
 	nfaBuilder := filepath.Join(cdfaToolsDir, "nfa_builder")
-	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
-		fmt.Println("Building nfa_builder...")
-		buildCmd := exec.Command("gcc", "-o", nfaBuilder, filepath.Join(cdfaToolsDir, "nfa_builder.c"),
-			"-Wall", "-Wextra", "-std=c11", "-O2")
-		buildCmd.Stdout = os.Stdout
-		buildCmd.Stderr = os.Stderr
-		if err := buildCmd.Run(); err != nil {
-			return fmt.Errorf("failed to build nfa_builder: %w", err)
-		}
+	os.Remove(nfaBuilder)
+	fmt.Println("Building nfa_builder...")
+	buildNfaBuilderCmd := exec.Command("gcc", "-o", nfaBuilder, filepath.Join(cdfaToolsDir, "nfa_builder.c"),
+		"-Wall", "-Wextra", "-std=c11", "-O2")
+	buildNfaBuilderCmd.Stdout = os.Stdout
+	buildNfaBuilderCmd.Stderr = os.Stderr
+	if err := buildNfaBuilderCmd.Run(); err != nil {
+		return fmt.Errorf("failed to build nfa_builder: %w", err)
 	}
 
 	// Build nfa2dfa (always rebuild to ensure latest version)
@@ -380,6 +379,12 @@ func DfaTest() error {
 			optional:     false,
 		},
 		{
+			name:         "Comprehensive Quantifier Tests",
+			patternsFile: "patterns_quantifier_comprehensive.txt",
+			testArgs:     []string{"--comprehensive-quantifier-test"},
+			optional:     true,
+		},
+		{
 			name:         "Capture Pattern Tests",
 			patternsFile: "patterns_with_captures.txt",
 			testArgs:     []string{"--capture-test"},
@@ -397,7 +402,16 @@ func DfaTest() error {
 			testArgs:     []string{"--space-test"},
 			optional:     true,
 		},
+		{
+			name:         "Digit Specificity Tests",
+			patternsFile: "patterns_digit_test.txt",
+			testArgs:     []string{"--digit-test"},
+			optional:     true,
+		},
 	}
+
+	// Track failures across all groups
+	var failedGroups []string
 
 	// Run each test group
 	for _, group := range testGroups {
@@ -412,10 +426,28 @@ func DfaTest() error {
 		fmt.Printf("\n=== %s ===\n", group.name)
 		fmt.Printf("Patterns: %s\n", group.patternsFile)
 
+		// Generate pattern-aware alphabet using base alphabet for consistent symbol IDs
+		alphabetFile := filepath.Join(cdfaDir, "test_group_alphabet.map")
+		baseAlphabet := filepath.Join(cdfaDir, "alphabet_per_char.map")
+		genAlphabet := exec.Command("python3",
+			filepath.Join(cdfaDir, "generate_alphabet.py"),
+			patternsPath,
+			alphabetFile,
+			baseAlphabet)
+		genAlphabet.Dir = cdfaDir
+		genAlphabet.Stdout = os.Stdout
+		genAlphabet.Stderr = os.Stderr
+		if err := genAlphabet.Run(); err != nil {
+			failedGroups = append(failedGroups, fmt.Sprintf("%s (alphabet generation)", group.name))
+			fmt.Printf("ERROR: Failed to generate pattern-aware alphabet for %s: %v\n", group.name, err)
+			continue
+		}
+		fmt.Printf("Generated pattern-aware alphabet for %s\n", group.name)
+
 		// Generate NFA
 		nfaFile := filepath.Join(cdfaDir, "test_group.nfa")
 		genNfa := exec.Command(nfaBuilder,
-			filepath.Join(cdfaDir, "alphabet_per_char.map"),
+			alphabetFile,
 			patternsPath,
 			nfaFile)
 		genNfa.Dir = cdfaDir
@@ -426,7 +458,9 @@ func DfaTest() error {
 				fmt.Printf("Skipping %s due to NFA generation error: %v\n", group.name, err)
 				continue
 			}
-			return fmt.Errorf("failed to generate NFA for %s: %w", group.name, err)
+			failedGroups = append(failedGroups, fmt.Sprintf("%s (NFA generation)", group.name))
+			fmt.Printf("ERROR: Failed to generate NFA for %s: %v\n", group.name, err)
+			continue
 		}
 
 		// Generate DFA
@@ -440,7 +474,9 @@ func DfaTest() error {
 				fmt.Printf("Skipping %s due to DFA generation error: %v\n", group.name, err)
 				continue
 			}
-			return fmt.Errorf("failed to generate DFA for %s: %w", group.name, err)
+			failedGroups = append(failedGroups, fmt.Sprintf("%s (DFA generation)", group.name))
+			fmt.Printf("ERROR: Failed to generate DFA for %s: %v\n", group.name, err)
+			continue
 		}
 
 		// Run tests
@@ -448,10 +484,22 @@ func DfaTest() error {
 		cmd.Dir = cdfaDir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		err := cmd.Run()
-		if err != nil && !group.optional {
-			return fmt.Errorf("tests failed for %s: %w", group.name, err)
+		if testErr := cmd.Run(); testErr != nil {
+			if !group.optional {
+				failedGroups = append(failedGroups, group.name)
+			}
+			// Continue to next group even if this one failed
+			fmt.Printf("NOTE: Tests for %s had failures\n", group.name)
 		}
+	}
+
+	// Report any failures
+	if len(failedGroups) > 0 {
+		fmt.Printf("\n=== Failed Test Groups ===\n")
+		for _, name := range failedGroups {
+			fmt.Printf("  - %s\n", name)
+		}
+		return fmt.Errorf("some test groups failed")
 	}
 
 	// Build shell_tokenizer_test if needed
