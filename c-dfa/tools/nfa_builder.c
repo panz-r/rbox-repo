@@ -442,11 +442,10 @@ static unsigned int hash_signature(uint64_t signature) {
 static uint64_t compute_state_signature(int state) {
     uint64_t signature = 0;
 
-    // Only include pattern index if this state has tags (i.e., it's an accepting state
-    // or has category/operation info). This allows intermediate states to be shared.
-    if (nfa[state].tag_count > 0) {
-        signature = signature * 31 + current_pattern_index;
-    }
+    // Always include pattern index to prevent inappropriate state sharing
+    // between patterns with different characteristics (especially different
+    // acceptance categories assigned via #ACCEPTANCE_MAPPING directive)
+    signature = signature * 31 + current_pattern_index;
 
     // Include category_mask in signature (8-bit category bits)
     if (nfa[state].category_mask != 0) {
@@ -906,14 +905,16 @@ static int parse_rdp_fragment(const char* pattern, int* pos, int start_state) {
         pending_loop_char = frag_value[0];
     }
 
-    // For + quantifier: store the fragment's end state BEFORE adding EOS transition
+    // For + quantifier: store the fragment states for loop creation
     // pending_loop_char was set above for single-char fragments
-    // pending_loop_state should be the END of the fragment (frag_end)
+    // CRITICAL: For single-char fragments with + quantifier:
+    //   - Loop should be at frag_start (where character is consumed)
+    //   - Accepting state should be frag_end (after consuming one+ chars)
     if (pending_loop_char != '\0') {
-        pending_loop_state = frag_end;
-        pending_loop_accepting = -1;
+        pending_loop_state = frag_start;  // Loop at state where char is consumed
+        pending_loop_accepting = frag_end;  // Accepting at state after char
         // For + quantifier: DON'T create EOS accepting state here
-        // The + handler will mark the loop state as accepting
+        // The + handler will set up the loop and mark frag_end as accepting
     } else {
         // Add EOS transition to make it a proper accepting state (for patterns without +)
         int eos_sid = find_symbol_id(DFA_CHAR_EOS);
@@ -1166,7 +1167,27 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
 
 // Parse postfix quantifier: * + ?
 static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
-    int current = parse_rdp_element(pattern, pos, start_state);
+    // CRITICAL FIX: Check if element was already parsed and has pending loop state
+    // This happens when parse_rdp_sequence parses an element then calls us for the quantifier
+    // If we re-parse, we'll overwrite the pending_loop_* values set by the first parse
+    int current;
+    if (pending_loop_char != '\0' && pending_loop_state != -1) {
+        // Element was already parsed, just use the start_state as current
+        // and advance past the fragment reference if we're at one
+        if (pattern[*pos] == '(' && pattern[*pos+1] == '(') {
+            // Skip past the fragment reference ((name))
+            int end = *pos + 2;
+            while (pattern[end] != '\0' && !(pattern[end] == ')' && pattern[end+1] == ')')) {
+                end++;
+            }
+            if (pattern[end] == ')' && pattern[end+1] == ')') {
+                *pos = end + 2;
+            }
+        }
+        current = start_state;
+    } else {
+        current = parse_rdp_element(pattern, pos, start_state);
+    }
 
     while (pattern[*pos] != '\0') {
         char op = pattern[*pos];
@@ -1219,12 +1240,18 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                 pending_loop_state = outer_pending_loop_state;
             }
 
+            fprintf(stderr, "DEBUG + handler: pending_loop_char='%c', pending_loop_state=%d, pending_loop_accepting=%d\n",
+                    pending_loop_char, pending_loop_state, pending_loop_accepting);
+
             if ((pending_loop_char != '\0' || pending_class_symbol_count > 0) && pending_loop_state != -1 && pending_loop_char != '*') {
                 int char_sid = find_symbol_id(pending_loop_char);
+                fprintf(stderr, "DEBUG + handler: char_sid=%d for char='%c'\n", char_sid, pending_loop_char);
 
                 if (char_sid != -1) {
-                    // frag_end (pending_loop_state) becomes the loop entry
-                    // Add loop transition: frag_end --char--> frag_end
+                    // CRITICAL FIX: For + quantifier on single-char fragment:
+                    //   - pending_loop_state = frag_start (where char is consumed)
+                    //   - pending_loop_accepting = frag_end (state after char, which should be accepting)
+                    // Add loop at frag_start: allows consuming one or more chars
                     nfa_add_transition(pending_loop_state, pending_loop_state, char_sid);
                     
                     // Also add loop transitions for all character class symbols
@@ -1237,16 +1264,6 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                         }
                     }
 
-                    // Mark the entry state (current) as non-accepting
-                    // This ensures patterns like abc((b))+ don't match just "abc"
-                    // The only way to accept is through the loop state after matching at least one char
-                    fprintf(stderr, "DEBUG: Marking state %d as non-accepting (was eos_target=%d, cat_mask=%d)\n", 
-                            current, nfa[current].is_eos_target, nfa[current].category_mask);
-                    nfa[current].is_eos_target = false;
-                    nfa[current].category_mask = 0x00;
-                    fprintf(stderr, "DEBUG: State %d now eos_target=%d, cat_mask=%d\n", 
-                            current, nfa[current].is_eos_target, nfa[current].category_mask);
-
                     // Check if we're inside a capture - if so, defer the capture end
                     // until we actually leave the loop state
                     if (pending_capture_defer_id >= 0) {
@@ -1254,38 +1271,21 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                         pending_capture_defer_id = -1;
                     }
 
-                    // Mark the loop state as accepting (can exit the loop at any point)
-                    // But if the state has outgoing transitions (is shared), create a fork state
-                    bool loop_has_outgoing = false;
-                    for (int s = 0; s < MAX_SYMBOLS; s++) {
-                        if (nfa[pending_loop_state].transitions[s] != -1 ||
-                            nfa[pending_loop_state].multi_targets[s][0] != '\0') {
-                            loop_has_outgoing = true;
-                            break;
-                        }
+                    // Mark the accepting state (pending_loop_accepting = frag_end) as accepting
+                    // This is the state reached AFTER consuming at least one char
+                    if (pending_loop_accepting != -1) {
+                        nfa[pending_loop_accepting].is_eos_target = true;
+                        nfa[pending_loop_accepting].category_mask = 0x01;  // Mark as accepting
+                        nfa_finalize_state(pending_loop_accepting);
+                        current = pending_loop_accepting;
+                    } else {
+                        // Fallback: if no specific accepting state, use loop state
+                        // (this shouldn't happen for properly set up single-char fragments)
+                        nfa[pending_loop_state].is_eos_target = true;
+                        nfa[pending_loop_state].category_mask = 0x01;
+                        nfa_finalize_state(pending_loop_state);
+                        current = pending_loop_state;
                     }
-
-                        if (loop_has_outgoing) {
-                            // Create a fork state for accepting - the loop state continues its transitions
-                            int fork_state = nfa_add_state_with_minimization(false);
-                            nfa[fork_state].is_eos_target = true;
-                            nfa[fork_state].category_mask = 0x01;  // Mark fork state as accepting
-                            int eos_sid = find_symbol_id(DFA_CHAR_EOS);
-                            if (eos_sid != -1) {
-                                nfa_add_transition(pending_loop_state, fork_state, eos_sid);
-                            }
-                            nfa_finalize_state(pending_loop_state);
-                            nfa[pending_loop_state].is_eos_target = false;  // Loop state should NOT be accepting
-                            nfa[pending_loop_state].category_mask = 0x00;  // Loop state has no category
-                            nfa_finalize_state(fork_state);
-                            current = fork_state;
-                        } else {
-                            // State has no outgoing transitions - safe to mark as accepting
-                            nfa[pending_loop_state].is_eos_target = true;
-                            nfa[pending_loop_state].category_mask = 0x01;  // Mark as accepting category
-                            nfa_finalize_state(pending_loop_state);
-                            current = pending_loop_state;
-                        }
                 }
 
                 // Clear the pending loop info UNLESS we're preserving for outer quantifier
@@ -1441,6 +1441,9 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
     int finalized_end = nfa_finalize_state(postfix_result);
     return finalized_end;
 }
+
+// Forward declaration for category mapping lookup
+static int lookup_acceptance_category(const char* category, const char* subcategory, const char* operations);
 
 // Main entry point: parse pattern and build NFA
 static void parse_pattern_full(const char* pattern, const char* category,
@@ -1613,7 +1616,11 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // DO NOT mark end_state as EOS target - it has outgoing transitions (shared state)
         }
 
-        int accepting = nfa_add_state_with_minimization(true);
+        // Determine acceptance category from mapping (default to 0 = SAFE)
+        int acceptance_cat = lookup_acceptance_category(category, subcategory, operations);
+        uint8_t cat_mask = (1 << acceptance_cat);  // Convert 0-7 to bit mask 0x01, 0x02, etc.
+
+        int accepting = nfa_add_state_with_category(cat_mask);
         nfa[accepting].is_eos_target = true;  // This state can accept via EOS
         nfa_add_transition(eos_target_state, accepting, eos_sid);
 
@@ -1815,6 +1822,104 @@ void parse_advanced_pattern(const char* line) {
     parse_pattern_full(pattern, category, subcategory, operations, action);
 }
 
+// Category mapping table for #ACCEPTANCE_MAPPING directive
+#define MAX_CATEGORY_MAPPINGS 64
+typedef struct {
+    char category[64];
+    char subcategory[64];
+    char operations[256];
+    int acceptance_category;  // 0-7
+} category_mapping_t;
+
+static category_mapping_t category_mappings[MAX_CATEGORY_MAPPINGS];
+static int category_mapping_count = 0;
+
+// Parse #ACCEPTANCE_MAPPING directive
+// Syntax: #ACCEPTANCE_MAPPING [category:subcategory:operations] -> N
+// Where N is 0-7 representing the 8 acceptance categories
+static void parse_acceptance_mapping(const char* line) {
+    // Find the mapping arrow
+    const char* arrow = strstr(line, "->");
+    if (arrow == NULL) {
+        fprintf(stderr, "Warning: Invalid ACCEPTANCE_MAPPING syntax (no ->): %s\n", line);
+        return;
+    }
+
+    // Parse the category part [category:subcategory:operations]
+    const char* bracket_open = strchr(line, '[');
+    const char* bracket_close = strchr(line, ']');
+    if (bracket_open == NULL || bracket_close == NULL || bracket_close > arrow) {
+        fprintf(stderr, "Warning: Invalid ACCEPTANCE_MAPPING syntax (bad brackets): %s\n", line);
+        return;
+    }
+
+    // Extract category string
+    char category_str[512];
+    size_t cat_len = bracket_close - bracket_open - 1;
+    if (cat_len >= sizeof(category_str)) cat_len = sizeof(category_str) - 1;
+    strncpy(category_str, bracket_open + 1, cat_len);
+    category_str[cat_len] = '\0';
+
+    // Parse the acceptance category number after ->
+    int acceptance_cat = atoi(arrow + 2);
+    if (acceptance_cat < 0 || acceptance_cat > 7) {
+        fprintf(stderr, "Warning: Invalid acceptance category %d (must be 0-7): %s\n", acceptance_cat, line);
+        return;
+    }
+
+    // Parse category:subcategory:operations
+    char category[64] = "";
+    char subcategory[64] = "";
+    char operations[256] = "";
+
+    char* tok = strtok(category_str, ":");
+    if (tok != NULL) {
+        strncpy(category, tok, sizeof(category) - 1);
+        category[sizeof(category) - 1] = '\0';
+    }
+
+    tok = strtok(NULL, ":");
+    if (tok != NULL) {
+        strncpy(subcategory, tok, sizeof(subcategory) - 1);
+        subcategory[sizeof(subcategory) - 1] = '\0';
+    }
+
+    tok = strtok(NULL, ":");
+    if (tok != NULL) {
+        strncpy(operations, tok, sizeof(operations) - 1);
+        operations[sizeof(operations) - 1] = '\0';
+    }
+
+    // Store the mapping
+    if (category_mapping_count < MAX_CATEGORY_MAPPINGS) {
+        category_mapping_t* mapping = &category_mappings[category_mapping_count++];
+        strncpy(mapping->category, category, sizeof(mapping->category) - 1);
+        strncpy(mapping->subcategory, subcategory, sizeof(mapping->subcategory) - 1);
+        strncpy(mapping->operations, operations, sizeof(mapping->operations) - 1);
+        mapping->acceptance_category = acceptance_cat;
+        fprintf(stderr, "ACCEPTANCE_MAPPING: [%s:%s:%s] -> %d\n",
+                category, subcategory, operations, acceptance_cat);
+    } else {
+        fprintf(stderr, "Warning: Too many category mappings, ignoring: %s\n", line);
+    }
+}
+
+// Look up acceptance category for a given category:subcategory:operations
+static int lookup_acceptance_category(const char* category, const char* subcategory, const char* operations) {
+    for (int i = 0; i < category_mapping_count; i++) {
+        category_mapping_t* mapping = &category_mappings[i];
+        // Match category (required)
+        if (strcmp(mapping->category, category) != 0) continue;
+        // Match subcategory (if specified in mapping)
+        if (mapping->subcategory[0] != '\0' && strcmp(mapping->subcategory, subcategory) != 0) continue;
+        // Match operations (if specified in mapping)
+        if (mapping->operations[0] != '\0' && strcmp(mapping->operations, operations) != 0) continue;
+        return mapping->acceptance_category;
+    }
+    // Default: use first category (CAT_SAFE = 0)
+    return 0;
+}
+
 // Read advanced command specification file
 void read_advanced_spec_file(const char* filename) {
     FILE* file = fopen(filename, "r");
@@ -1837,8 +1942,19 @@ void read_advanced_spec_file(const char* filename) {
             line[len-1] = '\0';
         }
 
-        // Skip empty lines and comments
-        if (line[0] == '\0' || line[0] == '#') {
+        // Skip empty lines
+        if (line[0] == '\0') {
+            continue;
+        }
+
+        // Handle #ACCEPTANCE_MAPPING directive
+        if (strncmp(line, "#ACCEPTANCE_MAPPING", 19) == 0) {
+            parse_acceptance_mapping(line);
+            continue;
+        }
+
+        // Skip other comments
+        if (line[0] == '#') {
             continue;
         }
 

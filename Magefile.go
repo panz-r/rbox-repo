@@ -408,6 +408,12 @@ func DfaTest() error {
 			testArgs:     []string{"--digit-test"},
 			optional:     true,
 		},
+		{
+			name:         "Acceptance Category Isolation Tests",
+			patternsFile: "patterns_acceptance_category_test.txt",
+			testArgs:     []string{"--acceptance-test"},
+			optional:     true,
+		},
 	}
 
 	// Track failures across all groups

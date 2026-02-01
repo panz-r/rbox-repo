@@ -682,6 +682,161 @@ static void test_capture_comprehensive(void) {
     printf("\n  Pattern matching test complete.\n");
 }
 
+static void test_acceptance_category_isolation(void) {
+    printf("\nTest: Acceptance Category Isolation\n");
+    printf("  Testing that patterns in different acceptance categories don't interfere\n");
+    printf("  This is essential for correct multi-category evaluation in one DFA run\n\n");
+
+    dfa_result_t result;
+    int pass_count = 0;
+    int fail_count = 0;
+
+    // Test Group 1: Simple patterns should not interfere
+    printf("  Group 1: Simple non-interfering patterns\n");
+    printf("  ----------------------------------------\n");
+
+    // Test 1.1: Basic commands in different categories
+    bool t1_1 = dfa_evaluate("ls", 0, &result);
+    TEST_ASSERT(t1_1 && result.matched, "'ls' matches safe::readonly category");
+    bool t1_2 = dfa_evaluate("pwd", 0, &result);
+    TEST_ASSERT(t1_2 && result.matched, "'pwd' matches safe::readonly category");
+    bool t1_3 = dfa_evaluate("curl", 0, &result);
+    TEST_ASSERT(t1_3 && result.matched, "'curl' matches caution::network category");
+    bool t1_4 = dfa_evaluate("wget", 0, &result);
+    TEST_ASSERT(t1_4 && result.matched, "'wget' matches caution::network category");
+
+    // Test Group 2: Shared prefixes with different categories
+    printf("\n  Group 2: Shared prefixes, different categories\n");
+    printf("  -----------------------------------------------\n");
+
+    // Test 2.1: Git commands with different categories
+    TEST_ASSERT(dfa_evaluate("git status", 0, &result) && result.matched,
+               "'git status' matches safe::readonly::git category");
+    TEST_ASSERT(dfa_evaluate("git log", 0, &result) && result.matched,
+               "'git log' matches safe::readonly::git category");
+    TEST_ASSERT(dfa_evaluate("git push", 0, &result) && result.matched,
+               "'git push' matches caution::network category");
+    TEST_ASSERT(dfa_evaluate("git fetch", 0, &result) && result.matched,
+               "'git fetch' matches caution::network category");
+
+    // Test Group 3: CRITICAL - Quantifier patterns that must not interfere
+    printf("\n  Group 3: CRITICAL - Quantifier patterns with shared prefixes\n");
+    printf("  -------------------------------------------------------------\n");
+    printf("  These tests verify the core bug fix for acceptance categories\n\n");
+
+    // Test 3.1: The critical bug case - a((b))+ vs abc((b))+
+    // Pattern 1: [safe::readonly::quant1] a((b))+
+    // Pattern 2: [caution::network::quant2] abc((b))+
+    // These patterns share "ab" prefix but are in DIFFERENT acceptance categories
+    // They must NOT interfere with each other
+
+    printf("  Pattern: a((b))+ (safe::readonly::quant1, category 1)\n");
+    printf("  Pattern: abc((b))+ (caution::network::quant2, category 2)\n\n");
+
+    // Test 3.1.1: Pattern 1 matches
+    TEST_ASSERT(dfa_evaluate("ab", 0, &result) && result.matched,
+               "'ab' matches a((b))+ pattern");
+    TEST_ASSERT(dfa_evaluate("abb", 0, &result) && result.matched,
+               "'abb' matches a((b))+ pattern");
+    TEST_ASSERT(dfa_evaluate("abbb", 0, &result) && result.matched,
+               "'abbb' matches a((b))+ pattern");
+
+    // Test 3.1.2: Pattern 2 matches (requires 'b' after 'abc')
+    TEST_ASSERT(dfa_evaluate("abcb", 0, &result) && result.matched,
+               "'abcb' matches abc((b))+ pattern");
+    TEST_ASSERT(dfa_evaluate("abcbb", 0, &result) && result.matched,
+               "'abcbb' matches abc((b))+ pattern");
+
+    // Test 3.1.3: CRITICAL - Pattern 2 must NOT match without the required 'b'
+    // This is the bug case - "abc" should NOT match abc((b))+
+    bool abc_should_not_match = dfa_evaluate("abc", 0, &result);
+    if (abc_should_not_match && result.matched) {
+        printf("  [FAIL] 'abc' - CRITICAL BUG: matches when it should NOT\n");
+        printf("         Pattern abc((b))+ requires at least one 'b' after 'abc'\n");
+        printf("         This indicates interference between acceptance categories\n");
+        fail_count++;
+    } else {
+        printf("  [PASS] 'abc' - correctly does NOT match (requires 'b' suffix)\n");
+        pass_count++;
+    }
+
+    // Test 3.1.4: Pattern 1 should not match 'abc' either
+    // (but it might match 'ab' as a prefix, which is correct)
+    bool abc_matches_cat1 = dfa_evaluate("abc", 0, &result) && result.matched;
+    if (abc_matches_cat1 && result.category_mask == 0x01) {
+        printf("  [INFO] 'abc' matches via category 1 (a((b))+) - partial match\n");
+    }
+
+    // Test Group 4: More quantifier patterns in different categories
+    printf("\n  Group 4: Multiple quantifier patterns with different categories\n");
+    printf("  ----------------------------------------------------------------\n");
+
+    // Test 4.1: ab((c))+ pattern (category 3)
+    TEST_ASSERT(dfa_evaluate("abc", 0, &result) && result.matched,
+               "'abc' matches ab((c))+ pattern (one 'c' after 'ab')");
+    TEST_ASSERT(dfa_evaluate("abcc", 0, &result) && result.matched,
+               "'abcc' matches ab((c))+ pattern (two 'c's after 'ab')");
+
+    // Test Group 5: Category mask verification
+    printf("\n  Group 5: Category mask isolation verification\n");
+    printf("  ----------------------------------------------\n");
+
+    // Test 5.1: Verify that matches report correct category masks
+    // Each pattern should only set its own category bit, not others
+    dfa_evaluate("ab", 0, &result);
+    printf("  'ab' - matched=%s, category_mask=0x%02x\n",
+           result.matched ? "true" : "false", result.category_mask);
+    if (result.matched && result.category_mask == 0x01) {
+        printf("  [PASS] Correctly reports only category 1 (safe::readonly::quant1)\n");
+        pass_count++;
+    } else {
+        printf("  [FAIL] Wrong category mask - should be 0x01 for category 1 only\n");
+        fail_count++;
+    }
+
+    dfa_evaluate("abcb", 0, &result);
+    printf("\n  'abcb' - matched=%s, category_mask=0x%02x\n",
+           result.matched ? "true" : "false", result.category_mask);
+    if (result.matched && result.category_mask == 0x02) {
+        printf("  [PASS] Correctly reports only category 2 (caution::network::quant2)\n");
+        pass_count++;
+    } else {
+        printf("  [FAIL] Wrong category mask - should be 0x02 for category 2 only\n");
+        fail_count++;
+    }
+
+    // Test Group 6: Edge cases and negative tests
+    printf("\n  Group 6: Edge cases and negative tests\n");
+    printf("  ---------------------------------------\n");
+
+    // Test 6.1: Non-matching inputs should not interfere
+    TEST_ASSERT(!(dfa_evaluate("xyz", 0, &result) && result.matched),
+               "'xyz' does NOT match any pattern (unrelated input)");
+    TEST_ASSERT(!(dfa_evaluate("abcd", 0, &result) && result.matched),
+               "'abcd' does NOT match abc((b))+ (wrong ending)");
+    TEST_ASSERT(!(dfa_evaluate("abca", 0, &result) && result.matched),
+               "'abca' does NOT match abc((b))+ (wrong suffix)");
+
+    // Test 6.2: Empty and minimal inputs
+    TEST_ASSERT(!(dfa_evaluate("a", 0, &result) && result.matched),
+               "'a' does NOT match a((b))+ (needs at least 'ab')");
+    TEST_ASSERT(!(dfa_evaluate("ab", 0, &result) && result.category_mask == 0x02),
+               "'ab' does NOT match abc((b))+ category (too short)");
+
+    // Summary
+    printf("\n=================================================\n");
+    printf("Acceptance Category Isolation Results: %d/%d tests passed\n", pass_count, pass_count + fail_count);
+    printf("=================================================\n");
+    if (fail_count > 0) {
+        printf("WARNING: %d test(s) failed - acceptance category isolation has bugs!\n", fail_count);
+        printf("This means patterns in different categories may interfere with each other.\n");
+    } else {
+        printf("SUCCESS: All acceptance category isolation tests passed!\n");
+        printf("Patterns in different categories correctly do not interfere.\n");
+    }
+    printf("\n");
+}
+
 static void test_negative_patterns(void) {
     printf("\nTest: Negative Pattern Tests\n");
     printf("  Testing that dangerous commands are NOT matched\n\n");
@@ -788,6 +943,7 @@ int main(int argc, char* argv[]) {
     bool negative_mode = false;
     bool space_mode = false;
     bool digit_mode = false;
+    bool acceptance_mode = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--quantifier-test") == 0) {
             quantifier_mode = true;
@@ -801,6 +957,8 @@ int main(int argc, char* argv[]) {
             space_mode = true;
         } else if (strcmp(argv[i], "--digit-test") == 0) {
             digit_mode = true;
+        } else if (strcmp(argv[i], "--acceptance-test") == 0) {
+            acceptance_mode = true;
         } else if (i == argc - 1 && argv[i][0] != '-') {
             // Last argument is the DFA file path
             dfa_file_path = argv[i];
@@ -819,6 +977,8 @@ int main(int argc, char* argv[]) {
         printf("Mode: Negative Pattern Tests\n");
     } else if (space_mode) {
         printf("Mode: Space Character Tests\n");
+    } else if (acceptance_mode) {
+        printf("Mode: Acceptance Category Isolation Tests\n");
     }
     printf("=================================================\n");
 
@@ -881,6 +1041,16 @@ int main(int argc, char* argv[]) {
 
         printf("\n=================================================\n");
         printf("Digit Specificity Test Results: %d/%d tests passed\n", tests_passed, tests_run);
+        printf("=================================================\n");
+        return (tests_passed == tests_run) ? 0 : 1;
+    }
+
+    if (acceptance_mode) {
+        // In acceptance test mode, only run acceptance category isolation tests
+        test_acceptance_category_isolation();
+
+        printf("\n=================================================\n");
+        printf("Acceptance Category Isolation Results: %d/%d tests passed\n", tests_passed, tests_run);
         printf("=================================================\n");
         return (tests_passed == tests_run) ? 0 : 1;
     }

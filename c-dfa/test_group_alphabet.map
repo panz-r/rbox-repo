@@ -1,6 +1,6 @@
 # Pattern-Aware Alphabet Map
 # Based on: /home/panz/osrc/lms-test/readonlybox/c-dfa/alphabet_per_char.map
-# Specific digits: ['1', '2', '5']
+# Specific digits: ['0', '1']
 
 0 0 0       # ANY (wildcard - matches any character)
 1 5 5       # EOS (End of String marker)
@@ -88,7 +88,6 @@
 84 252 252       # CAPTURE_ID_10 (0xFC)
 85 253 253       # CAPTURE_ID_11 (0xFD)
 86 255 255       # INSTANT (non-consuming epsilon-like transition for + quantifier)
-87 49 49       # 1
-88 50 50       # 2
-89 53 53       # 5
-90 48 57       # 0-9
+87 48 48       # 0
+88 49 49       # 1
+89 50 57       # 2-9

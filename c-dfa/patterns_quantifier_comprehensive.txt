@@ -2,18 +2,26 @@
 # These patterns are used for the comprehensive quantifier test suite
 # which tests single-character fragment quantifiers with specific loops
 
+# Map acceptance categories to prevent state sharing between different pattern types
+# This ensures patterns like 'a((b))+' and 'abc((b))+' don't share accepting states
+#ACCEPTANCE_MAPPING [safe::quantifier::comprehensive] -> 0
+#ACCEPTANCE_MAPPING [safe::quantifier::group1] -> 1
+#ACCEPTANCE_MAPPING [safe::quantifier::group2] -> 2
+#ACCEPTANCE_MAPPING [safe::quantifier::group3] -> 3
+#ACCEPTANCE_MAPPING [safe::quantifier::group4] -> 4
+
 [fragment:TQ::B] b
 [fragment:TQ::Y] y
 [fragment:TQ::Z] z
 
 # Group 1: Fragment-based + quantifier with 'b' character
-[safe:quantifier:comprehensive] a((TQ::B))+
+[safe:quantifier:group1] a((TQ::B))+
 
 # Group 2: Fragment-based + quantifier with 'y' character  
-[safe:quantifier:comprehensive] x((TQ::Y))+
+[safe:quantifier:group2] x((TQ::Y))+
 
 # Group 3: Literal + quantifier (not fragment)
-[safe:quantifier:comprehensive] p+
+[safe:quantifier:group3] p+
 
 # Group 4: Multiple chars before + quantifier
-[safe:quantifier:comprehensive] abc((TQ::B))+
+[safe:quantifier:group4] abc((TQ::B))+

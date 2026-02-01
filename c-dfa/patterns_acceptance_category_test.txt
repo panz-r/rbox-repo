@@ -1,0 +1,129 @@
+# Acceptance Category Isolation Test Patterns
+# Tests that patterns in different acceptance categories don't interfere with each other
+# This is essential for the DFA to correctly evaluate multiple categories in one run
+
+# Map acceptance categories to distinct IDs
+#ACCEPTANCE_MAPPING [safe::readonly] -> 0
+#ACCEPTANCE_MAPPING [safe::readonly::git] -> 1
+#ACCEPTANCE_MAPPING [caution::network] -> 2
+#ACCEPTANCE_MAPPING [modifying::filesystem] -> 3
+#ACCEPTANCE_MAPPING [dangerous::destructive] -> 4
+
+# ============================================
+# GROUP 1: Simple patterns that should NOT interfere
+# Different prefixes, different categories
+# ============================================
+
+[safe::readonly] ls
+[safe::readonly] pwd
+[caution::network] curl
+[caution::network] wget
+[modifying::filesystem] touch
+[modifying::filesystem] mkdir
+
+# ============================================
+# GROUP 2: Shared prefixes, different categories
+# These might be problematic if state sharing isn't handled correctly
+# ============================================
+
+[safe::readonly::git] git status
+[safe::readonly::git] git log
+[caution::network] git push
+[caution::network] git fetch
+
+# ============================================
+# GROUP 3: Quantifier patterns with shared prefixes
+# Known problematic case - the quantifier edge case
+# ============================================
+
+[safe::readonly::git] git log --oneline
+[safe::readonly::git] git log --graph
+[modifying::filesystem] git commit
+[modifying::filesystem] git commit -m
+
+# ============================================
+# GROUP 4: Single-char fragments with + quantifier
+# The critical bug case - different acceptance categories MUST not interfere
+# ============================================
+
+[safe::readonly::quant1] a((b))+
+[caution::network::quant2] abc((b))+
+[modifying::filesystem::quant3] ab((c))+
+[dangerous::destructive::quant4] abcd((d))+
+
+# ============================================
+# GROUP 5: Complex patterns with multiple shared components
+# More nuanced cases that test deep state sharing
+# ============================================
+
+[safe::readonly::complex1] git log --oneline -n
+[safe::readonly::complex1] git log --oneline -n 1
+[safe::readonly::complex2] git log --graph -n
+[caution::network::complex3] git log --oneline --all
+[modifying::filesystem::complex4] git log --oneline -p
+
+# ============================================
+# GROUP 6: Nested and overlapping patterns
+# Patterns that share multiple levels of structure
+# ============================================
+
+[safe::readonly::nested1] git status -s
+[safe::readonly::nested1] git status --short
+[caution::network::nested2] git status -b
+[caution::network::nested2] git status --branch
+[modifying::filesystem::nested3] git status -u
+[modifying::filesystem::nested3] git status --untracked-files
+
+# ============================================
+# GROUP 7: Patterns with wildcards in different categories
+# Test that wildcard behavior is category-isolated
+# ============================================
+
+[safe::readonly::wild1] git show *
+[caution::network::wild2] git diff *
+[modifying::filesystem::wild3] git add *
+[dangerous::destructive::wild4] git rm *
+
+# ============================================
+# GROUP 8: Edge case - empty/short patterns vs longer patterns
+# ============================================
+
+[safe::readonly::edge1] git
+[safe::readonly::edge1] git status
+[caution::network::edge2] git remote
+[caution::network::edge2] git remote -v
+[modifying::filesystem::edge3] git config
+[modifying::filesystem::edge3] git config --list
+
+# ============================================
+# GROUP 9: Character classes and alternatives
+# Test category isolation with complex regex features
+# ============================================
+
+[safe::readonly::class1] ls [a-z]*
+[caution::network::class2] curl [a-z0-9]*
+[modifying::filesystem::class3] touch [A-Z]*
+[dangerous::destructive::class4] rm -rf [a-z]*
+
+# ============================================
+# GROUP 10: The critical bug reproduction cases
+# These must pass for acceptance categories to be considered working
+# ============================================
+
+# Case 10.1: Single-char fragment quantifiers (THE BUG)
+[safe::readonly::critical1] a((b))+
+[caution::network::critical2] abc((b))+
+
+# Case 10.2: Prefix sharing with different endings
+[safe::readonly::critical3] git log
+[modifying::filesystem::critical4] git log --oneline
+
+# Case 10.3: Same prefix, different quantifiers
+[safe::readonly::critical5] git status -s
+[safe::readonly::critical5] git status -s -b
+[caution::network::critical6] git status -s -u
+
+# Case 10.4: Deeply nested shared structure
+[safe::readonly::critical7] git log --oneline -n 10 --graph
+[caution::network::critical8] git log --oneline -n 10 --all
+[modifying::filesystem::critical9] git log --oneline -n 10 --patch
