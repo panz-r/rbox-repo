@@ -6,7 +6,7 @@
 #ifndef NFA_H
 #define NFA_H
 
-#define MAX_STATES 16384
+#define MAX_STATES 8192
 #define MAX_SYMBOLS 256
 #define MAX_CHARS 256
 #define MAX_PATTERNS 2048

@@ -42,6 +42,7 @@ typedef struct {
 // NFA State with category bitmask for 8-way parallel acceptance
 typedef struct {
     uint8_t category_mask;           // Bitmask of accepting categories (0-7)
+    int16_t pattern_id;              // Pattern ID this state belongs to (-1 = none/shared)
     bool is_eos_target;              // This state can accept via EOS transition
     char* tags[MAX_TAGS];             // Termination tags
     int tag_count;
@@ -86,7 +87,16 @@ static int alphabet_size = 0;
 static int nfa_state_count = 0;
 static int pattern_count = 0;
 static int current_pattern_index = 0;  // Track which pattern we're building
+static uint8_t current_pattern_cat_mask = 0x01;  // Category mask for current pattern (computed from #ACCEPTANCE_MAPPING)
 static StateSignature* signature_table[SIGNATURE_TABLE_SIZE] = {NULL};
+
+// CONSERVATIVE SHARING: Track states that should NOT be shared
+// States marked as "do not share" cannot be merged with other states during
+// NFA construction. This prevents acceptance category interference.
+// A state is marked "do not share" if it:
+//   - Might become accepting (has pending quantifier)
+//   - Is already accepting (has category_mask or is_eos_target)
+static bool state_do_not_share[MAX_STATES] = {false};
 
 // Category IDs
 enum {
@@ -222,6 +232,8 @@ void nfa_init(void) {
         // Initialize capture markers
         nfa[i].capture_start_id = -1;
         nfa[i].capture_end_id = -1;
+        // Initialize "do not share" tracking for conservative state sharing
+        state_do_not_share[i] = false;
     }
     nfa_state_count = 1; // State 0 is initial state
     fragment_count = 0; // Reset fragments
@@ -369,6 +381,7 @@ int nfa_add_state_with_category(uint8_t category_mask) {
     // First create the state normally
     int new_state = nfa_state_count;
     nfa[new_state].category_mask = category_mask;
+    nfa[new_state].pattern_id = current_pattern_index;  // Set pattern_id
     nfa[new_state].tag_count = 0;
     for (int j = 0; j < MAX_TAGS; j++) {
         nfa[new_state].tags[j] = NULL;
@@ -396,23 +409,12 @@ int nfa_finalize_state(int state) {
     // Compute signature for this state (NOW transitions are set)
     uint64_t signature = compute_state_signature(state);
 
-    // Check if an equivalent state already exists
-    int equivalent_state = find_equivalent_state(signature, state);
-
-    if (equivalent_state != -1 && equivalent_state != state) {
-        // Found an equivalent state - redirect all transitions to it
-        // First, find all transitions pointing to 'state' and update them
-        for (int s = 0; s < nfa_state_count; s++) {
-            for (int t = 0; t < MAX_SYMBOLS; t++) {
-                if (nfa[s].transitions[t] == state) {
-                    nfa[s].transitions[t] = equivalent_state;
-                }
-            }
-        }
-        return equivalent_state;
-    }
-
-    // No equivalent found - add this state to signature table
+    // DEFERRED SHARING: Don't share during construction
+    // All sharing/minimization will happen at the end after all patterns are built
+    // This prevents interference between patterns with different acceptance categories
+    // The DFA conversion process will handle proper state minimization
+    
+    // Still add to signature table for potential future optimization
     add_state_to_signature_table(state, signature);
 
     return state;
@@ -578,10 +580,9 @@ void nfa_add_transition(int from, int to, int symbol_id) {
             sprintf(existing, "%d", nfa[0].transitions[symbol_id]);
 
             // Check if target already exists
-            if (strstr(existing, ",") != NULL ||
-                (nfa[0].transitions[symbol_id] != to &&
-                 strstr(nfa[0].multi_targets[symbol_id], ",") == NULL &&
-                 nfa[0].transitions[symbol_id] != to)) {
+            // CRITICAL FIX: Allow appending when multi_targets already has commas (3rd+ target)
+            if (strstr(existing, ",") != NULL || strstr(nfa[0].multi_targets[symbol_id], ",") != NULL ||
+                (nfa[0].transitions[symbol_id] != to && nfa[0].transitions[symbol_id] != to)) {
 
                 // Append to multi_targets
                 char new_target[32];
@@ -597,8 +598,30 @@ void nfa_add_transition(int from, int to, int symbol_id) {
     }
 
     // Use regular transition for non-State-0
-    nfa[from].transitions[symbol_id] = to;
-    nfa[from].transition_count++;
+    // Support multiple targets for the same symbol (for loops and exits)
+    if (nfa[from].transitions[symbol_id] == -1) {
+        // First transition on this symbol
+        nfa[from].transitions[symbol_id] = to;
+        nfa[from].transition_count++;
+    } else if (nfa[from].transitions[symbol_id] != to) {
+        // Additional transition on same symbol - use multi_targets
+        char existing[256];
+        sprintf(existing, "%d", nfa[from].transitions[symbol_id]);
+
+        // Check if target already exists
+        if (strstr(existing, ",") != NULL || strstr(nfa[from].multi_targets[symbol_id], ",") != NULL ||
+            nfa[from].transitions[symbol_id] != to) {
+
+            // Append to multi_targets
+            char new_target[32];
+            sprintf(new_target, ",%d", to);
+
+            if (strlen(nfa[from].multi_targets[symbol_id]) + strlen(new_target) < 255) {
+                strcat(nfa[from].multi_targets[symbol_id], new_target);
+                nfa[from].transition_count++;
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -913,6 +936,10 @@ static int parse_rdp_fragment(const char* pattern, int* pos, int start_state) {
     if (pending_loop_char != '\0') {
         pending_loop_state = frag_start;  // Loop at state where char is consumed
         pending_loop_accepting = frag_end;  // Accepting at state after char
+        // CONSERVATIVE: Mark these states as "potentially accepting" to prevent
+        // sharing with states from other patterns that might have different categories
+        state_do_not_share[frag_start] = true;
+        state_do_not_share[frag_end] = true;
         // For + quantifier: DON'T create EOS accepting state here
         // The + handler will set up the loop and mark frag_end as accepting
     } else {
@@ -1252,7 +1279,13 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     //   - pending_loop_state = frag_start (where char is consumed)
                     //   - pending_loop_accepting = frag_end (state after char, which should be accepting)
                     // Add loop at frag_start: allows consuming one or more chars
+                    // Also add exit transition to accepting state
                     nfa_add_transition(pending_loop_state, pending_loop_state, char_sid);
+
+                    // Add exit transition from loop state to accepting state (for exiting loop after 1+ chars)
+                    if (pending_loop_accepting != -1 && pending_loop_state != pending_loop_accepting) {
+                        nfa_add_transition(pending_loop_state, pending_loop_accepting, char_sid);
+                    }
                     
                     // Also add loop transitions for all character class symbols
                     if (pending_class_symbol_count > 0) {
@@ -1273,16 +1306,21 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 
                     // Mark the accepting state (pending_loop_accepting = frag_end) as accepting
                     // This is the state reached AFTER consuming at least one char
+                    // CRITICAL FIX: DON'T add EOS transition from loop state here
+                    // The EOS transition will be added at the end of pattern construction
                     if (pending_loop_accepting != -1) {
+                        // Mark the accepting state
                         nfa[pending_loop_accepting].is_eos_target = true;
-                        nfa[pending_loop_accepting].category_mask = 0x01;  // Mark as accepting
+                        nfa[pending_loop_accepting].category_mask = current_pattern_cat_mask;  // Use pattern's category
+                        state_do_not_share[pending_loop_accepting] = true;  // CONSERVATIVE: Don't share accepting states
                         nfa_finalize_state(pending_loop_accepting);
                         current = pending_loop_accepting;
                     } else {
                         // Fallback: if no specific accepting state, use loop state
                         // (this shouldn't happen for properly set up single-char fragments)
                         nfa[pending_loop_state].is_eos_target = true;
-                        nfa[pending_loop_state].category_mask = 0x01;
+                        nfa[pending_loop_state].category_mask = current_pattern_cat_mask;  // Use pattern's category
+                        state_do_not_share[pending_loop_state] = true;  // CONSERVATIVE: Don't share accepting states
                         nfa_finalize_state(pending_loop_state);
                         current = pending_loop_state;
                     }
@@ -1323,13 +1361,12 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                             accepting = nfa_add_state_with_minimization(true);
                             nfa_add_transition(current, accepting, eos_sid);
                             nfa[current].is_eos_target = true;
-                            nfa[current].category_mask = 0x01;  // Mark as accepting category
-                            nfa[current].category_mask = 0x01;  // Mark as accepting category
+                            nfa[current].category_mask = current_pattern_cat_mask;  // Use pattern's category
                             nfa_finalize_state(current);
                         } else {
                             // Safe to mark current as accepting
                             nfa[current].is_eos_target = true;
-                            nfa[current].category_mask = 0x01;  // Mark as accepting category
+                            nfa[current].category_mask = current_pattern_cat_mask;  // Use pattern's category
                             accepting = nfa_add_state_with_minimization(true);
                             nfa_add_transition(current, accepting, eos_sid);
                             nfa_finalize_state(current);
@@ -1503,9 +1540,31 @@ static void parse_pattern_full(const char* pattern, const char* category,
             int best_shared_state = -1;
             int best_shared_pos = 0;
 
+            // CRITICAL FIX: Check if shared states have the same pattern_id as current pattern
+            // If not, don't share - patterns with different acceptance categories must be isolated
+            bool all_targets_have_same_pattern_id = true;
+            int first_target_pattern_id = -1;
+            fprintf(stderr, "//DEBUG: Prefix sharing for '%s': target_count=%d, current_pattern_index=%d\n",
+                    pattern, target_count, current_pattern_index);
+            for (int t = 0; t < target_count; t++) {
+                fprintf(stderr, "//DEBUG:   target[%d]=%d, pattern_id=%d\n", t, targets[t], nfa[targets[t]].pattern_id);
+                if (first_target_pattern_id == -1) {
+                    first_target_pattern_id = nfa[targets[t]].pattern_id;
+                } else if (nfa[targets[t]].pattern_id != first_target_pattern_id) {
+                    all_targets_have_same_pattern_id = false;
+                    break;
+                }
+            }
+
             for (int t = 0; t < target_count; t++) {
                 int curr_state = targets[t];
                 int curr_pos = 1;
+
+                // CRITICAL: Don't follow paths from states with different pattern_id
+                // This prevents contamination between patterns with different acceptance categories
+                if (nfa[curr_state].pattern_id != current_pattern_index) {
+                    continue;  // Skip this target - different pattern
+                }
 
                 while (curr_pos < (int)strlen(pattern)) {
                     int c = pattern[curr_pos];
@@ -1540,16 +1599,27 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 }
             }
 
-            if (best_shared_pos > 1) {
+            // CRITICAL: Only share prefix if:
+            // 1. A common prefix was found (best_shared_pos > 1)
+            // 2. All target states have the same pattern_id (no pattern mixing)
+            // 3. That pattern_id matches the current pattern (current_pattern_index)
+            if (best_shared_pos > 1 && all_targets_have_same_pattern_id &&
+                first_target_pattern_id == current_pattern_index) {
                 // Found common prefix - start from there
                 shared_state = best_shared_state;
                 shared_pos = best_shared_pos;
                 start_state = shared_state;
                 pattern_start_pos = shared_pos;
+                fprintf(stderr, "//DEBUG: SHARED prefix at pos %d, state %d\n", best_shared_pos, best_shared_state);
             } else {
                 // No common prefix - create new start state
                 start_state = nfa_add_state_with_minimization(false);
+                fprintf(stderr, "//DEBUG: NEW start_state=%d for pattern_id %d, adding transition 0->%d on %d\n",
+                        start_state, current_pattern_index, start_state, first_char_sid);
                 nfa_add_transition(0, start_state, first_char_sid);
+                fprintf(stderr, "//DEBUG: After add_transition: transitions[%d]=%d, multi_targets[%d]='%s'\n",
+                        first_char_sid, nfa[0].transitions[first_char_sid], first_char_sid,
+                        nfa[0].multi_targets[first_char_sid]);
                 pattern_start_pos = 1;  // Skip first character (already consumed)
             }
         } else {
@@ -1619,14 +1689,17 @@ static void parse_pattern_full(const char* pattern, const char* category,
         // Determine acceptance category from mapping (default to 0 = SAFE)
         int acceptance_cat = lookup_acceptance_category(category, subcategory, operations);
         uint8_t cat_mask = (1 << acceptance_cat);  // Convert 0-7 to bit mask 0x01, 0x02, etc.
+        current_pattern_cat_mask = cat_mask;  // Store for use by quantifier handlers
 
         int accepting = nfa_add_state_with_category(cat_mask);
         nfa[accepting].is_eos_target = true;  // This state can accept via EOS
+        state_do_not_share[accepting] = true;  // CONSERVATIVE: Don't share accepting states
         nfa_add_transition(eos_target_state, accepting, eos_sid);
 
         // When has_outgoing=false, eos_target_state == end_state, so mark it as EOS target
         if (!has_outgoing) {
             nfa[eos_target_state].is_eos_target = true;
+            state_do_not_share[eos_target_state] = true;  // CONSERVATIVE: Don't share accepting states
         }
 
         nfa_add_tag(accepting, category);
@@ -1999,7 +2072,13 @@ void write_nfa_file(const char* filename) {
     for (int i = 0; i < nfa_state_count; i++) {
         fprintf(file, "State %d:\n", i);
         fprintf(file, "  CategoryMask: 0x%02x\n", nfa[i].category_mask);
+        fprintf(file, "  PatternId: %d\n", nfa[i].pattern_id);
         fprintf(file, "  EosTarget: %s\n", nfa[i].is_eos_target ? "yes" : "no");
+        // Debug: print states with non-zero pattern_id
+        if (nfa[i].pattern_id != 0 && nfa[i].category_mask != 0) {
+            fprintf(stderr, "//DEBUG: State %d has pattern_id=%d, category=0x%02x\n", 
+                    i, nfa[i].pattern_id, nfa[i].category_mask);
+        }
         
         // Write capture markers
         if (nfa[i].capture_start_id >= 0) {

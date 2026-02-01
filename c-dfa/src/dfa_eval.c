@@ -275,9 +275,14 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     }
 
     size_t pos = 0;
-    
+
     process_capture_markers(&current_state, raw_base, active_captures, pos, result);
-    
+
+    // Track the best candidate match seen so far (for handling patterns that can end early)
+    uint8_t best_category_mask = 0;
+    const dfa_state_t* best_state = NULL;
+    size_t best_length = 0;
+
     for (pos = 0; pos < length && pos < 1000; pos++) {
         unsigned char c = (unsigned char)input[pos];
         size_t current_offset = (size_t)current_state - raw_base;
@@ -319,70 +324,80 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         }
 
         if (!transition_found) {
+            // Dead end - check if current state can accept here
+            uint8_t category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
+            if (category_mask != 0) {
+                // Only accept if this state can actually terminate (EOS or no outgoing)
+                bool has_eos = (current_state->eos_target >= 0);
+                bool has_outgoing = (current_state->transition_count > 0);
+                // CRITICAL FIX: Only accept if we're at end of input AND in a valid accepting state
+                // A state can accept if:
+                // 1. It has no outgoing transitions (dead-end), OR
+                // 2. We're at end of input and the state has an EOS transition
+                // But NOT just because a state has an EOS target while still having outgoing transitions
+                if ((!has_outgoing && category_mask != 0) || (pos == length && has_eos && category_mask != 0)) {
+                    result->matched = true;
+                    result->final_state = current_state->flags;
+                    result->matched_length = pos;
+                    result->category_mask = category_mask;
+
+                    if (category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+                    else if (category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+                    else if (category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+                    else if (category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+                    else if (category_mask & 0x10) result->category = DFA_CMD_NETWORK;
+                    else if (category_mask & 0x20) result->category = DFA_CMD_ADMIN;
+                }
+            }
             result->final_state = current_state->flags;
             result->category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
             result->matched_length = pos;
-            result->matched = false;
             return true;
         }
 
+        // Track candidate match states (but don't finalize yet)
+        // CRITICAL: Only consider DEAD-END states as valid accepting states
+        // A state can accept ONLY if it has no outgoing transitions
+        // States with EOS targets but outgoing transitions are NOT accepting
+        // This prevents partial matches for patterns like a((b))+ where 'ab' would
+        // incorrectly match before the required 'b' is consumed
         uint8_t category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-        if (category_mask != 0) {
-            // Track the best match so far, but only mark as matched if:
-            // 1. We're at the end of input (pos == length - 1), OR
-            // 2. The state has no outgoing transitions (dead end)
-            // This prevents partial matches like "git" matching "git status"
-            bool is_at_end = (pos == length - 1);
-            bool has_no_outgoing = (current_state->transition_count == 0);
-            bool has_eos_transition = (current_state->eos_target >= 0);
-            
-            if (is_at_end || has_no_outgoing || has_eos_transition) {
-                result->matched = true;
-                result->final_state = current_state->flags;
-                result->matched_length = pos + 1;
-                result->category_mask = category_mask;
-                
-                if (category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-                else if (category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-                else if (category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-                else if (category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-                else if (category_mask & 0x10) result->category = DFA_CMD_NETWORK;
-                else if (category_mask & 0x20) result->category = DFA_CMD_ADMIN;
-            }
+        if (category_mask != 0 && current_state->transition_count == 0) {
+            // Only dead-end states (no transitions) can accept
+            best_category_mask = category_mask;
+            best_state = current_state;
+            best_length = pos + 1;
         }
     }
 
-    for (int i = 0; i < DFA_MAX_CAPTURES && i < max_captures; i++) {
-        if (active_captures[i].active) {
-            result->captures[result->capture_count].start = active_captures[i].start_pos;
-            result->captures[result->capture_count].end = pos;
-            result->captures[result->capture_count].active = false;
-            result->captures[result->capture_count].completed = true;
-            result->capture_count++;
-        }
+    // End of input - check if final state can accept
+    // THEORY: A DFA state is accepting if it contains ANY NFA accepting state
+    // (i.e., category_mask != 0). The EOS transition is already followed during
+    // epsilon_closure, so the accepting state is included in the DFA state.
+    // We do NOT require the state to have no outgoing transitions.
+    uint8_t current_category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
+
+    // A state is accepting if category_mask != 0 (contains at least one accepting NFA state)
+    bool is_accepting = (current_category_mask != 0);
+
+    if (is_accepting) {
+        result->matched = true;
+        result->matched_length = pos;
+        result->final_state = current_state->flags;
+        result->category_mask = current_category_mask;
+
+        if (current_category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+        else if (current_category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+        else if (current_category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+        else if (current_category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+        else if (current_category_mask & 0x10) result->category = DFA_CMD_NETWORK;
+        else if (current_category_mask & 0x20) result->category = DFA_CMD_ADMIN;
     }
+    // NOTE: We removed the fallback to best_state
+    // The DFA should only accept if the current state is accepting
+    // If there's no valid transition, we don't accept (even if we saw an accepting state earlier)
 
-    if (pos >= length && current_state->eos_target >= 0) {
-        size_t eos_offset = STATE_INDEX_TO_OFFSET(current_state->eos_target);
-        const dfa_state_t* eos_accepting_state = (const dfa_state_t*)((const char*)raw_base + eos_offset);
-        uint8_t eos_category_mask = DFA_GET_CATEGORY_MASK(eos_accepting_state->flags);
-        if (eos_category_mask != 0) {
-            result->matched = true;
-            result->matched_length = pos;
-            result->final_state = eos_accepting_state->flags;
-            result->category_mask = eos_category_mask;
-
-            if (eos_category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-            else if (eos_category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-            else if (eos_category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-            else if (eos_category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-            else if (eos_category_mask & 0x10) result->category = DFA_CMD_NETWORK;
-            else if (eos_category_mask & 0x20) result->category = DFA_CMD_ADMIN;
-        }
-    }
-
-    result->matched_length = pos;
-    return true;
+    return result->matched;
 }
 
 bool dfa_evaluate(const char* input, size_t length, dfa_result_t* result) {

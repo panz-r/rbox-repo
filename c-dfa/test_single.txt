@@ -1,0 +1,60 @@
+# Acceptance Category Isolation Test Patterns
+# Tests that patterns in different acceptance categories don't interfere with each other
+# This is essential for the DFA to correctly evaluate multiple categories in one run
+
+# Define fragments for quantifier test patterns
+[fragment:b] b
+[fragment:c] c
+[fragment:d] d
+
+# Map acceptance categories to distinct IDs
+#ACCEPTANCE_MAPPING [safe::readonly] -> 0
+#ACCEPTANCE_MAPPING [safe::readonly::git] -> 1
+#ACCEPTANCE_MAPPING [caution::network] -> 2
+#ACCEPTANCE_MAPPING [modifying::filesystem] -> 3
+#ACCEPTANCE_MAPPING [dangerous::destructive] -> 4
+
+# ============================================
+# GROUP 1: Simple patterns that should NOT interfere
+# Different prefixes, different categories
+# ============================================
+
+[safe::readonly] ls
+[safe::readonly] pwd
+[caution::network] curl
+[caution::network] wget
+[modifying::filesystem] touch
+[modifying::filesystem] mkdir
+
+# ============================================
+# GROUP 2: Shared prefixes, different categories
+# These might be problematic if state sharing isn't handled correctly
+# ============================================
+
+[safe::readonly::git] git status
+[safe::readonly::git] git log
+[caution::network] git push
+[caution::network] git fetch
+
+# ============================================
+# GROUP 3: Quantifier patterns with shared prefixes
+# Known problematic case - the quantifier edge case
+# ============================================
+
+[safe::readonly::git] git log --oneline
+[safe::readonly::git] git log --graph
+[modifying::filesystem] git commit
+[modifying::filesystem] git commit -m
+
+# ============================================
+# GROUP 4: Single-char fragments with + quantifier
+# The critical bug case - different acceptance categories MUST not interfere
+# ============================================
+
+[safe::readonly::quant1] a((b))+
+[caution::network::quant2] abc((b))+
+[modifying::filesystem::quant3] ab((c))+
+[dangerous::destructive::quant4] abcd((d))+
+
+# ============================================
+# GROUP 5: Complex patterns with multiple shared components

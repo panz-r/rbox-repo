@@ -87,3 +87,10 @@
 # System read-only operations
 [safe:system:read] which bwrap
 [safe:system:read] which socat
+
+# Acceptance category isolation test patterns
+#ACCEPTANCE_MAPPING [safe::readonly::quant1] -> 0
+#ACCEPTANCE_MAPPING [caution::network::quant2] -> 1
+
+[safe::readonly::quant1] a((b))+
+[caution::network::quant2] abc((b))+

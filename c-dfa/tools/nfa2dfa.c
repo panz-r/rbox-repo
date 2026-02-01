@@ -39,6 +39,7 @@ typedef struct {
     int8_t capture_end_id;     // Capture ID to emit at this state (-1 = none)
     int8_t capture_defer_id;   // Capture ID to defer until leaving this state (-1 = none)
     bool is_eos_target;        // This state can accept via EOS transition
+    int16_t pattern_id;        // Pattern ID this state belongs to (-1 = none/shared)
 } nfa_state_t;
 
 // Build-time DFA State
@@ -82,6 +83,7 @@ void nfa_init(void) {
         nfa[i].capture_end_id = -1;
         nfa[i].capture_defer_id = -1;
         nfa[i].is_eos_target = false;
+        nfa[i].pattern_id = -1;
     }
     nfa_state_count = 0;
 }
@@ -187,7 +189,37 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
 }
 
 // Compute epsilon closure (follows ANY and EOS transitions)
+// CRITICAL FIX: Track how each state was added to the closure
+// - States added via character transitions (nfa_move) can have ANY followed
+// - States added via EOS transitions can have ANY followed
+// - States added via ANY transitions should NOT have ANY followed
+// This prevents loop state ANY transitions (like in a((b))+ from state 9)
+// from contaminating the closure with states that lead to dead paths.
 void epsilon_closure(int* states, int* count, int max_states) {
+    // Find symbol IDs once
+    int any_symbol = -1;
+    int eos_symbol = -1;
+    for (int s = 0; s < alphabet_size; s++) {
+        if (alphabet[s].start_char == DFA_CHAR_ANY) {
+            any_symbol = s;
+        }
+        if (alphabet[s].start_char == DFA_CHAR_EOS) {
+            eos_symbol = s;
+        }
+    }
+
+    // Track how each state was added
+    // 0 = original (from character move or initial set)
+    // 1 = added via EOS
+    // 2 = added via ANY (should not have ANY followed)
+    int8_t added_via[MAX_STATES];
+    for (int i = 0; i < MAX_STATES; i++) {
+        added_via[i] = -1;  // Unknown
+    }
+    for (int i = 0; i < *count; i++) {
+        added_via[states[i]] = 0;  // Original states
+    }
+
     int added = 1;
     while (added && *count < max_states) {
         added = 0;
@@ -195,40 +227,7 @@ void epsilon_closure(int* states, int* count, int max_states) {
             int state = states[i];
             if (state < 0 || state >= nfa_state_count) continue;
 
-            // Find ANY symbol
-            int any_symbol = -1;
-            for (int s = 0; s < alphabet_size; s++) {
-                if (alphabet[s].start_char == DFA_CHAR_ANY) {
-                    any_symbol = s;
-                    break;
-                }
-            }
-
-            // Follow ANY transitions
-            if (any_symbol >= 0 && nfa[state].transitions[any_symbol] != -1) {
-                int target = nfa[state].transitions[any_symbol];
-                bool found = false;
-                for (int j = 0; j < *count; j++) {
-                    if (states[j] == target) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    states[*count] = target;
-                    (*count)++;
-                    added = 1;
-                }
-            }
-
-            // Also follow EOS transitions (for accepting states)
-            int eos_symbol = -1;
-            for (int s = 0; s < alphabet_size; s++) {
-                if (alphabet[s].start_char == DFA_CHAR_EOS) {
-                    eos_symbol = s;
-                    break;
-                }
-            }
+            // EOS transitions can always be followed
             if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
                 int target = nfa[state].transitions[eos_symbol];
                 bool found = false;
@@ -240,6 +239,27 @@ void epsilon_closure(int* states, int* count, int max_states) {
                 }
                 if (!found) {
                     states[*count] = target;
+                    added_via[target] = 1;  // Added via EOS
+                    (*count)++;
+                    added = 1;
+                }
+            }
+
+            // ANY transitions: only follow if state was NOT added via ANY
+            // This prevents loop states from contaminating the closure
+            if (any_symbol >= 0 && added_via[state] != 2 &&
+                nfa[state].transitions[any_symbol] != -1) {
+                int target = nfa[state].transitions[any_symbol];
+                bool found = false;
+                for (int j = 0; j < *count; j++) {
+                    if (states[j] == target) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    states[*count] = target;
+                    added_via[target] = 2;  // Added via ANY
                     (*count)++;
                     added = 1;
                 }
@@ -363,10 +383,26 @@ void nfa_to_dfa(void) {
     initial_nfa_states[0] = 0;
     int initial_count = 1;
     epsilon_closure(initial_nfa_states, &initial_count, MAX_STATES);
+
+    // Compute initial accepting mask - only from states with same pattern_id
+    // This prevents category leakage from different patterns in the initial closure
+    int initial_dominant_pattern = -1;
     uint8_t initial_accepting_mask = 0;
     for (int i = 0; i < initial_count; i++) {
-        initial_accepting_mask |= nfa[initial_nfa_states[i]].category_mask;
+        int state = initial_nfa_states[i];
+        int pattern_id = nfa[state].pattern_id;
+
+        // If this is the first accepting state, establish dominant pattern
+        if (nfa[state].category_mask != 0 && initial_dominant_pattern == -1) {
+            initial_dominant_pattern = pattern_id;
+        }
+
+        // Only include category if it matches the dominant pattern
+        if (pattern_id == initial_dominant_pattern) {
+            initial_accepting_mask |= nfa[state].category_mask;
+        }
     }
+
     int initial_dfa = dfa_add_state(initial_accepting_mask, initial_nfa_states, initial_count);
     int queue[MAX_STATES];
     int queue_start = 0;
@@ -387,13 +423,26 @@ void nfa_to_dfa(void) {
             nfa_move(move_states, &move_count, symbol_id, MAX_STATES);
             if (move_count == 0) continue;
             epsilon_closure(move_states, &move_count, MAX_STATES);
+
+            // THEORY: DFA states are subsets of NFA states
+            // We must keep ALL NFA states reachable by the input (no pattern_id filtering)
+            // The DFA's category_mask is the UNION of category_masks of all NFA states
+
+            // Compute accepting mask from ALL states (union of category masks)
             uint8_t move_accepting_mask = 0;
             for (int i = 0; i < move_count; i++) {
                 move_accepting_mask |= nfa[move_states[i]].category_mask;
             }
+
+            // Find existing DFA state with same set of NFA states
             int existing_state = -1;
             for (int i = 0; i < dfa_state_count; i++) {
                 if (dfa[i].nfa_state_count != move_count) continue;
+
+                // CRITICAL FIX: States with different acceptance categories must NOT be merged
+                uint8_t existing_cat_mask = (dfa[i].flags >> 8) & 0xFF;
+                if (existing_cat_mask != move_accepting_mask) continue;
+
                 bool match = true;
                 for (int j = 0; j < move_count; j++) {
                     bool found = false;
@@ -598,6 +647,10 @@ void load_nfa_file(const char* filename) {
                 char eos_str[16];
                 sscanf(line, "  EosTarget: %15s", eos_str);
                 nfa[current_state].is_eos_target = (strcmp(eos_str, "yes") == 0);
+            } else if (strstr(line, "PatternId:") != NULL) {
+                int pattern_id;
+                sscanf(line, "  PatternId: %d", &pattern_id);
+                nfa[current_state].pattern_id = (int16_t)pattern_id;
             } else if (strstr(line, "Accepting:") != NULL) {
                 // Backward compatibility: old NFA format uses "Accepting: yes/no"
                 // Map to CAT_MASK_SAFE (0x01) for accepting states

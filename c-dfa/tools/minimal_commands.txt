@@ -1,0 +1,4 @@
+[fragment:b] b
+[safe] cat
+[safe] dog
+[safe:quant:test] a((b))+

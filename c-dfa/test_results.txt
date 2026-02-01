@@ -1,0 +1,81 @@
+=================================================
+ReadOnlyBox DFA Unit Tests
+Mode: Acceptance Category Isolation Tests
+=================================================
+
+Test: DFA Init (valid file)
+  [PASS] Can open DFA file
+  [PASS] DFA init returns true
+  [PASS] dfa_is_valid returns true
+  [PASS] DFA version is 3 or higher
+
+Test: DFA Init (invalid data)
+  [PASS] DFA init returns false for invalid magic
+  [PASS] DFA init returns false for NULL data
+  [PASS] DFA init returns false for too small size
+
+Test: Acceptance Category Isolation
+  Testing that patterns in different acceptance categories don't interfere
+  This is essential for correct multi-category evaluation in one DFA run
+
+  Group 1: Simple non-interfering patterns
+  ----------------------------------------
+  [PASS] 'ls' matches safe::readonly category
+  [PASS] 'pwd' matches safe::readonly category
+  [PASS] 'curl' matches caution::network category
+  [PASS] 'wget' matches caution::network category
+
+  Group 2: Shared prefixes, different categories
+  -----------------------------------------------
+  [PASS] 'git status' matches safe::readonly::git category
+  [PASS] 'git log' matches safe::readonly::git category
+  [PASS] 'git push' matches caution::network category
+  [PASS] 'git fetch' matches caution::network category
+
+  Group 3: CRITICAL - Quantifier patterns with shared prefixes
+  -------------------------------------------------------------
+  These tests verify the core bug fix for acceptance categories
+
+  Pattern: a((b))+ (safe::readonly::quant1, category 1)
+  Pattern: abc((b))+ (caution::network::quant2, category 2)
+
+  [PASS] 'ab' matches a((b))+ pattern
+  [PASS] 'abb' matches a((b))+ pattern
+  [PASS] 'abbb' matches a((b))+ pattern
+  [PASS] 'abcb' matches abc((b))+ pattern
+  [PASS] 'abcbb' matches abc((b))+ pattern
+  [FAIL] 'abc' - CRITICAL BUG: matches when it should NOT
+         Pattern abc((b))+ requires at least one 'b' after 'abc'
+         This indicates interference between acceptance categories
+
+  Group 4: Multiple quantifier patterns with different categories
+  ----------------------------------------------------------------
+  [PASS] 'abc' matches ab((c))+ pattern (one 'c' after 'ab')
+  [PASS] 'abcc' matches ab((c))+ pattern (two 'c's after 'ab')
+
+  Group 5: Category mask isolation verification
+  ----------------------------------------------
+  'ab' - matched=true, category_mask=0x19
+  [FAIL] Wrong category mask - should be 0x01 for category 1 only
+
+  'abcb' - matched=true, category_mask=0x05
+  [FAIL] Wrong category mask - should be 0x02 for category 2 only
+
+  Group 6: Edge cases and negative tests
+  ---------------------------------------
+  [PASS] 'xyz' does NOT match any pattern (unrelated input)
+  [FAIL] 'abcd' does NOT match abc((b))+ (wrong ending)
+  [PASS] 'abca' does NOT match abc((b))+ (wrong suffix)
+  [PASS] 'a' does NOT match a((b))+ (needs at least 'ab')
+  [PASS] 'ab' does NOT match abc((b))+ category (too short)
+
+=================================================
+Acceptance Category Isolation Results: 0/3 tests passed
+=================================================
+WARNING: 3 test(s) failed - acceptance category isolation has bugs!
+This means patterns in different categories may interfere with each other.
+
+
+=================================================
+Acceptance Category Isolation Results: 26/27 tests passed
+=================================================

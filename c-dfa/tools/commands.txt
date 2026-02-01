@@ -127,3 +127,45 @@
 [safe:quantifier:test] x((TEST::Y))+
 # 1((2))+ should match "12", "12345" but NOT "13"
 [safe:quantifier:test] 1((TEST::TWO))+
+# ============ PLUS QUANTIFIER TEST PATTERNS ============
+# Test patterns for + quantifier (one or more)
+# These patterns test the fragment-based + quantifier
+
+[fragment:b] b
+
+# ============ FRAGMENTS FOR QUANTIFIER TEST PATTERNS ============
+# Each pattern namespace needs its own fragment definitions
+
+# Global fragments (fallback)
+[fragment:b] b
+[fragment:c] c
+[fragment:d] d
+[fragment:y] y
+[fragment:z] z
+
+# safe namespace fragments
+[fragment:safe::quant::test::b] b
+[fragment:safe::quant::test::y] y
+[fragment:safe::quant::test::z] z
+
+# caution namespace fragments
+[fragment:caution::quant::test::b] b
+
+# modifying namespace fragments
+[fragment:modifying::quant::test::c] c
+
+# dangerous namespace fragments
+[fragment:dangerous::quant::test::d] d
+
+[fragment:c] c
+[fragment:d] d
+[fragment:y] y
+[fragment:z] z
+
+[safe:quant:test] a((b))+
+[caution:quant:test] abc((b))+
+[modifying:quant:test] ab((c))+
+[dangerous:quant:test] abcd((d))+
+[safe:quant:test] x((y))+
+[safe:quant:test] w((z))+
+[safe:quant:test] p+
