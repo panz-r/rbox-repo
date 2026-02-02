@@ -19,9 +19,45 @@ var tools = []string{}
 // Default target - build and test
 var Default = Test
 
+// ValidatePatterns validates patterns before building
+func ValidatePatterns() error {
+	fmt.Println("=================================================")
+	fmt.Println("Validating patterns...")
+	fmt.Println("=================================================")
+
+	wd, _ := os.Getwd()
+	cdfaToolsDir := filepath.Join(wd, "c-dfa", "tools")
+	patternsFile := filepath.Join(wd, "c-dfa", "patterns_safe_commands.txt")
+
+	// Check if validation script exists
+	validateScript := filepath.Join(cdfaToolsDir, "validate_patterns.sh")
+	if _, err := os.Stat(validateScript); os.IsNotExist(err) {
+		fmt.Println("WARNING: validate_patterns.sh not found, skipping validation")
+		return nil
+	}
+
+	// Make sure it's executable
+	if err := os.Chmod(validateScript, 0755); err != nil {
+		return fmt.Errorf("failed to make validate_patterns.sh executable: %w", err)
+	}
+
+	// Run validation
+	fmt.Printf("Validating: %s\n", patternsFile)
+	cmd := exec.Command("/bin/bash", validateScript, patternsFile)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("pattern validation failed: %w", err)
+	}
+
+	fmt.Println("")
+	fmt.Println("Pattern validation passed!")
+	return nil
+}
+
 // Build all tools
 func Build() error {
-	mg.Deps(Clean)
+	mg.Deps(Clean, ValidatePatterns)
 	if err := buildAll(); err != nil {
 		return err
 	}
@@ -52,7 +88,7 @@ func BuildClient() error {
 	os.Remove(nfaBuilder)
 	fmt.Println("Building nfa_builder...")
 	buildNfaBuilderCmd := exec.Command("gcc", "-o", nfaBuilder, filepath.Join(cdfaToolsDir, "nfa_builder.c"),
-		"-Wall", "-Wextra", "-std=c11", "-O2")
+		"-Wall", "-Wextra", "-std=c11", "-O2", "-DNFA_BUILDER_DEBUG=0", "-DNFA_BUILDER_VERBOSE=0")
 	buildNfaBuilderCmd.Stdout = os.Stdout
 	buildNfaBuilderCmd.Stderr = os.Stderr
 	if err := buildNfaBuilderCmd.Run(); err != nil {
@@ -64,7 +100,7 @@ func BuildClient() error {
 	os.Remove(nfa2dfa)
 	fmt.Println("Building nfa2dfa...")
 	buildCmd := exec.Command("gcc", "-o", nfa2dfa, filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
-		"-Wall", "-Wextra", "-std=c11", "-O2")
+		"-Wall", "-Wextra", "-std=c11", "-O2", "-DNFA2DFA_DEBUG=0", "-DNFA2DFA_VERBOSE=0")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -324,7 +360,7 @@ func DfaTest() error {
 	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
 		fmt.Println("Building nfa_builder...")
 		buildCmd := exec.Command("gcc", "-o", nfaBuilder, filepath.Join(cdfaToolsDir, "nfa_builder.c"),
-			"-Wall", "-Wextra", "-std=c11", "-O2")
+			"-Wall", "-Wextra", "-std=c11", "-O2", "-DNFA_BUILDER_DEBUG=0", "-DNFA_BUILDER_VERBOSE=0")
 		buildCmd.Stdout = os.Stdout
 		buildCmd.Stderr = os.Stderr
 		if err := buildCmd.Run(); err != nil {
@@ -337,7 +373,7 @@ func DfaTest() error {
 	os.Remove(nfa2dfa)
 	fmt.Println("Building nfa2dfa...")
 	buildCmd := exec.Command("gcc", "-o", nfa2dfa, filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
-		"-Wall", "-Wextra", "-std=c11", "-O2")
+		"-Wall", "-Wextra", "-std=c11", "-O2", "-DNFA2DFA_DEBUG=0", "-DNFA2DFA_VERBOSE=0")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -357,6 +393,22 @@ func DfaTest() error {
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
 		return fmt.Errorf("failed to build dfa_test_new: %w", err)
+	}
+
+	// Helper function to validate patterns file
+	validatePatternFile := func(patternsPath, groupName string) error {
+		validateScript := filepath.Join(cdfaToolsDir, "validate_patterns.sh")
+		if _, err := os.Stat(validateScript); os.IsNotExist(err) {
+			fmt.Printf("WARNING: validate_patterns.sh not found, skipping validation for %s\n", groupName)
+			return nil
+		}
+
+		fmt.Printf("Validating: %s\n", filepath.Base(patternsPath))
+		cmd := exec.Command("/bin/bash", validateScript, patternsPath)
+		cmd.Dir = cdfaDir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
 	}
 
 	// Define test groups with their patterns files
@@ -449,6 +501,17 @@ func DfaTest() error {
 			continue
 		}
 		fmt.Printf("Generated pattern-aware alphabet for %s\n", group.name)
+
+		// Validate patterns before building NFA
+		if err := validatePatternFile(patternsPath, group.name); err != nil {
+			if group.optional {
+				fmt.Printf("Skipping %s due to pattern validation error: %v\n", group.name, err)
+				continue
+			}
+			failedGroups = append(failedGroups, fmt.Sprintf("%s (pattern validation)", group.name))
+			fmt.Printf("ERROR: Pattern validation failed for %s: %v\n", group.name, err)
+			continue
+		}
 
 		// Generate NFA
 		nfaFile := filepath.Join(cdfaDir, "test_group.nfa")

@@ -17,6 +17,25 @@ TARGETS = dfa_test
 
 .PHONY: all clean test
 
+# Pattern file
+PATTERN_FILE = patterns_safe_commands.txt
+
+# ============================================================================
+# Pattern Validation
+# ============================================================================
+
+# Validate patterns before building
+validate-patterns:
+	@echo "================================================="
+	@echo "Validating patterns in $(PATTERN_FILE)..."
+	@echo "================================================="
+	@$(TOOLS_DIR)/validate_patterns.sh $(PATTERN_FILE) || (echo "ERROR: Pattern validation failed!"; exit 1)
+	@echo ""
+
+# ============================================================================
+# Build Targets
+# ============================================================================
+
 all: dfa_test
 
 # Create build directory
@@ -37,23 +56,32 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # Test
-test: dfa_test
+test: dfa_test validate-patterns
+	@echo ""
+	@echo "================================================="
 	@echo "Running DFA test..."
+	@echo "================================================="
 	@./dfa_test
 
 # Build DFA (if tools are available)
-dfa: $(BUILD_DIR)
+dfa: validate-patterns $(BUILD_DIR)
 	@echo "Building DFA..."
-	@cd $(BUILD_DIR) && ../tools/nfa_builder ../tools/commands.txt
+	@cd $(BUILD_DIR) && ../tools/nfa_builder ../alphabet.map ../$(PATTERN_FILE) readonlybox.nfa
 	@cd $(BUILD_DIR) && ../tools/nfa2dfa_advanced readonlybox.nfa readonlybox.dfa
+	@echo ""
+	@echo "DFA built successfully: $(PATTERN_FILE) -> build/readonlybox.dfa"
 
 # Build DFA with alphabet optimization
-dfa-alphabet: $(BUILD_DIR)
+dfa-alphabet: validate-patterns $(BUILD_DIR)
 	@echo "Building DFA with alphabet optimization..."
-	@cd $(BUILD_DIR) && ../tools/alphabet_constructor ../test_commands.txt alphabet.map
-	@cd $(BUILD_DIR) && ../tools/nfa_builder_with_alphabet alphabet.map ../test_commands.txt readonlybox_alphabet.nfa
+	@cd $(BUILD_DIR) && ../tools/alphabet_constructor ../$(PATTERN_FILE) alphabet.map
+	@cd $(BUILD_DIR) && ../tools/nfa_builder_with_alphabet alphabet.map ../$(PATTERN_FILE) readonlybox_alphabet.nfa
 	@cd $(BUILD_DIR) && ../tools/nfa2dfa_with_alphabet readonlybox_alphabet.nfa readonlybox_alphabet.dfa
 
-# Quick test
-quick: dfa_test
+# Quick test (with validation)
+quick: dfa_test validate-patterns
+	@echo ""
+	@echo "================================================="
+	@echo "Running quick DFA test..."
+	@echo "================================================="
 	@./dfa_test

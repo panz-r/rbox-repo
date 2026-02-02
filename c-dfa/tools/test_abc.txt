@@ -1,0 +1,5 @@
+# Test patterns for abc((b))+ pattern
+[fragment:b] b
+
+# Pattern that should match 'abcb', 'abcbb', 'abcbbb' etc.
+[caution:quant:test] abc((b))+

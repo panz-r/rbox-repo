@@ -1,0 +1,8 @@
+# Test patterns for Phase 1: Fragment Resolution
+# These patterns test fragment-based + quantifiers
+
+# Fragment definitions
+[fragment:y] y
+
+# Pattern that should match 'x', 'xy', 'xyy', etc.
+[safe:quant:test] x((y))+

@@ -10,6 +10,30 @@
 // Forward declaration
 int find_symbol_id(char c);
 
+// Debug output control - set to 0 to disable all debug prints
+#ifndef NFA2DFA_DEBUG
+#define NFA2DFA_DEBUG 0
+#endif
+
+// Verbose output control - set to 0 to disable progress messages
+#ifndef NFA2DFA_VERBOSE
+#define NFA2DFA_VERBOSE 1
+#endif
+
+// Conditional debug print macro
+#if NFA2DFA_DEBUG
+#define DEBUG_PRINT(fmt, ...) fprintf(stderr, "DEBUG: " fmt, ##__VA_ARGS__)
+#else
+#define DEBUG_PRINT(fmt, ...) ((void)0)
+#endif
+
+// Conditional verbose print macro
+#if NFA2DFA_VERBOSE
+#define VERBOSE_PRINT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+#else
+#define VERBOSE_PRINT(fmt, ...) ((void)0)
+#endif
+
 // Character class definition
 typedef struct {
     int start_char;
@@ -132,7 +156,7 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
         if (nfa[nfa_state].capture_start_id >= 0) {
             capture_flags |= DFA_STATE_CAPTURE_START;
             capture_start_id = nfa[nfa_state].capture_start_id;
-            fprintf(stderr, "DEBUG: DFA state %d gets capture_start_id=%d from NFA state %d\n",
+            DEBUG_PRINT("DFA state %d gets capture_start_id=%d from NFA state %d\n",
                     state, capture_start_id, nfa_state);
         }
 
@@ -140,7 +164,7 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
         if (nfa[nfa_state].capture_end_id >= 0) {
             capture_flags |= DFA_STATE_CAPTURE_END;
             capture_end_id = nfa[nfa_state].capture_end_id;
-            fprintf(stderr, "DEBUG: DFA state %d gets capture_end_id=%d from NFA state %d\n",
+            DEBUG_PRINT("DFA state %d gets capture_end_id=%d from NFA state %d\n",
                     state, capture_end_id, nfa_state);
         }
 
@@ -148,7 +172,7 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
         if (nfa[nfa_state].capture_defer_id >= 0) {
             capture_flags |= DFA_STATE_CAPTURE_DEFER;
             capture_defer_id = nfa[nfa_state].capture_defer_id;
-            fprintf(stderr, "DEBUG: DFA state %d gets capture_defer_id=%d from NFA state %d\n",
+            DEBUG_PRINT("DFA state %d gets capture_defer_id=%d from NFA state %d\n",
                     state, capture_defer_id, nfa_state);
         }
 
@@ -164,7 +188,7 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
         dfa[state].flags |= DFA_STATE_ACCEPTING;
     }
     if (capture_flags != 0) {
-        fprintf(stderr, "DEBUG: State %d has capture flags 0x%x (start_id=%d, end_id=%d, defer_id=%d)\n",
+        DEBUG_PRINT("State %d has capture flags 0x%x (start_id=%d, end_id=%d, defer_id=%d)\n",
                 state, capture_flags, capture_start_id, capture_end_id, capture_defer_id);
     }
     dfa[state].transition_count = 0;
@@ -177,12 +201,14 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
         dfa[state].nfa_states[i] = nfa_states[i];
         dfa[state].nfa_state_count++;
     }
-#if 1
-    fprintf(stderr, "DEBUG: dfa_add_state(%d): category_mask=0x%02x, nfa_count=%d, nfa_states={", state, category_mask, nfa_count);
-    for (int i = 0; i < nfa_count; i++) {
-        fprintf(stderr, "%d(cat=0x%02x)%s", nfa_states[i], nfa[nfa_states[i]].category_mask, i < nfa_count-1 ? ", " : "");
+#if NFA2DFA_DEBUG
+    if (state <= 20) {
+        DEBUG_PRINT("dfa_add_state(%d): category_mask=0x%02x, nfa_count=%d, nfa_states={", state, category_mask, nfa_count);
+        for (int i = 0; i < nfa_count; i++) {
+            fprintf(stderr, "%d(cat=0x%02x,pid=%d)%s", nfa_states[i], nfa[nfa_states[i]].category_mask, nfa[nfa_states[i]].pattern_id, i < nfa_count-1 ? ", " : "");
+        }
+        fprintf(stderr, "}\n");
     }
-    fprintf(stderr, "}\n");
 #endif
     dfa_state_count++;
     return state;
@@ -385,21 +411,31 @@ void nfa_to_dfa(void) {
     epsilon_closure(initial_nfa_states, &initial_count, MAX_STATES);
 
     // Compute initial accepting mask - only from states with same pattern_id
-    // This prevents category leakage from different patterns in the initial closure
+    // CRITICAL FIX: The initial state's category_mask should only be set if ALL NFA states
+    // in the initial closure belong to the SAME pattern. If states from different patterns
+    // are present, we must NOT set the accepting mask (set to 0) to prevent incorrect matches.
     int initial_dominant_pattern = -1;
+    bool initial_all_same_pattern = true;
     uint8_t initial_accepting_mask = 0;
     for (int i = 0; i < initial_count; i++) {
         int state = initial_nfa_states[i];
         int pattern_id = nfa[state].pattern_id;
 
-        // If this is the first accepting state, establish dominant pattern
-        if (nfa[state].category_mask != 0 && initial_dominant_pattern == -1) {
-            initial_dominant_pattern = pattern_id;
+        if (pattern_id < 0) {
+            // State has no pattern_id (e.g., fragment or intermediate state)
+            continue;
         }
-
-        // Only include category if it matches the dominant pattern
-        if (pattern_id == initial_dominant_pattern) {
-            initial_accepting_mask |= nfa[state].category_mask;
+        if (initial_dominant_pattern < 0) {
+            initial_dominant_pattern = pattern_id;
+        } else if (pattern_id != initial_dominant_pattern) {
+            // States from different patterns - don't set accepting mask
+            initial_all_same_pattern = false;
+            break;
+        }
+    }
+    if (initial_all_same_pattern && initial_dominant_pattern >= 0) {
+        for (int i = 0; i < initial_count; i++) {
+            initial_accepting_mask |= nfa[initial_nfa_states[i]].category_mask;
         }
     }
 
@@ -426,12 +462,116 @@ void nfa_to_dfa(void) {
 
             // THEORY: DFA states are subsets of NFA states
             // We must keep ALL NFA states reachable by the input (no pattern_id filtering)
-            // The DFA's category_mask is the UNION of category_masks of all NFA states
+            // CRITICAL FIX: The DFA's category_mask should only be set if ALL NFA states
+            // belong to the SAME pattern. If states from different patterns are merged,
+            // we must NOT set the accepting mask (set to 0) to prevent incorrect matches.
 
-            // Compute accepting mask from ALL states (union of category masks)
+            // Compute accepting mask
+            // CRITICAL FIX: Only use the category from truly final accepting states.
+            // A state is a "final accepting state" if:
+            // 1. It can accept via EOS (is_eos_target=yes AND category_mask != 0)
+            // 2. It has no outgoing character transitions (dead end - pattern is complete)
+            //
+            // Intermediate accepting states (can accept via EOS but have outgoing transitions
+            // that lead to more matching) should NOT contribute to the accepting mask.
+            //
+            // This prevents intermediate states from one pattern (e.g., state 135 for abc((b))+)
+            // from incorrectly being used as accepting, while properly using the final state
+            // (e.g., state 136) which represents the true end of the pattern.
+
             uint8_t move_accepting_mask = 0;
+            bool multiple_categories = false;
+
+            // Track categories from final accepting states only
+            bool pattern_has_final_accepting[MAX_PATTERNS] = {false};
+            uint8_t pattern_final_cats[MAX_PATTERNS] = {0};
+
             for (int i = 0; i < move_count; i++) {
-                move_accepting_mask |= nfa[move_states[i]].category_mask;
+                int state = move_states[i];
+                uint8_t state_cat = nfa[state].category_mask;
+                int state_pattern = nfa[state].pattern_id;
+
+                // Check if this state is a final accepting state
+                // A state is final accepting if:
+                // 1. is_eos_target = true (can accept via EOS)
+                // 2. category_mask != 0 (has an acceptance category)
+                // 3. has NO outgoing character transitions (dead end)
+                bool is_final_accepting = false;
+                if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
+                    // Check if state has NO outgoing character transitions
+                    bool has_transitions = false;
+                    for (int s = 0; s < MAX_SYMBOLS; s++) {
+                        if (nfa[state].transitions[s] != -1 ||
+                            nfa[state].multi_targets[s][0] != '\0') {
+                            has_transitions = true;
+                            break;
+                        }
+                    }
+                    if (!has_transitions) {
+                        is_final_accepting = true;
+                    }
+                }
+
+                if (is_final_accepting) {
+                    pattern_has_final_accepting[state_pattern] = true;
+                    pattern_final_cats[state_pattern] |= state_cat;
+                }
+
+                // Check for different categories using local variables
+                uint8_t seen_cats[256] = {0};
+                int seen_cat_count = 0;
+                if (state_cat != 0) {
+                    bool found = false;
+                    for (int j = 0; j < seen_cat_count; j++) {
+                        if (seen_cats[j] == state_cat) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found && seen_cat_count < 256) {
+                        seen_cats[seen_cat_count++] = state_cat;
+                    }
+                    if (seen_cat_count > 1) {
+                        multiple_categories = true;
+                    }
+                }
+            }
+
+            // Only set accepting mask from final accepting states
+            for (int p = 0; p < MAX_PATTERNS; p++) {
+                if (pattern_has_final_accepting[p]) {
+                    move_accepting_mask |= pattern_final_cats[p];
+                }
+            }
+
+            // If accepting states from different categories, clear the mask
+            if (multiple_categories) {
+                move_accepting_mask = 0;
+            }
+
+            // Debug for transitions on 'b' from states 10 and 20
+            if (alphabet[array_idx].start_char == 'b' && (current_dfa == 10 || current_dfa == 20)) {
+                    DEBUG_PRINT("From DFA state %d on 'b': move_count=%d\n", current_dfa, move_count);
+                int final_count = 0;
+                for (int i = 0; i < move_count; i++) {
+                    int state = move_states[i];
+                    bool is_final = nfa[state].is_eos_target && nfa[state].category_mask != 0;
+                    if (is_final) {
+                        bool has_trans = false;
+                        for (int s = 0; s < MAX_SYMBOLS; s++) {
+                            if (nfa[state].transitions[s] != -1 || nfa[state].multi_targets[s][0] != '\0') {
+                                has_trans = true;
+                                break;
+                            }
+                        }
+                        if (!has_trans) {
+                            final_count++;
+                            fprintf(stderr, "  State %d: FINAL (cat=0x%02x)\n", state, nfa[state].category_mask);
+                        }
+                    }
+                }
+                fprintf(stderr, "  Final states count: %d\n", final_count);
+                fprintf(stderr, "  move_accepting_mask=0x%02x\n", move_accepting_mask);
             }
 
             // Find existing DFA state with same set of NFA states
@@ -473,15 +613,30 @@ void nfa_to_dfa(void) {
                     queue[queue_end] = new_dfa;
                     queue_end++;
                 }
-#if 0
-                // Debug for states around 212
-                if (new_dfa >= 210 && new_dfa <= 220) {
-                    fprintf(stderr, "DEBUG: Created DFA state %d via symbol %d (char %d-%d), nfa_count=%d, nfa_states={",
-                            new_dfa, array_idx, alphabet[array_idx].start_char, alphabet[array_idx].end_char, move_count);
+#if 1
+                // Debug for transitions on 'b' from states 10 and 20
+                if (alphabet[array_idx].start_char == 'b' && (current_dfa == 10 || current_dfa == 20)) {
+                DEBUG_PRINT("From DFA state %d on 'b': move_count=%d\n", current_dfa, move_count);
+                    // Check for different categories
+                    uint8_t seen_cats[256] = {0};
+                    int cat_count = 0;
                     for (int i = 0; i < move_count; i++) {
-                        fprintf(stderr, "%d%s", move_states[i], i < move_count-1 ? ", " : "");
+                        uint8_t state_cat = nfa[move_states[i]].category_mask;
+                        if (state_cat != 0) {
+                            bool found = false;
+                            for (int j = 0; j < cat_count; j++) {
+                                if (seen_cats[j] == state_cat) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found && cat_count < 256) {
+                                seen_cats[cat_count++] = state_cat;
+                            }
+                        }
                     }
-                    fprintf(stderr, "}\n");
+                    fprintf(stderr, "  Categories found: %d\n", cat_count);
+                    fprintf(stderr, "  move_accepting_mask=0x%02x\n", move_accepting_mask);
                 }
 #endif
             }
@@ -548,7 +703,7 @@ void flatten_dfa(void) {
 #if 0
         // Debug state 212 transitions
         if (state == 212) {
-            fprintf(stderr, "DEBUG: State 212 transitions: count=%d, transitions={", new_count);
+            DEBUG_PRINT("State 212 transitions: count=%d, transitions={", new_count);
             for (int c = 0; c < 256; c++) {
                 if (new_transitions[c] != -1) {
                     fprintf(stderr, "%d->%d ", c, new_transitions[c]);
@@ -715,7 +870,7 @@ void load_nfa_file(const char* filename) {
         }
     }
     fclose(file);
-    printf("Loaded NFA with %d states and %d symbols from %s\n", nfa_state_count, alphabet_size, filename);
+    VERBOSE_PRINT("Loaded NFA with %d states and %d symbols from %s\n", nfa_state_count, alphabet_size, filename);
 }
 
 // Write DFA to binary file (Version 3 format)
@@ -771,7 +926,7 @@ void write_dfa_file(const char* filename) {
         states[i].capture_defer_id = dfa[i].capture_defer_id;
         states[i].eos_target = dfa[i].eos_target;
         if (dfa[i].capture_start_id >= 0 || dfa[i].capture_end_id >= 0 || dfa[i].capture_defer_id >= 0) {
-            fprintf(stderr, "DEBUG: Writing state %d: capture_start_id=%d, capture_end_id=%d, capture_defer_id=%d\n",
+            DEBUG_PRINT("Writing state %d: capture_start_id=%d, capture_end_id=%d, capture_defer_id=%d\n",
                     i, dfa[i].capture_start_id, dfa[i].capture_end_id, dfa[i].capture_defer_id);
         }
         // Check accepting mask (bits 8-15 of flags)
@@ -827,8 +982,8 @@ void write_dfa_file(const char* filename) {
     fwrite(dfa_struct, dfa_size, 1, file);
     fclose(file);
     free(dfa_struct);
-    printf("Wrote DFA with %d states to %s\n", dfa_state_count, filename);
-    printf("DFA size: %zu bytes\n", dfa_size);
+    VERBOSE_PRINT("Wrote DFA with %d states to %s\n", dfa_state_count, filename);
+    VERBOSE_PRINT("DFA size: %zu bytes\n", dfa_size);
 }
 
 // Main function
@@ -839,15 +994,15 @@ int main(int argc, char* argv[]) {
     }
     const char* nfa_file = argv[1];
     const char* dfa_file = argc > 2 ? argv[2] : "readonlybox.dfa";
-    printf("NFA to DFA Converter (Version 3)\n");
-    printf("================================\n\n");
+    VERBOSE_PRINT("NFA to DFA Converter (Version 3)\n");
+    VERBOSE_PRINT("================================\n\n");
     load_nfa_file(nfa_file);
-    printf("Converting NFA to DFA...\n");
+    VERBOSE_PRINT("Converting NFA to DFA...\n");
     nfa_to_dfa();
-    printf("Flattening DFA (symbol -> character)...\n");
+    VERBOSE_PRINT("Flattening DFA (symbol -> character)...\n");
     flatten_dfa();
     write_dfa_file(dfa_file);
-    printf("\nConversion complete!\n");
+    VERBOSE_PRINT("\nConversion complete!\n");
     return 0;
 }
 

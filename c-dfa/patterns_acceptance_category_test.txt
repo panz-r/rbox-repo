@@ -6,6 +6,14 @@
 [fragment:b] b
 [fragment:c] c
 [fragment:d] d
+[fragment:y] y
+[fragment:z] z
+[fragment:r] r
+[fragment:s] s
+[fragment:git] git
+[fragment:status] status
+[fragment:push] push
+[fragment:value] value
 
 # Map acceptance categories to distinct IDs
 #ACCEPTANCE_MAPPING [safe::readonly] -> 0
@@ -140,3 +148,153 @@
 [safe::readonly::critical7] git log --oneline -n 10 --graph
 [caution::network::critical8] git log --oneline -n 10 --all
 [modifying::filesystem::critical9] git log --oneline -n 10 --patch
+
+# ============================================
+# GROUP 11: NESTED QUANTIFIERS - Extremely challenging
+# Nested quantifiers can cause state explosion and category interference
+# ============================================
+
+# Nested + quantifiers with shared prefix
+[safe::readonly::nested_quant1] x((y))+((z))+
+[caution::network::nested_quant2] xy((z))+((z))+
+
+# Triple nesting with shared prefixes
+[safe::readonly::triple_nest1] a((b))+((c))+
+[caution::network::triple_nest2] ab((c))+((d))+
+
+# Quantifier inside fragment, fragment used with quantifier
+[fragment:q] q
+[safe::readonly::frag_quant1] p((q))+((r))+
+[caution::network::frag_quant2] pq((r))+((s))+
+
+# ============================================
+# GROUP 12: ALTERNATIVES (a|b) WITH SHARED PREFIXES
+# Alternation with shared structure can leak category information
+# ============================================
+
+# Same prefix, different alternatives, different categories
+[safe::readonly::alt1] git (status|log)
+[caution::network::alt2] git (push|fetch)
+
+# Alternation at different positions
+[safe::readonly::alt3] (git|hg) status
+[caution::network::alt4] (git|hg) push
+
+# Complex alternation with shared suffix
+[safe::readonly::alt5] git (status --short|log --oneline)
+[caution::network::alt6] git (push --force|fetch --all)
+
+# ============================================
+# GROUP 13: CHARACTER CLASS OVERLAP
+# Character classes that overlap can cause category interference
+# ============================================
+
+# Overlapping character classes in different categories
+[safe::readonly::overlap1] cmd [abc]*
+[caution::network::overlap2] cmd [ab]*
+
+# Nested character classes
+[safe::readonly::class_nest1] [[:alpha:]]+
+[caution::network::class_nest2] [[:alnum:]]+
+
+# Character range edge cases
+[safe::readonly::range1] a[0-9]b[0-9]c
+[caution::network::range2] a[0-8]b[0-8]c
+
+# ============================================
+# GROUP 14: FRAGMENT CHAINS
+# Chains of fragments can expose state sharing bugs
+# ============================================
+
+[fragment:cmd] git
+[fragment:sub1] status
+[fragment:sub2] log
+[fragment:sub3] push
+
+[safe::readonly::chain1] cmd sub1
+[caution::network::chain2] cmd sub3
+
+# Fragments with quantifiers
+[safe::readonly::frag_chain1] ((git)) ((status))+
+[caution::network::frag_chain2] ((git)) ((push))+
+
+# ============================================
+# GROUP 15: ZERO-LENGTH MATCH EDGE CASES
+# Patterns that could match empty strings must be handled carefully
+# ============================================
+
+# Empty alternative - one of the options is empty
+[safe::readonly::empty_alt1] git (status|)
+[caution::network::empty_alt2] git (push|)
+
+# Fragment that matches empty (if supported)
+# [fragment:empty]
+# [safe::readonly::empty_frag] (empty)((status))+
+
+# ============================================
+# GROUP 16: QUANTIFIER INTERACTION BUGS
+# Specific quantifier combinations that stress the NFA builder
+# ============================================
+
+# * followed by + (edge case)
+[safe::readonly::star_plus1] a((b))*((c))+
+[caution::network::star_plus2] ab((c))*((d))+
+
+
+# + followed by * (should be same as + for same pattern)
+[safe::readonly::plus_star1] a((b))+((c))*
+[caution::network::plus_star2] ab((c))+((d))*
+
+# Multiple different quantifiers on same base
+[safe::readonly::multi_quant1] x((y))+
+[caution::network::multi_quant2] x((y))*
+[modifying::filesystem::multi_quant3] x((y))
+
+# ============================================
+# GROUP 17: DEEP STATE SHARING STRESS TEST
+# Many patterns sharing deep prefixes
+# ============================================
+
+[safe::readonly::deep1] git log --oneline --graph --all -n 10 --pretty=medium
+[caution::network::deep2] git log --oneline --graph --all -n 10 --stat
+[modifying::filesystem::deep3] git log --oneline --graph --all -n 10 --patch
+[dangerous::destructive::deep4] git log --oneline --graph --all -n 10 --hard
+
+# ============================================
+# GROUP 18: ESCAPE SEQUENCE HANDLING
+# Test that escaped characters work correctly across categories
+# ============================================
+
+[safe::readonly::escape1] echo \"hello world\"
+[caution::network::escape2] curl \"http://example.com\"
+
+# ============================================
+# GROUP 19: CATEGORY MASK BOUNDARY TESTS
+# Test patterns at category boundaries (7 patterns per category max)
+# ============================================
+
+# Push to boundary of category 2 (caution::network)
+[caution::network::boundary1] network1
+[caution::network::boundary2] network2
+[caution::network::boundary3] network3
+[caution::network::boundary4] network4
+[caution::network::boundary5] network5
+[caution::network::boundary6] network6
+[caution::network::boundary7] network7
+
+# ============================================
+# GROUP 20: IDENTICAL PATTERNS, DIFFERENT CATEGORIES
+# Same pattern string must work in different categories
+# This is critical for category isolation
+# ============================================
+
+# Same literal pattern in different categories
+[safe::readonly::same1] specific_command_name
+[caution::network::same2] specific_command_name
+[modifying::filesystem::same3] specific_command_name
+
+# Same pattern with quantifiers in different categories
+[safe::readonly::same_quant1] token((value))+
+[caution::network::same_quant2] token((value))+
+[modifying::filesystem::same_quant3] token((value))+
+

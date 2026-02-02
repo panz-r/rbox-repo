@@ -327,15 +327,13 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             // Dead end - check if current state can accept here
             uint8_t category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
             if (category_mask != 0) {
-                // Only accept if this state can actually terminate (EOS or no outgoing)
-                bool has_eos = (current_state->eos_target >= 0);
+                // Only accept if this state can actually terminate (no outgoing transitions)
+                // The category_mask tells us if this state is accepting
+                // We do NOT check eos_target here because:
+                // 1. category_mask already indicates if we're in an accepting state
+                // 2. Following eos_target was causing bugs (it pointed to wrong state)
                 bool has_outgoing = (current_state->transition_count > 0);
-                // CRITICAL FIX: Only accept if we're at end of input AND in a valid accepting state
-                // A state can accept if:
-                // 1. It has no outgoing transitions (dead-end), OR
-                // 2. We're at end of input and the state has an EOS transition
-                // But NOT just because a state has an EOS target while still having outgoing transitions
-                if ((!has_outgoing && category_mask != 0) || (pos == length && has_eos && category_mask != 0)) {
+                if (!has_outgoing && category_mask != 0) {
                     result->matched = true;
                     result->final_state = current_state->flags;
                     result->matched_length = pos;

@@ -1,0 +1,17 @@
+# Test cases for fragment error handling
+# These patterns should cause the NFA builder to stop with errors
+
+# FIRST: Define a valid fragment (so it's available for other patterns)
+[fragment:FILENAME] [a-zA-Z0-9_.]+
+
+# Error Case 1: Undefined fragment reference (FILENAME_NOT_DEFINED doesn't exist)
+[cat] cat ((FILENAME_NOT_DEFINED))
+
+# Error Case 2: Fragment reference to non-existent scoped fragment
+[cat] ls ((NONEXISTENT::PATH))
+
+# Error Case 3: Multiple undefined fragments
+[cat] rm ((UNDEFINED_FILE)) ((ANOTHER_MISSING))
+
+# Valid patterns for comparison (FILENAME is defined above)
+[safe] cat ((FILENAME))

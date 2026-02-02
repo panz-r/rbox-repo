@@ -14,6 +14,30 @@
  * command specifications using an optimized alphabet to reduce DFA state space.
  */
 
+// Debug output control - set to 0 to disable all debug prints
+#ifndef NFA_BUILDER_DEBUG
+#define NFA_BUILDER_DEBUG 0
+#endif
+
+// Verbose output control - set to 0 to disable progress messages
+#ifndef NFA_BUILDER_VERBOSE
+#define NFA_BUILDER_VERBOSE 1
+#endif
+
+// Conditional debug print macro
+#if NFA_BUILDER_DEBUG
+#define DEBUG_PRINT(fmt, ...) fprintf(stderr, "//DEBUG: " fmt, ##__VA_ARGS__)
+#else
+#define DEBUG_PRINT(fmt, ...) ((void)0)
+#endif
+
+// Conditional verbose print macro
+#if NFA_BUILDER_VERBOSE
+#define VERBOSE_PRINT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+#else
+#define VERBOSE_PRINT(fmt, ...) ((void)0)
+#endif
+
 // Character class definition
 typedef struct {
     int start_char;
@@ -166,15 +190,15 @@ static int pending_class_symbol_count = 0;
 
 // Find a fragment by name
 static const char* find_fragment(const char* name) {
-    fprintf(stderr, "//DEBUG: find_fragment looking for: '%s'\n", name);
+    DEBUG_PRINT("find_fragment looking for: '%s'\n", name);
     for (int i = 0; i < fragment_count; i++) {
-        fprintf(stderr, "//DEBUG:   comparing with fragment[%d]: '%s' = '%s'\n", i, fragments[i].name, fragments[i].value);
+        DEBUG_PRINT("  comparing with fragment[%d]: '%s' = '%s'\n", i, fragments[i].name, fragments[i].value);
         if (strcmp(fragments[i].name, name) == 0) {
-            fprintf(stderr, "//DEBUG:   found match!\n");
+            DEBUG_PRINT("  found match!\n");
             return fragments[i].value;
         }
     }
-    fprintf(stderr, "//DEBUG:   not found\n");
+    DEBUG_PRINT("  not found\n");
     return NULL;
 }
 
@@ -350,7 +374,7 @@ void load_alphabet(const char* filename) {
     }
 
     fclose(file);
-    printf("Loaded alphabet with %d symbols from %s\n", alphabet_size, filename);
+    VERBOSE_PRINT("Loaded alphabet with %d symbols from %s\n", alphabet_size, filename);
 }
 
 // Find symbol ID for a character
@@ -483,6 +507,12 @@ static int find_equivalent_state(uint64_t signature, int current_state) {
     StateSignature* entry = signature_table[hash];
 
     while (entry != NULL) {
+        // Skip states that should not be shared
+        if (state_do_not_share[current_state] || state_do_not_share[entry->state_index]) {
+            entry = entry->next;
+            continue;
+        }
+
         if (entry->signature == signature) {
             // Found a state with matching signature, verify it's truly equivalent
             int candidate_state = entry->state_index;
@@ -725,17 +755,17 @@ static bool is_capture_start(const char* pattern, int pos, char* cap_name) {
 // Parse capture start tag and emit CAPTURE_START transition
 // Then continue parsing the content inside the tags
 static int parse_capture_start(const char* pattern, int* pos, int start_state) {
-    fprintf(stderr, "//DEBUG: parse_capture_start ENTERED at pos %d, start_state=%d\n", *pos, start_state);
+    DEBUG_PRINT("parse_capture_start ENTERED at pos %d, start_state=%d\n", *pos, start_state);
     char cap_name[MAX_CAPTURE_NAME];
     if (!is_capture_start(pattern, *pos, cap_name)) {
-        fprintf(stderr, "//DEBUG: parse_capture_start: is_capture_start returned FALSE\n");
+        DEBUG_PRINT("parse_capture_start: is_capture_start returned FALSE\n");
         return start_state;
     }
 
     int cap_id = get_capture_id(cap_name);
-    fprintf(stderr, "//DEBUG: parse_capture_start '%s' called, cap_id=%d, capture_count=%d\n", cap_name, cap_id, capture_count);
+    DEBUG_PRINT("parse_capture_start '%s' called, cap_id=%d, capture_count=%d\n", cap_name, cap_id, capture_count);
     if (cap_id < 0) {
-        fprintf(stderr, "//DEBUG: parse_capture_start returning early due to cap_id < 0\n");
+        DEBUG_PRINT("parse_capture_start returning early due to cap_id < 0\n");
         return start_state;
     }
 
@@ -751,7 +781,7 @@ static int parse_capture_start(const char* pattern, int* pos, int start_state) {
     // This way, the capture marker is intrinsic to the state and won't be lost
     // when states are merged during DFA construction
     nfa[start_state].capture_start_id = cap_id;
-    fprintf(stderr, "//DEBUG: parse_capture_start '%s' -> cap_id=%d on state %d\n", cap_name, cap_id, start_state);
+    DEBUG_PRINT("parse_capture_start '%s' -> cap_id=%d on state %d\n", cap_name, cap_id, start_state);
 
     // Push capture ID onto stack and mark for potential deferral (for + quantifier)
     capture_stack[capture_stack_depth++] = cap_id;
@@ -785,7 +815,7 @@ static int parse_capture_end(const char* pattern, int* pos, int start_state) {
     // NEW APPROACH: Set capture_end_id on start_state directly
     // The capture ends at start_state (position after content, before 'c')
     nfa[start_state].capture_end_id = cap_id;
-    fprintf(stderr, "//DEBUG: parse_capture_end '%s' -> cap_id=%d on state %d\n", cap_name, cap_id, start_state);
+    DEBUG_PRINT("parse_capture_end '%s' -> cap_id=%d on state %d\n", cap_name, cap_id, start_state);
 
     // Pop capture ID from stack (verify it matches)
     if (capture_stack_depth > 0) {
@@ -884,12 +914,12 @@ static int parse_rdp_fragment(const char* pattern, int* pos, int start_state) {
     strncpy(frag_name, &pattern[*pos + 2], name_len);
     frag_name[name_len] = '\0';
 
-     fprintf(stderr, "//DEBUG: Looking up fragment (raw): '%s'\n", frag_name);
+     DEBUG_PRINT("Looking up fragment (raw): '%s'\n", frag_name);
 
     // Normalize fragment name (convert single colon to double colon)
     normalize_fragment_name(frag_name);
 
-     fprintf(stderr, "//DEBUG: Looking up fragment (normalized): '%s'\n", frag_name);
+     DEBUG_PRINT("Looking up fragment (normalized): '%s'\n", frag_name);
 
     // Look up fragment
     const char* frag_value = find_fragment(frag_name);
@@ -1036,18 +1066,18 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
     // Check for capture start tag <name>
     char cap_name[MAX_CAPTURE_NAME];
     if (is_capture_start(pattern, *pos, cap_name)) {
-        fprintf(stderr, "//DEBUG: is_capture_start TRUE at pos %d, name='%s'\n", *pos, cap_name);
+        DEBUG_PRINT("is_capture_start TRUE at pos %d, name='%s'\n", *pos, cap_name);
         return parse_capture_start(pattern, pos, start_state);
     } else {
-        fprintf(stderr, "//DEBUG: is_capture_start FALSE at pos %d (char='%c')\n", *pos, c);
+        DEBUG_PRINT("is_capture_start FALSE at pos %d (char='%c')\n", *pos, c);
     }
 
     // Check for capture end tag </name>
     if (is_capture_end(pattern, *pos, cap_name)) {
-        fprintf(stderr, "//DEBUG: is_capture_end TRUE at pos %d, name='%s'\n", *pos, cap_name);
+        DEBUG_PRINT("is_capture_end TRUE at pos %d, name='%s'\n", *pos, cap_name);
         return parse_capture_end(pattern, pos, start_state);
     } else {
-        fprintf(stderr, "//DEBUG: is_capture_end FALSE at pos %d (char='%c')\n", *pos, c);
+        DEBUG_PRINT("is_capture_end FALSE at pos %d (char='%c')\n", *pos, c);
     }
 
     switch (c) {
@@ -1061,16 +1091,16 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                     // Parse hex escape \xHH
                     char hex[3] = {pattern[*pos + 2], pattern[*pos + 3], 0};
                     int hex_val = (int)strtol(hex, NULL, 16);
-                    fprintf(stderr, "//DEBUG: Found \\x%02x escape, char='%c', code=%d\n", hex_val, hex_val, hex_val);
+                    DEBUG_PRINT("Found \\x%02x escape, char='%c', code=%d\n", hex_val, hex_val, hex_val);
                     if (hex_val > 0 && hex_val < 256) {
                         int sid = find_symbol_id(hex_val);
-                        fprintf(stderr, "//DEBUG: find_symbol_id(%d) = %d\n", hex_val, sid);
+                        DEBUG_PRINT("find_symbol_id(%d) = %d\n", hex_val, sid);
                         if (sid != -1) {
                             int new_state = nfa_add_state_with_minimization(false);
                             nfa_add_transition(start_state, new_state, sid);
                             int finalized_state = nfa_finalize_state(new_state);
                             *pos += 4;
-                            fprintf(stderr, "//DEBUG: Created transition on '%c' (symbol %d)\n", hex_val, sid);
+                            DEBUG_PRINT("Created transition on '%c' (symbol %d)\n", hex_val, sid);
                             return finalized_state;
                         }
                     }
@@ -1181,7 +1211,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                     (*pos)++;
                     // Track this symbol ID for + quantifier handling
                     last_element_sid = sid;
-                    fprintf(stderr, "//DEBUG: parse_rdp_element: set last_element_sid=%d for '%c'\n", sid, c);
+                    DEBUG_PRINT("parse_rdp_element: set last_element_sid=%d for '%c'\n", sid, c);
                     return finalized_state;
                 }
             }
@@ -1267,12 +1297,12 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                 pending_loop_state = outer_pending_loop_state;
             }
 
-            fprintf(stderr, "DEBUG + handler: pending_loop_char='%c', pending_loop_state=%d, pending_loop_accepting=%d\n",
+            DEBUG_PRINT("+ handler: pending_loop_char='%c', pending_loop_state=%d, pending_loop_accepting=%d\n",
                     pending_loop_char, pending_loop_state, pending_loop_accepting);
 
             if ((pending_loop_char != '\0' || pending_class_symbol_count > 0) && pending_loop_state != -1 && pending_loop_char != '*') {
                 int char_sid = find_symbol_id(pending_loop_char);
-                fprintf(stderr, "DEBUG + handler: char_sid=%d for char='%c'\n", char_sid, pending_loop_char);
+                DEBUG_PRINT("+ handler: char_sid=%d for char='%c'\n", char_sid, pending_loop_char);
 
                 if (char_sid != -1) {
                     // CRITICAL FIX: For + quantifier on single-char fragment:
@@ -1283,6 +1313,8 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     nfa_add_transition(pending_loop_state, pending_loop_state, char_sid);
 
                     // Add exit transition from loop state to accepting state (for exiting loop after 1+ chars)
+                    // Only add for multi-char fragments where loop_state != accepting_state
+                    // For single-char fragments, loop_state == accepting_state, no exit needed
                     if (pending_loop_accepting != -1 && pending_loop_state != pending_loop_accepting) {
                         nfa_add_transition(pending_loop_state, pending_loop_accepting, char_sid);
                     }
@@ -1304,23 +1336,23 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                         pending_capture_defer_id = -1;
                     }
 
-                    // Mark the accepting state (pending_loop_accepting = frag_end) as accepting
-                    // This is the state reached AFTER consuming at least one char
-                    // CRITICAL FIX: DON'T add EOS transition from loop state here
-                    // The EOS transition will be added at the end of pattern construction
+        // For + quantifier: DON'T mark the fragment's accepting state (pending_loop_accepting) as EOS target
+        // The + quantifier creates a loop, so pending_loop_accepting has outgoing transitions
+        // Only states with NO outgoing transitions can be true accepting states
+        // The actual accepting state will be set when the pattern flow continues past this quantifier
                     if (pending_loop_accepting != -1) {
-                        // Mark the accepting state
-                        nfa[pending_loop_accepting].is_eos_target = true;
-                        nfa[pending_loop_accepting].category_mask = current_pattern_cat_mask;  // Use pattern's category
-                        state_do_not_share[pending_loop_accepting] = true;  // CONSERVATIVE: Don't share accepting states
+                        DEBUG_PRINT("+ handler: NOT setting EOS target on state %d (pending_loop_accepting)\n", pending_loop_accepting);
+                        // Still set category_mask for the state, but DON'T mark as EOS target
+                        nfa[pending_loop_accepting].category_mask = current_pattern_cat_mask;
+                        state_do_not_share[pending_loop_accepting] = true;
                         nfa_finalize_state(pending_loop_accepting);
                         current = pending_loop_accepting;
                     } else {
                         // Fallback: if no specific accepting state, use loop state
                         // (this shouldn't happen for properly set up single-char fragments)
                         nfa[pending_loop_state].is_eos_target = true;
-                        nfa[pending_loop_state].category_mask = current_pattern_cat_mask;  // Use pattern's category
-                        state_do_not_share[pending_loop_state] = true;  // CONSERVATIVE: Don't share accepting states
+                        nfa[pending_loop_state].category_mask = current_pattern_cat_mask;
+                        state_do_not_share[pending_loop_state] = true;
                         nfa_finalize_state(pending_loop_state);
                         current = pending_loop_state;
                     }
@@ -1379,7 +1411,7 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     last_element_sid = -1;
                 } else {
                     // Fall back to ANY-based loop for complex patterns
-                    fprintf(stderr, "DEBUG: FALLBACK TO ANY-BASED LOOP (incorrect for specific chars)\n");
+                    DEBUG_PRINT("FALLBACK TO ANY-BASED LOOP (incorrect for specific chars)\n");
                     int any_sid = find_symbol_id(DFA_CHAR_ANY);
                     int eos_sid = find_symbol_id(DFA_CHAR_EOS);
                     if (any_sid == -1 || eos_sid == -1) return current;
@@ -1502,7 +1534,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
     int start_state;
     int pattern_start_pos = 0;
 
-     fprintf(stderr, "//DEBUG: parse_pattern_full '%s': nfa_state_count=%d, pattern[0]='%c' (sid=%d)\n", pattern, nfa_state_count, pattern[0], find_symbol_id(pattern[0]));
+     DEBUG_PRINT("parse_pattern_full '%s': nfa_state_count=%d, pattern[0]='%c' (sid=%d)\n", pattern, nfa_state_count, pattern[0], find_symbol_id(pattern[0]));
 
     if (nfa_state_count > 1 && pattern[0] != '\0') {
         // Try to find a common prefix with existing NFA paths
@@ -1544,10 +1576,10 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // If not, don't share - patterns with different acceptance categories must be isolated
             bool all_targets_have_same_pattern_id = true;
             int first_target_pattern_id = -1;
-            fprintf(stderr, "//DEBUG: Prefix sharing for '%s': target_count=%d, current_pattern_index=%d\n",
+            DEBUG_PRINT("Prefix sharing for '%s': target_count=%d, current_pattern_index=%d\n",
                     pattern, target_count, current_pattern_index);
             for (int t = 0; t < target_count; t++) {
-                fprintf(stderr, "//DEBUG:   target[%d]=%d, pattern_id=%d\n", t, targets[t], nfa[targets[t]].pattern_id);
+                DEBUG_PRINT("  target[%d]=%d, pattern_id=%d\n", t, targets[t], nfa[targets[t]].pattern_id);
                 if (first_target_pattern_id == -1) {
                     first_target_pattern_id = nfa[targets[t]].pattern_id;
                 } else if (nfa[targets[t]].pattern_id != first_target_pattern_id) {
@@ -1610,14 +1642,14 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 shared_pos = best_shared_pos;
                 start_state = shared_state;
                 pattern_start_pos = shared_pos;
-                fprintf(stderr, "//DEBUG: SHARED prefix at pos %d, state %d\n", best_shared_pos, best_shared_state);
+                DEBUG_PRINT("SHARED prefix at pos %d, state %d\n", best_shared_pos, best_shared_state);
             } else {
                 // No common prefix - create new start state
                 start_state = nfa_add_state_with_minimization(false);
-                fprintf(stderr, "//DEBUG: NEW start_state=%d for pattern_id %d, adding transition 0->%d on %d\n",
+                DEBUG_PRINT("NEW start_state=%d for pattern_id %d, adding transition 0->%d on %d\n",
                         start_state, current_pattern_index, start_state, first_char_sid);
                 nfa_add_transition(0, start_state, first_char_sid);
-                fprintf(stderr, "//DEBUG: After add_transition: transitions[%d]=%d, multi_targets[%d]='%s'\n",
+                DEBUG_PRINT("After add_transition: transitions[%d]=%d, multi_targets[%d]='%s'\n",
                         first_char_sid, nfa[0].transitions[first_char_sid], first_char_sid,
                         nfa[0].multi_targets[first_char_sid]);
                 pattern_start_pos = 1;  // Skip first character (already consumed)
@@ -1652,6 +1684,12 @@ static void parse_pattern_full(const char* pattern, const char* category,
         }
     }
 
+    // CRITICAL FIX: Determine acceptance category BEFORE pattern parsing
+    // so that quantifier handlers can access current_pattern_cat_mask
+    int acceptance_cat = lookup_acceptance_category(category, subcategory, operations);
+    uint8_t cat_mask = (1 << acceptance_cat);  // Convert 0-7 to bit mask 0x01, 0x02, etc.
+    current_pattern_cat_mask = cat_mask;  // Store for use by quantifier handlers
+
     int parse_pos = 0;
     int end_state;
     if (remaining[0] != '\0') {
@@ -1667,6 +1705,8 @@ static void parse_pattern_full(const char* pattern, const char* category,
 
         // Check if end_state is a shared state with outgoing transitions
         // If so, create a fork state to avoid marking the shared state as accepting
+        // CRITICAL: Also create fork state if end_state is an accepting state (category_mask != 0)
+        // This prevents marking + quantifier intermediate states as EOS target
         bool has_outgoing = false;
         for (int s = 0; s < MAX_SYMBOLS; s++) {
             if (nfa[end_state].transitions[s] != -1 || nfa[end_state].multi_targets[s][0] != '\0') {
@@ -1674,6 +1714,13 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 break;
             }
         }
+        // If end_state is an accepting state (has category_mask), treat as having outgoing
+        // This ensures + quantifier states like 129 don't get marked as EOS target
+        if (nfa[end_state].category_mask != 0) {
+            has_outgoing = true;
+        }
+        DEBUG_PRINT("finalize: end_state=%d, has_outgoing=%d, is_eos_target before=%d, cat_mask=0x%02x\n",
+                end_state, has_outgoing, nfa[end_state].is_eos_target, nfa[end_state].category_mask);
 
         if (has_outgoing) {
             // Create a fork state - this is where the pattern can end
@@ -1685,11 +1732,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
             nfa_finalize_state(end_state);
             // DO NOT mark end_state as EOS target - it has outgoing transitions (shared state)
         }
-
-        // Determine acceptance category from mapping (default to 0 = SAFE)
-        int acceptance_cat = lookup_acceptance_category(category, subcategory, operations);
-        uint8_t cat_mask = (1 << acceptance_cat);  // Convert 0-7 to bit mask 0x01, 0x02, etc.
-        current_pattern_cat_mask = cat_mask;  // Store for use by quantifier handlers
 
         int accepting = nfa_add_state_with_category(cat_mask);
         nfa[accepting].is_eos_target = true;  // This state can accept via EOS
@@ -1745,7 +1787,7 @@ void parse_advanced_pattern(const char* line) {
                 // Normalize separator from single colon to double colon for consistency
                 strncpy(fragments[fragment_count].name, name_start, name_len);
                 fragments[fragment_count].name[name_len] = '\0';
-                 fprintf(stderr, "//DEBUG: Storing fragment (before normalization): '%s'\n", fragments[fragment_count].name);
+                 DEBUG_PRINT("Storing fragment (before normalization): '%s'\n", fragments[fragment_count].name);
                 // Replace first single colon with double colon
                 // Only do this if the name contains a single colon (not already double colon)
                 if (strstr(fragments[fragment_count].name, "::") == NULL) {
@@ -1758,12 +1800,12 @@ void parse_advanced_pattern(const char* line) {
                             }
                             fragments[fragment_count].name[i] = ':';
                             fragments[fragment_count].name[i + 1] = ':';
-                             fprintf(stderr, "//DEBUG: Storing fragment (after normalization): '%s'\n", fragments[fragment_count].name);
+                             DEBUG_PRINT("Storing fragment (after normalization): '%s'\n", fragments[fragment_count].name);
                             break;  // Only replace first colon (namespace separator)
                         }
                     }
                 } else {
-                     fprintf(stderr, "//DEBUG: Fragment '%s' already has ::, skipping normalization\n", fragments[fragment_count].name);
+                     DEBUG_PRINT("Fragment '%s' already has ::, skipping normalization\n", fragments[fragment_count].name);
                 }
                 // Skip past ] and whitespace to get value
                 const char* value_start = name_end + 1;
@@ -1970,7 +2012,7 @@ static void parse_acceptance_mapping(const char* line) {
         strncpy(mapping->subcategory, subcategory, sizeof(mapping->subcategory) - 1);
         strncpy(mapping->operations, operations, sizeof(mapping->operations) - 1);
         mapping->acceptance_category = acceptance_cat;
-        fprintf(stderr, "ACCEPTANCE_MAPPING: [%s:%s:%s] -> %d\n",
+        VERBOSE_PRINT("ACCEPTANCE_MAPPING: [%s:%s:%s] -> %d\n",
                 category, subcategory, operations, acceptance_cat);
     } else {
         fprintf(stderr, "Warning: Too many category mappings, ignoring: %s\n", line);
@@ -1983,14 +2025,15 @@ static int lookup_acceptance_category(const char* category, const char* subcateg
         category_mapping_t* mapping = &category_mappings[i];
         // Match category (required)
         if (strcmp(mapping->category, category) != 0) continue;
-        // Match subcategory (if specified in mapping)
-        if (mapping->subcategory[0] != '\0' && strcmp(mapping->subcategory, subcategory) != 0) continue;
-        // Match operations (if specified in mapping)
-        if (mapping->operations[0] != '\0' && strcmp(mapping->operations, operations) != 0) continue;
+        // Match subcategory: if pattern has non-empty subcategory, mapping must match
+        if (subcategory[0] != '\0' && strcmp(mapping->subcategory, subcategory) != 0) continue;
+        // Match operations: if pattern has non-empty operations, mapping must match
+        if (operations[0] != '\0' && strcmp(mapping->operations, operations) != 0) continue;
         return mapping->acceptance_category;
     }
-    // Default: use first category (CAT_SAFE = 0)
-    return 0;
+    // No explicit mapping found - fall back to category name
+    // This handles patterns like [caution:...] without ACCEPTANCE_MAPPING directive
+    return parse_category(category);
 }
 
 // Read advanced command specification file
@@ -2037,7 +2080,7 @@ void read_advanced_spec_file(const char* filename) {
 
     fclose(file);
 
-    printf("Read %d patterns from %s\n", pattern_count, filename);
+    VERBOSE_PRINT("Read %d patterns from %s\n", pattern_count, filename);
 }
 
 // Write NFA to file (for nfa2dfa to process)
@@ -2076,7 +2119,7 @@ void write_nfa_file(const char* filename) {
         fprintf(file, "  EosTarget: %s\n", nfa[i].is_eos_target ? "yes" : "no");
         // Debug: print states with non-zero pattern_id
         if (nfa[i].pattern_id != 0 && nfa[i].category_mask != 0) {
-            fprintf(stderr, "//DEBUG: State %d has pattern_id=%d, category=0x%02x\n", 
+            DEBUG_PRINT("State %d has pattern_id=%d, category=0x%02x\n", 
                     i, nfa[i].pattern_id, nfa[i].category_mask);
         }
         
@@ -2132,7 +2175,7 @@ void write_nfa_file(const char* filename) {
     }
 
     fclose(file);
-    printf("Wrote NFA with %d states and %d symbols to %s\n", nfa_state_count, alphabet_size, filename);
+    VERBOSE_PRINT("Wrote NFA with %d states and %d symbols to %s\n", nfa_state_count, alphabet_size, filename);
 }
 
 // Cleanup
@@ -2160,8 +2203,8 @@ int main(int argc, char* argv[]) {
     const char* spec_file = argv[2];
     const char* output_file = argc > 3 ? argv[3] : "readonlybox.nfa";
 
-    printf("Advanced NFA Builder with Alphabet Support\n");
-    printf("===========================================\n\n");
+    VERBOSE_PRINT("Advanced NFA Builder with Alphabet Support\n");
+    VERBOSE_PRINT("===========================================\n\n");
 
     // Load alphabet
     load_alphabet(alphabet_file);
@@ -2175,9 +2218,9 @@ int main(int argc, char* argv[]) {
     // Cleanup
     cleanup();
 
-    printf("\nDone!\n");
-    printf("Next step: Run nfa2dfa_with_alphabet to convert NFA to DFA\n");
-    printf("  nfa2dfa_with_alphabet %s readonlybox.dfa\n", output_file);
+    VERBOSE_PRINT("\nDone!\n");
+    VERBOSE_PRINT("Next step: Run nfa2dfa_with_alphabet to convert NFA to DFA\n");
+    VERBOSE_PRINT("  nfa2dfa_with_alphabet %s readonlybox.dfa\n", output_file);
 
     return 0;
 }
