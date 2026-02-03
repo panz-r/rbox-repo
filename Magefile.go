@@ -295,7 +295,7 @@ func Test() error {
 	return IntegrationTest()
 }
 
-// Run unit tests
+// Run unit tests (quiet output)
 func UnitTest() error {
 	fmt.Println("Running unit tests...")
 
@@ -332,15 +332,25 @@ func UnitTest() error {
 		"./internal/rouname/...",
 	}
 
+	failed := 0
+	passed := 0
+
 	for _, pkg := range packages {
-		cmd := exec.Command("go", "test", "-v", pkg)
+		// Run without -v for cleaner output
+		cmd := exec.Command("go", "test", pkg)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("unit tests failed for %s: %w", pkg, err)
+			failed++
+		} else {
+			passed++
 		}
 	}
 
+	fmt.Printf("Unit tests: %d passed, %d failed\n", passed, failed)
+	if failed > 0 {
+		return fmt.Errorf("%d unit test packages failed", failed)
+	}
 	return nil
 }
 
@@ -433,7 +443,7 @@ func DfaTest() error {
 		{
 			name:         "Comprehensive Quantifier Tests",
 			patternsFile: "patterns_quantifier_comprehensive.txt",
-			testArgs:     []string{"--comprehensive-quantifier-test"},
+			testArgs:     []string{"--comprehensive-quantifier-test", "--quiet"},
 			optional:     true,
 		},
 		{
@@ -601,7 +611,8 @@ func DfaTest() error {
 func IntegrationTest() error {
 	fmt.Println("Running integration tests...")
 
-	cmd := exec.Command("go", "test", "-v", "./test/...")
+	// Run without -v for cleaner output
+	cmd := exec.Command("go", "test", "./test/...")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

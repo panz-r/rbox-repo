@@ -226,6 +226,8 @@ int dfa_get_capture(const dfa_result_t* result, int index, const char** out_star
 }
 
 bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_captures) {
+    (void)max_captures; // Reserved for future capture limiting functionality
+
     if (current_dfa == NULL || input == NULL || result == NULL) {
         return false;
     }
@@ -278,23 +280,47 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
     process_capture_markers(&current_state, raw_base, active_captures, pos, result);
 
-    // Track the best candidate match seen so far (for handling patterns that can end early)
-    uint8_t best_category_mask = 0;
-    const dfa_state_t* best_state = NULL;
-    size_t best_length = 0;
-
     for (pos = 0; pos < length && pos < 1000; pos++) {
-        unsigned char c = (unsigned char)input[pos];
-        size_t current_offset = (size_t)current_state - raw_base;
-
         process_capture_markers(&current_state, raw_base, active_captures, pos, result);
-        current_offset = (size_t)current_state - raw_base;
+
+        size_t current_offset = (size_t)current_state - raw_base;
 
         if (current_offset >= 1000000) {
             result->matched_length = pos;
             return true;
         }
 
+        bool instant_followed = true;
+        while (instant_followed) {
+            instant_followed = false;
+            if (current_state->transition_count > 0) {
+                size_t trans_offset = current_state->transitions_offset;
+                if (trans_offset >= 100000) {
+                    result->matched_length = pos;
+                    return true;
+                }
+
+                const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
+
+                for (uint16_t i = 0; i < current_state->transition_count; i++) {
+                    unsigned char trans_char = (unsigned char)trans[i].character;
+
+                    if (trans_char == DFA_CHAR_INSTANT) {
+                        uint32_t next_trans_offset = trans[i].next_state_offset;
+                        size_t next_offset = next_trans_offset;
+
+                        process_deferred_captures(current_state, next_offset, raw_base, pos, result);
+
+                        const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
+                        current_state = next_state;
+                        instant_followed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        unsigned char c = (unsigned char)input[pos];
         bool transition_found = false;
 
         if (current_state->transition_count > 0) {
@@ -310,7 +336,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
                 unsigned char trans_char = (unsigned char)trans[i].character;
                 uint32_t next_trans_offset = trans[i].next_state_offset;
 
-                if (trans_char == DFA_CHAR_ANY || trans_char == c) {
+                if (trans_char == c) {
                     size_t next_offset = next_trans_offset;
 
                     process_deferred_captures(current_state, next_offset, raw_base, pos, result);
@@ -321,36 +347,31 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
                     break;
                 }
             }
+
+            if (!transition_found) {
+                for (uint16_t i = 0; i < current_state->transition_count; i++) {
+                    unsigned char trans_char = (unsigned char)trans[i].character;
+                    uint32_t next_trans_offset = trans[i].next_state_offset;
+
+                    if (trans_char == DFA_CHAR_ANY) {
+                        size_t next_offset = next_trans_offset;
+
+                        process_deferred_captures(current_state, next_offset, raw_base, pos, result);
+
+                        const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
+                        current_state = next_state;
+                        transition_found = true;
+                        break;
+                    }
+                }
+            }
         }
 
         if (!transition_found) {
-            // Dead end - check if current state can accept here
-            uint8_t category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-            if (category_mask != 0) {
-                // Only accept if this state can actually terminate (no outgoing transitions)
-                // The category_mask tells us if this state is accepting
-                // We do NOT check eos_target here because:
-                // 1. category_mask already indicates if we're in an accepting state
-                // 2. Following eos_target was causing bugs (it pointed to wrong state)
-                bool has_outgoing = (current_state->transition_count > 0);
-                if (!has_outgoing && category_mask != 0) {
-                    result->matched = true;
-                    result->final_state = current_state->flags;
-                    result->matched_length = pos;
-                    result->category_mask = category_mask;
-
-                    if (category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-                    else if (category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-                    else if (category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-                    else if (category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-                    else if (category_mask & 0x10) result->category = DFA_CMD_NETWORK;
-                    else if (category_mask & 0x20) result->category = DFA_CMD_ADMIN;
-                }
+            if (result->matched) {
+                return true;
             }
-            result->final_state = current_state->flags;
-            result->category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-            result->matched_length = pos;
-            return true;
+            return false;
         }
 
         // Track candidate match states (but don't finalize yet)
@@ -362,9 +383,6 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         uint8_t category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
         if (category_mask != 0 && current_state->transition_count == 0) {
             // Only dead-end states (no transitions) can accept
-            best_category_mask = category_mask;
-            best_state = current_state;
-            best_length = pos + 1;
         }
     }
 
@@ -391,9 +409,6 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         else if (current_category_mask & 0x10) result->category = DFA_CMD_NETWORK;
         else if (current_category_mask & 0x20) result->category = DFA_CMD_ADMIN;
     }
-    // NOTE: We removed the fallback to best_state
-    // The DFA should only accept if the current state is accepting
-    // If there's no valid transition, we don't accept (even if we saw an accepting state earlier)
 
     return result->matched;
 }

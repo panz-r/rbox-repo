@@ -5,7 +5,7 @@
 #include "include/dfa_types.h"
 
 int main(int argc, char* argv[]) {
-    const char* dfa_file = "test_group.dfa";
+    const char* dfa_file = "/tmp/test_group.dfa";
     const char* test_input = "git status";
     
     // Load DFA file

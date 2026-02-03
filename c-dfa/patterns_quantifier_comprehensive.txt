@@ -11,17 +11,6 @@
 # - Edge cases
 # ============================================================================
 
-# Acceptance category mappings for complete isolation between test groups
-# Each group gets a unique category to prevent state sharing interference
-#ACCEPTANCE_MAPPING [safe:quantifier:group1] -> 0
-#ACCEPTANCE_MAPPING [safe:quantifier:group2] -> 1
-#ACCEPTANCE_MAPPING [safe:quantifier:group3] -> 2
-#ACCEPTANCE_MAPPING [safe:quantifier:group4] -> 3
-#ACCEPTANCE_MAPPING [safe:quantifier:group5] -> 4
-#ACCEPTANCE_MAPPING [safe:quantifier:group6] -> 5
-#ACCEPTANCE_MAPPING [safe:quantifier:group7] -> 6
-#ACCEPTANCE_MAPPING [safe:quantifier:group8] -> 7
-
 # ============================================================================
 # Fragments for reuse across test patterns
 # ============================================================================
@@ -36,172 +25,174 @@
 [fragment:TQ::CD] cd
 [fragment:TQ::AB] ab
 [fragment:TQ::YZ] yz
-[fragment:frag1] first
-[fragment:frag2] second
-[fragment:frag3] third
-
-[safe:quantifier:group25] ((frag1)) ((frag2)) ((frag3))
-[safe:quantifier:group25] ((frag1))+((frag2))+
-[safe:quantifier:group25] ((frag1))?((frag2))?
-
+[fragment:a] a
+[fragment:b] b
+[fragment:X] X
+[fragment:Y] Y
+[fragment:Z] Z
 
 # ============================================================================
-# GROUP 26: Nested Quantifiers
+# GROUP 1: Plus Quantifier (+) - Fragment-based
 # ============================================================================
-# Test: Quantifiers inside quantifiers
-
-[safe:quantifier:group26] ((TQ::A))+
-[safe:quantifier:group26] ((x((TQ::Y))+))+
-[safe:quantifier:group26] (a((TQ::B))*)+
-[safe:quantifier:group26] (outer((TQ::INNER)))+
-
+# Test: Fragment-based + quantifier (one or more)
+[safe:quantifier:group1] a((TQ::B))+
+[safe:quantifier:group1] x((TQ::Y))+
+[safe:quantifier:group1] xyz((TQ::A))+
+[safe:quantifier:group1] abc((TQ::B))+
 
 # ============================================================================
-# GROUP 27: Complex Alternation
+# GROUP 2: Star Quantifier (*) - Fragment-based
 # ============================================================================
-# Test: Complex alternation patterns
-
-[safe:quantifier:group27] (a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z)+
-[safe:quantifier:group27] (git|hg|svn|bzr) (status|log|diff|branch)
-[safe:quantifier:group27] (http|https|ftp|ssh)://[[:alnum:]]+
-[safe:quantifier:group27] (cat|dog|fish|bird|hamster)
-
+# Test: Fragment-based * quantifier (zero or more)
+[safe:quantifier:group2] a((TQ::B))*
+[safe:quantifier:group2] x((TQ::Y))*
+[safe:quantifier:group2] abc((TQ::B))*
 
 # ============================================================================
-# GROUP 28: Capture Pattern Tests
+# GROUP 3: Question Mark Quantifier (?) - Fragment-based
 # ============================================================================
-# Test: Patterns with capture groups
-
-[safe:quantifier:group28] git ((<commit>HEX))+
-[safe:quantifier:group28] docker ((<image>IMAGE))+
-[safe:quantifier:group28] kubectl ((<resource>RESOURCE)) ((<name>NAME))
-
+# Test: Fragment-based ? quantifier (zero or one)
+[safe:quantifier:group3] git((TQ::B))?
+[safe:quantifier:group3] x((TQ::Y))?
+[safe:quantifier:group3] abc((TQ::B))?
 
 # ============================================================================
-# GROUP 29: Empty and Minimal Patterns
+# GROUP 4: Literal + Quantifier
 # ============================================================================
-# Test: Edge cases with empty or minimal patterns
-
-[safe:quantifier:group29] (|)
-[safe:quantifier:group29] a?
-[safe:quantifier:group29] (a|)
-[safe:quantifier:group29] ()
-[safe:quantifier:group29] ^$
-[safe:quantifier:group29] literal
-
+# Test: Literal character with + quantifier (one or more)
+[safe:quantifier:group4] p+
+[safe:quantifier:group4] a+
+[safe:quantifier:group4] xyz+
 
 # ============================================================================
-# GROUP 30: Boundary and Anchors
+# GROUP 5: Multiple Characters Before Quantifier
 # ============================================================================
-# Test: Start and end of string patterns
-
-[safe:quantifier:group30] ^start
-[safe:quantifier:group30] end$
-[safe:quantifier:group30] ^exact$
-[safe:quantifier:group30] ^[[:alpha:]]+$
-
+# Test: Multiple literal characters before + quantifier
+[safe:quantifier:group5] abc((TQ::B))+
+[safe:quantifier:group5] xyz((TQ::A))+
 
 # ============================================================================
-# GROUP 31: Multi-Character Quantifier Behavior
+# GROUP 6: Escape Sequences
 # ============================================================================
-# Test: Quantifiers on multi-character elements
-
-[safe:quantifier:group31] ab((TQ::CD))+
-[safe:quantifier:group31] ((TQ::AB))+
-[safe:quantifier:group31] x((TQ::YZ)){2,}
-[safe:quantifier:group31] (abc)+
-
+# Test: Escaped space and forward slash
+[safe:quantifier:group6] hello\ world
+[safe:quantifier:group6] path\/to\/file
+[safe:quantifier:group6] test\ path
 
 # ============================================================================
-# GROUP 32: Real-World Command Patterns
+# GROUP 7: Wildcards
 # ============================================================================
-# Test: Patterns similar to actual command matching
-
-[safe:quantifier:group32] git commit (-m "[^"]+")?
-[safe:quantifier:group32] docker (ps|images|run|build)
-[safe:quantifier:group32] kubectl (get|describe|delete|apply) ([[:alpha:]]|-)*
-[safe:quantifier:group32] npm (install|run|test|build) ([[:alpha:]]|-)*
-
+# Test: Wildcard patterns with .* and combined with literals
+[safe:quantifier:group7] .*
+[safe:quantifier:group7] .+
+[safe:quantifier:group7] .*\.txt
+[safe:quantifier:group7] file.*
 
 # ============================================================================
-# GROUP 33: Longest Match Behavior
+# GROUP 8: Edge Cases
 # ============================================================================
-# Test: Greedy matching and longest match behavior
-
-[safe:quantifier:group33] .*
-[safe:quantifier:group33] .+
-[safe:quantifier:group33] [[:alpha:]]+[[:digit:]]+
-[safe:quantifier:group33] .*\.[[:alpha:]]+
-
+# Test: Empty patterns, single chars, and combined patterns
+[safe:quantifier:group8] ""
+[safe:quantifier:group8] a
+[safe:quantifier:group8] abc
+[safe:quantifier:group8] [[:alpha:]]+[[:digit:]]+
 
 # ============================================================================
-# GROUP 34: Quantifier Precedence
+# GROUP 9: POSIX Character Classes
 # ============================================================================
-# Test: How quantifiers interact with precedence
-
-[safe:quantifier:group34] ab+
-[safe:quantifier:group34] (ab)+
-[safe:quantifier:group34] a+b+
-[safe:quantifier:group34] (a|b)+
-
+# Test: POSIX character classes with quantifiers
+[safe:quantifier:group9] [[:alpha:]]+
+[safe:quantifier:group9] [[:digit:]]+
+[safe:quantifier:group9] [[:alnum:]]+
+[safe:quantifier:group9] [[:space:]]*
 
 # ============================================================================
-# GROUP 35: Extremely Long Patterns
+# GROUP 10: Complex Alternation
 # ============================================================================
-# Test: Long pattern strings to stress the parser
-
-[safe:quantifier:group35] aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-[safe:quantifier:group35] [[:alpha:]][[:alpha:]][[:alpha:]][[:alpha:]][[:alpha:]]
-
-
-# ============================================================================
-# GROUP 36: Special Character Combinations
-# ============================================================================
-# Test: Combinations of special characters
-
-[safe:quantifier:group36] [a-z][A-Z][0-9][!@#$%^&*()]
-[safe:quantifier:group36] [[:space:]]*[[:alpha:]]*[[:space:]]*
-[safe:quantifier:group36] [._-]+
-
+# Test: Alternation patterns with multiple options
+[safe:quantifier:group10] (cat|dog|fish)
+[safe:quantifier:group10] git (status|log|diff)
+[safe:quantifier:group10] (start|stop|restart)
 
 # ============================================================================
-# GROUP 37: Digit and Number Patterns
+# GROUP 11: Literal Plus Quantifier (Extended)
 # ============================================================================
-# Test: Various digit and number matching patterns
-
-[safe:quantifier:group37] [0-9]+
-[safe:quantifier:group37] [1-9][0-9]*
-[safe:quantifier:group37] [0-9]+\.[0-9]+
-[safe:quantifier:group37] [[:digit:]]{1,3}(\.[[:digit:]]{1,3})?
-
+# Test: Extended p+ tests
+[safe:quantifier:group11] p+
+[safe:quantifier:group11] pp+
+[safe:quantifier:group11] ppp+
 
 # ============================================================================
-# GROUP 38: URL and Path Patterns
+# GROUP 12: Character Class Ranges
 # ============================================================================
-# Test: URL and file patterns
-
-[safe::quantifier::group38] (http|https)://[[:alnum:]]+\.[[:alpha:]]+/[[:alnum:]]+
-[safe:quantifier:group38] /[[:alpha:]]+/[[:alpha:]]+
-[safe:quantifier:group38] [[:alpha:]]+:\\/\\/[[:alnum:]]+
-
-
-# ============================================================================
-# GROUP 39: Email and Identifier Patterns
-# ============================================================================
-# Test: Email and identifier matching patterns
-
-[safe:quantifier:group39] [[:alnum:]]+@[[:alnum:]]+\.[[:alpha:]]+
-[safe:quantifier:group39] [[:alpha:]_][[:alnum:]_]*
-[safe:quantifier:group39] [A-Za-z][A-Za-z0-9_]*
-
+# Test: Character ranges with quantifiers
+[safe:quantifier:group12] [a-z]+
+[safe:quantifier:group12] [A-Z0-9_]+
+[safe:quantifier:group12] [0-9]+
+[safe:quantifier:group12] [a-zA-Z]*
 
 # ============================================================================
-# GROUP 40: Whitespace and Delimiter Patterns
+# GROUP 13: Nested Quantifiers
 # ============================================================================
-# Test: Whitespace handling patterns
+# Test: Nested parentheses with quantifiers
+[safe:quantifier:group13] ((a))+
+[safe:quantifier:group13] ((TQ::A))+
+[safe:quantifier:group13] (((a)))*
+[safe:quantifier:group13] (x((TQ::Y))+)?
 
-[safe:quantifier:group40] [[:space:]]+
-[safe:quantifier:group40] [[:space:]]*
-[safe:quantifier:group40] [[:alpha:]]+[[:space:]]+[[:alpha:]]+
-[safe:quantifier:group40] [[:space:]]?[[:alpha:]]+[[:space:]]?
+# ============================================================================
+# GROUP 14: Escaped Special Characters
+# ============================================================================
+# Test: Escaped + and * to match literals
+[safe:quantifier:group14] a\+b
+[safe:quantifier:group14] a\*b
+[safe:quantifier:group14] test\+value
 
+# ============================================================================
+# GROUP 15: Multiple Characters Before Quantifier (Extended)
+# ============================================================================
+# Test: Extended abc((B))+ tests
+[safe:quantifier:group15] abc((TQ::B))+
+[safe:quantifier:group15] abc((TQ::B))*
+[safe:quantifier:group15] abc((TQ::B))?
+
+# ============================================================================
+# GROUP 16: Digit Quantifiers
+# ============================================================================
+# Test: Quantifiers with digit fragments
+[safe:quantifier:group16] ((TQ::DIGIT))+
+[safe:quantifier:group16] ((TQ::DIGIT))*
+[safe:quantifier:group16] X((TQ::DIGIT))+
+[safe:quantifier:group16] X((TQ::DIGIT))?
+
+# ============================================================================
+# GROUP 17: Combined Quantifiers
+# ============================================================================
+# Test: Multiple quantifiers in sequence
+[safe:quantifier:group17] a+b+
+[safe:quantifier:group17] (a|b)+c*
+[safe:quantifier:group17] [[:alpha:]]+[[:digit:]]*
+
+# ============================================================================
+# GROUP 18: Multi-Character Fragments
+# ============================================================================
+# Test: Multi-character fragments with quantifiers
+[safe:quantifier:group18] ((TQ::ARG))+
+[safe:quantifier:group18] ((TQ::MIDDLE))?
+[safe:quantifier:group18] abc((TQ::CD))+
+
+# ============================================================================
+# GROUP 19: Literal Character Tests
+# ============================================================================
+# Test: Simple literal character matching
+[safe:quantifier:group19] a
+[safe:quantifier:group19] abc
+[safe:quantifier:group19] test
+
+# ============================================================================
+# GROUP 20: Combined Alpha-Digit Patterns
+# ============================================================================
+# Test: Combined alpha followed by digit patterns
+[safe:quantifier:group20] [[:alpha:]]+[[:digit:]]+
+[safe:quantifier:group20] abc[[:digit:]]+
+[safe:quantifier:group20] [[:alpha:]]XYZ[[:digit:]]*

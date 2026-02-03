@@ -8,7 +8,7 @@ static int tests_run = 0;
 static int tests_passed = 0;
 static const char* dfa_file_path = "readonlybox.dfa";  // Default DFA file path
 
-static void test_nfa_dfa_comprehensive(void);
+static void test_nfa_dfa_comprehensive(bool quiet_mode);
 
 #define TEST_ASSERT(cond, msg) do { \
     tests_run++; \
@@ -365,8 +365,7 @@ static void test_plus_quantifier_comprehensive(void) {
             pass_count++;
         } else {
             printf("  [FAIL] %s - got %s (len=%zu)\n", group1[i].description,
-                   result.matched ? "MATCH" : "NO MATCH",
-                   result.matched_length);
+                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
             fail_count++;
         }
     }
@@ -1238,10 +1237,14 @@ int main(int argc, char* argv[]) {
     bool digit_mode = false;
     bool acceptance_mode = false;
     bool state_sharing_mode = false;
-    bool git_config_mode = false;
     bool quantifier_edge_mode = false;
+    bool git_config_mode = false;
+    bool quiet_mode = false;
+
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--quantifier-test") == 0) {
+        if (strcmp(argv[i], "--quiet") == 0) {
+            quiet_mode = true;
+        } else if (strcmp(argv[i], "--quantifier-test") == 0) {
             quantifier_mode = true;
         } else if (strcmp(argv[i], "--comprehensive-quantifier-test") == 0) {
             comprehensive_quantifier_mode = true;
@@ -1299,11 +1302,15 @@ int main(int argc, char* argv[]) {
 
     if (comprehensive_quantifier_mode) {
         // In comprehensive quantifier test mode, run NFA/DFA comprehensive tests
-        test_nfa_dfa_comprehensive();
+        test_nfa_dfa_comprehensive(quiet_mode);
 
-        printf("\n=================================================\n");
-        printf("Comprehensive NFA/DFA Test Results: %d/%d passed\n", tests_passed, tests_run);
-        printf("=================================================\n");
+        if (!quiet_mode) {
+            printf("\n=================================================\n");
+            printf("Comprehensive NFA/DFA Test Results: %d/%d passed\n", tests_passed, tests_run);
+            printf("=================================================\n");
+        } else {
+            printf("\nNFA/DFA Comprehensive Tests: %d/%d passed\n", tests_passed, tests_run);
+        }
         return (tests_passed == tests_run) ? 0 : 1;
     }
 
@@ -1398,9 +1405,11 @@ typedef struct {
     const char* description;
 } ComprehensiveTestCase;
 
-static void test_nfa_dfa_comprehensive(void) {
-    printf("\nTest: NFA/DFA Comprehensive Functionality\n");
-    printf("  Testing complete NFA/DFA feature coverage\n\n");
+static void test_nfa_dfa_comprehensive(bool quiet_mode) {
+    if (!quiet_mode) {
+        printf("\nTest: NFA/DFA Comprehensive Functionality\n");
+        printf("  Testing complete NFA/DFA feature coverage\n\n");
+    }
 
     dfa_result_t result;
     int tests_passed = 0;
@@ -1409,8 +1418,10 @@ static void test_nfa_dfa_comprehensive(void) {
     // =========================================================================
     // GROUP 1: Plus Quantifier (+) - one or more
     // =========================================================================
-    printf("  Group 1: Plus Quantifier (+)\n");
-    printf("  ----------------------------\n");
+    if (!quiet_mode) {
+        printf("  Group 1: Plus Quantifier (+)\n");
+        printf("  ----------------------------\n");
+    }
     
     ComprehensiveTestCase group1[] = {
         // Pattern: a((B))+ from patterns_quantifier_comprehensive.txt
@@ -1434,19 +1445,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group1[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group1[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group1[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group1[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group1[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group1[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 2: Star Quantifier (*) - zero or more
     // =========================================================================
-    printf("\n  Group 2: Star Quantifier (*)\n");
-    printf("  ----------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 2: Star Quantifier (*)\n");
+        printf("  ----------------------------\n");
+    } else {
+        printf("  Group 2: Star Quantifier (*)\n");
+    }
     
     ComprehensiveTestCase group2[] = {
         // Pattern: a((B))* from patterns_quantifier_comprehensive.txt
@@ -1464,19 +1487,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group2[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group2[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group2[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group2[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group2[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group2[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 3: Question Mark Quantifier (?) - zero or one
     // =========================================================================
-    printf("\n  Group 3: Question Mark Quantifier (?)\n");
-    printf("  -----------------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 3: Question Mark Quantifier (?)\n");
+        printf("  -----------------------------------\n");
+    } else {
+        printf("  Group 3: Question Mark Quantifier (?)\n");
+    }
     
     ComprehensiveTestCase group3[] = {
         // Pattern: git((B))? from patterns_quantifier_comprehensive.txt
@@ -1493,19 +1528,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group3[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group3[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group3[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group3[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group3[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group3[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 4: Literal + Quantifier
     // =========================================================================
-    printf("\n  Group 4: Literal + Quantifier\n");
-    printf("  -----------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 4: Literal + Quantifier\n");
+        printf("  -----------------------------\n");
+    } else {
+        printf("  Group 4: Literal + Quantifier\n");
+    }
     
     ComprehensiveTestCase group4[] = {
         // Pattern: p+ from patterns_quantifier_comprehensive.txt
@@ -1522,19 +1569,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group4[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group4[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group4[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group4[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group4[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group4[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 5: Multiple Characters Before Quantifier
     // =========================================================================
-    printf("\n  Group 5: Multiple Characters Before Quantifier\n");
-    printf("  -------------------------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 5: Multiple Characters Before Quantifier\n");
+        printf("  -------------------------------------------\n");
+    } else {
+        printf("  Group 5: Multiple Characters Before Quantifier\n");
+    }
     
     ComprehensiveTestCase group5[] = {
         // Pattern: abc((B))+ from patterns_quantifier_comprehensive.txt
@@ -1551,17 +1610,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group5[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group5[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group5[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group5[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group5[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group5[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
+
+    // =========================================================================
     // GROUP 6: Escape Sequences
     // =========================================================================
-    printf("\n  Group 6: Escape Sequences\n");
-    printf("  -------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 6: Escape Sequences\n");
+        printf("  -------------------------\n");
+    } else {
+        printf("  Group 6: Escape Sequences\n");
+    }
     
     ComprehensiveTestCase group6[] = {
         // Pattern: hello\ world
@@ -1581,19 +1654,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group6[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group6[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group6[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group6[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group6[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group6[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 7: Wildcards
     // =========================================================================
-    printf("\n  Group 7: Wildcards (.*)\n");
-    printf("  -----------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 7: Wildcards (.*)\n");
+        printf("  -----------------------\n");
+    } else {
+        printf("  Group 7: Wildcards (.*)\n");
+    }
     
     ComprehensiveTestCase group7[] = {
         // Pattern: .*
@@ -1616,19 +1701,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group7[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group7[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group7[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group7[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group7[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group7[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 8: Edge Cases
     // =========================================================================
-    printf("\n  Group 8: Edge Cases\n");
-    printf("  --------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 8: Edge Cases\n");
+        printf("  --------------------\n");
+    } else {
+        printf("  Group 8: Edge Cases\n");
+    }
     
     ComprehensiveTestCase group8[] = {
         // Empty pattern
@@ -1649,19 +1746,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group8[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group8[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group8[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group8[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group8[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group8[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 9: POSIX Character Classes
     // =========================================================================
-    printf("\n  Group 9: POSIX Character Classes\n");
-    printf("  --------------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 9: POSIX Character Classes\n");
+        printf("  --------------------------------\n");
+    } else {
+        printf("  Group 9: POSIX Character Classes\n");
+    }
     
     ComprehensiveTestCase group9[] = {
         // Pattern: [[:alpha:]]+
@@ -1687,19 +1796,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group9[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group9[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group9[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group9[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group9[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group9[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 10: Complex Alternation
     // =========================================================================
-    printf("\n  Group 10: Complex Alternation\n");
-    printf("  ---------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 10: Complex Alternation\n");
+        printf("  ---------------------------\n");
+    } else {
+        printf("  Group 10: Complex Alternation\n");
+    }
     
     ComprehensiveTestCase group10[] = {
         // Pattern: (cat|dog|fish)
@@ -1723,19 +1844,33 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group10[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group10[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group10[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group10[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group10[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group10[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
+    // GROUP 11: Literal Plus Quantifier
+    // =========================================================================
     // GROUP 11: Literal Plus (p+)
     // =========================================================================
-    printf("\n  Group 11: Literal Plus Quantifier\n");
-    printf("  --------------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 11: Literal Plus Quantifier\n");
+        printf("  --------------------------------\n");
+    } else {
+        printf("  Group 11: Literal Plus Quantifier\n");
+    }
     
     ComprehensiveTestCase group11[] = {
         // Pattern: p+
@@ -1754,19 +1889,33 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group11[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group11[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group11[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group11[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group11[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group11[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
+    // GROUP 12: Character Class Ranges
+    // =========================================================================
     // GROUP 12: Character Classes - Ranges
     // =========================================================================
-    printf("\n  Group 12: Character Class Ranges\n");
-    printf("  --------------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 12: Character Class Ranges\n");
+        printf("  --------------------------------\n");
+    } else {
+        printf("  Group 12: Character Class Ranges\n");
+    }
     
     ComprehensiveTestCase group12[] = {
         // Pattern: [a-z]+
@@ -1787,19 +1936,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group12[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group12[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group12[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group12[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group12[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group12[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 13: Nested Quantifiers
     // =========================================================================
-    printf("\n  Group 13: Nested Quantifiers\n");
-    printf("  ---------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 13: Nested Quantifiers\n");
+        printf("  ---------------------------\n");
+    } else {
+        printf("  Group 13: Nested Quantifiers\n");
+    }
     
     ComprehensiveTestCase group13[] = {
         // Pattern: ((a))+
@@ -1816,19 +1977,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group13[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group13[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group13[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group13[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group13[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group13[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // GROUP 14: Escaped Special Characters
     // =========================================================================
-    printf("\n  Group 14: Escaped Special Characters\n");
-    printf("  ----------------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 14: Escaped Special Characters\n");
+        printf("  ----------------------------------\n");
+    } else {
+        printf("  Group 14: Escaped Special Characters\n");
+    }
     
     ComprehensiveTestCase group14[] = {
         // Pattern: a\+b (literal +)
@@ -1848,19 +2021,33 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group14[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group14[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group14[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group14[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group14[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group14[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
+    // GROUP 15: Multiple Characters Before Quantifier
+    // =========================================================================
     // GROUP 15: Multiple Character Before Quantifier
     // =========================================================================
-    printf("\n  Group 15: Multiple Characters Before Quantifier\n");
-    printf("  ---------------------------------------------\n");
+    if (!quiet_mode) {
+        printf("\n  Group 15: Multiple Characters Before Quantifier\n");
+        printf("  ---------------------------------------------\n");
+    } else {
+        printf("  Group 15: Multiple Characters Before Quantifier\n");
+    }
     
     ComprehensiveTestCase group15[] = {
         // Pattern: abc((B))+
@@ -1878,19 +2065,31 @@ static void test_nfa_dfa_comprehensive(void) {
             passed = (result.matched_length == group15[i].expected_len);
         }
         if (passed) {
-            printf("  [PASS] %s\n", group15[i].description);
             tests_passed++;
+        }
+        if (quiet_mode) {
+            if (!passed) {
+                printf("  [FAIL] %s\n", group15[i].description);
+            }
         } else {
-            printf("  [FAIL] %s - got %s (len=%zu)\n", group15[i].description,
-                   result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            if (passed) {
+                printf("  [PASS] %s\n", group15[i].description);
+            } else {
+                printf("  [FAIL] %s - got %s (len=%zu)\n", group15[i].description,
+                       result.matched ? "MATCH" : "NO MATCH", result.matched_length);
+            }
         }
     }
 
     // =========================================================================
     // Summary
     // =========================================================================
-    printf("\n=================================================\n");
-    printf("NFA/DFA Comprehensive Tests: %d/%d passed\n", tests_passed, tests_run);
-    printf("=================================================\n");
+    if (!quiet_mode) {
+        printf("\n=================================================\n");
+        printf("NFA/DFA Comprehensive Tests: %d/%d passed\n", tests_passed, tests_run);
+        printf("=================================================\n");
+    } else {
+        printf("\nNFA/DFA Comprehensive Tests: %d/%d passed\n", tests_passed, tests_run);
+    }
 }
 
