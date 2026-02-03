@@ -16,7 +16,7 @@
 
 // Debug output control - set to 0 to disable all debug prints
 #ifndef NFA_BUILDER_DEBUG
-#define NFA_BUILDER_DEBUG 0
+#define NFA_BUILDER_DEBUG 1
 #endif
 
 // Verbose output control - set to 0 to disable progress messages
@@ -973,6 +973,8 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 
     DEBUG_PRINT("Looking up fragment (normalized): '%s'\n", frag_name);
 
+    DEBUG_PRINT("parse_rdp_fragment ENTER: frag_name='%s'\n", frag_name);
+
     // Look up fragment
     const char* frag_value = find_fragment(frag_name);
     if (frag_value == NULL) {
@@ -981,6 +983,8 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
         result.exit_state = start_state;
         return result;
     }
+
+    DEBUG_PRINT("parse_rdp_fragment: frag_name='%s', frag_value='%s'\n", frag_name, frag_value);
 
     // Create a clean start state for the fragment
     int frag_start = nfa_add_state_with_minimization(false);
@@ -1010,7 +1014,7 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     if (is_single_char) {
         result.is_single_char = true;
         result.loop_char = frag_value[0];
-        result.loop_entry_state = frag_start;  // Loop at state where char is consumed
+        result.loop_entry_state = frag_end;  // Exit state after consuming the char
     } else {
         result.is_single_char = false;
         result.loop_char = '\0';
@@ -1019,15 +1023,19 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 
     result.exit_state = frag_end;
 
-    // Add EOS transition to make it a proper accepting state (for patterns without +)
-    // This is done in the fragment parser to ensure it's set up correctly
+    // Add EOS transition only for multi-char fragments
+    // Single-char fragments should NOT have EOS here - the quantifier handler adds it
+    // This prevents patterns like a((b))+ from incorrectly accepting zero iterations
     int eos_sid = find_symbol_id(DFA_CHAR_EOS);
-    if (eos_sid != -1) {
+    if (eos_sid != -1 && !is_single_char) {
         int accepting = nfa_add_state_with_minimization(false);
         nfa_add_transition(frag_end, accepting, eos_sid);
         nfa[accepting].is_eos_target = true;
         nfa_finalize_state(frag_end);
         nfa_finalize_state(accepting);
+    } else if (is_single_char) {
+        // For single-char fragments, finalize frag_end without EOS transition
+        nfa_finalize_state(frag_end);
     }
 
     // Mark states as potentially accepting (for quantifier handling)
@@ -1418,18 +1426,48 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             if (current_fragment.is_single_char && current_fragment.loop_entry_state != -1) {
                 int char_sid = find_symbol_id(current_fragment.loop_char);
                 if (char_sid != -1) {
-                    nfa_add_transition(current_fragment.loop_entry_state, current_fragment.loop_entry_state, char_sid);
 
+                    // For + quantifier: need to handle the multi-target transition bug
+                    // where loop_state gets added to the transition. Use separate states.
+                    //
+                    // Structure:
+                    //   Entry --char--> First (for first iteration)
+                    //   Loop --char--> Loop (for subsequent iterations)
+                    //   Loop --EOS--> Accepting
+                    int first_iter = nfa_add_state_with_minimization(false);
+                    int loop_state = nfa_add_state_with_minimization(false);
+                    DEBUG_PRINT("+ handler: loop_entry=%d, first_iter=%d, loop_state=%d\n",
+                              current_fragment.loop_entry_state, first_iter, loop_state);
+
+                    // Entry -> First on char (first iteration)
+                    nfa_add_transition(current_fragment.loop_entry_state, first_iter, char_sid);
+
+                    // First -> Loop on char (transition to loop state)
+                    nfa_add_transition(first_iter, loop_state, char_sid);
+                    DEBUG_PRINT("+ handler: Added %d -> %d on char %d\n",
+                              first_iter, loop_state, char_sid);
+
+                    // Loop -> Loop on char (subsequent iterations)
+                    nfa_add_transition(loop_state, loop_state, char_sid);
+                    DEBUG_PRINT("+ handler: Added %d -> %d on char %d (loop)\n",
+                              loop_state, loop_state, char_sid);
+
+                    // Loop -> Accepting on EOS
                     int new_accepting = nfa_add_state_with_minimization(true);
                     nfa[new_accepting].is_eos_target = true;
                     nfa[new_accepting].category_mask = current_pattern_cat_mask;
-                    nfa_add_transition(current_fragment.loop_entry_state, new_accepting, eos_sid);
+                    nfa_add_transition(loop_state, new_accepting, eos_sid);
+                    DEBUG_PRINT("+ handler: Added %d -> %d on EOS\n",
+                              loop_state, new_accepting);
                     nfa_finalize_state(new_accepting);
                     current = new_accepting;
+                    DEBUG_PRINT("+ handler: Final current=%d\n", current);
 
                     memset(&current_fragment, 0, sizeof(current_fragment));
                     current_fragment.exit_state = -1;
                     current_is_char_class = false;
+                } else {
+                    DEBUG_PRINT("+ handler: char_sid not found for '%c'\n", current_fragment.loop_char);
                 }
             } else if (current_is_char_class && current_class_symbol_count > 0) {
                 for (int i = 0; i < current_class_symbol_count; i++) {
