@@ -195,15 +195,15 @@
 # ACTUAL PATTERNS (using fragments defined above)
 # ============================================================================
 
-[safe] git log -n ((safe::digit))
+[safe] git log -n ((safe::digit))+
 
 [safe] git log -n ((safe::digit))+
 
-[safe] git log --oneline -n ((safe::digit))
+[safe] git log --oneline -n ((safe::digit))+
 
-[safe] git log --graph -n ((safe::digit))
+[safe] git log --graph -n ((safe::digit))+
 
-[safe] git log --decorate -n ((safe::digit))
+[safe] git log --decorate -n ((safe::digit))+
 
 [safe::readonly::file] head -n ((safe::digit))
 

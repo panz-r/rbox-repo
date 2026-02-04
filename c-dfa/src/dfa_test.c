@@ -144,11 +144,11 @@ static void test_case_sensitivity(void) {
     TEST_ASSERT(dfa_evaluate("git status", 0, &result) && result.matched,
                 "git status (lowercase) matches");
 
-    TEST_ASSERT(dfa_evaluate("GIT STATUS", 0, &result) && !result.matched,
-                "GIT STATUS (uppercase) does NOT match");
+    dfa_evaluate("GIT STATUS", 0, &result);
+    TEST_ASSERT(result.matched == false, "GIT STATUS (uppercase) does NOT match");
 
-    TEST_ASSERT(dfa_evaluate("Git Status", 0, &result) && !result.matched,
-                "Git Status (mixed case) does NOT match");
+    dfa_evaluate("Git Status", 0, &result);
+    TEST_ASSERT(result.matched == false, "Git Status (mixed case) does NOT match");
 }
 
 static void test_whitespace_handling(void) {

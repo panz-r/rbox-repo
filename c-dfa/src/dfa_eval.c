@@ -38,7 +38,8 @@ static int defer_get_depth(void) {
 }
 
 static bool process_capture_markers(const dfa_state_t** state_ptr, size_t raw_base,
-                                    eval_capture_t* active_captures, size_t pos, dfa_result_t* result) {
+                                    eval_capture_t* active_captures, size_t pos, dfa_result_t* result,
+                                    int max_captures) {
     const dfa_state_t* current_state = *state_ptr;
     bool changed = false;
     
@@ -62,7 +63,8 @@ static bool process_capture_markers(const dfa_state_t** state_ptr, size_t raw_ba
         if (cap_id >= 0) {
             for (int ci = 0; ci < DFA_MAX_CAPTURES; ci++) {
                 if (active_captures[ci].active && active_captures[ci].capture_id == cap_id) {
-                    if (result->capture_count < DFA_MAX_CAPTURES) {
+                    // Respect max_captures limit (0 = no captures, -1 = unlimited)
+                    if (max_captures < 0 || result->capture_count < (size_t)max_captures) {
                         dfa_capture_t* cap = &result->captures[result->capture_count];
                         cap->start = active_captures[ci].start_pos;
                         cap->end = pos;
@@ -158,6 +160,7 @@ bool dfa_init(const void* dfa_data, size_t size) {
         return false;
     }
 
+    // Only set current_dfa if ALL validation passes
     current_dfa = dfa;
     return true;
 }
@@ -226,7 +229,6 @@ int dfa_get_capture(const dfa_result_t* result, int index, const char** out_star
 }
 
 bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_captures) {
-    (void)max_captures; // Reserved for future capture limiting functionality
 
     if (current_dfa == NULL || input == NULL || result == NULL) {
         return false;
@@ -278,10 +280,10 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
     size_t pos = 0;
 
-    process_capture_markers(&current_state, raw_base, active_captures, pos, result);
+    process_capture_markers(&current_state, raw_base, active_captures, pos, result, max_captures);
 
     for (pos = 0; pos < length && pos < 1000; pos++) {
-        process_capture_markers(&current_state, raw_base, active_captures, pos, result);
+        process_capture_markers(&current_state, raw_base, active_captures, pos, result, max_captures);
 
         size_t current_offset = (size_t)current_state - raw_base;
 
@@ -336,7 +338,8 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
                 unsigned char trans_char = (unsigned char)trans[i].character;
                 uint32_t next_trans_offset = trans[i].next_state_offset;
 
-                if (trans_char == c) {
+                // DFA_CHAR_ANY (0x00) matches any character - check first for wildcards
+                if (trans_char == DFA_CHAR_ANY || trans_char == c) {
                     size_t next_offset = next_trans_offset;
 
                     process_deferred_captures(current_state, next_offset, raw_base, pos, result);

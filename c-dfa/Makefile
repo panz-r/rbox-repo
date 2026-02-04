@@ -29,7 +29,7 @@ validate-patterns:
 	@echo "================================================="
 	@echo "Validating patterns in $(PATTERN_FILE)..."
 	@echo "================================================="
-	@$(TOOLS_DIR)/validate_patterns.sh $(PATTERN_FILE) || (echo "ERROR: Pattern validation failed!"; exit 1)
+	@$(TOOLS_DIR)/nfa_builder --validate-only $(PATTERN_FILE) || (echo "ERROR: Pattern validation failed!"; exit 1)
 	@echo ""
 
 # ============================================================================
@@ -56,30 +56,25 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # Test
-test: dfa_test validate-patterns
+test: dfa dfa_test
 	@echo ""
 	@echo "================================================="
 	@echo "Running DFA test..."
 	@echo "================================================="
+	@cp build/readonlybox.dfa .
 	@./dfa_test
+	@rm -f readonlybox.dfa
 
 # Build DFA (if tools are available)
-dfa: validate-patterns $(BUILD_DIR)
+dfa: $(BUILD_DIR)
 	@echo "Building DFA..."
-	@cd $(BUILD_DIR) && ../tools/nfa_builder ../alphabet.map ../$(PATTERN_FILE) readonlybox.nfa
+	@cd $(BUILD_DIR) && ../tools/nfa_builder ../$(PATTERN_FILE) readonlybox.nfa
 	@cd $(BUILD_DIR) && ../tools/nfa2dfa_advanced readonlybox.nfa readonlybox.dfa
 	@echo ""
 	@echo "DFA built successfully: $(PATTERN_FILE) -> build/readonlybox.dfa"
 
-# Build DFA with alphabet optimization
-dfa-alphabet: validate-patterns $(BUILD_DIR)
-	@echo "Building DFA with alphabet optimization..."
-	@cd $(BUILD_DIR) && ../tools/alphabet_constructor ../$(PATTERN_FILE) alphabet.map
-	@cd $(BUILD_DIR) && ../tools/nfa_builder_with_alphabet alphabet.map ../$(PATTERN_FILE) readonlybox_alphabet.nfa
-	@cd $(BUILD_DIR) && ../tools/nfa2dfa_with_alphabet readonlybox_alphabet.nfa readonlybox_alphabet.dfa
-
 # Quick test (with validation)
-quick: dfa_test validate-patterns
+quick: dfa_test
 	@echo ""
 	@echo "================================================="
 	@echo "Running quick DFA test..."

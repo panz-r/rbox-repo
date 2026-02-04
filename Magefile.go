@@ -29,21 +29,10 @@ func ValidatePatterns() error {
 	cdfaToolsDir := filepath.Join(wd, "c-dfa", "tools")
 	patternsFile := filepath.Join(wd, "c-dfa", "patterns_safe_commands.txt")
 
-	// Check if validation script exists
-	validateScript := filepath.Join(cdfaToolsDir, "validate_patterns.sh")
-	if _, err := os.Stat(validateScript); os.IsNotExist(err) {
-		fmt.Println("WARNING: validate_patterns.sh not found, skipping validation")
-		return nil
-	}
-
-	// Make sure it's executable
-	if err := os.Chmod(validateScript, 0755); err != nil {
-		return fmt.Errorf("failed to make validate_patterns.sh executable: %w", err)
-	}
-
-	// Run validation
+	// Use nfa_builder for validation
+	nfaBuilder := filepath.Join(cdfaToolsDir, "nfa_builder")
 	fmt.Printf("Validating: %s\n", patternsFile)
-	cmd := exec.Command("/bin/bash", validateScript, patternsFile)
+	cmd := exec.Command(nfaBuilder, "--validate-only", patternsFile)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -77,7 +66,6 @@ func BuildClient() error {
 	cdfaToolsDir := filepath.Join(cdfaDir, "tools")
 	cdfaSrcDir := filepath.Join(cdfaDir, "src")
 	patternsFile := filepath.Join(cdfaDir, "patterns_safe_commands.txt")
-	alphabetFile := filepath.Join(cdfaDir, "alphabet_per_char.map")
 	nfaFile := filepath.Join(cdfaDir, "readonlybox.nfa")
 	dfaFile := filepath.Join(cdfaDir, "readonlybox.dfa")
 	dfaCArray := filepath.Join(cdfaToolsDir, "readonlybox_dfa.c")
@@ -120,9 +108,9 @@ func BuildClient() error {
 		}
 	}
 
-	// Step 1: Generate NFA from patterns with per-character alphabet
-	fmt.Println("Generating NFA from patterns (per-character alphabet)...")
-	genNfa := exec.Command(nfaBuilder, alphabetFile, patternsFile, nfaFile)
+	// Step 1: Generate NFA from patterns (alphabet is now constructed internally)
+	fmt.Println("Generating NFA from patterns...")
+	genNfa := exec.Command(nfaBuilder, patternsFile, nfaFile)
 	genNfa.Dir = cdfaDir
 	genNfa.Stdout = os.Stdout
 	genNfa.Stderr = os.Stderr
@@ -405,22 +393,6 @@ func DfaTest() error {
 		return fmt.Errorf("failed to build dfa_test_new: %w", err)
 	}
 
-	// Helper function to validate patterns file
-	validatePatternFile := func(patternsPath, groupName string) error {
-		validateScript := filepath.Join(cdfaToolsDir, "validate_patterns.sh")
-		if _, err := os.Stat(validateScript); os.IsNotExist(err) {
-			fmt.Printf("WARNING: validate_patterns.sh not found, skipping validation for %s\n", groupName)
-			return nil
-		}
-
-		fmt.Printf("Validating: %s\n", filepath.Base(patternsPath))
-		cmd := exec.Command("/bin/bash", validateScript, patternsPath)
-		cmd.Dir = cdfaDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		return cmd.Run()
-	}
-
 	// Define test groups with their patterns files
 	testGroups := []struct {
 		name         string
@@ -494,26 +466,12 @@ func DfaTest() error {
 		fmt.Printf("\n=== %s ===\n", group.name)
 		fmt.Printf("Patterns: %s\n", group.patternsFile)
 
-		// Generate pattern-aware alphabet using base alphabet for consistent symbol IDs
-		alphabetFile := filepath.Join(cdfaDir, "test_group_alphabet.map")
-		baseAlphabet := filepath.Join(cdfaDir, "alphabet_per_char.map")
-		genAlphabet := exec.Command("python3",
-			filepath.Join(cdfaDir, "generate_alphabet.py"),
-			patternsPath,
-			alphabetFile,
-			baseAlphabet)
-		genAlphabet.Dir = cdfaDir
-		genAlphabet.Stdout = os.Stdout
-		genAlphabet.Stderr = os.Stderr
-		if err := genAlphabet.Run(); err != nil {
-			failedGroups = append(failedGroups, fmt.Sprintf("%s (alphabet generation)", group.name))
-			fmt.Printf("ERROR: Failed to generate pattern-aware alphabet for %s: %v\n", group.name, err)
-			continue
-		}
-		fmt.Printf("Generated pattern-aware alphabet for %s\n", group.name)
-
 		// Validate patterns before building NFA
-		if err := validatePatternFile(patternsPath, group.name); err != nil {
+		validateCmd := exec.Command(nfaBuilder, "--validate-only", patternsPath)
+		validateCmd.Dir = cdfaDir
+		validateCmd.Stdout = os.Stdout
+		validateCmd.Stderr = os.Stderr
+		if err := validateCmd.Run(); err != nil {
 			if group.optional {
 				fmt.Printf("Skipping %s due to pattern validation error: %v\n", group.name, err)
 				continue
@@ -523,10 +481,9 @@ func DfaTest() error {
 			continue
 		}
 
-		// Generate NFA
+		// Generate NFA (alphabet is now constructed internally by nfa_builder)
 		nfaFile := filepath.Join(cdfaDir, "test_group.nfa")
 		genNfa := exec.Command(nfaBuilder,
-			alphabetFile,
 			patternsPath,
 			nfaFile)
 		genNfa.Dir = cdfaDir
