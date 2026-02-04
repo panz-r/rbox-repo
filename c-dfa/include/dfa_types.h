@@ -17,14 +17,14 @@
  * - Bits 0-7: State flags (DFA_STATE_*)
  * - Bits 8-15: Category mask (8-way parallel acceptance)
  */
-typedef struct {
+typedef struct __attribute__((packed)) {
     uint32_t transitions_offset;      // Offset to transition table (relative to DFA base, 0 = no transitions)
     uint16_t transition_count;        // Number of transitions
     uint16_t flags;                   // State flags (accepting, capture markers, etc.)
     int8_t capture_start_id;          // Capture ID for CAPTURE_START (-1 = none)
     int8_t capture_end_id;            // Capture ID for CAPTURE_END (-1 = none)
     int8_t capture_defer_id;          // Capture ID for deferred CAPTURE_END (-1 = none)
-    int8_t eos_target;                // Target state for EOS (end of string) transition (-1 = none)
+    uint32_t eos_target;              // Offset to EOS target state (0 = no EOS transition)
 } dfa_state_t;
 
 /**
@@ -38,8 +38,10 @@ typedef struct __attribute__((packed)) {
 /**
  * Complete DFA structure - can be memory-mapped directly
  *
- * Version 3 layout:
- * - Header (24 bytes)
+ * Version 4 layout:
+ * - Header (19 + id_len bytes)
+ *   - dfa_t: magic(4) + version(2) + state_count(2) + initial_state(4) + accepting_mask(4) + flags(2) + identifier_length(1) = 19 bytes
+ * - identifier (0-255 bytes, not null-terminated)
  * - States array
  * - Transition tables follow after states
  *
@@ -49,13 +51,14 @@ typedef struct __attribute__((packed)) {
  */
 typedef struct {
     uint32_t magic;              // Magic number: 0xDFA1DFA1
-    uint16_t version;            // Version: 3 (character-based, no alphabet_map)
+    uint16_t version;            // Version: 4 (with identifier)
     uint16_t state_count;        // Total number of states
     uint32_t initial_state;      // Offset to initial state
     uint32_t accepting_mask;     // Bitmask of accepting states
     uint16_t flags;              // DFA flags
-    uint16_t reserved;           // Reserved for future use
-    dfa_state_t states[];        // Flexible array of states
+    uint8_t identifier_length;    // Length of identifier (0-255)
+    uint8_t identifier[];        // Identifier string (not null-terminated)
+    // States array follows after identifier (padded to 4-byte alignment)
     // Transition tables follow after states
 } dfa_t;
 

@@ -62,7 +62,7 @@ test: dfa dfa_test
 	@echo "Running DFA test..."
 	@echo "================================================="
 	@cp build/readonlybox.dfa .
-	@./dfa_test
+	@./dfa_test --quantifier-test
 	@rm -f readonlybox.dfa
 
 # Build DFA (if tools are available)

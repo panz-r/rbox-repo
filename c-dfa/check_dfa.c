@@ -29,8 +29,14 @@ int main(int argc, char* argv[]) {
     printf("sizeof(dfa_t) = %zu\n", sizeof(dfa_t));
     printf("sizeof(dfa_state_t) = %zu\n", sizeof(dfa_state_t));
     printf("Total file size: %ld\n", size);
-    
-    dfa_state_t *states = (dfa_state_t*)((char*)dfa + sizeof(dfa_t));
+    printf("Identifier length: %d\n", dfa->identifier_length);
+
+    // For Version 4, states start after the identifier
+    size_t header_size = sizeof(dfa_t);
+    if (dfa->version >= 4) {
+        header_size += dfa->identifier_length;
+    }
+    dfa_state_t *states = (dfa_state_t*)((char*)dfa + header_size);
     for (int i = 0; i < dfa->state_count && i < 10; i++) {
         printf("\nState %d:\n", i);
         printf("  transitions_offset: %u (0x%X)\n", states[i].transitions_offset, states[i].transitions_offset);

@@ -10,6 +10,9 @@
 // Forward declaration
 int find_symbol_id(char c);
 
+// Pattern identifier (read from NFA file)
+static char pattern_identifier[256] = "";
+
 // Debug output control - set to 0 to disable all debug prints
 #ifndef NFA2DFA_DEBUG
 #define NFA2DFA_DEBUG 0
@@ -78,7 +81,7 @@ typedef struct {
     int8_t capture_start_id;   // Capture ID for CAPTURE_START transition (-1 = none)
     int8_t capture_end_id;     // Capture ID for CAPTURE_END transition (-1 = none)
     int8_t capture_defer_id;   // Capture ID for deferred CAPTURE_END (-1 = none)
-    int8_t eos_target;         // Target state index for EOS transition (-1 = none)
+    uint32_t eos_target;       // Target state index for EOS transition (0 = none)
 } build_dfa_state_t;
 
 // Global variables
@@ -121,7 +124,7 @@ void dfa_init(void) {
         dfa[i].capture_start_id = -1;
         dfa[i].capture_end_id = -1;
         dfa[i].capture_defer_id = -1;
-        dfa[i].eos_target = -1;
+        dfa[i].eos_target = 0;
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             dfa[i].transitions[j] = -1;
             dfa[i].transitions_from_any[j] = false;
@@ -146,7 +149,7 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
     int8_t capture_start_id = -1;
     int8_t capture_end_id = -1;
     int8_t capture_defer_id = -1;
-    int8_t eos_target = -1;
+    uint32_t eos_target = 0;
 
     for (int i = 0; i < nfa_count; i++) {
         int nfa_state = nfa_states[i];
@@ -480,7 +483,6 @@ void nfa_to_dfa(void) {
             // (e.g., state 136) which represents the true end of the pattern.
 
             uint8_t move_accepting_mask = 0;
-            bool multiple_categories = false;
 
             // Track categories from final accepting states only
             bool pattern_has_final_accepting[MAX_PATTERNS] = {false};
@@ -495,21 +497,11 @@ void nfa_to_dfa(void) {
                 // A state is final accepting if:
                 // 1. is_eos_target = true (can accept via EOS)
                 // 2. category_mask != 0 (has an acceptance category)
-                // 3. has NO outgoing character transitions (dead end)
+                // NOTE: We no longer check for outgoing transitions because
+                // patterns with shared prefixes need intermediate states to be accepting
                 bool is_final_accepting = false;
                 if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
-                    // Check if state has NO outgoing character transitions
-                    bool has_transitions = false;
-                    for (int s = 0; s < MAX_SYMBOLS; s++) {
-                        if (nfa[state].transitions[s] != -1 ||
-                            nfa[state].multi_targets[s][0] != '\0') {
-                            has_transitions = true;
-                            break;
-                        }
-                    }
-                    if (!has_transitions) {
-                        is_final_accepting = true;
-                    }
+                    is_final_accepting = true;
                 }
 
                 if (is_final_accepting) {
@@ -531,9 +523,6 @@ void nfa_to_dfa(void) {
                     if (!found && seen_cat_count < 256) {
                         seen_cats[seen_cat_count++] = state_cat;
                     }
-                    if (seen_cat_count > 1) {
-                        multiple_categories = true;
-                    }
                 }
             }
 
@@ -544,10 +533,9 @@ void nfa_to_dfa(void) {
                 }
             }
 
-            // If accepting states from different categories, clear the mask
-            if (multiple_categories) {
-                move_accepting_mask = 0;
-            }
+            // NOTE: We do NOT clear move_accepting_mask when multiple categories are present
+            // This allows prefix-sharing patterns like "git" (cat 0x01) and "git status" (cat 0x02)
+            // to both be accepted at the "git" prefix, with the combined category mask 0x03
 
             // Debug for transitions on 'b' from states 10 and 20
             if (alphabet[array_idx].start_char == 'b' && (current_dfa == 10 || current_dfa == 20)) {
@@ -757,6 +745,11 @@ void load_nfa_file(const char* filename) {
         if (sscanf(line, "%63s", header) == 1) {
             if (strcmp(header, "NFA_ALPHABET") == 0) {
                 continue;
+            } else if (strncmp(line, "Identifier:", 11) == 0) {
+                char* id_start = line + 11;
+                while (*id_start == ' ') id_start++;
+                strncpy(pattern_identifier, id_start, 255);
+                pattern_identifier[255] = '\0';
             } else if (strstr(header, "AlphabetSize:") == header) {
                 sscanf(line, "AlphabetSize: %d", &alphabet_size);
             } else if (strstr(header, "States:") == header) {
@@ -873,14 +866,20 @@ void load_nfa_file(const char* filename) {
     VERBOSE_PRINT("Loaded NFA with %d states and %d symbols from %s\n", nfa_state_count, alphabet_size, filename);
 }
 
-// Write DFA to binary file (Version 3 format)
+// Write DFA to binary file (Version 4 format with identifier)
 void write_dfa_file(const char* filename) {
     FILE* file = fopen(filename, "wb");
     if (file == NULL) {
         fprintf(stderr, "Error: Cannot create file %s\n", filename);
         return;
     }
-    size_t header_size = sizeof(dfa_t);
+
+    // Calculate header size
+    size_t id_len = strlen(pattern_identifier);
+    if (id_len > 255) id_len = 255;
+    // dfa_t struct is 19 bytes: magic(4) + version(2) + state_count(2) + initial_state(4) + accepting_mask(4) + flags(2) + identifier_length(1)
+    // States start at: 19 + id_len (identifier_length byte is included in dfa_t)
+    size_t header_size = 19 + id_len;
     size_t states_size = dfa_state_count * sizeof(dfa_state_t);
     size_t total_transitions = 0;
     for (int i = 0; i < dfa_state_count; i++) {
@@ -898,18 +897,22 @@ void write_dfa_file(const char* filename) {
     dfa_struct->magic = DFA_MAGIC;
     dfa_struct->version = DFA_VERSION;
     dfa_struct->state_count = dfa_state_count;
-    dfa_struct->initial_state = sizeof(dfa_t);
+    dfa_struct->initial_state = header_size;
     dfa_struct->accepting_mask = 0;
     dfa_struct->flags = 0;
-    dfa_struct->reserved = 0;
-    dfa_state_t* states = (dfa_state_t*)((char*)dfa_struct + sizeof(dfa_t));
+    dfa_struct->identifier_length = (uint8_t)id_len;
+    if (id_len > 0) {
+        memcpy(dfa_struct->identifier, pattern_identifier, id_len);
+    }
+    dfa_state_t* states = (dfa_state_t*)((char*)dfa_struct + header_size);
     dfa_transition_t* transitions = (dfa_transition_t*)((char*)states + states_size);
     size_t current_transition = 0;
     uint32_t accepting_mask = 0;
 
     // Pre-calculate absolute transition offsets for each state
     // transitions_offset must be the byte offset from start of dfa_t structure
-    size_t transition_table_start = sizeof(dfa_t) + dfa_state_count * sizeof(dfa_state_t);
+    // CRITICAL: Use header_size (19 + id_len), not sizeof(dfa_t) which may include padding
+    size_t transition_table_start = header_size + dfa_state_count * sizeof(dfa_state_t);
     int state_trans_offsets[MAX_STATES];
     size_t current_offset = transition_table_start;
     for (int i = 0; i < dfa_state_count; i++) {
@@ -945,7 +948,8 @@ void write_dfa_file(const char* filename) {
                 transitions[current_transition].character = (char)c;
                 int target_state = dfa[i].transitions[c];
                 // Convert state index to absolute offset
-                size_t target_offset = sizeof(dfa_t) + (size_t)target_state * sizeof(dfa_state_t);
+                // CRITICAL: Use header_size, not sizeof(dfa_t)
+                size_t target_offset = header_size + (size_t)target_state * sizeof(dfa_state_t);
                 transitions[current_transition].next_state_offset = (uint32_t)target_offset;
                 current_transition++;
             }
@@ -962,7 +966,8 @@ void write_dfa_file(const char* filename) {
                 transitions[current_transition].character = (char)c;
                 int target_state = dfa[i].transitions[c];
                 // Convert state index to absolute offset
-                size_t target_offset = sizeof(dfa_t) + (size_t)target_state * sizeof(dfa_state_t);
+                // CRITICAL: Use header_size, not sizeof(dfa_t)
+                size_t target_offset = header_size + (size_t)target_state * sizeof(dfa_state_t);
                 transitions[current_transition].next_state_offset = (uint32_t)target_offset;
                 current_transition++;
             }
@@ -984,6 +989,14 @@ void write_dfa_file(const char* filename) {
     free(dfa_struct);
     VERBOSE_PRINT("Wrote DFA with %d states to %s\n", dfa_state_count, filename);
     VERBOSE_PRINT("DFA size: %zu bytes\n", dfa_size);
+    
+    // Count final states
+    int final_count = 0;
+    for (int i = 0; i < dfa_state_count; i++) {
+        uint8_t cat_mask = (dfa[i].flags >> 8) & 0xFF;
+        if (cat_mask != 0) final_count++;
+    }
+    fprintf(stderr, "DEBUG: DFA has %d states, %d have non-zero category mask\n", dfa_state_count, final_count);
 }
 
 // Main function

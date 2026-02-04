@@ -82,6 +82,9 @@ static bool flag_verbose_validation = false;
 static bool flag_verbose_nfa = false;
 static const char* external_alphabet_file = NULL;
 
+// Pattern file identifier (for NFA/DFA matching)
+static char pattern_identifier[256] = "";
+
 // NFA State with category bitmask for 8-way parallel acceptance
 typedef struct {
     uint8_t category_mask;           // Bitmask of accepting categories (0-7)
@@ -2089,12 +2092,13 @@ void parse_advanced_pattern(const char* line) {
         strncpy(patterns[pattern_count].operations, operations, sizeof(operations) - 1);
         strncpy(patterns[pattern_count].action, action, sizeof(action) - 1);
         patterns[pattern_count].category_id = parse_category(category);
+        current_pattern_index = pattern_count;  // Set BEFORE incrementing
         pattern_count++;
     }
 
     // Set the pattern index for this NFA construction
     // This prevents states from different patterns from being merged
-    current_pattern_index = pattern_count;
+    // current_pattern_index was already set to the current pattern's index above
 
     // Use the new recursive descent parser to build NFA
     // parse_pattern_full handles NFA building, EOS transition, and tagging internally
@@ -2196,7 +2200,6 @@ static int lookup_acceptance_category(const char* category, const char* subcateg
         return mapping->acceptance_category;
     }
     // No explicit mapping found - fall back to category name
-    // This handles patterns like [caution:...] without ACCEPTANCE_MAPPING directive
     return parse_category(category);
 }
 
@@ -2257,6 +2260,7 @@ void write_nfa_file(const char* filename) {
 
     // Write header
     fprintf(file, "NFA_ALPHABET\n");
+    fprintf(file, "Identifier: %s\n", pattern_identifier[0] ? pattern_identifier : "(none)");
     fprintf(file, "AlphabetSize: %d\n", alphabet_size);
     fprintf(file, "States: %d\n", nfa_state_count);
     fprintf(file, "Initial: 0\n\n");
@@ -2502,7 +2506,44 @@ static bool validate_pattern_file(const char* spec_file) {
             }
             continue;
         }
-        
+
+        // Check for IDENTIFIER directive
+        if (strncmp(line, "IDENTIFIER", 10) == 0 && (line[10] == ' ' || line[10] == '"')) {
+            // Extract the quoted string
+            char* id_start = line + 11;
+            // Skip leading whitespace
+            while (*id_start == ' ' || *id_start == '\t') id_start++;
+
+            if (*id_start != '"') {
+                fprintf(stderr, "Error: IDENTIFIER must be a quoted string at line %d\n", line_num);
+                errors++;
+                continue;
+            }
+            id_start++; // Skip opening quote
+
+            char* id_end = strchr(id_start, '"');
+            if (!id_end) {
+                fprintf(stderr, "Error: Unclosed IDENTIFIER string at line %d\n", line_num);
+                errors++;
+                continue;
+            }
+
+            size_t id_len = id_end - id_start;
+            if (id_len >= sizeof(pattern_identifier)) {
+                fprintf(stderr, "Error: IDENTIFIER too long at line %d\n", line_num);
+                errors++;
+                continue;
+            }
+
+            strncpy(pattern_identifier, id_start, id_len);
+            pattern_identifier[id_len] = '\0';
+
+            if (flag_verbose_validation) {
+                fprintf(stderr, "  Line %d: Identifier = \"%s\"\n", line_num, pattern_identifier);
+            }
+            continue;
+        }
+
         // Check for category pattern [category:subcategory:operations] pattern
         if (line[0] == '[') {
             char* bracket = strchr(line, ']');
@@ -2777,6 +2818,12 @@ int main(int argc, char* argv[]) {
         }
         fprintf(stderr, "Validation passed\n");
         return 0;
+    }
+
+    // Always validate first to parse identifier and check syntax
+    if (!validate_pattern_file(spec_file)) {
+        fprintf(stderr, "Pattern validation failed\n");
+        return 1;
     }
 
     if (external_alphabet_file) {

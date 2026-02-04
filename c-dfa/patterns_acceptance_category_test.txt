@@ -16,19 +16,19 @@
 [fragment:value] value
 
 # Map acceptance categories to distinct IDs
-#ACCEPTANCE_MAPPING [safe::readonly] -> 0
-#ACCEPTANCE_MAPPING [safe::readonly::git] -> 1
-#ACCEPTANCE_MAPPING [caution::network] -> 2
-#ACCEPTANCE_MAPPING [modifying::filesystem] -> 3
-#ACCEPTANCE_MAPPING [dangerous::destructive] -> 4
-#ACCEPTANCE_MAPPING [safe::readonly::quant1] -> 0
-#ACCEPTANCE_MAPPING [caution::network::quant2] -> 1
-#ACCEPTANCE_MAPPING [modifying::filesystem::quant3] -> 2
-#ACCEPTANCE_MAPPING [safe::readonly::critical1] -> 0
-#ACCEPTANCE_MAPPING [caution::network::critical2] -> 1
-#ACCEPTANCE_MAPPING [safe::readonly::critical3] -> 0
-#ACCEPTANCE_MAPPING [modifying::filesystem::critical4] -> 3
-#ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
+ACCEPTANCE_MAPPING [safe::readonly] -> 0
+ACCEPTANCE_MAPPING [safe::readonly::git] -> 1
+ACCEPTANCE_MAPPING [caution::network] -> 2
+ACCEPTANCE_MAPPING [modifying::filesystem] -> 3
+ACCEPTANCE_MAPPING [dangerous::destructive] -> 4
+ACCEPTANCE_MAPPING [safe::readonly::quant1] -> 0
+ACCEPTANCE_MAPPING [caution::network::quant2] -> 1
+ACCEPTANCE_MAPPING [modifying::filesystem::quant3] -> 2
+ACCEPTANCE_MAPPING [safe::readonly::critical1] -> 0
+ACCEPTANCE_MAPPING [caution::network::critical2] -> 1
+ACCEPTANCE_MAPPING [safe::readonly::critical3] -> 0
+ACCEPTANCE_MAPPING [modifying::filesystem::critical4] -> 3
+ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 
 # ============================================
 # GROUP 1: Simple patterns that should NOT interfere

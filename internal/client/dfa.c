@@ -4,6 +4,7 @@
 
 extern const unsigned char readonlybox_dfa_data[];
 extern const size_t readonlybox_dfa_size;
+extern const char* readonlybox_dfa_identifier;
 
 static bool g_dfa_initialized = false;
 
@@ -13,7 +14,7 @@ int dfa_should_allow(const char* cmd) {
     }
 
     if (!g_dfa_initialized) {
-        if (!dfa_init(readonlybox_dfa_data, readonlybox_dfa_size)) {
+        if (!dfa_init_with_identifier(readonlybox_dfa_data, readonlybox_dfa_size, readonlybox_dfa_identifier)) {
             return 0;
         }
         g_dfa_initialized = true;
@@ -32,8 +33,8 @@ void dfa_debug(const char* cmd) {
     }
 
     if (!g_dfa_initialized) {
-        if (!dfa_init(readonlybox_dfa_data, readonlybox_dfa_size)) {
-            fprintf(stderr, "DFA init failed\n");
+        if (!dfa_init_with_identifier(readonlybox_dfa_data, readonlybox_dfa_size, readonlybox_dfa_identifier)) {
+            fprintf(stderr, "DFA init failed (identifier mismatch or invalid data)\n");
             return;
         }
         g_dfa_initialized = true;

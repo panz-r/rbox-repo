@@ -6,6 +6,15 @@
 # Used by the main project for production pattern matching.
 #
 # ============================================================================
+# IDENTIFIER
+# ============================================================================
+#
+# This identifier is included in the NFA and DFA files to ensure matching.
+# It must be a double-quoted string without internal double quotes.
+#
+IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
+
+# ============================================================================
 # LINE FORMAT
 # ============================================================================
 #

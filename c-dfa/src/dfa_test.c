@@ -23,22 +23,21 @@ static void test_nfa_dfa_comprehensive(bool quiet_mode);
 static void test_dfa_init_valid(void) {
     printf("\nTest: DFA Init (valid file)\n");
 
-    FILE* f = fopen(dfa_file_path, "rb");
-    TEST_ASSERT(f != NULL, "Can open DFA file");
-
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    void* data = malloc(size);
-    fread(data, 1, size, f);
-    fclose(f);
+    size_t size;
+    void* data = load_dfa_from_file(dfa_file_path, &size);
+    TEST_ASSERT(data != NULL, "Can load DFA file");
+    if (data == NULL) {
+        return;
+    }
 
     bool result = dfa_init(data, size);
     TEST_ASSERT(result == true, "DFA init returns true");
     TEST_ASSERT(dfa_is_valid() == true, "dfa_is_valid returns true");
     uint16_t version = dfa_get_version();
     TEST_ASSERT(version >= 3, "DFA version is 3 or higher");
+
+    const char* identifier = dfa_get_identifier();
+    TEST_ASSERT(identifier != NULL, "DFA has identifier");
 
     // Don't free data - it's used by subsequent tests
     // free(data);

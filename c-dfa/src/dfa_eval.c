@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 static const dfa_t* current_dfa = NULL;
+static char current_identifier[256] = "";
 
 #define DFA_STATE_SIZE (sizeof(dfa_state_t))
 #define STATE_INDEX_TO_OFFSET(idx) (sizeof(dfa_t) + ((size_t)(idx) * DFA_STATE_SIZE))
@@ -138,6 +139,10 @@ static void process_deferred_captures(const dfa_state_t* current_state,
 }
 
 bool dfa_init(const void* dfa_data, size_t size) {
+    return dfa_init_with_identifier(dfa_data, size, NULL);
+}
+
+bool dfa_init_with_identifier(const void* dfa_data, size_t size, const char* expected_identifier) {
     if (dfa_data == NULL || size < sizeof(dfa_t)) {
         return false;
     }
@@ -160,6 +165,14 @@ bool dfa_init(const void* dfa_data, size_t size) {
         return false;
     }
 
+    // Store the identifier for later retrieval
+    if (expected_identifier != NULL) {
+        strncpy(current_identifier, expected_identifier, sizeof(current_identifier) - 1);
+        current_identifier[sizeof(current_identifier) - 1] = '\0';
+    } else {
+        strcpy(current_identifier, "(none)");
+    }
+
     // Only set current_dfa if ALL validation passes
     current_dfa = dfa;
     return true;
@@ -167,6 +180,10 @@ bool dfa_init(const void* dfa_data, size_t size) {
 
 bool dfa_is_valid(void) {
     return current_dfa != NULL;
+}
+
+const char* dfa_get_identifier(void) {
+    return current_dfa ? current_identifier : "(not initialized)";
 }
 
 uint16_t dfa_get_version(void) {
@@ -230,10 +247,16 @@ int dfa_get_capture(const dfa_result_t* result, int index, const char** out_star
 
 bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_captures) {
 
+    fprintf(stderr, "DEBUG: dfa_evaluate_with_limit called, current_dfa=%p\n", current_dfa);
+    fflush(stderr);
+
     if (current_dfa == NULL || input == NULL || result == NULL) {
+        fprintf(stderr, "DEBUG: Early return - NULL check failed\n");
+        fflush(stderr);
         return false;
     }
 
+    // Initialize result
     result->category = DFA_CMD_UNKNOWN;
     result->category_mask = 0;
     result->final_state = 0;
@@ -260,7 +283,15 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     defer_stack_depth = 0;
 
     size_t states_size = current_dfa->state_count * sizeof(dfa_state_t);
-    size_t dfa_header_size = sizeof(dfa_t);
+    // CRITICAL: Use correct header size based on version
+    // Version 4: 19 bytes base + identifier_length
+    // Earlier versions: sizeof(dfa_t) (may include padding)
+    size_t dfa_header_size;
+    if (current_dfa->version >= 4) {
+        dfa_header_size = 19 + current_dfa->identifier_length;
+    } else {
+        dfa_header_size = sizeof(dfa_t);
+    }
     size_t dfa_total_size = dfa_header_size + states_size;
     size_t raw_base = (size_t)current_dfa;
 
@@ -282,7 +313,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
     process_capture_markers(&current_state, raw_base, active_captures, pos, result, max_captures);
 
-    for (pos = 0; pos < length && pos < 1000; pos++) {
+    for (pos = 0; pos < length && pos < 10000; pos++) {
         process_capture_markers(&current_state, raw_base, active_captures, pos, result, max_captures);
 
         size_t current_offset = (size_t)current_state - raw_base;
@@ -292,9 +323,13 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             return true;
         }
 
+        // Track instant transitions to prevent infinite loops
+        int instant_count = 0;
         bool instant_followed = true;
-        while (instant_followed) {
+        while (instant_followed && instant_count < 10000) {
             instant_followed = false;
+            instant_count++;
+            
             if (current_state->transition_count > 0) {
                 size_t trans_offset = current_state->transitions_offset;
                 if (trans_offset >= 100000) {
@@ -371,34 +406,58 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         }
 
         if (!transition_found) {
+            // Check if we can follow an EOS transition
+            if (current_state->eos_target != 0) {
+                dfa_state_t* eos_state = (dfa_state_t*)((char*)current_dfa + current_state->eos_target);
+                uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
+                if (eos_cat_mask != 0) {
+                    // EOS target is accepting - this is a match!
+                    result->matched = true;
+                    result->matched_length = pos;
+                    result->final_state = eos_state->flags;
+                    result->category_mask = eos_cat_mask;
+                    if (eos_cat_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+                    else if (eos_cat_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+                    else if (eos_cat_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+                    else if (eos_cat_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+                    else if (eos_cat_mask & 0x10) result->category = DFA_CMD_NETWORK;
+                    else if (eos_cat_mask & 0x20) result->category = DFA_CMD_ADMIN;
+                    return true;
+                }
+            }
             if (result->matched) {
                 return true;
             }
             return false;
         }
+    }
 
-        // Track candidate match states (but don't finalize yet)
-        // CRITICAL: Only consider DEAD-END states as valid accepting states
-        // A state can accept ONLY if it has no outgoing transitions
-        // States with EOS targets but outgoing transitions are NOT accepting
-        // This prevents partial matches for patterns like a((b))+ where 'ab' would
-        // incorrectly match before the required 'b' is consumed
-        uint8_t category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-        if (category_mask != 0 && current_state->transition_count == 0) {
-            // Only dead-end states (no transitions) can accept
+    fprintf(stderr, "DEBUG: Reached end of input check, pos=%zu, length=%zu\n", pos, length);
+    fflush(stderr);
+
+    // End of input - check if final state can accept
+    uint8_t current_category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
+    fprintf(stderr, "DEBUG: Final state flags=0x%04X, category_mask=0x%02X\n",
+            current_state->flags, current_category_mask);
+    fflush(stderr);
+
+    // First check current state
+    bool is_accepting = (current_category_mask != 0);
+    fprintf(stderr, "DEBUG: is_accepting=%d\n", is_accepting);
+    fflush(stderr);
+
+    // Also check EOS target if current state is not accepting
+    if (!is_accepting && current_state->eos_target != 0) {
+        dfa_state_t* eos_state = (dfa_state_t*)((char*)current_dfa + current_state->eos_target);
+        uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
+        if (eos_cat_mask != 0) {
+            is_accepting = true;
+            current_category_mask = eos_cat_mask;
+            current_state = eos_state;
         }
     }
 
-    // End of input - check if final state can accept
-    // THEORY: A DFA state is accepting if it contains ANY NFA accepting state
-    // (i.e., category_mask != 0). The EOS transition is already followed during
-    // epsilon_closure, so the accepting state is included in the DFA state.
-    // We do NOT require the state to have no outgoing transitions.
-    uint8_t current_category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-
     // A state is accepting if category_mask != 0 (contains at least one accepting NFA state)
-    bool is_accepting = (current_category_mask != 0);
-
     if (is_accepting) {
         result->matched = true;
         result->matched_length = pos;
