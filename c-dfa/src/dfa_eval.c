@@ -4,6 +4,22 @@
 #include <string.h>
 #include <stdint.h>
 
+/**
+ * Debug output control - set to 0 to disable all debug prints
+ * Can be overridden with -DDFA_EVAL_DEBUG=1 compiler flag
+ */
+#ifndef DFA_EVAL_DEBUG
+#define DFA_EVAL_DEBUG 0
+#endif
+
+#if DFA_EVAL_DEBUG
+#define EVAL_DEBUG_PRINT(fmt, ...) fprintf(stderr, "DEBUG: " fmt, ##__VA_ARGS__)
+#define EVAL_DEBUG_FLUSH() fflush(stderr)
+#else
+#define EVAL_DEBUG_PRINT(fmt, ...) ((void)0)
+#define EVAL_DEBUG_FLUSH() ((void)0)
+#endif
+
 static const dfa_t* current_dfa = NULL;
 static char current_identifier[256] = "";
 
@@ -247,12 +263,12 @@ int dfa_get_capture(const dfa_result_t* result, int index, const char** out_star
 
 bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_captures) {
 
-    fprintf(stderr, "DEBUG: dfa_evaluate_with_limit called, current_dfa=%p\n", current_dfa);
-    fflush(stderr);
+    EVAL_DEBUG_PRINT("dfa_evaluate_with_limit called, current_dfa=%p\n", current_dfa);
+    EVAL_DEBUG_FLUSH();
 
     if (current_dfa == NULL || input == NULL || result == NULL) {
-        fprintf(stderr, "DEBUG: Early return - NULL check failed\n");
-        fflush(stderr);
+        EVAL_DEBUG_PRINT("Early return - NULL check failed\n");
+        EVAL_DEBUG_FLUSH();
         return false;
     }
 
@@ -432,18 +448,18 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         }
     }
 
-    fprintf(stderr, "DEBUG: Reached end of input check, pos=%zu, length=%zu\n", pos, length);
-    fflush(stderr);
+    EVAL_DEBUG_PRINT("Reached end of input check, pos=%zu, length=%zu\n", pos, length);
+    EVAL_DEBUG_FLUSH();
 
     // End of input - check if final state can accept
     uint8_t current_category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-    fprintf(stderr, "DEBUG: Final state flags=0x%04X, category_mask=0x%02X\n",
+    EVAL_DEBUG_PRINT("Final state flags=0x%04X, category_mask=0x%02X\n",
             current_state->flags, current_category_mask);
-    fflush(stderr);
+    EVAL_DEBUG_FLUSH();
 
     // First check current state
     bool is_accepting = (current_category_mask != 0);
-    fprintf(stderr, "DEBUG: is_accepting=%d\n", is_accepting);
+    EVAL_DEBUG_PRINT("is_accepting=%d\n", is_accepting);
     fflush(stderr);
 
     // Also check EOS target if current state is not accepting

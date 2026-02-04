@@ -23,8 +23,14 @@ static void test_nfa_dfa_comprehensive(bool quiet_mode);
 static void test_dfa_init_valid(void) {
     printf("\nTest: DFA Init (valid file)\n");
 
+#if DFA_EVAL_DEBUG
+    fprintf(stderr, "DEBUG: Loading DFA from '%s'\n", dfa_file_path);
+#endif
     size_t size;
     void* data = load_dfa_from_file(dfa_file_path, &size);
+#if DFA_EVAL_DEBUG
+    fprintf(stderr, "DEBUG: load_dfa_from_file returned %p, size=%zu\n", data, size);
+#endif
     TEST_ASSERT(data != NULL, "Can load DFA file");
     if (data == NULL) {
         return;
@@ -200,12 +206,16 @@ static void test_capture_support(void) {
 
     // Test cat with filename (matches pattern without capture tags)
     bool r1 = dfa_evaluate("cat test.txt", 0, &result);
+#if DFA_EVAL_DEBUG
     printf("  DEBUG: cat test.txt: eval=%d, matched=%d, len=%zu, category=%d\n", r1, result.matched, result.matched_length, result.category);
+#endif
     TEST_ASSERT(r1 && result.matched, "cat test.txt matches");
 
     // Test cat with path (matches pattern without capture tags)
     bool r2 = dfa_evaluate("cat /path/to/file.txt", 0, &result);
+#if DFA_EVAL_DEBUG
     printf("  DEBUG: cat /path: eval=%d, matched=%d, len=%zu\n", r2, result.matched, result.matched_length);
+#endif
     TEST_ASSERT(r2 && result.matched, "cat /path/to/file.txt matches");
 
     // Test capture API functions (these work even without capture patterns)

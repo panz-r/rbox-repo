@@ -30,11 +30,31 @@
  * from the pattern file.
  */
 
-// Conditional debug print macro - only prints if flag_verbose_nfa is true
-#define DEBUG_PRINT(fmt, ...) do { if (flag_verbose_nfa) fprintf(stderr, "//DEBUG: " fmt, ##__VA_ARGS__); } while (0)
+/**
+ * Debug output control - set to 0 to disable all debug prints
+ * These can be overridden with -DNFA_BUILDER_DEBUG=1 compiler flag
+ */
+#ifndef NFA_BUILDER_DEBUG
+#define NFA_BUILDER_DEBUG 0
+#endif
 
-// Conditional verbose print macro - only prints if flag_verbose is true
-#define VERBOSE_PRINT(fmt, ...) do { if (flag_verbose) fprintf(stderr, fmt, ##__VA_ARGS__); } while (0)
+#ifndef NFA_BUILDER_VERBOSE
+#define NFA_BUILDER_VERBOSE 0
+#endif
+
+// Conditional debug print macro - only prints if NFA_BUILDER_DEBUG is true
+#if NFA_BUILDER_DEBUG
+#define DEBUG_PRINT(fmt, ...) fprintf(stderr, "//DEBUG: " fmt, ##__VA_ARGS__)
+#else
+#define DEBUG_PRINT(fmt, ...) ((void)0)
+#endif
+
+// Conditional verbose print macro - only prints if NFA_BUILDER_VERBOSE is true
+#if NFA_BUILDER_VERBOSE
+#define VERBOSE_PRINT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+#else
+#define VERBOSE_PRINT(fmt, ...) ((void)0)
+#endif
 
 // Character class definition
 typedef struct {
@@ -2576,7 +2596,7 @@ static bool validate_pattern_file(const char* spec_file) {
             }
 
             // Check for common issues
-            if (*pattern_start != '\0' && strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*?[]()-+.\\", *pattern_start) == NULL) {
+            if (*pattern_start != '\0' && strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*?[]()-+.:\\", *pattern_start) == NULL) {
                 fprintf(stderr, "Error: Invalid pattern start at line %d: %s\n", line_num, line);
                 errors++;
             }

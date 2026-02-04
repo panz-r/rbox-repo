@@ -145,7 +145,7 @@ func BuildClient() error {
 
 	// Step 5: Build the client library with c-dfa evaluation code
 	outputFile := filepath.Join(wd, "bin", "libreadonlybox_client.so")
-	buildClient := exec.Command("gcc", "-shared", "-fPIC", "-O2", "-o", outputFile,
+	buildClient := exec.Command("gcc", "-shared", "-fPIC", "-O2", "-DFA_EVAL_DEBUG=0", "-o", outputFile,
 		filepath.Join(wd, "internal/client", "client.c"),
 		filepath.Join(wd, "internal/client", "dfa.c"),
 		filepath.Join(wd, "internal/client", "dfa_static_data.c"),
@@ -381,6 +381,7 @@ func DfaTest() error {
 	// Build dfa_test_new (new comprehensive test binary that reads DFA from file)
 	fmt.Println("Building dfa_test_new...")
 	buildCmd = exec.Command("gcc", "-o", dfaTestNew,
+		"-DFA_EVAL_DEBUG=0",
 		filepath.Join(cdfaSrcDir, "dfa_eval.c"),
 		filepath.Join(cdfaSrcDir, "dfa_loader.c"),
 		filepath.Join(cdfaSrcDir, "dfa_test.c"),

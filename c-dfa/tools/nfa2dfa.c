@@ -877,9 +877,11 @@ void write_dfa_file(const char* filename) {
     // Calculate header size
     size_t id_len = strlen(pattern_identifier);
     if (id_len > 255) id_len = 255;
+    DEBUG_PRINT("pattern_identifier='%s' (len=%zu)\n", pattern_identifier, id_len);
     // dfa_t struct is 19 bytes: magic(4) + version(2) + state_count(2) + initial_state(4) + accepting_mask(4) + flags(2) + identifier_length(1)
     // States start at: 19 + id_len (identifier_length byte is included in dfa_t)
     size_t header_size = 19 + id_len;
+    DEBUG_PRINT("header_size=%zu, initial_state will be set to %zu\n", header_size, header_size);
     size_t states_size = dfa_state_count * sizeof(dfa_state_t);
     size_t total_transitions = 0;
     for (int i = 0; i < dfa_state_count; i++) {
@@ -996,7 +998,7 @@ void write_dfa_file(const char* filename) {
         uint8_t cat_mask = (dfa[i].flags >> 8) & 0xFF;
         if (cat_mask != 0) final_count++;
     }
-    fprintf(stderr, "DEBUG: DFA has %d states, %d have non-zero category mask\n", dfa_state_count, final_count);
+    DEBUG_PRINT("DFA has %d states, %d have non-zero category mask\n", dfa_state_count, final_count);
 }
 
 // Main function

@@ -1,7 +1,7 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -O2
+CFLAGS = -Wall -Wextra -std=c99 -O2 -DNFA_BUILDER_DEBUG=0 -DNFA_BUILDER_VERBOSE=0 -DNFA2DFA_DEBUG=0 -DNFA2DFA_VERBOSE=0 -DDFA_EVAL_DEBUG=0
 
-TARGETS = nfa_builder nfa2dfa_advanced nfa2dfa_debug_large
+TARGETS = nfa_builder nfa2dfa_advanced
 
 all: $(TARGETS)
 
@@ -10,9 +10,6 @@ nfa_builder: nfa_builder.c
 
 nfa2dfa_advanced: nfa2dfa.c
 	$(CC) $(CFLAGS) -o $@ $<
-
-nfa2dfa_debug_large: nfa2dfa_debug_large.c
-	$(CC) $(CFLAGS) -DMAX_STATES=65536 -o $@ $<
 
 clean:
 	rm -f $(TARGETS)
