@@ -35,6 +35,10 @@ func main() {
 			handleInstallLinks()
 			return
 		}
+		if os.Args[1] == "ptrace" {
+			handlePtrace()
+			return
+		}
 		if os.Args[1] == "--run" {
 			handleRun()
 			return
@@ -91,6 +95,7 @@ func main() {
 		readonlybox.ListCommands()
 		fmt.Fprintf(os.Stderr, "\nSpecial commands:\n")
 		fmt.Fprintf(os.Stderr, "  shell              Launch a shell with read-only commands\n")
+		fmt.Fprintf(os.Stderr, "  ptrace <cmd>       Run command with ptrace-based interception\n")
 		fmt.Fprintf(os.Stderr, "  install-links      Install symlinks for all commands\n")
 		fmt.Fprintf(os.Stderr, "  --configure-access <config-file>  Configure access control\n")
 		fmt.Fprintf(os.Stderr, "  --show-access                    Show current access configuration\n")
@@ -510,6 +515,45 @@ func handleShowAccess() {
 		fmt.Printf("    Max Size: %s\n", configAST.TempConfig.MaxSize)
 		fmt.Printf("    Max Count: %d\n", configAST.TempConfig.MaxCount)
 		fmt.Printf("    Auto Cleanup: %s\n", configAST.TempConfig.AutoCleanup)
+	}
+}
+
+/* handlePtrace - run command with ptrace-based interception
+ * Usage: readonlybox ptrace <command> [args...]
+ */
+func handlePtrace() {
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage: readonlybox ptrace <command> [args...]\n")
+		fmt.Fprintf(os.Stderr, "\nRun a command with ptrace-based command interception.\n")
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  readonlybox ptrace bash\n")
+		fmt.Fprintf(os.Stderr, "  readonlybox ptrace /bin/ls -la\n")
+		os.Exit(1)
+	}
+
+	/* Find readonlybox-ptrace binary */
+	ptracePath := "/usr/local/bin/readonlybox-ptrace"
+	if _, err := os.Stat(ptracePath); os.IsNotExist(err) {
+		/* Try to find in PATH */
+		ptracePath = "readonlybox-ptrace"
+	}
+
+	/* Build arguments for readonlybox-ptrace */
+	/* Skip "readonlybox ptrace" and pass the rest */
+	ptraceArgs := os.Args[2:]
+
+	/* Execute readonlybox-ptrace */
+	cmd := exec.Command(ptracePath, ptraceArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "readonlybox ptrace: %v\n", err)
+		os.Exit(1)
 	}
 }
 

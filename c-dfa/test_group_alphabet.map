@@ -1,5 +1,5 @@
 # Pattern-Aware Alphabet Map
-# Based on: /home/panz/osrc/lms-test/readonlybox/c-dfa/alphabet_per_char.map
+# Based on: /home/panz/backup-copies/robox-copy/c-dfa/alphabet_per_char.map
 # Specific digits: ['0', '1', '2', '3', '4', '5', '6', '7']
 
 0 0 0       # ANY (wildcard - matches any character)

@@ -146,7 +146,7 @@ bool dfa_init(const void* dfa_data, size_t size) {
         return false;
     }
 
-    if (dfa->version != 3 && dfa->version != 4) {
+    if (dfa->version != 4) {
         return false;
     }
 

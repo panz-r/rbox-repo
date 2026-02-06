@@ -1,5 +1,6 @@
 bin/*
 *.so
+*.o
 */*.so
 c-dfa/tools/readonlybox_dfa.c
 internal/client/dfa_static_data.c
