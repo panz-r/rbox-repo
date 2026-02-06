@@ -1045,7 +1045,7 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     if (is_single_char) {
         result.is_single_char = true;
         result.loop_char = frag_value[0];
-        result.loop_entry_state = frag_end;  // Exit state after consuming the char
+        result.loop_entry_state = frag_start;  // State BEFORE consuming char (for loop transition)
     } else {
         result.is_single_char = false;
         result.loop_char = '\0';
@@ -1524,9 +1524,27 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     // where loop_state gets added to the transition. Use separate states.
                     //
                     // Structure:
-                    //   Entry --char--> First (for first iteration)
-                    //   Loop --char--> Loop (for subsequent iterations)
-                    //   Loop --EOS--> Accepting
+                    //   Entry --char--> First (first iteration)
+                    //   First --char--> Loop (subsequent iterations)
+                    //   First --EOS--> Accepting (after first iteration)
+                    //   Loop --char--> Loop (subsequent iterations)
+                    //   Loop --EOS--> Accepting (after subsequent iterations)
+                    fprintf(stderr, "DEBUG: + handler loop_entry=%d, currently has %d transitions\n",
+                            current_fragment.loop_entry_state,
+                            nfa[current_fragment.loop_entry_state].transition_count);
+                    for (int s = 0; s < MAX_SYMBOLS; s++) {
+                        if (nfa[current_fragment.loop_entry_state].transitions[s] != -1) {
+                            fprintf(stderr, "DEBUG:   Existing transition: state %d --symbol %d--> %d\n",
+                                    current_fragment.loop_entry_state, s,
+                                    nfa[current_fragment.loop_entry_state].transitions[s]);
+                        }
+                        if (nfa[current_fragment.loop_entry_state].multi_targets[s][0] != '\0') {
+                            fprintf(stderr, "DEBUG:   Existing multi-target: state %d --symbol %d--> %s\n",
+                                    current_fragment.loop_entry_state, s,
+                                    nfa[current_fragment.loop_entry_state].multi_targets[s]);
+                        }
+                    }
+
                     int first_iter = nfa_add_state_with_minimization(false);
                     int loop_state = nfa_add_state_with_minimization(false);
                     DEBUG_PRINT("+ handler: loop_entry=%d, first_iter=%d, loop_state=%d\n",
@@ -1536,26 +1554,33 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     state_do_not_share[first_iter] = true;
                     state_do_not_share[loop_state] = true;
 
-                    // Entry -> First on char (first iteration)
-                    nfa_add_transition(current_fragment.loop_entry_state, first_iter, char_sid);
-
-                    // First -> Loop on char (transition to loop state)
-                    nfa_add_transition(first_iter, loop_state, char_sid);
-                    DEBUG_PRINT("+ handler: Added %d -> %d on char %d\n",
-                              first_iter, loop_state, char_sid);
-
-                    // Loop -> Loop on char (subsequent iterations)
-                    nfa_add_transition(loop_state, loop_state, char_sid);
-                    DEBUG_PRINT("+ handler: Added %d -> %d on char %d (loop)\n",
-                              loop_state, loop_state, char_sid);
-
-                    // Loop -> Accepting on EOS
+                    // Create accepting state FIRST
                     int new_accepting = nfa_add_state_with_category(current_pattern_cat_mask);
                     state_do_not_share[new_accepting] = true;
                     nfa[new_accepting].is_eos_target = true;
+
+                    // Entry -> First on char (for first iteration)
+                    // IMPORTANT: Replace any existing transition from parse_rdp_fragment
+                    // because + quantifier needs to control the transition
+                    fprintf(stderr, "DEBUG: Adding/replacing transition %d --char(%d)--> %d\n",
+                            current_fragment.loop_entry_state, char_sid, first_iter);
+                    nfa[current_fragment.loop_entry_state].transitions[char_sid] = first_iter;
+                    // Clear any multi-target that might exist
+                    nfa[current_fragment.loop_entry_state].multi_targets[char_sid][0] = '\0';
+                    fprintf(stderr, "DEBUG: After transition, state %d has %d transitions\n",
+                            current_fragment.loop_entry_state, nfa[current_fragment.loop_entry_state].transition_count);
+
+                    // First -> Loop on char (for subsequent iterations)
+                    nfa_add_transition(first_iter, loop_state, char_sid);
+
+                    // Loop -> Loop on char (subsequent iterations)
+                    nfa_add_transition(loop_state, loop_state, char_sid);
+
+                    // First -> Accepting on EOS (for first iteration)
+                    nfa_add_transition(first_iter, new_accepting, eos_sid);
+
+                    // Loop -> Accepting on EOS (for subsequent iterations)
                     nfa_add_transition(loop_state, new_accepting, eos_sid);
-                    DEBUG_PRINT("+ handler: Added %d -> %d on EOS\n",
-                              loop_state, new_accepting);
                     nfa_finalize_state(new_accepting);
                     current = new_accepting;
                     DEBUG_PRINT("+ handler: Final current=%d\n", current);

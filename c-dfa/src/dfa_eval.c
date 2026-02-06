@@ -453,9 +453,18 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
     // End of input - check if final state can accept
     uint8_t current_category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-    EVAL_DEBUG_PRINT("Final state flags=0x%04X, category_mask=0x%02X\n",
-            current_state->flags, current_category_mask);
+    EVAL_DEBUG_PRINT("Final state at offset=0x%X, flags=0x%04X, category_mask=0x%02X\n",
+            (unsigned int)((char*)current_state - (char*)current_dfa), current_state->flags, current_category_mask);
     EVAL_DEBUG_FLUSH();
+    
+    // Also check EOS target
+    if (current_state->eos_target != 0) {
+        dfa_state_t* eos_state = (dfa_state_t*)((char*)current_dfa + current_state->eos_target);
+        uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
+        EVAL_DEBUG_PRINT("EOS target at offset=0x%X, flags=0x%04X, eos_category_mask=0x%02X\n",
+                current_state->eos_target, eos_state->flags, eos_cat_mask);
+        EVAL_DEBUG_FLUSH();
+    }
 
     // First check current state
     bool is_accepting = (current_category_mask != 0);

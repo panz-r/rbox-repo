@@ -184,7 +184,10 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
             eos_target = 0;  // Will be resolved during DFA construction
         }
     }
-
+    
+    fprintf(stderr, "DEBUG dfa_add_state: state=%d, category_mask=0x%02x, capture_flags=0x%04x, flags=0x%04x\n",
+            state, category_mask, capture_flags, (category_mask << 8) | capture_flags);
+    
     // Store category_mask in bits 8-15, set DFA_STATE_ACCEPTING if category_mask != 0
     dfa[state].flags = (category_mask << 8) | capture_flags;
     if (category_mask != 0) {
@@ -465,37 +468,44 @@ void nfa_to_dfa(void) {
                 }
                 
                 // Also check EOS transitions from this move target
-                // But ONLY if this move target has no character transitions
-                // (If it has char transitions, we can match more, so don't accept)
-                if (!has_char_transition) {
-                    // Find EOS symbol
-                    int eos_symbol = -1;
-                    for (int s = 0; s < alphabet_size; s++) {
-                        if (alphabet[s].is_special && alphabet[s].start_char == 3) {  // Symbol 3 is EOS
-                            eos_symbol = s;
-                            break;
-                        }
+                // IMPORTANT: For + quantifier, the first_iter state has both char transitions AND EOS
+                // We should accept if the EOS target is terminal, regardless of char transitions
+                // Because the user could end the input here (and loop zero more times)
+                // But if the state has char transitions, we mark it as "can continue" in the DFA
+                
+                // Find EOS symbol
+                int eos_symbol = -1;
+                for (int s = 0; s < alphabet_size; s++) {
+                    if (alphabet[s].is_special && alphabet[s].start_char == DFA_CHAR_EOS) {  // EOS symbol
+                        eos_symbol = s;
+                        break;
                     }
-                    
-                    if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
-                        int eos_target = nfa[state].transitions[eos_symbol];
-                        if (nfa[eos_target].is_eos_target && nfa[eos_target].category_mask != 0) {
-                            // Check if EOS target has char transitions
-                            bool eos_has_char_trans = false;
-                            for (int s = 0; s < alphabet_size; s++) {
-                                if (alphabet[s].is_special) continue;
-                                if (nfa[eos_target].transitions[s] != -1 || nfa[eos_target].multi_targets[s][0] != '\0') {
-                                    eos_has_char_trans = true;
-                                    break;
-                                }
+                }
+                
+                if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
+                    int eos_target = nfa[state].transitions[eos_symbol];
+                    fprintf(stderr, "DEBUG: state=%d has EOS to %d, eos_target.is_eos_target=%d, cat=0x%02x\n",
+                            state, eos_target, nfa[eos_target].is_eos_target, nfa[eos_target].category_mask);
+                    if (nfa[eos_target].is_eos_target && nfa[eos_target].category_mask != 0) {
+                        // Check if EOS target has char transitions
+                        bool eos_has_char_trans = false;
+                        for (int s = 0; s < alphabet_size; s++) {
+                            if (alphabet[s].is_special) continue;
+                            if (nfa[eos_target].transitions[s] != -1 || nfa[eos_target].multi_targets[s][0] != '\0') {
+                                eos_has_char_trans = true;
+                                break;
                             }
-                            if (!eos_has_char_trans) {
-                                move_accepting_mask |= nfa[eos_target].category_mask;
-                            }
+                        }
+                        fprintf(stderr, "DEBUG: eos_target=%d has_char_trans=%d\n", eos_target, eos_has_char_trans);
+                        if (!eos_has_char_trans) {
+                            move_accepting_mask |= nfa[eos_target].category_mask;
+                            fprintf(stderr, "DEBUG: Added category 0x%02x from EOS target\n", nfa[eos_target].category_mask);
                         }
                     }
                 }
             }
+            
+            fprintf(stderr, "DEBUG: direct_move_count=%d, move_accepting_mask=0x%02x\n", direct_move_count, move_accepting_mask);
 
             // Debug for transitions on 'b' from states 10 and 20
             if (alphabet[array_idx].start_char == 'b' && (current_dfa == 10 || current_dfa == 20)) {
