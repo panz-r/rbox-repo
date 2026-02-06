@@ -246,6 +246,8 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [safe::readonly::file] ls -a
 
+[safe::readonly::file] ls --color-auto
+
 [safe::readonly::file] cat *
 
 [safe::readonly::file] cat
