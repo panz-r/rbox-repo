@@ -301,6 +301,7 @@ void epsilon_closure(int* states, int* count, int max_states) {
 void nfa_move(int* states, int* count, int symbol_id, int max_states) {
     int new_states[MAX_STATES];
     int new_count = 0;
+
     for (int i = 0; i < *count; i++) {
         int state = states[i];
         if (state < 0 || state >= nfa_state_count) continue;
@@ -344,59 +345,6 @@ void nfa_move(int* states, int* count, int symbol_id, int max_states) {
                 if (p) p++;
             }
         }
-    }
-
-    // Iteratively follow transitions until no new states are found
-    // This handles cases where state A --symbol--> state B --symbol--> state C
-    while (1) {
-        int added = 0;
-        for (int i = 0; i < new_count; i++) {
-            int state = new_states[i];
-            if (state < 0 || state >= nfa_state_count) continue;
-
-            // Check first transition
-            if (nfa[state].transitions[symbol_id] != -1) {
-                int target = nfa[state].transitions[symbol_id];
-                bool found = false;
-                for (int j = 0; j < new_count; j++) {
-                    if (new_states[j] == target) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found && new_count < max_states) {
-                    new_states[new_count] = target;
-                    new_count++;
-                    added++;
-                }
-            }
-
-            // Check additional targets in multi_targets
-            if (nfa[state].multi_targets[symbol_id][0] != '\0') {
-                char* p = nfa[state].multi_targets[symbol_id];
-                while (p != NULL && *p != '\0') {
-                    if (*p == ',') p++;  // Skip leading comma
-                    int target = atoi(p);
-                    if (target >= 0 && target < MAX_STATES) {
-                        bool found = false;
-                        for (int j = 0; j < new_count; j++) {
-                            if (new_states[j] == target) {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found && new_count < max_states) {
-                            new_states[new_count] = target;
-                            new_count++;
-                            added++;
-                        }
-                    }
-                    p = strchr(p, ',');
-                    if (p) p++;
-                }
-            }
-        }
-        if (added == 0) break;
     }
 
     for (int i = 0; i < new_count && i < max_states; i++) {
@@ -455,12 +403,23 @@ void nfa_to_dfa(void) {
             int move_count = 0;
             for (int i = 0; i < dfa[current_dfa].nfa_state_count; i++) {
                 move_states[i] = dfa[current_dfa].nfa_states[i];
-                move_count++;
             }
+            move_count = dfa[current_dfa].nfa_state_count;
+
             // Use the actual symbol_id from the alphabet entry, not the array index
             int symbol_id = alphabet[array_idx].symbol_id;
             nfa_move(move_states, &move_count, symbol_id, MAX_STATES);
             if (move_count == 0) continue;
+
+            // CRITICAL FIX: Save the direct move targets BEFORE epsilon closure
+            // This is the key fix for the category isolation bug
+            int direct_move_count = move_count;
+            int direct_moves[MAX_STATES];
+            for (int i = 0; i < move_count; i++) {
+                direct_moves[i] = move_states[i];
+            }
+
+            // Now do epsilon closure (modifies move_states in place)
             epsilon_closure(move_states, &move_count, MAX_STATES);
 
             // THEORY: DFA states are subsets of NFA states
@@ -470,72 +429,73 @@ void nfa_to_dfa(void) {
             // we must NOT set the accepting mask (set to 0) to prevent incorrect matches.
 
             // Compute accepting mask
-            // CRITICAL FIX: Only use the category from truly final accepting states.
-            // A state is a "final accepting state" if:
-            // 1. It can accept via EOS (is_eos_target=yes AND category_mask != 0)
-            // 2. It has no outgoing character transitions (dead end - pattern is complete)
+            // A DFA state is accepting if ANY of the DIRECT MOVE TARGETS (before epsilon closure)
+            // is terminal (no character transitions, can accept via EOS, has a category).
             //
-            // Intermediate accepting states (can accept via EOS but have outgoing transitions
-            // that lead to more matching) should NOT contribute to the accepting mask.
+            // We check the direct move targets, NOT the epsilon-closed set, because:
+            // - The epsilon-closed set includes states reached via EOS from move targets
+            // - Those EOS-reached states are already accepting (they have EOS targets)
+            // - We should NOT include their EOS target's categories
             //
-            // This prevents intermediate states from one pattern (e.g., state 135 for abc((b))+)
-            // from incorrectly being used as accepting, while properly using the final state
-            // (e.g., state 136) which represents the true end of the pattern.
+            // For example, with patterns "abcdd" and "abcd((d))+":
+            // - After "abcd": move_targets = {4, 10}. Both have char transitions -> NOT accepting
+            // - After "abcdd": move_targets = {5, 11}. State 5 is terminal -> accepting with cat 0x04
 
             uint8_t move_accepting_mask = 0;
-
-            // Track categories from final accepting states only
-            bool pattern_has_final_accepting[MAX_PATTERNS] = {false};
-            uint8_t pattern_final_cats[MAX_PATTERNS] = {0};
-
-            for (int i = 0; i < move_count; i++) {
-                int state = move_states[i];
-                uint8_t state_cat = nfa[state].category_mask;
-                int state_pattern = nfa[state].pattern_id;
-
-                // Check if this state is a final accepting state
-                // A state is final accepting if:
-                // 1. is_eos_target = true (can accept via EOS)
-                // 2. category_mask != 0 (has an acceptance category)
-                // NOTE: We no longer check for outgoing transitions because
-                // patterns with shared prefixes need intermediate states to be accepting
-                bool is_final_accepting = false;
-                if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
-                    is_final_accepting = true;
+            
+            // Check which of the DIRECT MOVE TARGETS are terminal
+            // (States with no character transitions)
+            for (int i = 0; i < direct_move_count; i++) {
+                int state = direct_moves[i];
+                
+                // Check if this state has any character transitions (excluding special symbols)
+                bool has_char_transition = false;
+                for (int s = 0; s < alphabet_size; s++) {
+                    if (alphabet[s].is_special) continue;  // Skip EOS, space, etc.
+                    if (nfa[state].transitions[s] != -1 || nfa[state].multi_targets[s][0] != '\0') {
+                        has_char_transition = true;
+                        break;
+                    }
                 }
-
-                if (is_final_accepting) {
-                    pattern_has_final_accepting[state_pattern] = true;
-                    pattern_final_cats[state_pattern] |= state_cat;
+                
+                // If this move target is terminal, include its category
+                // (Terminal means: no char transitions, is EOS target, has category)
+                if (!has_char_transition && nfa[state].is_eos_target && nfa[state].category_mask != 0) {
+                    move_accepting_mask |= nfa[state].category_mask;
                 }
-
-                // Check for different categories using local variables
-                uint8_t seen_cats[256] = {0};
-                int seen_cat_count = 0;
-                if (state_cat != 0) {
-                    bool found = false;
-                    for (int j = 0; j < seen_cat_count; j++) {
-                        if (seen_cats[j] == state_cat) {
-                            found = true;
+                
+                // Also check EOS transitions from this move target
+                // But ONLY if this move target has no character transitions
+                // (If it has char transitions, we can match more, so don't accept)
+                if (!has_char_transition) {
+                    // Find EOS symbol
+                    int eos_symbol = -1;
+                    for (int s = 0; s < alphabet_size; s++) {
+                        if (alphabet[s].is_special && alphabet[s].start_char == 3) {  // Symbol 3 is EOS
+                            eos_symbol = s;
                             break;
                         }
                     }
-                    if (!found && seen_cat_count < 256) {
-                        seen_cats[seen_cat_count++] = state_cat;
+                    
+                    if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
+                        int eos_target = nfa[state].transitions[eos_symbol];
+                        if (nfa[eos_target].is_eos_target && nfa[eos_target].category_mask != 0) {
+                            // Check if EOS target has char transitions
+                            bool eos_has_char_trans = false;
+                            for (int s = 0; s < alphabet_size; s++) {
+                                if (alphabet[s].is_special) continue;
+                                if (nfa[eos_target].transitions[s] != -1 || nfa[eos_target].multi_targets[s][0] != '\0') {
+                                    eos_has_char_trans = true;
+                                    break;
+                                }
+                            }
+                            if (!eos_has_char_trans) {
+                                move_accepting_mask |= nfa[eos_target].category_mask;
+                            }
+                        }
                     }
                 }
             }
-
-            // Only set accepting mask from final accepting states
-            for (int p = 0; p < MAX_PATTERNS; p++) {
-                if (pattern_has_final_accepting[p]) {
-                    move_accepting_mask |= pattern_final_cats[p];
-                }
-            }
-
-            // NOTE: We do NOT clear move_accepting_mask when multiple categories are present
-            // This allows prefix-sharing patterns like "git" (cat 0x01) and "git status" (cat 0x02)
-            // to both be accepted at the "git" prefix, with the combined category mask 0x03
 
             // Debug for transitions on 'b' from states 10 and 20
             if (alphabet[array_idx].start_char == 'b' && (current_dfa == 10 || current_dfa == 20)) {
