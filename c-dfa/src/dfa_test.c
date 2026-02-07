@@ -30,7 +30,7 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
     char cmd[512];
     snprintf(cmd, sizeof(cmd),
         "mkdir -p %s && cd %s && "
-        "../tools/nfa_builder --alphabet ../alphabet_per_char.map ../%s test.nfa 2>/dev/null && "
+        "../tools/nfa_builder ../%s test.nfa 2>/dev/null && "
         "../tools/nfa2dfa_advanced test.nfa %s 2>/dev/null",
         build_dir, build_dir, patterns_file, filename);
     system(cmd);
@@ -505,6 +505,192 @@ static void run_expanded_perf_tests(void) {
                    "build_test/expanded_perf.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
+static void run_admin_command_tests(void) {
+    TestCase cases[] = {
+        {"sudo command", true, 0, CAT_MASK_ADMIN, "sudo command matches"},
+        {"sudo -i", true, 0, CAT_MASK_ADMIN, "sudo -i matches"},
+        {"sudo su", true, 0, CAT_MASK_ADMIN, "sudo su matches"},
+        {"useradd username", true, 0, CAT_MASK_ADMIN, "useradd matches"},
+        {"groupadd groupname", true, 0, CAT_MASK_ADMIN, "groupadd matches"},
+        {"apt-get update", true, 0, CAT_MASK_ADMIN, "apt-get update matches"},
+        {"cat file.txt", false, 0, CAT_MASK_ADMIN, "regular command should NOT match admin"},
+    };
+
+    run_test_group("ADMIN COMMAND TESTS", "patterns_admin_commands.txt",
+                   "build_test/admin_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_caution_command_tests(void) {
+    TestCase cases[] = {
+        {"cat /etc/passwd", true, 0, CAT_MASK_CAUTION, "cat /etc/passwd matches"},
+        {"cat /etc/shadow", true, 0, CAT_MASK_CAUTION, "cat /etc/shadow matches"},
+        {"find / -name \"*.conf\"", true, 0, CAT_MASK_CAUTION, "find / matches"},
+        {"netstat -tuln", true, 0, CAT_MASK_CAUTION, "netstat matches"},
+        {"ifconfig -a", true, 0, CAT_MASK_CAUTION, "ifconfig matches"},
+        {"ps aux | grep root", true, 0, CAT_MASK_CAUTION, "ps aux grep matches"},
+        {"git status", false, 0, CAT_MASK_CAUTION, "safe command should NOT match caution"},
+    };
+
+    run_test_group("CAUTION COMMAND TESTS", "patterns_caution_commands.txt",
+                   "build_test/caution_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_modifying_command_tests(void) {
+    TestCase cases[] = {
+        {"rm file.txt", true, 0, CAT_MASK_MODIFYING, "rm file matches"},
+        {"rm -rf /", true, 0, CAT_MASK_MODIFYING, "rm -rf / matches"},
+        {"touch newfile.txt", true, 0, CAT_MASK_MODIFYING, "touch matches"},
+        {"mkdir dir", true, 0, CAT_MASK_MODIFYING, "mkdir matches"},
+        {"cp file1.txt file2.txt", true, 0, CAT_MASK_MODIFYING, "cp matches"},
+        {"chmod 755 file.txt", true, 0, CAT_MASK_MODIFYING, "chmod matches"},
+        {"git status", false, 0, CAT_MASK_MODIFYING, "safe command should NOT match modifying"},
+    };
+
+    run_test_group("MODIFYING COMMAND TESTS", "patterns_modifying_commands.txt",
+                   "build_test/modifying_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_dangerous_command_tests(void) {
+    TestCase cases[] = {
+        {"reboot", true, 0, CAT_MASK_DANGEROUS, "reboot matches"},
+        {"shutdown", true, 0, CAT_MASK_DANGEROUS, "shutdown matches"},
+        {"dd if=/dev/zero of=/dev/sda", true, 0, CAT_MASK_DANGEROUS, "dd destructive matches"},
+        {"mkfs.ext4 /dev/sda1", true, 0, CAT_MASK_DANGEROUS, "mkfs matches"},
+        {":(){ :|:& };:", true, 0, CAT_MASK_DANGEROUS, "fork bomb matches"},
+        {"git status", false, 0, CAT_MASK_DANGEROUS, "safe command should NOT match dangerous"},
+    };
+
+    run_test_group("DANGEROUS COMMAND TESTS", "patterns_dangerous_commands.txt",
+                   "build_test/dangerous_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_network_command_tests(void) {
+    TestCase cases[] = {
+        {"ping google.com", true, 0, CAT_MASK_NETWORK, "ping matches"},
+        {"curl http://example.com", true, 0, CAT_MASK_NETWORK, "curl HTTP matches"},
+        {"wget https://example.com", true, 0, CAT_MASK_NETWORK, "wget HTTPS matches"},
+        {"ssh user@host", true, 0, CAT_MASK_NETWORK, "ssh matches"},
+        {"nmap host", true, 0, CAT_MASK_NETWORK, "nmap matches"},
+        {"nc host port", true, 0, CAT_MASK_NETWORK, "netcat matches"},
+        {"git status", false, 0, CAT_MASK_NETWORK, "safe command should NOT match network"},
+    };
+
+    run_test_group("NETWORK COMMAND TESTS", "patterns_network_commands.txt",
+                   "build_test/network_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_combined_tests(void) {
+    TestCase cases[] = {
+        {"cat file.txt", true, 0, CAT_MASK_SAFE, "cat file matches safe"},
+        {"grep pattern file.txt", true, 0, CAT_MASK_SAFE, "grep matches safe"},
+        {"git status", true, 0, CAT_MASK_SAFE, "git status matches safe"},
+        {"git log --oneline", true, 0, CAT_MASK_SAFE, "git log matches safe"},
+        {"find . -name \"*.txt\"", true, 0, CAT_MASK_SAFE, "find matches safe"},
+        {"ps aux", true, 0, CAT_MASK_SAFE, "ps matches safe"},
+        {"rm file.txt", false, 0, CAT_MASK_SAFE, "rm should NOT match safe"},
+    };
+
+    run_test_group("COMBINED PATTERN TESTS", "patterns_combined.txt",
+                   "build_test/combined.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_minimal_tests(void) {
+    TestCase cases[] = {
+        {"a", true, 1, CAT_MASK_SAFE, "single 'a' matches"},
+        {"aa", true, 2, CAT_MASK_SAFE, "double 'a' matches"},
+        {"aaa", true, 3, CAT_MASK_SAFE, "triple 'a' matches"},
+        {"", false, 0, 0, "empty should NOT match"},
+        {"b", false, 0, 0, "'b' should NOT match"},
+    };
+
+    run_test_group("MINIMAL PATTERN TESTS", "patterns_minimal.txt",
+                   "build_test/minimal.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_simple_quantifier_tests(void) {
+    TestCase cases[] = {
+        {"a", true, 1, CAT_MASK_SAFE, "a? matches 'a'"},
+        {"", true, 0, CAT_MASK_SAFE, "a? matches empty"},
+        {"aa", true, 2, CAT_MASK_SAFE, "a* matches 'aa'"},
+        {"", true, 0, CAT_MASK_SAFE, "a* matches empty"},
+        {"aaa", true, 3, CAT_MASK_SAFE, "a+ matches 'aaa'"},
+        {"", false, 0, 0, "a+ should NOT match empty"},
+    };
+
+    run_test_group("SIMPLE QUANTIFIER TESTS", "patterns_quantifier_simple.txt",
+                   "build_test/simple_quant.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_step_tests(void) {
+    TestCase cases[] = {
+        {"a", true, 1, CAT_MASK_SAFE, "step1 matches 'a'"},
+        {"ab", true, 2, CAT_MASK_SAFE, "step2 matches 'ab'"},
+        {"abc", true, 3, CAT_MASK_SAFE, "step3 matches 'abc'"},
+        {"", false, 0, 0, "empty should NOT match step patterns"},
+    };
+
+    run_test_group("STEP PATTERN TESTS", "patterns_step1.txt",
+                   "build_test/step1.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_test_pattern_tests(void) {
+    TestCase cases[] = {
+        {"test arg1", true, 0, CAT_MASK_SAFE, "test pattern matches"},
+        {"TEST uppercase", true, 0, CAT_MASK_SAFE, "TEST uppercase matches"},
+        {"test1", true, 0, CAT_MASK_SAFE, "test1 matches"},
+        {"", false, 0, 0, "empty should NOT match test pattern"},
+    };
+
+    run_test_group("TEST PATTERN TESTS", "patterns_test.txt",
+                   "build_test/test_patterns.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_debug_tests(void) {
+    TestCase cases[] = {
+        {"debug arg1", true, 0, CAT_MASK_SAFE, "debug pattern matches"},
+        {"DEBUG UPPERCASE", true, 0, CAT_MASK_SAFE, "DEBUG uppercase matches"},
+        {"", false, 0, 0, "empty should NOT match debug pattern"},
+    };
+
+    run_test_group("DEBUG PATTERN TESTS", "patterns_debug.txt",
+                   "build_test/debug_patterns.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_with_captures_tests(void) {
+    TestCase cases[] = {
+        {"cp src.txt dst.txt", true, 0, CAT_MASK_SAFE, "cp with captures matches"},
+        {"mv old.txt new.txt", true, 0, CAT_MASK_SAFE, "mv with captures matches"},
+        {"rsync -avz src/ dest/", true, 0, CAT_MASK_SAFE, "rsync with captures matches"},
+        {"echo hello world", true, 0, CAT_MASK_SAFE, "echo with captures matches"},
+    };
+
+    run_test_group("WITH CAPTURES TESTS", "patterns_with_captures.txt",
+                   "build_test/with_captures.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_capture_simple_tests(void) {
+    TestCase cases[] = {
+        {"cat file.txt", true, 0, CAT_MASK_SAFE, "cat simple capture matches"},
+        {"head -n 10 file.txt", true, 0, CAT_MASK_SAFE, "head capture matches"},
+        {"tail -n 5 file.txt", true, 0, CAT_MASK_SAFE, "tail capture matches"},
+        {"grep pattern file.txt", true, 0, CAT_MASK_SAFE, "grep capture matches"},
+    };
+
+    run_test_group("CAPTURE SIMPLE TESTS", "patterns_capture_simple.txt",
+                   "build_test/capture_simple.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void run_capture_test_tests(void) {
+    TestCase cases[] = {
+        {"GET /api/users HTTP/1.1", true, 0, CAT_MASK_SAFE, "HTTP request capture matches"},
+        {"POST /api/data HTTP/1.1", true, 0, CAT_MASK_SAFE, "POST request capture matches"},
+        {"curl -X GET http://api.example.com", true, 0, CAT_MASK_SAFE, "curl with method capture matches"},
+    };
+
+    run_test_group("CAPTURE TEST TESTS", "patterns_capture_test.txt",
+                   "build_test/capture_test.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
 int main(int argc, char* argv[]) {
     printf("=================================================\n");
     printf("DFA TEST RUNNER\n");
@@ -537,6 +723,21 @@ int main(int argc, char* argv[]) {
     run_expanded_mixed_tests();
     run_expanded_hard_tests();
     run_expanded_perf_tests();
+
+    run_admin_command_tests();
+    run_caution_command_tests();
+    run_modifying_command_tests();
+    run_dangerous_command_tests();
+    run_network_command_tests();
+    run_combined_tests();
+    run_minimal_tests();
+    run_simple_quantifier_tests();
+    run_step_tests();
+    run_test_pattern_tests();
+    run_debug_tests();
+    run_with_captures_tests();
+    run_capture_simple_tests();
+    run_capture_test_tests();
 
     print_separator();
     printf("=================================================\n");

@@ -1,0 +1,16 @@
+
+The fundamental problem is the misuse of the ANY transition. In a proper nondeterministic finite automaton (NFA) for alternation, we
+need epsilon transitions that allow moving between branches without consuming input characters. The current implementation incorrectly
+uses a character-consuming transition, which breaks the semantic correctness of the alternation operation.
+
+For (a|b), the NFA structure requires epsilon transitions from the initial state to each branch's start, and from each branch's end to
+the merge state. This allows seamless switching between alternatives without consuming input characters, preserving the intended
+matching behavior for patterns like a|b.
+
+The implementation needs to shift from using DFA_CHAR_ANY to truly epsilon-like transitions that don't consume characters but allow
+flexible path traversal.
+
+I found the issue! The alternation code is using DFA_CHAR_ANY to transition from each branch to the merge state, but this consumes a
+character when it shouldn't. Let me check how other patterns handle this:
+
+

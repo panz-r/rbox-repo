@@ -1,3 +1,0 @@
-# Minimal test for a((b))+
-[fragment:b] b
-[safe::readonly::test] a((b))+

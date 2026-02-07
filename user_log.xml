@@ -1,0 +1,7 @@
+<response timestamp="2026-01-26 16:29:00">
+  <request id="3" client="@" cwd="/home/panz/osrc/lms-test/readonlybox">
+    <command>[claude:execve] sh -c ps aux | grep -E &quot;code|cursor|windsurf|idea|pycharm|webstorm|phpstorm|rubymine|clion|goland|rider|datagrip|dataspell|aqua|gateway|fleet|android-studio&quot; | grep -v grep</command>
+    <args></args>
+  </request>
+  <decision action="ALLOW" duration="once"/>
+</response>

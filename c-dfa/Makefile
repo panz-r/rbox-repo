@@ -14,7 +14,7 @@ TOOLS_DIR = tools
 INCLUDE_DIR = include
 BUILD_DIR = build
 
-TARGETS = dfa_test comprehensive_test
+TARGETS = dfa_test
 
 # ============================================================================
 # All Pattern Files (used by test runner)
@@ -38,7 +38,24 @@ PATTERN_FILES = \
 	patterns_expanded_interactions.txt \
 	patterns_expanded_mixed.txt \
 	patterns_expanded_hard.txt \
-	patterns_expanded_perf.txt
+	patterns_expanded_perf.txt \
+	patterns_admin_commands.txt \
+	patterns_caution_commands.txt \
+	patterns_modifying_commands.txt \
+	patterns_dangerous_commands.txt \
+	patterns_network_commands.txt \
+	patterns_combined.txt \
+	patterns_minimal.txt \
+	patterns_quantifier_simple.txt \
+	patterns_simple_quant.txt \
+	patterns_step1.txt \
+	patterns_step2.txt \
+	patterns_step3.txt \
+	patterns_test.txt \
+	patterns_debug.txt \
+	patterns_with_captures.txt \
+	patterns_capture_test.txt \
+	patterns_capture_simple.txt
 
 # Pattern file to DFA file mapping
 # Each pattern file builds a DFA in build/ directory
@@ -66,7 +83,7 @@ $(BUILD_DIR):
 # ============================================================================
 $(BUILD_DIR)/%.nfa: %.txt | $(BUILD_DIR)
 	@echo "  Building NFA: $< -> $@"
-	@$(TOOLS_DIR)/nfa_builder --alphabet alphabet_per_char.map $< $@ 2>/dev/null
+	@$(TOOLS_DIR)/nfa_builder $< $@ 2>/dev/null
 
 # ============================================================================
 # Build DFA from NFA
@@ -88,16 +105,10 @@ dfa: $(DFA_FILES)
 	@echo ""
 
 # ============================================================================
-# Build DFA Test Runner
+# Build DFA Test Runner (single test binary for all tests)
 # ============================================================================
 dfa_test: src/dfa_eval.c src/dfa_loader.c src/dfa_test.c
 	$(CC) $(CFLAGS) -o $@ src/dfa_eval.c src/dfa_loader.c src/dfa_test.c $(LDFLAGS)
-
-# ============================================================================
-# Build Comprehensive Test
-# ============================================================================
-comprehensive_test: $(BUILD_DIR) src/shell_tokenizer.c src/shell_tokenizer_ext.c src/shell_processor.c src/shell_transform.c src/readonlybox.c src/dfa_eval.c src/dfa_loader.c src/comprehensive_test.c
-	$(CC) $(CFLAGS) -o $@ src/shell_tokenizer.c src/shell_tokenizer_ext.c src/shell_processor.c src/shell_transform.c src/readonlybox.c src/dfa_eval.c src/dfa_loader.c src/comprehensive_test.c $(LDFLAGS)
 
 # ============================================================================
 # Quick Test (runs test runner, builds DFAs on demand)
