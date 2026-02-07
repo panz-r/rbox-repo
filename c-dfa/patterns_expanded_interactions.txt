@@ -1,0 +1,15 @@
+# ============================================================================
+# Pattern File for Quantifier Interaction Tests
+# ============================================================================
+# Tests: a+b*, a*b+, a?b+, a+b?, (a+b?)+
+# ============================================================================
+
+[fragment:a] a
+[fragment:b] b
+
+# Quantifier interactions
+[safe:interact] a+b*
+[safe:interact] a*b+
+[safe:interact] a?b+
+[safe:interact] a+b?
+[safe:interact] (a+b?)+

@@ -2,6 +2,16 @@
 # Tests that patterns in different acceptance categories don't interfere with each other
 # This is essential for the DFA to correctly evaluate multiple categories in one run
 
+# ============================================================================
+# FRAGMENTS - Character ranges are replaced by explicit alternation
+# ============================================================================
+# Instead of [a-z] or [0-9], use fragments:
+#   [fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+#   [fragment:uppercase] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+#   [fragment:digit] 0|1|2|3|4|5|6|7|8|9
+#
+# Reference with: ((lowercase))+ or ((digit))* etc.
+
 # Define fragments for quantifier test patterns
 [fragment:b] b
 [fragment:c] c
@@ -14,6 +24,12 @@
 [fragment:status] status
 [fragment:push] push
 [fragment:value] value
+
+# Define fragments for character class tests (using explicit alternation)
+[fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[fragment:uppercase] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:alphanum] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
 
 # Map acceptance categories to distinct IDs
 ACCEPTANCE_MAPPING [safe::readonly] -> 0
@@ -119,12 +135,13 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 # ============================================
 # GROUP 9: Character classes and alternatives
 # Test category isolation with complex regex features
+# Note: Using fragments instead of character ranges
 # ============================================
 
-[safe::readonly::class1] ls [a-z]*
-[caution::network::class2] curl [a-z0-9]*
-[modifying::filesystem::class3] touch [A-Z]*
-[dangerous::destructive::class4] rm -rf [a-z]*
+[safe::readonly::class1] ls ((lowercase))*
+[caution::network::class2] curl ((alphanum))*
+[modifying::filesystem::class3] touch ((uppercase))*
+[dangerous::destructive::class4] rm -rf ((lowercase))*
 
 # ============================================
 # GROUP 10: The critical bug reproduction cases
@@ -197,9 +214,9 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 [safe::readonly::class_nest1] [[:alpha:]]+
 [caution::network::class_nest2] [[:alnum:]]+
 
-# Character range edge cases
-[safe::readonly::range1] a[0-9]b[0-9]c
-[caution::network::range2] a[0-8]b[0-8]c
+# Character range edge cases (using fragments instead of ranges)
+[safe::readonly::range1] a((digit))b((digit))c
+[caution::network::range2] a((digit))b((digit))c
 
 # ============================================
 # GROUP 14: FRAGMENT CHAINS

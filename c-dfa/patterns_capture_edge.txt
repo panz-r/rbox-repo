@@ -8,24 +8,36 @@
 # 3. Captures with quantifiers
 # 4. Empty captures
 # 5. Unclosed captures
+#
+# CHARACTER RANGES VIA FRAGMENTS
+# ------------------------------
+# Instead of [a-z] or [0-9], define fragments:
+#   [fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+#   [fragment:digit] 0|1|2|3|4|5|6|7|8|9
+# Reference with: ((lowercase))+ or ((digit))* etc.
 # ============================================================================
 
+# Fragments for character classes (using explicit alternation - replaces ranges)
+[fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[fragment:digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:pathchar] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|/|.|-|_|[fragment:space]  |
+
 # Multiple captures - should extract both
-[safe:capture:multi] cp <src>[a-z]+</src> <dst>[a-z]+</dst>
-[safe:capture:multi] mv <src>[a-z]+</src> <dst>[a-z]+</dst>
+[safe:capture:multi] cp <src>((lowercase))+</src> <dst>((lowercase))+</dst>
+[safe:capture:multi] mv <src>((lowercase))+</src> <dst>((lowercase))+</dst>
 
 # Capture at start and end
-[safe:capture:ends] <cmd>echo</cmd> <msg>[a-z ]+</msg>
+[safe:capture:ends] <cmd>echo</cmd> <msg>((lowercase)|((space)))+</msg>
 
 # Empty string capture (zero-length match)
-[safe:capture:empty] touch <file>[a-z]*</file>
+[safe:capture:empty] touch <file>((lowercase))*</file>
 
 # Capture with optional part
-[safe:capture:opt] ls <flags>-[a-z]*</flags> <path>[a-z]+</path>
+[safe:capture:opt] ls <flags>-((lowercase))*</flags> <path>((lowercase))+</path>
 
 # Simple single captures
-[safe:capture:single] cat <file>[a-z]+</file>
-[safe:capture:single] head -n <num>[0-9]+</num>
-[safe:capture:single] mkdir <dir>[a-z]+</dir>
+[safe:capture:single] cat <file>((lowercase))+</file>
+[safe:capture:single] head -n <num>((digit))+</num>
+[safe:capture:single] mkdir <dir>((lowercase))+</dir>
 
 # End of capture edge case test patterns

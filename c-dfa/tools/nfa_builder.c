@@ -919,8 +919,7 @@ int parse_category(const char* name) {
 //   - Literal character: matches itself
 //   - \x: escaped character (matches x literally)
 //   - 'x': quoted character (matches x literally)
-//   - [abc]: character class (matches any one of a, b, or c)
-//   - [a-z]: character range (matches any character from a to z)
+//   - [abc]: character class (matches any one of a, b, or c - SINGLE CHARS ONLY)
 //   - *: zero or more of preceding element
 //   - +: one or more of preceding element
 //   - ?: zero or one of preceding element
@@ -930,8 +929,14 @@ int parse_category(const char* name) {
 //   - ((namespace::name)): fragment reference (expands to predefined pattern)
 //   - ((namespace::name))+ : fragment reference with one-or-more quantifier
 //
+// CHARACTER RANGES: Use fragments with explicit alternation
+//   Character ranges like [a-z] or [0-9] are NOT supported.
+//   Instead, define a fragment:
+//     [fragment:DIGIT] 0|1|2|3|4|5|6|7|8|9
+//     [fragment:LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+//   Reference with: ((DIGIT)) or ((LOWER))+
+//
 // Character classes use | for alternation, e.g., [a|b|c] means a OR b OR c
-// To match literal | outside character classes, escape it as \|
 //
 // Grammar (recursive descent):
 //   pattern      ::= alternation
@@ -1124,15 +1129,13 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
         } else if (pattern[*pos] == '-' && alt_count > 0 &&
                    isalnum(alt_chars[alt_count - 1]) &&
                    isalnum(pattern[*pos + 1])) {
-            // Range: previous char to next char
-            char start_c = alt_chars[alt_count - 1];
-            char end_c = pattern[*pos + 1];
-            alt_chars[alt_count - 1] = start_c; // Keep start
-            // Add range characters
-            for (char c = start_c + 1; c <= end_c && alt_count < 250; c++) {
-                alt_chars[alt_count++] = c;
-            }
-            *pos += 2;
+            // Character ranges like [a-z] are NOT supported
+            // Use fragments with explicit alternation instead
+            fprintf(stderr, "Error: Character ranges like [a-z] are not supported.\n");
+            fprintf(stderr, "       Use fragments with explicit alternation instead.\n");
+            fprintf(stderr, "       Example: [fragment: DIGIT] 0|1|2|3|4|5|6|7|8|9\n");
+            fprintf(stderr, "       Then reference as ((DIGIT))\n");
+            exit(1);
         } else if (pattern[*pos] != ']') {
             alt_chars[alt_count++] = pattern[*pos];
             (*pos)++;
@@ -1386,17 +1389,19 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
 
 // Parse postfix quantifier: * + ?
 static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
+    DEBUG_NFA_PRINT("parse_rdp_postfix: has_pending_quantifier=%d, exit_state=%d, loop_entry=%d\n",
+                    has_pending_quantifier, current_fragment.exit_state, current_fragment.loop_entry_state);
+    fprintf(stderr, ">>> parse_rdp_postfix ENTRY: pattern='%s', pos=%d\n", pattern, *pos);
+    fflush(stderr);
     int current;
-    DEBUG_NFA_PRINT("parse_rdp_postfix: has_pending_quantifier=%d, exit_state=%d\n",
-                    has_pending_quantifier, current_fragment.exit_state);
     if (has_pending_quantifier && current_fragment.exit_state != -1) {
         // Element was already parsed in parse_rdp_sequence, use its exit state
         current = current_fragment.exit_state;
         DEBUG_NFA_PRINT("Using existing exit_state: %d\n", current);
     } else if (!has_pending_quantifier && current_fragment.exit_state != -1) {
-        // Element was already parsed (no quantifier), return start_state without re-parsing
-        // This handles the case where parse_rdp_alternation calls us after parse_rdp_sequence
-        current = start_state;
+        // Element was already parsed, use its exit state for potential quantifier processing
+        current = current_fragment.exit_state;
+        DEBUG_NFA_PRINT("Using exit_state for quantifier: %d\n", current);
     } else {
         // Element not yet parsed, parse it now
         current = parse_rdp_element(pattern, pos, start_state);
@@ -1405,6 +1410,7 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 
     while (pattern[*pos] != '\0') {
         char op = pattern[*pos];
+        DEBUG_NFA_PRINT("while loop: pos=%d, op='%c' (0x%02x)\n", *pos, op, (unsigned char)op);
 
         if (op == '*') {
             int eos_sid = find_symbol_id(DFA_CHAR_EOS);
@@ -1571,6 +1577,9 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
         } else if (op == '+') {
             (*pos)++;
 
+            DEBUG_NFA_PRINT("+ handler START: is_single_char=%d, loop_entry=%d, exit_state=%d, frag_entry=%d\n",
+                    current_fragment.is_single_char, current_fragment.loop_entry_state,
+                    current_fragment.exit_state, current_fragment.fragment_entry_state);
 
             int eos_sid = find_symbol_id(DFA_CHAR_EOS);
             if (eos_sid == -1) return current;
@@ -1680,9 +1689,32 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 
                 // Add loop-back transition for subsequent iterations
                 if (current_fragment.loop_entry_state != -1) {
-                    // For multi-char fragments: loop back to fragment_entry_state on first char
-                    // This restarts the fragment from the beginning
-                    if (!current_fragment.is_single_char && current_fragment.fragment_entry_state != -1) {
+                    // For alternations: detect if we have multiple transitions from start_state
+                    // (which indicates alternation branches) and use epsilon for looping
+                    int start_transition_count = 0;
+                    for (int s = 0; s < MAX_SYMBOLS; s++) {
+                        if (nfa[current_fragment.fragment_entry_state].transitions[s] != -1) {
+                            start_transition_count++;
+                        }
+                    }
+                    
+                    DEBUG_NFA_PRINT("+ handler multi-char: is_single_char=%d, fragment_entry=%d, start_transitions=%d\n",
+                            current_fragment.is_single_char, current_fragment.fragment_entry_state, start_transition_count);
+                    
+                    // Alternation detected: multiple transitions from start = multiple branches
+                    if (!current_fragment.is_single_char && 
+                        current_fragment.fragment_entry_state != -1 && 
+                        start_transition_count > 1) {
+                        DEBUG_NFA_PRINT("+ handler: Detected alternation, adding epsilon loop-back\n");
+                        // For alternations: loop back via EPSILON, not on character
+                        int epsilon_sid = find_symbol_id(DFA_CHAR_EPSILON);
+                        DEBUG_NFA_PRINT("+ handler: epsilon_sid=%d for char %d\n", epsilon_sid, DFA_CHAR_EPSILON);
+                        if (epsilon_sid != -1) {
+                            nfa_add_transition(current_fragment.exit_state, 
+                                              current_fragment.fragment_entry_state, epsilon_sid);
+                        }
+                    } else if (!current_fragment.is_single_char && current_fragment.fragment_entry_state != -1) {
+                        // Multi-char fragment: loop back to fragment_entry_state on first char
                         int first_sid = find_symbol_id(current_fragment.loop_first_char);
                         if (first_sid != -1) {
                             nfa_add_transition(current_fragment.exit_state, current_fragment.fragment_entry_state, first_sid);
@@ -1832,51 +1864,70 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
     if (pattern[*pos] == '|') {
         // Create merge state for alternation
         int merge_state = nfa_add_state_with_minimization(false);
-        int finalized_first = nfa_finalize_state(first_end);
+        nfa[merge_state].category_mask = nfa[first_end].category_mask;  // Propagate category from first branch
 
-        // Connect first branch to merge via ANY (since we don't have epsilon)
-        int any_sid = find_symbol_id(DFA_CHAR_ANY);
-        if (any_sid != -1) {
-            nfa_add_transition(finalized_first, merge_state, any_sid);
+        // Connect first branch to merge via EPSILON (non-consuming transition)
+        int epsilon_sid = find_symbol_id(DFA_CHAR_EPSILON);
+        if (epsilon_sid != -1) {
+            nfa_add_transition(first_end, merge_state, epsilon_sid);
         }
 
         // Parse remaining alternatives
         while (pattern[*pos] == '|') {
             (*pos)++; // Skip |
             int branch_end = parse_rdp_sequence(pattern, pos, start_state);
-            int finalized_branch = nfa_finalize_state(branch_end);
 
-            if (any_sid != -1) {
-                nfa_add_transition(finalized_branch, merge_state, any_sid);
+            // Merge categories from all branches
+            nfa[merge_state].category_mask |= nfa[branch_end].category_mask;
+
+            if (epsilon_sid != -1) {
+                nfa_add_transition(branch_end, merge_state, epsilon_sid);
             }
         }
 
-        int finalized_merge = nfa_finalize_state(merge_state);
-        return finalized_merge;
+        // Close paren if present
+        if (pattern[*pos] == ')') {
+            (*pos)++;
+            // Update current_fragment to reflect the group structure
+            memset(&current_fragment, 0, sizeof(current_fragment));
+            current_fragment.is_single_char = false;
+            current_fragment.exit_state = merge_state;
+            current_fragment.fragment_entry_state = start_state;
+            // Find first character of the group
+            for (int s = 0; s < MAX_SYMBOLS; s++) {
+                if (nfa[start_state].transitions[s] != -1) {
+                    current_fragment.loop_first_char = alphabet[s].start_char;
+                    break;
+                }
+            }
+        }
+
+        // Handle postfix quantifiers (* + ?) on the alternation result
+        // IMPORTANT: Pass merge_state, not first_end
+        int postfix_result = parse_rdp_postfix(pattern, pos, merge_state);
+
+        nfa_finalize_state(merge_state);
+        return postfix_result;
     }
 
     // Close paren if present
     if (pattern[*pos] == ')') {
         (*pos)++;
         // Update current_fragment to reflect the group structure
-        // This is needed for proper quantifier handling on groups
         memset(&current_fragment, 0, sizeof(current_fragment));
         current_fragment.is_single_char = false;
         current_fragment.exit_state = first_end;
         current_fragment.fragment_entry_state = start_state;
-        // Find first character of the group by looking at transitions from entry state
+        // Find first character of the group
         for (int s = 0; s < MAX_SYMBOLS; s++) {
             if (nfa[start_state].transitions[s] != -1) {
-                // Found first character transition, get the actual character
                 current_fragment.loop_first_char = alphabet[s].start_char;
                 break;
             }
         }
     }
 
-    // Handle postfix quantifiers (* + ?) on the alternation result
-    // This is needed because parse_rdp_element calls parse_rdp_alternation directly
-    // for grouping, bypassing parse_rdp_postfix where quantifier handling lives
+    // Handle postfix quantifiers (* + ?) on the sequence result
     int postfix_result = parse_rdp_postfix(pattern, pos, first_end);
 
     int finalized_end = nfa_finalize_state(postfix_result);
@@ -2847,26 +2898,33 @@ static bool construct_alphabet_from_patterns(const char* spec_file) {
     built_alphabet[0].symbol_id = 0;
     built_alphabet[0].is_special = true;
     built_alphabet_size++;
-    
-    // Symbol 1: DFA_CHAR_SPACE (space)
-    built_alphabet[1].start_char = 32;
-    built_alphabet[1].end_char = 32;
+
+    // Symbol 1: DFA_CHAR_EPSILON (non-consuming transition)
+    built_alphabet[1].start_char = DFA_CHAR_EPSILON;
+    built_alphabet[1].end_char = DFA_CHAR_EPSILON;
     built_alphabet[1].symbol_id = 1;
     built_alphabet[1].is_special = true;
     built_alphabet_size++;
-    
-    // Symbol 2: DFA_CHAR_TAB (tab)
-    built_alphabet[2].start_char = 9;
-    built_alphabet[2].end_char = 9;
+
+    // Symbol 2: DFA_CHAR_SPACE (space)
+    built_alphabet[2].start_char = 32;
+    built_alphabet[2].end_char = 32;
     built_alphabet[2].symbol_id = 2;
     built_alphabet[2].is_special = true;
     built_alphabet_size++;
-    
-    // Symbol 3: DFA_CHAR_EOS (end of string marker, value 5)
-    built_alphabet[3].start_char = 5;
-    built_alphabet[3].end_char = 5;
+
+    // Symbol 3: DFA_CHAR_TAB (tab)
+    built_alphabet[3].start_char = 9;
+    built_alphabet[3].end_char = 9;
     built_alphabet[3].symbol_id = 3;
     built_alphabet[3].is_special = true;
+    built_alphabet_size++;
+
+    // Symbol 4: DFA_CHAR_EOS (end of string marker)
+    built_alphabet[4].start_char = DFA_CHAR_EOS;
+    built_alphabet[4].end_char = DFA_CHAR_EOS;
+    built_alphabet[4].symbol_id = 4;
+    built_alphabet[4].is_special = true;
     built_alphabet_size++;
     
     char line[MAX_LINE_LENGTH];

@@ -56,12 +56,23 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   Space in patterns normalizes to [ \t]+ (one or more whitespace):
 #     git status   matches "git status", "git  status", "git\tstatus"
 #
-# CHARACTER CLASSES
+# CHARACTER CLASSES (single characters only)
 #   [abc]           - Matches any one of a, b, or c
-#   [a-z]           - Matches any character from a to z
-#   [0-9]+          - Matches one or more digits
 #   [^abc]          - Negated: matches anything EXCEPT a, b, c
-#   [a-zA-Z0-9_]    - Alphanumeric plus underscore
+#
+# CHARACTER RANGES (via fragments with explicit alternation)
+#   For patterns like "any letter a-z" or "any digit 0-9", use fragments:
+#
+#   Define a fragment at the top of the file:
+#     [fragment:DIGIT] 0|1|2|3|4|5|6|7|8|9
+#     [fragment:LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+#     [fragment:UPPER] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+#     [fragment:ALNUM] a|b|c|...|0|1|...|9
+#
+#   Reference fragments with double parens:
+#     ((DIGIT))         - Matches a single digit
+#     ((DIGIT))+        - Matches one or more digits
+#     ((LOWER))+        - Matches one or more lowercase letters
 #
 # QUANTIFIERS (applied to preceding element)
 #   *               - Zero or more of preceding element
@@ -71,11 +82,6 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   Examples:
 #     git log -n ((DIGIT))+   - One or more digits using fragment
 #     cat ((FILENAME))*        - Zero or more filenames
-#     git log -n [0-9]         - Single digit (no quantifier)
-#
-#   Note: The + quantifier works best with fragment references for precise
-#         single-character matching. Character classes like [0-9]+ are also
-#         supported but have different internal handling.
 #
 # GROUPING AND ALTERNATION
 #   (expr)          - Groups expressions together
@@ -127,22 +133,36 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 # FRAGMENTS
 # ============================================================================
 #
-# Fragments are reusable pattern definitions that can be referenced elsewhere.
-# Defined at the top of the file (before patterns that use them).
+# Fragments are reusable pattern definitions that replace character ranges.
+# Use fragments for "character class ranges" like "all digits" or "all letters".
 #
-# Format: [fragment:namespace::name] pattern_value
+# WHY FRAGMENTS?
+#   Instead of [a-z] or [0-9], define a fragment with explicit alternation:
+#     [fragment:DIGIT] 0|1|2|3|4|5|6|7|8|9
+#     [fragment:LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 #
-# Examples:
-#   [fragment:FILENAME] [a-zA-Z0-9_./-]+
-#   [fragment:git::DIGIT] [0-9]
+#   This is more explicit, portable, and avoids ambiguity.
 #
-# Reference syntax:
-#   ((FILENAME))              - References FILENAME fragment
-#   ((git::DIGIT))            - References DIGIT in git namespace
+# FRAGMENT DEFINITION
+#   Format: [fragment:namespace::name] pattern_value
+#
+#   Examples:
+#     [fragment:DIGIT] 0|1|2|3|4|5|6|7|8|9
+#     [fragment:LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+#     [fragment:UPPER] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+#     [fragment:FILENAME] a|b|c|...|0|1|...|9|_|-|.|/  (all valid filename chars)
+#
+# FRAGMENT REFERENCE
+#   Reference with double parens: ((name))
+#     ((DIGIT))         - Matches single digit
+#     ((DIGIT))+        - Matches one or more digits
+#     ((FILENAME))*     - Matches zero or more filenames
 #
 # Fragment namespaces:
 #   - Simple: [fragment:name] - Referenced as ((name))
 #   - Namespaced: [fragment:ns::name] - Referenced as ((ns::name))
+#
+# Fragments must be defined at the TOP of the file, before patterns that use them.
 #
 # ============================================================================
 # SPECIAL NOTES
@@ -151,7 +171,6 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 # 1. + QUANTIFIER ON FRAGMENTS
 #    The + quantifier (one or more) works best with fragment references:
 #    CORRECT:   ((FILENAME))+   - Fragment with + for precise matching
-#    CORRECT:   [0-9]+         - Character class with + is also supported
 #    NOTE:      Fragment references are recommended for single-char matching
 #
 # 2. ? QUANTIFIER LIMITATIONS
@@ -197,7 +216,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 # FRAGMENT DEFINITIONS (must come before patterns that use them)
 # ============================================================================
 #
-[fragment:safe::digit] [0-9]
+[fragment:safe::digit] 0|1|2|3|4|5|6|7|8|9
 [fragment:safe::b] b
 #
 # ============================================================================
@@ -292,7 +311,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   - Named fragments:        [safe] cat ((FILENAME))
 #
 # MODERATE PATTERNS (Still efficient)
-#   - Character classes:      [safe] tail -n [0-9]
+#   - Character classes:      [safe] tail -n [0-9] (NOT SUPPORTED - use fragments)
 #   - Single-char fragments:  [safe] git log -n ((safe::digit))
 #   - Wildcards:              [safe] cat *
 #
@@ -318,7 +337,6 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 # PATTERN SYNTAX:
 #   Literal:       git status          (matches "git status")
 #   Character:    [abc]               (matches a, b, or c)
-#   Range:         [a-z]               (matches a to z)
 #   Negated:       [^abc]               (NOT a, b, or c)
 #   Quantifier:    *  +  ?             (zero-or-more, one-or-more, zero-or-one)
 #   Fragment:      ((NAME))             (inserts fragment pattern)
@@ -327,8 +345,11 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   Wildcard:      *                    (matches any argument)
 #   Escape:        \x \\ \' \xNN        (literal char, backslash, quote, hex)
 #
+# NOTE: Character ranges like [a-z] or [0-9] are NOT supported.
+#       Use fragments with explicit alternation instead.
+#
 # FRAGMENT DEFINITION:
-#   [fragment:ns::name] pattern_value
+#   [fragment:ns::name] a|b|c|...
 #
 # REFERENCE:
 #   ((ns::name))              - Insert fragment

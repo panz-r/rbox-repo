@@ -1,1 +1,11 @@
-[safe:test] test <w>[a-z]+</w>
+# Fragment-based character range test
+#
+# CHARACTER RANGES VIA FRAGMENTS
+# ------------------------------
+# Instead of [a-z], use a fragment:
+#   [fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+# Reference with: ((lowercase))+
+# ============================================================================
+
+[fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[safe:test] test <w>((lowercase))+</w>

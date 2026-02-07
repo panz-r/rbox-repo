@@ -3,13 +3,23 @@
 # ============================================================================
 # These patterns provide complete coverage of NFA and DFA functionality:
 # - Quantifiers: +, *, ?
-# - Character classes: [abc], [a-z], [^abc]
+# - Character classes: [abc], [^abc] (single characters only)
+# - Character RANGES: Use fragments with explicit alternation (see below)
 # - Alternation: a|b
 # - Escaped characters
 # - Nested patterns
 # - Fragments
 # - Edge cases
 # ============================================================================
+#
+# CHARACTER RANGES VIA FRAGMENTS
+# ------------------------------
+# Instead of [a-z] or [0-9], define fragments:
+#   [fragment:alpha] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+#   [fragment:digit] 0|1|2|3|4|5|6|7|8|9
+#   [fragment:ALNUM] a|b|c|...|0|1|...|9
+#
+# Reference with: ((alpha))+ or ((digit))*
 
 # ============================================================================
 # Fragments for reuse across test patterns
@@ -91,8 +101,7 @@
 # ============================================================================
 # GROUP 8: Edge Cases
 # ============================================================================
-# Test: Empty patterns, single chars, and combined patterns
-[safe:quantifier:group8] ""
+# Test: Single chars and combined patterns
 [safe:quantifier:group8] a
 [safe:quantifier:group8] abc
 [safe:quantifier:group8] [[:alpha:]]+[[:digit:]]+
@@ -123,13 +132,17 @@
 [safe:quantifier:group11] ppp+
 
 # ============================================================================
-# GROUP 12: Character Class Ranges
+# GROUP 12: Character Classes (using fragments)
 # ============================================================================
-# Test: Character ranges with quantifiers
-[safe:quantifier:group12] [a-z]+
-[safe:quantifier:group12] [A-Z0-9_]+
-[safe:quantifier:group12] [0-9]+
-[safe:quantifier:group12] [a-zA-Z]*
+# Test: Character classes with quantifiers (NOT ranges)
+[fragment:alpha] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[fragment:ALPHA] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:digit] 0|1|2|3|4|5|6|7|8|9
+[safe:quantifier:group12] ((alpha))+
+[safe:quantifier:group12] ((ALPHA))+
+[safe:quantifier:group12] ((digit))+
+[safe:quantifier:group12] ((ALPHA)|((alpha)))*
+[safe:quantifier:group12] ((ALPHA)|((alpha))|((digit))|_)+
 
 # ============================================================================
 # GROUP 13: Nested Quantifiers

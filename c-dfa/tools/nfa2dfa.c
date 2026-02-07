@@ -261,6 +261,7 @@ void epsilon_closure(int* states, int* count, int max_states) {
     // Find symbol IDs once
     int any_symbol = -1;
     int eos_symbol = -1;
+    int epsilon_symbol = -1;
     for (int s = 0; s < alphabet_size; s++) {
         if (alphabet[s].start_char == DFA_CHAR_ANY) {
             any_symbol = s;
@@ -268,12 +269,16 @@ void epsilon_closure(int* states, int* count, int max_states) {
         if (alphabet[s].start_char == DFA_CHAR_EOS) {
             eos_symbol = s;
         }
+        if (alphabet[s].start_char == DFA_CHAR_EPSILON) {
+            epsilon_symbol = s;
+        }
     }
 
     // Track how each state was added
     // 0 = original (from character move or initial set)
     // 1 = added via EOS
-    // 2 = added via ANY (should not have ANY followed)
+    // 2 = added via EPSILON
+    // 3 = added via ANY (should not have ANY followed)
     int8_t added_via[MAX_STATES];
     for (int i = 0; i < MAX_STATES; i++) {
         added_via[i] = -1;  // Unknown
@@ -288,6 +293,24 @@ void epsilon_closure(int* states, int* count, int max_states) {
         for (int i = 0; i < *count; i++) {
             int state = states[i];
             if (state < 0 || state >= nfa_state_count) continue;
+
+            // EPSILON transitions can always be followed (for alternation)
+            if (epsilon_symbol >= 0 && nfa[state].transitions[epsilon_symbol] != -1) {
+                int target = nfa[state].transitions[epsilon_symbol];
+                bool found = false;
+                for (int j = 0; j < *count; j++) {
+                    if (states[j] == target) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    states[*count] = target;
+                    added_via[target] = 2;  // Added via EPSILON
+                    (*count)++;
+                    added = 1;
+                }
+            }
 
             // EOS transitions can always be followed
             if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
@@ -309,7 +332,7 @@ void epsilon_closure(int* states, int* count, int max_states) {
 
             // ANY transitions: only follow if state was NOT added via ANY
             // This prevents loop states from contaminating the closure
-            if (any_symbol >= 0 && added_via[state] != 2 &&
+            if (any_symbol >= 0 && added_via[state] != 3 &&
                 nfa[state].transitions[any_symbol] != -1) {
                 int target = nfa[state].transitions[any_symbol];
                 bool found = false;
@@ -321,7 +344,7 @@ void epsilon_closure(int* states, int* count, int max_states) {
                 }
                 if (!found) {
                     states[*count] = target;
-                    added_via[target] = 2;  // Added via ANY
+                    added_via[target] = 3;  // Added via ANY
                     (*count)++;
                     added = 1;
                 }

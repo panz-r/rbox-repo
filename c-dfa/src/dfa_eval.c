@@ -457,6 +457,31 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     EVAL_DEBUG_PRINT("Reached end of input check, pos=%zu, length=%zu\n", pos, length);
     EVAL_DEBUG_FLUSH();
 
+    // Also check for EOS as a character transition (DFA_CHAR_EOS = 0x05)
+    // This handles the case where EOS is stored as a regular character transition
+    if (current_state->transition_count > 0 && current_state->transitions_offset > 0) {
+        dfa_transition_t* trans = (dfa_transition_t*)((char*)current_dfa + current_state->transitions_offset);
+        for (uint16_t i = 0; i < current_state->transition_count; i++) {
+            if ((unsigned char)trans[i].character == DFA_CHAR_EOS) {
+                const dfa_state_t* eos_state = (const dfa_state_t*)((char*)current_dfa + trans[i].next_state_offset);
+                uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
+                if (eos_cat_mask != 0) {
+                    result->matched = true;
+                    result->matched_length = pos;
+                    result->final_state = eos_state->flags;
+                    result->category_mask = eos_cat_mask;
+                    if (eos_cat_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+                    else if (eos_cat_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+                    else if (eos_cat_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+                    else if (eos_cat_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+                    else if (eos_cat_mask & 0x10) result->category = DFA_CMD_NETWORK;
+                    else if (eos_cat_mask & 0x20) result->category = DFA_CMD_ADMIN;
+                    return true;
+                }
+            }
+        }
+    }
+
     // End of input - check if final state can accept
     uint8_t current_category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
     EVAL_DEBUG_PRINT("Final state at offset=0x%X, flags=0x%04X, category_mask=0x%02X\n",

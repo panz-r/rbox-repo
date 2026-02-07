@@ -1,0 +1,27 @@
+# ============================================================================
+# Pattern File for Mixed Literal/Fragment Tests
+# ============================================================================
+# Tests: x((y)), x((y))+, ((x))y, ab((c))de, start((mid))+end
+# ============================================================================
+
+[fragment:x] x
+[fragment:y] y
+[fragment:c] c
+[fragment:d] d
+[fragment:e] e
+[fragment:mid] mid
+
+# Literal followed by fragment with quantifier
+[safe:mixed] x((y))
+[safe:mixed] x((y))+
+
+# Fragment followed by literal with quantifier
+[safe:mixed] ((x))y
+[safe:mixed] ((x))+y
+
+# Multiple literals with fragment
+[safe:mixed] ab((c))de
+[safe:mixed] ab((c))+de
+
+# Fragment between literals
+[safe:mixed] start((mid))+end

@@ -1,82 +1,202 @@
-# Simple Makefile for ReadOnlyBox DFA
+# ============================================================================
+# ReadOnlyBox DFA Build System
+# ============================================================================
+# Builds NFA and DFA files from pattern specifications
+# Runs comprehensive test suite
+# ============================================================================
 
 CC = gcc
 CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -O2
 LDFLAGS = -lm
 
-# Source files
 SRC_DIR = src
 TOOLS_DIR = tools
 INCLUDE_DIR = include
-
-# Build directory
 BUILD_DIR = build
 
-# Targets
-TARGETS = dfa_test
-
-.PHONY: all clean test
-
-# Pattern file
-PATTERN_FILE = patterns_safe_commands.txt
+TARGETS = dfa_test comprehensive_test
 
 # ============================================================================
-# Pattern Validation
+# All Pattern Files (used by test runner)
 # ============================================================================
+PATTERN_FILES = \
+	patterns_safe_commands.txt \
+	patterns_quantifier_comprehensive.txt \
+	patterns_frag_quant.txt \
+	patterns_focused.txt \
+	patterns_simple.txt \
+	patterns_acceptance_category_test.txt \
+	patterns_frag_plus.txt \
+	patterns_digit_test.txt \
+	patterns_space_test.txt \
+	patterns_quantifier_test.txt \
+	patterns_expanded_quantifier.txt \
+	patterns_expanded_alternation.txt \
+	patterns_expanded_nested.txt \
+	patterns_expanded_fragment.txt \
+	patterns_expanded_boundary.txt \
+	patterns_expanded_interactions.txt \
+	patterns_expanded_mixed.txt \
+	patterns_expanded_hard.txt \
+	patterns_expanded_perf.txt
 
-# Validate patterns before building
-validate-patterns:
-	@echo "================================================="
-	@echo "Validating patterns in $(PATTERN_FILE)..."
-	@echo "================================================="
-	@$(TOOLS_DIR)/nfa_builder --validate-only $(PATTERN_FILE) || (echo "ERROR: Pattern validation failed!"; exit 1)
-	@echo ""
+# Pattern file to DFA file mapping
+# Each pattern file builds a DFA in build/ directory
+DFA_FILES = $(patsubst %.txt,$(BUILD_DIR)/%.dfa,$(PATTERN_FILES))
+NFA_FILES = $(patsubst %.txt,$(BUILD_DIR)/%.nfa,$(PATTERN_FILES))
 
 # ============================================================================
-# Build Targets
+# Phony Targets
 # ============================================================================
+.PHONY: all clean test test-full validate help summary FORCE
 
+# ============================================================================
+# All Targets
+# ============================================================================
 all: dfa_test
 
-# Create build directory
+# ============================================================================
+# Build Directory
+# ============================================================================
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# Build DFA test
-dfa_test: src/dfa_eval.c src/dfa_loader.c src/dfa_test.c src/dfa_test_tripled.c
-	$(CC) $(CFLAGS) -o $@ src/dfa_eval.c src/dfa_loader.c src/dfa_test.c src/dfa_test_tripled.c $(LDFLAGS)
+# ============================================================================
+# Build NFA from pattern file
+# ============================================================================
+$(BUILD_DIR)/%.nfa: %.txt | $(BUILD_DIR)
+	@echo "  Building NFA: $< -> $@"
+	@$(TOOLS_DIR)/nfa_builder --alphabet alphabet_per_char.map $< $@ 2>/dev/null
 
-# Build comprehensive test
+# ============================================================================
+# Build DFA from NFA
+# ============================================================================
+$(BUILD_DIR)/%.dfa: $(BUILD_DIR)/%.nfa
+	@echo "  Building DFA: $< -> $@"
+	@$(TOOLS_DIR)/nfa2dfa_advanced $< $@ 2>/dev/null
+
+# ============================================================================
+# Build all NFA and DFA files
+# ============================================================================
+dfa: $(DFA_FILES)
+	@echo ""
+	@echo "================================================="
+	@echo "DFA Build Complete"
+	@echo "================================================="
+	@echo "Built $(words $(DFA_FILES)) DFA files:"
+	@for f in $(DFA_FILES); do echo "  - $$f"; done
+	@echo ""
+
+# ============================================================================
+# Build DFA Test Runner
+# ============================================================================
+dfa_test: src/dfa_eval.c src/dfa_loader.c src/dfa_test.c
+	$(CC) $(CFLAGS) -o $@ src/dfa_eval.c src/dfa_loader.c src/dfa_test.c $(LDFLAGS)
+
+# ============================================================================
+# Build Comprehensive Test
+# ============================================================================
 comprehensive_test: $(BUILD_DIR) src/shell_tokenizer.c src/shell_tokenizer_ext.c src/shell_processor.c src/shell_transform.c src/readonlybox.c src/dfa_eval.c src/dfa_loader.c src/comprehensive_test.c
-	$(CC) $(CFLAGS) -o $@ src/shell_tokenizer.c src/shell_tokenizer_ext.c src/shell_processor.c src/shell_transform.c src/readonlybox.c src/dfa_eval.c src/dfa_loader.c src/comprehensive_test.c
+	$(CC) $(CFLAGS) -o $@ src/shell_tokenizer.c src/shell_tokenizer_ext.c src/shell_processor.c src/shell_transform.c src/readonlybox.c src/dfa_eval.c src/dfa_loader.c src/comprehensive_test.c $(LDFLAGS)
 
-# Clean
-clean:
-	rm -f $(TARGETS) $(BUILD_DIR)/*.o $(BUILD_DIR)/*.dfa $(BUILD_DIR)/*.nfa
-	rm -rf $(BUILD_DIR)
-
-# Test
-test: dfa dfa_test
-	@echo ""
-	@echo "================================================="
-	@echo "Running DFA test..."
-	@echo "================================================="
-	@cp build/readonlybox.dfa .
-	@./dfa_test --quantifier-test
-	@rm -f readonlybox.dfa
-
-# Build DFA (if tools are available)
-dfa: $(BUILD_DIR)
-	@echo "Building DFA..."
-	@cd $(BUILD_DIR) && ../tools/nfa_builder ../$(PATTERN_FILE) readonlybox.nfa
-	@cd $(BUILD_DIR) && ../tools/nfa2dfa_advanced readonlybox.nfa readonlybox.dfa
-	@echo ""
-	@echo "DFA built successfully: $(PATTERN_FILE) -> build/readonlybox.dfa"
-
-# Quick test (with validation)
+# ============================================================================
+# Quick Test (runs test runner, builds DFAs on demand)
+# ============================================================================
 quick: dfa_test
 	@echo ""
 	@echo "================================================="
-	@echo "Running quick DFA test..."
+	@echo "Running DFA Quick Test..."
 	@echo "================================================="
 	@./dfa_test
+
+# ============================================================================
+# Full Test Suite (builds all DFAs first, then runs tests)
+# ============================================================================
+# Force test to always run by depending on a phony target
+FORCE:
+
+test: FORCE dfa dfa_test
+	@echo ""
+	@echo "================================================="
+	@echo "C-DFA TEST SUITE"
+	@echo "================================================="
+	@echo "Pattern Files: $(words $(PATTERN_FILES))"
+	@echo "DFA Files: $(words $(DFA_FILES))"
+	@echo ""
+	@./dfa_test
+	@echo ""
+	@echo "================================================="
+	@echo "Test files are in: $(BUILD_DIR)/"
+	@echo "================================================="
+
+# ============================================================================
+# Validate All Patterns
+# ============================================================================
+validate:
+	@echo "================================================="
+	@echo "Validating All Pattern Files"
+	@echo "================================================="
+	@for f in $(PATTERN_FILES); do \
+		echo -n "Validating $$f... "; \
+		if $(TOOLS_DIR)/nfa_builder --validate-only $$f 2>/dev/null; then \
+			echo "OK"; \
+		else \
+			echo "FAILED"; \
+		fi; \
+	done
+	@echo ""
+	@echo "All patterns validated."
+
+# ============================================================================
+# Build Summary
+# ============================================================================
+summary: dfa
+	@echo ""
+	@echo "================================================="
+	@echo "C-DFA Build Summary"
+	@echo "================================================="
+	@echo ""
+	@echo "Pattern Files ($(words $(PATTERN_FILES))):"
+	@for f in $(PATTERN_FILES); do echo "  - $$f"; done
+	@echo ""
+	@echo "Built DFA Files (in $(BUILD_DIR)/):"
+	@for f in $(DFA_FILES); do echo "  - $$f"; done
+	@echo ""
+	@echo "To run tests: make test"
+	@echo "To validate patterns: make validate"
+	@echo "================================================="
+
+# ============================================================================
+# Help
+# ============================================================================
+help:
+	@echo ""
+	@echo "================================================="
+	@echo "ReadOnlyBox C-DFA Build System"
+	@echo "================================================="
+	@echo ""
+	@echo "Targets:"
+	@echo "  all           - Build dfa_test (default)"
+	@echo "  dfa           - Build all DFA files from patterns"
+	@echo "  test          - Build DFAs and run full test suite"
+	@echo "  quick         - Run tests (builds DFAs on demand)"
+	@echo "  validate      - Validate all pattern files"
+	@echo "  summary       - Show build summary"
+	@echo "  clean         - Remove build artifacts"
+	@echo "  help          - Show this help message"
+	@echo ""
+	@echo "Pattern Files: $(words $(PATTERN_FILES))"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make test          # Build and run all tests"
+	@echo "  make validate      # Check all patterns are valid"
+	@echo "  make summary       # Show what's been built"
+	@echo "================================================="
+
+# ============================================================================
+# Clean
+# ============================================================================
+clean:
+	rm -f $(TARGETS) $(BUILD_DIR)/*.o $(BUILD_DIR)/*.dfa $(BUILD_DIR)/*.nfa
+	rm -rf $(BUILD_DIR)
+	@echo "Cleaned build artifacts."

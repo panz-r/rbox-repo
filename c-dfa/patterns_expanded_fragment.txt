@@ -1,0 +1,24 @@
+# ============================================================================
+# Pattern File for Fragment Interactions Tests
+# ============================================================================
+# Tests: ((x))+((y))+, abc((def))+, ((a|b))+((c|d))+, etc.
+# ============================================================================
+
+[fragment:x] x
+[fragment:y] y
+[fragment:z] z
+[fragment:a] a
+[fragment:b] b
+[fragment:c] c
+[fragment:d] d
+[fragment:e] e
+[fragment:f] f
+[fragment:def] def
+
+# Multiple fragments with quantifiers
+[safe:frag] ((x))+((y))+
+[safe:frag] abc((def))+
+[safe:frag] (( (a) ))+
+
+# Fragment alternation
+[safe:frag] ((a|b))+((c|d))+
