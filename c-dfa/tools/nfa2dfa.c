@@ -20,22 +20,14 @@ static char pattern_identifier[256] = "";
 
 // Verbose output control - set to 0 to disable progress messages
 #ifndef NFA2DFA_VERBOSE
-#define NFA2DFA_VERBOSE 1
+#define NFA2DFA_VERBOSE 0
 #endif
 
-// Conditional debug print macro
-#if NFA2DFA_DEBUG
-#define DEBUG_PRINT(fmt, ...) fprintf(stderr, "DEBUG: " fmt, ##__VA_ARGS__)
-#else
-#define DEBUG_PRINT(fmt, ...) ((void)0)
-#endif
+// Runtime verbose flag (overrides compile-time setting)
+static bool flag_verbose = false;
 
-// Conditional verbose print macro
-#if NFA2DFA_VERBOSE
-#define VERBOSE_PRINT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
-#else
-#define VERBOSE_PRINT(fmt, ...) ((void)0)
-#endif
+// Conditional debug print macro - only prints if verbose is enabled
+#define DEBUG_PRINT(fmt, ...) do { if (flag_verbose) fprintf(stderr, fmt, ##__VA_ARGS__); } while (0)
 
 // Character class definition
 typedef struct {
@@ -136,6 +128,49 @@ void dfa_init(void) {
     dfa_state_count = 0;
 }
 
+// Helper function to recursively follow EOS transitions and collect category masks
+// Returns the combined category mask from all terminal states reachable via EOS chain
+static uint8_t collect_eos_categories(int state, int eos_symbol, int* visited, int* visited_count) {
+    uint8_t combined_mask = 0;
+
+    // Check for cycles
+    for (int i = 0; i < *visited_count; i++) {
+        if (visited[i] == state) {
+            // Already visited this state in current chain
+            return 0;
+        }
+    }
+
+    // Add to visited set
+    if (*visited_count < MAX_STATES) {
+        visited[(*visited_count)++] = state;
+    }
+
+    // Check if this state is terminal (EOS target with category)
+    if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
+        // Check if this state has NO character transitions (truly terminal)
+        bool has_char_trans = false;
+        for (int s = 0; s < alphabet_size; s++) {
+            if (alphabet[s].is_special) continue;
+            if (nfa[state].transitions[s] != -1 || nfa[state].multi_targets[s][0] != '\0') {
+                has_char_trans = true;
+                break;
+            }
+        }
+        if (!has_char_trans) {
+            combined_mask |= nfa[state].category_mask;
+        }
+    }
+
+    // Follow EOS transition if present
+    if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
+        int eos_target = nfa[state].transitions[eos_symbol];
+        combined_mask |= collect_eos_categories(eos_target, eos_symbol, visited, visited_count);
+    }
+
+    return combined_mask;
+}
+
 // Add DFA state
 int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
     if (dfa_state_count >= MAX_STATES) {
@@ -185,9 +220,6 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
         }
     }
     
-    fprintf(stderr, "DEBUG dfa_add_state: state=%d, category_mask=0x%02x, capture_flags=0x%04x, flags=0x%04x\n",
-            state, category_mask, capture_flags, (category_mask << 8) | capture_flags);
-    
     // Store category_mask in bits 8-15, set DFA_STATE_ACCEPTING if category_mask != 0
     dfa[state].flags = (category_mask << 8) | capture_flags;
     if (category_mask != 0) {
@@ -207,15 +239,13 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
         dfa[state].nfa_states[i] = nfa_states[i];
         dfa[state].nfa_state_count++;
     }
-#if NFA2DFA_DEBUG
     if (state <= 20) {
         DEBUG_PRINT("dfa_add_state(%d): category_mask=0x%02x, nfa_count=%d, nfa_states={", state, category_mask, nfa_count);
         for (int i = 0; i < nfa_count; i++) {
-            fprintf(stderr, "%d(cat=0x%02x,pid=%d)%s", nfa_states[i], nfa[nfa_states[i]].category_mask, nfa[nfa_states[i]].pattern_id, i < nfa_count-1 ? ", " : "");
+            DEBUG_PRINT("%d(cat=0x%02x,pid=%d)%s", nfa_states[i], nfa[nfa_states[i]].category_mask, nfa[nfa_states[i]].pattern_id, i < nfa_count-1 ? ", " : "");
         }
-        fprintf(stderr, "}\n");
+        DEBUG_PRINT("}\n");
     }
-#endif
     dfa_state_count++;
     return state;
 }
@@ -468,10 +498,8 @@ void nfa_to_dfa(void) {
                 }
                 
                 // Also check EOS transitions from this move target
-                // IMPORTANT: For + quantifier, the first_iter state has both char transitions AND EOS
-                // We should accept if the EOS target is terminal, regardless of char transitions
-                // Because the user could end the input here (and loop zero more times)
-                // But if the state has char transitions, we mark it as "can continue" in the DFA
+                // IMPORTANT: For + quantifier, we need to recursively follow EOS chains
+                // to find all terminal states reachable via EOS
                 
                 // Find EOS symbol
                 int eos_symbol = -1;
@@ -483,29 +511,19 @@ void nfa_to_dfa(void) {
                 }
                 
                 if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
-                    int eos_target = nfa[state].transitions[eos_symbol];
-                    fprintf(stderr, "DEBUG: state=%d has EOS to %d, eos_target.is_eos_target=%d, cat=0x%02x\n",
-                            state, eos_target, nfa[eos_target].is_eos_target, nfa[eos_target].category_mask);
-                    if (nfa[eos_target].is_eos_target && nfa[eos_target].category_mask != 0) {
-                        // Check if EOS target has char transitions
-                        bool eos_has_char_trans = false;
-                        for (int s = 0; s < alphabet_size; s++) {
-                            if (alphabet[s].is_special) continue;
-                            if (nfa[eos_target].transitions[s] != -1 || nfa[eos_target].multi_targets[s][0] != '\0') {
-                                eos_has_char_trans = true;
-                                break;
-                            }
-                        }
-                        fprintf(stderr, "DEBUG: eos_target=%d has_char_trans=%d\n", eos_target, eos_has_char_trans);
-                        if (!eos_has_char_trans) {
-                            move_accepting_mask |= nfa[eos_target].category_mask;
-                            fprintf(stderr, "DEBUG: Added category 0x%02x from EOS target\n", nfa[eos_target].category_mask);
-                        }
+                    // Use recursive helper to collect all categories from EOS chain
+                    int visited[MAX_STATES];
+                    int visited_count = 0;
+                    uint8_t eos_categories = collect_eos_categories(state, eos_symbol, visited, &visited_count);
+                    if (eos_categories != 0) {
+                        DEBUG_PRINT("state=%d EOS chain categories=0x%02x\n", state, eos_categories);
+                        move_accepting_mask |= eos_categories;
+                        DEBUG_PRINT("Added category 0x%02x from EOS chain\n", eos_categories);
                     }
                 }
             }
             
-            fprintf(stderr, "DEBUG: direct_move_count=%d, move_accepting_mask=0x%02x\n", direct_move_count, move_accepting_mask);
+            DEBUG_PRINT("direct_move_count=%d, move_accepting_mask=0x%02x\n", direct_move_count, move_accepting_mask);
 
             // Debug for transitions on 'b' from states 10 and 20
             if (alphabet[array_idx].start_char == 'b' && (current_dfa == 10 || current_dfa == 20)) {
@@ -524,12 +542,12 @@ void nfa_to_dfa(void) {
                         }
                         if (!has_trans) {
                             final_count++;
-                            fprintf(stderr, "  State %d: FINAL (cat=0x%02x)\n", state, nfa[state].category_mask);
+                            DEBUG_PRINT("  State %d: FINAL (cat=0x%02x)\n", state, nfa[state].category_mask);
                         }
                     }
                 }
-                fprintf(stderr, "  Final states count: %d\n", final_count);
-                fprintf(stderr, "  move_accepting_mask=0x%02x\n", move_accepting_mask);
+                DEBUG_PRINT("  Final states count: %d\n", final_count);
+                DEBUG_PRINT("  move_accepting_mask=0x%02x\n", move_accepting_mask);
             }
 
             // Find existing DFA state with same set of NFA states
@@ -812,7 +830,7 @@ void load_nfa_file(const char* filename) {
                                         // Additional targets go to multi_targets
                                         char num_str[32];
                                         sprintf(num_str, ",%d", target);
-                                        if (strlen(nfa[current_state].multi_targets[symbol_id]) + strlen(num_str) < 255) {
+                                        if (strlen(nfa[current_state].multi_targets[symbol_id]) + strlen(num_str) < 254) {
                                             strcat(nfa[current_state].multi_targets[symbol_id], num_str);
                                             nfa[current_state].transition_count++;
                                         }
@@ -833,7 +851,7 @@ void load_nfa_file(const char* filename) {
         }
     }
     fclose(file);
-    VERBOSE_PRINT("Loaded NFA with %d states and %d symbols from %s\n", nfa_state_count, alphabet_size, filename);
+    DEBUG_PRINT("Loaded NFA with %d states and %d symbols from %s\n", nfa_state_count, alphabet_size, filename);
 }
 
 // Write DFA to binary file (Version 4 format with identifier)
@@ -959,8 +977,8 @@ void write_dfa_file(const char* filename) {
     fwrite(dfa_struct, dfa_size, 1, file);
     fclose(file);
     free(dfa_struct);
-    VERBOSE_PRINT("Wrote DFA with %d states to %s\n", dfa_state_count, filename);
-    VERBOSE_PRINT("DFA size: %zu bytes\n", dfa_size);
+    DEBUG_PRINT("Wrote DFA with %d states to %s\n", dfa_state_count, filename);
+    DEBUG_PRINT("DFA size: %zu bytes\n", dfa_size);
     
     // Count final states
     int final_count = 0;
@@ -973,21 +991,36 @@ void write_dfa_file(const char* filename) {
 
 // Main function
 int main(int argc, char* argv[]) {
+    // Check for verbose flag
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
+            flag_verbose = true;
+            // Remove flag from arguments
+            for (int j = i; j < argc - 1; j++) {
+                argv[j] = argv[j + 1];
+            }
+            argc--;
+            i--;
+        }
+    }
+
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <nfa_file> [dfa_file]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [options] <nfa_file> [dfa_file]\n", argv[0]);
+        fprintf(stderr, "Options:\n");
+        fprintf(stderr, "  -v, --verbose    Enable verbose output\n");
         return 1;
     }
     const char* nfa_file = argv[1];
     const char* dfa_file = argc > 2 ? argv[2] : "readonlybox.dfa";
-    VERBOSE_PRINT("NFA to DFA Converter (Version 3)\n");
-    VERBOSE_PRINT("================================\n\n");
+    DEBUG_PRINT("NFA to DFA Converter (Version 3)\n");
+    DEBUG_PRINT("================================\n\n");
     load_nfa_file(nfa_file);
-    VERBOSE_PRINT("Converting NFA to DFA...\n");
+    DEBUG_PRINT("Converting NFA to DFA...\n");
     nfa_to_dfa();
-    VERBOSE_PRINT("Flattening DFA (symbol -> character)...\n");
+    DEBUG_PRINT("Flattening DFA (symbol -> character)...\n");
     flatten_dfa();
     write_dfa_file(dfa_file);
-    VERBOSE_PRINT("\nConversion complete!\n");
+    DEBUG_PRINT("\nConversion complete!\n");
     return 0;
 }
 

@@ -1,0 +1,12 @@
+# ============================================================================
+# Test Group 3: Question Mark Quantifier with Literal Characters
+# ============================================================================
+# Pattern: a? (zero or one 'a' character)
+[safe:test:group3] a?
+
+# ============================================================================
+# Test cases:
+# - "" should match (zero a's)
+# - "a" should match (one a)
+# - "aa" should NOT match (more than one a)
+# ============================================================================

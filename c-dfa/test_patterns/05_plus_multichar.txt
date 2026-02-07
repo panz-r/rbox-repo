@@ -1,0 +1,17 @@
+# ============================================================================
+# Test Group 5: Multi-char Fragment Plus
+# ============================================================================
+# Fragment definition
+[fragment:ABC] ab
+
+# Pattern: ((ABC))+ (one or more "ab" sequences)
+[safe:test:group5] ((ABC))+
+
+# ============================================================================
+# Test cases:
+# - "ab" should match (1 sequence)
+# - "abab" should match (2 sequences)
+# - "ababab" should match (3 sequences)
+# - "a" should NOT match (incomplete)
+# - "aba" should NOT match (incomplete)
+# ============================================================================

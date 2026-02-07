@@ -6,6 +6,8 @@
 
 static int tests_run = 0;
 static int tests_passed = 0;
+static int expanded_tests_run = 0;
+static int expanded_tests_passed = 0;
 static const char* dfa_file_path = "readonlybox.dfa";  // Default DFA file path
 
 static void test_nfa_dfa_comprehensive(bool quiet_mode);
@@ -1389,8 +1391,41 @@ int main(int argc, char* argv[]) {
     // Note: test_plus_quantifier_comprehensive() now runs as separate test group with its own DFA
     test_capture_comprehensive();
 
-    printf("\n=================================================\n");
-    printf("Results: %d/%d tests passed\n", tests_passed, tests_run);
+    printf("\n");
+    printf("=================================================\n");
+    printf("               FULL TEST SUMMARY\n");
+    printf("=================================================\n");
+    printf("\n");
+    printf("Core Tests (patterns from patterns_safe_commands.txt):\n");
+    printf("  Tests Run:    %d\n", tests_run);
+    printf("  Tests Passed: %d\n", tests_passed);
+    printf("  Tests Failed: %d\n", tests_run - tests_passed);
+    printf("\n");
+    printf("Expanded Tests (additional pattern coverage):\n");
+    printf("  Tests Run:    %d\n", expanded_tests_run);
+    printf("  Tests Passed: %d\n", expanded_tests_passed);
+    printf("  Tests Failed: %d\n", expanded_tests_run - expanded_tests_passed);
+    printf("\n");
+    printf("Combined Results:\n");
+    printf("  Total Tests Run:    %d\n", tests_run + expanded_tests_run);
+    printf("  Total Tests Passed: %d\n", tests_passed + expanded_tests_passed);
+    printf("  Total Tests Failed: %d\n", (tests_run - tests_passed) + (expanded_tests_run - expanded_tests_passed));
+    printf("\n");
+    printf("Test Categories Covered:\n");
+    printf("  - Literal pattern matching\n");
+    printf("  - Quantifiers (+, *, ?)\n");
+    printf("  - Fragments and reuse\n");
+    printf("  - Alternation (|)\n");
+    printf("  - Character classes ([abc], [a-z])\n");
+    printf("  - POSIX character classes ([[:alpha:]], [[:digit:]])\n");
+    printf("  - Wildcards (.*)\n");
+    printf("  - Nested quantifiers\n");
+    printf("  - Capture groups\n");
+    printf("  - Edge cases and boundary conditions\n");
+    printf("\n");
+    printf("=================================================\n");
+    printf("FINAL RESULT: %s\n", 
+           (tests_passed == tests_run) ? "ALL CORE TESTS PASSED" : "SOME CORE TESTS FAILED");
     printf("=================================================\n");
 
     return (tests_passed == tests_run) ? 0 : 1;
@@ -2108,9 +2143,6 @@ static void test_nfa_dfa_comprehensive(bool quiet_mode) {
 // EXPANDED DFA/NFA TEST SUITE (3x Coverage)
 // ============================================================================
 // Additional test functions for comprehensive coverage
-
-static int expanded_tests_run = 0;
-static int expanded_tests_passed = 0;
 
 #define EXP_TEST_ASSERT(cond, msg) do { \
     expanded_tests_run++; \

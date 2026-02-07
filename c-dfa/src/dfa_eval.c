@@ -145,12 +145,14 @@ static void process_deferred_captures(const dfa_state_t* current_state,
             result->capture_count++;
         }
         
+        // Remove this entry from defer stack by shifting remaining elements
+        // IMPORTANT: Re-check the current position after shifting to avoid skipping elements
         for (int shift = d; shift < defer_depth - 1; shift++) {
             defer_stack[shift] = defer_stack[shift + 1];
         }
         defer_stack_depth--;
         defer_depth--;
-        d--;
+        d--;  // Re-check current position after shift
     }
 }
 
@@ -424,7 +426,11 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         if (!transition_found) {
             // Check if we can follow an EOS transition
             if (current_state->eos_target != 0) {
-                dfa_state_t* eos_state = (dfa_state_t*)((char*)current_dfa + current_state->eos_target);
+                const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)current_dfa + current_state->eos_target);
+
+                // Process capture markers on EOS state
+                process_capture_markers(&eos_state, raw_base, active_captures, pos, result, max_captures);
+                
                 uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
                 if (eos_cat_mask != 0) {
                     // EOS target is accepting - this is a match!
@@ -473,7 +479,11 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
     // Also check EOS target if current state is not accepting
     if (!is_accepting && current_state->eos_target != 0) {
-        dfa_state_t* eos_state = (dfa_state_t*)((char*)current_dfa + current_state->eos_target);
+        const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)current_dfa + current_state->eos_target);
+
+        // Process capture markers on EOS state
+        process_capture_markers(&eos_state, raw_base, active_captures, pos, result, max_captures);
+
         uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
         if (eos_cat_mask != 0) {
             is_accepting = true;

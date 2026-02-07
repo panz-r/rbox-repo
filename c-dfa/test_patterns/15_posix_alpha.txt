@@ -1,0 +1,13 @@
+# ============================================================================
+# Test Group 15: POSIX Character Classes
+# ============================================================================
+# Pattern: [[:alpha:]]+ (one or more alphabetic characters)
+[safe:test:group15] [[:alpha:]]+
+
+# ============================================================================
+# Test cases:
+# - "abc" should match
+# - "ABCXYZ" should match
+# - "abc123" should match (stops at digit)
+# - "123" should NOT match
+# ============================================================================

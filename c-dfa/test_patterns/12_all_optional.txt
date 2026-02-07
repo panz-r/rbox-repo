@@ -1,0 +1,17 @@
+# ============================================================================
+# Test Group 12: All Optional Quantifiers
+# ============================================================================
+# Pattern: a?b?c? (zero or one of a, then b, then c)
+[safe:test:group12] a?b?c?
+
+# ============================================================================
+# Test cases:
+# - "" should match (all optional)
+# - "a" should match
+# - "ab" should match
+# - "abc" should match
+# - "b" should match (a optional)
+# - "bc" should match (a optional)
+# - "c" should match (a,b optional)
+# - "d" should NOT match
+# ============================================================================

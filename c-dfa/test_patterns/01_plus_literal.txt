@@ -1,0 +1,14 @@
+# ============================================================================
+# Test Group 1: Plus Quantifier with Literal Characters
+# ============================================================================
+# Pattern: a+ (one or more 'a' characters)
+[safe:test:group1] a+
+
+# ============================================================================
+# Test cases:
+# - "a" should match (1 a)
+# - "aa" should match (2 a's)
+# - "aaa" should match (3 a's)
+# - "" should NOT match (needs at least one a)
+# - "b" should NOT match (wrong character)
+# ============================================================================

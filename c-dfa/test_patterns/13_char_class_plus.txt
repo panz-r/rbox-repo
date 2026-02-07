@@ -1,0 +1,17 @@
+# ============================================================================
+# Test Group 13: Character Class with Plus
+# ============================================================================
+# Pattern: [abc]+ (one or more of a, b, or c)
+[safe:test:group13] [abc]+
+
+# ============================================================================
+# Test cases:
+# - "a" should match
+# - "b" should match
+# - "c" should match
+# - "abc" should match
+# - "ababc" should match
+# - "abcabc" should match
+# - "d" should NOT match
+# - "" should NOT match
+# ============================================================================
