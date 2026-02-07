@@ -493,8 +493,14 @@ void nfa_to_dfa(void) {
                 
                 // If this move target is terminal, include its category
                 // (Terminal means: no char transitions, is EOS target, has category)
+                // IMPORTANT: Detect category conflicts - if different categories reach
+                // the same state, mark as conflicting (0) to prevent misclassification
                 if (!has_char_transition && nfa[state].is_eos_target && nfa[state].category_mask != 0) {
-                    move_accepting_mask |= nfa[state].category_mask;
+                    if (move_accepting_mask == 0) {
+                        move_accepting_mask = nfa[state].category_mask;
+                    } else if (move_accepting_mask != nfa[state].category_mask) {
+                        move_accepting_mask = 0;
+                    }
                 }
                 
                 // Also check EOS transitions from this move target
@@ -810,7 +816,7 @@ void load_nfa_file(const char* filename) {
                         while (p != NULL && *p != '\0' && *p != '\n') {
                             // Find next comma or end
                             char* comma = strchr(p, ',');
-                            size_t len = comma ? (comma - p) : strlen(p);
+                            size_t len = comma ? (size_t)(comma - p) : strlen(p);
 
                             // Skip trailing spaces
                             while (len > 0 && p[len-1] == ' ') len--;

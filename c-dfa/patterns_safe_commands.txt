@@ -282,12 +282,6 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [caution::network::quant2] abc((safe::b))+
 
-[caution::network::quant2] abcb
-
-[caution::network::quant2] abcbb
-
-[caution::network::quant2] abcbbb
-
 # ============================================================================
 # PATTERN PERFORMANCE NOTES
 # ============================================================================

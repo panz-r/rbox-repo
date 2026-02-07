@@ -43,8 +43,8 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # Build DFA test
-dfa_test: src/dfa_eval.c src/dfa_loader.c src/dfa_test.c
-	$(CC) $(CFLAGS) -o $@ src/dfa_eval.c src/dfa_loader.c src/dfa_test.c $(LDFLAGS)
+dfa_test: src/dfa_eval.c src/dfa_loader.c src/dfa_test.c src/dfa_test_tripled.c
+	$(CC) $(CFLAGS) -o $@ src/dfa_eval.c src/dfa_loader.c src/dfa_test.c src/dfa_test_tripled.c $(LDFLAGS)
 
 # Build comprehensive test
 comprehensive_test: $(BUILD_DIR) src/shell_tokenizer.c src/shell_tokenizer_ext.c src/shell_processor.c src/shell_transform.c src/readonlybox.c src/dfa_eval.c src/dfa_loader.c src/comprehensive_test.c

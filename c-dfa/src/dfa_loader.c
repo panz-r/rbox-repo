@@ -29,11 +29,11 @@ const char* get_dfa_identifier(const char* filename) {
         
         uint8_t id_len = 0;
         if (version >= 4) {
-            fread(&id_len, sizeof(id_len), 1, file);
+            if (fread(&id_len, sizeof(id_len), 1, file) != 1) id_len = 0;
         }
-        
+
         if (id_len > 0 && id_len < 255) {
-            fread(identifier, 1, id_len, file);
+            if (fread(identifier, 1, id_len, file) != id_len) id_len = 0;
             identifier[id_len] = '\0';
         } else {
             strcpy(identifier, "(none)");
@@ -71,24 +71,24 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
     uint32_t magic;
     if (fread(&magic, sizeof(magic), 1, file) == 1 && magic == DFA_MAGIC) {
         uint16_t version;
-        fread(&version, sizeof(version), 1, file);
+        if (fread(&version, sizeof(version), 1, file) != 1) version = 0;
 
         uint16_t state_count;
-        fread(&state_count, sizeof(state_count), 1, file);
+        if (fread(&state_count, sizeof(state_count), 1, file) != 1) state_count = 0;
 
         uint32_t initial_state;
-        fread(&initial_state, sizeof(initial_state), 1, file);
+        if (fread(&initial_state, sizeof(initial_state), 1, file) != 1) initial_state = 0;
 
         uint32_t accepting_mask;
-        fread(&accepting_mask, sizeof(accepting_mask), 1, file);
+        if (fread(&accepting_mask, sizeof(accepting_mask), 1, file) != 1) accepting_mask = 0;
 
         uint16_t flags;
-        fread(&flags, sizeof(flags), 1, file);
+        if (fread(&flags, sizeof(flags), 1, file) != 1) flags = 0;
 
         uint8_t id_len = 0;
         size_t header_size = 19; // dfa_t base (magic through identifier_length)
         if (version >= 4) {
-            fread(&id_len, sizeof(id_len), 1, file);
+            if (fread(&id_len, sizeof(id_len), 1, file) != 1) id_len = 0;
             header_size = 19 + id_len; // 19 + identifier_length + identifier bytes
         }
 

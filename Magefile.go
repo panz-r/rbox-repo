@@ -385,6 +385,7 @@ func DfaTest() error {
 		filepath.Join(cdfaSrcDir, "dfa_eval.c"),
 		filepath.Join(cdfaSrcDir, "dfa_loader.c"),
 		filepath.Join(cdfaSrcDir, "dfa_test.c"),
+		filepath.Join(cdfaSrcDir, "dfa_test_tripled.c"),
 		"-I"+filepath.Join(cdfaDir, "include"),
 		"-lm", "-O2")
 	buildCmd.Dir = cdfaDir

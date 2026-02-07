@@ -220,16 +220,21 @@ static int8_t pending_capture_defer_id = -1;
 // ============================================================================
 
 // Result of parsing a fragment - stores info needed by quantifier handlers
+// IMPORTANT: loop_entry_state is the state AFTER the first character is consumed.
+// This is used by quantifier handlers to copy transitions for loop-back.
+// For multi-char fragments, loop_back copies ALL transitions from loop_entry_state
+// to exit_state, allowing the fragment to restart from wherever it would go
+// after consuming any character.
 typedef struct {
-    int loop_entry_state;      // State where quantifier loop should be added (-1 if multi-char)
-    int exit_state;            // State after consuming the fragment
+    int loop_entry_state;      // State AFTER first char consumed (source for loop-back transitions)
+    int exit_state;            // State after consuming the entire fragment
     bool is_single_char;       // Whether fragment is single character
     char loop_char;            // The character (if single char)
     int capture_defer_id;       // Capture ID to defer (for +/* quantifiers)
     bool has_capture;          // Whether fragment contains captures
     char capture_name[MAX_CAPTURE_NAME];  // Capture name if applicable
-    int fragment_entry_state;  // State BEFORE first char transition (for multi-char loop-back)
-    char loop_first_char;      // First character of fragment (for multi-char loop-back)
+    int fragment_entry_state;  // State BEFORE first char transition (legacy, rarely used)
+    char loop_first_char;      // First character of fragment (legacy, rarely used)
 } FragmentResult;
 
 // Stack-based context for nested quantifiers
@@ -1053,11 +1058,11 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     if (is_single_char) {
         result.is_single_char = true;
         result.loop_char = frag_value[0];
-        result.loop_entry_state = frag_start;  // State BEFORE consuming char (for loop transition)
+        result.loop_entry_state = frag_start;  // State BEFORE consuming char (for quantifier to add transitions)
     } else {
         result.is_single_char = false;
         result.loop_char = '\0';
-        result.loop_entry_state = frag_start;
+        result.loop_entry_state = frag_start;  // State BEFORE consuming fragment (for multi-char loop-back)
         result.fragment_entry_state = start_state;  // Store entry state for multi-char loop-back
         result.loop_first_char = frag_value[0];     // Store first char for loop-back transition
     }
@@ -2294,11 +2299,11 @@ void parse_advanced_pattern(const char* line) {
 
     // Store pattern
     if (pattern_count < MAX_PATTERNS) {
-        strncpy(patterns[pattern_count].pattern, pattern, MAX_LINE_LENGTH - 1);
-        strncpy(patterns[pattern_count].category, category, sizeof(category) - 1);
-        strncpy(patterns[pattern_count].subcategory, subcategory, sizeof(subcategory) - 1);
-        strncpy(patterns[pattern_count].operations, operations, sizeof(operations) - 1);
-        strncpy(patterns[pattern_count].action, action, sizeof(action) - 1);
+        strncpy(patterns[pattern_count].pattern, pattern, MAX_LINE_LENGTH);
+        strncpy(patterns[pattern_count].category, category, sizeof(patterns[pattern_count].category));
+        strncpy(patterns[pattern_count].subcategory, subcategory, sizeof(patterns[pattern_count].subcategory));
+        strncpy(patterns[pattern_count].operations, operations, sizeof(patterns[pattern_count].operations));
+        strncpy(patterns[pattern_count].action, action, sizeof(patterns[pattern_count].action));
         patterns[pattern_count].category_id = parse_category(category);
         current_pattern_index = pattern_count;  // Set BEFORE incrementing
         pattern_count++;
@@ -2384,9 +2389,9 @@ static void parse_acceptance_mapping(const char* line) {
     // Store the mapping
     if (category_mapping_count < MAX_CATEGORY_MAPPINGS) {
         category_mapping_t* mapping = &category_mappings[category_mapping_count++];
-        strncpy(mapping->category, category, sizeof(mapping->category) - 1);
-        strncpy(mapping->subcategory, subcategory, sizeof(mapping->subcategory) - 1);
-        strncpy(mapping->operations, operations, sizeof(mapping->operations) - 1);
+        strncpy(mapping->category, category, sizeof(mapping->category));
+        strncpy(mapping->subcategory, subcategory, sizeof(mapping->subcategory));
+        strncpy(mapping->operations, operations, sizeof(mapping->operations));
         mapping->acceptance_category = acceptance_cat;
         VERBOSE_PRINT("ACCEPTANCE_MAPPING: [%s:%s:%s] -> %d\n",
                 category, subcategory, operations, acceptance_cat);

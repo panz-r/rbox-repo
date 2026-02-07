@@ -12,6 +12,7 @@ static const char* dfa_file_path = "readonlybox.dfa";  // Default DFA file path
 
 static void test_nfa_dfa_comprehensive(bool quiet_mode);
 static void run_expanded_tests(void);
+extern void run_tripled_expanded_tests(void);  // defined in dfa_test_tripled.c
 
 #define TEST_ASSERT(cond, msg) do { \
     tests_run++; \
@@ -2142,7 +2143,17 @@ static void test_nfa_dfa_comprehensive(bool quiet_mode) {
 // ============================================================================
 // EXPANDED DFA/NFA TEST SUITE (3x Coverage)
 // ============================================================================
-// Additional test functions for comprehensive coverage
+// IMPORTANT: These tests require a TEST DFA built from test pattern files.
+// They will FAIL against the production DFA (readonlybox.dfa).
+//
+// To run these tests:
+// 1. Build test DFA: patterns_quantifier_comprehensive.txt -> test.dfa
+// 2. Copy test.dfa to src/ as test_quantifier.dfa
+// 3. Build with: gcc -Iinclude -o test_expanded src/test_with_quantifier_dfa.c ...
+// 4. Run: ./test_expanded
+//
+// See TEST_ORGANIZATION.md for details.
+// ============================================================================
 
 #define EXP_TEST_ASSERT(cond, msg) do { \
     expanded_tests_run++; \
@@ -2697,6 +2708,9 @@ void run_expanded_tests(void) {
     test_expanded_mixed_literal_fragment();
     test_expanded_hard_edge_cases();
     test_expanded_performance_stress();
+
+    // TRIPLED TESTS: 3x coverage (~1000 tests)
+    run_tripled_expanded_tests();
 
     printf("\n=================================================\n");
     printf("EXPANDED TESTS: %d/%d passed\n", expanded_tests_passed, expanded_tests_run);
