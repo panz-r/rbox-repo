@@ -1131,6 +1131,17 @@ void write_dfa_file(const char* filename) {
     DEBUG_PRINT("Binary Size: Header=%zu, States=%zu, Rules=%zu, Total=%zu bytes\n",
                 header_size, states_size, rules_size, dfa_size);
 
+    if (flag_verbose) {
+        fprintf(stderr, "State 0 transitions:\n");
+        for (int c = 0; c < 256; c++) {
+            if (dfa[0].transitions[c] != -1) {
+                fprintf(stderr, "  '%c' (0x%02x) -> state %d%s\n", 
+                        isprint(c) ? c : '.', c, dfa[0].transitions[c],
+                        dfa[0].transitions_from_any[c] ? " (ANY)" : "");
+            }
+        }
+    }
+
     dfa_t* dfa_struct = malloc(dfa_size);
     if (dfa_struct == NULL) {
         fprintf(stderr, "Error: Memory allocation failed for binary DFA\n");
@@ -1302,7 +1313,7 @@ int main(int argc, char* argv[]) {
     if (minimize) {
         DEBUG_PRINT("Minimizing DFA...\n");
         dfa_minimize_set_verbose(flag_verbose);
-        // dfa_state_count = dfa_minimize(dfa, dfa_state_count);
+        dfa_state_count = dfa_minimize(dfa, dfa_state_count);
         dfa_minimize_stats_t stats;
         dfa_minimize_get_stats(&stats);
         if (flag_verbose) {

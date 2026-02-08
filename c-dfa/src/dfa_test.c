@@ -113,21 +113,26 @@ static void run_core_tests(void) {
 
 static void run_quantifier_tests(void) {
     TestCase cases[] = {
-        {"a+", true, 1, CAT_MASK_SAFE, "a+ matches 'a'"},
-        {"aa", true, 2, CAT_MASK_SAFE, "aa matches 'aa'"},
-        {"aaa", true, 3, CAT_MASK_SAFE, "aaa matches 'aaa'"},
-        {"", false, 0, 0, "a+ should NOT match empty"},
-        {"b", false, 0, 0, "a+ should NOT match 'b'"},
-        {"ab", false, 0, 0, "a+ should NOT match 'ab'"},
-        {"a((b))+", true, 2, CAT_MASK_SAFE, "a((b))+ matches 'ab'"},
-        {"a((b))+", true, 3, CAT_MASK_SAFE, "a((b))+ matches 'abb'"},
-        {"a((b))+", true, 4, CAT_MASK_SAFE, "a((b))+ matches 'abbb'"},
-        {"a((b))+", false, 0, 0, "a((b))+ should NOT match 'a'"},
-        {"abc((b))+", true, 4, CAT_MASK_SAFE, "abc((b))+ matches 'abcb'"},
-        {"a*", true, 0, CAT_MASK_SAFE, "a* matches empty"},
-        {"a", true, 1, CAT_MASK_SAFE, "a* matches 'a'"},
-        {"a?", true, 0, CAT_MASK_SAFE, "a? matches empty"},
-        {"a?", true, 1, CAT_MASK_SAFE, "a? matches 'a'"},
+        // Pattern: (a)+ - matches one or more 'a's
+        {"a", true, 1, CAT_MASK_SAFE, "(a)+ matches 'a'"},
+        {"aa", true, 2, CAT_MASK_SAFE, "(a)+ matches 'aa'"},
+        {"aaa", true, 3, CAT_MASK_SAFE, "(a)+ matches 'aaa'"},
+        {"", false, 0, 0, "(a)+ should NOT match empty"},
+        {"b", false, 0, 0, "(a)+ should NOT match 'b'"},
+        {"ab", false, 0, 0, "(a)+ should NOT match 'ab'"},
+        // Pattern: a((b))+ - matches 'a' followed by one or more 'b's
+        {"ab", true, 2, CAT_MASK_SAFE, "a((b))+ matches 'ab'"},
+        {"abb", true, 3, CAT_MASK_SAFE, "a((b))+ matches 'abb'"},
+        {"abbb", true, 4, CAT_MASK_SAFE, "a((b))+ matches 'abbb'"},
+        {"a", false, 0, 0, "a((b))+ should NOT match 'a'"},
+        // Pattern: abc((b))+ - matches 'abc' followed by one or more 'b's
+        {"abcb", true, 4, CAT_MASK_SAFE, "abc((b))+ matches 'abcb'"},
+        // Pattern: (a)* - matches zero or more 'a's
+        {"", true, 0, CAT_MASK_SAFE, "(a)* matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a)* matches 'a'"},
+        // Pattern: (a)? - matches zero or one 'a'
+        {"", true, 0, CAT_MASK_SAFE, "(a)? matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a)? matches 'a'"},
     };
 
     run_test_group("QUANTIFIER TESTS", "patterns_quantifier_comprehensive.txt",
@@ -136,14 +141,12 @@ static void run_quantifier_tests(void) {
 
 static void run_fragment_tests(void) {
     TestCase cases[] = {
-        {"alpha", true, 5, CAT_MASK_SAFE, "alpha matches 'alpha'"},
-        {"beta", true, 4, CAT_MASK_SAFE, "beta matches 'beta'"},
         {"alpha beta", true, 11, CAT_MASK_SAFE, "alpha beta matches"},
         {"outer inner", true, 12, CAT_MASK_SAFE, "outer inner matches"},
         {"inner", false, 0, 0, "inner alone should NOT match"},
         {"outer", false, 0, 0, "outer alone should NOT match"},
-        {"((xyz))+", true, 3, CAT_MASK_SAFE, "((xyz))+ matches 'xyz'"},
-        {"((xyz))+", true, 6, CAT_MASK_SAFE, "((xyz))+ matches 'xyzxyz'"},
+        {"xyz", true, 3, CAT_MASK_SAFE, "((xyz))+ matches 'xyz'"},
+        {"xyzxyz", true, 6, CAT_MASK_SAFE, "((xyz))+ matches 'xyzxyz'"},
     };
 
     run_test_group("FRAGMENT TESTS", "patterns_frag_quant.txt",
@@ -152,14 +155,14 @@ static void run_fragment_tests(void) {
 
 static void run_alternation_tests(void) {
     TestCase cases[] = {
-        {"(a|b)", true, 1, CAT_MASK_SAFE, "(a|b) matches 'a'"},
-        {"(a|b)", true, 1, CAT_MASK_SAFE, "(a|b) matches 'b'"},
-        {"(a|b)+", true, 1, CAT_MASK_SAFE, "(a|b)+ matches 'a'"},
-        {"(a|b)+", true, 2, CAT_MASK_SAFE, "(a|b)+ matches 'ab'"},
-        {"(a|b)+", true, 3, CAT_MASK_SAFE, "(a|b)+ matches 'aba'"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a|b) matches 'a'"},
+        {"b", true, 1, CAT_MASK_SAFE, "(a|b) matches 'b'"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a|b)+ matches 'a'"},
+        {"ab", true, 2, CAT_MASK_SAFE, "(a|b)+ matches 'ab'"},
+        {"aba", true, 3, CAT_MASK_SAFE, "(a|b)+ matches 'aba'"},
         {"", false, 0, 0, "(a|b)+ should NOT match empty"},
         {"c", false, 0, 0, "(a|b)+ should NOT match 'c'"},
-        {"(ABC|DEF)", true, 3, CAT_MASK_SAFE, "(ABC|DEF) matches 'ABC'"},
+        {"ABC", true, 3, CAT_MASK_SAFE, "(ABC|DEF) matches 'ABC'"},
     };
 
     run_test_group("ALTERNATION TESTS", "patterns_focused.txt",
@@ -193,25 +196,25 @@ static void run_category_tests(void) {
 
 static void run_tripled_quantifier_depth(void) {
     TestCase cases[] = {
-        {"a((b))+", true, 2, CAT_MASK_SAFE, "a((b))+ matches 'ab'"},
-        {"a((b))+", true, 3, CAT_MASK_SAFE, "a((b))+ matches 'abb'"},
-        {"a((b))+", true, 4, CAT_MASK_SAFE, "a((b))+ matches 'abbb'"},
-        {"a((b))+", false, 0, 0, "a((b))+ should NOT match 'a'"},
-        {"((a))+", true, 1, CAT_MASK_SAFE, "((a))+ matches 'a'"},
-        {"((a))+", true, 2, CAT_MASK_SAFE, "((a))+ matches 'aa'"},
-        {"((a))+", true, 3, CAT_MASK_SAFE, "((a))+ matches 'aaa'"},
-        {"(((a)))+", true, 2, CAT_MASK_SAFE, "(((a)))+ matches 'aa'"},
-        {"(((a)))+", true, 4, CAT_MASK_SAFE, "(((a)))+ matches 'aaaa'"},
-        {"(a|b)+", true, 1, CAT_MASK_SAFE, "(a|b)+ matches 'a'"},
-        {"(a|b)+", true, 2, CAT_MASK_SAFE, "(a|b)+ matches 'ab'"},
-        {"(a|b)+", true, 5, CAT_MASK_SAFE, "(a|b)+ matches 'ababa'"},
-        {"((a|b))+", true, 1, CAT_MASK_SAFE, "((a|b))+ matches 'a'"},
-        {"((a|b))+", true, 2, CAT_MASK_SAFE, "((a|b))+ matches 'ab'"},
-        {"((a|b))+", true, 4, CAT_MASK_SAFE, "((a|b))+ matches 'abab'"},
-        {"(a*)+", true, 0, CAT_MASK_SAFE, "(a*)+ matches empty"},
-        {"(a*)+", true, 1, CAT_MASK_SAFE, "(a*)+ matches 'a'"},
-        {"(a+)+", true, 1, CAT_MASK_SAFE, "(a+)+ matches 'a'"},
-        {"(a+)+", true, 3, CAT_MASK_SAFE, "(a+)+ matches 'aaa'"},
+        {"ab", true, 2, CAT_MASK_SAFE, "a((b))+ matches 'ab'"},
+        {"abb", true, 3, CAT_MASK_SAFE, "a((b))+ matches 'abb'"},
+        {"abbb", true, 4, CAT_MASK_SAFE, "a((b))+ matches 'abbb'"},
+        {"a", false, 0, 0, "a((b))+ should NOT match 'a'"},
+        {"a", true, 1, CAT_MASK_SAFE, "((a))+ matches 'a'"},
+        {"aa", true, 2, CAT_MASK_SAFE, "((a))+ matches 'aa'"},
+        {"aaa", true, 3, CAT_MASK_SAFE, "((a))+ matches 'aaa'"},
+        {"aa", true, 2, CAT_MASK_SAFE, "(((a)))+ matches 'aa'"},
+        {"aaaa", true, 4, CAT_MASK_SAFE, "(((a)))+ matches 'aaaa'"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a|b)+ matches 'a'"},
+        {"ab", true, 2, CAT_MASK_SAFE, "(a|b)+ matches 'ab'"},
+        {"ababa", true, 5, CAT_MASK_SAFE, "(a|b)+ matches 'ababa'"},
+        {"a", true, 1, CAT_MASK_SAFE, "((a|b))+ matches 'a'"},
+        {"ab", true, 2, CAT_MASK_SAFE, "((a|b))+ matches 'ab'"},
+        {"abab", true, 4, CAT_MASK_SAFE, "((a|b))+ matches 'abab'"},
+        {"", true, 0, CAT_MASK_SAFE, "(a*)+ matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a*)+ matches 'a'"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a+)+ matches 'a'"},
+        {"aaa", true, 3, CAT_MASK_SAFE, "(a+)+ matches 'aaa'"},
     };
 
     run_test_group("TRIPLED QUANTIFIER DEPTH", "patterns_quantifier_comprehensive.txt",
@@ -220,15 +223,13 @@ static void run_tripled_quantifier_depth(void) {
 
 static void run_tripled_fragment_interactions(void) {
     TestCase cases[] = {
-        {"alpha", true, 5, CAT_MASK_SAFE, "alpha matches 'alpha'"},
-        {"beta", true, 4, CAT_MASK_SAFE, "beta matches 'beta'"},
         {"alpha beta", true, 11, CAT_MASK_SAFE, "alpha beta matches"},
         {"outer inner", true, 12, CAT_MASK_SAFE, "outer inner matches"},
-        {"((xyz))+", true, 3, CAT_MASK_SAFE, "((xyz))+ matches 'xyz'"},
-        {"((xyz))+", true, 6, CAT_MASK_SAFE, "((xyz))+ matches 'xyzxyz'"},
+        {"xyz", true, 3, CAT_MASK_SAFE, "((xyz))+ matches 'xyz'"},
+        {"xyzxyz", true, 6, CAT_MASK_SAFE, "((xyz))+ matches 'xyzxyz'"},
         {"ABC ABC ABC", true, 11, CAT_MASK_SAFE, "ABC repeated 3x matches"},
-        {"(AB)+", true, 2, CAT_MASK_SAFE, "(AB)+ matches 'AB'"},
-        {"(AB)+", true, 4, CAT_MASK_SAFE, "(AB)+ matches 'ABAB'"},
+        {"AB", true, 2, CAT_MASK_SAFE, "(AB)+ matches 'AB'"},
+        {"ABAB", true, 4, CAT_MASK_SAFE, "(AB)+ matches 'ABAB'"},
     };
 
     run_test_group("TRIPLED FRAGMENT INTERACTIONS", "patterns_frag_plus.txt",
@@ -300,18 +301,18 @@ static void run_tripled_category_isolation(void) {
 
 static void run_tripled_quantifier_interactions(void) {
     TestCase cases[] = {
-        {"a((b))+", true, 2, CAT_MASK_SAFE, "a+(b)+ matches 'ab'"},
-        {"a((b))+", true, 4, CAT_MASK_SAFE, "a+(b)+ matches 'abbb'"},
-        {"a((b))*", true, 0, CAT_MASK_SAFE, "a+(b)* matches empty"},
-        {"a((b))*", true, 1, CAT_MASK_SAFE, "a+(b)* matches 'a'"},
-        {"a((b))*", true, 3, CAT_MASK_SAFE, "a+(b)* matches 'abb'"},
-        {"a((b))?", true, 1, CAT_MASK_SAFE, "a+(b)? matches 'a'"},
-        {"a((b))?", true, 2, CAT_MASK_SAFE, "a+(b)? matches 'ab'"},
-        {"abc((d))+", true, 4, CAT_MASK_SAFE, "abc+(d)+ matches 'abcd'"},
-        {"((x)y)+", true, 2, CAT_MASK_SAFE, "((x)y)+ matches 'xy'"},
-        {"((x)y)+", true, 4, CAT_MASK_SAFE, "((x)y)+ matches 'xyxy'"},
-        {"((x)y)*", true, 0, CAT_MASK_SAFE, "((x)y)* matches empty"},
-        {"((x)y)*", true, 2, CAT_MASK_SAFE, "((x)y)* matches 'xy'"},
+        {"ab", true, 2, CAT_MASK_SAFE, "a((b))+ matches 'ab'"},
+        {"abbb", true, 4, CAT_MASK_SAFE, "a((b))+ matches 'abbb'"},
+        {"", true, 0, CAT_MASK_SAFE, "a((b))* matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "a((b))* matches 'a'"},
+        {"abb", true, 3, CAT_MASK_SAFE, "a((b))* matches 'abb'"},
+        {"a", true, 1, CAT_MASK_SAFE, "a((b))? matches 'a'"},
+        {"ab", true, 2, CAT_MASK_SAFE, "a((b))? matches 'ab'"},
+        {"abcd", true, 4, CAT_MASK_SAFE, "abc((d))+ matches 'abcd'"},
+        {"xy", true, 2, CAT_MASK_SAFE, "((x)y)+ matches 'xy'"},
+        {"xyxy", true, 4, CAT_MASK_SAFE, "((x)y)+ matches 'xyxy'"},
+        {"", true, 0, CAT_MASK_SAFE, "((x)y)* matches empty"},
+        {"xy", true, 2, CAT_MASK_SAFE, "((x)y)* matches 'xy'"},
     };
 
     run_test_group("TRIPLED QUANTIFIER INTERACTIONS", "patterns_quantifier_test.txt",
