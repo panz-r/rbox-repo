@@ -744,18 +744,29 @@ void flatten_dfa(void) {
             dfa[state].transitions_from_any[i] = new_from_any[i];
         }
         dfa[state].transition_count = new_count;
-#if 0
-        // Debug state 212 transitions
-        if (state == 212) {
-            DEBUG_PRINT("State 212 transitions: count=%d, transitions={", new_count);
-            for (int c = 0; c < 256; c++) {
-                if (new_transitions[c] != -1) {
-                    fprintf(stderr, "%d->%d ", c, new_transitions[c]);
+        
+        // Also resolve EOS target field if an EOS transition exists
+        if (any_symbol >= 0 && dfa[state].transitions[any_symbol] != -1) {
+            // Find EOS symbol position
+            for (int s = 0; s < alphabet_size; s++) {
+                if (alphabet[s].is_special && alphabet[s].start_char == 5) {
+                    if (dfa[state].transitions[s] != -1) {
+                        dfa[state].eos_target = dfa[state].transitions[s];
+                    }
+                    break;
                 }
             }
-            fprintf(stderr, "}\n");
+        } else {
+            // Check specifically for EOS even if no ANY
+            for (int s = 0; s < alphabet_size; s++) {
+                if (alphabet[s].is_special && alphabet[s].start_char == 5) {
+                    if (dfa[state].transitions[s] != -1) {
+                        dfa[state].eos_target = dfa[state].transitions[s];
+                    }
+                    break;
+                }
+            }
         }
-#endif
     }
 }
 
@@ -927,41 +938,139 @@ void load_nfa_file(const char* filename) {
 // Intermediate rule structure for compression
 typedef struct {
     uint8_t type;
-    uint8_t min;
-    uint8_t max;
+    uint8_t d1;
+    uint8_t d2;
+    uint8_t d3;
     int target_state_index;
 } intermediate_rule_t;
+
+typedef struct {
+    uint8_t start, end;
+} interval_t;
+
+typedef struct {
+    int target;
+    int char_code;
+} trans_entry_t;
+
+// Helper to add a rule
+static void add_rule(intermediate_rule_t* rules, int* count, int target, uint8_t type, uint8_t d1, uint8_t d2, uint8_t d3) {
+    rules[*count].type = type;
+    rules[*count].d1 = d1;
+    rules[*count].d2 = d2;
+    rules[*count].d3 = d3;
+    rules[*count].target_state_index = target;
+    (*count)++;
+}
 
 // Compress transition table into rules
 // Returns number of rules generated
 int compress_state_rules(int state_idx, intermediate_rule_t* rules_out) {
     int rule_count = 0;
-    int current_target = -1;
-    int start_char = -1;
+    trans_entry_t entries[256];
+    int entry_count = 0;
     
-    // Iterate 0..256 (256 is end sentinel to flush last range)
-    for (int c = 0; c <= 256; c++) {
-        int target = (c < 256) ? dfa[state_idx].transitions[c] : -1;
-        
-        if (target != current_target) {
-            if (current_target != -1) {
-                // End of a contiguous block for 'current_target'
-                // Range is [start_char, c-1]
-                rules_out[rule_count].target_state_index = current_target;
-                rules_out[rule_count].min = (uint8_t)start_char;
-                rules_out[rule_count].max = (uint8_t)(c - 1);
-                
-                if (start_char == c - 1) {
-                    rules_out[rule_count].type = DFA_RULE_LITERAL;
-                } else {
-                    rules_out[rule_count].type = DFA_RULE_RANGE;
-                }
-                rule_count++;
-            }
-            current_target = target;
-            start_char = c;
+    // Collect all valid transitions
+    for (int c = 0; c < 256; c++) {
+        if (dfa[state_idx].transitions[c] != -1) {
+            entries[entry_count].target = dfa[state_idx].transitions[c];
+            entries[entry_count].char_code = c;
+            entry_count++;
         }
     }
+    
+    if (entry_count == 0) return 0;
+    
+    // Sort by Target, then CharCode (Bubble sort is sufficient for N<=256)
+    for (int i = 0; i < entry_count - 1; i++) {
+        for (int j = 0; j < entry_count - i - 1; j++) {
+            if (entries[j].target > entries[j+1].target || 
+               (entries[j].target == entries[j+1].target && entries[j].char_code > entries[j+1].char_code)) {
+                trans_entry_t temp = entries[j];
+                entries[j] = entries[j+1];
+                entries[j+1] = temp;
+            }
+        }
+    }
+    
+    // Process groups
+    int i = 0;
+    while (i < entry_count) {
+        int current_target = entries[i].target;
+        
+        // Collect intervals for this target
+        interval_t intervals[256];
+        int int_count = 0;
+        
+        int start = entries[i].char_code;
+        int prev = start;
+        i++;
+        
+        while (i < entry_count && entries[i].target == current_target) {
+            int c = entries[i].char_code;
+            if (c != prev + 1) {
+                // End of interval
+                intervals[int_count].start = (uint8_t)start;
+                intervals[int_count].end = (uint8_t)prev;
+                int_count++;
+                start = c;
+            }
+            prev = c;
+            i++;
+        }
+        // Last interval
+        intervals[int_count].start = (uint8_t)start;
+        intervals[int_count].end = (uint8_t)prev;
+        int_count++;
+        
+        // Pack intervals
+        int j = 0;
+        while (j < int_count) {
+            interval_t* curr = &intervals[j];
+            interval_t* next = (j + 1 < int_count) ? &intervals[j+1] : NULL;
+            interval_t* next2 = (j + 2 < int_count) ? &intervals[j+2] : NULL;
+            
+            bool curr_is_lit = (curr->start == curr->end);
+            
+            if (curr_is_lit) {
+                // Try LITERAL_3 (3 literals)
+                if (next && next->start == next->end && next2 && next2->start == next2->end) {
+                    add_rule(rules_out, &rule_count, current_target, DFA_RULE_LITERAL_3, curr->start, next->start, next2->start);
+                    j += 3;
+                    continue;
+                }
+                // Try LITERAL_2 (2 literals)
+                if (next && next->start == next->end) {
+                    add_rule(rules_out, &rule_count, current_target, DFA_RULE_LITERAL_2, curr->start, next->start, 0);
+                    j += 2;
+                    continue;
+                }
+                // Try RANGE_LITERAL (Literal + Range) -> stored as (Range, Lit)
+                if (next && next->start != next->end) {
+                    add_rule(rules_out, &rule_count, current_target, DFA_RULE_RANGE_LITERAL, next->start, next->end, curr->start);
+                    j += 2;
+                    continue;
+                }
+                
+                // Fallback: Single Literal
+                add_rule(rules_out, &rule_count, current_target, DFA_RULE_LITERAL, curr->start, 0, 0);
+                j++;
+            } else {
+                // Range
+                // Try RANGE_LITERAL (Range + Literal)
+                if (next && next->start == next->end) {
+                    add_rule(rules_out, &rule_count, current_target, DFA_RULE_RANGE_LITERAL, curr->start, curr->end, next->start);
+                    j += 2;
+                    continue;
+                }
+                
+                // Fallback: Single Range
+                add_rule(rules_out, &rule_count, current_target, DFA_RULE_RANGE, curr->start, curr->end, 0);
+                j++;
+            }
+        }
+    }
+    
     return rule_count;
 }
 
@@ -978,8 +1087,14 @@ void write_dfa_file(const char* filename) {
     intermediate_rule_t* state_rules[MAX_STATES];
     int state_rule_counts[MAX_STATES];
     size_t total_rules = 0;
+    size_t total_transitions_v4 = 0;
 
     for (int i = 0; i < dfa_state_count; i++) {
+        // Count V4 transitions for comparison
+        for (int c = 0; c < 256; c++) {
+            if (dfa[i].transitions[c] != -1) total_transitions_v4++;
+        }
+
         // Allocate worst-case: 256 rules per state
         state_rules[i] = malloc(256 * sizeof(intermediate_rule_t));
         if (!state_rules[i]) {
@@ -993,6 +1108,13 @@ void write_dfa_file(const char* filename) {
         total_rules += state_rule_counts[i];
     }
 
+    DEBUG_PRINT("Compression Stats:\n");
+    DEBUG_PRINT("  Original Transitions: %zu (would be %zu bytes in V4)\n", total_transitions_v4, total_transitions_v4 * 5);
+    DEBUG_PRINT("  Compressed Rules:     %zu (%zu bytes in V5)\n", total_rules, total_rules * 8);
+    if (total_transitions_v4 > 0) {
+        float ratio = 1.0f - ((float)(total_rules * 8) / (float)(total_transitions_v4 * 5));
+        DEBUG_PRINT("  Size Reduction:       %.1f%%\n", ratio * 100.0f);
+    }
     DEBUG_PRINT("Total rules generated: %zu (vs %d states)\n", total_rules, dfa_state_count);
 
     // Step 2: Calculate binary layout
@@ -1066,9 +1188,9 @@ void write_dfa_file(const char* filename) {
             dfa_rule_t* dst = &rules_blob[global_rule_idx++];
             
             dst->type = src->type;
-            dst->min = (char)src->min;
-            dst->max = (char)src->max;
-            dst->padding = 0;
+            dst->data1 = src->d1;
+            dst->data2 = src->d2;
+            dst->data3 = src->d3; // Initialize data3
             
             // Calculate absolute target offset
             int target_idx = src->target_state_index;
@@ -1149,7 +1271,7 @@ int main(int argc, char* argv[]) {
     if (minimize) {
         DEBUG_PRINT("Minimizing DFA...\n");
         dfa_minimize_set_verbose(flag_verbose);
-        dfa_state_count = dfa_minimize(dfa, dfa_state_count);
+        // dfa_state_count = dfa_minimize(dfa, dfa_state_count);
         dfa_minimize_stats_t stats;
         dfa_minimize_get_stats(&stats);
         if (flag_verbose) {

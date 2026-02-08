@@ -388,16 +388,41 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             }
 
             if (current_dfa->version >= 5) {
-                // V5: Compact Rules (Literal/Range)
+                // V5: Compact Rules
                 const dfa_rule_t* rules = (const dfa_rule_t*)((const char*)raw_base + trans_offset);
                 
                 for (uint16_t i = 0; i < current_state->transition_count; i++) {
                     bool match = false;
+                    uint8_t type = rules[i].type;
+                    uint8_t d1 = rules[i].data1;
+                    uint8_t d2 = rules[i].data2;
+                    uint8_t d3 = rules[i].data3;
                     
-                    if (rules[i].type == DFA_RULE_LITERAL) {
-                        if ((unsigned char)rules[i].min == c) match = true;
-                    } else if (rules[i].type == DFA_RULE_RANGE) {
-                        if (c >= (unsigned char)rules[i].min && c <= (unsigned char)rules[i].max) match = true;
+                    switch (type) {
+                        case DFA_RULE_LITERAL:
+                            if (c == d1) match = true;
+                            break;
+                        case DFA_RULE_RANGE:
+                            if (c >= d1 && c <= d2) match = true;
+                            break;
+                        case DFA_RULE_LITERAL_2:
+                            if (c == d1 || c == d2) match = true;
+                            break;
+                        case DFA_RULE_LITERAL_3:
+                            if (c == d1 || c == d2 || c == d3) match = true;
+                            break;
+                        case DFA_RULE_RANGE_LITERAL:
+                            if ((c >= d1 && c <= d2) || c == d3) match = true;
+                            break;
+                        case DFA_RULE_DEFAULT:
+                            match = true;
+                            break;
+                        case DFA_RULE_NOT_LITERAL:
+                            if (c != d1) match = true;
+                            break;
+                        case DFA_RULE_NOT_RANGE:
+                            if (c < d1 || c > d2) match = true;
+                            break;
                     }
                     
                     if (match) {
@@ -477,10 +502,37 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             const dfa_rule_t* rules = (const dfa_rule_t*)((const char*)current_dfa + current_state->transitions_offset);
             for (uint16_t i = 0; i < current_state->transition_count; i++) {
                 bool match = false;
-                if (rules[i].type == DFA_RULE_LITERAL) {
-                    if ((unsigned char)rules[i].min == DFA_CHAR_EOS) match = true;
-                } else if (rules[i].type == DFA_RULE_RANGE) {
-                    if ((unsigned char)rules[i].min <= DFA_CHAR_EOS && (unsigned char)rules[i].max >= DFA_CHAR_EOS) match = true;
+                unsigned char c = DFA_CHAR_EOS;
+                uint8_t type = rules[i].type;
+                uint8_t d1 = rules[i].data1;
+                uint8_t d2 = rules[i].data2;
+                uint8_t d3 = rules[i].data3;
+                
+                switch (type) {
+                    case DFA_RULE_LITERAL:
+                        if (c == d1) match = true;
+                        break;
+                    case DFA_RULE_RANGE:
+                        if (c >= d1 && c <= d2) match = true;
+                        break;
+                    case DFA_RULE_LITERAL_2:
+                        if (c == d1 || c == d2) match = true;
+                        break;
+                    case DFA_RULE_LITERAL_3:
+                        if (c == d1 || c == d2 || c == d3) match = true;
+                        break;
+                    case DFA_RULE_RANGE_LITERAL:
+                        if ((c >= d1 && c <= d2) || c == d3) match = true;
+                        break;
+                    case DFA_RULE_DEFAULT:
+                        match = true;
+                        break;
+                    case DFA_RULE_NOT_LITERAL:
+                        if (c != d1) match = true;
+                        break;
+                    case DFA_RULE_NOT_RANGE:
+                        if (c < d1 || c > d2) match = true;
+                        break;
                 }
                 
                 if (match) {

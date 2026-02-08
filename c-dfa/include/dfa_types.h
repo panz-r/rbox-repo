@@ -101,18 +101,23 @@ typedef struct {
 /**
  * Rule types for V5 format
  */
-#define DFA_RULE_LITERAL 0  // Match specific character
-#define DFA_RULE_RANGE   1  // Match character in range [min, max]
-#define DFA_RULE_DEFAULT 2  // Match anything not matched by previous rules
+#define DFA_RULE_LITERAL        0  // Match data1
+#define DFA_RULE_RANGE          1  // Match data1..data2
+#define DFA_RULE_LITERAL_2      2  // Match data1 or data2
+#define DFA_RULE_LITERAL_3      3  // Match data1 or data2 or data3
+#define DFA_RULE_RANGE_LITERAL  4  // Match data1..data2 or data3
+#define DFA_RULE_DEFAULT        5  // Match anything
+#define DFA_RULE_NOT_LITERAL    6  // Match anything NOT data1
+#define DFA_RULE_NOT_RANGE      7  // Match anything NOT in data1..data2
 
 /**
  * Compact Rule entry (8 bytes) - Replaces dfa_transition_t in V5
  */
 typedef struct __attribute__((packed)) {
     uint8_t type;        // Rule type (DFA_RULE_*)
-    uint8_t min;         // Match char == min (LITERAL) or char >= min (RANGE)
-    uint8_t max;         // Match char <= max (RANGE only)
-    uint8_t padding;     // Reserved/Alignment
+    uint8_t data1;       // Generic payload byte 1
+    uint8_t data2;       // Generic payload byte 2
+    uint8_t data3;       // Generic payload byte 3
     uint32_t target;     // Next state offset (absolute file offset)
 } dfa_rule_t;
 
