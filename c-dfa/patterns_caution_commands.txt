@@ -6,8 +6,8 @@
 [caution:system:read] cat /etc/shadow
 [caution:system:read] cat ~/.bash_history
 [caution:system:read] cat ~/.ssh/known_hosts
-[caution:system:read] find / -name "*.conf"
-[caution:system:read] find /etc -name "*.conf"
+[caution:system:read] find / -name "(*).conf"
+[caution:system:read] find /etc -name "(*).conf"
 [caution:system:read] grep -r password /
 [caution:system:read] grep -r secret /
 [caution:system:read] last
@@ -59,7 +59,7 @@
 [caution:git:read] git show HEAD:config.yml
 
 # Complex caution patterns
-[caution:system:read] find /home -name "*.ssh*"
+[caution:system:read] find /home -name "(*).ssh(*)"
 [caution:system:read] grep -r "password" /etc
 [caution:system:read] cat /var/log/auth.log
 [caution:system:read] cat /var/log/syslog

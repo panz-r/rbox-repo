@@ -17,6 +17,15 @@ BUILD_DIR = build
 TARGETS = dfa_test
 
 # ============================================================================
+# Build Tools (if source is newer than binary)
+# ============================================================================
+$(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c
+
+# ============================================================================
 # All Pattern Files (used by test runner)
 # ============================================================================
 PATTERN_FILES = \
@@ -81,14 +90,14 @@ $(BUILD_DIR):
 # ============================================================================
 # Build NFA from pattern file
 # ============================================================================
-$(BUILD_DIR)/%.nfa: %.txt | $(BUILD_DIR)
+$(BUILD_DIR)/%.nfa: %.txt $(TOOLS_DIR)/nfa_builder | $(BUILD_DIR)
 	@echo "  Building NFA: $< -> $@"
 	@$(TOOLS_DIR)/nfa_builder $< $@ 2>/dev/null
 
 # ============================================================================
 # Build DFA from NFA
 # ============================================================================
-$(BUILD_DIR)/%.dfa: $(BUILD_DIR)/%.nfa
+$(BUILD_DIR)/%.dfa: $(BUILD_DIR)/%.nfa $(TOOLS_DIR)/nfa2dfa_advanced
 	@echo "  Building DFA: $< -> $@"
 	@$(TOOLS_DIR)/nfa2dfa_advanced $< $@ 2>/dev/null
 

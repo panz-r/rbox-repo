@@ -15,7 +15,7 @@
 [safe:nested] ((a)+)+
 
 # Star inside plus
-[safe:nested] (a*)+
+[safe:nested] ((a)*)+
 
 # Plus inside star
-[safe:nested] (a+)*
+[safe:nested] ((a)+)*

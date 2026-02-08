@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include "../include/dfa_types.h"
 #include "../include/nfa.h"
+#include "dfa_minimize.h"
 
 // Bitmask type for visited tracking (8192 bits = 128 uint64_t for MAX_STATES=8192)
 #define VISITED_WORDS 128
@@ -67,20 +68,7 @@ typedef struct {
     int16_t pattern_id;        // Pattern ID this state belongs to (-1 = none/shared)
 } nfa_state_t;
 
-// Build-time DFA State
-typedef struct {
-    uint32_t transitions_offset;
-    uint16_t transition_count;
-    uint16_t flags;  // Bits 0-7: state flags, Bits 8-15: category_mask
-    int transitions[256];            // Character-based transitions (0-255)
-    bool transitions_from_any[256];
-    int nfa_states[MAX_STATES];
-    int nfa_state_count;
-    int8_t capture_start_id;   // Capture ID for CAPTURE_START transition (-1 = none)
-    int8_t capture_end_id;     // Capture ID for CAPTURE_END transition (-1 = none)
-    int8_t capture_defer_id;   // Capture ID for deferred CAPTURE_END (-1 = none)
-    uint32_t eos_target;       // Target state index for EOS transition (0 = none)
-} build_dfa_state_t;
+// Note: build_dfa_state_t is now defined in dfa_minimize.h
 
 // Global variables
 static nfa_state_t nfa[MAX_STATES];
@@ -936,7 +924,48 @@ void load_nfa_file(const char* filename) {
     DEBUG_PRINT("Loaded NFA with %d states and %d symbols from %s\n", nfa_state_count, alphabet_size, filename);
 }
 
-// Write DFA to binary file (Version 4 format with identifier)
+// Intermediate rule structure for compression
+typedef struct {
+    uint8_t type;
+    uint8_t min;
+    uint8_t max;
+    int target_state_index;
+} intermediate_rule_t;
+
+// Compress transition table into rules
+// Returns number of rules generated
+int compress_state_rules(int state_idx, intermediate_rule_t* rules_out) {
+    int rule_count = 0;
+    int current_target = -1;
+    int start_char = -1;
+    
+    // Iterate 0..256 (256 is end sentinel to flush last range)
+    for (int c = 0; c <= 256; c++) {
+        int target = (c < 256) ? dfa[state_idx].transitions[c] : -1;
+        
+        if (target != current_target) {
+            if (current_target != -1) {
+                // End of a contiguous block for 'current_target'
+                // Range is [start_char, c-1]
+                rules_out[rule_count].target_state_index = current_target;
+                rules_out[rule_count].min = (uint8_t)start_char;
+                rules_out[rule_count].max = (uint8_t)(c - 1);
+                
+                if (start_char == c - 1) {
+                    rules_out[rule_count].type = DFA_RULE_LITERAL;
+                } else {
+                    rules_out[rule_count].type = DFA_RULE_RANGE;
+                }
+                rule_count++;
+            }
+            current_target = target;
+            start_char = c;
+        }
+    }
+    return rule_count;
+}
+
+// Write DFA to binary file (Version 5 format with compact rules)
 void write_dfa_file(const char* filename) {
     FILE* file = fopen(filename, "wb");
     if (file == NULL) {
@@ -944,30 +973,54 @@ void write_dfa_file(const char* filename) {
         return;
     }
 
-    // Calculate header size
+    // Step 1: Pre-calculate compression rules
+    // We need to know the total size before allocating the binary blob
+    intermediate_rule_t* state_rules[MAX_STATES];
+    int state_rule_counts[MAX_STATES];
+    size_t total_rules = 0;
+
+    for (int i = 0; i < dfa_state_count; i++) {
+        // Allocate worst-case: 256 rules per state
+        state_rules[i] = malloc(256 * sizeof(intermediate_rule_t));
+        if (!state_rules[i]) {
+            fprintf(stderr, "Error: Memory allocation failed for rule compression\n");
+            // Cleanup previous
+            for (int j = 0; j < i; j++) free(state_rules[j]);
+            fclose(file);
+            return;
+        }
+        state_rule_counts[i] = compress_state_rules(i, state_rules[i]);
+        total_rules += state_rule_counts[i];
+    }
+
+    DEBUG_PRINT("Total rules generated: %zu (vs %d states)\n", total_rules, dfa_state_count);
+
+    // Step 2: Calculate binary layout
     size_t id_len = strlen(pattern_identifier);
     if (id_len > 255) id_len = 255;
-    DEBUG_PRINT("pattern_identifier='%s' (len=%zu)\n", pattern_identifier, id_len);
-    // dfa_t struct is 19 bytes: magic(4) + version(2) + state_count(2) + initial_state(4) + accepting_mask(4) + flags(2) + identifier_length(1)
-    // States start at: 19 + id_len (identifier_length byte is included in dfa_t)
+    
+    // Header size: 19 bytes base + identifier length
     size_t header_size = 19 + id_len;
-    DEBUG_PRINT("header_size=%zu, initial_state will be set to %zu\n", header_size, header_size);
+    
     size_t states_size = dfa_state_count * sizeof(dfa_state_t);
-    size_t total_transitions = 0;
-    for (int i = 0; i < dfa_state_count; i++) {
-        total_transitions += dfa[i].transition_count + 1;
-    }
-    size_t transitions_size = total_transitions * sizeof(dfa_transition_t);
-    size_t dfa_size = header_size + states_size + transitions_size;
+    size_t rules_size = total_rules * sizeof(dfa_rule_t);
+    size_t dfa_size = header_size + states_size + rules_size;
+    
+    DEBUG_PRINT("Binary Size: Header=%zu, States=%zu, Rules=%zu, Total=%zu bytes\n",
+                header_size, states_size, rules_size, dfa_size);
+
     dfa_t* dfa_struct = malloc(dfa_size);
     if (dfa_struct == NULL) {
-        fprintf(stderr, "Error: Memory allocation failed\n");
+        fprintf(stderr, "Error: Memory allocation failed for binary DFA\n");
+        for (int i = 0; i < dfa_state_count; i++) free(state_rules[i]);
         fclose(file);
         return;
     }
     memset(dfa_struct, 0, dfa_size);
+
+    // Step 3: Fill Header
     dfa_struct->magic = DFA_MAGIC;
-    dfa_struct->version = DFA_VERSION;
+    dfa_struct->version = DFA_VERSION; // V5
     dfa_struct->state_count = dfa_state_count;
     dfa_struct->initial_state = header_size;
     dfa_struct->accepting_mask = 0;
@@ -976,107 +1029,95 @@ void write_dfa_file(const char* filename) {
     if (id_len > 0) {
         memcpy(dfa_struct->identifier, pattern_identifier, id_len);
     }
-    dfa_state_t* states = (dfa_state_t*)((char*)dfa_struct + header_size);
-    dfa_transition_t* transitions = (dfa_transition_t*)((char*)states + states_size);
-    size_t current_transition = 0;
-    uint32_t accepting_mask = 0;
 
-    // Pre-calculate absolute transition offsets for each state
-    // transitions_offset must be the byte offset from start of dfa_t structure
-    // CRITICAL: Use header_size (19 + id_len), not sizeof(dfa_t) which may include padding
-    size_t transition_table_start = header_size + dfa_state_count * sizeof(dfa_state_t);
-    int state_trans_offsets[MAX_STATES];
-    size_t current_offset = transition_table_start;
+    // Step 4: Setup Pointers
+    dfa_state_t* states = (dfa_state_t*)((char*)dfa_struct + header_size);
+    dfa_rule_t* rules_blob = (dfa_rule_t*)((char*)states + states_size);
+    
+    // Step 5: Fill States and Rules
+    size_t current_rule_offset = header_size + states_size; // Absolute offset in file
+    uint32_t accepting_mask = 0;
+    size_t global_rule_idx = 0;
+
     for (int i = 0; i < dfa_state_count; i++) {
-        state_trans_offsets[i] = (int)current_offset;
-        current_offset += (dfa[i].transition_count + 1) * sizeof(dfa_transition_t);
-    }
-    current_transition = 0;
-    for (int i = 0; i < dfa_state_count; i++) {
-        states[i].transitions_offset = state_trans_offsets[i];
-        states[i].transition_count = dfa[i].transition_count;
+        // Fill State Info
+        states[i].transition_count = state_rule_counts[i]; // Reusing field name for rule count
+        
+        if (state_rule_counts[i] > 0) {
+            states[i].transitions_offset = (uint32_t)current_rule_offset;
+        } else {
+            states[i].transitions_offset = 0;
+        }
+        
         states[i].flags = dfa[i].flags;
         states[i].capture_start_id = dfa[i].capture_start_id;
         states[i].capture_end_id = dfa[i].capture_end_id;
         states[i].capture_defer_id = dfa[i].capture_defer_id;
         states[i].eos_target = dfa[i].eos_target;
-        if (dfa[i].capture_start_id >= 0 || dfa[i].capture_end_id >= 0 || dfa[i].capture_defer_id >= 0) {
-            DEBUG_PRINT("Writing state %d: capture_start_id=%d, capture_end_id=%d, capture_defer_id=%d\n",
-                    i, dfa[i].capture_start_id, dfa[i].capture_end_id, dfa[i].capture_defer_id);
-        }
-        // Check accepting mask (bits 8-15 of flags)
+
+        // Accepting mask update
         if (dfa[i].flags & 0xFF00) {
             accepting_mask |= (1 << i);
         }
-        // FIRST PASS: specific character transitions
-        for (int c = 0; c < 256; c++) {
-            if (dfa[i].transitions[c] != -1 && !dfa[i].transitions_from_any[c]) {
-                if (current_transition >= total_transitions) {
-                    fprintf(stderr, "Error: Transition count mismatch for state %d\n", i);
-                    free(dfa_struct);
-                    fclose(file);
-                    return;
-                }
-                transitions[current_transition].character = (char)c;
-                int target_state = dfa[i].transitions[c];
-                // Convert state index to absolute offset
-                // CRITICAL: Use header_size, not sizeof(dfa_t)
-                size_t target_offset = header_size + (size_t)target_state * sizeof(dfa_state_t);
-                transitions[current_transition].next_state_offset = (uint32_t)target_offset;
-                current_transition++;
-            }
+
+        // Fill Rules for this state
+        for (int r = 0; r < state_rule_counts[i]; r++) {
+            intermediate_rule_t* src = &state_rules[i][r];
+            dfa_rule_t* dst = &rules_blob[global_rule_idx++];
+            
+            dst->type = src->type;
+            dst->min = (char)src->min;
+            dst->max = (char)src->max;
+            dst->padding = 0;
+            
+            // Calculate absolute target offset
+            int target_idx = src->target_state_index;
+            size_t target_offset = header_size + (size_t)target_idx * sizeof(dfa_state_t);
+            dst->target = (uint32_t)target_offset;
         }
-        // SECOND PASS: ANY wildcard transitions
-        for (int c = 0; c < 256; c++) {
-            if (dfa[i].transitions[c] != -1 && dfa[i].transitions_from_any[c]) {
-                if (current_transition >= total_transitions) {
-                    fprintf(stderr, "Error: Transition count mismatch for state %d\n", i);
-                    free(dfa_struct);
-                    fclose(file);
-                    return;
-                }
-                transitions[current_transition].character = (char)c;
-                int target_state = dfa[i].transitions[c];
-                // Convert state index to absolute offset
-                // CRITICAL: Use header_size, not sizeof(dfa_t)
-                size_t target_offset = header_size + (size_t)target_state * sizeof(dfa_state_t);
-                transitions[current_transition].next_state_offset = (uint32_t)target_offset;
-                current_transition++;
-            }
-        }
-        // Add end marker
-        if (current_transition >= total_transitions) {
-            fprintf(stderr, "Error: Transition count mismatch (end marker)\n");
-            free(dfa_struct);
-            fclose(file);
-            return;
-        }
-        transitions[current_transition].character = 0;
-        transitions[current_transition].next_state_offset = 0;
-        current_transition++;
+        
+        current_rule_offset += state_rule_counts[i] * sizeof(dfa_rule_t);
     }
-    dfa_struct->accepting_mask = accepting_mask;
-    fwrite(dfa_struct, dfa_size, 1, file);
-    fclose(file);
-    free(dfa_struct);
-    DEBUG_PRINT("Wrote DFA with %d states to %s\n", dfa_state_count, filename);
-    DEBUG_PRINT("DFA size: %zu bytes\n", dfa_size);
     
-    // Count final states
-    int final_count = 0;
-    for (int i = 0; i < dfa_state_count; i++) {
-        uint8_t cat_mask = (dfa[i].flags >> 8) & 0xFF;
-        if (cat_mask != 0) final_count++;
+    dfa_struct->accepting_mask = accepting_mask;
+
+    // Step 6: Write to file
+    size_t written = fwrite(dfa_struct, 1, dfa_size, file);
+    if (written != dfa_size) {
+        fprintf(stderr, "Error: Failed to write complete DFA file\n");
     }
-    DEBUG_PRINT("DFA has %d states, %d have non-zero category mask\n", dfa_state_count, final_count);
+
+    // Step 7: Cleanup
+    free(dfa_struct);
+    for (int i = 0; i < dfa_state_count; i++) free(state_rules[i]);
+    fclose(file);
+    DEBUG_PRINT("Wrote DFA V5 to %s\n", filename);
 }
 
 // Main function
 int main(int argc, char* argv[]) {
-    // Check for verbose flag
+    bool minimize = true;  // Enabled by default
+    
+    // Check for flags
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
             flag_verbose = true;
+            // Remove flag from arguments
+            for (int j = i; j < argc - 1; j++) {
+                argv[j] = argv[j + 1];
+            }
+            argc--;
+            i--;
+        } else if (strcmp(argv[i], "--minimize") == 0) {
+            minimize = true;
+            // Remove flag from arguments
+            for (int j = i; j < argc - 1; j++) {
+                argv[j] = argv[j + 1];
+            }
+            argc--;
+            i--;
+        } else if (strcmp(argv[i], "--no-minimize") == 0) {
+            minimize = false;
             // Remove flag from arguments
             for (int j = i; j < argc - 1; j++) {
                 argv[j] = argv[j + 1];
@@ -1090,6 +1131,8 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Usage: %s [options] <nfa_file> [dfa_file]\n", argv[0]);
         fprintf(stderr, "Options:\n");
         fprintf(stderr, "  -v, --verbose    Enable verbose output\n");
+        fprintf(stderr, "  --minimize       Enable DFA state minimization (default)\n");
+        fprintf(stderr, "  --no-minimize    Disable DFA state minimization\n");
         return 1;
     }
     const char* nfa_file = argv[1];
@@ -1101,6 +1144,21 @@ int main(int argc, char* argv[]) {
     nfa_to_dfa();
     DEBUG_PRINT("Flattening DFA (symbol -> character)...\n");
     flatten_dfa();
+    
+    // Minimization phase (optional)
+    if (minimize) {
+        DEBUG_PRINT("Minimizing DFA...\n");
+        dfa_minimize_set_verbose(flag_verbose);
+        dfa_state_count = dfa_minimize(dfa, dfa_state_count);
+        dfa_minimize_stats_t stats;
+        dfa_minimize_get_stats(&stats);
+        if (flag_verbose) {
+            fprintf(stderr, "Minimization: %d -> %d states (removed %d, %.1f%% reduction)\n",
+                   stats.initial_states, stats.final_states, stats.states_removed,
+                   stats.initial_states > 0 ? (100.0 * stats.states_removed / stats.initial_states) : 0.0);
+        }
+    }
+    
     write_dfa_file(dfa_file);
     DEBUG_PRINT("\nConversion complete!\n");
     return 0;

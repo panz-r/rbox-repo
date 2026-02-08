@@ -70,9 +70,10 @@
 # GROUP 4: Literal + Quantifier
 # ============================================================================
 # Test: Literal character with + quantifier (one or more)
-[safe:quantifier:group4] p+
-[safe:quantifier:group4] a+
-[safe:quantifier:group4] xyz+
+# NOTE: Must use explicit grouping like (p)+ because a+ is ambiguous
+[safe:quantifier:group4] (p)+
+[safe:quantifier:group4] (a)+
+[safe:quantifier:group4] xy(z)+
 
 # ============================================================================
 # GROUP 5: Multiple Characters Before Quantifier
@@ -93,10 +94,10 @@
 # GROUP 7: Wildcards
 # ============================================================================
 # Test: Wildcard patterns with .* and combined with literals
-[safe:quantifier:group7] .*
-[safe:quantifier:group7] .+
-[safe:quantifier:group7] .*\.txt
-[safe:quantifier:group7] file.*
+[safe:quantifier:group7] (*)
+[safe:quantifier:group7] (.+)
+[safe:quantifier:group7] (*)\.txt
+[safe:quantifier:group7] file(*)
 
 # ============================================================================
 # GROUP 8: Edge Cases
@@ -183,7 +184,7 @@
 # ============================================================================
 # Test: Multiple quantifiers in sequence
 [safe:quantifier:group17] a+b+
-[safe:quantifier:group17] (a|b)+c*
+[safe:quantifier:group17] (a|b)+(c)*
 [safe:quantifier:group17] [[:alpha:]]+[[:digit:]]*
 
 # ============================================================================

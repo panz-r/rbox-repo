@@ -9,8 +9,8 @@
 [fragment:test] test
 
 # Simple patterns for stress testing
-[safe:stress] a+
+[safe:stress] (a)+
 [safe:stress] ab
 
 # Repeated patterns
-[safe:stress] test+
+[safe:stress] tes(t)+

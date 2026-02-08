@@ -9,7 +9,7 @@
 [fragment:c] c
 
 # Nested plus patterns
-[safe:hard] (a+a+)+b
+[safe:hard] ((a)+(a)+)+b
 
 # Overlapping fragment references
 [safe:hard] ((a))+((a))+

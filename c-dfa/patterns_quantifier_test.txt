@@ -37,7 +37,7 @@
 
 [safe::quant_x] x((y))+
 [safe::quant_w] w((z))+
-[safe::quant_p] p+
+[safe::quant_p] (p)+
 
 # ============================================
 # Simple patterns for comparison

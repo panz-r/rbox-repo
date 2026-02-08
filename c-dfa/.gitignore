@@ -1,3 +1,7 @@
 #binaries
 dfa_test
 tools/nfa_builder
+tools/nfa2dfa_advanced
+src/dfa_test
+src/test_single
+src/test_single_quant

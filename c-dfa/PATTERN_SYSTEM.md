@@ -62,51 +62,73 @@ Match exact characters:
 ```
 
 #### Wildcards
-- `*` - Matches any sequence of characters
-- `?` - Matches any single character
+- `(*)` - Wildcard group: matches any single argument
+- `(expr)*` - Quantifier: zero or more of preceding element (parentheses REQUIRED for literals)
+- `(expr)+` - Quantifier: one or more of preceding element (parentheses REQUIRED for literals)
+- `(expr)?` - Quantifier: zero or one of preceding element (parentheses REQUIRED for literals)
 
-```
-[safe:file:read] cat * -> allow
-[safe:file:read] grep * * -> allow
-```
+**Syntax Rules:**
+- `(*)`  = wildcard (matches any single argument)
+- `(a)*` = zero or more 'a' (quantifier)
+- `a*`   = ERROR: ambiguous - use `(a)*` for quantifier
+- `a+`, `a?` = ERROR: ambiguous - use `(a)+` or `(a)?`
 
-#### Escape Sequences
-- `\*` - Literal asterisk
+**Quantifier Compatibility:**
+- Literals: Require grouping `(a)+`
+- Fragments: Work directly `((frag))+` or `((frag))*`
+- Groups: Work directly `(a|b)+`
+
+**Escape Sequences:**
+- `\*` - Literal asterisk (for matching literal `*` arguments)
 - `\?` - Literal question mark
 - `\\` - Literal backslash
 
+**Examples:**
 ```
-[safe:file:read] find * -name \* -> allow
+[safe:file:read] cat (*) -> allow        # any single argument
+[safe:file:read] cat (*) (*) -> allow   # two arguments
+[safe:file:read] grep (*) (*) -> allow  # pattern and files
+
+[safe:file:read] (*) -> allow           # any command (dangerous!)
+[caution:file:read] find (*) -name (*) -> allow
+
+# Literal asterisk (escape the star)
+[safe:file:read] find (*) -name \* -> allow  # matches -name *
+
+# Quantifiers (parentheses REQUIRED for literals)
+[safe:file:read] git log (-n)* -> allow      # zero or more -n flags (grouped)
+[safe:file:read] echo ((ARG))+ -> allow      # one or more args (fragment)
+[safe:file:read] ls -la (h)? -> allow        # optional char (grouped)
 ```
 
 ### Complete Examples
 
 ```
 # Safe file operations
-[safe:file:read] cat * -> allow
-[safe:file:read] head * -> allow
-[safe:file:read] tail * -> allow
+[safe:file:read] cat (*) -> allow
+[safe:file:read] head (*) -> allow
+[safe:file:read] tail (*) -> allow
 
 # Git operations
-[safe:vcs:read] git log * -> allow
-[safe:vcs:read] git show * -> allow
-[modifying:vcs:write] git commit * -> caution
+[safe:vcs:read] git log (*) -> allow
+[safe:vcs:read] git show (*) -> allow
+[modifying:vcs:write] git commit (*) -> caution
 
 # Build operations
-[safe:build:compile] gcc -c * -> allow
+[safe:build:compile] gcc -c (*) -> allow
 [modifying:build:install] make install -> caution
 
 # Dangerous operations
-[dangerous:file:delete] rm -rf * -> block
-[dangerous:system:write] dd * -> block
+[dangerous:file:delete] rm -rf (*) -> block
+[dangerous:system:write] dd (*) -> block
 
 # Network operations
-[network:network:read] curl * -> audit
-[network:network:execute] ssh * -> audit
+[network:network:read] curl (*) -> audit
+[network:network:execute] ssh (*) -> audit
 
 # Admin operations
-[admin:system:privilege] sudo * -> block
-[admin:file:privilege] chmod * * -> audit
+[admin:system:privilege] sudo (*) -> block
+[admin:file:privilege] chmod (*) (*) -> audit
 ```
 
 ## Pattern Processing Pipeline
@@ -150,7 +172,7 @@ dfa_evaluate("cat file.txt", 0, &result);
 Tags from the pattern specification are attached to accepting states in the NFA/DFA:
 
 ```
-[safe:file:read] cat * -> allow
+[safe:file:read] cat (*) -> allow
                       ↓
               Accepting state with tags:
               - "safe" (category)
@@ -228,36 +250,36 @@ if (dfa_evaluate(command, 0, &result)) {
 ### 1. Be Specific
 ```bash
 # Good
-[safe:file:read] cat /var/log/* -> allow
+[safe:file:read] cat /var/log/(*) -> allow
 
 # Bad (too broad)
-[safe:file:read] cat * -> allow
+[safe:file:read] cat (*) -> allow
 ```
 
 ### 2. Order Matters
 ```bash
 # Process specific before general
 [dangerous:file:delete] rm -rf / -> block
-[dangerous:file:delete] rm -rf * -> block
-[modifying:file:delete] rm * -> caution
+[dangerous:file:delete] rm -rf (*) -> block
+[modifying:file:delete] rm (*) -> caution
 ```
 
 ### 3. Use Subcategories
 ```bash
 # More descriptive
-[safe:text:read] grep * * -> allow
+[safe:text:read] grep (*) (*) -> allow
 
 # Less descriptive
-[safe:file:read] grep * * -> allow
+[safe:file:read] grep (*) (*) -> allow
 ```
 
 ### 4. Document Actions
 ```bash
 # Clear intent
-[safe:file:read] cat * -> allow
+[safe:file:read] cat (*) -> allow
 
 # Unclear intent
-[safe:file:read] cat *
+[safe:file:read] cat (*)
 ```
 
 ### 5. Test Thoroughly
@@ -265,7 +287,7 @@ if (dfa_evaluate(command, 0, &result)) {
 # Test all variations
 dfa_test my.dfa "cat file.txt"
 dfa_test my.dfa "cat /etc/passwd"
-dfa_test my.dfa "cat *"
+dfa_test my.dfa "cat (*)"
 ```
 
 ## Performance Considerations

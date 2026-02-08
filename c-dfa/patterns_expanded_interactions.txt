@@ -8,8 +8,8 @@
 [fragment:b] b
 
 # Quantifier interactions
-[safe:interact] a+b*
-[safe:interact] a*b+
-[safe:interact] a?b+
-[safe:interact] a+b?
-[safe:interact] (a+b?)+
+[safe:interact] (a)+(b)*
+[safe:interact] (a)*(b)+
+[safe:interact] (a)?(b)+
+[safe:interact] (a)+(b)?
+[safe:interact] ((a)+(b)?)+

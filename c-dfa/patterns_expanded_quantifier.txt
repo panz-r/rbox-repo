@@ -12,19 +12,19 @@
 [fragment:z] z
 
 # Single char quantifier patterns
-[safe:quantifier] a+
-[safe:quantifier] aa+
-[safe:quantifier] aaa+
+[safe:quantifier] (a)+
+[safe:quantifier] a(a)+
+[safe:quantifier] aa(a)+
 [safe:quantifier] aaaaaa
 
 # Multi-char literal with quantifier
-[safe:quantifier] abc+
-[safe:quantifier] test123+
+[safe:quantifier] ab(c)+
+[safe:quantifier] test12(3)+
 
 # Fragment with quantifier
 [safe:quantifier] xyz((abc))+
 [safe:quantifier] xyz((abc))abc
 
 # Optional and star patterns
-[safe:quantifier] a?
-[safe:quantifier] a*
+[safe:quantifier] (a)?
+[safe:quantifier] (a)*

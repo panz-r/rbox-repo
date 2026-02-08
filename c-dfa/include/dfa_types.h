@@ -86,7 +86,7 @@ typedef struct {
 /**
  * Current DFA version
  */
-#define DFA_VERSION 4  // Version 4: character-based transitions with capture support
+#define DFA_VERSION 5  // Version 5: Compact rules (Range/Literal)
 
 /**
  * Maximum number of states in a single DFA
@@ -97,6 +97,24 @@ typedef struct {
  * Maximum number of transitions per state
  */
 #define DFA_MAX_TRANSITIONS 256
+
+/**
+ * Rule types for V5 format
+ */
+#define DFA_RULE_LITERAL 0  // Match specific character
+#define DFA_RULE_RANGE   1  // Match character in range [min, max]
+#define DFA_RULE_DEFAULT 2  // Match anything not matched by previous rules
+
+/**
+ * Compact Rule entry (8 bytes) - Replaces dfa_transition_t in V5
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t type;        // Rule type (DFA_RULE_*)
+    uint8_t min;         // Match char == min (LITERAL) or char >= min (RANGE)
+    uint8_t max;         // Match char <= max (RANGE only)
+    uint8_t padding;     // Reserved/Alignment
+    uint32_t target;     // Next state offset (absolute file offset)
+} dfa_rule_t;
 
 /**
  * Special character values

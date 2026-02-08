@@ -37,7 +37,7 @@
 # DNS operations
 [network:system:connect] nslookup example.com
 [network:system:connect] dig example.com
-[network:system:connect] dig +short example.com
+[network:system:connect] dig \+short example.com
 [network:system:connect] host example.com
 [network:system:connect] whois example.com
 [network:system:connect] dig mx example.com

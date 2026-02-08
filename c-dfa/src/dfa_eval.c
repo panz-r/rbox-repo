@@ -171,7 +171,7 @@ bool dfa_init_with_identifier(const void* dfa_data, size_t size, const char* exp
         return false;
     }
 
-    if (dfa->version != 4) {
+    if (dfa->version != 3 && dfa->version != 4 && dfa->version != 5) {
         return false;
     }
 
@@ -341,35 +341,37 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             return true;
         }
 
-        // Track instant transitions to prevent infinite loops
-        int instant_count = 0;
-        bool instant_followed = true;
-        while (instant_followed && instant_count < 10000) {
-            instant_followed = false;
-            instant_count++;
-            
-            if (current_state->transition_count > 0) {
-                size_t trans_offset = current_state->transitions_offset;
-                if (trans_offset >= 100000) {
-                    result->matched_length = pos;
-                    return true;
-                }
+        // Track instant transitions to prevent infinite loops (V4 only)
+        if (current_dfa->version < 5) {
+            int instant_count = 0;
+            bool instant_followed = true;
+            while (instant_followed && instant_count < 10000) {
+                instant_followed = false;
+                instant_count++;
+                
+                if (current_state->transition_count > 0) {
+                    size_t trans_offset = current_state->transitions_offset;
+                    if (trans_offset >= 100000) {
+                        result->matched_length = pos;
+                        return true;
+                    }
 
-                const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
+                    const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
 
-                for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                    unsigned char trans_char = (unsigned char)trans[i].character;
+                    for (uint16_t i = 0; i < current_state->transition_count; i++) {
+                        unsigned char trans_char = (unsigned char)trans[i].character;
 
-                    if (trans_char == DFA_CHAR_INSTANT) {
-                        uint32_t next_trans_offset = trans[i].next_state_offset;
-                        size_t next_offset = next_trans_offset;
+                        if (trans_char == DFA_CHAR_INSTANT) {
+                            uint32_t next_trans_offset = trans[i].next_state_offset;
+                            size_t next_offset = next_trans_offset;
 
-                        process_deferred_captures(current_state, next_offset, raw_base, pos, result);
+                            process_deferred_captures(current_state, next_offset, raw_base, pos, result);
 
-                        const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
-                        current_state = next_state;
-                        instant_followed = true;
-                        break;
+                            const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
+                            current_state = next_state;
+                            instant_followed = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -380,36 +382,46 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
         if (current_state->transition_count > 0) {
             size_t trans_offset = current_state->transitions_offset;
-            if (trans_offset >= 100000) {
+            if (trans_offset >= 100000) { // Sanity check
                 result->matched_length = pos;
                 return true;
             }
 
-            const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
-
-            for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                unsigned char trans_char = (unsigned char)trans[i].character;
-                uint32_t next_trans_offset = trans[i].next_state_offset;
-
-                // DFA_CHAR_ANY (0x00) matches any character - check first for wildcards
-                if (trans_char == DFA_CHAR_ANY || trans_char == c) {
-                    size_t next_offset = next_trans_offset;
-
-                    process_deferred_captures(current_state, next_offset, raw_base, pos, result);
-
-                    const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
-                    current_state = next_state;
-                    transition_found = true;
-                    break;
+            if (current_dfa->version >= 5) {
+                // V5: Compact Rules (Literal/Range)
+                const dfa_rule_t* rules = (const dfa_rule_t*)((const char*)raw_base + trans_offset);
+                
+                for (uint16_t i = 0; i < current_state->transition_count; i++) {
+                    bool match = false;
+                    
+                    if (rules[i].type == DFA_RULE_LITERAL) {
+                        if ((unsigned char)rules[i].min == c) match = true;
+                    } else if (rules[i].type == DFA_RULE_RANGE) {
+                        if (c >= (unsigned char)rules[i].min && c <= (unsigned char)rules[i].max) match = true;
+                    }
+                    
+                    if (match) {
+                        uint32_t next_trans_offset = rules[i].target;
+                        // For V5, target is absolute offset
+                        size_t next_offset = next_trans_offset;
+                        
+                        process_deferred_captures(current_state, next_offset, raw_base, pos, result);
+                        
+                        current_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
+                        transition_found = true;
+                        break;
+                    }
                 }
-            }
+            } else {
+                // V4: Explicit Transitions
+                const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
 
-            if (!transition_found) {
                 for (uint16_t i = 0; i < current_state->transition_count; i++) {
                     unsigned char trans_char = (unsigned char)trans[i].character;
                     uint32_t next_trans_offset = trans[i].next_state_offset;
 
-                    if (trans_char == DFA_CHAR_ANY) {
+                    // DFA_CHAR_ANY (0x00) matches any character - check first for wildcards
+                    if (trans_char == DFA_CHAR_ANY || trans_char == c) {
                         size_t next_offset = next_trans_offset;
 
                         process_deferred_captures(current_state, next_offset, raw_base, pos, result);
@@ -460,23 +472,55 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     // Also check for EOS as a character transition (DFA_CHAR_EOS = 0x05)
     // This handles the case where EOS is stored as a regular character transition
     if (current_state->transition_count > 0 && current_state->transitions_offset > 0) {
-        dfa_transition_t* trans = (dfa_transition_t*)((char*)current_dfa + current_state->transitions_offset);
-        for (uint16_t i = 0; i < current_state->transition_count; i++) {
-            if ((unsigned char)trans[i].character == DFA_CHAR_EOS) {
-                const dfa_state_t* eos_state = (const dfa_state_t*)((char*)current_dfa + trans[i].next_state_offset);
-                uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
-                if (eos_cat_mask != 0) {
-                    result->matched = true;
-                    result->matched_length = pos;
-                    result->final_state = eos_state->flags;
-                    result->category_mask = eos_cat_mask;
-                    if (eos_cat_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-                    else if (eos_cat_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-                    else if (eos_cat_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-                    else if (eos_cat_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-                    else if (eos_cat_mask & 0x10) result->category = DFA_CMD_NETWORK;
-                    else if (eos_cat_mask & 0x20) result->category = DFA_CMD_ADMIN;
-                    return true;
+        if (current_dfa->version >= 5) {
+            // V5: Compact Rules
+            const dfa_rule_t* rules = (const dfa_rule_t*)((const char*)current_dfa + current_state->transitions_offset);
+            for (uint16_t i = 0; i < current_state->transition_count; i++) {
+                bool match = false;
+                if (rules[i].type == DFA_RULE_LITERAL) {
+                    if ((unsigned char)rules[i].min == DFA_CHAR_EOS) match = true;
+                } else if (rules[i].type == DFA_RULE_RANGE) {
+                    if ((unsigned char)rules[i].min <= DFA_CHAR_EOS && (unsigned char)rules[i].max >= DFA_CHAR_EOS) match = true;
+                }
+                
+                if (match) {
+                    const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)current_dfa + rules[i].target);
+                    uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
+                    if (eos_cat_mask != 0) {
+                        result->matched = true;
+                        result->matched_length = pos;
+                        result->final_state = eos_state->flags;
+                        result->category_mask = eos_cat_mask;
+                        if (eos_cat_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+                        else if (eos_cat_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+                        else if (eos_cat_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+                        else if (eos_cat_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+                        else if (eos_cat_mask & 0x10) result->category = DFA_CMD_NETWORK;
+                        else if (eos_cat_mask & 0x20) result->category = DFA_CMD_ADMIN;
+                        return true;
+                    }
+                }
+            }
+        } else {
+            // V4: Explicit Transitions
+            dfa_transition_t* trans = (dfa_transition_t*)((char*)current_dfa + current_state->transitions_offset);
+            for (uint16_t i = 0; i < current_state->transition_count; i++) {
+                if ((unsigned char)trans[i].character == DFA_CHAR_EOS) {
+                    const dfa_state_t* eos_state = (const dfa_state_t*)((char*)current_dfa + trans[i].next_state_offset);
+                    uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
+                    if (eos_cat_mask != 0) {
+                        result->matched = true;
+                        result->matched_length = pos;
+                        result->final_state = eos_state->flags;
+                        result->category_mask = eos_cat_mask;
+                        if (eos_cat_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
+                        else if (eos_cat_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
+                        else if (eos_cat_mask & 0x04) result->category = DFA_CMD_MODIFYING;
+                        else if (eos_cat_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
+                        else if (eos_cat_mask & 0x10) result->category = DFA_CMD_NETWORK;
+                        else if (eos_cat_mask & 0x20) result->category = DFA_CMD_ADMIN;
+                        return true;
+                    }
                 }
             }
         }
