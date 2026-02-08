@@ -1635,8 +1635,18 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     nfa[current_fragment.loop_entry_state].transitions[char_sid] = first_iter;
                     // Clear any multi-target that might exist
                     nfa[current_fragment.loop_entry_state].multi_targets[char_sid][0] = '\0';
+                    // Increment transition count since we're adding directly
+                    nfa[current_fragment.loop_entry_state].transition_count++;
                     DEBUG_NFA_PRINT("After transition, state %d has %d transitions\n",
                             current_fragment.loop_entry_state, nfa[current_fragment.loop_entry_state].transition_count);
+
+                    // CRITICAL FIX: loop_entry_state needs EOS transition to accept after ONE iteration
+                    // Structure:
+                    //   Entry --char--> First --char--> Loop (subsequent)
+                    //   Entry --EOS--> Accepting (after exactly one char consumed)
+                    //   First --EOS--> Accepting (backup after first iteration)
+                    //   Loop --EOS--> Accepting (after multiple iterations)
+                    nfa_add_transition(current_fragment.loop_entry_state, new_accepting, eos_sid);
 
                     // First -> Loop on char (for subsequent iterations)
                     nfa_add_transition(first_iter, loop_state, char_sid);
@@ -1644,7 +1654,7 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     // Loop -> Loop on char (subsequent iterations)
                     nfa_add_transition(loop_state, loop_state, char_sid);
 
-                    // First -> Accepting on EOS (for first iteration)
+                    // First -> Accepting on EOS (for first iteration - backup)
                     nfa_add_transition(first_iter, new_accepting, eos_sid);
 
                     // Loop -> Accepting on EOS (for subsequent iterations)

@@ -478,27 +478,23 @@ void nfa_to_dfa(void) {
             // Now do epsilon closure (modifies move_states in place)
             epsilon_closure(move_states, &move_count, MAX_STATES);
 
-            // THEORY: DFA states are subsets of NFA states
-            // We must keep ALL NFA states reachable by the input (no pattern_id filtering)
-            // CRITICAL FIX: The DFA's category_mask should only be set if ALL NFA states
-            // belong to the SAME pattern. If states from different patterns are merged,
-            // we must NOT set the accepting mask (set to 0) to prevent incorrect matches.
-
-            // Compute accepting mask
-            // A DFA state is accepting if ANY of the DIRECT MOVE TARGETS (before epsilon closure)
-            // is terminal (no character transitions, can accept via EOS, has a category).
-            //
-            // We check the direct move targets, NOT the epsilon-closed set, because:
-            // - The epsilon-closed set includes states reached via EOS from move targets
-            // - Those EOS-reached states are already accepting (they have EOS targets)
-            // - We should NOT include their EOS target's categories
-            //
-            // For example, with patterns "abcdd" and "abcd((d))+":
-            // - After "abcd": move_targets = {4, 10}. Both have char transitions -> NOT accepting
-            // - After "abcdd": move_targets = {5, 11}. State 5 is terminal -> accepting with cat 0x04
-
             uint8_t move_accepting_mask = 0;
-            
+
+            // Also check EPSILON-CLOSED states for accepting status
+            // After epsilon closure, move_states contains states reachable via EPSILON
+            // Some of these states might be accepting (have is_eos_target=true)
+            // We need to include their categories
+            for (int i = 0; i < move_count; i++) {
+                int state = move_states[i];
+                if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
+                    if (move_accepting_mask == 0) {
+                        move_accepting_mask = nfa[state].category_mask;
+                    } else if (move_accepting_mask != nfa[state].category_mask) {
+                        move_accepting_mask = 0;
+                    }
+                }
+            }
+
             // Check which of the DIRECT MOVE TARGETS are terminal
             // (States with no character transitions)
             for (int i = 0; i < direct_move_count; i++) {
