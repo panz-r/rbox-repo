@@ -62,4 +62,30 @@ typedef struct {
 
 void dfa_minimize_get_stats(dfa_minimize_stats_t* stats);
 
+typedef enum {
+    DFA_MIN_MOORE,
+    DFA_MIN_HOPCROFT,
+    DFA_MIN_BRZOZOWSKI
+} dfa_min_algo_t;
+
+/**
+ * Select minimization algorithm
+ */
+void dfa_minimize_set_algorithm(dfa_min_algo_t algo);
+
+/**
+ * Hopcroft's Algorithm
+ */
+int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count);
+
+/**
+ * Moore's Algorithm
+ */
+int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count);
+
+/**
+ * Brzozowski's Algorithm - Extreme minimization
+ */
+int dfa_minimize_brzozowski(build_dfa_state_t* dfa, int state_count);
+
 #endif // DFA_MINIMIZE_H

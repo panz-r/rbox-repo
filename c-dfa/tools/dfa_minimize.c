@@ -5,6 +5,7 @@
  * 1. Dead State Pruning (Reverse Reachability)
  * 2. Hopcroft's Algorithm (Worklist-based Partition Refinement)
  * 3. Moore's Algorithm (Fallback/Verification option)
+ * 4. Brzozowski's Algorithm (Extreme minimization via reversal)
  */
 
 #include <stdio.h>
@@ -27,7 +28,7 @@
 
 // Debug and Configuration
 static bool minimize_verbose = false;
-static bool use_moore_fallback = false; 
+static dfa_min_algo_t current_algo = DFA_MIN_HOPCROFT;
 static dfa_minimize_stats_t last_stats = {0};
 
 #define VERBOSE_PRINT(fmt, ...) do { \
@@ -281,10 +282,10 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
 }
 
 // ============================================================================
-// Phase 2: Refinement
+// Phase 2 (A): Hopcroft's Algorithm
 // ============================================================================
 
-static int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
+int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
     inverse_graph_t inv;
@@ -339,7 +340,11 @@ static int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
     return new_count;
 }
 
-static int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
+// ============================================================================
+// Phase 2 (B): Moore's Algorithm (Fallback)
+// ============================================================================
+
+int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
     int iterations = 0;
@@ -378,6 +383,15 @@ static int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
     free(ms); return new_count;
 }
 
+// ============================================================================
+// Public Entry Point
+// ============================================================================
+
+void dfa_minimize_set_algorithm(dfa_min_algo_t algo) { current_algo = algo; }
+void dfa_minimize_set_moore(bool use_moore) { current_algo = use_moore ? DFA_MIN_MOORE : DFA_MIN_HOPCROFT; }
+void dfa_minimize_set_verbose(bool verbose) { minimize_verbose = verbose; }
+void dfa_minimize_get_stats(dfa_minimize_stats_t* stats) { if(stats) *stats = last_stats; }
+
 static bool verify_minimized_dfa(const build_dfa_state_t* dfa, int state_count) {
     if (state_count <= 0) return false;
     for (int s = 0; s < state_count; s++) {
@@ -399,8 +413,10 @@ int dfa_minimize(build_dfa_state_t* dfa, int state_count) {
     
     // Phase 2: Behavioral optimization
     int new_count;
-    if (use_moore_fallback) {
+    if (current_algo == DFA_MIN_MOORE) {
         new_count = dfa_minimize_moore(dfa, state_count);
+    } else if (current_algo == DFA_MIN_BRZOZOWSKI) {
+        new_count = dfa_minimize_brzozowski(dfa, state_count);
     } else {
         new_count = dfa_minimize_hopcroft(dfa, state_count);
     }
@@ -416,7 +432,3 @@ int dfa_minimize(build_dfa_state_t* dfa, int state_count) {
     
     return new_count;
 }
-
-void dfa_minimize_set_verbose(bool verbose) { minimize_verbose = verbose; }
-void dfa_minimize_set_moore(bool use_moore) { use_moore_fallback = use_moore; }
-void dfa_minimize_get_stats(dfa_minimize_stats_t* stats) { if(stats) *stats = last_stats; }

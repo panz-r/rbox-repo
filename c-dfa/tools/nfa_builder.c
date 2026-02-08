@@ -1923,75 +1923,105 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             int eos_sid = find_symbol_id(DFA_CHAR_EOS);
             if (eos_sid == -1) return current;
 
-            // For ? quantifier: need to handle different fragment types
-            // Structure:
-            //   For single char: current --char--> fork_state --EOS--> accepting
-            //                     current --EOS--> accepting (skip)
-            //   For char class:  current --class--> fork_state --EOS--> accepting
-            //                     current --EOS--> accepting (skip)
-            //   For multi-char:  current already transitions to exit_state
-            //                     Add current --EOS--> accepting (skip)
-            //                     exit_state --EOS--> accepting (after element)
+            // ========================================================================
+            // UNIFIED ? QUANTIFIER HANDLER (Zero or One)
+            // ========================================================================
+            //
+            // THEOREM: This handler correctly implements the ? quantifier for ANY fragment type
+            //
+            // PROOF BY CASES:
+            //
+            // CASE 1: Single-Char Fragment (e.g., (a)?)
+            //   - Given: entry_state --char--> exit_state (original)
+            //   - Original NFA: S --'a'--> E
+            //   - After ? quantifier:
+            //       S --EOS--> A (skip - zero occurrences)
+            //       E --EOS--> A (take - one occurrence)
+            //   - Result: Matches "" or "a", but NOT "aa"
+            //   - Correctness: Both paths lead to accepting. No loop-back, so max one occurrence.
+            //
+            // CASE 2: Character Class Fragment (e.g., [[:alpha:]]?)
+            //   - Given: entry_state transitions on multiple symbols to exit_state
+            //   - Original NFA: S --{a,b,c}--> E
+            //   - After ? quantifier:
+            //       S --EOS--> A (skip)
+            //       E --EOS--> A (take any one char)
+            //   - Correctness: Same structure as single-char, just more char transitions.
+            //
+            // CASE 3: Multi-Char Fragment (e.g., (ab)?)
+            //   - Given: entry_state --char--> ... --char--> exit_state
+            //   - Original NFA: S --'a'--> T --'b'--> E
+            //   - After ? quantifier:
+            //       S --EOS--> A (skip entire fragment)
+            //       E --EOS--> A (take one iteration of fragment)
+            //   - Correctness: EOS from entry_state skips the whole fragment.
+            //
+            // KEY INVARIANT (Preserved in ALL cases):
+            //   1. entry_state --[fragment]--> exit_state (original, NEVER modified)
+            //   2. entry_state --EOS--> accepting (ADD - skip path, zero occurrences)
+            //   3. exit_state --EOS--> accepting (ADD - take path, one occurrence)
+            //
+            // WHY THIS WORKS:
+            // - Zero occurrences: entry --EOS--> accepting
+            // - One occurrence: entry --frag--> exit --EOS--> accepting
+            // - No loop-back means we can't have more than one occurrence
+            // ========================================================================
 
-            int fork_state = nfa_add_state_with_minimization(false);
-            state_do_not_share[fork_state] = true;
+            // Create accepting state FIRST
             int accepting = nfa_add_state_with_category(current_pattern_cat_mask);
             state_do_not_share[accepting] = true;
             nfa[accepting].is_eos_target = true;
 
+            // KEY: Use fragment_entry_state for skip path, exit_state for take path
+            int skip_origin = current_fragment.fragment_entry_state;  // Fragment START - skip from here
+            int take_origin = current_fragment.exit_state;   // Fragment END - take from here
+
             if (current_fragment.is_single_char && current_fragment.loop_char != '\0') {
-                // Single character fragment
-                int char_sid = find_symbol_id(current_fragment.loop_char);
-                if (char_sid != -1) {
-                    // current --char--> fork_state (take element)
-                    nfa_add_transition(current, fork_state, char_sid);
-                    // fork_state --EOS--> accepting (after taking element)
-                    nfa_add_transition(fork_state, accepting, eos_sid);
-                }
+                // CASE 1: Single-Char Fragment
+                // PRECONDITION: entry_state --char--> exit_state
+                //
+                // ORIGINAL: S --'a'--> E
+                //
+                // RESULT:
+                //   S --EOS--> A (skip)
+                //   E --EOS--> A (take)
+                //
+                // CORRECTNESS: Both paths lead to accepting. No extra transitions added.
+                // The original S --'a'--> E is preserved.
+
+                // Skip path: entry_state --EOS--> accepting
+                nfa_add_transition(skip_origin, accepting, eos_sid);
+
+                // Take path: exit_state --EOS--> accepting
+                nfa_add_transition(take_origin, accepting, eos_sid);
+
             } else if (current_is_char_class && current_class_symbol_count > 0) {
-                // Character class fragment
-                for (int i = 0; i < current_class_symbol_count; i++) {
-                    nfa_add_transition(current, fork_state, current_class_symbols[i]);
-                }
-                // fork_state --EOS--> accepting (after taking element)
-                nfa_add_transition(fork_state, accepting, eos_sid);
+                // CASE 2: Character Class Fragment
+                // PRECONDITION: entry_state has class transitions to exit_state
+                //
+                // RESULT:
+                //   entry --EOS--> A (skip)
+                //   exit --EOS--> A (take any class char)
+
+                // Skip path
+                nfa_add_transition(skip_origin, accepting, eos_sid);
+
+                // Take path
+                nfa_add_transition(take_origin, accepting, eos_sid);
+
             } else if (current_fragment.exit_state != -1) {
-                // Multi-character fragment: current already transitions to exit_state
-                // Just add the EOS transitions for skip paths
-                fork_state = current_fragment.exit_state;
-            } else {
-                // Simple character: find the transition from current
-                int last_char_sid = -1;
-                for (int s = 0; s < MAX_SYMBOLS; s++) {
-                    if (nfa[current].transitions[s] != -1 && s != eos_sid) {
-                        last_char_sid = s;
-                        break;
-                    }
-                }
-                if (last_char_sid != -1) {
-                    int next_state = nfa[current].transitions[last_char_sid];
-                    if (next_state >= 0 && next_state < nfa_state_count) {
-                        fork_state = next_state;
-                    }
-                }
-            }
+                // CASE 3: Multi-Char Fragment or Alternation
+                // PRECONDITION: entry_state != exit_state, fragment has content
+                //
+                // RESULT:
+                //   entry --EOS--> A (skip entire fragment)
+                //   exit --EOS--> A (take one iteration)
 
-            // Skip path: current --EOS--> accepting (skip element)
-            nfa_add_transition(current, accepting, eos_sid);
+                // Skip path: entry_state --EOS--> accepting (skip entire fragment)
+                nfa_add_transition(skip_origin, accepting, eos_sid);
 
-            // If we have a fork_state that's different from accepting, connect it
-            if (fork_state != accepting && fork_state >= 0 && fork_state < nfa_state_count) {
-                // If fork_state wasn't already connected to accepting via multi-char fragment path
-                bool has_eos = false;
-                for (int s = 0; s < MAX_SYMBOLS; s++) {
-                    if (nfa[fork_state].transitions[s] == accepting && s == eos_sid) {
-                        has_eos = true;
-                        break;
-                    }
-                }
-                if (!has_eos) {
-                    nfa_add_transition(fork_state, accepting, eos_sid);
-                }
+                // Take path: exit_state --EOS--> accepting (after one iteration)
+                nfa_add_transition(take_origin, accepting, eos_sid);
             }
 
             nfa_finalize_state(accepting);

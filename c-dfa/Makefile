@@ -22,8 +22,8 @@ TARGETS = dfa_test
 $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c
 	$(CC) $(CFLAGS) -o $@ $<
 
-$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c
-	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c
+$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c
 
 # ============================================================================
 # All Pattern Files (used by test runner)
@@ -74,7 +74,13 @@ NFA_FILES = $(patsubst %.txt,$(BUILD_DIR)/%.nfa,$(PATTERN_FILES))
 # ============================================================================
 # Phony Targets
 # ============================================================================
-.PHONY: all clean test test-full validate help summary FORCE
+.PHONY: all clean test test-full validate help FORCE clean-dfa
+
+# ============================================================================
+# Clean DFA files (force rebuild)
+# ============================================================================
+clean-dfa:
+	rm -rf $(BUILD_DIR)/*.nfa $(BUILD_DIR)/*.dfa
 
 # ============================================================================
 # All Targets
@@ -88,18 +94,18 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # ============================================================================
-# Build NFA from pattern file
+# Build NFA from pattern file (ALWAYS rebuild - pattern files may change)
 # ============================================================================
 $(BUILD_DIR)/%.nfa: %.txt $(TOOLS_DIR)/nfa_builder | $(BUILD_DIR)
 	@echo "  Building NFA: $< -> $@"
 	@$(TOOLS_DIR)/nfa_builder $< $@ 2>/dev/null
 
 # ============================================================================
-# Build DFA from NFA
+# Build DFA from NFA (ALWAYS rebuild - NFA may change)
 # ============================================================================
 $(BUILD_DIR)/%.dfa: $(BUILD_DIR)/%.nfa $(TOOLS_DIR)/nfa2dfa_advanced
 	@echo "  Building DFA: $< -> $@"
-	@$(TOOLS_DIR)/nfa2dfa_advanced $< $@ 2>/dev/null
+	@$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
 
 # ============================================================================
 # Build all NFA and DFA files
@@ -130,12 +136,9 @@ quick: dfa_test
 	@./dfa_test
 
 # ============================================================================
-# Full Test Suite (builds all DFAs first, then runs tests)
+# Full Test Suite (always rebuilds DFAs from patterns, then runs tests)
 # ============================================================================
-# Force test to always run by depending on a phony target
-FORCE:
-
-test: FORCE dfa dfa_test
+test: clean-dfa dfa dfa_test
 	@echo ""
 	@echo "================================================="
 	@echo "C-DFA TEST SUITE"

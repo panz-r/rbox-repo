@@ -318,7 +318,7 @@ static void run_tripled_quantifier_interactions(void) {
                    "build_test/tripled_quant_int.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
-static void run_expanded_quantifier_tests(void) {
+    static void run_expanded_quantifier_tests(void) {
     TestCase cases[] = {
         {"a", true, 1, CAT_MASK_SAFE, "a+ matches 'a'"},
         {"aa", true, 2, CAT_MASK_SAFE, "a+ matches 'aa'"},
@@ -327,10 +327,12 @@ static void run_expanded_quantifier_tests(void) {
         {"", false, 0, 0, "a+ should NOT match empty"},
         {"b", false, 0, 0, "a+ should NOT match 'b'"},
         {"ab", false, 0, 0, "a+ should NOT match 'ab'"},
-        {"abc", true, 1, CAT_MASK_SAFE, "abc+ matches 'abc'"},
-        {"abcc", true, 4, CAT_MASK_SAFE, "abc+ matches 'abcc'"},
-        {"a?", true, 1, CAT_MASK_SAFE, "a? matches 'a'"},
-        {"", true, 0, CAT_MASK_SAFE, "a? matches empty"},
+        // Pattern is ab(c)+, so "abc" matches with length 3 (ab + one c)
+        {"abc", true, 3, CAT_MASK_SAFE, "ab(c)+ matches 'abc'"},
+        {"abcc", true, 4, CAT_MASK_SAFE, "ab(c)+ matches 'abcc'"},
+        // Pattern is (a)?, so test inputs are "a" and "" (not "a?")
+        {"a", true, 1, CAT_MASK_SAFE, "(a)? matches 'a'"},
+        {"", true, 0, CAT_MASK_SAFE, "(a)? matches empty"},
     };
 
     run_test_group("EXPANDED QUANTIFIER EDGE CASES", "patterns_expanded_quantifier.txt",

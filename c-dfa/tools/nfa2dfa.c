@@ -1232,6 +1232,34 @@ int main(int argc, char* argv[]) {
             i--;
         } else if (strcmp(argv[i], "--minimize") == 0) {
             minimize = true;
+            dfa_minimize_set_algorithm(DFA_MIN_HOPCROFT);
+            // Remove flag from arguments
+            for (int j = i; j < argc - 1; j++) {
+                argv[j] = argv[j + 1];
+            }
+            argc--;
+            i--;
+        } else if (strcmp(argv[i], "--minimize-moore") == 0) {
+            minimize = true;
+            dfa_minimize_set_algorithm(DFA_MIN_MOORE);
+            // Remove flag from arguments
+            for (int j = i; j < argc - 1; j++) {
+                argv[j] = argv[j + 1];
+            }
+            argc--;
+            i--;
+        } else if (strcmp(argv[i], "--minimize-hopcroft") == 0) {
+            minimize = true;
+            dfa_minimize_set_algorithm(DFA_MIN_HOPCROFT);
+            // Remove flag from arguments
+            for (int j = i; j < argc - 1; j++) {
+                argv[j] = argv[j + 1];
+            }
+            argc--;
+            i--;
+        } else if (strcmp(argv[i], "--minimize-brzozowski") == 0) {
+            minimize = true;
+            dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
             // Remove flag from arguments
             for (int j = i; j < argc - 1; j++) {
                 argv[j] = argv[j + 1];
@@ -1252,9 +1280,12 @@ int main(int argc, char* argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [options] <nfa_file> [dfa_file]\n", argv[0]);
         fprintf(stderr, "Options:\n");
-        fprintf(stderr, "  -v, --verbose    Enable verbose output\n");
-        fprintf(stderr, "  --minimize       Enable DFA state minimization (default)\n");
-        fprintf(stderr, "  --no-minimize    Disable DFA state minimization\n");
+        fprintf(stderr, "  -v, --verbose           Enable verbose output\n");
+        fprintf(stderr, "  --minimize              Enable DFA state minimization (default: Hopcroft)\n");
+        fprintf(stderr, "  --no-minimize           Disable DFA state minimization\n");
+        fprintf(stderr, "  --minimize-moore        Use Moore's algorithm\n");
+        fprintf(stderr, "  --minimize-hopcroft     Use Hopcroft's algorithm\n");
+        fprintf(stderr, "  --minimize-brzozowski   Use Brzozowski's algorithm (Extreme)\n");
         return 1;
     }
     const char* nfa_file = argv[1];
