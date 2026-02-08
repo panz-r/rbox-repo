@@ -7,6 +7,12 @@
 #include "../include/dfa_types.h"
 #include "../include/nfa.h"
 
+// Bitmask type for visited tracking (8192 bits = 128 uint64_t for MAX_STATES=8192)
+#define VISITED_WORDS 128
+typedef struct {
+    uint64_t bits[VISITED_WORDS];
+} visited_bitmask_t;
+
 // Forward declaration
 int find_symbol_id(char c);
 
@@ -128,46 +134,93 @@ void dfa_init(void) {
     dfa_state_count = 0;
 }
 
-// Helper function to recursively follow EOS transitions and collect category masks
+// Helper function to iteratively follow EOS transitions and collect category masks
 // Returns the combined category mask from all terminal states reachable via EOS chain
-static uint8_t collect_eos_categories(int state, int eos_symbol, int* visited, int* visited_count) {
+// Uses iterative DFS with bitmask visited tracking to avoid stack overflow
+static uint8_t collect_eos_categories(int start_state, int eos_symbol) {
     uint8_t combined_mask = 0;
 
-    // Check for cycles
-    for (int i = 0; i < *visited_count; i++) {
-        if (visited[i] == state) {
-            // Already visited this state in current chain
-            return 0;
+    // Use a bitmask for visited tracking
+    visited_bitmask_t visited;
+    memset(&visited, 0, sizeof(visited));
+
+    // Stack for iterative DFS (use malloc for large stacks if needed)
+    int* stack = NULL;
+    int stack_capacity = 64;
+    int stack_top = 0;
+
+    stack = malloc(stack_capacity * sizeof(int));
+    if (!stack) {
+        fprintf(stderr, "Error: Failed to allocate stack for EOS traversal\n");
+        return 0;
+    }
+
+    // Push start state
+    stack[stack_top++] = start_state;
+
+    while (stack_top > 0) {
+        // Pop from stack
+        int state = stack[--stack_top];
+
+        // Bounds check for safety
+        if (state < 0 || state >= nfa_state_count) {
+            continue;
         }
-    }
 
-    // Add to visited set
-    if (*visited_count < MAX_STATES) {
-        visited[(*visited_count)++] = state;
-    }
+        // Check if already visited using bitmask
+        int word = state / 64;
+        int bit = state % 64;
+        if (word < VISITED_WORDS && (visited.bits[word] & (1ULL << bit))) {
+            continue;
+        }
+        // Mark as visited
+        if (word < VISITED_WORDS) {
+            visited.bits[word] |= (1ULL << bit);
+        }
 
-    // Check if this state is terminal (EOS target with category)
-    if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
-        // Check if this state has NO character transitions (truly terminal)
-        bool has_char_trans = false;
-        for (int s = 0; s < alphabet_size; s++) {
-            if (alphabet[s].is_special) continue;
-            if (nfa[state].transitions[s] != -1 || nfa[state].multi_targets[s][0] != '\0') {
-                has_char_trans = true;
-                break;
+        // Check if this state is terminal (EOS target with category)
+        if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
+            // Check if this state has NO character transitions (truly terminal)
+            bool has_char_trans = false;
+            for (int s = 0; s < alphabet_size; s++) {
+                if (alphabet[s].is_special) continue;
+                if (nfa[state].transitions[s] != -1 || nfa[state].multi_targets[s][0] != '\0') {
+                    has_char_trans = true;
+                    break;
+                }
+            }
+            if (!has_char_trans) {
+                combined_mask |= nfa[state].category_mask;
             }
         }
-        if (!has_char_trans) {
-            combined_mask |= nfa[state].category_mask;
+
+        // Follow EOS transition if present
+        if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
+            int eos_target = nfa[state].transitions[eos_symbol];
+
+            // Grow stack if needed
+            if (stack_top >= stack_capacity) {
+                stack_capacity *= 2;
+                if (stack_capacity > MAX_STATES) {
+                    stack_capacity = MAX_STATES;
+                }
+                int* new_stack = realloc(stack, stack_capacity * sizeof(int));
+                if (!new_stack) {
+                    fprintf(stderr, "Error: Failed to reallocate stack\n");
+                    free(stack);
+                    return combined_mask;
+                }
+                stack = new_stack;
+            }
+
+            // Push EOS target if within bounds
+            if (eos_target >= 0 && eos_target < nfa_state_count && stack_top < stack_capacity) {
+                stack[stack_top++] = eos_target;
+            }
         }
     }
 
-    // Follow EOS transition if present
-    if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
-        int eos_target = nfa[state].transitions[eos_symbol];
-        combined_mask |= collect_eos_categories(eos_target, eos_symbol, visited, visited_count);
-    }
-
+    free(stack);
     return combined_mask;
 }
 
@@ -536,10 +589,8 @@ void nfa_to_dfa(void) {
                 }
                 
                 if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
-                    // Use recursive helper to collect all categories from EOS chain
-                    int visited[MAX_STATES];
-                    int visited_count = 0;
-                    uint8_t eos_categories = collect_eos_categories(state, eos_symbol, visited, &visited_count);
+                    // Use iterative helper to collect all categories from EOS chain
+                    uint8_t eos_categories = collect_eos_categories(state, eos_symbol);
                     if (eos_categories != 0) {
                         DEBUG_PRINT("state=%d EOS chain categories=0x%02x\n", state, eos_categories);
                         move_accepting_mask |= eos_categories;
