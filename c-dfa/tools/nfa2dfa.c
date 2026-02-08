@@ -383,9 +383,10 @@ void epsilon_closure(int* states, int* count, int max_states) {
                 }
             }
 
-            // ANY transitions: only follow if state was NOT added via ANY
+            // ANY transitions: only follow if state was NOT added via ANY or EPSILON
             // This prevents loop states from contaminating the closure
-            if (any_symbol >= 0 && added_via[state] != 3 &&
+            // States added via EPSILON should not follow ANY to avoid cross-branch contamination
+            if (any_symbol >= 0 && added_via[state] != 3 && added_via[state] != 2 &&
                 nfa[state].transitions[any_symbol] != -1) {
                 int target = nfa[state].transitions[any_symbol];
                 bool found = false;
@@ -436,8 +437,11 @@ void nfa_move(int* states, int* count, int symbol_id, int max_states) {
             char* p = nfa[state].multi_targets[symbol_id];
             while (p != NULL && *p != '\0') {
                 if (*p == ',') p++;  // Skip leading comma
-                int target = atoi(p);
-                if (target >= 0 && target < MAX_STATES) {
+                // Use strtol for safer parsing with bounds validation
+                char* end;
+                long target_long = strtol(p, &end, 10);
+                if (end > p && target_long >= 0 && target_long < MAX_STATES) {
+                    int target = (int)target_long;
                     bool found = false;
                     for (int j = 0; j < new_count; j++) {
                         if (new_states[j] == target) {
@@ -543,7 +547,7 @@ void nfa_to_dfa(void) {
                     if (move_accepting_mask == 0) {
                         move_accepting_mask = nfa[state].category_mask;
                     } else if (move_accepting_mask != nfa[state].category_mask) {
-                        move_accepting_mask = 0;
+                        move_accepting_mask |= nfa[state].category_mask;
                     }
                 }
             }
@@ -571,7 +575,7 @@ void nfa_to_dfa(void) {
                     if (move_accepting_mask == 0) {
                         move_accepting_mask = nfa[state].category_mask;
                     } else if (move_accepting_mask != nfa[state].category_mask) {
-                        move_accepting_mask = 0;
+                        move_accepting_mask |= nfa[state].category_mask;
                     }
                 }
                 
@@ -905,9 +909,11 @@ void load_nfa_file(const char* filename) {
                                     } else {
                                         // Additional targets go to multi_targets
                                         char num_str[32];
-                                        sprintf(num_str, ",%d", target);
-                                        if (strlen(nfa[current_state].multi_targets[symbol_id]) + strlen(num_str) < 254) {
-                                            strcat(nfa[current_state].multi_targets[symbol_id], num_str);
+                                        snprintf(num_str, sizeof(num_str), ",%d", target);
+                                        size_t current_len = strlen(nfa[current_state].multi_targets[symbol_id]);
+                                        if (current_len + strlen(num_str) < sizeof(nfa[current_state].multi_targets[symbol_id])) {
+                                            strncat(nfa[current_state].multi_targets[symbol_id], num_str,
+                                                    sizeof(nfa[current_state].multi_targets[symbol_id]) - current_len - 1);
                                             nfa[current_state].transition_count++;
                                         }
                                     }

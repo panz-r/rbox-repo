@@ -691,10 +691,12 @@ void nfa_add_transition(int from, int to, int symbol_id) {
 
                 // Append to multi_targets
                 char new_target[32];
-                sprintf(new_target, ",%d", to);
+                snprintf(new_target, sizeof(new_target), ",%d", to);
 
-                if (strlen(nfa[0].multi_targets[symbol_id]) + strlen(new_target) < 255) {
-                    strcat(nfa[0].multi_targets[symbol_id], new_target);
+                size_t current_len = strlen(nfa[0].multi_targets[symbol_id]);
+                if (current_len + strlen(new_target) < sizeof(nfa[0].multi_targets[symbol_id])) {
+                    strncat(nfa[0].multi_targets[symbol_id], new_target,
+                            sizeof(nfa[0].multi_targets[symbol_id]) - current_len - 1);
                     nfa[0].transition_count++;
                 }
             }
@@ -719,10 +721,12 @@ void nfa_add_transition(int from, int to, int symbol_id) {
 
             // Append to multi_targets
             char new_target[32];
-            sprintf(new_target, ",%d", to);
+            snprintf(new_target, sizeof(new_target), ",%d", to);
 
-            if (strlen(nfa[from].multi_targets[symbol_id]) + strlen(new_target) < 255) {
-                strcat(nfa[from].multi_targets[symbol_id], new_target);
+            size_t current_len = strlen(nfa[from].multi_targets[symbol_id]);
+            if (current_len + strlen(new_target) < sizeof(nfa[from].multi_targets[symbol_id])) {
+                strncat(nfa[from].multi_targets[symbol_id], new_target,
+                        sizeof(nfa[from].multi_targets[symbol_id]) - current_len - 1);
                 nfa[from].transition_count++;
             }
         }
@@ -2055,9 +2059,11 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 char* p = nfa[0].multi_targets[first_char_sid];
                 while (p != NULL && *p != '\0') {
                     if (*p == ',') p++;
-                    int target = atoi(p);
-                    if (target > 0 && target < MAX_STATES) {
-                        targets[target_count++] = target;
+                    // Use strtol for safer parsing with bounds validation
+                    char* end;
+                    long target_long = strtol(p, &end, 10);
+                    if (end > p && target_long > 0 && target_long < MAX_STATES) {
+                        targets[target_count++] = (int)target_long;
                     }
                     p = strchr(p, ',');
                     if (p) p++;
@@ -2475,11 +2481,13 @@ static void parse_acceptance_mapping(const char* line) {
     category_str[cat_len] = '\0';
 
     // Parse the acceptance category number after ->
-    int acceptance_cat = atoi(arrow + 2);
-    if (acceptance_cat < 0 || acceptance_cat > 7) {
-        fprintf(stderr, "Warning: Invalid acceptance category %d (must be 0-7): %s\n", acceptance_cat, line);
+    char* end;
+    long acceptance_cat_long = strtol(arrow + 2, &end, 10);
+    if (end == arrow + 2 || acceptance_cat_long < 0 || acceptance_cat_long > 7) {
+        fprintf(stderr, "Warning: Invalid acceptance category: %s\n", line);
         return;
     }
+    int acceptance_cat = (int)acceptance_cat_long;
 
     // Parse category:subcategory:operations
     char category[64] = "";
