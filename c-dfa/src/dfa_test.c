@@ -596,11 +596,12 @@ static void run_combined_tests(void) {
 
 static void run_minimal_tests(void) {
     TestCase cases[] = {
-        {"a", true, 1, CAT_MASK_SAFE, "single 'a' matches"},
-        {"aa", true, 2, CAT_MASK_SAFE, "double 'a' matches"},
-        {"aaa", true, 3, CAT_MASK_SAFE, "triple 'a' matches"},
-        {"", false, 0, 0, "empty should NOT match"},
-        {"b", false, 0, 0, "'b' should NOT match"},
+        {"cat file.txt", true, 12, CAT_MASK_SAFE, "cat file.txt matches"},
+        {"ls -la", true, 6, CAT_MASK_SAFE, "ls -la matches"},
+        {"rm file.txt", true, 11, CAT_MASK_MODIFYING, "rm file.txt matches"},
+        {"reboot", true, 6, CAT_MASK_DANGEROUS, "reboot matches"},
+        {"cat", false, 0, 0, "cat alone should NOT match"},
+        {"rm", false, 0, 0, "rm alone should NOT match"},
     };
 
     run_test_group("MINIMAL PATTERN TESTS", "patterns_minimal.txt",
@@ -609,12 +610,12 @@ static void run_minimal_tests(void) {
 
 static void run_simple_quantifier_tests(void) {
     TestCase cases[] = {
-        {"a", true, 1, CAT_MASK_SAFE, "a? matches 'a'"},
-        {"", true, 0, CAT_MASK_SAFE, "a? matches empty"},
-        {"aa", true, 2, CAT_MASK_SAFE, "a* matches 'aa'"},
-        {"", true, 0, CAT_MASK_SAFE, "a* matches empty"},
-        {"aaa", true, 3, CAT_MASK_SAFE, "a+ matches 'aaa'"},
-        {"", false, 0, 0, "a+ should NOT match empty"},
+        {"a", false, 0, 0, "a(B)+ should NOT match 'a' (needs at least one B)"},
+        {"aB", true, 2, CAT_MASK_SAFE, "a(B)+ matches 'aB'"},
+        {"aBB", true, 3, CAT_MASK_SAFE, "a(B)+ matches 'aBB'"},
+        {"aBBB", true, 4, CAT_MASK_SAFE, "a(B)+ matches 'aBBB'"},
+        {"", false, 0, 0, "a(B)+ should NOT match empty"},
+        {"ab", false, 0, 0, "a(B)+ should NOT match 'ab' (lowercase b)"},
     };
 
     run_test_group("SIMPLE QUANTIFIER TESTS", "patterns_quantifier_simple.txt",

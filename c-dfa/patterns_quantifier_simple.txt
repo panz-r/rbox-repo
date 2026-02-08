@@ -1,2 +1,2 @@
 # Simple + quantifier test
-a(B)+ :one :cat :ops
+[safe:quantifier:test] a(B)+

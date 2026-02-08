@@ -1640,13 +1640,15 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                     DEBUG_NFA_PRINT("After transition, state %d has %d transitions\n",
                             current_fragment.loop_entry_state, nfa[current_fragment.loop_entry_state].transition_count);
 
-                    // CRITICAL FIX: loop_entry_state needs EOS transition to accept after ONE iteration
+                    // CRITICAL FIX: loop_entry_state needs EOS transition AND is_eos_target=true
+                    // to accept after ONE iteration
                     // Structure:
                     //   Entry --char--> First --char--> Loop (subsequent)
                     //   Entry --EOS--> Accepting (after exactly one char consumed)
                     //   First --EOS--> Accepting (backup after first iteration)
                     //   Loop --EOS--> Accepting (after multiple iterations)
                     nfa_add_transition(current_fragment.loop_entry_state, new_accepting, eos_sid);
+                    nfa[current_fragment.loop_entry_state].is_eos_target = true;
 
                     // First -> Loop on char (for subsequent iterations)
                     nfa_add_transition(first_iter, loop_state, char_sid);
@@ -1724,11 +1726,66 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                                               current_fragment.fragment_entry_state, epsilon_sid);
                         }
                     } else if (!current_fragment.is_single_char && current_fragment.fragment_entry_state != -1) {
-                        // Multi-char fragment: loop back to fragment_entry_state on first char
+                        // Multi-char fragment: Create a first_iter state that accepts on EOS
+                        // Structure:
+                        //   Entry --char--> First_iter (first iteration)
+                        //   First_iter --EOS--> Accepting (accept after first iteration)
+                        //   First_iter --char--> Loop (subsequent iterations)
+                        //   Loop --char--> Loop (more iterations)
+                        //   Loop --EOS--> Accepting (after subsequent iterations)
+                        int first_iter = nfa_add_state_with_minimization(false);
+                        int loop_state = nfa_add_state_with_minimization(false);
+                        state_do_not_share[first_iter] = true;
+                        state_do_not_share[loop_state] = true;
+
+                        // Create accepting state
+                        int new_accepting = nfa_add_state_with_category(current_pattern_cat_mask);
+                        state_do_not_share[new_accepting] = true;
+                        nfa[new_accepting].is_eos_target = true;
+
+                        // Entry --first_char--> First_iter
                         int first_sid = find_symbol_id(current_fragment.loop_first_char);
                         if (first_sid != -1) {
-                            nfa_add_transition(current_fragment.exit_state, current_fragment.fragment_entry_state, first_sid);
+                            nfa_add_transition(current_fragment.fragment_entry_state, first_iter, first_sid);
                         }
+
+                        // First_iter --EOS--> Accepting (accept after first iteration)
+                        nfa_add_transition(first_iter, new_accepting, eos_sid);
+
+                        // First_iter --char--> Loop (for subsequent iterations)
+                        for (int s = 0; s < MAX_SYMBOLS; s++) {
+                            if (nfa[current_fragment.exit_state].transitions[s] != -1) {
+                                nfa_add_transition(first_iter, nfa[current_fragment.exit_state].transitions[s], s);
+                            }
+                            if (nfa[current_fragment.exit_state].multi_targets[s][0] != '\0') {
+                                strcpy(nfa[first_iter].multi_targets[s],
+                                       nfa[current_fragment.exit_state].multi_targets[s]);
+                                nfa[first_iter].transition_count++;
+                            }
+                        }
+
+                        // Loop --char--> Loop (subsequent iterations)
+                        for (int s = 0; s < MAX_SYMBOLS; s++) {
+                            if (nfa[current_fragment.exit_state].transitions[s] != -1) {
+                                nfa_add_transition(loop_state, nfa[current_fragment.exit_state].transitions[s], s);
+                            }
+                            if (nfa[current_fragment.exit_state].multi_targets[s][0] != '\0') {
+                                strcpy(nfa[loop_state].multi_targets[s],
+                                       nfa[current_fragment.exit_state].multi_targets[s]);
+                                nfa[loop_state].transition_count++;
+                            }
+                        }
+
+                        // Loop --EOS--> Accepting (after subsequent iterations)
+                        nfa_add_transition(loop_state, new_accepting, eos_sid);
+
+                        // Loop back to Loop on first_char
+                        if (first_sid != -1) {
+                            nfa_add_transition(loop_state, loop_state, first_sid);
+                        }
+
+                        nfa_finalize_state(new_accepting);
+                        current = new_accepting;
                     } else {
                         // Single-char: copy transitions from loop_entry_state to exit_state
                         for (int s = 0; s < MAX_SYMBOLS; s++) {
