@@ -98,14 +98,14 @@ $(BUILD_DIR):
 # ============================================================================
 $(BUILD_DIR)/%.nfa: %.txt $(TOOLS_DIR)/nfa_builder | $(BUILD_DIR)
 	@echo "  Building NFA: $< -> $@"
-	@$(TOOLS_DIR)/nfa_builder $< $@ 2>/dev/null
+	$(TOOLS_DIR)/nfa_builder $< $@
 
 # ============================================================================
 # Build DFA from NFA (ALWAYS rebuild - NFA may change)
 # ============================================================================
 $(BUILD_DIR)/%.dfa: $(BUILD_DIR)/%.nfa $(TOOLS_DIR)/nfa2dfa_advanced
 	@echo "  Building DFA: $< -> $@"
-	@$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-moore $< $@ 2>/dev/null
 
 # ============================================================================
 # Build all NFA and DFA files

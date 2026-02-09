@@ -107,6 +107,7 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
         }
 
         // Read entire file into buffer
+        fprintf(stderr, "LOADING DFA: %s (%ld bytes)\n", filename, dfa_size);
         size_t bytes_read = fread(dfa_data, 1, dfa_size, file);
         fclose(file);
 

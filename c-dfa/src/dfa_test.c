@@ -29,10 +29,10 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
 
     char cmd[512];
     snprintf(cmd, sizeof(cmd),
-        "mkdir -p %s && cd %s && "
-        "../tools/nfa_builder ../%s test.nfa 2>/dev/null && "
-        "../tools/nfa2dfa_advanced test.nfa %s 2>/dev/null",
-        build_dir, build_dir, patterns_file, filename);
+        "mkdir -p %s && "
+        "./tools/nfa_builder %s %s/test.nfa && "
+        "./tools/nfa2dfa_advanced --minimize-moore %s/test.nfa %s",
+        build_dir, patterns_file, build_dir, build_dir, dfa_file);
     system(cmd);
 }
 
@@ -87,6 +87,7 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
     }
 
     printf("  Result: %d/%d passed\n", group_passed, group_run);
+    dfa_reset();
     free(data);
 }
 

@@ -150,6 +150,13 @@ static nfa_builder_state_t nfa[MAX_STATES];
 static command_pattern_t patterns[MAX_PATTERNS];
 static char_class_t alphabet[MAX_SYMBOLS];
 static int alphabet_size = 0;
+
+// Virtual Symbol Mapping
+#define VSYM_ANY 256
+#define VSYM_EPS 257
+#define VSYM_EOS 258
+#define VSYM_SPACE 259
+#define VSYM_TAB 260
 static int nfa_state_count = 0;
 static int pattern_count = 0;
 static int current_pattern_index = 0;  // Track which pattern we're building
@@ -227,6 +234,7 @@ static int8_t pending_capture_defer_id = -1;
 // to exit_state, allowing the fragment to restart from wherever it would go
 // after consuming any character.
 typedef struct {
+    int anchor_state;          // Dedicated Entry Point (for EPSILON loop-back)
     int loop_entry_state;      // State AFTER first char consumed (source for loop-back transitions)
     int exit_state;            // State after consuming the entire fragment
     bool is_single_char;       // Whether fragment is single character
@@ -308,6 +316,7 @@ void nfa_init(void) {
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             nfa[i].transitions[j] = -1;
         }
+        mta_free(&nfa[i].multi_targets);
         mta_init(&nfa[i].multi_targets);
         nfa[i].transition_count = 0;
 
@@ -447,12 +456,18 @@ void load_alphabet(const char* filename) {
 
 // Find symbol ID for a character
 int find_symbol_id(unsigned char c) {
-    for (int i = 0; i < alphabet_size; i++) {
-        if (c >= alphabet[i].start_char && c <= alphabet[i].end_char) {
-            return alphabet[i].symbol_id;
-        }
+    return (int)c;
+}
+
+int find_special_symbol_id(int special_char) {
+    switch (special_char) {
+        case DFA_CHAR_ANY:     return VSYM_ANY;
+        case DFA_CHAR_EPSILON: return VSYM_EPS;
+        case DFA_CHAR_EOS:     return VSYM_EOS;
+        case 32:               return VSYM_SPACE;
+        case 9:                return VSYM_TAB;
+        default:               return -1;
     }
-    return -1; // Not found
 }
 
 // Forward declarations for minimization functions
@@ -482,11 +497,10 @@ int nfa_add_state_with_category(uint8_t category_mask) {
         nfa[new_state].transitions[j] = -1;
     }
     nfa[new_state].transition_count = 0;
+    mta_init(&nfa[new_state].multi_targets);
     nfa_state_count++;
 
-    // DON'T compute signature here - transitions aren't added yet!
-    // The caller will call nfa_finalize_state() after adding all transitions.
-
+    // FORCED NEW STATE - NO MINIMIZATION
     return new_state;
 }
 
@@ -660,40 +674,11 @@ void nfa_add_transition(int from, int to, int symbol_id) {
         exit(1);
     }
 
-    // Check if we should use a negated transition instead
-    if (should_use_negation(from, to, symbol_id)) {
-        add_negated_transition(from, to, symbol_id);
-        return;
-    }
-
-    // For State 0, store multiple targets per symbol
-    if (from == 0) {
-        if (nfa[0].transitions[symbol_id] == -1) {
-            // First transition on this symbol - store in transitions array
-            nfa[0].transitions[symbol_id] = to;
-            nfa[0].transition_count++;
-        } else if (nfa[0].transitions[symbol_id] != to) {
-            // Additional transition - use multi-target array
-            bool added = mta_add_target(&nfa[0].multi_targets, symbol_id, to);
-            if (added) {
-                nfa[0].transition_count++;
-            }
-        }
-        return;
-    }
-
-    // Use regular transition for non-State-0
-    // Support multiple targets for the same symbol (for loops and exits)
-    if (nfa[from].transitions[symbol_id] == -1) {
-        // First transition on this symbol
-        nfa[from].transitions[symbol_id] = to;
+    // ALWAYS use multi-target array for all transitions in the builder
+    // This avoids conflicts between transitions[] and multi_targets
+    bool added = mta_add_target(&nfa[from].multi_targets, symbol_id, to);
+    if (added) {
         nfa[from].transition_count++;
-    } else if (nfa[from].transitions[symbol_id] != to) {
-        // Additional transition on same symbol - use multi-target array
-        bool added = mta_add_target(&nfa[from].multi_targets, symbol_id, to);
-        if (added) {
-            nfa[from].transition_count++;
-        }
     }
 }
 
@@ -940,6 +925,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
 // REPLACES: previous approach that set pending_loop_* globals
 static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int start_state) {
     FragmentResult result = {0};
+    result.anchor_state = -1;
     result.loop_entry_state = -1;
     result.exit_state = -1;
     result.is_single_char = false;
@@ -989,9 +975,6 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 
     DEBUG_PRINT("Looking up fragment (normalized): '%s'\n", frag_name);
 
-    DEBUG_PRINT("parse_rdp_fragment ENTER: frag_name='%s'\n", frag_name);
-
-    // Look up fragment
     const char* frag_value = find_fragment(frag_name);
     if (frag_value == NULL) {
         fprintf(stderr, "WARNING: Fragment '%s' not found, skipping\n", frag_name);
@@ -1000,7 +983,7 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
         return result;
     }
 
-    DEBUG_PRINT("parse_rdp_fragment: frag_name='%s', frag_value='%s'\n", frag_name, frag_value);
+    DEBUG_PRINT("parse_rdp_fragment: frag_name=\"%s\", frag_value=\"%s\"\n", frag_name, frag_value);
 
     // Create a clean start state for the fragment
     int frag_start = nfa_add_state_with_minimization(false);
@@ -1024,46 +1007,30 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     // Parse the fragment value starting from frag_start
     // For multi-char fragments, skip first char since we already added its transition
     int frag_pos = 0;
-    int frag_end_raw;
+    int frag_end;
     if (frag_value[0] != '\0' && frag_value[1] != '\0') {
         frag_pos = 1;  // Skip first char (already handled above)
-        frag_end_raw = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
+        frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
     } else {
-        frag_end_raw = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
+        frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
     }
-    int frag_end = frag_end_raw;
 
     // Populate FragmentResult
     if (is_single_char) {
         result.is_single_char = true;
         result.loop_char = frag_value[0];
-        result.loop_entry_state = frag_start;  // State BEFORE consuming char (for quantifier to add transitions)
-        result.is_from_fragment = true;  // Mark as coming from fragment so * is allowed
+        result.loop_entry_state = frag_start;  // State BEFORE consuming char
+        result.is_from_fragment = true;
     } else {
         result.is_single_char = false;
         result.loop_char = '\0';
-        result.loop_entry_state = frag_start;  // State BEFORE consuming fragment (for multi-char loop-back)
-        result.fragment_entry_state = start_state;  // Store entry state for multi-char loop-back
-        result.loop_first_char = frag_value[0];     // Store first char for loop-back transition
+        result.loop_entry_state = frag_start;  // State BEFORE consuming fragment
+        result.fragment_entry_state = start_state;
+        result.loop_first_char = frag_value[0];
         result.is_from_fragment = false;
     }
 
     result.exit_state = frag_end;
-
-    // Add EOS transition only for multi-char fragments
-    // Single-char fragments should NOT have EOS here - the quantifier handler adds it
-    // This prevents patterns like a((b))+ from incorrectly accepting zero iterations
-    int eos_sid = find_symbol_id(DFA_CHAR_EOS);
-    if (eos_sid != -1 && !is_single_char) {
-        int accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-        nfa_add_transition(frag_end, accepting, eos_sid);
-        nfa[accepting].is_eos_target = true;
-        nfa_finalize_state(frag_end);
-        nfa_finalize_state(accepting);
-    } else if (is_single_char) {
-        // For single-char fragments, finalize frag_end without EOS transition
-        nfa_finalize_state(frag_end);
-    }
 
     // Mark states as potentially accepting (for quantifier handling)
     state_do_not_share[frag_start] = true;
@@ -1142,6 +1109,7 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
     nfa_finalize_state(class_state);
 
     // Set current_fragment for quantifier handling
+    current_fragment.anchor_state = start_state;
     current_fragment.is_single_char = false;
     current_fragment.loop_entry_state = class_state;
     current_fragment.exit_state = class_state;
@@ -1182,22 +1150,28 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                     // Parse hex escape \xHH
                     char hex[3] = {pattern[*pos + 2], pattern[*pos + 3], 0};
                     int hex_val = (int)strtol(hex, NULL, 16);
-                    DEBUG_PRINT("Found \\x%02x escape, char='%c', code=%d\n", hex_val, hex_val, hex_val);
                     if (hex_val > 0 && hex_val < 256) {
                         int sid = find_symbol_id(hex_val);
-                        DEBUG_PRINT("find_symbol_id(%d) = %d\n", hex_val, sid);
                         if (sid != -1) {
+                            // Ensure dedicated anchor state
+                            int anchor = start_state;
+                            if (anchor == 0) {
+                                anchor = nfa_add_state_with_minimization(false);
+                                nfa_add_transition(0, anchor, VSYM_EPS);
+                            }
+
                             int new_state = nfa_add_state_with_minimization(false);
-                            nfa_add_transition(start_state, new_state, sid);
+                            nfa_add_transition(anchor, new_state, sid);
                             int finalized_state = nfa_finalize_state(new_state);
+                            
                             memset(&current_fragment, 0, sizeof(current_fragment));
+                            current_fragment.anchor_state = anchor;
                             current_fragment.is_single_char = true;
                             current_fragment.loop_char = (char)hex_val;
                             current_fragment.loop_entry_state = finalized_state;
                             current_fragment.exit_state = finalized_state;
                             current_is_char_class = false;
                             *pos += 4;
-                            DEBUG_PRINT("Created transition on '%c' (symbol %d)\n", hex_val, sid);
                             return finalized_state;
                         }
                     }
@@ -1205,10 +1179,19 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                 
                 int sid = find_symbol_id(ec);
                 if (sid != -1) {
+                    // Ensure dedicated anchor state
+                    int anchor = start_state;
+                    if (anchor == 0) {
+                        anchor = nfa_add_state_with_minimization(false);
+                        nfa_add_transition(0, anchor, VSYM_EPS);
+                    }
+
                     int new_state = nfa_add_state_with_minimization(false);
-                    nfa_add_transition(start_state, new_state, sid);
+                    nfa_add_transition(anchor, new_state, sid);
                     int finalized_state = nfa_finalize_state(new_state);
+                    
                     memset(&current_fragment, 0, sizeof(current_fragment));
+                    current_fragment.anchor_state = anchor;
                     current_fragment.is_single_char = true;
                     current_fragment.loop_char = ec;
                     current_fragment.loop_entry_state = finalized_state;
@@ -1230,10 +1213,19 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                 char qc = pattern[*pos];
                 int sid = find_symbol_id(qc);
                 if (sid != -1) {
+                    // Ensure dedicated anchor state
+                    int anchor = start_state;
+                    if (anchor == 0) {
+                        anchor = nfa_add_state_with_minimization(false);
+                        nfa_add_transition(0, anchor, VSYM_EPS);
+                    }
+
                     int new_state = nfa_add_state_with_minimization(false);
-                    nfa_add_transition(start_state, new_state, sid);
+                    nfa_add_transition(anchor, new_state, sid);
                     int finalized_state = nfa_finalize_state(new_state);
+                    
                     memset(&current_fragment, 0, sizeof(current_fragment));
+                    current_fragment.anchor_state = anchor;
                     current_fragment.is_single_char = true;
                     current_fragment.loop_char = qc;
                     current_fragment.loop_entry_state = finalized_state;
@@ -1254,23 +1246,28 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
         case '(':
             // Check for (*) explicit wildcard syntax
             if (pattern[*pos + 1] == '*' && pattern[*pos + 2] == ')') {
-                int any_sid = find_symbol_id(DFA_CHAR_ANY);
-                if (any_sid != -1) {
-                    int star_state = nfa_add_state_with_minimization(false);
-                    state_do_not_share[star_state] = true;
-                    nfa_add_transition(start_state, star_state, any_sid);
-                    nfa_add_transition(star_state, star_state, any_sid);
-                    int finalized_star = nfa_finalize_state(star_state);
-                    
-                    // Set current_fragment to indicate a wildcard (complex/non-single-char)
-                    // This prevents postfix * from trying to quantify it again if used incorrectly
-                    memset(&current_fragment, 0, sizeof(current_fragment));
-                    current_fragment.is_single_char = false;
-                    current_fragment.exit_state = finalized_star;
-                    
-                    *pos += 3; // Consume (*)
-                    return finalized_star;
+                int any_sid = VSYM_ANY;
+                // Ensure we have a dedicated anchor state (not State 0)
+                int anchor = start_state;
+                if (anchor == 0) {
+                    anchor = nfa_add_state_with_minimization(false);
+                    nfa_add_transition(0, anchor, VSYM_EPS);
                 }
+
+                int star_state = nfa_add_state_with_minimization(false);
+                state_do_not_share[star_state] = true;
+                nfa_add_transition(anchor, star_state, any_sid);
+                nfa_add_transition(star_state, star_state, any_sid);
+                int finalized_star = nfa_finalize_state(star_state);
+                
+                // Set current_fragment
+                memset(&current_fragment, 0, sizeof(current_fragment));
+                current_fragment.anchor_state = anchor;
+                current_fragment.is_single_char = false;
+                current_fragment.exit_state = finalized_star;
+                
+                *pos += 3; // Consume (*)
+                return finalized_star;
             }
 
             // Check for fragment reference ((name::subname))
@@ -1306,30 +1303,47 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
         default:
             DEBUG_PRINT("parse_rdp_element: default case, c='%c' (0x%02x)\n", c, (unsigned char)c);
             if (c == '*') {
-                DEBUG_PRINT("parse_rdp_element: Found wildcard '*'\n");
-                int any_sid = find_symbol_id(DFA_CHAR_ANY);
-                DEBUG_PRINT("parse_rdp_element: any_sid=%d for DFA_CHAR_ANY (0x%02x)\n", any_sid, (unsigned char)DFA_CHAR_ANY);
-                if (any_sid != -1) {
-                    int star_state = nfa_add_state_with_minimization(false);
-                    state_do_not_share[star_state] = true;
-                    nfa_add_transition(start_state, star_state, any_sid);
-                    nfa_add_transition(star_state, star_state, any_sid);
-                    int finalized_star = nfa_finalize_state(star_state);
-                    (*pos)++;
-                    return finalized_star;
+                int any_sid = VSYM_ANY;
+                // Ensure dedicated anchor state
+                int anchor = start_state;
+                if (anchor == 0) {
+                    anchor = nfa_add_state_with_minimization(false);
+                    nfa_add_transition(0, anchor, VSYM_EPS);
                 }
+
+                int star_state = nfa_add_state_with_minimization(false);
+                state_do_not_share[star_state] = true;
+                nfa_add_transition(anchor, star_state, any_sid);
+                nfa_add_transition(star_state, star_state, any_sid);
+                int finalized_star = nfa_finalize_state(star_state);
+                (*pos)++;
+                
+                // Set current_fragment
+                memset(&current_fragment, 0, sizeof(current_fragment));
+                current_fragment.anchor_state = anchor;
+                current_fragment.is_single_char = false;
+                current_fragment.exit_state = finalized_star;
+                
+                return finalized_star;
             }
             if (c == ' ' || c == '\t') {
                 // Handle space and tab characters - create transitions
-                // Space is Symbol 2 (char 32), Tab is Symbol 3 (char 9) in alphabet_per_char.map
-                int space_sid = find_symbol_id(32);  // Space character
-                int tab_sid = find_symbol_id(9);     // Tab character
+                int space_sid = VSYM_SPACE;  // Normalized Space
+                int tab_sid = VSYM_TAB;     // Normalized Tab
                 int sid = (c == ' ') ? space_sid : tab_sid;
                 if (sid != -1) {
+                    // Ensure dedicated anchor state
+                    int anchor = start_state;
+                    if (anchor == 0) {
+                        anchor = nfa_add_state_with_minimization(false);
+                        nfa_add_transition(0, anchor, VSYM_EPS);
+                    }
+
                     int new_state = nfa_add_state_with_minimization(false);
-                    nfa_add_transition(start_state, new_state, sid);
+                    nfa_add_transition(anchor, new_state, sid);
                     int finalized_state = nfa_finalize_state(new_state);
                     memset(&current_fragment, 0, sizeof(current_fragment));
+                    current_fragment.anchor_state = anchor;
                     current_fragment.is_single_char = true;
                     current_fragment.loop_char = c;
                     current_fragment.loop_entry_state = finalized_state;
@@ -1342,32 +1356,24 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                 break;
             }
             if (c != '\0') {
-                // Special handling for * as wildcard (matches any argument)
-                // This MUST come BEFORE the postfix operator check
-                if (c == '*') {
-                    DEBUG_PRINT("parse_rdp_element: Found wildcard '*'\n");
-                    int any_sid = find_symbol_id(DFA_CHAR_ANY);
-                    DEBUG_PRINT("parse_rdp_element: any_sid=%d for DFA_CHAR_ANY (0x%02x)\n", any_sid, (unsigned char)DFA_CHAR_ANY);
-                    if (any_sid != -1) {
-                        int star_state = nfa_add_state_with_minimization(false);
-                        state_do_not_share[star_state] = true;
-                        nfa_add_transition(start_state, star_state, any_sid);
-                        nfa_add_transition(star_state, star_state, any_sid);
-                        int finalized_star = nfa_finalize_state(star_state);
-                        (*pos)++;
-                        return finalized_star;
-                    }
-                }
                 // Don't consume postfix operators - let parse_rdp_postfix handle them
                 if (c == '+' || c == '?') {
                     return start_state;
                 }
                 int sid = find_symbol_id(c);
                 if (sid != -1) {
+                    // Ensure dedicated anchor state
+                    int anchor = start_state;
+                    if (anchor == 0) {
+                        anchor = nfa_add_state_with_minimization(false);
+                        nfa_add_transition(0, anchor, VSYM_EPS);
+                    }
+
                     int new_state = nfa_add_state_with_minimization(false);
-                    nfa_add_transition(start_state, new_state, sid);
+                    nfa_add_transition(anchor, new_state, sid);
                     int finalized_state = nfa_finalize_state(new_state);
                     memset(&current_fragment, 0, sizeof(current_fragment));
+                    current_fragment.anchor_state = anchor;
                     current_fragment.is_single_char = true;
                     current_fragment.loop_char = c;
                     current_fragment.loop_entry_state = finalized_state;
@@ -1409,640 +1415,86 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
         char op = pattern[*pos];
         DEBUG_NFA_PRINT("while loop: pos=%d, op='%c' (0x%02x)\n", *pos, op, (unsigned char)op);
 
+        int epsilon_sid = VSYM_EPS;
+        if (epsilon_sid == -1) break;
+
         if (op == '*') {
-            int eos_sid = find_symbol_id(DFA_CHAR_EOS);
-            if (eos_sid == -1) return current;
-
-            // Check if we have a valid quantifier context
-            // A valid quantifier context means we have a single character fragment (not space/tab)
-            // that was just parsed and should be quantified
-            bool has_valid_quantifier_context = false;
-            if (current_fragment.is_single_char && current_fragment.loop_entry_state != -1) {
-                // Check if the fragment is NOT from space/tab handling
-                // Space/tab should not be quantified - * after space is a standalone wildcard
-                if (!(current_fragment.loop_char == ' ' || current_fragment.loop_char == '\t')) {
-                    has_valid_quantifier_context = true;
-                }
-            }
-
-            // If * is PRECEDED by '(', it's inside a wildcard group like (*)
-            // NOT a quantifier for our fragment. Let parse_rdp_element handle (*).
-            fprintf(stderr, "DEBUG: Checking * at pos=%d, pattern='%s', prev char='%c' (%d)\n", 
-                    *pos, pattern, pattern[*pos - 1], pattern[*pos - 1]);
+            // Check for standalone wildcard (*) group - handled by parse_rdp_element
             if (*pos > 0 && pattern[*pos - 1] == '(') {
-                fprintf(stderr, "DEBUG: Found (*) group, skipping * handling\n");
-                // Don't handle this * as a quantifier - let the group parsing handle it
-                // Return current state so the caller continues parsing
-                return current;
+                break;
             }
 
-            // ERROR: Ambiguous pattern detected
-            // Patterns like 'a*' are ambiguous - use '(a)*' for quantifier or 'a (*)'
-            // BUT: If is_from_fragment is true, the * quantifier is for the fragment, not the inner char
-            // ALSO: If current_is_in_group is true, we're quantifying a parenthesized group
-            if (has_valid_quantifier_context && pattern[*pos] != ')' && !current_fragment.is_from_fragment && !current_is_in_group) {
-                fprintf(stderr, "ERROR: Ambiguous pattern at position %d: '*' after single char '%c'\n", *pos, current_fragment.loop_char);
-                fprintf(stderr, "       Use '(a)*' for quantifier or '(a) (*)' for wildcard\n");
-                exit(1);
-            }
-
-            // If no valid quantifier context, this * is a standalone wildcard
-            // Handle it here by creating a wildcard transition
-            if (!has_valid_quantifier_context) {
-                int any_sid = find_symbol_id(DFA_CHAR_ANY);
-                if (any_sid != -1) {
-                    int star_state = nfa_add_state_with_minimization(false);
-                    state_do_not_share[star_state] = true;
-                    nfa_add_transition(current, star_state, any_sid);
-                    nfa_add_transition(star_state, star_state, any_sid);
-                    int accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                    state_do_not_share[accepting] = true;
-                    nfa_add_transition(star_state, accepting, eos_sid);
-                    nfa[accepting].is_eos_target = true;
-                    nfa_finalize_state(star_state);
-                    nfa_finalize_state(accepting);
-                    (*pos)++; // Consume the *
-                    return accepting;
-                }
-            }
-
-            // Only increment pos if we're actually handling the quantifier
             (*pos)++;
 
-            if (current_fragment.is_single_char && current_fragment.loop_entry_state != -1) {
-                int char_sid = find_symbol_id(current_fragment.loop_char);
-                if (char_sid != -1) {
-                    // For * quantifier with single-char fragment:
-                    // The START state should be accepting (for zero iterations)
-                    // loop_entry_state is frag_start (state after 'a')
-                    // Set it as the accepting state
-                    nfa[current_fragment.loop_entry_state].is_eos_target = true;
-                    nfa[current_fragment.loop_entry_state].category_mask = current_pattern_cat_mask;
-                    nfa_finalize_state(current_fragment.loop_entry_state);
+            // Create exit state
+            int exit_state = nfa_add_state_with_minimization(false);
+            state_do_not_share[exit_state] = true;
 
-                    // Create loop state
-                    int star_state = nfa_add_state_with_minimization(false);
-                    state_do_not_share[star_state] = true;
-                    nfa_add_transition(current_fragment.loop_entry_state, star_state, char_sid);
-                    nfa_add_transition(star_state, star_state, char_sid);
+            // Skip path (zero iterations): entry_state --EPS--> exit_state
+            int skip_origin = (current_fragment.anchor_state != -1) ? current_fragment.anchor_state : start_state;
+            nfa_add_transition(skip_origin, exit_state, epsilon_sid);
 
-                    // Continue to next pattern part (or create final accepting if end)
-                    current = current_fragment.loop_entry_state;
-
-                    // If at end of pattern (current is already accepting), we're done
-                    // The loop state allows continuing with more iterations
-                    // For patterns ending here, we need a final accepting state
-                    // Check if there's more pattern after this quantifier
-                    if (pattern[*pos] == '\0' || pattern[*pos] == ')') {
-                        // End of pattern - create final accepting state
-                        int final_accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                        state_do_not_share[final_accepting] = true;
-                        nfa_add_transition(star_state, final_accepting, eos_sid);
-                        nfa[final_accepting].is_eos_target = true;
-                        nfa_finalize_state(final_accepting);
-                        current = final_accepting;
-                    }
-
-                    // Clear current_fragment after use
-                    memset(&current_fragment, 0, sizeof(current_fragment));
-                    current_fragment.exit_state = -1;
-                } else {
-                    int any_sid = find_symbol_id(DFA_CHAR_ANY);
-                    if (any_sid != -1) {
-                        int star_state = nfa_add_state_with_minimization(false);
-                        state_do_not_share[star_state] = true;
-                        nfa_add_transition(current, star_state, any_sid);
-                        nfa_add_transition(star_state, star_state, any_sid);
-                        int accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                        state_do_not_share[accepting] = true;
-                        nfa_add_transition(star_state, accepting, eos_sid);
-                        nfa[accepting].is_eos_target = true;
-                        nfa_finalize_state(star_state);
-                        nfa_finalize_state(accepting);
-                        current = accepting;
-                    }
-                }
-            } else if (current_fragment.exit_state != -1) {
-                // Multi-char fragment like (ab)*
-                // Structure:
-                //   Entry --char...--> Exit (first iteration)
-                //   Exit --char--> Entry (loop back for subsequent iterations)
-                //   Entry --EOS--> Accepting (accept zero iterations)
-                //   Exit --EOS--> Accepting (accept after some iterations)
-
-                int new_accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                state_do_not_share[new_accepting] = true;
-                nfa[new_accepting].is_eos_target = true;
-
-                // Entry state is accepting (zero iterations allowed)
-                if (current_fragment.loop_entry_state != -1) {
-                    nfa[current_fragment.loop_entry_state].is_eos_target = true;
-                    nfa[current_fragment.loop_entry_state].category_mask = current_pattern_cat_mask;
-                    nfa_finalize_state(current_fragment.loop_entry_state);
-
-                    // Add loop-back transitions for subsequent iterations
-                    for (int s = 0; s < MAX_SYMBOLS; s++) {
-                        if (nfa[current_fragment.loop_entry_state].transitions[s] != -1) {
-                            nfa_add_transition(current_fragment.exit_state,
-                                              nfa[current_fragment.loop_entry_state].transitions[s], s);
-                        }
-                        if (mta_is_multi(&nfa[current_fragment.loop_entry_state].multi_targets, s)) {
-                            const char* targets = mta_get_targets(&nfa[current_fragment.loop_entry_state].multi_targets, s);
-                            if (targets != NULL) {
-                                char* targets_copy = strdup(targets);
-                                char* token = strtok(targets_copy, ",");
-                                while (token != NULL) {
-                                    int target = atoi(token);
-                                    mta_add_target(&nfa[current_fragment.exit_state].multi_targets, s, target);
-                                    token = strtok(NULL, ",");
-                                }
-                                free(targets_copy);
-                            }
-                            nfa[current_fragment.exit_state].transition_count++;
-                        }
-                    }
-                }
-
-                // Exit --EOS--> Accepting (accept after some iterations)
-                nfa_add_transition(current_fragment.exit_state, new_accepting, eos_sid);
-                nfa_finalize_state(new_accepting);
-                current = new_accepting;
-
-                memset(&current_fragment, 0, sizeof(current_fragment));
-                current_fragment.exit_state = -1;
-            } else if (last_element_sid != -1) {
-                int char_sid = last_element_sid;
-                int star_state = nfa_add_state_with_minimization(false);
-                state_do_not_share[star_state] = true;
-                nfa_add_transition(current, star_state, char_sid);
-                nfa_add_transition(star_state, star_state, char_sid);
-                int accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                state_do_not_share[accepting] = true;
-                nfa_add_transition(star_state, accepting, eos_sid);
-                nfa[accepting].is_eos_target = true;
-                nfa_finalize_state(star_state);
-                nfa_finalize_state(accepting);
-                current = accepting;
-                last_element_sid = -1;
-            } else {
-                int any_sid = find_symbol_id(DFA_CHAR_ANY);
-                if (any_sid != -1) {
-                    int star_state = nfa_add_state_with_minimization(false);
-                    state_do_not_share[star_state] = true;
-                    nfa_add_transition(current, star_state, any_sid);
-                    nfa_add_transition(star_state, star_state, any_sid);
-                    int accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                    state_do_not_share[accepting] = true;
-                    nfa_add_transition(star_state, accepting, eos_sid);
-                    nfa[accepting].is_eos_target = true;
-                    nfa_finalize_state(star_state);
-                    nfa_finalize_state(accepting);
-                    current = accepting;
-                }
+            if (current_fragment.exit_state != -1) {
+                // Loop back: exit_state_of_element --EPS--> anchor_state
+                int loop_target = (current_fragment.anchor_state != -1) ? current_fragment.anchor_state : start_state;
+                nfa_add_transition(current_fragment.exit_state, loop_target, epsilon_sid);
+                
+                // Connection to quantifier exit: exit_state_of_element --EPS--> exit_state
+                nfa_add_transition(current_fragment.exit_state, exit_state, epsilon_sid);
             }
+
+            nfa_finalize_state(exit_state);
+            current = exit_state;
+            
+            // Update current_fragment for potential subsequent quantifiers
+            current_fragment.anchor_state = skip_origin;
+            current_fragment.exit_state = exit_state;
 
         } else if (op == '+') {
             (*pos)++;
 
-            // Check for valid context
-            bool has_valid_context = (current_fragment.loop_entry_state != -1 || 
-                                     current_fragment.exit_state != -1 || 
-                                     (current_is_char_class && current_class_symbol_count > 0));
-                                     
-            if (!has_valid_context) {
-                 fprintf(stderr, "ERROR: Invalid use of '+' at pos %d.\n", *pos);
-                 exit(1);
+            // Create exit state
+            int exit_state = nfa_add_state_with_minimization(false);
+            state_do_not_share[exit_state] = true;
+
+            if (current_fragment.exit_state != -1) {
+                // Loop back: exit_state_of_element --EPS--> anchor_state
+                int loop_target = (current_fragment.anchor_state != -1) ? current_fragment.anchor_state : start_state;
+                nfa_add_transition(current_fragment.exit_state, loop_target, epsilon_sid);
+                
+                // Connection to quantifier exit: exit_state_of_element --EPS--> exit_state
+                nfa_add_transition(current_fragment.exit_state, exit_state, epsilon_sid);
             }
 
-            // Ambiguity check
-            // Allow if inside group (e.g. (a)+) or from fragment (e.g. ((B))+)
-            // Disallow literal single char without grouping (e.g. a+)
-            if (pattern[*pos] != ')' && !current_fragment.is_from_fragment && !current_is_in_group) {
-                 // Check if it's a single char literal (not class)
-                 if (current_fragment.is_single_char) {
-                     fprintf(stderr, "ERROR: Ambiguous pattern at position %d: '+' after single char.\n", *pos);
-                     fprintf(stderr, "       Use '(a)+' for quantifier.\n");
-                     exit(1);
-                 }
-             }
+            nfa_finalize_state(exit_state);
+            current = exit_state;
+            
+            // Update current_fragment for potential subsequent quantifiers
+            // For +, anchor remains same, exit is new
+            current_fragment.exit_state = exit_state;
 
-            DEBUG_NFA_PRINT("+ handler START: is_single_char=%d, loop_entry=%d, exit_state=%d, frag_entry=%d\n",
-                    current_fragment.is_single_char, current_fragment.loop_entry_state,
-                    current_fragment.exit_state, current_fragment.fragment_entry_state);
-
-            int eos_sid = find_symbol_id(DFA_CHAR_EOS);
-            if (eos_sid == -1) return current;
-
-            if (current_fragment.is_single_char && current_fragment.loop_entry_state != -1) {
-                int char_sid = find_symbol_id(current_fragment.loop_char);
-                if (char_sid != -1) {
-
-                    // For + quantifier: need to handle the multi-target transition bug
-                    // where loop_state gets added to the transition. Use separate states.
-                    //
-                    // Structure:
-                    //   Entry --char--> First (first iteration)
-                    //   First --char--> Loop (subsequent iterations)
-                    //   First --EOS--> Accepting (after first iteration)
-                    //   Loop --char--> Loop (subsequent iterations)
-                    //   Loop --EOS--> Accepting (after subsequent iterations)
-                    DEBUG_NFA_PRINT("+ handler exit_state=%d, currently has %d transitions\n",
-                            current_fragment.exit_state,
-                            nfa[current_fragment.exit_state].transition_count);
-                    for (int s = 0; s < MAX_SYMBOLS; s++) {
-                        if (nfa[current_fragment.exit_state].transitions[s] != -1) {
-                            DEBUG_NFA_PRINT("  Existing transition: state %d --symbol %d--> %d\n",
-                                    current_fragment.exit_state, s,
-                                    nfa[current_fragment.exit_state].transitions[s]);
-                        }
-                        if (mta_is_multi(&nfa[current_fragment.exit_state].multi_targets, s)) {
-                            const char* targets = mta_get_targets(&nfa[current_fragment.exit_state].multi_targets, s);
-                            DEBUG_NFA_PRINT("  Existing multi-target: state %d --symbol %d--> %s\n",
-                                    current_fragment.exit_state, s, targets ? targets : "(null)");
-                        }
-                    }
-
-                    int first_iter = nfa_add_state_with_minimization(false);
-                    int loop_state = nfa_add_state_with_minimization(false);
-                    DEBUG_NFA_PRINT("+ handler: exit_state=%d, first_iter=%d, loop_state=%d\n",
-                              current_fragment.exit_state, first_iter, loop_state);
-
-                    // Mark quantifier states as non-shareable to prevent pattern interference
-                    state_do_not_share[first_iter] = true;
-                    state_do_not_share[loop_state] = true;
-
-                    // Create accepting state FIRST
-                    int new_accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                    state_do_not_share[new_accepting] = true;
-                    nfa[new_accepting].is_eos_target = true;
-
-                    // Entry -> First on char (for first iteration)
-                    // IMPORTANT: For alternations with multi-target transitions, we need special handling.
-                    // The multi-target represents all branches of the alternation (e.g., 0|1|2|...).
-                    // For '+' quantifier, we need Entry --char--> First (with all branches)
-                    // AND a loop-back mechanism for subsequent iterations.
-                    DEBUG_NFA_PRINT("Adding/replacing transition %d --char(%d)--> %d\n",
-                            current_fragment.loop_entry_state, char_sid, first_iter);
-
-                    // Check if there's a multi-target that needs special handling
-                    if (mta_is_multi(&nfa[current_fragment.loop_entry_state].multi_targets, char_sid)) {
-                        // Multi-target exists: copy to first_iter to preserve all alternation branches
-                        const char* targets = mta_get_targets(&nfa[current_fragment.loop_entry_state].multi_targets, char_sid);
-                        if (targets != NULL) {
-                            char* targets_copy = strdup(targets);
-                            char* token = strtok(targets_copy, ",");
-                            while (token != NULL) {
-                                int target = atoi(token);
-                                mta_add_target(&nfa[first_iter].multi_targets, char_sid, target);
-                                token = strtok(NULL, ",");
-                            }
-                            free(targets_copy);
-                        }
-                        nfa[first_iter].transition_count++;
-                        // Also keep the transition from loop_entry_state to first_iter
-                        // (this is redundant but harmless - NFA semantics allow duplicate paths)
-                        nfa[current_fragment.loop_entry_state].transitions[char_sid] = first_iter;
-                        DEBUG_NFA_PRINT("  Multi-target: copied to first_iter, kept original transition\n");
-                    } else {
-                        // No multi-target: simple transition replacement
-                        nfa[current_fragment.loop_entry_state].transitions[char_sid] = first_iter;
-                        nfa[current_fragment.loop_entry_state].transition_count++;
-                    }
-
-                    DEBUG_NFA_PRINT("After transition, state %d has %d transitions\n",
-                            current_fragment.loop_entry_state, nfa[current_fragment.loop_entry_state].transition_count);
-
-                    // Exit -> Loop on char (for subsequent iterations)
-                    // This is the loop-back transition for repeated iterations
-                    // After the first iteration (which went Entry->First), subsequent iterations
-                    // loop from Exit back to Loop
-                    nfa_add_transition(current_fragment.exit_state, loop_state, char_sid);
-
-                    // Structure for + quantifier (one or more):
-                    //   Entry --char--> First (consume first char)
-                    //   First --EOS--> Accepting (accept after exactly one char consumed)
-                    //   First --char--> Loop (for subsequent iterations)
-                    //   Loop --char--> Loop (more iterations)
-                    //   Loop --EOS--> Accepting (accept after multiple iterations)
-
-                    // First -> Loop on char (for subsequent iterations)
-                    nfa_add_transition(first_iter, loop_state, char_sid);
-
-                    // Loop -> Loop on char (subsequent iterations)
-                    nfa_add_transition(loop_state, loop_state, char_sid);
-
-                    // First -> Accepting on EOS (accept after exactly one char consumed)
-                    nfa_add_transition(first_iter, new_accepting, eos_sid);
-
-                    // Loop -> Accepting on EOS (accept after multiple iterations)
-                    nfa_add_transition(loop_state, new_accepting, eos_sid);
-                    nfa_finalize_state(new_accepting);
-                    current = new_accepting;
-                    DEBUG_NFA_PRINT("+ handler: Final current=%d\n", current);
-
-                    memset(&current_fragment, 0, sizeof(current_fragment));
-                    current_fragment.exit_state = -1;
-                    current_is_char_class = false;
-                } else {
-                    DEBUG_PRINT("+ handler: char_sid not found for '%c'\n", current_fragment.loop_char);
-                }
-            } else if (current_is_char_class && current_class_symbol_count > 0) {
-                for (int i = 0; i < current_class_symbol_count; i++) {
-                    nfa_add_transition(current, current, current_class_symbols[i]);
-                }
-
-                int accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                state_do_not_share[accepting] = true;
-                nfa_add_transition(current, accepting, eos_sid);
-                nfa[accepting].is_eos_target = true;
-                nfa_finalize_state(accepting);
-                current = accepting;
-
-                memset(&current_fragment, 0, sizeof(current_fragment));
-                current_fragment.exit_state = -1;
-                current_is_char_class = false;
-                current_class_symbol_count = 0;
-                } else if (current_fragment.exit_state != -1) {
-                int new_accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                state_do_not_share[new_accepting] = true;
-                nfa[new_accepting].is_eos_target = true;
-
-                // For + quantifier with multi-char fragment:
-                // Structure:
-                //   Entry --char--> ... --char--> Exit (first iteration produces match)
-                //   Exit --char--> Entry (loop back for subsequent iterations)
-                //   Exit --EOS--> Accepting (accept after first iteration)
-                //   Entry --EOS--> Accepting (if fragment empty - handled separately)
-
-                // Add loop-back transition for subsequent iterations
-                if (current_fragment.loop_entry_state != -1) {
-                    // For alternations: detect if we have multiple transitions from start_state
-                    // (which indicates alternation branches) and use epsilon for looping
-                    int start_transition_count = 0;
-                    for (int s = 0; s < MAX_SYMBOLS; s++) {
-                        if (nfa[current_fragment.fragment_entry_state].transitions[s] != -1) {
-                            start_transition_count++;
-                        }
-                    }
-                    
-                    DEBUG_NFA_PRINT("+ handler multi-char: is_single_char=%d, fragment_entry=%d, start_transitions=%d\n",
-                            current_fragment.is_single_char, current_fragment.fragment_entry_state, start_transition_count);
-                    
-                    // Alternation detected: multiple transitions from start = multiple branches
-                    if (!current_fragment.is_single_char && 
-                        current_fragment.fragment_entry_state != -1 && 
-                        start_transition_count > 1) {
-                        DEBUG_NFA_PRINT("+ handler: Detected alternation, adding epsilon loop-back\n");
-                        // For alternations: loop back via EPSILON, not on character
-                        int epsilon_sid = find_symbol_id(DFA_CHAR_EPSILON);
-                        DEBUG_NFA_PRINT("+ handler: epsilon_sid=%d for char %d\n", epsilon_sid, DFA_CHAR_EPSILON);
-                        if (epsilon_sid != -1) {
-                            nfa_add_transition(current_fragment.exit_state, 
-                                              current_fragment.fragment_entry_state, epsilon_sid);
-                        }
-                    } else if (!current_fragment.is_single_char && current_fragment.fragment_entry_state != -1) {
-                        // Multi-char fragment: Create a first_iter state that accepts on EOS
-                        // Structure:
-                        //   Entry --char--> First_iter (first iteration)
-                        //   First_iter --EOS--> Accepting (accept after first iteration)
-                        //   First_iter --char--> Loop (subsequent iterations)
-                        //   Loop --char--> Loop (more iterations)
-                        //   Loop --EOS--> Accepting (after subsequent iterations)
-                        int first_iter = nfa_add_state_with_minimization(false);
-                        int loop_state = nfa_add_state_with_minimization(false);
-                        state_do_not_share[first_iter] = true;
-                        state_do_not_share[loop_state] = true;
-
-                        // Create accepting state
-                        int new_accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-                        state_do_not_share[new_accepting] = true;
-                        nfa[new_accepting].is_eos_target = true;
-
-                        // Entry --first_char--> First_iter
-                        int first_sid = find_symbol_id(current_fragment.loop_first_char);
-                        if (first_sid != -1) {
-                            nfa_add_transition(current_fragment.fragment_entry_state, first_iter, first_sid);
-                        }
-
-                        // First_iter --EOS--> Accepting (accept after first iteration)
-                        nfa_add_transition(first_iter, new_accepting, eos_sid);
-
-                        // First_iter --char--> Loop (for subsequent iterations)
-                        for (int s = 0; s < MAX_SYMBOLS; s++) {
-                            if (nfa[current_fragment.exit_state].transitions[s] != -1) {
-                                nfa_add_transition(first_iter, nfa[current_fragment.exit_state].transitions[s], s);
-                            }
-                            if (mta_is_multi(&nfa[current_fragment.exit_state].multi_targets, s)) {
-                                const char* targets = mta_get_targets(&nfa[current_fragment.exit_state].multi_targets, s);
-                                if (targets != NULL) {
-                                    char* targets_copy = strdup(targets);
-                                    char* token = strtok(targets_copy, ",");
-                                    while (token != NULL) {
-                                        int target = atoi(token);
-                                        mta_add_target(&nfa[first_iter].multi_targets, s, target);
-                                        token = strtok(NULL, ",");
-                                    }
-                                    free(targets_copy);
-                                }
-                                nfa[first_iter].transition_count++;
-                            }
-                        }
-
-                        // Loop --char--> Loop (subsequent iterations)
-                        for (int s = 0; s < MAX_SYMBOLS; s++) {
-                            if (nfa[current_fragment.exit_state].transitions[s] != -1) {
-                                nfa_add_transition(loop_state, nfa[current_fragment.exit_state].transitions[s], s);
-                            }
-                            if (mta_is_multi(&nfa[current_fragment.exit_state].multi_targets, s)) {
-                                const char* targets = mta_get_targets(&nfa[current_fragment.exit_state].multi_targets, s);
-                                if (targets != NULL) {
-                                    char* targets_copy = strdup(targets);
-                                    char* token = strtok(targets_copy, ",");
-                                    while (token != NULL) {
-                                        int target = atoi(token);
-                                        mta_add_target(&nfa[loop_state].multi_targets, s, target);
-                                        token = strtok(NULL, ",");
-                                    }
-                                    free(targets_copy);
-                                }
-                                nfa[loop_state].transition_count++;
-                            }
-                        }
-
-                        // Loop --EOS--> Accepting (after subsequent iterations)
-                        nfa_add_transition(loop_state, new_accepting, eos_sid);
-
-                        // Loop back to Loop on first_char
-                        if (first_sid != -1) {
-                            nfa_add_transition(loop_state, loop_state, first_sid);
-                        }
-
-                        nfa_finalize_state(new_accepting);
-                        current = new_accepting;
-                    } else {
-                        // Single-char: copy transitions from loop_entry_state to exit_state
-                        for (int s = 0; s < MAX_SYMBOLS; s++) {
-                            if (nfa[current_fragment.loop_entry_state].transitions[s] != -1) {
-                                int target = nfa[current_fragment.loop_entry_state].transitions[s];
-                                nfa_add_transition(current_fragment.exit_state, target, s);
-                            }
-                            if (mta_is_multi(&nfa[current_fragment.loop_entry_state].multi_targets, s)) {
-                                const char* targets = mta_get_targets(&nfa[current_fragment.loop_entry_state].multi_targets, s);
-                                if (targets != NULL) {
-                                    char* targets_copy = strdup(targets);
-                                    char* token = strtok(targets_copy, ",");
-                                    while (token != NULL) {
-                                        int target = atoi(token);
-                                        mta_add_target(&nfa[current_fragment.exit_state].multi_targets, s, target);
-                                        token = strtok(NULL, ",");
-                                    }
-                                    free(targets_copy);
-                                }
-                                nfa[current_fragment.exit_state].transition_count++;
-                            }
-                        }
-                    }
-                }
-
-                // Add EOS transition to accepting for first iteration completion
-                nfa_add_transition(current_fragment.exit_state, new_accepting, eos_sid);
-                nfa_finalize_state(new_accepting);
-                current = new_accepting;
-
-                memset(&current_fragment, 0, sizeof(current_fragment));
-                current_fragment.exit_state = -1;
-            }
         } else if (op == '?') {
             (*pos)++;
 
-            // Check for valid context
-            bool has_valid_context = (current_fragment.is_single_char || 
-                                     current_fragment.loop_entry_state != -1 || 
-                                     current_fragment.exit_state != -1 || 
-                                     (current_is_char_class && current_class_symbol_count > 0));
-                                     
-            if (!has_valid_context) {
-                 fprintf(stderr, "ERROR: Invalid use of '?' at pos %d.\n", *pos);
-                 exit(1);
+            // Create exit state
+            int exit_state = nfa_add_state_with_minimization(false);
+            state_do_not_share[exit_state] = true;
+
+            // Skip path (zero iterations): entry_state --EPS--> exit_state
+            int skip_origin = (current_fragment.anchor_state != -1) ? current_fragment.anchor_state : start_state;
+            nfa_add_transition(skip_origin, exit_state, epsilon_sid);
+
+            if (current_fragment.exit_state != -1) {
+                // Take path (one iteration): exit_state_of_element --EPS--> exit_state
+                nfa_add_transition(current_fragment.exit_state, exit_state, epsilon_sid);
             }
 
-            // Ambiguity check
-            // Allow if inside group (e.g. (a)?) or from fragment (e.g. ((B))?)
-            // Disallow literal single char without grouping (e.g. a?)
-            if (pattern[*pos] != ')' && !current_fragment.is_from_fragment && !current_is_in_group) {
-                 if (current_fragment.is_single_char) {
-                     fprintf(stderr, "ERROR: Ambiguous pattern at position %d: '?' after single char.\n", *pos);
-                     fprintf(stderr, "       Use '(a)?' for quantifier.\n");
-                     exit(1);
-                 }
-            }
-
-            int eos_sid = find_symbol_id(DFA_CHAR_EOS);
-            if (eos_sid == -1) return current;
-
-            // ========================================================================
-            // UNIFIED ? QUANTIFIER HANDLER (Zero or One)
-            // ========================================================================
-            //
-            // THEOREM: This handler correctly implements the ? quantifier for ANY fragment type
-            //
-            // PROOF BY CASES:
-            //
-            // CASE 1: Single-Char Fragment (e.g., (a)?)
-            //   - Given: entry_state --char--> exit_state (original)
-            //   - Original NFA: S --'a'--> E
-            //   - After ? quantifier:
-            //       S --EOS--> A (skip - zero occurrences)
-            //       E --EOS--> A (take - one occurrence)
-            //   - Result: Matches "" or "a", but NOT "aa"
-            //   - Correctness: Both paths lead to accepting. No loop-back, so max one occurrence.
-            //
-            // CASE 2: Character Class Fragment (e.g., [[:alpha:]]?)
-            //   - Given: entry_state transitions on multiple symbols to exit_state
-            //   - Original NFA: S --{a,b,c}--> E
-            //   - After ? quantifier:
-            //       S --EOS--> A (skip)
-            //       E --EOS--> A (take any one char)
-            //   - Correctness: Same structure as single-char, just more char transitions.
-            //
-            // CASE 3: Multi-Char Fragment (e.g., (ab)?)
-            //   - Given: entry_state --char--> ... --char--> exit_state
-            //   - Original NFA: S --'a'--> T --'b'--> E
-            //   - After ? quantifier:
-            //       S --EOS--> A (skip entire fragment)
-            //       E --EOS--> A (take one iteration of fragment)
-            //   - Correctness: EOS from entry_state skips the whole fragment.
-            //
-            // KEY INVARIANT (Preserved in ALL cases):
-            //   1. entry_state --[fragment]--> exit_state (original, NEVER modified)
-            //   2. entry_state --EOS--> accepting (ADD - skip path, zero occurrences)
-            //   3. exit_state --EOS--> accepting (ADD - take path, one occurrence)
-            //
-            // WHY THIS WORKS:
-            // - Zero occurrences: entry --EOS--> accepting
-            // - One occurrence: entry --frag--> exit --EOS--> accepting
-            // - No loop-back means we can't have more than one occurrence
-            // ========================================================================
-
-            // Create accepting state FIRST
-            int accepting = nfa_add_state_with_category(current_pattern_cat_mask);
-            state_do_not_share[accepting] = true;
-            nfa[accepting].is_eos_target = true;
-
-            // KEY: Use fragment_entry_state for skip path, exit_state for take path
-            int skip_origin = current_fragment.fragment_entry_state;  // Fragment START - skip from here
-            int take_origin = current_fragment.exit_state;   // Fragment END - take from here
-
-            if (current_fragment.is_single_char && current_fragment.loop_char != '\0') {
-                // CASE 1: Single-Char Fragment
-                // PRECONDITION: entry_state --char--> exit_state
-                //
-                // ORIGINAL: S --'a'--> E
-                //
-                // RESULT:
-                //   S --EOS--> A (skip)
-                //   E --EOS--> A (take)
-                //
-                // CORRECTNESS: Both paths lead to accepting. No extra transitions added.
-                // The original S --'a'--> E is preserved.
-
-                // Skip path: entry_state --EOS--> accepting
-                nfa_add_transition(skip_origin, accepting, eos_sid);
-
-                // Take path: exit_state --EOS--> accepting
-                nfa_add_transition(take_origin, accepting, eos_sid);
-
-            } else if (current_is_char_class && current_class_symbol_count > 0) {
-                // CASE 2: Character Class Fragment
-                // PRECONDITION: entry_state has class transitions to exit_state
-                //
-                // RESULT:
-                //   entry --EOS--> A (skip)
-                //   exit --EOS--> A (take any class char)
-
-                // Skip path
-                nfa_add_transition(skip_origin, accepting, eos_sid);
-
-                // Take path
-                nfa_add_transition(take_origin, accepting, eos_sid);
-
-            } else if (current_fragment.exit_state != -1) {
-                // CASE 3: Multi-Char Fragment or Alternation
-                // PRECONDITION: entry_state != exit_state, fragment has content
-                //
-                // RESULT:
-                //   entry --EOS--> A (skip entire fragment)
-                //   exit --EOS--> A (take one iteration)
-
-                // Skip path: entry_state --EOS--> accepting (skip entire fragment)
-                nfa_add_transition(skip_origin, accepting, eos_sid);
-
-                // Take path: exit_state --EOS--> accepting (after one iteration)
-                nfa_add_transition(take_origin, accepting, eos_sid);
-            }
-
-            nfa_finalize_state(accepting);
-            current = accepting;
+            nfa_finalize_state(exit_state);
+            current = exit_state;
+            
+            // Update current_fragment
+            current_fragment.anchor_state = skip_origin;
+            current_fragment.exit_state = exit_state;
 
         } else {
             break;
@@ -2079,12 +1531,26 @@ static int parse_rdp_sequence(const char* pattern, int* pos, int start_state) {
 
 // Parse alternation: sequence ('|' sequence)*
 static int parse_rdp_alternation(const char* pattern, int* pos, int start_state) {
+    // Create Anchor State (Dedicated Entry Point)
+    int anchor_state;
+    int epsilon_sid = VSYM_EPS;
+    if (start_state == 0) {
+        anchor_state = 0; // Use State 0 directly
+    } else {
+        anchor_state = nfa_add_state_with_minimization(false);
+        if (epsilon_sid != -1) {
+            nfa_add_transition(start_state, anchor_state, epsilon_sid);
+        } else {
+            anchor_state = start_state;
+        }
+    }
+
     // Mark that we're inside a group - this allows quantifiers on parenthesized groups
     bool was_in_group = current_is_in_group;
     current_is_in_group = true;
 
     // Parse first alternative
-    int first_end = parse_rdp_sequence(pattern, pos, start_state);
+    int first_end = parse_rdp_sequence(pattern, pos, anchor_state);
 
     // Restore previous group state
     current_is_in_group = was_in_group;
@@ -2093,10 +1559,9 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
     if (pattern[*pos] == '|') {
         // Create merge state for alternation
         int merge_state = nfa_add_state_with_minimization(false);
-        nfa[merge_state].category_mask = nfa[first_end].category_mask;  // Propagate category from first branch
 
         // Connect first branch to merge via EPSILON (non-consuming transition)
-        int epsilon_sid = find_symbol_id(DFA_CHAR_EPSILON);
+        int epsilon_sid = VSYM_EPS;
         if (epsilon_sid != -1) {
             nfa_add_transition(first_end, merge_state, epsilon_sid);
         }
@@ -2104,10 +1569,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
         // Parse remaining alternatives
         while (pattern[*pos] == '|') {
             (*pos)++; // Skip |
-            int branch_end = parse_rdp_sequence(pattern, pos, start_state);
-
-            // Merge categories from all branches
-            nfa[merge_state].category_mask |= nfa[branch_end].category_mask;
+            int branch_end = parse_rdp_sequence(pattern, pos, anchor_state);
 
             if (epsilon_sid != -1) {
                 nfa_add_transition(branch_end, merge_state, epsilon_sid);
@@ -2120,6 +1582,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
             // Update current_fragment to reflect the group structure
             memset(&current_fragment, 0, sizeof(current_fragment));
             current_fragment.is_single_char = false;
+            current_fragment.anchor_state = anchor_state;
             current_fragment.exit_state = merge_state;
             current_fragment.fragment_entry_state = start_state;
             // Find first character of the group
@@ -2151,6 +1614,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
         // Update current_fragment to reflect the group structure
         memset(&current_fragment, 0, sizeof(current_fragment));
         // Restore preserved values - single-char groups need loop_entry_state for +/* handlers
+        current_fragment.anchor_state = anchor_state;
         current_fragment.is_single_char = preserved_is_single_char;
         current_fragment.loop_entry_state = preserved_loop_entry_state;
         current_fragment.exit_state = first_end;
@@ -2228,23 +1692,19 @@ static void parse_pattern_full(const char* pattern, const char* category,
 
         if (first_char_sid != -1 && nfa[0].transitions[first_char_sid] != -1 && is_single_char_symbol && is_safe_first) {
             // Collect all target states for this transition (handles multi-target transitions)
-            int targets[100];
+            int targets[MAX_STATES];
             int target_count = 0;
             targets[target_count++] = nfa[0].transitions[first_char_sid];
             // Check for additional targets in multi_targets
             if (mta_is_multi(&nfa[0].multi_targets, first_char_sid)) {
-                const char* targets_str = mta_get_targets(&nfa[0].multi_targets, first_char_sid);
-                if (targets_str != NULL) {
-                    char* targets_copy = strdup(targets_str);
-                    char* token = strtok(targets_copy, ",");
-                    while (token != NULL) {
-                        long target_long = strtol(token, NULL, 10);
-                        if (target_long > 0 && target_long < MAX_STATES) {
-                            targets[target_count++] = (int)target_long;
+                int mta_count = 0;
+                int* mta_targets = mta_get_target_array(&nfa[0].multi_targets, first_char_sid, &mta_count);
+                if (mta_targets) {
+                    for (int i = 0; i < mta_count; i++) {
+                        if (target_count < MAX_STATES) {
+                            targets[target_count++] = mta_targets[i];
                         }
-                        token = strtok(NULL, ",");
                     }
-                    free(targets_copy);
                 }
             }
 
@@ -2324,12 +1784,15 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 pattern_start_pos = 1;  // Skip first character (already consumed)
             }
         } else {
-            // First character has no transition from state 0, or it's a range symbol
-            // Create new start state
-            start_state = nfa_add_state_with_minimization(false);
-            if (first_char_sid != -1) {
+            // If it's a safe literal, we can still start a new path from State 0
+            if (is_safe_first && first_char_sid != -1) {
+                start_state = nfa_add_state_with_minimization(false);
                 nfa_add_transition(0, start_state, first_char_sid);
-                pattern_start_pos = 1;  // Skip first character (already consumed)
+                pattern_start_pos = 1;
+            } else {
+                // Not safe to consume (metacharacter or quantified), start RDP from State 0
+                start_state = 0;
+                pattern_start_pos = 0;
             }
         }
     } else {
@@ -2362,18 +1825,34 @@ static void parse_pattern_full(const char* pattern, const char* category,
     int parse_pos = 0;
     int end_state;
     DEBUG_PRINT("parse_pattern_full: remaining='%s', pattern_start_pos=%d\n", remaining, pattern_start_pos);
+    
+    // ROOT BRANCHING: If start_state is 0, we must avoid EPSILON if possible
+    // to prevent pattern interference.
     if (remaining[0] != '\0') {
-        end_state = parse_rdp_alternation(remaining, &parse_pos, start_state);
+        if (start_state == 0) {
+            // For root patterns starting at 0, we use parse_rdp_sequence directly
+            // instead of parse_rdp_alternation which adds an EPSILON anchor.
+            end_state = parse_rdp_sequence(remaining, &parse_pos, 0);
+        } else {
+            end_state = parse_rdp_alternation(remaining, &parse_pos, start_state);
+        }
     } else {
         end_state = start_state;
     }
 
     // Add EOS transition to accepting state
-    int eos_sid = find_symbol_id(DFA_CHAR_EOS);
+    int eos_sid = VSYM_EOS;
     if (eos_sid != -1) {
         int eos_target_state = end_state;
 
-        // Check if end_state is a shared state with outgoing transitions
+        // CRITICAL: If end_state is 0, we MUST NOT set its category_mask
+        // Create a new state instead.
+        if (end_state == 0) {
+            eos_target_state = nfa_add_state_with_minimization(false);
+            nfa_add_transition(0, eos_target_state, VSYM_EPS);
+        }
+
+        // Check if eos_target_state is a shared state with outgoing transitions
         // If so, create a fork state to avoid marking the shared state as accepting
         // CRITICAL: Also create fork state if end_state is an accepting state (category_mask != 0)
         // This prevents marking + quantifier intermediate states as EOS target
@@ -2736,9 +2215,14 @@ void read_advanced_spec_file(const char* filename) {
             continue;
         }
 
-        // Handle #ACCEPTANCE_MAPPING directive
-        if (strncmp(line, "#ACCEPTANCE_MAPPING", 19) == 0) {
-            parse_acceptance_mapping(line);
+        // Skip leading whitespace
+        const char* p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0') continue;
+
+        // Handle #ACCEPTANCE_MAPPING or ACCEPTANCE_MAPPING directive
+        if (strncmp(p, "#ACCEPTANCE_MAPPING", 19) == 0 || strncmp(p, "ACCEPTANCE_MAPPING", 18) == 0) {
+            parse_acceptance_mapping(p);
             continue;
         }
 
@@ -2816,25 +2300,16 @@ void write_nfa_file(const char* filename) {
         fprintf(file, "  Transitions: %d\n", nfa[i].transition_count);
 
         for (int s = 0; s < MAX_SYMBOLS; s++) {
-            if (nfa[i].transitions[s] != -1 || mta_is_multi(&nfa[i].multi_targets, s)) {
-                fprintf(file, "    Symbol %d", s);
-                // Write first target from transitions array
-                if (nfa[i].transitions[s] != -1) {
-                    fprintf(file, " -> %d", nfa[i].transitions[s]);
-                    // Write additional targets from multi_targets
-                    if (mta_is_multi(&nfa[i].multi_targets, s)) {
-                        const char* targets = mta_get_targets(&nfa[i].multi_targets, s);
-                        if (targets != NULL) {
-                            fprintf(file, ",%s", targets);
-                        }
+            if (mta_get_target_count(&nfa[i].multi_targets, s) > 0) {
+                int count = 0;
+                int* targets = mta_get_target_array(&nfa[i].multi_targets, s, &count);
+                if (targets && count > 0) {
+                    fprintf(file, "    Symbol %d -> ", s);
+                    for (int k = 0; k < count; k++) {
+                        fprintf(file, "%d%s", targets[k], (k < count - 1) ? "," : "");
                     }
-                } else if (mta_is_multi(&nfa[i].multi_targets, s)) {
-                    const char* targets = mta_get_targets(&nfa[i].multi_targets, s);
-                    if (targets != NULL) {
-                        fprintf(file, " -> %s", targets);
-                    }
+                    fprintf(file, "\n");
                 }
-                fprintf(file, "\n");
             }
         }
 
@@ -3126,182 +2601,59 @@ static bool validate_pattern_file(const char* spec_file) {
 }
 
 static bool construct_alphabet_from_patterns(const char* spec_file) {
-    if (flag_verbose_alphabet) {
-        fprintf(stderr, "\n=== Alphabet Construction Phase ===\n");
-        fprintf(stderr, "Building alphabet from: %s\n", spec_file);
-    }
-    
-    FILE* file = fopen(spec_file, "r");
-    if (!file) {
-        fprintf(stderr, "Error: Cannot open spec file '%s'\n", spec_file);
-        return false;
-    }
+    (void)spec_file; 
     
     // Reset alphabet
     built_alphabet_size = 0;
-    alphabet_constructed = false;
     
-    // Add required special symbols
-    // Symbol 0: DFA_CHAR_ANY (matches any character)
-    built_alphabet[0].start_char = 0;
-    built_alphabet[0].end_char = 0;
-    built_alphabet[0].symbol_id = 0;
-    built_alphabet[0].is_special = true;
-    built_alphabet_size++;
-
-    // Symbol 1: DFA_CHAR_EPSILON (non-consuming transition)
-    built_alphabet[1].start_char = DFA_CHAR_EPSILON;
-    built_alphabet[1].end_char = DFA_CHAR_EPSILON;
-    built_alphabet[1].symbol_id = 1;
-    built_alphabet[1].is_special = true;
-    built_alphabet_size++;
-
-    // Symbol 2: DFA_CHAR_SPACE (space)
-    built_alphabet[2].start_char = 32;
-    built_alphabet[2].end_char = 32;
-    built_alphabet[2].symbol_id = 2;
-    built_alphabet[2].is_special = true;
-    built_alphabet_size++;
-
-    // Symbol 3: DFA_CHAR_TAB (tab)
-    built_alphabet[3].start_char = 9;
-    built_alphabet[3].end_char = 9;
-    built_alphabet[3].symbol_id = 3;
-    built_alphabet[3].is_special = true;
-    built_alphabet_size++;
-
-    // Symbol 4: DFA_CHAR_EOS (end of string marker)
-    built_alphabet[4].start_char = DFA_CHAR_EOS;
-    built_alphabet[4].end_char = DFA_CHAR_EOS;
-    built_alphabet[4].symbol_id = 4;
-    built_alphabet[4].is_special = true;
-    built_alphabet_size++;
-    
-    char line[MAX_LINE_LENGTH];
-    int line_num = 0;
-    int symbols_added = 0;
-    
-    while (fgets(line, sizeof(line), file)) {
-        line_num++;
-        
-        // Skip empty lines and comments
-        if (line[0] == '\0' || line[0] == '\n' || line[0] == '\r' || line[0] == '#') {
-            continue;
-        }
-        
-        // Remove trailing newline
-        line[strcspn(line, "\r\n")] = 0;
-        
-        // Skip fragment definitions
-        if (strncmp(line, "[fragment:", 11) == 0) {
-            continue;
-        }
-        
-        // Skip character set definitions
-        if (strncmp(line, "[characterset:", 15) == 0) {
-            continue;
-        }
-        
-        // Skip ACCEPTANCE_MAPPING directives
-        if (strncmp(line, "ACCEPTANCE_MAPPING", 19) == 0) {
-            continue;
-        }
-        
-        // Extract pattern (between ] and ->, or full line)
-        char* pattern_start = NULL;
-        char* pattern_end = NULL;
-        
-        if (line[0] == '[') {
-            pattern_start = strchr(line, ']');
-            if (!pattern_start) continue;
-            pattern_start++;  // Skip ]
-            
-            // Find arrow
-            char* arrow = strstr(pattern_start, "->");
-            if (arrow) {
-                pattern_end = arrow;
-            } else {
-                // No action, rest of line is pattern
-                pattern_end = pattern_start + strlen(pattern_start);
-            }
-        } else {
-            continue;
-        }
-        
-        // Process pattern characters
-        for (char* p = pattern_start; p < pattern_end && *p; p++) {
-            char c = *p;
-            
-            // Skip escaped characters
-            if (c == '\\') {
-                p++;
-                if (*p) {
-                    // Add escaped character
-                    bool found = false;
-                    for (int i = 0; i < built_alphabet_size; i++) {
-                        if (built_alphabet[i].start_char == (unsigned char)*p &&
-                            built_alphabet[i].end_char == (unsigned char)*p) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found && built_alphabet_size < MAX_SYMBOLS) {
-                        built_alphabet[built_alphabet_size].start_char = (unsigned char)*p;
-                        built_alphabet[built_alphabet_size].end_char = (unsigned char)*p;
-                        built_alphabet[built_alphabet_size].symbol_id = built_alphabet_size;
-                        built_alphabet[built_alphabet_size].is_special = false;
-                        built_alphabet_size++;
-                        symbols_added++;
-                    }
-                }
-                continue;
-            }
-            
-            // Skip quantifiers
-            if (c == '+' || c == '*' || c == '?') {
-                continue;
-            }
-            
-            // Skip brackets and parentheses
-            if (c == '[' || c == ']' || c == '(' || c == ')') {
-                continue;
-            }
-            
-            // Skip special characters
-            if (c == '-' && *(p+1) == '>') {
-                break;
-            }
-            if (c == '|') {
-                continue;
-            }
-            
-            // Add character if not already in alphabet
-            if (c >= 32 && c < 127) {  // Printable ASCII
-                bool found = false;
-                for (int i = 0; i < built_alphabet_size; i++) {
-                    if (built_alphabet[i].start_char == (unsigned char)c &&
-                        built_alphabet[i].end_char == (unsigned char)c) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found && built_alphabet_size < MAX_SYMBOLS) {
-                    built_alphabet[built_alphabet_size].start_char = (unsigned char)c;
-                    built_alphabet[built_alphabet_size].end_char = (unsigned char)c;
-                    built_alphabet[built_alphabet_size].symbol_id = built_alphabet_size;
-                    built_alphabet[built_alphabet_size].is_special = false;
-                    built_alphabet_size++;
-                    symbols_added++;
-                }
-            }
-        }
+    // 1. Literal Bytes (0-255)
+    for (int i = 0; i < 256; i++) {
+        built_alphabet[i].start_char = i;
+        built_alphabet[i].end_char = i;
+        built_alphabet[i].symbol_id = i;
+        built_alphabet[i].is_special = false;
+        built_alphabet_size++;
     }
     
-    fclose(file);
+    // 2. Virtual Symbols (256+)
+    // ANY
+    built_alphabet[VSYM_ANY].start_char = 0;
+    built_alphabet[VSYM_ANY].end_char = 255;
+    built_alphabet[VSYM_ANY].symbol_id = VSYM_ANY;
+    built_alphabet[VSYM_ANY].is_special = true;
+    built_alphabet_size++;
+
+    // EPSILON
+    built_alphabet[VSYM_EPS].start_char = 1;
+    built_alphabet[VSYM_EPS].end_char = 1;
+    built_alphabet[VSYM_EPS].symbol_id = VSYM_EPS;
+    built_alphabet[VSYM_EPS].is_special = true;
+    built_alphabet_size++;
+
+    // EOS
+    built_alphabet[VSYM_EOS].start_char = 5;
+    built_alphabet[VSYM_EOS].end_char = 5;
+    built_alphabet[VSYM_EOS].symbol_id = VSYM_EOS;
+    built_alphabet[VSYM_EOS].is_special = true;
+    built_alphabet_size++;
+
+    // Normalized SPACE
+    built_alphabet[VSYM_SPACE].start_char = 32;
+    built_alphabet[VSYM_SPACE].end_char = 32;
+    built_alphabet[VSYM_SPACE].symbol_id = VSYM_SPACE;
+    built_alphabet[VSYM_SPACE].is_special = true;
+    built_alphabet_size++;
+
+    // Normalized TAB
+    built_alphabet[VSYM_TAB].start_char = 9;
+    built_alphabet[VSYM_TAB].end_char = 9;
+    built_alphabet[VSYM_TAB].symbol_id = VSYM_TAB;
+    built_alphabet[VSYM_TAB].is_special = true;
+    built_alphabet_size++;
     
     if (flag_verbose_alphabet) {
-        fprintf(stderr, "  Special symbols: 4 (ANY, SPACE, TAB, EOS)\n");
-        fprintf(stderr, "  Pattern symbols: %d\n", symbols_added);
+        fprintf(stderr, "  Literal symbols: 256\n");
+        fprintf(stderr, "  Virtual symbols: %d\n", built_alphabet_size - 256);
         fprintf(stderr, "  Total alphabet size: %d\n", built_alphabet_size);
     }
     
@@ -3310,6 +2662,7 @@ static bool construct_alphabet_from_patterns(const char* spec_file) {
         alphabet[i] = built_alphabet[i];
     }
     alphabet_size = built_alphabet_size;
+    fprintf(stderr, "DEBUG: Alphabet constructed, alphabet_size = %d\n", alphabet_size);
     alphabet_constructed = true;
     
     if (flag_verbose_alphabet) {

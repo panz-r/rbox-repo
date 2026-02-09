@@ -14,7 +14,7 @@
  */
 
 #ifndef DFA_EVAL_DEBUG
-#define DFA_EVAL_DEBUG 0
+#define DFA_EVAL_DEBUG 1
 #endif
 
 #if DFA_EVAL_DEBUG
@@ -164,6 +164,8 @@ bool dfa_init_with_identifier(const void* data, size_t size, const char* expecte
     }
 
     current_dfa = dfa;
+    EVAL_DEBUG_PRINT("DFA LOADED: initial_state=%u, state_count=%u, id_len=%u\n", 
+                     dfa->initial_state, dfa->state_count, dfa->identifier_length);
     return true;
 }
 
@@ -193,12 +195,27 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     result->category = DFA_CMD_UNKNOWN;
 
     if (length == 0) length = strlen(input);
-    if (length == 0) return true;
-
     const char* raw_base = (const char*)current_dfa;
     const dfa_state_t* curr = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
 
+    if (length == 0) {
+        // Handle empty input string match if initial state is accepting or has EOS transition
+        if (curr->eos_target != 0) {
+            curr = (const dfa_state_t*)(raw_base + curr->eos_target);
+        }
+        uint8_t m = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+        if (m != 0) {
+            result->matched = true;
+            result->matched_length = 0;
+            result->category_mask = m;
+            for (int i = 0; i < 8; i++) if (m & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
+            return true;
+        }
+        return true; 
+    }
+
     size_t pos = 0;
+
     process_markers(curr, active, 0, result, max_caps, defer_stack, &defer_depth);
 
     while (pos < length && pos < MAX_EVAL_LENGTH) {
@@ -207,8 +224,11 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
         if (curr->transition_count > 0) {
             const dfa_rule_t* r = (const dfa_rule_t*)(raw_base + curr->transitions_offset);
+            EVAL_DEBUG_PRINT("State offset %ld, transitions: %d, input char: '%c' (%d)\n", 
+                            (const char*)curr - raw_base, curr->transition_count, c, c);
             for (uint16_t i = 0; i < curr->transition_count; i++, r++) {
                 bool m = false;
+                EVAL_DEBUG_PRINT("  Rule %d: type=%d, d1=%d, d2=%d, target=%u\n", i, r->type, r->data1, r->data2, r->target);
                 switch (r->type) {
                     case DFA_RULE_LITERAL: m = (c == r->data1); break;
                     case DFA_RULE_RANGE:   m = (c >= r->data1 && c <= r->data2); break;
@@ -219,7 +239,14 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
                     case DFA_RULE_NOT_LITERAL: m = (c != r->data1); break;
                     case DFA_RULE_NOT_RANGE:   m = (c < r->data1 || c > r->data2); break;
                 }
-                if (m) { next = (const dfa_state_t*)(raw_base + r->target); break; }
+                if (m) { 
+                    if (r->target >= 1000000) { // Safety check against obvious corruption
+                         fprintf(stderr, "FATAL: Evaluator encountered corrupt target offset %u\n", r->target);
+                         return false;
+                    }
+                    next = (const dfa_state_t*)(raw_base + r->target); 
+                    break; 
+                }
             }
         }
 
@@ -244,7 +271,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         result->matched_length = pos;
         result->category_mask = mask;
         result->final_state = (uint32_t)((const char*)curr - raw_base);
-        for (int i = 0; i < 7; i++) if (mask & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
+        for (int i = 0; i < 8; i++) if (mask & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
     }
 
     return result->matched;

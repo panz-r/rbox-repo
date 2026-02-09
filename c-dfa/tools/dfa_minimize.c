@@ -17,9 +17,8 @@
 #include "dfa_minimize.h"
 
 // Constants matching nfa.h
-#define MAX_STATES 8192
-#define MAX_SYMBOLS 256
-#define TOTAL_SYMBOLS 513 // 0: EOS, 1-256: Literal, 257-512: ANY
+#include "../include/nfa.h"
+#define TOTAL_SYMBOLS (MAX_SYMBOLS * 2 + 1)
 
 // FNV-1a Constants for hashing
 #define FNV_PRIME 16777619
@@ -243,7 +242,7 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
     hash ^= (uint8_t)state->capture_end_id; hash *= FNV_PRIME;
     hash ^= (uint8_t)state->capture_defer_id; hash *= FNV_PRIME;
     if (state->eos_target != 0) { hash ^= 0xFF; hash *= FNV_PRIME; }
-    for (int c = 0; c < 256; c += 16) {
+    for (int c = 0; c < MAX_SYMBOLS; c += 16) {
         int t = state->transitions[c];
         int target_p = (t != -1) ? partition_map[t] : -1;
         hash ^= c; hash *= FNV_PRIME;
