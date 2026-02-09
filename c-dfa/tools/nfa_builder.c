@@ -991,31 +991,45 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     // Track if this is a single-char fragment
     bool is_single_char = (frag_value[0] != '\0' && frag_value[1] == '\0');
 
+    // Detect if fragment starts with an alternation (Bug 2.9)
+    // If it does, we must DISABLE the first-char peeking optimization
+    bool has_alternation = (frag_value[0] != '\0' && frag_value[1] == '|');
+
     // Add transition from start_state to frag_start using first char of fragment value
     // For single-char fragments, use start_state directly as frag_start
-    if (frag_value[0] != '\0' && frag_value[1] != '\0') {
+    // SKIP if alternation is present (Bug 2.9)
+    if (!has_alternation && frag_value[0] != '\0' && frag_value[1] != '\0') {
         // Multi-char fragment: add transition from start_state to frag_start
         int first_sid = find_symbol_id(frag_value[0]);
         if (first_sid != -1) {
             nfa_add_transition(start_state, frag_start, first_sid);
         }
-    } else if (frag_value[0] != '\0') {
+    } else if (!has_alternation && frag_value[0] != '\0') {
         // Single-char fragment: use start_state directly
         frag_start = start_state;
+    } else {
+        // Alternation or complex fragment: use EPSILON to frag_start and parse all chars
+        int epsilon_sid = VSYM_EPS;
+        if (epsilon_sid != -1) {
+            nfa_add_transition(start_state, frag_start, epsilon_sid);
+        } else {
+            frag_start = start_state;
+        }
     }
 
     // Parse the fragment value starting from frag_start
-    // For multi-char fragments, skip first char since we already added its transition
+    // For multi-char fragments (without alternation), skip first char since we handled it
     int frag_pos = 0;
     int frag_end;
-    if (frag_value[0] != '\0' && frag_value[1] != '\0') {
-        frag_pos = 1;  // Skip first char (already handled above)
+    if (!has_alternation && frag_value[0] != '\0' && frag_value[1] != '\0') {
+        frag_pos = 1;  // Skip first char
         frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
     } else {
         frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
     }
 
     // Populate FragmentResult
+    result.anchor_state = start_state;
     if (is_single_char) {
         result.is_single_char = true;
         result.loop_char = frag_value[0];
@@ -1086,15 +1100,35 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
     }
 
     // Add transitions for each unique character
-    bool seen[256] = {false};
-    for (int i = 0; i < alt_count; i++) {
-        unsigned char uc = (unsigned char)alt_chars[i];
-        if (!seen[uc]) {
-            seen[uc] = true;
-            int sid = find_symbol_id(alt_chars[i]);
-            if (sid != -1) {
+    if (!negated) {
+        // Normal class: add transitions for characters in the class
+        bool seen[256] = {false};
+        for (int i = 0; i < alt_count; i++) {
+            unsigned char uc = (unsigned char)alt_chars[i];
+            if (!seen[uc]) {
+                seen[uc] = true;
+                int sid = find_symbol_id(alt_chars[i]);
+                if (sid != -1) {
+                    nfa_add_transition(start_state, class_state, sid);
+                    if (current_class_symbol_count < MAX_CLASS_SYMBOLS) {
+                        current_class_symbols[current_class_symbol_count++] = sid;
+                    }
+                }
+            }
+        }
+    } else {
+        // Negated class (Bug 15.4): add transitions for all symbols NOT in the class
+        bool excluded[256] = {false};
+        for (int i = 0; i < alt_count; i++) {
+            excluded[(unsigned char)alt_chars[i]] = true;
+        }
+
+        // Iterate through all literal symbols in the alphabet (0-255)
+        for (int sid = 0; sid < 256; sid++) {
+            // Find character associated with this symbol
+            // For literal symbols, sid is the character code
+            if (!excluded[sid]) {
                 nfa_add_transition(start_state, class_state, sid);
-                // Track this symbol for + quantifier loop creation
                 if (current_class_symbol_count < MAX_CLASS_SYMBOLS) {
                     current_class_symbols[current_class_symbol_count++] = sid;
                 }

@@ -2,7 +2,7 @@
 # Test Group 3: Question Mark Quantifier with Literal Characters
 # ============================================================================
 # Pattern: a? (zero or one 'a' character)
-[safe:test:group3] a?
+[safe:test:group3] (a)?
 
 # ============================================================================
 # Test cases:

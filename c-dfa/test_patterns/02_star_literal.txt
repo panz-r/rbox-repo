@@ -2,7 +2,7 @@
 # Test Group 2: Star Quantifier with Literal Characters
 # ============================================================================
 # Pattern: a* (zero or more 'a' characters)
-[safe:test:group2] a*
+[safe:test:group2] (a)*
 
 # ============================================================================
 # Test cases:

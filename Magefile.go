@@ -26,11 +26,29 @@ func ValidatePatterns() error {
 	fmt.Println("=================================================")
 
 	wd, _ := os.Getwd()
-	cdfaToolsDir := filepath.Join(wd, "c-dfa", "tools")
-	patternsFile := filepath.Join(wd, "c-dfa", "patterns_safe_commands.txt")
+	cdfaDir := filepath.Join(wd, "c-dfa")
+	cdfaToolsDir := filepath.Join(cdfaDir, "tools")
+	patternsFile := filepath.Join(cdfaDir, "patterns_safe_commands.txt")
 
 	// Use nfa_builder for validation
 	nfaBuilder := filepath.Join(cdfaToolsDir, "nfa_builder")
+
+	// Build nfa_builder if it doesn't exist
+	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
+		fmt.Println("Building nfa_builder for validation...")
+		buildCmd := exec.Command("gcc", "-o", nfaBuilder,
+			filepath.Join(cdfaToolsDir, "nfa_builder.c"),
+			filepath.Join(cdfaToolsDir, "multi_target_array.c"),
+			"-I"+filepath.Join(cdfaDir, "include"),
+			"-Wall", "-Wextra", "-std=c11", "-O2", "-mcmodel=medium",
+			"-DNFA_BUILDER_DEBUG=1", "-DNFA_BUILDER_VERBOSE=1")
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			return fmt.Errorf("failed to build nfa_builder for validation: %w", err)
+		}
+	}
+
 	fmt.Printf("Validating: %s\n", patternsFile)
 	cmd := exec.Command(nfaBuilder, "--validate-only", patternsFile)
 	cmd.Stdout = os.Stdout
@@ -75,8 +93,12 @@ func BuildClient() error {
 	nfaBuilder := filepath.Join(cdfaToolsDir, "nfa_builder")
 	os.Remove(nfaBuilder)
 	fmt.Println("Building nfa_builder...")
-	buildNfaBuilderCmd := exec.Command("gcc", "-o", nfaBuilder, filepath.Join(cdfaToolsDir, "nfa_builder.c"),
-		"-Wall", "-Wextra", "-std=c11", "-O2", "-DNFA_BUILDER_DEBUG=0", "-DNFA_BUILDER_VERBOSE=0")
+	buildNfaBuilderCmd := exec.Command("gcc", "-o", nfaBuilder,
+		filepath.Join(cdfaToolsDir, "nfa_builder.c"),
+		filepath.Join(cdfaToolsDir, "multi_target_array.c"),
+		"-I"+filepath.Join(cdfaDir, "include"),
+		"-Wall", "-Wextra", "-std=c11", "-O2", "-mcmodel=medium",
+		"-DNFA_BUILDER_DEBUG=0", "-DNFA_BUILDER_VERBOSE=0")
 	buildNfaBuilderCmd.Stdout = os.Stdout
 	buildNfaBuilderCmd.Stderr = os.Stderr
 	if err := buildNfaBuilderCmd.Run(); err != nil {
@@ -87,8 +109,14 @@ func BuildClient() error {
 	nfa2dfa := filepath.Join(cdfaToolsDir, "nfa2dfa")
 	os.Remove(nfa2dfa)
 	fmt.Println("Building nfa2dfa...")
-	buildCmd := exec.Command("gcc", "-o", nfa2dfa, filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
-		"-Wall", "-Wextra", "-std=c11", "-O2", "-DNFA2DFA_DEBUG=0", "-DNFA2DFA_VERBOSE=0")
+	buildCmd := exec.Command("gcc", "-o", nfa2dfa,
+		filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
+		filepath.Join(cdfaToolsDir, "multi_target_array.c"),
+		filepath.Join(cdfaToolsDir, "dfa_minimize.c"),
+		filepath.Join(cdfaToolsDir, "dfa_minimize_brzozowski.c"),
+		"-I"+filepath.Join(cdfaDir, "include"),
+		"-Wall", "-Wextra", "-std=c11", "-O2", "-mcmodel=medium",
+		"-DNFA2DFA_DEBUG=0", "-DNFA2DFA_VERBOSE=0")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -357,8 +385,12 @@ func DfaTest() error {
 	nfaBuilder := filepath.Join(cdfaToolsDir, "nfa_builder")
 	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
 		fmt.Println("Building nfa_builder...")
-		buildCmd := exec.Command("gcc", "-o", nfaBuilder, filepath.Join(cdfaToolsDir, "nfa_builder.c"),
-			"-Wall", "-Wextra", "-std=c11", "-O2", "-DNFA_BUILDER_DEBUG=0", "-DNFA_BUILDER_VERBOSE=0")
+		buildCmd := exec.Command("gcc", "-o", nfaBuilder,
+			filepath.Join(cdfaToolsDir, "nfa_builder.c"),
+			filepath.Join(cdfaToolsDir, "multi_target_array.c"),
+			"-I"+filepath.Join(cdfaDir, "include"),
+			"-Wall", "-Wextra", "-std=c11", "-O2", "-mcmodel=medium",
+			"-DNFA_BUILDER_DEBUG=1", "-DNFA_BUILDER_VERBOSE=1")
 		buildCmd.Stdout = os.Stdout
 		buildCmd.Stderr = os.Stderr
 		if err := buildCmd.Run(); err != nil {
@@ -370,8 +402,14 @@ func DfaTest() error {
 	nfa2dfa := filepath.Join(cdfaToolsDir, "nfa2dfa")
 	os.Remove(nfa2dfa)
 	fmt.Println("Building nfa2dfa...")
-	buildCmd := exec.Command("gcc", "-o", nfa2dfa, filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
-		"-Wall", "-Wextra", "-std=c11", "-O2", "-DNFA2DFA_DEBUG=0", "-DNFA2DFA_VERBOSE=0")
+	buildCmd := exec.Command("gcc", "-o", nfa2dfa,
+		filepath.Join(cdfaToolsDir, "nfa2dfa.c"),
+		filepath.Join(cdfaToolsDir, "multi_target_array.c"),
+		filepath.Join(cdfaToolsDir, "dfa_minimize.c"),
+		filepath.Join(cdfaToolsDir, "dfa_minimize_brzozowski.c"),
+		"-I"+filepath.Join(cdfaDir, "include"),
+		"-Wall", "-Wextra", "-std=c11", "-O2", "-mcmodel=medium",
+		"-DNFA2DFA_DEBUG=0", "-DNFA2DFA_VERBOSE=0")
 	buildCmd.Stdout = os.Stdout
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
@@ -385,7 +423,6 @@ func DfaTest() error {
 		filepath.Join(cdfaSrcDir, "dfa_eval.c"),
 		filepath.Join(cdfaSrcDir, "dfa_loader.c"),
 		filepath.Join(cdfaSrcDir, "dfa_test.c"),
-		filepath.Join(cdfaSrcDir, "dfa_test_tripled.c"),
 		"-I"+filepath.Join(cdfaDir, "include"),
 		"-lm", "-O2")
 	buildCmd.Dir = cdfaDir

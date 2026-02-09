@@ -2,7 +2,7 @@
 # Test Group 12: All Optional Quantifiers
 # ============================================================================
 # Pattern: a?b?c? (zero or one of a, then b, then c)
-[safe:test:group12] a?b?c?
+[safe:test:group12] (a)?(b)?(c)?
 
 # ============================================================================
 # Test cases:

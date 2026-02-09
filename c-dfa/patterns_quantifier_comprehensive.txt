@@ -128,9 +128,9 @@
 # GROUP 11: Literal Plus Quantifier (Extended)
 # ============================================================================
 # Test: Extended p+ tests
-[safe:quantifier:group11] p+
-[safe:quantifier:group11] pp+
-[safe:quantifier:group11] ppp+
+[safe:quantifier:group11] (p)+
+[safe:quantifier:group11] p(p)+
+[safe:quantifier:group11] pp(p)+
 
 # ============================================================================
 # GROUP 12: Character Classes (using fragments)
@@ -183,7 +183,7 @@
 # GROUP 17: Combined Quantifiers
 # ============================================================================
 # Test: Multiple quantifiers in sequence
-[safe:quantifier:group17] a+b+
+[safe:quantifier:group17] (a)+(b)+
 [safe:quantifier:group17] (a|b)+(c)*
 [safe:quantifier:group17] [[:alpha:]]+[[:digit:]]*
 

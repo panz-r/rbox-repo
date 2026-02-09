@@ -7,14 +7,15 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "../include/nfa.h"
 
 // Structure definition - shared between nfa2dfa.c and dfa_minimize.c
 typedef struct build_dfa_state {
     uint32_t transitions_offset;
     uint16_t transition_count;
     uint16_t flags;
-    int transitions[256];
-    bool transitions_from_any[256];
+    int transitions[MAX_SYMBOLS];
+    bool transitions_from_any[MAX_SYMBOLS];
     int nfa_states[8192];  // MAX_STATES from nfa.h
     int nfa_state_count;
     int8_t capture_start_id;

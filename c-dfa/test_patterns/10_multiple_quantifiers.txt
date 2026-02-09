@@ -2,7 +2,7 @@
 # Test Group 10: Multiple Quantifiers in Sequence
 # ============================================================================
 # Pattern: a+b+ (one or more a's followed by one or more b's)
-[safe:test:group10] a+b+
+[safe:test:group10] (a)+(b)+
 
 # ============================================================================
 # Test cases:

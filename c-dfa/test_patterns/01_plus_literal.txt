@@ -2,7 +2,7 @@
 # Test Group 1: Plus Quantifier with Literal Characters
 # ============================================================================
 # Pattern: a+ (one or more 'a' characters)
-[safe:test:group1] a+
+[safe:test:group1] (a)+
 
 # ============================================================================
 # Test cases:
