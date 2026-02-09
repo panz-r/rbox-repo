@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -104,33 +106,32 @@ static const char* external_alphabet_file = NULL;
 // Pattern file identifier (for NFA/DFA matching)
 static char pattern_identifier[256] = "";
 
-// NFA State with category bitmask for 8-way parallel acceptance
+// Extended NFA state for nfa_builder - includes additional fields not needed for DFA construction
 typedef struct {
-    uint8_t category_mask;           // Bitmask of accepting categories (0-7)
-    int16_t pattern_id;              // Pattern ID this state belongs to (-1 = none/shared)
-    bool is_eos_target;              // This state can accept via EOS transition
-    char* tags[MAX_TAGS];             // Termination tags
+    uint8_t category_mask;
+    int16_t pattern_id;
+    bool is_eos_target;
+    char* tags[MAX_TAGS];
     int tag_count;
-    int transitions[MAX_SYMBOLS];     // -1 = no transition, otherwise state index
+    int transitions[MAX_SYMBOLS];
     int transition_count;
-    char multi_targets[MAX_SYMBOLS][256];  // For storing multiple targets as CSV strings
+    multi_target_array_t multi_targets;
 
-    // Negated transitions: target state + excluded characters
+    // Negated transitions
     negated_transition_t negated_transitions[MAX_SYMBOLS];
     int negated_transition_count;
-    
-    // Capture markers: -1 = no capture, otherwise capture ID
+
+    // Capture markers
     int8_t capture_start_id;
     int8_t capture_end_id;
-    // Capture defer: -1 = no defer, otherwise capture ID to defer until leaving state
     int8_t capture_defer_id;
-} nfa_state_t;
+} nfa_builder_state_t;
 
 // State signature for on-the-fly minimization
 typedef struct StateSignature {
     uint64_t signature;
     int state_index;
-    struct StateSignature* next; // For hash table collision handling
+    struct StateSignature* next;
 } StateSignature;
 
 // Command pattern with metadata
@@ -144,8 +145,8 @@ typedef struct {
     int subcategory_id;
 } command_pattern_t;
 
-// Global variables
-static nfa_state_t nfa[MAX_STATES];
+// Global NFA array
+static nfa_builder_state_t nfa[MAX_STATES];
 static command_pattern_t patterns[MAX_PATTERNS];
 static char_class_t alphabet[MAX_SYMBOLS];
 static int alphabet_size = 0;
@@ -306,8 +307,8 @@ void nfa_init(void) {
         }
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             nfa[i].transitions[j] = -1;
-            nfa[i].multi_targets[j][0] = '\0';  // Initialize multi-targets
         }
+        mta_init(&nfa[i].multi_targets);
         nfa[i].transition_count = 0;
 
         // Initialize negated transitions
@@ -348,7 +349,7 @@ bool can_add_to_negated_transition(negated_transition_t* neg_trans, char new_cha
            !is_char_excluded(neg_trans, new_char);
 }
 
-negated_transition_t* find_negated_transition_for_target(nfa_state_t* state, int target_state) {
+negated_transition_t* find_negated_transition_for_target(nfa_builder_state_t* state, int target_state) {
     for (int i = 0; i < state->negated_transition_count; i++) {
         if (state->negated_transitions[i].target_state == target_state) {
             return &state->negated_transitions[i];
@@ -362,8 +363,8 @@ bool should_use_negation(int from_state, int to_state, char input_char) {
     // 1. Always use if we already have a negated transition to this target
     // 2. Use if we're adding a second transition to the same target
     // 3. Use for common patterns that benefit from negation
-    
-    nfa_state_t* state = &nfa[from_state];
+
+    nfa_builder_state_t* state = &nfa[from_state];
     
     // If we already have a negated transition to this target, always use it
     if (find_negated_transition_for_target(state, to_state) != NULL) {
@@ -384,11 +385,11 @@ bool should_use_negation(int from_state, int to_state, char input_char) {
 }
 
 void add_negated_transition(int from_state, int to_state, char excluded_char) {
-    nfa_state_t* state = &nfa[from_state];
-    
+    nfa_builder_state_t* state = &nfa[from_state];
+
     // Check if we already have a negated transition to this target
     negated_transition_t* existing_neg_trans = find_negated_transition_for_target(state, to_state);
-    
+
     if (existing_neg_trans != NULL) {
         // Add to existing negated transition
         if (can_add_to_negated_transition(existing_neg_trans, excluded_char)) {
@@ -396,7 +397,7 @@ void add_negated_transition(int from_state, int to_state, char excluded_char) {
             return;
         }
     }
-    
+
     // Create new negated transition
     if (state->negated_transition_count < MAX_SYMBOLS) {
         negated_transition_t* new_neg_trans = &state->negated_transitions[state->negated_transition_count++];
@@ -672,25 +673,10 @@ void nfa_add_transition(int from, int to, int symbol_id) {
             nfa[0].transitions[symbol_id] = to;
             nfa[0].transition_count++;
         } else if (nfa[0].transitions[symbol_id] != to) {
-            // Additional transition - append to multi_targets
-            char existing[256];
-            sprintf(existing, "%d", nfa[0].transitions[symbol_id]);
-
-            // Check if target already exists
-            // CRITICAL FIX: Allow appending when multi_targets already has commas (3rd+ target)
-            if (strstr(existing, ",") != NULL || strstr(nfa[0].multi_targets[symbol_id], ",") != NULL ||
-                (nfa[0].transitions[symbol_id] != to && nfa[0].transitions[symbol_id] != to)) {
-
-                // Append to multi_targets
-                char new_target[32];
-                snprintf(new_target, sizeof(new_target), ",%d", to);
-
-                size_t current_len = strlen(nfa[0].multi_targets[symbol_id]);
-                if (current_len + strlen(new_target) < sizeof(nfa[0].multi_targets[symbol_id])) {
-                    strncat(nfa[0].multi_targets[symbol_id], new_target,
-                            sizeof(nfa[0].multi_targets[symbol_id]) - current_len - 1);
-                    nfa[0].transition_count++;
-                }
+            // Additional transition - use multi-target array
+            bool added = mta_add_target(&nfa[0].multi_targets, symbol_id, to);
+            if (added) {
+                nfa[0].transition_count++;
             }
         }
         return;
@@ -703,24 +689,10 @@ void nfa_add_transition(int from, int to, int symbol_id) {
         nfa[from].transitions[symbol_id] = to;
         nfa[from].transition_count++;
     } else if (nfa[from].transitions[symbol_id] != to) {
-        // Additional transition on same symbol - use multi_targets
-        char existing[256];
-        sprintf(existing, "%d", nfa[from].transitions[symbol_id]);
-
-        // Check if target already exists
-        if (strstr(existing, ",") != NULL || strstr(nfa[from].multi_targets[symbol_id], ",") != NULL ||
-            nfa[from].transitions[symbol_id] != to) {
-
-            // Append to multi_targets
-            char new_target[32];
-            snprintf(new_target, sizeof(new_target), ",%d", to);
-
-            size_t current_len = strlen(nfa[from].multi_targets[symbol_id]);
-            if (current_len + strlen(new_target) < sizeof(nfa[from].multi_targets[symbol_id])) {
-                strncat(nfa[from].multi_targets[symbol_id], new_target,
-                        sizeof(nfa[from].multi_targets[symbol_id]) - current_len - 1);
-                nfa[from].transition_count++;
-            }
+        // Additional transition on same symbol - use multi-target array
+        bool added = mta_add_target(&nfa[from].multi_targets, symbol_id, to);
+        if (added) {
+            nfa[from].transition_count++;
         }
     }
 }
@@ -1574,9 +1546,18 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                             nfa_add_transition(current_fragment.exit_state,
                                               nfa[current_fragment.loop_entry_state].transitions[s], s);
                         }
-                        if (nfa[current_fragment.loop_entry_state].multi_targets[s][0] != '\0') {
-                            strcpy(nfa[current_fragment.exit_state].multi_targets[s],
-                                   nfa[current_fragment.loop_entry_state].multi_targets[s]);
+                        if (mta_is_multi(&nfa[current_fragment.loop_entry_state].multi_targets, s)) {
+                            const char* targets = mta_get_targets(&nfa[current_fragment.loop_entry_state].multi_targets, s);
+                            if (targets != NULL) {
+                                char* targets_copy = strdup(targets);
+                                char* token = strtok(targets_copy, ",");
+                                while (token != NULL) {
+                                    int target = atoi(token);
+                                    mta_add_target(&nfa[current_fragment.exit_state].multi_targets, s, target);
+                                    token = strtok(NULL, ",");
+                                }
+                                free(targets_copy);
+                            }
                             nfa[current_fragment.exit_state].transition_count++;
                         }
                     }
@@ -1674,10 +1655,10 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                                     current_fragment.exit_state, s,
                                     nfa[current_fragment.exit_state].transitions[s]);
                         }
-                        if (nfa[current_fragment.exit_state].multi_targets[s][0] != '\0') {
+                        if (mta_is_multi(&nfa[current_fragment.exit_state].multi_targets, s)) {
+                            const char* targets = mta_get_targets(&nfa[current_fragment.exit_state].multi_targets, s);
                             DEBUG_NFA_PRINT("  Existing multi-target: state %d --symbol %d--> %s\n",
-                                    current_fragment.exit_state, s,
-                                    nfa[current_fragment.exit_state].multi_targets[s]);
+                                    current_fragment.exit_state, s, targets ? targets : "(null)");
                         }
                     }
 
@@ -1704,10 +1685,19 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                             current_fragment.loop_entry_state, char_sid, first_iter);
 
                     // Check if there's a multi-target that needs special handling
-                    if (nfa[current_fragment.loop_entry_state].multi_targets[char_sid][0] != '\0') {
+                    if (mta_is_multi(&nfa[current_fragment.loop_entry_state].multi_targets, char_sid)) {
                         // Multi-target exists: copy to first_iter to preserve all alternation branches
-                        strcpy(nfa[first_iter].multi_targets[char_sid],
-                               nfa[current_fragment.loop_entry_state].multi_targets[char_sid]);
+                        const char* targets = mta_get_targets(&nfa[current_fragment.loop_entry_state].multi_targets, char_sid);
+                        if (targets != NULL) {
+                            char* targets_copy = strdup(targets);
+                            char* token = strtok(targets_copy, ",");
+                            while (token != NULL) {
+                                int target = atoi(token);
+                                mta_add_target(&nfa[first_iter].multi_targets, char_sid, target);
+                                token = strtok(NULL, ",");
+                            }
+                            free(targets_copy);
+                        }
                         nfa[first_iter].transition_count++;
                         // Also keep the transition from loop_entry_state to first_iter
                         // (this is redundant but harmless - NFA semantics allow duplicate paths)
@@ -1842,9 +1832,18 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                             if (nfa[current_fragment.exit_state].transitions[s] != -1) {
                                 nfa_add_transition(first_iter, nfa[current_fragment.exit_state].transitions[s], s);
                             }
-                            if (nfa[current_fragment.exit_state].multi_targets[s][0] != '\0') {
-                                strcpy(nfa[first_iter].multi_targets[s],
-                                       nfa[current_fragment.exit_state].multi_targets[s]);
+                            if (mta_is_multi(&nfa[current_fragment.exit_state].multi_targets, s)) {
+                                const char* targets = mta_get_targets(&nfa[current_fragment.exit_state].multi_targets, s);
+                                if (targets != NULL) {
+                                    char* targets_copy = strdup(targets);
+                                    char* token = strtok(targets_copy, ",");
+                                    while (token != NULL) {
+                                        int target = atoi(token);
+                                        mta_add_target(&nfa[first_iter].multi_targets, s, target);
+                                        token = strtok(NULL, ",");
+                                    }
+                                    free(targets_copy);
+                                }
                                 nfa[first_iter].transition_count++;
                             }
                         }
@@ -1854,9 +1853,18 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                             if (nfa[current_fragment.exit_state].transitions[s] != -1) {
                                 nfa_add_transition(loop_state, nfa[current_fragment.exit_state].transitions[s], s);
                             }
-                            if (nfa[current_fragment.exit_state].multi_targets[s][0] != '\0') {
-                                strcpy(nfa[loop_state].multi_targets[s],
-                                       nfa[current_fragment.exit_state].multi_targets[s]);
+                            if (mta_is_multi(&nfa[current_fragment.exit_state].multi_targets, s)) {
+                                const char* targets = mta_get_targets(&nfa[current_fragment.exit_state].multi_targets, s);
+                                if (targets != NULL) {
+                                    char* targets_copy = strdup(targets);
+                                    char* token = strtok(targets_copy, ",");
+                                    while (token != NULL) {
+                                        int target = atoi(token);
+                                        mta_add_target(&nfa[loop_state].multi_targets, s, target);
+                                        token = strtok(NULL, ",");
+                                    }
+                                    free(targets_copy);
+                                }
                                 nfa[loop_state].transition_count++;
                             }
                         }
@@ -1878,9 +1886,18 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                                 int target = nfa[current_fragment.loop_entry_state].transitions[s];
                                 nfa_add_transition(current_fragment.exit_state, target, s);
                             }
-                            if (nfa[current_fragment.loop_entry_state].multi_targets[s][0] != '\0') {
-                                strcpy(nfa[current_fragment.exit_state].multi_targets[s],
-                                       nfa[current_fragment.loop_entry_state].multi_targets[s]);
+                            if (mta_is_multi(&nfa[current_fragment.loop_entry_state].multi_targets, s)) {
+                                const char* targets = mta_get_targets(&nfa[current_fragment.loop_entry_state].multi_targets, s);
+                                if (targets != NULL) {
+                                    char* targets_copy = strdup(targets);
+                                    char* token = strtok(targets_copy, ",");
+                                    while (token != NULL) {
+                                        int target = atoi(token);
+                                        mta_add_target(&nfa[current_fragment.exit_state].multi_targets, s, target);
+                                        token = strtok(NULL, ",");
+                                    }
+                                    free(targets_copy);
+                                }
                                 nfa[current_fragment.exit_state].transition_count++;
                             }
                         }
@@ -2215,18 +2232,19 @@ static void parse_pattern_full(const char* pattern, const char* category,
             int target_count = 0;
             targets[target_count++] = nfa[0].transitions[first_char_sid];
             // Check for additional targets in multi_targets
-            if (nfa[0].multi_targets[first_char_sid][0] != '\0') {
-                char* p = nfa[0].multi_targets[first_char_sid];
-                while (p != NULL && *p != '\0') {
-                    if (*p == ',') p++;
-                    // Use strtol for safer parsing with bounds validation
-                    char* end;
-                    long target_long = strtol(p, &end, 10);
-                    if (end > p && target_long > 0 && target_long < MAX_STATES) {
-                        targets[target_count++] = (int)target_long;
+            if (mta_is_multi(&nfa[0].multi_targets, first_char_sid)) {
+                const char* targets_str = mta_get_targets(&nfa[0].multi_targets, first_char_sid);
+                if (targets_str != NULL) {
+                    char* targets_copy = strdup(targets_str);
+                    char* token = strtok(targets_copy, ",");
+                    while (token != NULL) {
+                        long target_long = strtol(token, NULL, 10);
+                        if (target_long > 0 && target_long < MAX_STATES) {
+                            targets[target_count++] = (int)target_long;
+                        }
+                        token = strtok(NULL, ",");
                     }
-                    p = strchr(p, ',');
-                    if (p) p++;
+                    free(targets_copy);
                 }
             }
 
@@ -2361,7 +2379,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
         // This prevents marking + quantifier intermediate states as EOS target
         bool has_outgoing = false;
         for (int s = 0; s < MAX_SYMBOLS; s++) {
-            if (nfa[end_state].transitions[s] != -1 || nfa[end_state].multi_targets[s][0] != '\0') {
+            if (nfa[end_state].transitions[s] != -1 || mta_is_multi(&nfa[end_state].multi_targets, s)) {
                 has_outgoing = true;
                 break;
             }
@@ -2798,17 +2816,23 @@ void write_nfa_file(const char* filename) {
         fprintf(file, "  Transitions: %d\n", nfa[i].transition_count);
 
         for (int s = 0; s < MAX_SYMBOLS; s++) {
-            if (nfa[i].transitions[s] != -1 || nfa[i].multi_targets[s][0] != '\0') {
+            if (nfa[i].transitions[s] != -1 || mta_is_multi(&nfa[i].multi_targets, s)) {
                 fprintf(file, "    Symbol %d", s);
                 // Write first target from transitions array
                 if (nfa[i].transitions[s] != -1) {
                     fprintf(file, " -> %d", nfa[i].transitions[s]);
                     // Write additional targets from multi_targets
-                    if (nfa[i].multi_targets[s][0] != '\0') {
-                        fprintf(file, ",%s", nfa[i].multi_targets[s]);
+                    if (mta_is_multi(&nfa[i].multi_targets, s)) {
+                        const char* targets = mta_get_targets(&nfa[i].multi_targets, s);
+                        if (targets != NULL) {
+                            fprintf(file, ",%s", targets);
+                        }
                     }
-                } else if (nfa[i].multi_targets[s][0] != '\0') {
-                    fprintf(file, " -> %s", nfa[i].multi_targets[s]);
+                } else if (mta_is_multi(&nfa[i].multi_targets, s)) {
+                    const char* targets = mta_get_targets(&nfa[i].multi_targets, s);
+                    if (targets != NULL) {
+                        fprintf(file, " -> %s", targets);
+                    }
                 }
                 fprintf(file, "\n");
             }
@@ -2839,7 +2863,9 @@ void cleanup(void) {
     for (int i = 0; i < nfa_state_count; i++) {
         for (int j = 0; j < nfa[i].tag_count; j++) {
             free(nfa[i].tags[j]);
+            nfa[i].tags[j] = NULL;
         }
+        mta_free(&nfa[i].multi_targets);
     }
 
     for (int i = 0; i < SIGNATURE_TABLE_SIZE; i++) {

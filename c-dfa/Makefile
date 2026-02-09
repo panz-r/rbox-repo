@@ -6,8 +6,8 @@
 # ============================================================================
 
 CC = gcc
-CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -O2
-LDFLAGS = -lm
+CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -O2 -mcmodel=medium
+LDFLAGS = -lm -mcmodel=medium
 
 SRC_DIR = src
 TOOLS_DIR = tools
@@ -19,11 +19,11 @@ TARGETS = dfa_test
 # ============================================================================
 # Build Tools (if source is newer than binary)
 # ============================================================================
-$(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c
-	$(CC) $(CFLAGS) -o $@ $<
+$(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/multi_target_array.c
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/multi_target_array.c
 
-$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c
-	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c
+$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c $(TOOLS_DIR)/multi_target_array.c
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c $(TOOLS_DIR)/multi_target_array.c
 
 # ============================================================================
 # All Pattern Files (used by test runner)

@@ -6,6 +6,9 @@
 #ifndef NFA_H
 #define NFA_H
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #define MAX_STATES 8192
 #define MAX_SYMBOLS 256
 #define MAX_CHARS 256
@@ -23,5 +26,18 @@
 #define CAT_MASK_ADMIN      0x20
 #define CAT_MASK_BUILD      0x40
 #define CAT_MASK_CONTAINER  0x80
+
+#include "multi_target_array.h"
+
+/* Shared NFA state structure for both nfa_builder and nfa2dfa */
+typedef struct {
+    uint8_t category_mask;
+    int transitions[MAX_SYMBOLS];
+    multi_target_array_t multi_targets;
+    int8_t capture_start_id;
+    int8_t capture_end_id;
+    int8_t capture_defer_id;
+    bool is_eos_target;
+} nfa_state_t;
 
 #endif // NFA_H

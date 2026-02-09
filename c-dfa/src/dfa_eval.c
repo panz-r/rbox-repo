@@ -1,18 +1,24 @@
-#include "dfa.h"
-#include "dfa_types.h"
-#include <stdio.h>
+#include "../include/dfa.h"
+#include "../include/dfa_types.h"
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /**
- * Debug output control - set to 0 to disable all debug prints
- * Can be overridden with -DDFA_EVAL_DEBUG=1 compiler flag
+ * DFA Evaluator - Lean Production Version (V5 Only)
+ * 
+ * Performance Constraints:
+ * - O(1) memory allocation (stack only)
+ * - Thread-safe matching hot-path
+ * - Optimized rule dispatch for Version 5 compact format
  */
+
 #ifndef DFA_EVAL_DEBUG
 #define DFA_EVAL_DEBUG 0
 #endif
 
 #if DFA_EVAL_DEBUG
+#include <stdio.h>
 #define EVAL_DEBUG_PRINT(fmt, ...) fprintf(stderr, "DEBUG: " fmt, ##__VA_ARGS__)
 #define EVAL_DEBUG_FLUSH() fflush(stderr)
 #else
@@ -20,17 +26,17 @@
 #define EVAL_DEBUG_FLUSH() ((void)0)
 #endif
 
+// Machine state - Set once via dfa_init
 static const dfa_t* current_dfa = NULL;
 static char current_identifier[256] = "";
 
-#define DFA_STATE_SIZE (sizeof(dfa_state_t))
-#define STATE_INDEX_TO_OFFSET(idx) (sizeof(dfa_t) + ((size_t)(idx) * DFA_STATE_SIZE))
+#define MAX_EVAL_LENGTH 16384 
+#define MAX_DEFER_STACK 16
 
 typedef struct {
     size_t start_pos;
     bool active;
     int capture_id;
-    uint8_t category;  // Category mask when capture started
 } eval_capture_t;
 
 typedef struct {
@@ -38,594 +44,207 @@ typedef struct {
     size_t start_pos;
 } defer_entry_t;
 
-#define MAX_DEFER_STACK 16
-static defer_entry_t defer_stack[MAX_DEFER_STACK];
-static int defer_stack_depth = 0;
-
-static void defer_push(int capture_id, size_t start_pos) {
-    if (defer_stack_depth < MAX_DEFER_STACK) {
-        defer_stack[defer_stack_depth].capture_id = capture_id;
-        defer_stack[defer_stack_depth].start_pos = start_pos;
-        defer_stack_depth++;
-    }
-}
-
-static int defer_get_depth(void) {
-    return defer_stack_depth;
-}
-
-static bool process_capture_markers(const dfa_state_t** state_ptr, size_t raw_base,
-                                    eval_capture_t* active_captures, size_t pos, dfa_result_t* result,
-                                    int max_captures) {
-    const dfa_state_t* current_state = *state_ptr;
-    bool changed = false;
-    
-    if (current_state->flags & DFA_STATE_CAPTURE_START) {
-        int cap_id = current_state->capture_start_id;
-        if (cap_id >= 0) {
-            for (int ci = 0; ci < DFA_MAX_CAPTURES; ci++) {
-                if (!active_captures[ci].active) {
-                    active_captures[ci].capture_id = cap_id;
-                    active_captures[ci].start_pos = pos;
-                    active_captures[ci].active = true;
-                    break;
-                }
-            }
-            changed = true;
-        }
-    }
-    
-    if (current_state->flags & DFA_STATE_CAPTURE_END) {
-        int cap_id = current_state->capture_end_id;
-        if (cap_id >= 0) {
-            for (int ci = 0; ci < DFA_MAX_CAPTURES; ci++) {
-                if (active_captures[ci].active && active_captures[ci].capture_id == cap_id) {
-                    // Respect max_captures limit (0 = no captures, -1 = unlimited)
-                    if (max_captures < 0 || result->capture_count < (size_t)max_captures) {
-                        dfa_capture_t* cap = &result->captures[result->capture_count];
-                        cap->start = active_captures[ci].start_pos;
-                        cap->end = pos;
-                        cap->active = false;
-                        cap->completed = true;
-                        snprintf(cap->name, sizeof(cap->name), "capture_%d", cap_id);
-                        result->capture_count++;
-                    }
-                    active_captures[ci].active = false;
-                    active_captures[ci].capture_id = -1;
-                    break;
-                }
-            }
-            changed = true;
-        }
-    }
-    
-    if (current_state->flags & DFA_STATE_CAPTURE_DEFER) {
-        int cap_id = current_state->capture_defer_id;
-        if (cap_id >= 0) {
-            for (int ci = 0; ci < DFA_MAX_CAPTURES; ci++) {
-                if (active_captures[ci].active && active_captures[ci].capture_id == cap_id) {
-                    defer_push(cap_id, active_captures[ci].start_pos);
-                    break;
-                }
-            }
-            changed = true;
-        }
-    }
-    
-    return changed;
-}
-
-static void process_deferred_captures(const dfa_state_t* current_state, 
-                                       size_t next_state_offset, size_t raw_base,
-                                       size_t pos, dfa_result_t* result) {
-    int defer_depth = defer_get_depth();
-    if (defer_depth == 0) {
-        return;
-    }
-    
-    const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_state_offset);
-    
-    for (int d = 0; d < defer_depth; d++) {
-        int cap_id = defer_stack[d].capture_id;
-        size_t start_pos = defer_stack[d].start_pos;
-        
-        if (next_state->flags & DFA_STATE_CAPTURE_DEFER) {
-            if (next_state->capture_defer_id == cap_id) {
-                continue;
-            }
-        }
-        
-        if (result->capture_count < DFA_MAX_CAPTURES) {
-            dfa_capture_t* cap = &result->captures[result->capture_count];
-            cap->start = start_pos;
-            cap->end = pos;
-            cap->active = false;
-            cap->completed = true;
-            snprintf(cap->name, sizeof(cap->name), "capture_%d", cap_id);
-            result->capture_count++;
-        }
-        
-        // Remove this entry from defer stack by shifting remaining elements
-        // IMPORTANT: Re-check the current position after shifting to avoid skipping elements
-        for (int shift = d; shift < defer_depth - 1; shift++) {
-            defer_stack[shift] = defer_stack[shift + 1];
-        }
-        defer_stack_depth--;
-        defer_depth--;
-        d--;  // Re-check current position after shift
-    }
-}
-
-bool dfa_init(const void* dfa_data, size_t size) {
-    return dfa_init_with_identifier(dfa_data, size, NULL);
-}
-
-bool dfa_init_with_identifier(const void* dfa_data, size_t size, const char* expected_identifier) {
-    if (dfa_data == NULL || size < sizeof(dfa_t)) {
-        return false;
-    }
-
-    const dfa_t* dfa = (const dfa_t*)dfa_data;
-
-    if (dfa->magic != DFA_MAGIC) {
-        return false;
-    }
-
-    if (dfa->version != 3 && dfa->version != 4 && dfa->version != 5) {
-        return false;
-    }
-
-    if (dfa->state_count == 0 || dfa->state_count > DFA_MAX_STATES) {
-        return false;
-    }
-
-    if (dfa->initial_state == 0 || dfa->initial_state >= size) {
-        return false;
-    }
-
-    // Store the identifier for later retrieval
-    if (expected_identifier != NULL) {
-        strncpy(current_identifier, expected_identifier, sizeof(current_identifier) - 1);
-        current_identifier[sizeof(current_identifier) - 1] = '\0';
+static void set_capture_name(char* dst, int id) {
+    memcpy(dst, "capture_", 8);
+    if (id < 10) {
+        dst[8] = (char)('0' + id);
+        dst[9] = '\0';
+    } else if (id < 100) {
+        dst[8] = (char)('0' + (id / 10));
+        dst[9] = (char)('0' + (id % 10));
+        dst[10] = '\0';
     } else {
-        strcpy(current_identifier, "(none)");
+        dst[8] = '?'; dst[9] = '\0';
+    }
+}
+
+static void process_markers(const dfa_state_t* state, eval_capture_t* active, 
+                           size_t pos, dfa_result_t* result, int max_caps,
+                           defer_entry_t* defer_stack, int* defer_depth) {
+    uint16_t flags = state->flags;
+
+    if (flags & DFA_STATE_CAPTURE_START) {
+        int id = state->capture_start_id;
+        if (id >= 0) {
+            for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
+                if (!active[i].active) {
+                    active[i].capture_id = id;
+                    active[i].start_pos = pos;
+                    active[i].active = true;
+                    break;
+                }
+            }
+        }
     }
 
-    // Only set current_dfa if ALL validation passes
+    if (flags & DFA_STATE_CAPTURE_END) {
+        int id = state->capture_end_id;
+        if (id >= 0) {
+            for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
+                if (active[i].active && active[i].capture_id == id) {
+                    if (max_caps < 0 || result->capture_count < max_caps) {
+                        if (result->capture_count < DFA_MAX_CAPTURES) {
+                            dfa_capture_t* cap = &result->captures[result->capture_count++];
+                            cap->start = active[i].start_pos;
+                            cap->end = pos;
+                            cap->active = false;
+                            cap->completed = true;
+                            set_capture_name(cap->name, id);
+                            cap->capture_id = id;
+                        }
+                    }
+                    active[i].active = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (flags & DFA_STATE_CAPTURE_DEFER) {
+        int id = state->capture_defer_id;
+        if (id >= 0 && *defer_depth < MAX_DEFER_STACK) {
+            for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
+                if (active[i].active && active[i].capture_id == id) {
+                    defer_stack[*defer_depth].capture_id = id;
+                    defer_stack[*defer_depth].start_pos = active[i].start_pos;
+                    (*defer_depth)++;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+static void process_deferred(const dfa_state_t* next, defer_entry_t* stack, int* depth, 
+                            size_t pos, dfa_result_t* res) {
+    int d_count = *depth;
+    if (d_count == 0) return;
+
+    int write_idx = 0;
+    for (int i = 0; i < d_count; i++) {
+        bool still_deferred = false;
+        if (next->flags & DFA_STATE_CAPTURE_DEFER) {
+            if (next->capture_defer_id == stack[i].capture_id) still_deferred = true;
+        }
+
+        if (!still_deferred) {
+            if (res->capture_count < DFA_MAX_CAPTURES) {
+                dfa_capture_t* cap = &res->captures[res->capture_count++];
+                cap->start = stack[i].start_pos;
+                cap->end = pos;
+                cap->active = false;
+                cap->completed = true;
+                set_capture_name(cap->name, stack[i].capture_id);
+                cap->capture_id = stack[i].capture_id;
+            }
+        } else {
+            if (write_idx != i) stack[write_idx] = stack[i];
+            write_idx++;
+        }
+    }
+    *depth = write_idx;
+}
+
+bool dfa_init(const void* data, size_t size) {
+    return dfa_init_with_identifier(data, size, NULL);
+}
+
+bool dfa_init_with_identifier(const void* data, size_t size, const char* expected_id) {
+    if (!data || size < sizeof(dfa_t)) return false;
+    const dfa_t* dfa = (const dfa_t*)data;
+    if (dfa->magic != DFA_MAGIC) return false;
+    if (dfa->version != 5) return false; // V5 only
+    if (dfa->state_count == 0 || dfa->initial_state >= size) return false;
+
+    if (expected_id) {
+        strncpy(current_identifier, expected_id, 255);
+        current_identifier[255] = '\0';
+    } else {
+        current_identifier[0] = '\0';
+    }
+
     current_dfa = dfa;
     return true;
 }
 
-bool dfa_is_valid(void) {
-    return current_dfa != NULL;
+bool dfa_is_valid(void) { return current_dfa != NULL; }
+const char* dfa_get_identifier(void) { return current_identifier; }
+uint16_t dfa_get_version(void) { return current_dfa ? current_dfa->version : 0; }
+uint16_t dfa_get_state_count(void) { return current_dfa ? current_dfa->state_count : 0; }
+bool dfa_reset(void) { current_dfa = NULL; return true; }
+const dfa_t* dfa_get_current(void) { return current_dfa; }
+
+const char* dfa_category_string(dfa_command_category_t cat) {
+    static const char* names[] = {"Unknown", "Read-only (Safe)", "Read-only (Caution)", 
+                                 "Modifying", "Dangerous", "Network", "Admin"};
+    int idx = (int)cat;
+    return (idx >= 0 && idx <= 6) ? names[idx] : "Invalid";
 }
 
-const char* dfa_get_identifier(void) {
-    return current_dfa ? current_identifier : "(not initialized)";
-}
+bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_caps) {
+    if (!current_dfa || !input || !result) return false;
 
-uint16_t dfa_get_version(void) {
-    return current_dfa ? current_dfa->version : 0;
-}
-
-uint16_t dfa_get_state_count(void) {
-    return current_dfa ? current_dfa->state_count : 0;
-}
-
-bool dfa_reset(void) {
-    current_dfa = NULL;
-    return true;
-}
-
-const dfa_t* dfa_get_current(void) {
-    return current_dfa;
-}
-
-const char* dfa_category_string(dfa_command_category_t category) {
-    switch (category) {
-        case DFA_CMD_UNKNOWN: return "Unknown";
-        case DFA_CMD_READONLY_SAFE: return "Read-only (Safe)";
-        case DFA_CMD_READONLY_CAUTION: return "Read-only (Caution)";
-        case DFA_CMD_MODIFYING: return "Modifying";
-        case DFA_CMD_DANGEROUS: return "Dangerous";
-        case DFA_CMD_NETWORK: return "Network";
-        case DFA_CMD_ADMIN: return "Admin";
-        default: return "Invalid";
-    }
-}
-
-int dfa_get_capture_count(const dfa_result_t* result) {
-    return result ? result->capture_count : 0;
-}
-
-bool dfa_get_capture_by_index(const dfa_result_t* result, int index, size_t* out_start, size_t* out_length) {
-    if (result == NULL || index < 0 || index >= result->capture_count) {
-        return false;
-    }
-    if (out_start) *out_start = result->captures[index].start;
-    if (out_length) *out_length = result->captures[index].end - result->captures[index].start;
-    return true;
-}
-
-const char* dfa_get_capture_name(const dfa_result_t* result, int index) {
-    if (result == NULL || index < 0 || index >= result->capture_count) {
-        return NULL;
-    }
-    return result->captures[index].name;
-}
-
-int dfa_get_capture(const dfa_result_t* result, int index, const char** out_start, size_t* out_length) {
-    if (result == NULL || index < 0 || index >= result->capture_count) {
-        return -1;
-    }
-    if (out_start) *out_start = "";
-    if (out_length) *out_length = 0;
-    return result->captures[index].capture_id;
-}
-
-bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_captures) {
-
-    EVAL_DEBUG_PRINT("dfa_evaluate_with_limit called, current_dfa=%p\n", current_dfa);
-    EVAL_DEBUG_FLUSH();
-
-    if (current_dfa == NULL || input == NULL || result == NULL) {
-        EVAL_DEBUG_PRINT("Early return - NULL check failed\n");
-        EVAL_DEBUG_FLUSH();
-        return false;
-    }
-
-    // Initialize result
+    eval_capture_t active[DFA_MAX_CAPTURES];
+    defer_entry_t defer_stack[MAX_DEFER_STACK];
+    int defer_depth = 0;
+    
+    memset(active, 0, sizeof(active));
+    memset(result, 0, sizeof(dfa_result_t));
     result->category = DFA_CMD_UNKNOWN;
-    result->category_mask = 0;
-    result->final_state = 0;
-    result->matched = false;
-    result->matched_length = 0;
-    result->capture_count = 0;
-    for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
-        result->captures[i].start = 0;
-        result->captures[i].end = 0;
-        result->captures[i].name[0] = '\0';
-        result->captures[i].active = false;
-        result->captures[i].completed = false;
-    }
 
-    if (length == 0) {
-        length = strlen(input);
-    }
+    if (length == 0) length = strlen(input);
+    if (length == 0) return true;
 
-    if (length == 0) {
-        return true;
-    }
-
-    // Reset defer stack for this evaluation
-    defer_stack_depth = 0;
-
-    size_t states_size = current_dfa->state_count * sizeof(dfa_state_t);
-    // CRITICAL: Use correct header size based on version
-    // Version 4: 19 bytes base + identifier_length
-    // Earlier versions: sizeof(dfa_t) (may include padding)
-    size_t dfa_header_size;
-    if (current_dfa->version >= 4) {
-        dfa_header_size = 19 + current_dfa->identifier_length;
-    } else {
-        dfa_header_size = sizeof(dfa_t);
-    }
-    size_t dfa_total_size = dfa_header_size + states_size;
-    size_t raw_base = (size_t)current_dfa;
-
-    size_t initial_state_offset = current_dfa->initial_state;
-    if (initial_state_offset == 0 || initial_state_offset >= dfa_total_size) {
-        return false;
-    }
-
-    const dfa_state_t* current_state = (const dfa_state_t*)((const char*)current_dfa + initial_state_offset);
-
-    eval_capture_t active_captures[DFA_MAX_CAPTURES];
-    for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
-        active_captures[i].start_pos = 0;
-        active_captures[i].active = false;
-        active_captures[i].capture_id = -1;
-    }
+    const char* raw_base = (const char*)current_dfa;
+    const dfa_state_t* curr = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
 
     size_t pos = 0;
+    process_markers(curr, active, 0, result, max_caps, defer_stack, &defer_depth);
 
-    process_capture_markers(&current_state, raw_base, active_captures, pos, result, max_captures);
-
-    for (pos = 0; pos < length && pos < 10000; pos++) {
-        process_capture_markers(&current_state, raw_base, active_captures, pos, result, max_captures);
-
-        size_t current_offset = (size_t)current_state - raw_base;
-
-        if (current_offset >= 1000000) {
-            result->matched_length = pos;
-            return true;
-        }
-
-        // Track instant transitions to prevent infinite loops (V4 only)
-        if (current_dfa->version < 5) {
-            int instant_count = 0;
-            bool instant_followed = true;
-            while (instant_followed && instant_count < 10000) {
-                instant_followed = false;
-                instant_count++;
-                
-                if (current_state->transition_count > 0) {
-                    size_t trans_offset = current_state->transitions_offset;
-                    if (trans_offset >= 100000) {
-                        result->matched_length = pos;
-                        return true;
-                    }
-
-                    const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
-
-                    for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                        unsigned char trans_char = (unsigned char)trans[i].character;
-
-                        if (trans_char == DFA_CHAR_INSTANT) {
-                            uint32_t next_trans_offset = trans[i].next_state_offset;
-                            size_t next_offset = next_trans_offset;
-
-                            process_deferred_captures(current_state, next_offset, raw_base, pos, result);
-
-                            const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
-                            current_state = next_state;
-                            instant_followed = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
+    while (pos < length && pos < MAX_EVAL_LENGTH) {
         unsigned char c = (unsigned char)input[pos];
-        bool transition_found = false;
+        const dfa_state_t* next = NULL;
 
-        if (current_state->transition_count > 0) {
-            size_t trans_offset = current_state->transitions_offset;
-            if (trans_offset >= 100000) { // Sanity check
-                result->matched_length = pos;
-                return true;
-            }
-
-            if (current_dfa->version >= 5) {
-                // V5: Compact Rules
-                const dfa_rule_t* rules = (const dfa_rule_t*)((const char*)raw_base + trans_offset);
-                
-                for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                    bool match = false;
-                    uint8_t type = rules[i].type;
-                    uint8_t d1 = rules[i].data1;
-                    uint8_t d2 = rules[i].data2;
-                    uint8_t d3 = rules[i].data3;
-                    
-                    switch (type) {
-                        case DFA_RULE_LITERAL:
-                            if (c == d1) match = true;
-                            break;
-                        case DFA_RULE_RANGE:
-                            if (c >= d1 && c <= d2) match = true;
-                            break;
-                        case DFA_RULE_LITERAL_2:
-                            if (c == d1 || c == d2) match = true;
-                            break;
-                        case DFA_RULE_LITERAL_3:
-                            if (c == d1 || c == d2 || c == d3) match = true;
-                            break;
-                        case DFA_RULE_RANGE_LITERAL:
-                            if ((c >= d1 && c <= d2) || c == d3) match = true;
-                            break;
-                        case DFA_RULE_DEFAULT:
-                            match = true;
-                            break;
-                        case DFA_RULE_NOT_LITERAL:
-                            if (c != d1) match = true;
-                            break;
-                        case DFA_RULE_NOT_RANGE:
-                            if (c < d1 || c > d2) match = true;
-                            break;
-                    }
-                    
-                    if (match) {
-                        uint32_t next_trans_offset = rules[i].target;
-                        // For V5, target is absolute offset
-                        size_t next_offset = next_trans_offset;
-                        
-                        process_deferred_captures(current_state, next_offset, raw_base, pos, result);
-                        
-                        current_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
-                        transition_found = true;
-                        break;
-                    }
+        if (curr->transition_count > 0) {
+            const dfa_rule_t* r = (const dfa_rule_t*)(raw_base + curr->transitions_offset);
+            for (uint16_t i = 0; i < curr->transition_count; i++, r++) {
+                bool m = false;
+                switch (r->type) {
+                    case DFA_RULE_LITERAL: m = (c == r->data1); break;
+                    case DFA_RULE_RANGE:   m = (c >= r->data1 && c <= r->data2); break;
+                    case DFA_RULE_LITERAL_2: m = (c == r->data1 || c == r->data2); break;
+                    case DFA_RULE_LITERAL_3: m = (c == r->data1 || c == r->data2 || c == r->data3); break;
+                    case DFA_RULE_RANGE_LITERAL: m = ((c >= r->data1 && c <= r->data2) || c == r->data3); break;
+                    case DFA_RULE_DEFAULT: m = true; break;
+                    case DFA_RULE_NOT_LITERAL: m = (c != r->data1); break;
+                    case DFA_RULE_NOT_RANGE:   m = (c < r->data1 || c > r->data2); break;
                 }
-            } else {
-                // V4: Explicit Transitions
-                const dfa_transition_t* trans = (const dfa_transition_t*)((const char*)raw_base + trans_offset);
-
-                for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                    unsigned char trans_char = (unsigned char)trans[i].character;
-                    uint32_t next_trans_offset = trans[i].next_state_offset;
-
-                    // DFA_CHAR_ANY (0x00) matches any character - check first for wildcards
-                    if (trans_char == DFA_CHAR_ANY || trans_char == c) {
-                        size_t next_offset = next_trans_offset;
-
-                        process_deferred_captures(current_state, next_offset, raw_base, pos, result);
-
-                        const dfa_state_t* next_state = (const dfa_state_t*)((const char*)raw_base + next_offset);
-                        current_state = next_state;
-                        transition_found = true;
-                        break;
-                    }
-                }
+                if (m) { next = (const dfa_state_t*)(raw_base + r->target); break; }
             }
         }
 
-        if (!transition_found) {
-            // Check if we can follow an EOS transition
-            if (current_state->eos_target != 0) {
-                const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)current_dfa + current_state->eos_target);
+        if (!next) return false;
 
-                // Process capture markers on EOS state
-                process_capture_markers(&eos_state, raw_base, active_captures, pos, result, max_captures);
-                
-                uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
-                if (eos_cat_mask != 0) {
-                    // EOS target is accepting - this is a match!
-                    result->matched = true;
-                    result->matched_length = pos;
-                    result->final_state = eos_state->flags;
-                    result->category_mask = eos_cat_mask;
-                    if (eos_cat_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-                    else if (eos_cat_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-                    else if (eos_cat_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-                    else if (eos_cat_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-                    else if (eos_cat_mask & 0x10) result->category = DFA_CMD_NETWORK;
-                    else if (eos_cat_mask & 0x20) result->category = DFA_CMD_ADMIN;
-                    return true;
-                }
-            }
-            if (result->matched) {
-                return true;
-            }
-            return false;
-        }
+        pos++;
+        process_deferred(next, defer_stack, &defer_depth, pos, result);
+        process_markers(next, active, pos, result, max_caps, defer_stack, &defer_depth);
+        curr = next;
     }
 
-    EVAL_DEBUG_PRINT("Reached end of input check, pos=%zu, length=%zu\n", pos, length);
-    EVAL_DEBUG_FLUSH();
-
-    // Also check for EOS as a character transition (DFA_CHAR_EOS = 0x05)
-    // This handles the case where EOS is stored as a regular character transition
-    if (current_state->transition_count > 0 && current_state->transitions_offset > 0) {
-        if (current_dfa->version >= 5) {
-            // V5: Compact Rules
-            const dfa_rule_t* rules = (const dfa_rule_t*)((const char*)current_dfa + current_state->transitions_offset);
-            for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                bool match = false;
-                unsigned char c = DFA_CHAR_EOS;
-                uint8_t type = rules[i].type;
-                uint8_t d1 = rules[i].data1;
-                uint8_t d2 = rules[i].data2;
-                uint8_t d3 = rules[i].data3;
-                
-                switch (type) {
-                    case DFA_RULE_LITERAL:
-                        if (c == d1) match = true;
-                        break;
-                    case DFA_RULE_RANGE:
-                        if (c >= d1 && c <= d2) match = true;
-                        break;
-                    case DFA_RULE_LITERAL_2:
-                        if (c == d1 || c == d2) match = true;
-                        break;
-                    case DFA_RULE_LITERAL_3:
-                        if (c == d1 || c == d2 || c == d3) match = true;
-                        break;
-                    case DFA_RULE_RANGE_LITERAL:
-                        if ((c >= d1 && c <= d2) || c == d3) match = true;
-                        break;
-                    case DFA_RULE_DEFAULT:
-                        match = true;
-                        break;
-                    case DFA_RULE_NOT_LITERAL:
-                        if (c != d1) match = true;
-                        break;
-                    case DFA_RULE_NOT_RANGE:
-                        if (c < d1 || c > d2) match = true;
-                        break;
-                }
-                
-                if (match) {
-                    const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)current_dfa + rules[i].target);
-                    uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
-                    if (eos_cat_mask != 0) {
-                        result->matched = true;
-                        result->matched_length = pos;
-                        result->final_state = eos_state->flags;
-                        result->category_mask = eos_cat_mask;
-                        if (eos_cat_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-                        else if (eos_cat_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-                        else if (eos_cat_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-                        else if (eos_cat_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-                        else if (eos_cat_mask & 0x10) result->category = DFA_CMD_NETWORK;
-                        else if (eos_cat_mask & 0x20) result->category = DFA_CMD_ADMIN;
-                        return true;
-                    }
-                }
-            }
-        } else {
-            // V4: Explicit Transitions
-            dfa_transition_t* trans = (dfa_transition_t*)((char*)current_dfa + current_state->transitions_offset);
-            for (uint16_t i = 0; i < current_state->transition_count; i++) {
-                if ((unsigned char)trans[i].character == DFA_CHAR_EOS) {
-                    const dfa_state_t* eos_state = (const dfa_state_t*)((char*)current_dfa + trans[i].next_state_offset);
-                    uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
-                    if (eos_cat_mask != 0) {
-                        result->matched = true;
-                        result->matched_length = pos;
-                        result->final_state = eos_state->flags;
-                        result->category_mask = eos_cat_mask;
-                        if (eos_cat_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-                        else if (eos_cat_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-                        else if (eos_cat_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-                        else if (eos_cat_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-                        else if (eos_cat_mask & 0x10) result->category = DFA_CMD_NETWORK;
-                        else if (eos_cat_mask & 0x20) result->category = DFA_CMD_ADMIN;
-                        return true;
-                    }
-                }
-            }
-        }
+    if (curr->eos_target != 0) {
+        const dfa_state_t* eos = (const dfa_state_t*)(raw_base + curr->eos_target);
+        process_deferred(eos, defer_stack, &defer_depth, pos, result);
+        process_markers(eos, active, pos, result, max_caps, defer_stack, &defer_depth);
+        curr = eos;
     }
 
-    // End of input - check if final state can accept
-    uint8_t current_category_mask = DFA_GET_CATEGORY_MASK(current_state->flags);
-    EVAL_DEBUG_PRINT("Final state at offset=0x%X, flags=0x%04X, category_mask=0x%02X\n",
-            (unsigned int)((char*)current_state - (char*)current_dfa), current_state->flags, current_category_mask);
-    EVAL_DEBUG_FLUSH();
-    
-    // Also check EOS target
-    if (current_state->eos_target != 0) {
-        dfa_state_t* eos_state = (dfa_state_t*)((char*)current_dfa + current_state->eos_target);
-        uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
-        EVAL_DEBUG_PRINT("EOS target at offset=0x%X, flags=0x%04X, eos_category_mask=0x%02X\n",
-                current_state->eos_target, eos_state->flags, eos_cat_mask);
-        EVAL_DEBUG_FLUSH();
-    }
-
-    // First check current state
-    bool is_accepting = (current_category_mask != 0);
-    EVAL_DEBUG_PRINT("is_accepting=%d\n", is_accepting);
-    fflush(stderr);
-
-    // Also check EOS target if current state is not accepting
-    if (!is_accepting && current_state->eos_target != 0) {
-        const dfa_state_t* eos_state = (const dfa_state_t*)((const char*)current_dfa + current_state->eos_target);
-
-        // Process capture markers on EOS state
-        process_capture_markers(&eos_state, raw_base, active_captures, pos, result, max_captures);
-
-        uint8_t eos_cat_mask = DFA_GET_CATEGORY_MASK(eos_state->flags);
-        if (eos_cat_mask != 0) {
-            is_accepting = true;
-            current_category_mask = eos_cat_mask;
-            current_state = eos_state;
-        }
-    }
-
-    // A state is accepting if category_mask != 0 (contains at least one accepting NFA state)
-    if (is_accepting) {
+    uint8_t mask = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+    if (mask != 0) {
         result->matched = true;
         result->matched_length = pos;
-        result->final_state = current_state->flags;
-        result->category_mask = current_category_mask;
-
-        if (current_category_mask & 0x01) result->category = DFA_CMD_READONLY_SAFE;
-        else if (current_category_mask & 0x02) result->category = DFA_CMD_READONLY_CAUTION;
-        else if (current_category_mask & 0x04) result->category = DFA_CMD_MODIFYING;
-        else if (current_category_mask & 0x08) result->category = DFA_CMD_DANGEROUS;
-        else if (current_category_mask & 0x10) result->category = DFA_CMD_NETWORK;
-        else if (current_category_mask & 0x20) result->category = DFA_CMD_ADMIN;
+        result->category_mask = mask;
+        result->final_state = (uint32_t)((const char*)curr - raw_base);
+        for (int i = 0; i < 7; i++) if (mask & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
     }
 
     return result->matched;

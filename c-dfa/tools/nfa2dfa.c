@@ -4,106 +4,98 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include <errno.h>
 #include "../include/dfa_types.h"
 #include "../include/nfa.h"
+#include "multi_target_array.h"
 #include "dfa_minimize.h"
-
-// Bitmask type for visited tracking (8192 bits = 128 uint64_t for MAX_STATES=8192)
-#define VISITED_WORDS 128
-typedef struct {
-    uint64_t bits[VISITED_WORDS];
-} visited_bitmask_t;
 
 // Forward declaration
 int find_symbol_id(char c);
 
-// Pattern identifier (read from NFA file)
 static char pattern_identifier[256] = "";
-
-// Debug output control - set to 0 to disable all debug prints
-#ifndef NFA2DFA_DEBUG
-#define NFA2DFA_DEBUG 0
-#endif
-
-// Verbose output control - set to 0 to disable progress messages
-#ifndef NFA2DFA_VERBOSE
-#define NFA2DFA_VERBOSE 0
-#endif
-
-// Runtime verbose flag (overrides compile-time setting)
 static bool flag_verbose = false;
 
-// Conditional debug print macro - only prints if verbose is enabled
-#define DEBUG_PRINT(fmt, ...) do { if (flag_verbose) fprintf(stderr, fmt, ##__VA_ARGS__); } while (0)
+#define DEBUG_PRINT(...) do { if (flag_verbose) fprintf(stderr, __VA_ARGS__); } while (0)
 
-// Character class definition
+/**
+ * Check allocation result and abort on failure
+ */
+static void* alloc_or_abort(void* ptr, const char* msg) {
+    if (ptr == NULL) {
+        fprintf(stderr, "FATAL: %s - %s\n", msg, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+    return ptr;
+}
+
 typedef struct {
+    int symbol_id;
     int start_char;
     int end_char;
-    int symbol_id;
     bool is_special;
-} char_class_t;
+} alphabet_entry_t;
 
-// Negated transition structure for NFA
-typedef struct {
-    int target_state;
-    char excluded_chars[MAX_SYMBOLS];
-    int excluded_count;
-} negated_transition_t;
-
-// NFA State for reading NFA files
-typedef struct {
-    uint8_t category_mask;  // Bitmask of accepting categories
-    char* tags[MAX_STATES];
-    int tag_count;
-    int transitions[MAX_SYMBOLS];
-    int transition_count;
-    char multi_targets[MAX_SYMBOLS][256];  // For storing additional targets as CSV
-    negated_transition_t negated_transitions[MAX_SYMBOLS];
-    int negated_transition_count;
-    int8_t capture_start_id;   // Capture ID to emit at this state (-1 = none)
-    int8_t capture_end_id;     // Capture ID to emit at this state (-1 = none)
-    int8_t capture_defer_id;   // Capture ID to defer until leaving this state (-1 = none)
-    bool is_eos_target;        // This state can accept via EOS transition
-    int16_t pattern_id;        // Pattern ID this state belongs to (-1 = none/shared)
-} nfa_state_t;
-
-// Note: build_dfa_state_t is now defined in dfa_minimize.h
-
-// Global variables
+// Global NFA/DFA storage
 static nfa_state_t nfa[MAX_STATES];
 static build_dfa_state_t dfa[MAX_STATES];
-static char_class_t alphabet[MAX_SYMBOLS];
+static alphabet_entry_t alphabet[MAX_SYMBOLS];
 static int nfa_state_count = 0;
 static int dfa_state_count = 0;
 static int alphabet_size = 0;
 
-// Initialize NFA
+// DFA Deduplication Hash Table
+#define DFA_HASH_SIZE 32749
+static int dfa_hash_table[DFA_HASH_SIZE];
+static int dfa_next_in_bucket[MAX_STATES];
+
+static uint32_t hash_nfa_set(const int* states, int count, uint8_t mask) {
+    uint32_t hash = 2166136261u;
+    for (int i = 0; i < count; i++) {
+        hash ^= (uint32_t)states[i];
+        hash *= 16777619;
+    }
+    hash ^= (uint32_t)mask << 24;
+    return hash;
+}
+
+static int find_dfa_state_hashed(uint32_t hash, const int* states, int count, uint8_t mask) {
+    int idx = dfa_hash_table[hash % DFA_HASH_SIZE];
+    while (idx != -1) {
+        if (dfa[idx].nfa_state_count == count) {
+            uint8_t existing_mask = (uint8_t)(dfa[idx].flags >> 8);
+            if (existing_mask == mask) {
+                bool match = true;
+                for (int j = 0; j < count; j++) {
+                    if (dfa[idx].nfa_states[j] != states[j]) { match = false; break; }
+                }
+                if (match) return idx;
+            }
+        }
+        idx = dfa_next_in_bucket[idx];
+    }
+    return -1;
+}
+
 void nfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
         nfa[i].category_mask = 0;
-        nfa[i].tag_count = 0;
-        for (int j = 0; j < MAX_STATES; j++) {
-            nfa[i].tags[j] = NULL;
-        }
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             nfa[i].transitions[j] = -1;
-            nfa[i].multi_targets[j][0] = '\0';
         }
-        nfa[i].transition_count = 0;
-        nfa[i].negated_transition_count = 0;
+        mta_init(&nfa[i].multi_targets);
         nfa[i].capture_start_id = -1;
         nfa[i].capture_end_id = -1;
         nfa[i].capture_defer_id = -1;
         nfa[i].is_eos_target = false;
-        nfa[i].pattern_id = -1;
     }
     nfa_state_count = 0;
 }
 
-// Initialize DFA
 void dfa_init(void) {
+    memset(dfa_hash_table, -1, sizeof(dfa_hash_table));
     for (int i = 0; i < MAX_STATES; i++) {
+        dfa_next_in_bucket[i] = -1;
         dfa[i].flags = 0;
         dfa[i].transition_count = 0;
         dfa[i].nfa_state_count = 0;
@@ -111,820 +103,237 @@ void dfa_init(void) {
         dfa[i].capture_end_id = -1;
         dfa[i].capture_defer_id = -1;
         dfa[i].eos_target = 0;
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
+        for (int j = 0; j < 256; j++) {
             dfa[i].transitions[j] = -1;
             dfa[i].transitions_from_any[j] = false;
-        }
-        for (int j = 0; j < MAX_STATES; j++) {
-            dfa[i].nfa_states[j] = -1;
         }
     }
     dfa_state_count = 0;
 }
 
-// Helper function to iteratively follow EOS transitions and collect category masks
-// Returns the combined category mask from all terminal states reachable via EOS chain
-// Uses iterative DFS with bitmask visited tracking to avoid stack overflow
-static uint8_t collect_eos_categories(int start_state, int eos_symbol) {
-    uint8_t combined_mask = 0;
+void epsilon_closure(int* states, int* count, int max_states) {
+    int epsilon_sid = -1;
+    for (int s = 0; s < alphabet_size; s++) {
+        if (alphabet[s].is_special && alphabet[s].start_char == 1) { epsilon_sid = s; break; }
+    }
+    if (epsilon_sid < 0) return;
 
-    // Use a bitmask for visited tracking
-    visited_bitmask_t visited;
-    memset(&visited, 0, sizeof(visited));
-
-    // Stack for iterative DFS (use malloc for large stacks if needed)
-    int* stack = NULL;
-    int stack_capacity = 64;
-    int stack_top = 0;
-
-    stack = malloc(stack_capacity * sizeof(int));
-    if (!stack) {
-        fprintf(stderr, "Error: Failed to allocate stack for EOS traversal\n");
-        return 0;
+    static bool in_set[MAX_STATES];
+    memset(in_set, 0, sizeof(in_set));
+    int stack[MAX_STATES], top = 0;
+    
+    for (int i = 0; i < *count; i++) {
+        int s = states[i];
+        if (s >= 0 && s < nfa_state_count) { stack[top++] = s; in_set[s] = true; }
     }
 
-    // Push start state
-    stack[stack_top++] = start_state;
-
-    while (stack_top > 0) {
-        // Pop from stack
-        int state = stack[--stack_top];
-
-        // Bounds check for safety
-        if (state < 0 || state >= nfa_state_count) {
-            continue;
+    while (top > 0) {
+        int s = stack[--top];
+        int t = nfa[s].transitions[epsilon_sid];
+        if (t != -1 && t < nfa_state_count && !in_set[t]) {
+            if (*count < max_states) { states[(*count)++] = t; stack[top++] = t; in_set[t] = true; }
         }
-
-        // Check if already visited using bitmask
-        int word = state / 64;
-        int bit = state % 64;
-        if (word < VISITED_WORDS && (visited.bits[word] & (1ULL << bit))) {
-            continue;
-        }
-        // Mark as visited
-        if (word < VISITED_WORDS) {
-            visited.bits[word] |= (1ULL << bit);
-        }
-
-        // Check if this state is terminal (EOS target with category)
-        if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
-            // Check if this state has NO character transitions (truly terminal)
-            bool has_char_trans = false;
-            for (int s = 0; s < alphabet_size; s++) {
-                if (alphabet[s].is_special) continue;
-                if (nfa[state].transitions[s] != -1 || nfa[state].multi_targets[s][0] != '\0') {
-                    has_char_trans = true;
-                    break;
+        int mta_cnt = 0;
+        int* mta_targets = mta_get_target_array(&nfa[s].multi_targets, epsilon_sid, &mta_cnt);
+        if (mta_targets) {
+            for (int i = 0; i < mta_cnt; i++) {
+                int target = mta_targets[i];
+                if (target >= 0 && target < nfa_state_count && !in_set[target]) {
+                    if (*count < max_states) { states[(*count)++] = target; stack[top++] = target; in_set[target] = true; }
                 }
-            }
-            if (!has_char_trans) {
-                combined_mask |= nfa[state].category_mask;
-            }
-        }
-
-        // Follow EOS transition if present
-        if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
-            int eos_target = nfa[state].transitions[eos_symbol];
-
-            // Grow stack if needed
-            if (stack_top >= stack_capacity) {
-                stack_capacity *= 2;
-                if (stack_capacity > MAX_STATES) {
-                    stack_capacity = MAX_STATES;
-                }
-                int* new_stack = realloc(stack, stack_capacity * sizeof(int));
-                if (!new_stack) {
-                    fprintf(stderr, "Error: Failed to reallocate stack\n");
-                    free(stack);
-                    return combined_mask;
-                }
-                stack = new_stack;
-            }
-
-            // Push EOS target if within bounds
-            if (eos_target >= 0 && eos_target < nfa_state_count && stack_top < stack_capacity) {
-                stack[stack_top++] = eos_target;
             }
         }
     }
-
-    free(stack);
-    return combined_mask;
 }
 
-// Add DFA state
 int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
-    if (dfa_state_count >= MAX_STATES) {
-        fprintf(stderr, "Error: Maximum DFA states reached\n");
-        exit(1);
+    epsilon_closure(nfa_states, &nfa_count, MAX_STATES);
+    for (int i = 0; i < nfa_count - 1; i++) {
+        for (int j = 0; j < nfa_count - i - 1; j++) {
+            if (nfa_states[j] > nfa_states[j+1]) { int t = nfa_states[j]; nfa_states[j] = nfa_states[j+1]; nfa_states[j+1] = t; }
+        }
     }
-    int state = dfa_state_count;
-
-    // Check for capture markers in NFA states (stored directly on states)
-    uint16_t capture_flags = 0;
-    int8_t capture_start_id = -1;
-    int8_t capture_end_id = -1;
-    int8_t capture_defer_id = -1;
-    uint32_t eos_target = 0;
-
+    uint32_t h = hash_nfa_set(nfa_states, nfa_count, category_mask);
+    int existing = find_dfa_state_hashed(h, nfa_states, nfa_count, category_mask);
+    if (existing != -1) return existing;
+    if (dfa_state_count >= MAX_STATES) { fprintf(stderr, "FATAL: Max DFA states reached\n"); exit(1); }
+    int state = dfa_state_count++;
+    memset(&dfa[state], 0, sizeof(build_dfa_state_t));
+    for (int i = 0; i < 256; i++) dfa[state].transitions[i] = -1;
+    uint16_t cf = 0; int8_t cs = -1, ce = -1, cd = -1;
     for (int i = 0; i < nfa_count; i++) {
-        int nfa_state = nfa_states[i];
-        if (nfa_state < 0 || nfa_state >= nfa_state_count) continue;
-
-        // Check for capture start marker on this NFA state
-        if (nfa[nfa_state].capture_start_id >= 0) {
-            capture_flags |= DFA_STATE_CAPTURE_START;
-            capture_start_id = nfa[nfa_state].capture_start_id;
-            DEBUG_PRINT("DFA state %d gets capture_start_id=%d from NFA state %d\n",
-                    state, capture_start_id, nfa_state);
-        }
-
-        // Check for capture end marker on this NFA state
-        if (nfa[nfa_state].capture_end_id >= 0) {
-            capture_flags |= DFA_STATE_CAPTURE_END;
-            capture_end_id = nfa[nfa_state].capture_end_id;
-            DEBUG_PRINT("DFA state %d gets capture_end_id=%d from NFA state %d\n",
-                    state, capture_end_id, nfa_state);
-        }
-
-        // Check for capture defer marker on this NFA state
-        if (nfa[nfa_state].capture_defer_id >= 0) {
-            capture_flags |= DFA_STATE_CAPTURE_DEFER;
-            capture_defer_id = nfa[nfa_state].capture_defer_id;
-            DEBUG_PRINT("DFA state %d gets capture_defer_id=%d from NFA state %d\n",
-                    state, capture_defer_id, nfa_state);
-        }
-
-        // Check for EOS target marker on this NFA state
-        if (nfa[nfa_state].is_eos_target) {
-            eos_target = 0;  // Will be resolved during DFA construction
-        }
+        int ns = nfa_states[i]; if (ns < 0 || ns >= nfa_state_count) continue;
+        if (nfa[ns].capture_start_id >= 0) { cf |= DFA_STATE_CAPTURE_START; cs = nfa[ns].capture_start_id; }
+        if (nfa[ns].capture_end_id >= 0) { cf |= DFA_STATE_CAPTURE_END; ce = nfa[ns].capture_end_id; }
+        if (nfa[ns].capture_defer_id >= 0) { cf |= DFA_STATE_CAPTURE_DEFER; cd = nfa[ns].capture_defer_id; }
     }
-    
-    // Store category_mask in bits 8-15, set DFA_STATE_ACCEPTING if category_mask != 0
-    dfa[state].flags = (category_mask << 8) | capture_flags;
-    if (category_mask != 0) {
-        dfa[state].flags |= DFA_STATE_ACCEPTING;
-    }
-    if (capture_flags != 0) {
-        DEBUG_PRINT("State %d has capture flags 0x%x (start_id=%d, end_id=%d, defer_id=%d)\n",
-                state, capture_flags, capture_start_id, capture_end_id, capture_defer_id);
-    }
-    dfa[state].transition_count = 0;
-    dfa[state].nfa_state_count = 0;
-    dfa[state].capture_start_id = capture_start_id;
-    dfa[state].capture_end_id = capture_end_id;
-    dfa[state].capture_defer_id = capture_defer_id;
-    dfa[state].eos_target = eos_target;
-    for (int i = 0; i < nfa_count && i < MAX_STATES; i++) {
-        dfa[state].nfa_states[i] = nfa_states[i];
-        dfa[state].nfa_state_count++;
-    }
-    if (state <= 20) {
-        DEBUG_PRINT("dfa_add_state(%d): category_mask=0x%02x, nfa_count=%d, nfa_states={", state, category_mask, nfa_count);
-        for (int i = 0; i < nfa_count; i++) {
-            DEBUG_PRINT("%d(cat=0x%02x,pid=%d)%s", nfa_states[i], nfa[nfa_states[i]].category_mask, nfa[nfa_states[i]].pattern_id, i < nfa_count-1 ? ", " : "");
-        }
-        DEBUG_PRINT("}\n");
-    }
-    dfa_state_count++;
+    dfa[state].flags = (category_mask << 8) | cf;
+    if (category_mask != 0) dfa[state].flags |= DFA_STATE_ACCEPTING;
+    dfa[state].capture_start_id = cs; dfa[state].capture_end_id = ce; dfa[state].capture_defer_id = cd;
+    dfa[state].nfa_state_count = nfa_count;
+    for (int i = 0; i < nfa_count && i < 8192; i++) dfa[state].nfa_states[i] = nfa_states[i];
+    int bucket = h % DFA_HASH_SIZE;
+    dfa_next_in_bucket[state] = dfa_hash_table[bucket];
+    dfa_hash_table[bucket] = state;
     return state;
 }
 
-// Compute epsilon closure (follows ANY and EOS transitions)
-// CRITICAL FIX: Track how each state was added to the closure
-// - States added via character transitions (nfa_move) can have ANY followed
-// - States added via EOS transitions can have ANY followed
-// - States added via ANY transitions should NOT have ANY followed
-// This prevents loop state ANY transitions (like in a((b))+ from state 9)
-// from contaminating the closure with states that lead to dead paths.
-void epsilon_closure(int* states, int* count, int max_states) {
-    // Find symbol IDs once
-    int any_symbol = -1;
-    int eos_symbol = -1;
-    int epsilon_symbol = -1;
-    for (int s = 0; s < alphabet_size; s++) {
-        if (alphabet[s].start_char == DFA_CHAR_ANY) {
-            any_symbol = s;
-        }
-        if (alphabet[s].start_char == DFA_CHAR_EOS) {
-            eos_symbol = s;
-        }
-        if (alphabet[s].start_char == DFA_CHAR_EPSILON) {
-            epsilon_symbol = s;
-        }
-    }
-
-    // Track how each state was added
-    // 0 = original (from character move or initial set)
-    // 1 = added via EOS
-    // 2 = added via EPSILON
-    // 3 = added via ANY (should not have ANY followed)
-    int8_t added_via[MAX_STATES];
-    for (int i = 0; i < MAX_STATES; i++) {
-        added_via[i] = -1;  // Unknown
-    }
+void nfa_move(int* states, int* count, int sid, int max_states) {
+    int ns[MAX_STATES], nc = 0; static bool is[MAX_STATES];
+    memset(is, 0, sizeof(is));
     for (int i = 0; i < *count; i++) {
-        added_via[states[i]] = 0;  // Original states
-    }
-
-    int added = 1;
-    while (added && *count < max_states) {
-        added = 0;
-        for (int i = 0; i < *count; i++) {
-            int state = states[i];
-            if (state < 0 || state >= nfa_state_count) continue;
-
-            // EPSILON transitions can always be followed (for alternation)
-            if (epsilon_symbol >= 0 && nfa[state].transitions[epsilon_symbol] != -1) {
-                int target = nfa[state].transitions[epsilon_symbol];
-                bool found = false;
-                for (int j = 0; j < *count; j++) {
-                    if (states[j] == target) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    states[*count] = target;
-                    added_via[target] = 2;  // Added via EPSILON
-                    (*count)++;
-                    added = 1;
-                }
-            }
-
-            // EOS transitions can always be followed
-            if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
-                int target = nfa[state].transitions[eos_symbol];
-                bool found = false;
-                for (int j = 0; j < *count; j++) {
-                    if (states[j] == target) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    states[*count] = target;
-                    added_via[target] = 1;  // Added via EOS
-                    (*count)++;
-                    added = 1;
-                }
-            }
-
-            // ANY transitions: only follow if state was NOT added via ANY or EPSILON
-            // This prevents loop states from contaminating the closure
-            // States added via EPSILON should not follow ANY to avoid cross-branch contamination
-            if (any_symbol >= 0 && added_via[state] != 3 && added_via[state] != 2 &&
-                nfa[state].transitions[any_symbol] != -1) {
-                int target = nfa[state].transitions[any_symbol];
-                bool found = false;
-                for (int j = 0; j < *count; j++) {
-                    if (states[j] == target) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    states[*count] = target;
-                    added_via[target] = 3;  // Added via ANY
-                    (*count)++;
-                    added = 1;
-                }
+        int s = states[i]; if (s < 0 || s >= nfa_state_count) continue;
+        int mta_cnt = 0;
+        int* targets = mta_get_target_array(&nfa[s].multi_targets, sid, &mta_cnt);
+        if (targets) {
+            for (int k = 0; k < mta_cnt; k++) {
+                int t = targets[k]; if (t >= 0 && t < nfa_state_count && !is[t]) { if (nc < max_states) { ns[nc++] = t; is[t] = true; } }
             }
         }
     }
+    for (int i = 0; i < nc; i++) states[i] = ns[i];
+    *count = nc;
 }
 
-// Move NFA states on symbol
-void nfa_move(int* states, int* count, int symbol_id, int max_states) {
-    int new_states[MAX_STATES];
-    int new_count = 0;
-
-    for (int i = 0; i < *count; i++) {
-        int state = states[i];
-        if (state < 0 || state >= nfa_state_count) continue;
-
-        // Check first transition
-        if (nfa[state].transitions[symbol_id] != -1) {
-            int target = nfa[state].transitions[symbol_id];
-            bool found = false;
-            for (int j = 0; j < new_count; j++) {
-                if (new_states[j] == target) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found && new_count < max_states) {
-                new_states[new_count] = target;
-                new_count++;
-            }
-        }
-
-        // Check additional targets in multi_targets
-        if (nfa[state].multi_targets[symbol_id][0] != '\0') {
-            char* p = nfa[state].multi_targets[symbol_id];
-            while (p != NULL && *p != '\0') {
-                if (*p == ',') p++;  // Skip leading comma
-                // Use strtol for safer parsing with bounds validation
-                char* end;
-                long target_long = strtol(p, &end, 10);
-                if (end > p && target_long >= 0 && target_long < MAX_STATES) {
-                    int target = (int)target_long;
-                    bool found = false;
-                    for (int j = 0; j < new_count; j++) {
-                        if (new_states[j] == target) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found && new_count < max_states) {
-                        new_states[new_count] = target;
-                        new_count++;
-                    }
-                }
-                p = strchr(p, ',');
-                if (p) p++;
-            }
-        }
-    }
-
-    for (int i = 0; i < new_count && i < max_states; i++) {
-        states[i] = new_states[i];
-    }
-    *count = new_count;
-}
-
-// Convert NFA to DFA
 void nfa_to_dfa(void) {
     dfa_init();
-    int initial_nfa_states[MAX_STATES];
-    initial_nfa_states[0] = 0;
-    int initial_count = 1;
-    epsilon_closure(initial_nfa_states, &initial_count, MAX_STATES);
-
-    // Compute initial accepting mask - only from states with same pattern_id
-    // CRITICAL FIX: The initial state's category_mask should only be set if ALL NFA states
-    // in the initial closure belong to the SAME pattern. If states from different patterns
-    // are present, we must NOT set the accepting mask (set to 0) to prevent incorrect matches.
-    int initial_dominant_pattern = -1;
-    bool initial_all_same_pattern = true;
-    uint8_t initial_accepting_mask = 0;
-    for (int i = 0; i < initial_count; i++) {
-        int state = initial_nfa_states[i];
-        int pattern_id = nfa[state].pattern_id;
-
-        if (pattern_id < 0) {
-            // State has no pattern_id (e.g., fragment or intermediate state)
-            continue;
-        }
-        if (initial_dominant_pattern < 0) {
-            initial_dominant_pattern = pattern_id;
-        } else if (pattern_id != initial_dominant_pattern) {
-            // States from different patterns - don't set accepting mask
-            initial_all_same_pattern = false;
-            break;
-        }
-    }
-    if (initial_all_same_pattern && initial_dominant_pattern >= 0) {
-        for (int i = 0; i < initial_count; i++) {
-            initial_accepting_mask |= nfa[initial_nfa_states[i]].category_mask;
-        }
-    }
-
-    int initial_dfa = dfa_add_state(initial_accepting_mask, initial_nfa_states, initial_count);
-    int queue[MAX_STATES];
-    int queue_start = 0;
-    int queue_end = 1;
-    queue[0] = initial_dfa;
-    while (queue_start < queue_end) {
-        int current_dfa = queue[queue_start];
-        queue_start++;
-        for (int array_idx = 0; array_idx < alphabet_size; array_idx++) {
-            int move_states[MAX_STATES];
-            int move_count = 0;
-            for (int i = 0; i < dfa[current_dfa].nfa_state_count; i++) {
-                move_states[i] = dfa[current_dfa].nfa_states[i];
-            }
-            move_count = dfa[current_dfa].nfa_state_count;
-
-            // Use the actual symbol_id from the alphabet entry, not the array index
-            int symbol_id = alphabet[array_idx].symbol_id;
-            nfa_move(move_states, &move_count, symbol_id, MAX_STATES);
-            if (move_count == 0) continue;
-
-            // CRITICAL FIX: Save the direct move targets BEFORE epsilon closure
-            // This is the key fix for the category isolation bug
-            int direct_move_count = move_count;
-            int direct_moves[MAX_STATES];
-            for (int i = 0; i < move_count; i++) {
-                direct_moves[i] = move_states[i];
-            }
-
-            // Now do epsilon closure (modifies move_states in place)
-            epsilon_closure(move_states, &move_count, MAX_STATES);
-
-            uint8_t move_accepting_mask = 0;
-
-            // Also check EPSILON-CLOSED states for accepting status
-            // After epsilon closure, move_states contains states reachable via EPSILON
-            // Some of these states might be accepting (have is_eos_target=true)
-            // We need to include their categories
-            for (int i = 0; i < move_count; i++) {
-                int state = move_states[i];
-                if (nfa[state].is_eos_target && nfa[state].category_mask != 0) {
-                    if (move_accepting_mask == 0) {
-                        move_accepting_mask = nfa[state].category_mask;
-                    } else if (move_accepting_mask != nfa[state].category_mask) {
-                        move_accepting_mask |= nfa[state].category_mask;
-                    }
-                }
-            }
-
-            // Check which of the DIRECT MOVE TARGETS are terminal
-            // (States with no character transitions)
-            for (int i = 0; i < direct_move_count; i++) {
-                int state = direct_moves[i];
-                
-                // Check if this state has any character transitions (excluding special symbols)
-                bool has_char_transition = false;
-                for (int s = 0; s < alphabet_size; s++) {
-                    if (alphabet[s].is_special) continue;  // Skip EOS, space, etc.
-                    if (nfa[state].transitions[s] != -1 || nfa[state].multi_targets[s][0] != '\0') {
-                        has_char_transition = true;
-                        break;
-                    }
-                }
-                
-                // If this move target is terminal, include its category
-                // (Terminal means: no char transitions, is EOS target, has category)
-                // IMPORTANT: Detect category conflicts - if different categories reach
-                // the same state, mark as conflicting (0) to prevent misclassification
-                if (!has_char_transition && nfa[state].is_eos_target && nfa[state].category_mask != 0) {
-                    if (move_accepting_mask == 0) {
-                        move_accepting_mask = nfa[state].category_mask;
-                    } else if (move_accepting_mask != nfa[state].category_mask) {
-                        move_accepting_mask |= nfa[state].category_mask;
-                    }
-                }
-                
-                // Also check EOS transitions from this move target
-                // IMPORTANT: For + quantifier, we need to recursively follow EOS chains
-                // to find all terminal states reachable via EOS
-                
-                // Find EOS symbol
-                int eos_symbol = -1;
-                for (int s = 0; s < alphabet_size; s++) {
-                    if (alphabet[s].is_special && alphabet[s].start_char == DFA_CHAR_EOS) {  // EOS symbol
-                        eos_symbol = s;
-                        break;
-                    }
-                }
-                
-                if (eos_symbol >= 0 && nfa[state].transitions[eos_symbol] != -1) {
-                    // Use iterative helper to collect all categories from EOS chain
-                    uint8_t eos_categories = collect_eos_categories(state, eos_symbol);
-                    if (eos_categories != 0) {
-                        DEBUG_PRINT("state=%d EOS chain categories=0x%02x\n", state, eos_categories);
-                        move_accepting_mask |= eos_categories;
-                        DEBUG_PRINT("Added category 0x%02x from EOS chain\n", eos_categories);
-                    }
-                }
-            }
-            
-            DEBUG_PRINT("direct_move_count=%d, move_accepting_mask=0x%02x\n", direct_move_count, move_accepting_mask);
-
-            // Debug for transitions on 'b' from states 10 and 20
-            if (alphabet[array_idx].start_char == 'b' && (current_dfa == 10 || current_dfa == 20)) {
-                    DEBUG_PRINT("From DFA state %d on 'b': move_count=%d\n", current_dfa, move_count);
-                int final_count = 0;
-                for (int i = 0; i < move_count; i++) {
-                    int state = move_states[i];
-                    bool is_final = nfa[state].is_eos_target && nfa[state].category_mask != 0;
-                    if (is_final) {
-                        bool has_trans = false;
-                        for (int s = 0; s < MAX_SYMBOLS; s++) {
-                            if (nfa[state].transitions[s] != -1 || nfa[state].multi_targets[s][0] != '\0') {
-                                has_trans = true;
-                                break;
-                            }
-                        }
-                        if (!has_trans) {
-                            final_count++;
-                            DEBUG_PRINT("  State %d: FINAL (cat=0x%02x)\n", state, nfa[state].category_mask);
-                        }
-                    }
-                }
-                DEBUG_PRINT("  Final states count: %d\n", final_count);
-                DEBUG_PRINT("  move_accepting_mask=0x%02x\n", move_accepting_mask);
-            }
-
-            // Find existing DFA state with same set of NFA states
-            int existing_state = -1;
-            for (int i = 0; i < dfa_state_count; i++) {
-                if (dfa[i].nfa_state_count != move_count) continue;
-
-                // CRITICAL FIX: States with different acceptance categories must NOT be merged
-                uint8_t existing_cat_mask = (dfa[i].flags >> 8) & 0xFF;
-                if (existing_cat_mask != move_accepting_mask) continue;
-
-                bool match = true;
-                for (int j = 0; j < move_count; j++) {
-                    bool found = false;
-                    for (int k = 0; k < dfa[i].nfa_state_count; k++) {
-                        if (dfa[i].nfa_states[k] == move_states[j]) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        match = false;
-                        break;
-                    }
-                }
-                if (match) {
-                    existing_state = i;
-                    break;
-                }
-            }
-            if (existing_state != -1) {
-                dfa[current_dfa].transitions[array_idx] = existing_state;
-                dfa[current_dfa].transition_count++;
-            } else {
-                int new_dfa = dfa_add_state(move_accepting_mask, move_states, move_count);
-                dfa[current_dfa].transitions[array_idx] = new_dfa;
-                dfa[current_dfa].transition_count++;
-                if (queue_end < MAX_STATES) {
-                    queue[queue_end] = new_dfa;
-                    queue_end++;
-                }
-#if 1
-                // Debug for transitions on 'b' from states 10 and 20
-                if (alphabet[array_idx].start_char == 'b' && (current_dfa == 10 || current_dfa == 20)) {
-                DEBUG_PRINT("From DFA state %d on 'b': move_count=%d\n", current_dfa, move_count);
-                    // Check for different categories
-                    uint8_t seen_cats[256] = {0};
-                    int cat_count = 0;
-                    for (int i = 0; i < move_count; i++) {
-                        uint8_t state_cat = nfa[move_states[i]].category_mask;
-                        if (state_cat != 0) {
-                            bool found = false;
-                            for (int j = 0; j < cat_count; j++) {
-                                if (seen_cats[j] == state_cat) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if (!found && cat_count < 256) {
-                                seen_cats[cat_count++] = state_cat;
-                            }
-                        }
-                    }
-                    fprintf(stderr, "  Categories found: %d\n", cat_count);
-                    fprintf(stderr, "  move_accepting_mask=0x%02x\n", move_accepting_mask);
-                }
-#endif
-            }
+    int in[MAX_STATES] = {0}; int ic = 1;
+    int temp[MAX_STATES]; memcpy(temp, in, sizeof(int)); int tc = ic;
+    epsilon_closure(temp, &tc, MAX_STATES);
+    uint8_t im = 0; for (int i = 0; i < tc; i++) im |= nfa[temp[i]].category_mask;
+    int idfa = dfa_add_state(im, in, ic);
+    int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
+    while (h < t) {
+        int cur = q[h++];
+        for (int i = 0; i < alphabet_size; i++) {
+            int ms[MAX_STATES]; int mc = dfa[cur].nfa_state_count;
+            for (int j = 0; j < mc; j++) ms[j] = dfa[cur].nfa_states[j];
+            nfa_move(ms, &mc, alphabet[i].symbol_id, MAX_STATES);
+            if (mc == 0) continue;
+            int tc2 = mc; int temp2[MAX_STATES]; memcpy(temp2, ms, mc * sizeof(int));
+            epsilon_closure(temp2, &tc2, MAX_STATES);
+            uint8_t mm = 0; for (int j = 0; j < tc2; j++) mm |= nfa[temp2[j]].category_mask;
+            int target = dfa_add_state(mm, ms, mc);
+            dfa[cur].transitions[i] = target;
+            if (alphabet[i].is_special && alphabet[i].start_char == 5) dfa[cur].eos_target = target;
+            bool is_new = true; for (int j = 0; j < t; j++) if (q[j] == target) { is_new = false; break; }
+            if (is_new && t < MAX_STATES) q[t++] = target;
         }
     }
 }
 
-// Flatten DFA: convert symbol-based transitions to character-based
 void flatten_dfa(void) {
-    int start_symbol = 0;
-    if (alphabet_size > 0 && alphabet[0].start_char == 0 && alphabet[0].is_special) {
-        start_symbol = 1;
-    }
-    // Find ANY symbol (special with start_char == 0)
-    int any_symbol = -1;
-    for (int s = 0; s < alphabet_size; s++) {
-        if (alphabet[s].is_special && alphabet[s].start_char == 0) {
-            any_symbol = s;
-            break;
+    int any_sid = -1;
+    for (int s = 0; s < alphabet_size; s++) if (alphabet[s].is_special && alphabet[s].start_char == 0) { any_sid = s; break; }
+    for (int s = 0; s < dfa_state_count; s++) {
+        int nt[256]; bool any[256];
+        for (int i = 0; i < 256; i++) { nt[i] = -1; any[i] = false; }
+        if (any_sid >= 0 && dfa[s].transitions[any_sid] != -1) {
+            int t = dfa[s].transitions[any_sid];
+            for (int i = 0; i < 256; i++) { nt[i] = t; any[i] = true; }
         }
-    }
-    for (int state = 0; state < dfa_state_count; state++) {
-        int new_transitions[256];  // Character-based (0-255)
-        bool new_from_any[256];
-        int new_count = 0;
-        for (int i = 0; i < 256; i++) {
-            new_transitions[i] = -1;
-            new_from_any[i] = false;
-        }
-        // FIRST PASS: specific character transitions (higher priority)
-        // Skip symbol 0 (ANY) - it's handled in second pass
-        for (int s = alphabet_size - 1; s >= start_symbol; s--) {
-            if (s == any_symbol) continue;  // Skip ANY in first pass
-            if (dfa[state].transitions[s] != -1) {
-                int target = dfa[state].transitions[s];
-                // Find the alphabet entry for this symbol position
-                int start_char = alphabet[s].start_char;
-                int end_char = alphabet[s].end_char;
-                for (int c = start_char; c <= end_char; c++) {
-                    if (c >= 0 && c < 256 && new_transitions[c] == -1) {
-                        new_transitions[c] = target;
-                        new_from_any[c] = false;
-                        new_count++;
-                    }
-                }
+        for (int i = 0; i < alphabet_size; i++) {
+            if (i == any_sid || (alphabet[i].is_special && alphabet[i].start_char == 1)) continue;
+            if (dfa[s].transitions[i] != -1) {
+                int t = dfa[s].transitions[i];
+                for (int c = alphabet[i].start_char; c <= alphabet[i].end_char; c++) if (c >= 0 && c < 256) { nt[c] = t; any[c] = false; }
             }
         }
-        // SECOND PASS: ANY symbol to fill missing characters
-        if (any_symbol >= 0 && dfa[state].transitions[any_symbol] != -1) {
-            int any_target = dfa[state].transitions[any_symbol];
-            for (int c = 0; c < 256; c++) {
-                if (new_transitions[c] == -1) {
-                    new_transitions[c] = any_target;
-                    new_from_any[c] = true;
-                    new_count++;
-                }
-            }
-        }
-        for (int i = 0; i < 256; i++) {
-            dfa[state].transitions[i] = new_transitions[i];
-            dfa[state].transitions_from_any[i] = new_from_any[i];
-        }
-        dfa[state].transition_count = new_count;
-        
-        // Also resolve EOS target field if an EOS transition exists
-        if (any_symbol >= 0 && dfa[state].transitions[any_symbol] != -1) {
-            // Find EOS symbol position
-            for (int s = 0; s < alphabet_size; s++) {
-                if (alphabet[s].is_special && alphabet[s].start_char == 5) {
-                    if (dfa[state].transitions[s] != -1) {
-                        dfa[state].eos_target = dfa[state].transitions[s];
-                    }
-                    break;
-                }
-            }
-        } else {
-            // Check specifically for EOS even if no ANY
-            for (int s = 0; s < alphabet_size; s++) {
-                if (alphabet[s].is_special && alphabet[s].start_char == 5) {
-                    if (dfa[state].transitions[s] != -1) {
-                        dfa[state].eos_target = dfa[state].transitions[s];
-                    }
-                    break;
-                }
-            }
-        }
+        int rc = 0;
+        for (int i = 0; i < 256; i++) { dfa[s].transitions[i] = nt[i]; dfa[s].transitions_from_any[i] = any[i]; if (nt[i] != -1) rc++; }
+        dfa[s].transition_count = rc;
     }
 }
 
-// Load NFA file
-// Find symbol ID for a character
-int find_symbol_id(char c) {
-    for (int i = 0; i < alphabet_size; i++) {
-        if (c >= alphabet[i].start_char && c <= alphabet[i].end_char) {
-            return alphabet[i].symbol_id;
+typedef struct { uint8_t type, d1, d2, d3; int target_state_index; } intermediate_rule_t;
+
+int compress_state_rules(int sidx, intermediate_rule_t* out) {
+    int rc = 0, ct = -1, sc = -1;
+    for (int c = 0; c <= 256; c++) {
+        int t = (c < 256) ? dfa[sidx].transitions[c] : -1;
+        if (t != ct) {
+            if (ct != -1) {
+                out[rc].target_state_index = ct; out[rc].d1 = (uint8_t)sc; out[rc].d2 = (uint8_t)(c - 1); out[rc].d3 = 0;
+                out[rc].type = (sc == c - 1) ? DFA_RULE_LITERAL : DFA_RULE_RANGE;
+                rc++;
+            }
+            ct = t; sc = c;
         }
     }
-    return -1; // Not found
+    return rc;
+}
+
+void write_dfa_file(const char* filename) {
+    FILE* file = fopen(filename, "wb");
+    if (!file) { fprintf(stderr, "FATAL: Cannot open %s for writing\n", filename); exit(1); }
+    intermediate_rule_t* all_rules = alloc_or_abort(malloc(dfa_state_count * 256 * sizeof(intermediate_rule_t)), "Rules");
+    size_t total_rules = 0;
+    for (int i = 0; i < dfa_state_count; i++) total_rules += compress_state_rules(i, &all_rules[i * 256]);
+    size_t id_len = strlen(pattern_identifier);
+    size_t dfa_size = 19 + id_len + dfa_state_count * sizeof(dfa_state_t) + total_rules * sizeof(dfa_rule_t);
+    dfa_t* ds = calloc(1, dfa_size);
+    ds->magic = DFA_MAGIC; ds->version = DFA_VERSION;
+    ds->state_count = dfa_state_count; ds->initial_state = 19 + id_len;
+    ds->identifier_length = (uint8_t)id_len; memcpy(ds->identifier, pattern_identifier, id_len);
+    dfa_state_t* sarr = (dfa_state_t*)((char*)ds + ds->initial_state);
+    dfa_rule_t* rarr = (dfa_rule_t*)((char*)sarr + dfa_state_count * sizeof(dfa_state_t));
+    size_t cro = ds->initial_state + dfa_state_count * sizeof(dfa_state_t);
+    size_t gri = 0;
+    for (int i = 0; i < dfa_state_count; i++) {
+        int rc = compress_state_rules(i, &all_rules[i * 256]);
+        sarr[i].transition_count = rc; sarr[i].transitions_offset = (rc > 0) ? (uint32_t)cro : 0;
+        sarr[i].flags = dfa[i].flags;
+        sarr[i].capture_start_id = dfa[i].capture_start_id;
+        sarr[i].capture_end_id = dfa[i].capture_end_id;
+        sarr[i].capture_defer_id = dfa[i].capture_defer_id;
+        if (dfa[i].eos_target != 0) sarr[i].eos_target = (uint32_t)(ds->initial_state + (size_t)dfa[i].eos_target * sizeof(dfa_state_t));
+        for (int r = 0; r < rc; r++) {
+            dfa_rule_t* dst = &rarr[gri++];
+            dst->type = all_rules[i * 256 + r].type; dst->data1 = all_rules[i * 256 + r].d1;
+            dst->data2 = all_rules[i * 256 + r].d2; dst->data3 = 0;
+            dst->target = (uint32_t)(ds->initial_state + (size_t)all_rules[i * 256 + r].target_state_index * sizeof(dfa_state_t));
+        }
+        cro += rc * sizeof(dfa_rule_t);
+    }
+    if (fwrite(ds, 1, dfa_size, file) != dfa_size) exit(1);
+    fclose(file); free(ds); free(all_rules);
 }
 
 void load_nfa_file(const char* filename) {
     FILE* file = fopen(filename, "r");
-    if (file == NULL) {
-        fprintf(stderr, "Error: Cannot open file %s\n", filename);
-        exit(1);
-    }
-    char first_line[MAX_LINE_LENGTH];
-    if (fgets(first_line, sizeof(first_line), file) == NULL) {
-        fprintf(stderr, "Error: Empty NFA file\n");
-        fclose(file);
-        exit(1);
-    }
-    if (strstr(first_line, "NFA_ALPHABET") == NULL) {
-        fprintf(stderr, "Error: Unsupported NFA format. Expected NFA_ALPHABET format.\n");
-        fclose(file);
-        exit(1);
-    }
-    rewind(file);
-    char line[MAX_LINE_LENGTH];
-    char header[64];
-    int current_state = -1;
+    if (!file) { fprintf(stderr, "FATAL: Cannot open NFA file %s\n", filename); exit(1); }
+    char line[1024]; 
+    if (!fgets(line, sizeof(line), file)) { fprintf(stderr, "FATAL: Empty NFA file\n"); exit(1); }
+    if (!strstr(line, "NFA_ALPHABET")) { fprintf(stderr, "FATAL: Invalid NFA header\n"); exit(1); }
     nfa_init();
     while (fgets(line, sizeof(line), file)) {
-        size_t len = strlen(line);
-        if (len > 0 && line[len-1] == '\n') {
-            line[len-1] = '\0';
-        }
-        if (line[0] == '\0') continue;
-        if (sscanf(line, "%63s", header) == 1) {
-            if (strcmp(header, "NFA_ALPHABET") == 0) {
-                continue;
-            } else if (strncmp(line, "Identifier:", 11) == 0) {
-                char* id_start = line + 11;
-                while (*id_start == ' ') id_start++;
-                strncpy(pattern_identifier, id_start, 255);
-                pattern_identifier[255] = '\0';
-            } else if (strstr(header, "AlphabetSize:") == header) {
-                sscanf(line, "AlphabetSize: %d", &alphabet_size);
-            } else if (strstr(header, "States:") == header) {
-                sscanf(line, "States: %d", &nfa_state_count);
-            } else if (strstr(header, "Initial:") == header) {
-                continue;
-            } else if (strstr(header, "Alphabet:") == header) {
-                current_state = -2;
-            } else if (strstr(header, "State") == header) {
-                sscanf(line, "State %d:", &current_state);
-            } else if (current_state == -2 && strstr(header, "Symbol") == header) {
-                int symbol_id, start_char, end_char;
-                char special[16] = "";
-                if (sscanf(line, "  Symbol %d: %d-%d (%15[^)]",
-                          &symbol_id, &start_char, &end_char, special) >= 3) {
-                    if (symbol_id < MAX_SYMBOLS) {
-                        alphabet[symbol_id].symbol_id = symbol_id;
-                        alphabet[symbol_id].start_char = start_char;
-                        alphabet[symbol_id].end_char = end_char;
-                        alphabet[symbol_id].is_special = (strcmp(special, "special") == 0);
-                    }
+        if (strncmp(line, "Identifier:", 11) == 0) sscanf(line + 11, "%s", pattern_identifier);
+        else if (strncmp(line, "AlphabetSize:", 13) == 0) sscanf(line + 13, "%d", &alphabet_size);
+        else if (strncmp(line, "States:", 7) == 0) sscanf(line + 7, "%d", &nfa_state_count);
+        else if (strncmp(line, "Alphabet:", 9) == 0) {
+            for (int i = 0; i < alphabet_size; i++) {
+                if (!fgets(line, sizeof(line), file)) break;
+                unsigned int sid, start, end;
+                if (sscanf(line, " Symbol %u: %u-%u", &sid, &start, &end) >= 3) {
+                    alphabet[i].symbol_id = (int)sid; alphabet[i].start_char = (int)start; alphabet[i].end_char = (int)end;
+                    alphabet[i].is_special = (strstr(line, "special") != NULL);
                 }
             }
-        }
-        if (current_state >= 0) {
-            if (strstr(line, "CategoryMask:") != NULL) {
-                unsigned int category_mask;
-                sscanf(line, "  CategoryMask: %x", &category_mask);
-                nfa[current_state].category_mask = (uint8_t)category_mask;
-            } else if (strstr(line, "CaptureStart:") != NULL) {
-                int cap_id;
-                sscanf(line, "  CaptureStart: %d", &cap_id);
-                nfa[current_state].capture_start_id = (int8_t)cap_id;
-            } else if (strstr(line, "CaptureEnd:") != NULL) {
-                int cap_id;
-                sscanf(line, "  CaptureEnd: %d", &cap_id);
-                nfa[current_state].capture_end_id = (int8_t)cap_id;
-            } else if (strstr(line, "CaptureDefer:") != NULL) {
-                int cap_id;
-                sscanf(line, "  CaptureDefer: %d", &cap_id);
-                nfa[current_state].capture_defer_id = (int8_t)cap_id;
-            } else if (strstr(line, "EosTarget:") != NULL) {
-                char eos_str[16];
-                sscanf(line, "  EosTarget: %15s", eos_str);
-                nfa[current_state].is_eos_target = (strcmp(eos_str, "yes") == 0);
-            } else if (strstr(line, "PatternId:") != NULL) {
-                int pattern_id;
-                sscanf(line, "  PatternId: %d", &pattern_id);
-                nfa[current_state].pattern_id = (int16_t)pattern_id;
-            } else if (strstr(line, "Accepting:") != NULL) {
-                // Backward compatibility: old NFA format uses "Accepting: yes/no"
-                // Map to CAT_MASK_SAFE (0x01) for accepting states
-                char accepting_str[16];
-                sscanf(line, "  Accepting: %15s", accepting_str);
-                nfa[current_state].category_mask = (strcmp(accepting_str, "yes") == 0) ? 0x01 : 0x00;
-            } else if (strstr(line, "Symbol") != NULL) {
-                int symbol_id;
-                // Parse format: "Symbol %d -> %d[,%d[,%d...]]" or "Symbol %d -> ,%d[,%d...]"
-                char* arrow = strstr(line, "->");
-                if (arrow != NULL) {
-                    if (sscanf(line, "    Symbol %d", &symbol_id) == 1) {
-                        char* targets_str = arrow + 2;
-                        // Skip leading whitespace
-                        while (*targets_str == ' ') targets_str++;
-
-                        // Parse targets separated by commas
-                        char* p = targets_str;
-                        int target_count = 0;
-
-                        while (p != NULL && *p != '\0' && *p != '\n') {
-                            // Find next comma or end
-                            char* comma = strchr(p, ',');
-                            size_t len = comma ? (size_t)(comma - p) : strlen(p);
-
-                            // Skip trailing spaces
-                            while (len > 0 && p[len-1] == ' ') len--;
-
-                            if (len > 0) {
-                                char target_str[32];
-                                strncpy(target_str, p, len);
-                                target_str[len] = '\0';
-
-                                int target = atoi(target_str);
-                                if (target >= 0 && target < MAX_STATES) {
-                                    if (target_count == 0) {
-                                        // First target goes in transitions array
-                                        nfa[current_state].transitions[symbol_id] = target;
-                                        nfa[current_state].transition_count++;
-                                    } else {
-                                        // Additional targets go to multi_targets
-                                        char num_str[32];
-                                        snprintf(num_str, sizeof(num_str), ",%d", target);
-                                        size_t current_len = strlen(nfa[current_state].multi_targets[symbol_id]);
-                                        if (current_len + strlen(num_str) < sizeof(nfa[current_state].multi_targets[symbol_id])) {
-                                            strncat(nfa[current_state].multi_targets[symbol_id], num_str,
-                                                    sizeof(nfa[current_state].multi_targets[symbol_id]) - current_len - 1);
-                                            nfa[current_state].transition_count++;
-                                        }
-                                    }
-                                    target_count++;
-                                }
-                            }
-
-                            if (comma) {
-                                p = comma + 1;
-                            } else {
-                                break;
-                            }
+        } else if (strncmp(line, "State ", 6) == 0) {
+            int s_idx; sscanf(line + 6, "%d:", &s_idx);
+            while (fgets(line, sizeof(line), file) && line[0] != '\n' && line[0] != '\r') {
+                if (strstr(line, "CategoryMask:")) { unsigned int m; sscanf(strstr(line, "0x"), "%x", &m); nfa[s_idx].category_mask = (uint8_t)m; }
+                else if (strstr(line, "EosTarget:")) nfa[s_idx].is_eos_target = (strstr(line, "yes") != NULL);
+                else if (strstr(line, "CaptureStart:")) sscanf(line + 15, "%d", (int*)&nfa[s_idx].capture_start_id);
+                else if (strstr(line, "CaptureEnd:")) sscanf(line + 13, "%d", (int*)&nfa[s_idx].capture_end_id);
+                else if (strstr(line, "Symbol ")) {
+                    int sid, target; char* arrow = strstr(line, "->");
+                    if (arrow && sscanf(line, " Symbol %d", &sid) == 1) {
+                        char* p = arrow + 2;
+                        while (p) {
+                            while (isspace(*p) || *p == ',') p++;
+                            if (sscanf(p, "%d", &target) == 1) mta_add_target(&nfa[s_idx].multi_targets, sid, target);
+                            p = strchr(p, ','); if (p) p++;
                         }
                     }
                 }
@@ -932,399 +341,26 @@ void load_nfa_file(const char* filename) {
         }
     }
     fclose(file);
-    DEBUG_PRINT("Loaded NFA with %d states and %d symbols from %s\n", nfa_state_count, alphabet_size, filename);
 }
 
-// Intermediate rule structure for compression
-typedef struct {
-    uint8_t type;
-    uint8_t d1;
-    uint8_t d2;
-    uint8_t d3;
-    int target_state_index;
-} intermediate_rule_t;
-
-typedef struct {
-    uint8_t start, end;
-} interval_t;
-
-typedef struct {
-    int target;
-    int char_code;
-} trans_entry_t;
-
-// Helper to add a rule
-static void add_rule(intermediate_rule_t* rules, int* count, int target, uint8_t type, uint8_t d1, uint8_t d2, uint8_t d3) {
-    rules[*count].type = type;
-    rules[*count].d1 = d1;
-    rules[*count].d2 = d2;
-    rules[*count].d3 = d3;
-    rules[*count].target_state_index = target;
-    (*count)++;
-}
-
-// Compress transition table into rules
-// Returns number of rules generated
-int compress_state_rules(int state_idx, intermediate_rule_t* rules_out) {
-    int rule_count = 0;
-    trans_entry_t entries[256];
-    int entry_count = 0;
-    
-    // Collect all valid transitions
-    for (int c = 0; c < 256; c++) {
-        if (dfa[state_idx].transitions[c] != -1) {
-            entries[entry_count].target = dfa[state_idx].transitions[c];
-            entries[entry_count].char_code = c;
-            entry_count++;
-        }
-    }
-    
-    if (entry_count == 0) return 0;
-    
-    // Sort by Target, then CharCode (Bubble sort is sufficient for N<=256)
-    for (int i = 0; i < entry_count - 1; i++) {
-        for (int j = 0; j < entry_count - i - 1; j++) {
-            if (entries[j].target > entries[j+1].target || 
-               (entries[j].target == entries[j+1].target && entries[j].char_code > entries[j+1].char_code)) {
-                trans_entry_t temp = entries[j];
-                entries[j] = entries[j+1];
-                entries[j+1] = temp;
-            }
-        }
-    }
-    
-    // Process groups
-    int i = 0;
-    while (i < entry_count) {
-        int current_target = entries[i].target;
-        
-        // Collect intervals for this target
-        interval_t intervals[256];
-        int int_count = 0;
-        
-        int start = entries[i].char_code;
-        int prev = start;
-        i++;
-        
-        while (i < entry_count && entries[i].target == current_target) {
-            int c = entries[i].char_code;
-            if (c != prev + 1) {
-                // End of interval
-                intervals[int_count].start = (uint8_t)start;
-                intervals[int_count].end = (uint8_t)prev;
-                int_count++;
-                start = c;
-            }
-            prev = c;
-            i++;
-        }
-        // Last interval
-        intervals[int_count].start = (uint8_t)start;
-        intervals[int_count].end = (uint8_t)prev;
-        int_count++;
-        
-        // Pack intervals
-        int j = 0;
-        while (j < int_count) {
-            interval_t* curr = &intervals[j];
-            interval_t* next = (j + 1 < int_count) ? &intervals[j+1] : NULL;
-            interval_t* next2 = (j + 2 < int_count) ? &intervals[j+2] : NULL;
-            
-            bool curr_is_lit = (curr->start == curr->end);
-            
-            if (curr_is_lit) {
-                // Try LITERAL_3 (3 literals)
-                if (next && next->start == next->end && next2 && next2->start == next2->end) {
-                    add_rule(rules_out, &rule_count, current_target, DFA_RULE_LITERAL_3, curr->start, next->start, next2->start);
-                    j += 3;
-                    continue;
-                }
-                // Try LITERAL_2 (2 literals)
-                if (next && next->start == next->end) {
-                    add_rule(rules_out, &rule_count, current_target, DFA_RULE_LITERAL_2, curr->start, next->start, 0);
-                    j += 2;
-                    continue;
-                }
-                // Try RANGE_LITERAL (Literal + Range) -> stored as (Range, Lit)
-                if (next && next->start != next->end) {
-                    add_rule(rules_out, &rule_count, current_target, DFA_RULE_RANGE_LITERAL, next->start, next->end, curr->start);
-                    j += 2;
-                    continue;
-                }
-                
-                // Fallback: Single Literal
-                add_rule(rules_out, &rule_count, current_target, DFA_RULE_LITERAL, curr->start, 0, 0);
-                j++;
-            } else {
-                // Range
-                // Try RANGE_LITERAL (Range + Literal)
-                if (next && next->start == next->end) {
-                    add_rule(rules_out, &rule_count, current_target, DFA_RULE_RANGE_LITERAL, curr->start, curr->end, next->start);
-                    j += 2;
-                    continue;
-                }
-                
-                // Fallback: Single Range
-                add_rule(rules_out, &rule_count, current_target, DFA_RULE_RANGE, curr->start, curr->end, 0);
-                j++;
-            }
-        }
-    }
-    
-    return rule_count;
-}
-
-// Write DFA to binary file (Version 5 format with compact rules)
-void write_dfa_file(const char* filename) {
-    FILE* file = fopen(filename, "wb");
-    if (file == NULL) {
-        fprintf(stderr, "Error: Cannot create file %s\n", filename);
-        return;
-    }
-
-    // Step 1: Pre-calculate compression rules
-    // We need to know the total size before allocating the binary blob
-    intermediate_rule_t* state_rules[MAX_STATES];
-    int state_rule_counts[MAX_STATES];
-    size_t total_rules = 0;
-    size_t total_transitions_v4 = 0;
-
-    for (int i = 0; i < dfa_state_count; i++) {
-        // Count V4 transitions for comparison
-        for (int c = 0; c < 256; c++) {
-            if (dfa[i].transitions[c] != -1) total_transitions_v4++;
-        }
-
-        // Allocate worst-case: 256 rules per state
-        state_rules[i] = malloc(256 * sizeof(intermediate_rule_t));
-        if (!state_rules[i]) {
-            fprintf(stderr, "Error: Memory allocation failed for rule compression\n");
-            // Cleanup previous
-            for (int j = 0; j < i; j++) free(state_rules[j]);
-            fclose(file);
-            return;
-        }
-        state_rule_counts[i] = compress_state_rules(i, state_rules[i]);
-        total_rules += state_rule_counts[i];
-    }
-
-    DEBUG_PRINT("Compression Stats:\n");
-    DEBUG_PRINT("  Original Transitions: %zu (would be %zu bytes in V4)\n", total_transitions_v4, total_transitions_v4 * 5);
-    DEBUG_PRINT("  Compressed Rules:     %zu (%zu bytes in V5)\n", total_rules, total_rules * 8);
-    if (total_transitions_v4 > 0) {
-        float ratio = 1.0f - ((float)(total_rules * 8) / (float)(total_transitions_v4 * 5));
-        DEBUG_PRINT("  Size Reduction:       %.1f%%\n", ratio * 100.0f);
-    }
-    DEBUG_PRINT("Total rules generated: %zu (vs %d states)\n", total_rules, dfa_state_count);
-
-    // Step 2: Calculate binary layout
-    size_t id_len = strlen(pattern_identifier);
-    if (id_len > 255) id_len = 255;
-    
-    // Header size: 19 bytes base + identifier length
-    size_t header_size = 19 + id_len;
-    
-    size_t states_size = dfa_state_count * sizeof(dfa_state_t);
-    size_t rules_size = total_rules * sizeof(dfa_rule_t);
-    size_t dfa_size = header_size + states_size + rules_size;
-    
-    DEBUG_PRINT("Binary Size: Header=%zu, States=%zu, Rules=%zu, Total=%zu bytes\n",
-                header_size, states_size, rules_size, dfa_size);
-
-    if (flag_verbose) {
-        fprintf(stderr, "State 0 transitions:\n");
-        for (int c = 0; c < 256; c++) {
-            if (dfa[0].transitions[c] != -1) {
-                fprintf(stderr, "  '%c' (0x%02x) -> state %d%s\n", 
-                        isprint(c) ? c : '.', c, dfa[0].transitions[c],
-                        dfa[0].transitions_from_any[c] ? " (ANY)" : "");
-            }
-        }
-    }
-
-    dfa_t* dfa_struct = malloc(dfa_size);
-    if (dfa_struct == NULL) {
-        fprintf(stderr, "Error: Memory allocation failed for binary DFA\n");
-        for (int i = 0; i < dfa_state_count; i++) free(state_rules[i]);
-        fclose(file);
-        return;
-    }
-    memset(dfa_struct, 0, dfa_size);
-
-    // Step 3: Fill Header
-    dfa_struct->magic = DFA_MAGIC;
-    dfa_struct->version = DFA_VERSION; // V5
-    dfa_struct->state_count = dfa_state_count;
-    dfa_struct->initial_state = header_size;
-    dfa_struct->accepting_mask = 0;
-    dfa_struct->flags = 0;
-    dfa_struct->identifier_length = (uint8_t)id_len;
-    if (id_len > 0) {
-        memcpy(dfa_struct->identifier, pattern_identifier, id_len);
-    }
-
-    // Step 4: Setup Pointers
-    dfa_state_t* states = (dfa_state_t*)((char*)dfa_struct + header_size);
-    dfa_rule_t* rules_blob = (dfa_rule_t*)((char*)states + states_size);
-    
-    // Step 5: Fill States and Rules
-    size_t current_rule_offset = header_size + states_size; // Absolute offset in file
-    uint32_t accepting_mask = 0;
-    size_t global_rule_idx = 0;
-
-    for (int i = 0; i < dfa_state_count; i++) {
-        // Fill State Info
-        states[i].transition_count = state_rule_counts[i]; // Reusing field name for rule count
-        
-        if (state_rule_counts[i] > 0) {
-            states[i].transitions_offset = (uint32_t)current_rule_offset;
-        } else {
-            states[i].transitions_offset = 0;
-        }
-        
-        states[i].flags = dfa[i].flags;
-        states[i].capture_start_id = dfa[i].capture_start_id;
-        states[i].capture_end_id = dfa[i].capture_end_id;
-        states[i].capture_defer_id = dfa[i].capture_defer_id;
-        states[i].eos_target = dfa[i].eos_target;
-
-        // Accepting mask update
-        if (dfa[i].flags & 0xFF00) {
-            accepting_mask |= (1 << i);
-        }
-
-        // Fill Rules for this state
-        for (int r = 0; r < state_rule_counts[i]; r++) {
-            intermediate_rule_t* src = &state_rules[i][r];
-            dfa_rule_t* dst = &rules_blob[global_rule_idx++];
-            
-            dst->type = src->type;
-            dst->data1 = src->d1;
-            dst->data2 = src->d2;
-            dst->data3 = src->d3; // Initialize data3
-            
-            // Calculate absolute target offset
-            int target_idx = src->target_state_index;
-            size_t target_offset = header_size + (size_t)target_idx * sizeof(dfa_state_t);
-            dst->target = (uint32_t)target_offset;
-        }
-        
-        current_rule_offset += state_rule_counts[i] * sizeof(dfa_rule_t);
-    }
-    
-    dfa_struct->accepting_mask = accepting_mask;
-
-    // Step 6: Write to file
-    size_t written = fwrite(dfa_struct, 1, dfa_size, file);
-    if (written != dfa_size) {
-        fprintf(stderr, "Error: Failed to write complete DFA file\n");
-    }
-
-    // Step 7: Cleanup
-    free(dfa_struct);
-    for (int i = 0; i < dfa_state_count; i++) free(state_rules[i]);
-    fclose(file);
-    DEBUG_PRINT("Wrote DFA V5 to %s\n", filename);
-}
-
-// Main function
 int main(int argc, char* argv[]) {
-    bool minimize = true;  // Enabled by default
-    
-    // Check for flags
+    bool minimize = true;
+    const char* input_file = NULL;
+    const char* output_file = "out.dfa";
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
-            flag_verbose = true;
-            // Remove flag from arguments
-            for (int j = i; j < argc - 1; j++) {
-                argv[j] = argv[j + 1];
-            }
-            argc--;
-            i--;
-        } else if (strcmp(argv[i], "--minimize") == 0) {
-            minimize = true;
-            dfa_minimize_set_algorithm(DFA_MIN_HOPCROFT);
-            // Remove flag from arguments
-            for (int j = i; j < argc - 1; j++) {
-                argv[j] = argv[j + 1];
-            }
-            argc--;
-            i--;
-        } else if (strcmp(argv[i], "--minimize-moore") == 0) {
-            minimize = true;
-            dfa_minimize_set_algorithm(DFA_MIN_MOORE);
-            // Remove flag from arguments
-            for (int j = i; j < argc - 1; j++) {
-                argv[j] = argv[j + 1];
-            }
-            argc--;
-            i--;
-        } else if (strcmp(argv[i], "--minimize-hopcroft") == 0) {
-            minimize = true;
-            dfa_minimize_set_algorithm(DFA_MIN_HOPCROFT);
-            // Remove flag from arguments
-            for (int j = i; j < argc - 1; j++) {
-                argv[j] = argv[j + 1];
-            }
-            argc--;
-            i--;
-        } else if (strcmp(argv[i], "--minimize-brzozowski") == 0) {
-            minimize = true;
-            dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
-            // Remove flag from arguments
-            for (int j = i; j < argc - 1; j++) {
-                argv[j] = argv[j + 1];
-            }
-            argc--;
-            i--;
-        } else if (strcmp(argv[i], "--no-minimize") == 0) {
-            minimize = false;
-            // Remove flag from arguments
-            for (int j = i; j < argc - 1; j++) {
-                argv[j] = argv[j + 1];
-            }
-            argc--;
-            i--;
+        if (argv[i][0] == '-') {
+            if (strcmp(argv[i], "--no-minimize") == 0) minimize = false;
+            else if (strcmp(argv[i], "-v") == 0) flag_verbose = true;
+            else if (strcmp(argv[i], "--minimize-moore") == 0) dfa_minimize_set_algorithm(DFA_MIN_MOORE);
+            else if (strcmp(argv[i], "--minimize-brzozowski") == 0) dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
+        } else {
+            if (input_file == NULL) input_file = argv[i];
+            else output_file = argv[i];
         }
     }
-
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s [options] <nfa_file> [dfa_file]\n", argv[0]);
-        fprintf(stderr, "Options:\n");
-        fprintf(stderr, "  -v, --verbose           Enable verbose output\n");
-        fprintf(stderr, "  --minimize              Enable DFA state minimization (default: Hopcroft)\n");
-        fprintf(stderr, "  --no-minimize           Disable DFA state minimization\n");
-        fprintf(stderr, "  --minimize-moore        Use Moore's algorithm\n");
-        fprintf(stderr, "  --minimize-hopcroft     Use Hopcroft's algorithm\n");
-        fprintf(stderr, "  --minimize-brzozowski   Use Brzozowski's algorithm (Extreme)\n");
-        return 1;
-    }
-    const char* nfa_file = argv[1];
-    const char* dfa_file = argc > 2 ? argv[2] : "readonlybox.dfa";
-    DEBUG_PRINT("NFA to DFA Converter (Version 3)\n");
-    DEBUG_PRINT("================================\n\n");
-    load_nfa_file(nfa_file);
-    DEBUG_PRINT("Converting NFA to DFA...\n");
-    nfa_to_dfa();
-    DEBUG_PRINT("Flattening DFA (symbol -> character)...\n");
-    flatten_dfa();
-    
-    // Minimization phase (optional)
-    if (minimize) {
-        DEBUG_PRINT("Minimizing DFA...\n");
-        dfa_minimize_set_verbose(flag_verbose);
-        dfa_state_count = dfa_minimize(dfa, dfa_state_count);
-        dfa_minimize_stats_t stats;
-        dfa_minimize_get_stats(&stats);
-        if (flag_verbose) {
-            fprintf(stderr, "Minimization: %d -> %d states (removed %d, %.1f%% reduction)\n",
-                   stats.initial_states, stats.final_states, stats.states_removed,
-                   stats.initial_states > 0 ? (100.0 * stats.states_removed / stats.initial_states) : 0.0);
-        }
-    }
-    
-    write_dfa_file(dfa_file);
-    DEBUG_PRINT("\nConversion complete!\n");
+    if (input_file == NULL) return 1;
+    load_nfa_file(input_file); nfa_to_dfa(); flatten_dfa();
+    if (minimize) dfa_state_count = dfa_minimize(dfa, dfa_state_count);
+    write_dfa_file(output_file);
     return 0;
 }
-
