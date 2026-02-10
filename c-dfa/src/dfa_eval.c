@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 /**
  * DFA Evaluator - Lean Production Version (V5 Only)
@@ -14,7 +15,7 @@
  */
 
 #ifndef DFA_EVAL_DEBUG
-#define DFA_EVAL_DEBUG 1
+#define DFA_EVAL_DEBUG 0
 #endif
 
 #if DFA_EVAL_DEBUG

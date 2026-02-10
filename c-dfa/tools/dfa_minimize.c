@@ -282,6 +282,7 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
     alloc_or_abort(new_dfa, "Alloc New DFA Buffer");
     int state_remap[MAX_STATES];
     int new_count = 0;
+
     for (int p = 0; p < ms->partition_count; p++) {
         if (ms->partitions[p].count == 0) continue;
         int rep = ms->partitions[p].states[0];
@@ -289,6 +290,7 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
         for (int i = 0; i < ms->partitions[p].count; i++) state_remap[ms->partitions[p].states[i]] = new_count;
         new_count++;
     }
+
     for (int s = 0; s < new_count; s++) {
         for (int c = 0; c < 256; c++) {
             int t = new_dfa[s].transitions[c];
@@ -299,6 +301,7 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
         }
         new_dfa[s].nfa_state_count = 0;
     }
+
     memcpy(dfa, new_dfa, new_count * sizeof(build_dfa_state_t));
     free(new_dfa); return new_count;
 }
@@ -311,6 +314,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
     inverse_graph_t inv;
+    if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
     if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
     int head = 0, tail = 0;
     int worklist[MAX_STATES * 4];
@@ -360,6 +364,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
             }
         }
     }
+
     int new_count = build_minimized_dfa(dfa, ms, state_count);
     free(ms); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
     return new_count;
@@ -435,7 +440,7 @@ int dfa_minimize(build_dfa_state_t* dfa, int state_count) {
     
     // Phase 1: Structural optimization
     state_count = prune_dead_states(dfa, state_count);
-    
+
     // Phase 2: Behavioral optimization
     int new_count;
     if (current_algo == DFA_MIN_MOORE) {

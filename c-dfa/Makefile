@@ -26,15 +26,21 @@ $(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c $(TOOLS_DIR)/multi_target_array.c
 
 # ============================================================================
-# All Pattern Files (used by test runner)
+# Pattern Files - Group 1: Core tests (Moore algorithm)
 # ============================================================================
-PATTERN_FILES = \
-	patterns_safe_commands.txt \
+PATTERN_GROUP1 = \
+	patterns_safe_commands.txt
+
+DFA_GROUP1 = $(patsubst %.txt,$(BUILD_DIR)/%.dfa,$(PATTERN_GROUP1))
+
+# ============================================================================
+# Pattern Files - Group 2: Quantifier tests (Hopcroft algorithm)
+# ============================================================================
+PATTERN_GROUP2 = \
 	patterns_quantifier_comprehensive.txt \
 	patterns_frag_quant.txt \
 	patterns_focused.txt \
 	patterns_simple.txt \
-	patterns_acceptance_category_test.txt \
 	patterns_frag_plus.txt \
 	patterns_digit_test.txt \
 	patterns_space_test.txt \
@@ -48,6 +54,16 @@ PATTERN_FILES = \
 	patterns_expanded_mixed.txt \
 	patterns_expanded_hard.txt \
 	patterns_expanded_perf.txt \
+	patterns_quantifier_simple.txt \
+	patterns_simple_quant.txt
+
+DFA_GROUP2 = $(patsubst %.txt,$(BUILD_DIR)/%.dfa,$(PATTERN_GROUP2))
+
+# ============================================================================
+# Pattern Files - Group 3: Category and capture tests (Brzozowski algorithm)
+# ============================================================================
+PATTERN_GROUP3 = \
+	patterns_acceptance_category_test.txt \
 	patterns_admin_commands.txt \
 	patterns_caution_commands.txt \
 	patterns_modifying_commands.txt \
@@ -55,8 +71,6 @@ PATTERN_FILES = \
 	patterns_network_commands.txt \
 	patterns_combined.txt \
 	patterns_minimal.txt \
-	patterns_quantifier_simple.txt \
-	patterns_simple_quant.txt \
 	patterns_step1.txt \
 	patterns_step2.txt \
 	patterns_step3.txt \
@@ -66,15 +80,19 @@ PATTERN_FILES = \
 	patterns_capture_test.txt \
 	patterns_capture_simple.txt
 
+DFA_GROUP3 = $(patsubst %.txt,$(BUILD_DIR)/%.dfa,$(PATTERN_GROUP3))
+
+# All pattern files
+PATTERN_FILES = $(PATTERN_GROUP1) $(PATTERN_GROUP2) $(PATTERN_GROUP3)
+
 # Pattern file to DFA file mapping
-# Each pattern file builds a DFA in build/ directory
-DFA_FILES = $(patsubst %.txt,$(BUILD_DIR)/%.dfa,$(PATTERN_FILES))
+DFA_FILES = $(PATTERN_GROUP1:%=$(BUILD_DIR)/%.dfa) $(PATTERN_GROUP2:%=$(BUILD_DIR)/%.dfa) $(PATTERN_GROUP3:%=$(BUILD_DIR)/%.dfa)
 NFA_FILES = $(patsubst %.txt,$(BUILD_DIR)/%.nfa,$(PATTERN_FILES))
 
 # ============================================================================
 # Phony Targets
 # ============================================================================
-.PHONY: all clean test test-full validate help FORCE clean-dfa
+.PHONY: all clean test test-moore test-hopcroft test-brzozowski validate help FORCE clean-dfa
 
 # ============================================================================
 # Clean DFA files (force rebuild)
@@ -101,14 +119,160 @@ $(BUILD_DIR)/%.nfa: %.txt $(TOOLS_DIR)/nfa_builder | $(BUILD_DIR)
 	$(TOOLS_DIR)/nfa_builder $< $@
 
 # ============================================================================
-# Build DFA from NFA (ALWAYS rebuild - NFA may change)
+# Build DFA from NFA with specific algorithm - Group 1 (Moore)
 # ============================================================================
-$(BUILD_DIR)/%.dfa: $(BUILD_DIR)/%.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+$(BUILD_DIR)/patterns_safe_commands.dfa: $(BUILD_DIR)/patterns_safe_commands.nfa $(TOOLS_DIR)/nfa2dfa_advanced
 	@echo "  Building DFA: $< -> $@"
 	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-moore $< $@ 2>/dev/null
 
 # ============================================================================
-# Build all NFA and DFA files
+# Build DFA from NFA with specific algorithm - Group 2 (Hopcroft)
+# ============================================================================
+$(BUILD_DIR)/patterns_quantifier_comprehensive.dfa: $(BUILD_DIR)/patterns_quantifier_comprehensive.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_frag_quant.dfa: $(BUILD_DIR)/patterns_frag_quant.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_focused.dfa: $(BUILD_DIR)/patterns_focused.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_simple.dfa: $(BUILD_DIR)/patterns_simple.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_frag_plus.dfa: $(BUILD_DIR)/patterns_frag_plus.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_digit_test.dfa: $(BUILD_DIR)/patterns_digit_test.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_space_test.dfa: $(BUILD_DIR)/patterns_space_test.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_quantifier_test.dfa: $(BUILD_DIR)/patterns_quantifier_test.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_quantifier.dfa: $(BUILD_DIR)/patterns_expanded_quantifier.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_alternation.dfa: $(BUILD_DIR)/patterns_expanded_alternation.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_nested.dfa: $(BUILD_DIR)/patterns_expanded_nested.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_fragment.dfa: $(BUILD_DIR)/patterns_expanded_fragment.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_boundary.dfa: $(BUILD_DIR)/patterns_expanded_boundary.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_interactions.dfa: $(BUILD_DIR)/patterns_expanded_interactions.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_mixed.dfa: $(BUILD_DIR)/patterns_expanded_mixed.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_hard.dfa: $(BUILD_DIR)/patterns_expanded_hard.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_expanded_perf.dfa: $(BUILD_DIR)/patterns_expanded_perf.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_quantifier_simple.dfa: $(BUILD_DIR)/patterns_quantifier_simple.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_simple_quant.dfa: $(BUILD_DIR)/patterns_simple_quant.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-hopcroft $< $@ 2>/dev/null
+
+# ============================================================================
+# Build DFA from NFA with specific algorithm - Group 3 (Brzozowski)
+# ============================================================================
+$(BUILD_DIR)/patterns_acceptance_category_test.dfa: $(BUILD_DIR)/patterns_acceptance_category_test.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_admin_commands.dfa: $(BUILD_DIR)/patterns_admin_commands.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_caution_commands.dfa: $(BUILD_DIR)/patterns_caution_commands.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_modifying_commands.dfa: $(BUILD_DIR)/patterns_modifying_commands.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_dangerous_commands.dfa: $(BUILD_DIR)/patterns_dangerous_commands.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_network_commands.dfa: $(BUILD_DIR)/patterns_network_commands.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_combined.dfa: $(BUILD_DIR)/patterns_combined.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_minimal.dfa: $(BUILD_DIR)/patterns_minimal.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_step1.dfa: $(BUILD_DIR)/patterns_step1.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_step2.dfa: $(BUILD_DIR)/patterns_step2.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_step3.dfa: $(BUILD_DIR)/patterns_step3.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_test.dfa: $(BUILD_DIR)/patterns_test.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_debug.dfa: $(BUILD_DIR)/patterns_debug.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_with_captures.dfa: $(BUILD_DIR)/patterns_with_captures.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_capture_test.dfa: $(BUILD_DIR)/patterns_capture_test.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+$(BUILD_DIR)/patterns_capture_simple.dfa: $(BUILD_DIR)/patterns_capture_simple.nfa $(TOOLS_DIR)/nfa2dfa_advanced
+	@echo "  Building DFA: $< -> $@"
+	$(TOOLS_DIR)/nfa2dfa_advanced --minimize-brzozowski $< $@ 2>/dev/null
+
+# ============================================================================
+# Build all NFA and DFA files (uses default Hopcroft for backward compatibility)
 # ============================================================================
 dfa: $(DFA_FILES)
 	@echo ""
@@ -126,6 +290,66 @@ dfa_test: src/dfa_eval.c src/dfa_loader.c src/dfa_test.c
 	$(CC) $(CFLAGS) -o $@ src/dfa_eval.c src/dfa_loader.c src/dfa_test.c $(LDFLAGS)
 
 # ============================================================================
+# Test: Group 1 - Moore Algorithm
+# ============================================================================
+test-moore: $(DFA_GROUP1) dfa_test
+	@echo ""
+	@echo "================================================="
+	@echo "TEST SUITE: MOORE ALGORITHM (Group 1)"
+	@echo "================================================="
+	@./dfa_test $(PATTERN_GROUP1)
+	@echo ""
+	@echo "================================================="
+
+# ============================================================================
+# Test: Group 2 - Hopcroft Algorithm
+# ============================================================================
+test-hopcroft: $(DFA_GROUP2) dfa_test
+	@echo ""
+	@echo "================================================="
+	@echo "TEST SUITE: HOPCROFT ALGORITHM (Group 2)"
+	@echo "================================================="
+	@./dfa_test $(PATTERN_GROUP2)
+	@echo ""
+	@echo "================================================="
+
+# ============================================================================
+# Test: Group 3 - Brzozowski Algorithm
+# ============================================================================
+test-brzozowski: $(DFA_GROUP3) dfa_test
+	@echo ""
+	@echo "================================================="
+	@echo "TEST SUITE: BRZOZOWSKI ALGORITHM (Group 3)"
+	@echo "================================================="
+	@./dfa_test $(PATTERN_GROUP3)
+	@echo ""
+	@echo "================================================="
+
+# ============================================================================
+# Full Test Suite (runs all 3 groups with their respective algorithms)
+# ============================================================================
+test: clean-dfa dfa_test
+	@echo ""
+	@echo "================================================="
+	@echo "C-DFA FULL TEST SUITE"
+	@echo "================================================="
+	@echo ""
+	@echo "Group 1 (Moore):      $(words $(PATTERN_GROUP1)) pattern files"
+	@echo "Group 2 (Hopcroft):  $(words $(PATTERN_GROUP2)) pattern files"
+	@echo "Group 3 (Brzozowski): $(words $(PATTERN_GROUP3)) pattern files"
+	@echo "Total:                $(words $(PATTERN_FILES)) pattern files"
+	@echo ""
+	@make test-moore 2>&1 | tail -5
+	@echo ""
+	@make test-hopcroft 2>&1 | tail -5
+	@echo ""
+	@make test-brzozowski 2>&1 | tail -5
+	@echo ""
+	@echo "================================================="
+	@echo "ALL TESTS COMPLETE"
+	@echo "================================================="
+
+# ============================================================================
 # Quick Test (runs test runner, builds DFAs on demand)
 # ============================================================================
 quick: dfa_test
@@ -134,23 +358,6 @@ quick: dfa_test
 	@echo "Running DFA Quick Test..."
 	@echo "================================================="
 	@./dfa_test
-
-# ============================================================================
-# Full Test Suite (always rebuilds DFAs from patterns, then runs tests)
-# ============================================================================
-test: clean-dfa dfa dfa_test
-	@echo ""
-	@echo "================================================="
-	@echo "C-DFA TEST SUITE"
-	@echo "================================================="
-	@echo "Pattern Files: $(words $(PATTERN_FILES))"
-	@echo "DFA Files: $(words $(DFA_FILES))"
-	@echo ""
-	@./dfa_test
-	@echo ""
-	@echo "================================================="
-	@echo "Test files are in: $(BUILD_DIR)/"
-	@echo "================================================="
 
 # ============================================================================
 # Validate All Patterns
@@ -199,21 +406,29 @@ help:
 	@echo "================================================="
 	@echo ""
 	@echo "Targets:"
-	@echo "  all           - Build dfa_test (default)"
-	@echo "  dfa           - Build all DFA files from patterns"
-	@echo "  test          - Build DFAs and run full test suite"
-	@echo "  quick         - Run tests (builds DFAs on demand)"
-	@echo "  validate      - Validate all pattern files"
-	@echo "  summary       - Show build summary"
-	@echo "  clean         - Remove build artifacts"
-	@echo "  help          - Show this help message"
+	@echo "  all              - Build dfa_test (default)"
+	@echo "  dfa              - Build all DFA files from patterns"
+	@echo "  test             - Run full test suite (all 3 algorithms)"
+	@echo "  quick            - Run tests (builds DFAs on demand)"
+	@echo "  test-moore       - Run Group 1 tests (Moore algorithm)"
+	@echo "  test-hopcroft    - Run Group 2 tests (Hopcroft algorithm)"
+	@echo "  test-brzozowski  - Run Group 3 tests (Brzozowski algorithm)"
+	@echo "  validate         - Validate all pattern files"
+	@echo "  summary          - Show build summary"
+	@echo "  clean            - Remove build artifacts"
+	@echo "  help             - Show this help message"
 	@echo ""
-	@echo "Pattern Files: $(words $(PATTERN_FILES))"
+	@echo "Pattern Groups:"
+	@echo "  Group 1 (Moore):      $(words $(PATTERN_GROUP1)) files - Core safe/caution commands"
+	@echo "  Group 2 (Hopcroft):   $(words $(PATTERN_GROUP2)) files - Quantifiers and fragments"
+	@echo "  Group 3 (Brzozowski): $(words $(PATTERN_GROUP3)) files - Categories and captures"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make test          # Build and run all tests"
-	@echo "  make validate      # Check all patterns are valid"
-	@echo "  make summary       # Show what's been built"
+	@echo "  make test             # Run all tests with all algorithms"
+	@echo "  make test-moore      # Run only Group 1 with Moore"
+	@echo "  make test-hopcroft   # Run only Group 2 with Hopcroft"
+	@echo "  make test-brzozowski # Run only Group 3 with Brzozowski"
+	@echo "  make validate        # Check all patterns are valid"
 	@echo "================================================="
 
 # ============================================================================

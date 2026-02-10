@@ -217,14 +217,13 @@ static int brz_determinize(
 
         for (int sym = 0; sym < TOTAL_VIRTUAL_SYMBOLS; sym++) {
             int next_count = 0;
+            int seen[BRZ_MAX_STATES] = {0};
             for (int i = 0; i < curr->count; i++) {
                 int s = curr->states[i];
                 int off = nfa->offsets[s], cnt = nfa->counts[s];
                 for (int k = 0; k < cnt; k++) if (nfa->edges[off + k].symbol == sym) {
                     int t = nfa->edges[off + k].target;
-                    bool found = false;
-                    for (int m = 0; m < next_count; m++) if (temp[m] == t) { found = true; break; }
-                    if (!found) temp[next_count++] = t;
+                    if (!seen[t]) { seen[t] = 1; temp[next_count++] = t; }
                 }
             }
             if (next_count > 0) {

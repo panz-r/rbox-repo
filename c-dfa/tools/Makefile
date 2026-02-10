@@ -5,11 +5,11 @@ TARGETS = nfa_builder nfa2dfa_advanced
 
 all: $(TARGETS)
 
-nfa_builder: nfa_builder.c
-	$(CC) $(CFLAGS) -o $@ $<
+nfa_builder: nfa_builder.c multi_target_array.c multi_target_array.h
+	$(CC) $(CFLAGS) -o $@ $< multi_target_array.c
 
-nfa2dfa_advanced: nfa2dfa.c
-	$(CC) $(CFLAGS) -o $@ $<
+nfa2dfa_advanced: nfa2dfa.c multi_target_array.c multi_target_array.h dfa_minimize.c dfa_minimize_brzozowski.c dfa_minimize.h
+	$(CC) $(CFLAGS) -o $@ $< multi_target_array.c dfa_minimize.c dfa_minimize_brzozowski.c -lm
 
 clean:
 	rm -f $(TARGETS)

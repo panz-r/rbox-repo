@@ -357,7 +357,7 @@ void write_dfa_file(const char* filename) {
             dst->data2 = all_rules[i * MAX_SYMBOLS + r].d2; dst->data3 = 0;
             int tidx = all_rules[i * MAX_SYMBOLS + r].target_state_index;
             if (tidx < 0 || tidx >= dfa_state_count) {
-                fprintf(stderr, "FATAL: State %d rule %d target index %d out of bounds (max %d)\n", 
+                fprintf(stderr, "FATAL: State %d rule %d target index %d out of bounds (max %d)\n",
                         i, r, tidx, dfa_state_count - 1);
                 exit(1);
             }
@@ -380,7 +380,6 @@ void load_nfa_file(const char* filename) {
         if (strncmp(line, "Identifier:", 11) == 0) sscanf(line + 11, "%s", pattern_identifier);
         else if (strncmp(line, "AlphabetSize:", 13) == 0) {
             sscanf(line + 13, "%d", &alphabet_size);
-            fprintf(stderr, "DEBUG: NFA AlphabetSize: %d\n", alphabet_size);
         } else if (strncmp(line, "States:", 7) == 0) {
             sscanf(line + 7, "%d", &nfa_state_count);
             fprintf(stderr, "DEBUG: NFA States: %d\n", nfa_state_count);
@@ -438,7 +437,6 @@ int main(int argc, char* argv[]) {
     if (input_file == NULL) return 1;
     load_nfa_file(input_file); nfa_to_dfa(); flatten_dfa();
     if (minimize) dfa_state_count = dfa_minimize(dfa, dfa_state_count);
-    fprintf(stderr, "DEBUG: Final DFA States: %d\n", dfa_state_count);
     write_dfa_file(output_file);
     return 0;
 }

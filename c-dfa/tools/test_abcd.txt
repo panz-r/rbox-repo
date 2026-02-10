@@ -1,5 +1,0 @@
-# Test patterns for abcd((d))+ pattern
-[fragment:d] d
-
-# Pattern that should match 'abcd', 'abcdd', 'abcddd' etc.
-[dangerous:quant:test] abcd((d))+

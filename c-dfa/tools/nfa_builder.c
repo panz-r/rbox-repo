@@ -1396,11 +1396,14 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                 }
                 int sid = find_symbol_id(c);
                 if (sid != -1) {
-                    // Ensure dedicated anchor state
+                    // Bug 1 fix: For root patterns (start_state == 0), don't add EPSILON
+                    // Use state 0 directly as anchor for root patterns
                     int anchor = start_state;
                     if (anchor == 0) {
+                        anchor = 0;  // Use state 0 directly as anchor for root
+                    } else {
                         anchor = nfa_add_state_with_minimization(false);
-                        nfa_add_transition(0, anchor, VSYM_EPS);
+                        nfa_add_transition(start_state, anchor, VSYM_EPS);
                     }
 
                     int new_state = nfa_add_state_with_minimization(false);
@@ -1428,8 +1431,10 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
 static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
     DEBUG_NFA_PRINT("parse_rdp_postfix: has_pending_quantifier=%d, exit_state=%d, loop_entry=%d\n",
                     has_pending_quantifier, current_fragment.exit_state, current_fragment.loop_entry_state);
+#ifdef NFA_BUILDER_VERBOSE
     fprintf(stderr, ">>> parse_rdp_postfix ENTRY: pattern='%s', pos=%d\n", pattern, *pos);
     fflush(stderr);
+#endif
     int current;
     if (has_pending_quantifier && current_fragment.exit_state != -1) {
         // Element was already parsed in parse_rdp_sequence, use its exit state
@@ -1464,13 +1469,17 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             int exit_state = nfa_add_state_with_minimization(false);
             state_do_not_share[exit_state] = true;
 
+            // Bug 3 fix: Use loop_entry_state for proper loop-back targets
+            // The anchor_state may be 0 or -1 for root patterns, but loop_entry_state tracks actual entry
+            int element_entry = (current_fragment.loop_entry_state != -1) ? current_fragment.loop_entry_state : start_state;
+
             // Skip path (zero iterations): entry_state --EPS--> exit_state
-            int skip_origin = (current_fragment.anchor_state != -1) ? current_fragment.anchor_state : start_state;
+            int skip_origin = element_entry;
             nfa_add_transition(skip_origin, exit_state, epsilon_sid);
 
             if (current_fragment.exit_state != -1) {
-                // Loop back: exit_state_of_element --EPS--> anchor_state
-                int loop_target = (current_fragment.anchor_state != -1) ? current_fragment.anchor_state : start_state;
+                // Loop back: exit_state_of_element --EPS--> element_entry
+                int loop_target = element_entry;
                 nfa_add_transition(current_fragment.exit_state, loop_target, epsilon_sid);
                 
                 // Connection to quantifier exit: exit_state_of_element --EPS--> exit_state
@@ -1491,9 +1500,12 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             int exit_state = nfa_add_state_with_minimization(false);
             state_do_not_share[exit_state] = true;
 
+            // Bug 3 fix: Use loop_entry_state for proper loop-back targets
+            int element_entry = (current_fragment.loop_entry_state != -1) ? current_fragment.loop_entry_state : start_state;
+
             if (current_fragment.exit_state != -1) {
-                // Loop back: exit_state_of_element --EPS--> anchor_state
-                int loop_target = (current_fragment.anchor_state != -1) ? current_fragment.anchor_state : start_state;
+                // Loop back: exit_state_of_element --EPS--> element_entry
+                int loop_target = element_entry;
                 nfa_add_transition(current_fragment.exit_state, loop_target, epsilon_sid);
                 
                 // Connection to quantifier exit: exit_state_of_element --EPS--> exit_state
@@ -1514,8 +1526,11 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             int exit_state = nfa_add_state_with_minimization(false);
             state_do_not_share[exit_state] = true;
 
+            // Bug 3 fix: Use loop_entry_state for proper skip targets
+            int element_entry = (current_fragment.loop_entry_state != -1) ? current_fragment.loop_entry_state : start_state;
+
             // Skip path (zero iterations): entry_state --EPS--> exit_state
-            int skip_origin = (current_fragment.anchor_state != -1) ? current_fragment.anchor_state : start_state;
+            int skip_origin = element_entry;
             nfa_add_transition(skip_origin, exit_state, epsilon_sid);
 
             if (current_fragment.exit_state != -1) {

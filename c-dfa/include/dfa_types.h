@@ -25,6 +25,7 @@ typedef struct __attribute__((packed)) {
     int8_t capture_end_id;            // Capture ID for CAPTURE_END (-1 = none)
     int8_t capture_defer_id;          // Capture ID for deferred CAPTURE_END (-1 = none)
     uint32_t eos_target;              // Offset to EOS target state (0 = no EOS transition)
+    uint8_t padding;                  // Padding to make structure 16 bytes
 } dfa_state_t;
 
 /**
