@@ -10,6 +10,40 @@
 static int total_tests_run = 0;
 static int total_tests_passed = 0;
 static const char* build_dir = "build_test";
+static const char* minimize_algo = "--minimize-moore";
+static char test_set_mask = 0;
+#define TEST_SET_A 0x01
+#define TEST_SET_B 0x02
+#define TEST_SET_C 0x04
+
+#define MAX_TRACKED_FILES 256
+static char tracked_nfa_files[MAX_TRACKED_FILES][64];
+static int tracked_nfa_count = 0;
+static char tracked_dfa_files[MAX_TRACKED_FILES][64];
+static int tracked_dfa_count = 0;
+
+static void track_nfa_file(const char* filepath) {
+    if (tracked_nfa_count < MAX_TRACKED_FILES) {
+        strncpy(tracked_nfa_files[tracked_nfa_count++], filepath, sizeof(tracked_nfa_files[0]) - 1);
+    }
+}
+
+static void track_dfa_file(const char* filepath) {
+    if (tracked_dfa_count < MAX_TRACKED_FILES) {
+        strncpy(tracked_dfa_files[tracked_dfa_count++], filepath, sizeof(tracked_dfa_files[0]) - 1);
+    }
+}
+
+static void cleanup_tracked_files(void) {
+    for (int i = 0; i < tracked_nfa_count; i++) {
+        remove(tracked_nfa_files[i]);
+    }
+    for (int i = 0; i < tracked_dfa_count; i++) {
+        remove(tracked_dfa_files[i]);
+    }
+    tracked_nfa_count = 0;
+    tracked_dfa_count = 0;
+}
 
 typedef struct {
     const char* input;
@@ -23,22 +57,43 @@ static void print_separator(void) {
     printf("\n");
 }
 
+static void print_usage(const char* progname) {
+    printf("Usage: %s [options]\n", progname);
+    printf("Options:\n");
+    printf("  --minimize-moore       Use Moore's algorithm for DFA minimization\n");
+    printf("  --minimize-hopcroft    Use Hopcroft's algorithm for DFA minimization\n");
+    printf("  --minimize-brzozowski  Use Brzozowski's algorithm for DFA minimization\n");
+    printf("  --test-set A|B|C        Run only tests for specified test set(s)\n");
+    printf("                          A = Core tests (quantifiers, fragments, etc.)\n");
+    printf("                          B = Expanded tests (quantifier expansions)\n");
+    printf("                          C = Command tests (admin, caution, captures)\n");
+    printf("                          Can combine: ABC, AB, AC, BC, etc.\n");
+    printf("  --help                 Show this help message\n");
+    printf("\nExamples:\n");
+    printf("  %s --minimize-hopcroft --test-set A\n", progname);
+    printf("  %s --minimize-brzozowski --test-set C\n", progname);
+    printf("  %s --minimize-moore --test-set ABC\n", progname);
+}
+
 static void build_dfa(const char* patterns_file, const char* dfa_file) {
-    const char* filename = strrchr(dfa_file, '/');
-    filename = filename ? filename + 1 : dfa_file;
+    // Track the NFA file for cleanup
+    char nfa_file[256];
+    snprintf(nfa_file, sizeof(nfa_file), "%s/test.nfa", build_dir);
+    track_nfa_file(nfa_file);
 
     char cmd[512];
     snprintf(cmd, sizeof(cmd),
         "mkdir -p %s && "
-        "./tools/nfa_builder %s %s/test.nfa && "
-        "./tools/nfa2dfa_advanced --minimize-moore %s/test.nfa %s",
-        build_dir, patterns_file, build_dir, build_dir, dfa_file);
+        "./tools/nfa_builder %s %s && "
+        "./tools/nfa2dfa_advanced %s %s %s",
+        build_dir, patterns_file, nfa_file, minimize_algo, nfa_file, dfa_file);
     system(cmd);
 }
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
     build_dfa(patterns_file, dfa_file);
+    track_dfa_file(dfa_file);
 
     printf("\n=== %s ===\n", group_name);
     printf("Patterns: %s\n", patterns_file);
@@ -89,6 +144,7 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
     printf("  Result: %d/%d passed\n", group_passed, group_run);
     dfa_reset();
     free(data);
+    remove(dfa_file);
 }
 
 static void run_core_tests(void) {
@@ -697,57 +753,106 @@ static void run_capture_test_tests(void) {
 }
 
 int main(int argc, char* argv[]) {
+    test_set_mask = TEST_SET_A | TEST_SET_B | TEST_SET_C;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        } else if (strcmp(argv[i], "--minimize-moore") == 0) {
+            minimize_algo = "--minimize-moore";
+        } else if (strcmp(argv[i], "--minimize-hopcroft") == 0) {
+            minimize_algo = "--minimize-hopcroft";
+        } else if (strcmp(argv[i], "--minimize-brzozowski") == 0) {
+            minimize_algo = "--minimize-brzozowski";
+        } else if (strcmp(argv[i], "--test-set") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --test-set requires an argument\n");
+                print_usage(argv[0]);
+                return 1;
+            }
+            test_set_mask = 0;
+            const char* sets = argv[++i];
+            for (const char* p = sets; *p; p++) {
+                if (*p == 'A' || *p == 'a') test_set_mask |= TEST_SET_A;
+                else if (*p == 'B' || *p == 'b') test_set_mask |= TEST_SET_B;
+                else if (*p == 'C' || *p == 'c') test_set_mask |= TEST_SET_C;
+            }
+            if (!test_set_mask) {
+                fprintf(stderr, "Error: --test-set requires A, B, or C\n");
+                print_usage(argv[0]);
+                return 1;
+            }
+        }
+    }
+
     printf("=================================================\n");
     printf("DFA TEST RUNNER\n");
     printf("=================================================\n");
-    printf("Pattern -> NFA -> DFA -> eval chain per test group\n\n");
+    printf("Minimization: %s\n", minimize_algo + 12);
+    printf("Test sets: %s%s%s\n\n",
+           (test_set_mask & TEST_SET_A) ? "A " : "",
+           (test_set_mask & TEST_SET_B) ? "B " : "",
+           (test_set_mask & TEST_SET_C) ? "C" : "");
 
     total_tests_run = 0;
     total_tests_passed = 0;
 
-    run_core_tests();
-    run_quantifier_tests();
-    run_fragment_tests();
-    run_alternation_tests();
-    run_boundary_tests();
-    run_category_tests();
-    run_tripled_quantifier_depth();
-    run_tripled_fragment_interactions();
-    run_tripled_boundary();
-    run_tripled_hard_edges();
-    run_tripled_syntax();
-    run_tripled_category_isolation();
-    run_tripled_quantifier_interactions();
+    if (test_set_mask & TEST_SET_A) {
+        printf("--- TEST SET A: Core Tests ---\n");
+        run_core_tests();
+        run_quantifier_tests();
+        run_fragment_tests();
+        run_alternation_tests();
+        run_boundary_tests();
+        run_category_tests();
+        run_tripled_quantifier_depth();
+        run_tripled_fragment_interactions();
+        run_tripled_boundary();
+        run_tripled_hard_edges();
+        run_tripled_syntax();
+        run_tripled_category_isolation();
+        run_tripled_quantifier_interactions();
+    }
 
-    run_expanded_quantifier_tests();
-    run_expanded_alternation_tests();
-    run_expanded_nested_tests();
-    run_expanded_fragment_tests();
-    run_expanded_boundary_tests();
-    run_expanded_interaction_tests();
-    run_expanded_mixed_tests();
-    run_expanded_hard_tests();
-    run_expanded_perf_tests();
+    if (test_set_mask & TEST_SET_B) {
+        printf("\n--- TEST SET B: Expanded Tests ---\n");
+        run_expanded_quantifier_tests();
+        run_expanded_alternation_tests();
+        run_expanded_nested_tests();
+        run_expanded_fragment_tests();
+        run_expanded_boundary_tests();
+        run_expanded_interaction_tests();
+        run_expanded_mixed_tests();
+        run_expanded_hard_tests();
+        run_expanded_perf_tests();
+    }
 
-    run_admin_command_tests();
-    run_caution_command_tests();
-    run_modifying_command_tests();
-    run_dangerous_command_tests();
-    run_network_command_tests();
-    run_combined_tests();
-    run_minimal_tests();
-    run_simple_quantifier_tests();
-    run_step_tests();
-    run_test_pattern_tests();
-    run_debug_tests();
-    run_with_captures_tests();
-    run_capture_simple_tests();
-    run_capture_test_tests();
+    if (test_set_mask & TEST_SET_C) {
+        printf("\n--- TEST SET C: Command Tests ---\n");
+        run_admin_command_tests();
+        run_caution_command_tests();
+        run_modifying_command_tests();
+        run_dangerous_command_tests();
+        run_network_command_tests();
+        run_combined_tests();
+        run_minimal_tests();
+        run_simple_quantifier_tests();
+        run_step_tests();
+        run_test_pattern_tests();
+        run_debug_tests();
+        run_with_captures_tests();
+        run_capture_simple_tests();
+        run_capture_test_tests();
+    }
 
     print_separator();
     printf("=================================================\n");
     printf("SUMMARY: %d/%d passed\n", total_tests_passed, total_tests_run);
     printf("=================================================\n");
+
+    // Clean up only the files we tracked during this test run
+    cleanup_tracked_files();
 
     return 0;
 }

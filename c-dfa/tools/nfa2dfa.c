@@ -48,6 +48,84 @@ static int nfa_state_count = 0;
 static int dfa_state_count = 0;
 static int alphabet_size = 0;
 
+// Phase 3: Marker harvesting system
+#define MAX_MARKERS_PER_DFA_TRANSITION 16
+#define MAX_DFA_MARKER_LISTS 8192
+#define MARKER_SENTINEL 0xFFFFFFFF
+
+typedef struct {
+    uint32_t markers[MAX_MARKERS_PER_DFA_TRANSITION];
+    int count;
+} MarkerList;
+
+static MarkerList dfa_marker_lists[MAX_DFA_MARKER_LISTS];
+static int marker_list_count = 0;
+
+// Initialize marker lists
+static void init_marker_lists(void) {
+    marker_list_count = 0;
+}
+
+// Get unique marker list (store if new)
+static uint32_t store_marker_list(const uint32_t* markers, int count) {
+    if (count == 0) return 0;
+    
+    // Check if list already exists
+    for (int i = 0; i < marker_list_count; i++) {
+        if (dfa_marker_lists[i].count == count) {
+            bool match = true;
+            for (int j = 0; j < count; j++) {
+                if (dfa_marker_lists[i].markers[j] != markers[j]) { match = false; break; }
+            }
+            if (match) return (uint32_t)(i + 1);  // +1 to distinguish from 0 (no markers)
+        }
+    }
+    
+    // Store new list
+    if (marker_list_count < MAX_DFA_MARKER_LISTS) {
+        for (int j = 0; j < count && j < MAX_MARKERS_PER_DFA_TRANSITION; j++) {
+            dfa_marker_lists[marker_list_count].markers[j] = markers[j];
+        }
+        dfa_marker_lists[marker_list_count].count = count;
+        return (uint32_t)(marker_list_count++ + 1);
+    }
+    return 0;
+}
+
+// Collect markers from NFA states in an epsilon closure
+static void collect_markers_from_states(const int* states, int state_count,
+                                        uint32_t* out_markers, int* out_count) {
+    int count = 0;
+    for (int i = 0; i < state_count && count < MAX_MARKERS_PER_DFA_TRANSITION; i++) {
+        int ns = states[i];
+        if (ns < 0 || ns >= nfa_state_count) continue;
+
+        // Use pattern_id from NFA state (nfa[ns].pattern_id)
+        uint16_t state_pattern_id = (nfa[ns].pattern_id != UINT16_MAX) ? nfa[ns].pattern_id : 0;
+
+        // START marker
+        if (nfa[ns].capture_start_id >= 0) {
+            uint32_t marker = ((uint32_t)state_pattern_id << 17) | ((uint32_t)nfa[ns].capture_start_id << 1) | 0;
+            bool exists = false;
+            for (int j = 0; j < count; j++) {
+                if (out_markers[j] == marker) { exists = true; break; }
+            }
+            if (!exists) out_markers[count++] = marker;
+        }
+
+        // END marker
+        if (nfa[ns].capture_end_id >= 0) {
+            uint32_t marker = ((uint32_t)state_pattern_id << 17) | ((uint32_t)nfa[ns].capture_end_id << 1) | 1;
+            bool exists = false;
+            for (int j = 0; j < count; j++) {
+                if (out_markers[j] == marker) { exists = true; break; }
+            }
+            if (!exists) out_markers[count++] = marker;
+        }
+    }
+    *out_count = count;
+}
+
 // DFA Deduplication Hash Table
 #define DFA_HASH_SIZE 32749
 static int dfa_hash_table[DFA_HASH_SIZE];
@@ -94,6 +172,7 @@ void nfa_init(void) {
         nfa[i].is_eos_target = false;
     }
     nfa_state_count = 0;
+    init_marker_lists();
 }
 
 void dfa_init(void) {
@@ -122,7 +201,7 @@ void epsilon_closure(int* states, int* count, int max_states) {
     }
     if (epsilon_sid < 0) {
         static bool warned = false;
-        if (!warned) { fprintf(stderr, "DEBUG: Epsilon symbol (257) NOT found in alphabet!\n"); warned = true; }
+
         return;
     }
 
@@ -154,8 +233,23 @@ void epsilon_closure(int* states, int* count, int max_states) {
     }
 }
 
-int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
-    epsilon_closure(nfa_states, &nfa_count, MAX_STATES);
+int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id) {
+    // Find minimum pattern_id in the NFA state set (for winning pattern)
+    // Use 0xFFFF as sentinel for "no pattern assigned yet"
+    uint16_t min_pattern_id = 0xFFFF;
+    for (int i = 0; i < nfa_count; i++) {
+        int ns = nfa_states[i];
+        fprintf(stderr, "[DEBUG] dfa_add_state: nfa_state[%d]=%d, pattern_id=%d\n", i, ns, ns >= 0 && ns < nfa_state_count ? nfa[ns].pattern_id : 9999);
+        if (ns >= 0 && ns < nfa_state_count && nfa[ns].pattern_id != 0xFFFF) {
+            if (nfa[ns].pattern_id < min_pattern_id) {
+                min_pattern_id = nfa[ns].pattern_id;
+            }
+        }
+    }
+    fprintf(stderr, "[DEBUG] dfa_add_state: min_pattern_id=%d, accepting_pattern_id=%d\n", min_pattern_id, accepting_pattern_id);
+    if (min_pattern_id != 0xFFFF && accepting_pattern_id == 0) {
+        accepting_pattern_id = min_pattern_id;
+    }
     for (int i = 0; i < nfa_count - 1; i++) {
         for (int j = 0; j < nfa_count - i - 1; j++) {
             if (nfa_states[j] > nfa_states[j+1]) { int t = nfa_states[j]; nfa_states[j] = nfa_states[j+1]; nfa_states[j+1] = t; }
@@ -177,6 +271,7 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count) {
     }
     dfa[state].flags = (category_mask << 8) | cf;
     if (category_mask != 0) dfa[state].flags |= DFA_STATE_ACCEPTING;
+    dfa[state].accepting_pattern_id = accepting_pattern_id;
     dfa[state].capture_start_id = cs; dfa[state].capture_end_id = ce; dfa[state].capture_defer_id = cd;
     dfa[state].nfa_state_count = nfa_count;
     for (int i = 0; i < nfa_count && i < 8192; i++) dfa[state].nfa_states[i] = nfa_states[i];
@@ -215,26 +310,52 @@ void nfa_to_dfa(void) {
     int in[MAX_STATES] = {0}; int ic = 1;
     int temp[MAX_STATES]; memcpy(temp, in, sizeof(int)); int tc = ic;
     epsilon_closure(temp, &tc, MAX_STATES);
-    uint8_t im = 0; for (int i = 0; i < tc; i++) im |= nfa[temp[i]].category_mask;
-    int idfa = dfa_add_state(im, in, ic);
+    uint8_t im = 0; for (int i = 0; i < tc; i++) { im |= nfa[temp[i]].category_mask; }
+    int idfa = dfa_add_state(im, temp, tc, 0);
     int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
     while (h < t) {
         int cur = q[h++];
         for (int i = 0; i < alphabet_size; i++) {
-            // Skip EPSILON - it''s handled during epsilon closure, not as a character transition
-            if (alphabet[i].symbol_id == 257) continue;
+            int symbol = alphabet[i].symbol_id;
+            if (symbol == 257) continue;
 
             int ms[MAX_STATES]; int mc = dfa[cur].nfa_state_count;
             for (int j = 0; j < mc; j++) ms[j] = dfa[cur].nfa_states[j];
-            nfa_move(ms, &mc, alphabet[i].symbol_id, MAX_STATES);
+            nfa_move(ms, &mc, symbol, MAX_STATES);
             if (mc == 0) continue;
             int tc2 = mc; int temp2[MAX_STATES]; memcpy(temp2, ms, mc * sizeof(int));
             epsilon_closure(temp2, &tc2, MAX_STATES);
             uint8_t mm = 0; for (int j = 0; j < tc2; j++) mm |= nfa[temp2[j]].category_mask;
-            int target = dfa_add_state(mm, ms, mc);
-            dfa[cur].transitions[i] = target;
-            // Map VSYM_EOS (258)
-            if (alphabet[i].symbol_id == 258) dfa[cur].eos_target = target;
+
+            uint32_t markers[MAX_MARKERS_PER_DFA_TRANSITION];
+            int marker_count = 0;
+            collect_markers_from_states(temp2, tc2, markers, &marker_count);
+            if (marker_count > 0) {
+                fprintf(stderr, "[DEBUG MARKER] tc2=%d, collected %d markers\n", tc2, marker_count);
+                for (int m = 0; m < marker_count; m++) {
+                    fprintf(stderr, "  marker[%d] = 0x%08X\n", m, markers[m]);
+                }
+            }
+            uint32_t marker_list_offset = store_marker_list(markers, marker_count);
+            if (marker_list_offset > 0) {
+                fprintf(stderr, "[DEBUG MARKER] Stored at offset %u\n", marker_list_offset);
+            }
+
+            int target = dfa_add_state(mm, temp2, tc2, 0);
+            int sid = alphabet[i].symbol_id;
+            if (sid < 256) {
+                dfa[cur].transitions[sid] = target;
+                dfa[cur].marker_offsets[sid] = marker_list_offset;
+                if (sid == 103) {
+                    fprintf(stderr, "[DEBUG] nfa_to_dfa: DFA state %d, 'g'(103) -> %d\n", cur, target);
+                }
+            }
+
+            if (alphabet[i].symbol_id == 258) {
+                dfa[cur].eos_target = target;
+                dfa[cur].eos_marker_offset = marker_list_offset;
+            }
+
             bool is_new = true; for (int j = 0; j < t; j++) if (q[j] == target) { is_new = false; break; }
             if (is_new && t < MAX_STATES) q[t++] = target;
         }
@@ -254,54 +375,60 @@ void flatten_dfa(void) {
     }
     
     for (int s = 0; s < dfa_state_count; s++) {
-        int nt[256]; bool any[256];
-        for (int i = 0; i < 256; i++) { nt[i] = -1; any[i] = false; }
-        
-        // 1. Expand VSYM_ANY (256) to all bytes 0-255
-        if (any_sid != -1 && dfa[s].transitions[any_sid] != -1) {
-            int t = dfa[s].transitions[any_sid];
-            for (int i = 0; i < 256; i++) { nt[i] = t; any[i] = true; }
-        }
-        
-        // 2. Map explicit literals 0-255
+        int nt[256]; bool any[256]; uint32_t markers[256];
+        for (int i = 0; i < 256; i++) { nt[i] = -1; any[i] = false; markers[i] = 0; }
+
+        uint32_t any_marker = (any_sid != -1) ? dfa[s].marker_offsets[any_sid] : 0;
+
+        // First, set specific symbol transitions
         for (int i = 0; i < alphabet_size; i++) {
             int sid = alphabet[i].symbol_id;
-            if (sid < 256 && dfa[s].transitions[i] != -1) {
-                int t = dfa[s].transitions[i];
+            if (sid < 256 && dfa[s].transitions[sid] != -1) {
+                int t = dfa[s].transitions[sid];
                 nt[sid] = t;
                 any[sid] = false;
+                markers[sid] = dfa[s].marker_offsets[sid];
             }
         }
 
-        // 3. Map VSYM_SPACE (259) to literal 32
+        // Override with space and tab transitions
         if (space_sid != -1 && dfa[s].transitions[space_sid] != -1) {
             nt[32] = dfa[s].transitions[space_sid];
             any[32] = false;
+            markers[32] = dfa[s].marker_offsets[space_sid];
         }
 
-        // 4. Map VSYM_TAB (260) to literal 9
         if (tab_sid != -1 && dfa[s].transitions[tab_sid] != -1) {
             nt[9] = dfa[s].transitions[tab_sid];
             any[9] = false;
+            markers[9] = dfa[s].marker_offsets[tab_sid];
         }
 
-        // Apply back to state. Transitions array in build_dfa_state_t is MAX_SYMBOLS
-        // but for final flattened DFA we only care about 0-255 literal rules.
-        // Virtual symbols 256+ are now fully merged or moved to eos_target.
+        // Finally, override with ANY transition (fills in gaps)
+        if (any_sid != -1 && dfa[s].transitions[any_sid] != -1) {
+            int t = dfa[s].transitions[any_sid];
+            for (int i = 0; i < 256; i++) {
+                if (nt[i] == -1) {  // Only fill gaps, don't override specific transitions
+                    nt[i] = t;
+                    any[i] = true;
+                    markers[i] = any_marker;
+                }
+            }
+        }
+
         int rc = 0;
-        for (int i = 0; i < 256; i++) { 
+        for (int i = 0; i < 256; i++) {
             if (nt[i] >= dfa_state_count) {
-                fprintf(stderr, "WARNING: State %d transition on %d points to invalid state %d (max %d)\n",
-                        s, i, nt[i], dfa_state_count - 1);
                 nt[i] = -1;
             }
-            dfa[s].transitions[i] = nt[i]; 
-            dfa[s].transitions_from_any[i] = any[i]; 
-            if (nt[i] != -1) rc++; 
+            dfa[s].transitions[i] = nt[i];
+            dfa[s].transitions_from_any[i] = any[i];
+            dfa[s].marker_offsets[i] = markers[i];
+            if (nt[i] != -1) rc++;
         }
-        // Clear virtual symbol indices in transition array
         for (int i = 256; i < MAX_SYMBOLS; i++) {
             dfa[s].transitions[i] = -1;
+            dfa[s].marker_offsets[i] = 0;
         }
         dfa[s].transition_count = rc;
     }
@@ -333,28 +460,70 @@ void write_dfa_file(const char* filename) {
     size_t total_rules = 0;
     for (int i = 0; i < dfa_state_count; i++) total_rules += compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
     size_t id_len = strlen(pattern_identifier);
-    size_t dfa_size = 19 + id_len + dfa_state_count * sizeof(dfa_state_t) + total_rules * sizeof(dfa_rule_t);
-    dfa_t* ds = calloc(1, dfa_size);
+
+    size_t marker_data_size = 0;
+    for (int i = 0; i < dfa_state_count; i++) {
+        int rule_count = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
+        for (int r = 0; r < rule_count && r < 256; r++) {
+            uint32_t list_idx = dfa[i].marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1];
+            if (list_idx > 0 && list_idx <= (uint32_t)marker_list_count) {
+                MarkerList* ml = &dfa_marker_lists[list_idx - 1];
+                marker_data_size += (ml->count + 1) * sizeof(uint32_t);
+            }
+        }
+        if (dfa[i].eos_marker_offset > 0 && dfa[i].eos_marker_offset <= (uint32_t)marker_list_count) {
+            MarkerList* ml = &dfa_marker_lists[dfa[i].eos_marker_offset - 1];
+            marker_data_size += (ml->count + 1) * sizeof(uint32_t);
+        }
+    }
+
+    size_t dfa_size = 23 + id_len + dfa_state_count * sizeof(dfa_state_t) + total_rules * sizeof(dfa_rule_t);
+    dfa_t* ds = calloc(1, dfa_size + marker_data_size);
+    if (!ds) { fprintf(stderr, "FATAL: Failed to allocate DFA buffer (%zu + %zu bytes)\n", dfa_size, marker_data_size); exit(1); }
     ds->magic = DFA_MAGIC; ds->version = DFA_VERSION;
-    ds->state_count = dfa_state_count; ds->initial_state = 19 + id_len;
-    ds->identifier_length = (uint8_t)id_len; memcpy(ds->identifier, pattern_identifier, id_len);
+    ds->state_count = dfa_state_count; ds->initial_state = 23 + id_len;  // Header is 23 bytes total (magic=4, ver=2, cnt=2, init=4, mask=4, flags=2, id_len=1, meta=4 = 23), identifier starts at offset 23
+    ds->metadata_offset = 0;  // Will be set after states are written if needed
+
+    uint32_t accepting_mask = 0;
+    for (int i = 0; i < dfa_state_count; i++) {
+        if (dfa[i].flags & DFA_STATE_ACCEPTING) {
+            accepting_mask |= (1 << i);
+        }
+    }
+    ds->accepting_mask = accepting_mask;
+
+    ds->identifier_length = (uint8_t)id_len; 
+    fprintf(stderr, "[DEBUG ID] ds at %p\n", (void*)ds);
+    fprintf(stderr, "[DEBUG ID] id_len at offset %zu = %d\n", offsetof(dfa_t, identifier_length), ds->identifier_length);
+    fprintf(stderr, "[DEBUG ID] identifier at offset %zu\n", offsetof(dfa_t, identifier));
+    memcpy(ds->identifier, pattern_identifier, id_len);
+    fprintf(stderr, "[DEBUG ID] After memcpy, bytes at ds[18..26]: %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+            ((unsigned char*)ds)[18], ((unsigned char*)ds)[19],
+            ((unsigned char*)ds)[20], ((unsigned char*)ds)[21],
+            ((unsigned char*)ds)[22], ((unsigned char*)ds)[23],
+            ((unsigned char*)ds)[24], ((unsigned char*)ds)[25],
+            ((unsigned char*)ds)[26]);
+
     dfa_state_t* sarr = (dfa_state_t*)((char*)ds + ds->initial_state);
     dfa_rule_t* rarr = (dfa_rule_t*)((char*)sarr + dfa_state_count * sizeof(dfa_state_t));
     size_t cro = ds->initial_state + dfa_state_count * sizeof(dfa_state_t);
     size_t gri = 0;
     for (int i = 0; i < dfa_state_count; i++) {
         int rc = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
-        if (rc > 256) rc = 256; // Cap to Version 5 limit
+        if (rc > 256) rc = 256;
         sarr[i].transition_count = (uint16_t)rc; sarr[i].transitions_offset = (rc > 0) ? (uint32_t)cro : 0;
         sarr[i].flags = dfa[i].flags;
         sarr[i].capture_start_id = dfa[i].capture_start_id;
         sarr[i].capture_end_id = dfa[i].capture_end_id;
         sarr[i].capture_defer_id = dfa[i].capture_defer_id;
+        sarr[i].accepting_pattern_id = dfa[i].accepting_pattern_id;
+        sarr[i].eos_marker_offset = 0;
         if (dfa[i].eos_target != 0) sarr[i].eos_target = (uint32_t)(ds->initial_state + (size_t)dfa[i].eos_target * sizeof(dfa_state_t));
         for (int r = 0; r < rc; r++) {
             dfa_rule_t* dst = &rarr[gri++];
             dst->type = all_rules[i * MAX_SYMBOLS + r].type; dst->data1 = all_rules[i * MAX_SYMBOLS + r].d1;
             dst->data2 = all_rules[i * MAX_SYMBOLS + r].d2; dst->data3 = 0;
+            dst->marker_offset = 0;
             int tidx = all_rules[i * MAX_SYMBOLS + r].target_state_index;
             if (tidx < 0 || tidx >= dfa_state_count) {
                 fprintf(stderr, "FATAL: State %d rule %d target index %d out of bounds (max %d)\n",
@@ -365,7 +534,54 @@ void write_dfa_file(const char* filename) {
         }
         cro += rc * sizeof(dfa_rule_t);
     }
-    if (fwrite(ds, 1, dfa_size, file) != dfa_size) exit(1);
+
+    size_t metadata_offset = cro;
+    fprintf(stderr, "[DEBUG WRITE] id_len=%zu, initial_state=%zu, cro=%zu, marker_list_count=%d\n",
+            id_len, ds->initial_state, cro, marker_list_count);
+    if (marker_list_count > 0) {
+        fprintf(stderr, "[DEBUG WRITE] Setting metadata_offset=%zu\n", metadata_offset);
+        ds->metadata_offset = (uint32_t)metadata_offset;
+        fprintf(stderr, "[DEBUG WRITE] ds->metadata_offset = %u (0x%X)\n",
+                ds->metadata_offset, ds->metadata_offset);
+
+        uint32_t* marker_base = (uint32_t*)((char*)ds + metadata_offset);
+        fprintf(stderr, "[DEBUG WRITE] marker_base at %p\n", (void*)marker_base);
+        size_t moffset = 0;
+
+        for (int i = 0; i < dfa_state_count; i++) {
+            int rule_count = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
+            size_t rule_offset = sarr[i].transitions_offset;
+            for (int r = 0; r < rule_count && r < 256; r++) {
+                dfa_rule_t* dst = (dfa_rule_t*)((char*)ds + rule_offset + r * sizeof(dfa_rule_t));
+                uint32_t list_idx = dfa[i].marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1];
+                fprintf(stderr, "[DEBUG MARKER WRITE] State %d, rule %d, list_idx=%u\n", i, r, list_idx);
+                if (list_idx > 0 && list_idx <= (uint32_t)marker_list_count) {
+                    MarkerList* ml = &dfa_marker_lists[list_idx - 1];
+                    fprintf(stderr, "[DEBUG MARKER WRITE] Writing %d markers from list %d\n", ml->count, list_idx - 1);
+                    for (int k = 0; k < ml->count; k++) {
+                        marker_base[moffset] = ml->markers[k];
+                        fprintf(stderr, "  marker[%zu] = 0x%08X\n", moffset, marker_base[moffset]);
+                        moffset++;
+                    }
+                    marker_base[moffset++] = MARKER_SENTINEL;
+                }
+            }
+            if (dfa[i].eos_marker_offset > 0 && dfa[i].eos_marker_offset <= (uint32_t)marker_list_count) {
+                sarr[i].eos_marker_offset = (uint32_t)(metadata_offset + moffset * sizeof(uint32_t));
+                MarkerList* ml = &dfa_marker_lists[dfa[i].eos_marker_offset - 1];
+                for (int k = 0; k < ml->count; k++) marker_base[moffset++] = ml->markers[k];
+                marker_base[moffset++] = MARKER_SENTINEL;
+            }
+        }
+        fprintf(stderr, "[DEBUG WRITE] Total markers written: %zu\n", moffset);
+    } else {
+        fprintf(stderr, "[DEBUG WRITE] No markers to write\n");
+    }
+
+    size_t total_size = dfa_size + marker_data_size;
+    fprintf(stderr, "[DEBUG WRITE] total_size=%zu, dfa_size=%zu, marker_data_size=%zu\n",
+            total_size, dfa_size, marker_data_size);
+    if (fwrite(ds, 1, total_size, file) != total_size) exit(1);
     fclose(file); free(ds); free(all_rules);
 }
 
@@ -382,18 +598,22 @@ void load_nfa_file(const char* filename) {
             sscanf(line + 13, "%d", &alphabet_size);
         } else if (strncmp(line, "States:", 7) == 0) {
             sscanf(line + 7, "%d", &nfa_state_count);
-            fprintf(stderr, "DEBUG: NFA States: %d\n", nfa_state_count);
+
         }
         else if (strncmp(line, "Alphabet:", 9) == 0) {
             for (int i = 0; i < alphabet_size; i++) {
                 if (!fgets(line, sizeof(line), file)) break;
+                if (line[0] == '\n' || line[0] == '\r') { i--; continue; }
+                if (strncmp(line, "State ", 6) == 0) { i--; continue; }
+                if (strncmp(line, "Initial:", 8) == 0) { i--; continue; }
                 unsigned int sid, start, end;
                 if (sscanf(line, " Symbol %u: %u-%u", &sid, &start, &end) >= 3) {
                     alphabet[i].symbol_id = (int)sid; alphabet[i].start_char = (int)start; alphabet[i].end_char = (int)end;
                     alphabet[i].is_special = (strstr(line, "special") != NULL);
                 }
             }
-        } else if (strncmp(line, "State ", 6) == 0) {
+        }
+        else if (strncmp(line, "State ", 6) == 0) {
             int s_idx; sscanf(line + 6, "%d:", &s_idx);
             while (fgets(line, sizeof(line), file) && line[0] != '\n' && line[0] != '\r') {
                 if (strstr(line, "CategoryMask:")) { unsigned int m; sscanf(strstr(line, "0x"), "%x", &m); nfa[s_idx].category_mask = (uint8_t)m; }

@@ -16,37 +16,49 @@
  * Flags field encoding (16 bits):
  * - Bits 0-7: State flags (DFA_STATE_*)
  * - Bits 8-15: Category mask (8-way parallel acceptance)
+ *
+ * Version 6 layout (with capture markers):
+ * - Header (dfa_t)
+ * - Identifier
+ * - Name Table (metadata block)
+ * - States array (dfa_state_t)
+ * - Rules array (dfa_rule_t)
+ * - Marker Block
  */
 typedef struct __attribute__((packed)) {
-    uint32_t transitions_offset;      // Offset to rule table (relative to DFA base, 0 = no rules)
+    uint32_t transitions_offset;      // Offset to rule table (absolute, from DFA base, 0 = no rules)
     uint16_t transition_count;        // Number of rules
     uint16_t flags;                   // State flags (accepting, capture markers, etc.)
     int8_t capture_start_id;          // Capture ID for CAPTURE_START (-1 = none)
     int8_t capture_end_id;            // Capture ID for CAPTURE_END (-1 = none)
     int8_t capture_defer_id;          // Capture ID for deferred CAPTURE_END (-1 = none)
-    uint32_t eos_target;              // Offset to EOS target state (0 = no EOS transition)
-    uint8_t padding;                  // Padding to make structure 16 bytes
+    uint16_t accepting_pattern_id;     // Pattern ID for accepting state (0 = not accepting, >0 = accepting with pattern)
+    uint32_t eos_target;              // Offset to EOS target state (absolute, 0 = no EOS transition)
+    uint32_t eos_marker_offset;       // Offset to EOS marker list (absolute, 0 = no markers)
 } dfa_state_t;
 
 /**
  * Complete DFA structure - can be memory-mapped directly
  *
- * Version 5 layout:
- * - Header (19 + id_len bytes)
- *   - dfa_t: magic(4) + version(2) + state_count(2) + initial_state(4) + accepting_mask(4) + flags(2) + identifier_length(1) = 19 bytes
+ * Version 6 layout (with capture markers):
+ * - Header (dfa_t): magic(4) + version(2) + state_count(2) + initial_state(4) +
+ *                   accepting_mask(4) + flags(2) + identifier_length(1) + metadata_offset(4) = 23 bytes
  * - identifier (0-255 bytes, not null-terminated)
+ * - Name Table (metadata_offset): [entry_count(4)][Entry1: pattern_id(2), name_len(2), name_data...][Entry2...]
  * - States array (dfa_state_t)
- * - Rule tables (dfa_rule_t) follow after states
+ * - Rules array (dfa_rule_t)
+ * - Marker Block: Variable-length marker lists, each terminated by 0xFFFFFFFF sentinel
  */
-typedef struct {
-    uint32_t magic;              // Magic number: 0xDFA1DFA1
-    uint16_t version;            // Version: 5
-    uint16_t state_count;        // Total number of states
-    uint32_t initial_state;      // Offset to initial state
-    uint32_t accepting_mask;     // Bitmask of accepting states
-    uint16_t flags;              // DFA flags
-    uint8_t identifier_length;    // Length of identifier (0-255)
-    uint8_t identifier[];        // Identifier string (not null-terminated)
+typedef struct __attribute__((packed)) {
+    uint32_t magic;                   // Magic number: 0xDFA1DFA1
+    uint16_t version;                 // Version: 6
+    uint16_t state_count;             // Total number of states
+    uint32_t initial_state;           // Offset to initial state (absolute, from DFA base)
+    uint32_t accepting_mask;          // Bitmask of accepting states
+    uint16_t flags;                   // DFA flags
+    uint8_t identifier_length;        // Length of identifier (0-255)
+    uint32_t metadata_offset;          // Offset to name table (absolute, from DFA base)
+    uint8_t identifier[];            // Identifier string (not null-terminated)
 } dfa_t;
 
 /**
@@ -73,7 +85,7 @@ typedef struct {
 /**
  * Current DFA version
  */
-#define DFA_VERSION 5  // Version 5: Compact rules (Range/Literal)
+#define DFA_VERSION 6  // Version 6: Capture markers and scalable metadata
 
 /**
  * Maximum number of states in a single DFA
@@ -98,14 +110,22 @@ typedef struct {
 #define DFA_RULE_NOT_RANGE      7  // Match anything NOT in data1..data2
 
 /**
- * Compact Rule entry (8 bytes)
+ * Compact Rule entry (12 bytes on 32-bit systems, may vary)
+ *
+ * Marker encoding in marker_offset lists:
+ * - Each marker is packed into a uint32_t: [16-bit PatternID][15-bit UID][1-bit Type]
+ * - Type: 0 = CAPTURE_START, 1 = CAPTURE_END
+ * - UID: Unique identifier for the capture point
+ * - PatternID: Which pattern this capture belongs to
+ * - Lists are terminated by 0xFFFFFFFF sentinel
  */
 typedef struct __attribute__((packed)) {
-    uint8_t type;        // Rule type (DFA_RULE_*)
-    uint8_t data1;       // Generic payload byte 1
-    uint8_t data2;       // Generic payload byte 2
-    uint8_t data3;       // Generic payload byte 3
-    uint32_t target;     // Next state offset (absolute file offset)
+    uint8_t type;                // Rule type (DFA_RULE_*)
+    uint8_t data1;               // Generic payload byte 1
+    uint8_t data2;               // Generic payload byte 2
+    uint8_t data3;               // Generic payload byte 3 (for LITERAL_3, RANGE_LITERAL)
+    uint32_t target;             // Next state offset (absolute file offset)
+    uint32_t marker_offset;      // Offset to marker list (absolute, from DFA base, 0 = no markers)
 } dfa_rule_t;
 
 /**
@@ -171,5 +191,42 @@ typedef struct {
     dfa_capture_t captures[DFA_MAX_CAPTURES];
     int capture_count;
 } dfa_result_t;
+
+/**
+ * Marker Block Constants
+ */
+#define MARKER_SENTINEL 0xFFFFFFFF
+#define MARKER_TYPE_START 0
+#define MARKER_TYPE_END 1
+
+/**
+ * Marker encoding macros
+ * Marker format: [16-bit PatternID][15-bit UID][1-bit Type]
+ */
+#define MARKER_PACK(pattern_id, uid, type) \
+    ((((uint32_t)(pattern_id)) << 17) | (((uint32_t)(uid)) << 1) | (uint32_t)(type))
+
+#define MARKER_GET_PATTERN_ID(marker) ((uint16_t)((marker) >> 17))
+#define MARKER_GET_UID(marker) ((uint16_t)(((marker) >> 1) & 0x7FFF))
+#define MARKER_GET_TYPE(marker) ((marker) & 0x01)
+
+/**
+ * Name Table Entry (variable length)
+ * Stored at metadata_offset:
+ * - entry_count (4 bytes): Number of entries
+ * - Followed by variable-length entries
+ */
+typedef struct {
+    uint16_t pattern_id;      // Pattern identifier
+    uint16_t name_length;     // Length of capture name (excluding null terminator)
+    char name_data[];         // Capture name (not null-terminated)
+} dfa_name_entry_t;
+
+/**
+ * Marker List Entry (fixed 4 bytes per marker)
+ * Each rule/state can point to a list of markers.
+ * Lists are terminated by MARKER_SENTINEL (0xFFFFFFFF).
+ */
+typedef uint32_t dfa_marker_t;
 
 #endif // DFA_TYPES_H

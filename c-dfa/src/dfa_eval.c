@@ -4,14 +4,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /**
- * DFA Evaluator - Lean Production Version (V5 Only)
+ * DFA Evaluator - Phase 4: Path-Trace Evaluator with Capture Extraction
  * 
- * Performance Constraints:
- * - O(1) memory allocation (stack only)
- * - Thread-safe matching hot-path
- * - Optimized rule dispatch for Version 5 compact format
+ * This evaluator records the matching path and uses it to filter markers
+ * by the winning pattern ID, enabling correct capture extraction from
+ * patterns with overlapping rules.
  */
 
 #ifndef DFA_EVAL_DEBUG
@@ -20,7 +20,7 @@
 
 #if DFA_EVAL_DEBUG
 #include <stdio.h>
-#define EVAL_DEBUG_PRINT(fmt, ...) fprintf(stderr, "DEBUG: " fmt, ##__VA_ARGS__)
+#define EVAL_DEBUG_PRINT(fmt, ...) fprintf(stderr, "[EVAL] " fmt, ##__VA_ARGS__)
 #define EVAL_DEBUG_FLUSH() fflush(stderr)
 #else
 #define EVAL_DEBUG_PRINT(fmt, ...) ((void)0)
@@ -32,118 +32,60 @@ static const dfa_t* current_dfa = NULL;
 static char current_identifier[256] = "";
 
 #define MAX_EVAL_LENGTH 16384 
-#define MAX_DEFER_STACK 16
-
-typedef struct {
-    size_t start_pos;
-    bool active;
-    int capture_id;
-} eval_capture_t;
+#define MAX_TRACE_LENGTH 16384
+#define MAX_CAPTURE_STACK 32
 
 typedef struct {
     int capture_id;
     size_t start_pos;
-} defer_entry_t;
+    size_t end_pos;
+} capture_range_t;
 
-static void set_capture_name(char* dst, int id) {
-    memcpy(dst, "capture_", 8);
-    if (id < 10) {
-        dst[8] = (char)('0' + id);
-        dst[9] = '\0';
-    } else if (id < 100) {
-        dst[8] = (char)('0' + (id / 10));
-        dst[9] = (char)('0' + (id % 10));
-        dst[10] = '\0';
-    } else {
-        dst[8] = '?'; dst[9] = '\0';
-    }
+static void add_capture(dfa_result_t* result, int capture_id, size_t start, size_t end) {
+    if (result->capture_count >= DFA_MAX_CAPTURES) return;
+    dfa_capture_t* cap = &result->captures[result->capture_count++];
+    cap->start = start;
+    cap->end = end;
+    cap->capture_id = capture_id;
+    snprintf(cap->name, sizeof(cap->name), "capture_%d", capture_id);
+    cap->active = false;
+    cap->completed = true;
 }
 
-static void process_markers(const dfa_state_t* state, eval_capture_t* active, 
-                           size_t pos, dfa_result_t* result, int max_caps,
-                           defer_entry_t* defer_stack, int* defer_depth) {
-    uint16_t flags = state->flags;
-
-    if (flags & DFA_STATE_CAPTURE_START) {
-        int id = state->capture_start_id;
-        if (id >= 0) {
-            for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
-                if (!active[i].active) {
-                    active[i].capture_id = id;
-                    active[i].start_pos = pos;
-                    active[i].active = true;
-                    break;
-                }
-            }
+static void process_marker_list(const uint32_t* marker_base, size_t pos, 
+                                 uint16_t winning_pattern_id,
+                                 capture_range_t* capture_stack, int* stack_depth,
+                                 dfa_result_t* result) {
+    if (!marker_base) return;
+    
+    for (int i = 0; marker_base[i] != MARKER_SENTINEL && marker_base[i] != 0; i++) {
+        uint32_t m = marker_base[i];
+        uint16_t pattern_id = MARKER_GET_PATTERN_ID(m);
+        uint16_t capture_id = MARKER_GET_UID(m);
+        uint8_t type = MARKER_GET_TYPE(m);
+        
+        // Phase 4: Filter by winning pattern ID
+        if (winning_pattern_id != UINT16_MAX && pattern_id != winning_pattern_id) {
+            continue;
         }
-    }
-
-    if (flags & DFA_STATE_CAPTURE_END) {
-        int id = state->capture_end_id;
-        if (id >= 0) {
-            for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
-                if (active[i].active && active[i].capture_id == id) {
-                    if (max_caps < 0 || result->capture_count < max_caps) {
-                        if (result->capture_count < DFA_MAX_CAPTURES) {
-                            dfa_capture_t* cap = &result->captures[result->capture_count++];
-                            cap->start = active[i].start_pos;
-                            cap->end = pos;
-                            cap->active = false;
-                            cap->completed = true;
-                            set_capture_name(cap->name, id);
-                            cap->capture_id = id;
-                        }
-                    }
-                    active[i].active = false;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (flags & DFA_STATE_CAPTURE_DEFER) {
-        int id = state->capture_defer_id;
-        if (id >= 0 && *defer_depth < MAX_DEFER_STACK) {
-            for (int i = 0; i < DFA_MAX_CAPTURES; i++) {
-                if (active[i].active && active[i].capture_id == id) {
-                    defer_stack[*defer_depth].capture_id = id;
-                    defer_stack[*defer_depth].start_pos = active[i].start_pos;
-                    (*defer_depth)++;
-                    break;
-                }
-            }
-        }
-    }
-}
-
-static void process_deferred(const dfa_state_t* next, defer_entry_t* stack, int* depth, 
-                            size_t pos, dfa_result_t* res) {
-    int d_count = *depth;
-    if (d_count == 0) return;
-
-    int write_idx = 0;
-    for (int i = 0; i < d_count; i++) {
-        bool still_deferred = false;
-        if (next->flags & DFA_STATE_CAPTURE_DEFER) {
-            if (next->capture_defer_id == stack[i].capture_id) still_deferred = true;
-        }
-
-        if (!still_deferred) {
-            if (res->capture_count < DFA_MAX_CAPTURES) {
-                dfa_capture_t* cap = &res->captures[res->capture_count++];
-                cap->start = stack[i].start_pos;
-                cap->end = pos;
-                cap->active = false;
-                cap->completed = true;
-                set_capture_name(cap->name, stack[i].capture_id);
-                cap->capture_id = stack[i].capture_id;
+        
+        if (type == MARKER_TYPE_START) {
+            if (*stack_depth < MAX_CAPTURE_STACK) {
+                capture_stack[*stack_depth].capture_id = capture_id;
+                capture_stack[*stack_depth].start_pos = pos;
+                capture_stack[*stack_depth].end_pos = 0;
+                (*stack_depth)++;
             }
         } else {
-            if (write_idx != i) stack[write_idx] = stack[i];
-            write_idx++;
+            for (int j = *stack_depth - 1; j >= 0; j--) {
+                if (capture_stack[j].capture_id == capture_id && capture_stack[j].end_pos == 0) {
+                    capture_stack[j].end_pos = pos;
+                    add_capture(result, capture_id, capture_stack[j].start_pos, pos);
+                    break;
+                }
+            }
         }
     }
-    *depth = write_idx;
 }
 
 bool dfa_init(const void* data, size_t size) {
@@ -154,7 +96,7 @@ bool dfa_init_with_identifier(const void* data, size_t size, const char* expecte
     if (!data || size < sizeof(dfa_t)) return false;
     const dfa_t* dfa = (const dfa_t*)data;
     if (dfa->magic != DFA_MAGIC) return false;
-    if (dfa->version != 5) return false; // V5 only
+    if (dfa->version < 5 || dfa->version > 6) return false;
     if (dfa->state_count == 0 || dfa->initial_state >= size) return false;
 
     if (expected_id) {
@@ -184,23 +126,22 @@ const char* dfa_category_string(dfa_command_category_t cat) {
     return (idx >= 0 && idx <= 6) ? names[idx] : "Invalid";
 }
 
+/**
+ * Phase 4 Evaluator: Path-Trace with Winning Pattern Filter
+ * 
+ * Pass 1: Record the trace (state indices) during matching
+ * Pass 2: Replay the trace to extract captures filtered by winning pattern
+ */
 bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_caps) {
     if (!current_dfa || !input || !result) return false;
 
-    eval_capture_t active[DFA_MAX_CAPTURES];
-    defer_entry_t defer_stack[MAX_DEFER_STACK];
-    int defer_depth = 0;
-    
-    memset(active, 0, sizeof(active));
     memset(result, 0, sizeof(dfa_result_t));
     result->category = DFA_CMD_UNKNOWN;
 
     if (length == 0) length = strlen(input);
-    const char* raw_base = (const char*)current_dfa;
-    const dfa_state_t* curr = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
-
     if (length == 0) {
-        // Handle empty input string match if initial state is accepting or has EOS transition
+        const char* raw_base = (const char*)current_dfa;
+        const dfa_state_t* curr = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
         if (curr->eos_target != 0) {
             curr = (const dfa_state_t*)(raw_base + curr->eos_target);
         }
@@ -210,26 +151,43 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             result->matched_length = 0;
             result->category_mask = m;
             for (int i = 0; i < 8; i++) if (m & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
-            return true;
         }
-        return true; 
+        return result->matched;
     }
 
+    const char* raw_base = (const char*)current_dfa;
+    const dfa_state_t* curr = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
+    
+    EVAL_DEBUG_PRINT("Starting evaluation, initial_state=%u, first_state_offset=%u\n", 
+                     current_dfa->initial_state, (unsigned int)((const char*)curr - raw_base));
+    EVAL_DEBUG_PRINT("State 0: tc=%u, to=%u, flags=0x%04X\n", 
+                     curr->transition_count, curr->transitions_offset, curr->flags);
+    
+    const uint32_t* marker_base = NULL;
+    if (current_dfa->metadata_offset != 0 && current_dfa->version >= 6) {
+        marker_base = (const uint32_t*)((const char*)current_dfa + current_dfa->metadata_offset);
+    }
+    
+    uint32_t trace_buffer[MAX_TRACE_LENGTH];
+    int trace_depth = 0;
+    
+    if (trace_depth < MAX_TRACE_LENGTH) {
+        trace_buffer[trace_depth++] = (uint32_t)((const char*)curr - raw_base);
+    }
+    
     size_t pos = 0;
-
-    process_markers(curr, active, 0, result, max_caps, defer_stack, &defer_depth);
 
     while (pos < length && pos < MAX_EVAL_LENGTH) {
         unsigned char c = (unsigned char)input[pos];
         const dfa_state_t* next = NULL;
+        
+        EVAL_DEBUG_PRINT("Pos %zu: char='%c'(0x%02X), state_offset=%u, tc=%u\n",
+                         pos, c, c, (unsigned int)((const char*)curr - raw_base), curr->transition_count);
 
         if (curr->transition_count > 0) {
             const dfa_rule_t* r = (const dfa_rule_t*)(raw_base + curr->transitions_offset);
-            EVAL_DEBUG_PRINT("State offset %ld, transitions: %d, input char: '%c' (%d)\n", 
-                            (const char*)curr - raw_base, curr->transition_count, c, c);
             for (uint16_t i = 0; i < curr->transition_count; i++, r++) {
                 bool m = false;
-                EVAL_DEBUG_PRINT("  Rule %d: type=%d, d1=%d, d2=%d, target=%u\n", i, r->type, r->data1, r->data2, r->target);
                 switch (r->type) {
                     case DFA_RULE_LITERAL: m = (c == r->data1); break;
                     case DFA_RULE_RANGE:   m = (c >= r->data1 && c <= r->data2); break;
@@ -240,39 +198,90 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
                     case DFA_RULE_NOT_LITERAL: m = (c != r->data1); break;
                     case DFA_RULE_NOT_RANGE:   m = (c < r->data1 || c > r->data2); break;
                 }
-                if (m) { 
-                    if (r->target >= 1000000) { // Safety check against obvious corruption
-                         fprintf(stderr, "FATAL: Evaluator encountered corrupt target offset %u\n", r->target);
-                         return false;
+                if (m) {
+                    EVAL_DEBUG_PRINT("  Rule %u: type=%u matched, target=%u\n", i, r->type, r->target);
+                    if (r->target >= 1000000) {
+                        fprintf(stderr, "FATAL: Evaluator encountered corrupt target offset %u\n", r->target);
+                        return false;
                     }
-                    next = (const dfa_state_t*)(raw_base + r->target); 
-                    break; 
+                    next = (const dfa_state_t*)(raw_base + r->target);
+                    break;
                 }
             }
         }
 
-        if (!next) return false;
+        if (!next) {
+            EVAL_DEBUG_PRINT("  No transition found for char '%c'\n", c);
+            return false;
+        }
 
         pos++;
-        process_deferred(next, defer_stack, &defer_depth, pos, result);
-        process_markers(next, active, pos, result, max_caps, defer_stack, &defer_depth);
         curr = next;
+        if (trace_depth < MAX_TRACE_LENGTH) {
+            trace_buffer[trace_depth++] = (uint32_t)((const char*)curr - raw_base);
+        }
     }
 
+    uint16_t winning_pattern_id = UINT16_MAX;  // UINT16_MAX = no accepting pattern
     if (curr->eos_target != 0) {
         const dfa_state_t* eos = (const dfa_state_t*)(raw_base + curr->eos_target);
-        process_deferred(eos, defer_stack, &defer_depth, pos, result);
-        process_markers(eos, active, pos, result, max_caps, defer_stack, &defer_depth);
         curr = eos;
+        if (trace_depth < MAX_TRACE_LENGTH) {
+            trace_buffer[trace_depth++] = (uint32_t)((const char*)curr - raw_base);
+        }
+        winning_pattern_id = curr->accepting_pattern_id;
+    } else {
+        winning_pattern_id = curr->accepting_pattern_id;
     }
 
     uint8_t mask = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
-    if (mask != 0) {
+    if (mask != 0 || winning_pattern_id != UINT16_MAX) {
         result->matched = true;
         result->matched_length = pos;
         result->category_mask = mask;
         result->final_state = (uint32_t)((const char*)curr - raw_base);
         for (int i = 0; i < 8; i++) if (mask & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
+        
+        if (current_dfa->version >= 6 && winning_pattern_id != UINT16_MAX) {
+            capture_range_t capture_stack[MAX_CAPTURE_STACK];
+            int stack_depth = 0;
+            
+            for (int t = 1; t < trace_depth && t <= pos; t++) {
+                uint32_t from_state_offset = trace_buffer[t - 1];
+                uint32_t to_state_offset = trace_buffer[t];
+                
+    // Check if we're on a transition that has markers
+    const dfa_state_t* from_state = (const dfa_state_t*)(raw_base + from_state_offset);
+    
+    const dfa_rule_t* r = (const dfa_rule_t*)(raw_base + from_state->transitions_offset);
+    const uint32_t* transition_markers = NULL;
+    
+    for (uint16_t i = 0; i < from_state->transition_count; i++, r++) {
+        if (r->target == to_state_offset) {
+            if (r->marker_offset != 0 && marker_base) {
+                transition_markers = marker_base + r->marker_offset;
+                fprintf(stderr, "[EVAL] Found markers at rule offset %u\n", r->marker_offset);
+            }
+            break;
+        }
+    }
+    
+    if (transition_markers) {
+        fprintf(stderr, "[EVAL] Processing markers, winning_pattern_id=%u\n", winning_pattern_id);
+        for (int m = 0; transition_markers[m] != MARKER_SENTINEL && transition_markers[m] != 0; m++) {
+            fprintf(stderr, "  marker[%d] = 0x%08X\n", m, transition_markers[m]);
+        }
+        process_marker_list(transition_markers, t - 1, winning_pattern_id,
+                                       capture_stack, &stack_depth, result);
+                }
+            }
+            
+            if (curr->eos_marker_offset != 0 && marker_base) {
+                const uint32_t* eos_markers = marker_base + curr->eos_marker_offset;
+                process_marker_list(eos_markers, pos, winning_pattern_id,
+                                   capture_stack, &stack_depth, result);
+            }
+        }
     }
 
     return result->matched;

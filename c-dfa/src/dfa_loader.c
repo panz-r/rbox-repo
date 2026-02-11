@@ -89,7 +89,14 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
         size_t header_size = 19; // dfa_t base (magic through identifier_length)
         if (version >= 4) {
             if (fread(&id_len, sizeof(id_len), 1, file) != 1) id_len = 0;
-            header_size = 19 + id_len; // 19 + identifier_length + identifier bytes
+            header_size = 19 + id_len;
+            // Version 6+ has additional metadata_offset field
+            if (version >= 6) {
+                uint32_t metadata_offset;
+                if (fread(&metadata_offset, sizeof(metadata_offset), 1, file) == 1) {
+                    header_size = 23 + id_len; // 19 + id_len + 4 for metadata_offset
+                }
+            }
         }
 
         fseek(file, 0, SEEK_END);

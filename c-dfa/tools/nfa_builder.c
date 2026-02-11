@@ -197,6 +197,10 @@ const char* category_names[CAT_COUNT] = {
 #define MAX_CAPTURES 16
 #define MAX_CAPTURE_NAME 32
 
+// Phase 2: Marker system constants
+#define MAX_MARKERS_PER_TRANSITION 8
+#define MAX_MARKER_LISTS 4096
+
 typedef struct {
     char name[MAX_FRAGMENT_NAME];
     char value[MAX_FRAGMENT_VALUE];
@@ -216,6 +220,46 @@ static capture_mapping_t capture_map[MAX_CAPTURES];
 static int capture_count = 0;
 static int capture_stack[MAX_CAPTURES];
 static int capture_stack_depth = 0;
+
+// ============================================================================
+// PHASE 2: Marker System Type Definitions
+// ============================================================================
+
+// Marker types
+#define MARKER_TYPE_START 0
+#define MARKER_TYPE_END 1
+
+// Individual marker entry
+typedef struct {
+    uint16_t pattern_id;    // Which pattern this marker belongs to
+    uint32_t uid;          // Unique identifier for this capture point
+    uint8_t type;          // MARKER_TYPE_START or MARKER_TYPE_END
+} MarkerEntry;
+
+// Capture name to UID mapping (for metadata table)
+typedef struct {
+    char name[MAX_CAPTURE_NAME];
+    uint32_t uid;
+    bool used;
+} CaptureUIDMapping;
+
+// Marker list - variable length list of markers attached to a transition
+typedef struct MarkerList {
+    MarkerEntry markers[MAX_MARKERS_PER_TRANSITION];
+    int count;
+    struct MarkerList* next;  // For chaining if more markers needed
+} MarkerList;
+
+// ============================================================================
+// END PHASE 2 TYPE DEFINITIONS
+// ============================================================================
+
+// Phase 2: Marker system globals
+static MarkerList* all_marker_lists[MAX_MARKER_LISTS];
+static int marker_list_count = 0;
+static uint32_t next_marker_uid = 0;
+static CaptureUIDMapping capture_uid_map[MAX_CAPTURES];
+static int capture_uid_count = 0;
 
 // For + quantifier on literal characters: tracks the last symbol added
 static int last_element_sid = -1;
@@ -341,6 +385,96 @@ void nfa_init(void) {
     capture_count = 0;
     capture_stack_depth = 0;
 }
+
+// ============================================================================
+// PHASE 2: NFA Edge Payloads & Marker System
+// ============================================================================
+
+// Marker types
+#define MARKER_TYPE_START 0
+#define MARKER_TYPE_END 1
+
+// Generate a globally unique marker UID
+static uint32_t generate_marker_uid(void) {
+    return next_marker_uid++;
+}
+
+// Register a capture name with its UID
+static uint32_t register_capture_uid(const char* name) {
+    for (int i = 0; i < capture_uid_count; i++) {
+        if (strcmp(capture_uid_map[i].name, name) == 0) {
+            return capture_uid_map[i].uid;
+        }
+    }
+    if (capture_uid_count < MAX_CAPTURES) {
+        strncpy(capture_uid_map[capture_uid_count].name, name, MAX_CAPTURE_NAME - 1);
+        capture_uid_map[capture_uid_count].name[MAX_CAPTURE_NAME - 1] = '\0';
+        capture_uid_map[capture_uid_count].uid = generate_marker_uid();
+        capture_uid_map[capture_uid_count].used = true;
+        return capture_uid_map[capture_uid_count].uid++;
+    }
+    return 0;
+}
+
+// Create a new marker list with a single marker
+static MarkerList* create_marker_list(uint16_t pattern_id, uint32_t uid, uint8_t type) {
+    if (marker_list_count >= MAX_MARKER_LISTS) return NULL;
+    MarkerList* ml = calloc(1, sizeof(MarkerList));
+    if (ml) {
+        all_marker_lists[marker_list_count++] = ml;
+        ml->markers[0].pattern_id = pattern_id;
+        ml->markers[0].uid = uid;
+        ml->markers[0].type = type;
+        ml->count = 1;
+        ml->next = NULL;
+    }
+    return ml;
+}
+
+// Add a marker to an existing marker list
+static void marker_list_add(MarkerList* ml, uint16_t pattern_id, uint32_t uid, uint8_t type) {
+    if (!ml || ml->count >= MAX_MARKERS_PER_TRANSITION) return;
+    for (int i = 0; i < ml->count; i++) {
+        if (ml->markers[i].pattern_id == pattern_id && ml->markers[i].uid == uid) {
+            return;  // Already exists
+        }
+    }
+    ml->markers[ml->count].pattern_id = pattern_id;
+    ml->markers[ml->count].uid = uid;
+    ml->markers[ml->count].type = type;
+    ml->count++;
+}
+
+// Create or merge marker list
+static MarkerList* get_or_create_marker_list(MarkerList* existing, uint16_t pattern_id, uint32_t uid, uint8_t type) {
+    if (!existing) {
+        return create_marker_list(pattern_id, uid, type);
+    }
+    // Check if already in list
+    for (int i = 0; i < existing->count; i++) {
+        if (existing->markers[i].pattern_id == pattern_id && existing->markers[i].uid == uid) {
+            return existing;  // Already has this marker
+        }
+    }
+    // Add to existing list
+    if (existing->count < MAX_MARKERS_PER_TRANSITION) {
+        existing->markers[existing->count].pattern_id = pattern_id;
+        existing->markers[existing->count].uid = uid;
+        existing->markers[existing->count].type = type;
+        existing->count++;
+        return existing;
+    }
+    // List is full, need to chain (rare case)
+    if (!existing->next) {
+        existing->next = create_marker_list(pattern_id, uid, type);
+        return existing->next;
+    }
+    return get_or_create_marker_list(existing->next, pattern_id, uid, type);
+}
+
+// ============================================================================
+// END PHASE 2 MARKER SYSTEM
+// ============================================================================
 
 // Negated transition helper functions
 bool is_char_excluded(negated_transition_t* neg_trans, char test_char) {
@@ -488,6 +622,7 @@ int nfa_add_state_with_category(uint8_t category_mask) {
     // First create the state normally
     int new_state = nfa_state_count;
     nfa[new_state].category_mask = category_mask;
+    fprintf(stderr, "[DEBUG] nfa_add_state: state=%d, current_pattern_index=%d\n", new_state, current_pattern_index);
     nfa[new_state].pattern_id = current_pattern_index;  // Set pattern_id
     nfa[new_state].tag_count = 0;
     for (int j = 0; j < MAX_TAGS; j++) {
@@ -717,6 +852,16 @@ static int get_capture_id(const char* name) {
     capture_map[capture_count].used = true;
     
     return capture_count++;
+}
+
+// Get capture name from ID
+static const char* get_capture_name(int id) {
+    for (int i = 0; i < capture_count; i++) {
+        if (capture_map[i].id == id) {
+            return capture_map[i].name;
+        }
+    }
+    return NULL;
 }
 
 // Check if current position starts a capture end tag
@@ -1959,6 +2104,11 @@ void parse_advanced_pattern(const char* line) {
     // Or: [fragment:name] value
     // Or: [characterset:name] value
 
+    // Skip IDENTIFIER directive lines
+    if (strncmp(line, "IDENTIFIER", 10) == 0 && (line[10] == ' ' || line[10] == '"')) {
+        return;
+    }
+
     char category[64] = "safe";
     char subcategory[64] = "";
     char operations[256] = "";
@@ -2124,8 +2274,10 @@ void parse_advanced_pattern(const char* line) {
         strncpy(patterns[pattern_count].operations, operations, sizeof(patterns[pattern_count].operations));
         strncpy(patterns[pattern_count].action, action, sizeof(patterns[pattern_count].action));
         patterns[pattern_count].category_id = parse_category(category);
+        fprintf(stderr, "[DEBUG] Before parse_pattern_full: pattern_count=%d, current_pattern_index=%d\n", pattern_count, current_pattern_index);
         current_pattern_index = pattern_count;  // Set BEFORE incrementing
         pattern_count++;
+        fprintf(stderr, "[DEBUG] After increment: pattern_count=%d\n", pattern_count);
     }
 
     // Set the pattern index for this NFA construction
@@ -2330,12 +2482,22 @@ void write_nfa_file(const char* filename) {
                     i, nfa[i].pattern_id, nfa[i].category_mask);
         }
         
-        // Write capture markers
+        // Write capture markers (Phase 2: with names for metadata table)
         if (nfa[i].capture_start_id >= 0) {
-            fprintf(file, "  CaptureStart: %d\n", nfa[i].capture_start_id);
+            const char* cap_name = get_capture_name(nfa[i].capture_start_id);
+            if (cap_name) {
+                fprintf(file, "  CaptureStart: %d %s\n", nfa[i].capture_start_id, cap_name);
+            } else {
+                fprintf(file, "  CaptureStart: %d\n", nfa[i].capture_start_id);
+            }
         }
         if (nfa[i].capture_end_id >= 0) {
-            fprintf(file, "  CaptureEnd: %d\n", nfa[i].capture_end_id);
+            const char* cap_name = get_capture_name(nfa[i].capture_end_id);
+            if (cap_name) {
+                fprintf(file, "  CaptureEnd: %d %s\n", nfa[i].capture_end_id, cap_name);
+            } else {
+                fprintf(file, "  CaptureEnd: %d\n", nfa[i].capture_end_id);
+            }
         }
 
         if (nfa[i].tag_count > 0) {
@@ -2711,7 +2873,6 @@ static bool construct_alphabet_from_patterns(const char* spec_file) {
         alphabet[i] = built_alphabet[i];
     }
     alphabet_size = built_alphabet_size;
-    fprintf(stderr, "DEBUG: Alphabet constructed, alphabet_size = %d\n", alphabet_size);
     alphabet_constructed = true;
     
     if (flag_verbose_alphabet) {

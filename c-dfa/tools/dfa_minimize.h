@@ -16,12 +16,15 @@ typedef struct build_dfa_state {
     uint16_t flags;
     int transitions[MAX_SYMBOLS];
     bool transitions_from_any[MAX_SYMBOLS];
+    uint32_t marker_offsets[MAX_SYMBOLS];  // Phase 3: Marker list offset for each transition
     int nfa_states[8192];  // MAX_STATES from nfa.h
     int nfa_state_count;
     int8_t capture_start_id;
     int8_t capture_end_id;
     int8_t capture_defer_id;
+    uint16_t accepting_pattern_id;  // Phase 4: Pattern ID for accepting state (0 = not accepting)
     uint32_t eos_target;
+    uint32_t eos_marker_offset;  // Phase 3: Markers for EOS transition
 } build_dfa_state_t;
 
 /**

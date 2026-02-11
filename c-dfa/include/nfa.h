@@ -32,6 +32,7 @@
 /* Shared NFA state structure for both nfa_builder and nfa2dfa */
 typedef struct {
     uint8_t category_mask;
+    uint16_t pattern_id;    // Pattern ID for this state (0 = none)
     int transitions[MAX_SYMBOLS];
     multi_target_array_t multi_targets;
     int8_t capture_start_id;
