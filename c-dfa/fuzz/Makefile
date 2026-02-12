@@ -78,6 +78,19 @@ replay-crashes-dfa: dfa_eval_fuzzer
 		./dfa_eval_fuzzer $$crash -runs=1; \
 	done
 
+# Replay pattern parser crashes (use pattern_parse_fuzzer)
+# Usage: make replay-crashes-pattern CRASHES="crashes/pattern_parse_abc123"
+replay-crashes-pattern: pattern_parse_fuzzer
+	@if [ -z "$(CRASHES)" ]; then \
+		echo "Error: Please specify CRASHES='file1 file2 ...'"; \
+		echo "Example: make replay-crashes-pattern CRASHES='crashes/pattern_parse_*'"; \
+		exit 1; \
+	fi
+	@for crash in $(CRASHES); do \
+		echo "=== Replaying $$crash ==="; \
+		./pattern_parse_fuzzer $$crash -runs=1; \
+	done
+
 # Replay all DFA fuzzer crashes found
 replay-all-dfa-crashes: dfa_eval_fuzzer
 	@if ls crashes/dfa_eval_* 1>/dev/null 2>&1; then \
