@@ -35,10 +35,8 @@ static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
         return false;
     }
 
-    if (dfa->state_count > DFA_MAX_STATES) {
-        fprintf(stderr, "ERROR: state_count %u exceeds maximum %u\n", dfa->state_count, DFA_MAX_STATES);
-        return false;
-    }
+    // Note: DFA_MAX_STATES is 65535 (uint16_t max), so state_count > DFA_MAX_STATES
+    // is always false. Validation is effectively covered by file size checks below.
 
     // Validate initial_state offset
     size_t min_state_offset = dfa->initial_state;

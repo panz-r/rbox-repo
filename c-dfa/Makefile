@@ -45,9 +45,24 @@ $(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/nfa_builder.c
 $(TEST): $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(SRC_DIR)/dfa_test.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(SRC_DIR)/dfa_test.c $(LDFLAGS)
 
+# Build minimization integrity test
+$(TOOLS_DIR)/test_minimize_integrity: $(TOOLS_DIR)/test_minimize_integrity.c \
+		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
+		$(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/test_minimize_integrity.c \
+		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c $(LDFLAGS)
+
+# Run minimization integrity test
+test-integrity: $(TOOLS_DIR)/test_minimize_integrity
+	@echo ""
+	@echo "================================================="
+	@echo "MINIMIZATION INTEGRITY TEST"
+	@echo "================================================="
+	@./$(TOOLS_DIR)/test_minimize_integrity
+
 # Clean build artifacts
 clean:
-	rm -rf $(BUILD_DIR) $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TEST)
+	rm -rf $(BUILD_DIR) $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TOOLS_DIR)/test_minimize_integrity $(TEST)
 
 # Test targets - each invokes the test runner with specific test-set and algorithm
 test-moore: $(TOOLS) $(TEST)
@@ -72,7 +87,7 @@ test-brzozowski: $(TOOLS) $(TEST)
 	@./$(TEST) --test-set C --minimize-brzozowski
 
 # Full test suite - runs all three algorithms with their respective test sets
-test: $(TOOLS) $(TEST)
+test: $(TOOLS) $(TEST) $(TOOLS_DIR)/test_minimize_integrity
 	@echo ""
 	@echo "================================================="
 	@echo "C-DFA FULL TEST SUITE"
@@ -83,6 +98,8 @@ test: $(TOOLS) $(TEST)
 	@make test-hopcroft 2>&1 | tail -3
 	@echo ""
 	@make test-brzozowski 2>&1 | tail -3
+	@echo ""
+	@make test-integrity 2>&1 | tail -5
 	@echo ""
 	@echo "================================================="
 
@@ -107,5 +124,5 @@ fuzz-clean:
 
 fuzz-rebuild: clean-fuzz fuzz-build
 
-.PHONY: all clean test test-moore test-hopcroft test-brzozowski
+.PHONY: all clean test test-moore test-hopcroft test-brzozowski test-integrity
 .PHONY: fuzz fuzz-build fuzz-run-dfa fuzz-run-pattern fuzz-run fuzz-clean fuzz-rebuild

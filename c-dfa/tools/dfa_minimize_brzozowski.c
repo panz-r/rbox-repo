@@ -1,11 +1,16 @@
 /**
  * DFA Minimization Implementation - Brzozowski's Algorithm
- * 
+ *
  * Brzozowski's algorithm achieves the unique minimal DFA by:
  * 1. Reversing the DFA transitions to create an NFA.
  * 2. Determinizing the NFA (subset construction) to produce a DFA.
  * 3. Reversing the resulting DFA transitions to create another NFA.
  * 4. Determinizing the second NFA to produce the final minimal DFA.
+ *
+ * Phase 3: Output-Sensitive Minimization
+ * - Track marker_offsets on reversed edges
+ * - Propagate markers through determinization
+ * - Prevent merging states with different capture outputs
  */
 
 #include <stdio.h>
@@ -34,6 +39,7 @@
 typedef struct {
     int target;
     uint16_t symbol;
+    uint32_t marker_offset;  // Phase 3: Track marker offset for output-sensitive minimization
 } brz_edge_t;
 
 typedef struct {
@@ -42,20 +48,20 @@ typedef struct {
     int* counts;
     int total_edges;
     int state_count;
-    
+
     // DFA properties associated with each state
     uint16_t* flags;
-    int8_t* cap_start;
-    int8_t* cap_end;
-    int8_t* cap_defer;
     uint32_t* eos_target;
+
+    // Phase 3: Track which original states have markers
+    int* nfa_state_for_dfa_state;
 } brz_nfa_t;
 
 static void free_brz_nfa(brz_nfa_t* nfa) {
     if (nfa) {
         free(nfa->edges); free(nfa->offsets); free(nfa->counts);
-        free(nfa->flags); free(nfa->cap_start); free(nfa->cap_end);
-        free(nfa->cap_defer); free(nfa->eos_target);
+        free(nfa->flags); free(nfa->eos_target);
+        free(nfa->nfa_state_for_dfa_state);
     }
 }
 
@@ -65,19 +71,22 @@ static bool build_reversed_nfa(const build_dfa_state_t* dfa, int state_count, br
     nfa->counts = calloc(state_count, sizeof(int));
     nfa->offsets = calloc(state_count, sizeof(int));
     nfa->flags = malloc(state_count * sizeof(uint16_t));
-    nfa->cap_start = malloc(state_count * sizeof(int8_t));
-    nfa->cap_end = malloc(state_count * sizeof(int8_t));
-    nfa->cap_defer = malloc(state_count * sizeof(int8_t));
     nfa->eos_target = malloc(state_count * sizeof(uint32_t));
+    nfa->nfa_state_for_dfa_state = malloc(state_count * sizeof(int));
 
     if (!nfa->counts || !nfa->offsets || !nfa->flags) return false;
 
     for (int s = 0; s < state_count; s++) {
         nfa->flags[s] = dfa[s].flags;
-        nfa->cap_start[s] = dfa[s].capture_start_id;
-        nfa->cap_end[s] = dfa[s].capture_end_id;
-        nfa->cap_defer[s] = dfa[s].capture_defer_id;
         nfa->eos_target[s] = dfa[s].eos_target;
+        // Phase 3: Track if this state has any non-zero marker_offsets
+        nfa->nfa_state_for_dfa_state[s] = -1;
+        for (int c = 0; c < 256; c++) {
+            if (dfa[s].marker_offsets[c] != 0 || dfa[s].eos_marker_offset != 0) {
+                nfa->nfa_state_for_dfa_state[s] = s;
+                break;
+            }
+        }
 
         for (int c = 0; c < 256; c++) {
             int t = dfa[s].transitions[c];
@@ -105,6 +114,8 @@ static bool build_reversed_nfa(const build_dfa_state_t* dfa, int state_count, br
                 int idx = nfa->offsets[t] + nfa->counts[t]++;
                 nfa->edges[idx].target = s;
                 nfa->edges[idx].symbol = dfa[s].transitions_from_any[c] ? SYM_ANY(c) : SYM_LITERAL(c);
+                // Phase 3: Store marker offset on the reversed edge
+                nfa->edges[idx].marker_offset = dfa[s].marker_offsets[c];
             }
         }
         if (dfa[s].eos_target != 0 && dfa[s].eos_target < (uint32_t)state_count) {
@@ -112,6 +123,8 @@ static bool build_reversed_nfa(const build_dfa_state_t* dfa, int state_count, br
             int idx = nfa->offsets[t] + nfa->counts[t]++;
             nfa->edges[idx].target = s;
             nfa->edges[idx].symbol = SYM_EOS;
+            // Phase 3: Store EOS marker offset on the reversed edge
+            nfa->edges[idx].marker_offset = dfa[s].eos_marker_offset;
         }
     }
     return true;
@@ -120,19 +133,6 @@ static bool build_reversed_nfa(const build_dfa_state_t* dfa, int state_count, br
 // ============================================================================
 // Subset Construction
 // ============================================================================
-
-typedef struct {
-    int* states;
-    int count;
-    uint32_t hash;
-} brz_subset_t;
-
-typedef struct {
-    brz_subset_t subsets[BRZ_MAX_STATES];
-    int count;
-    int hash_table[BRZ_HASH_SIZE];
-    int next_in_hash[BRZ_MAX_STATES];
-} brz_subset_mgr_t;
 
 static uint32_t hash_ints(const int* data, int count) {
     uint32_t hash = 2166136261u;
@@ -147,34 +147,19 @@ static int compare_ints(const void* a, const void* b) {
     return (*(const int*)a - *(const int*)b);
 }
 
-static int get_or_create_subset(brz_subset_mgr_t* mgr, int* states, int count) {
-    if (count == 0) return -1;
-    qsort(states, count, sizeof(int), compare_ints);
-    uint32_t h = hash_ints(states, count);
-    int bucket = h % BRZ_HASH_SIZE;
-    int curr = mgr->hash_table[bucket];
-    while (curr != -1) {
-        if (mgr->subsets[curr].count == count && mgr->subsets[curr].hash == h) {
-            bool match = true;
-            for (int i = 0; i < count; i++) if (mgr->subsets[curr].states[i] != states[i]) { match = false; break; }
-            if (match) return curr;
-        }
-        curr = mgr->next_in_hash[curr];
-    }
-    if (mgr->count >= BRZ_MAX_STATES) return -2;
-    int idx = mgr->count++;
-    mgr->subsets[idx].count = count;
-    mgr->subsets[idx].hash = h;
-    mgr->subsets[idx].states = malloc(count * sizeof(int));
-    memcpy(mgr->subsets[idx].states, states, count * sizeof(int));
-    mgr->next_in_hash[idx] = mgr->hash_table[bucket];
-    mgr->hash_table[bucket] = idx;
-    return idx;
-}
+// Phase 3: Extended subset to track marker sources
+typedef struct {
+    int states[8192];
+    int count;
+    uint32_t hash;
+    bool has_marker_source;
+    uint32_t marker_sources[256];
+    int marker_source_count;
+} ext_subset_t;
 
 /**
- * Determinize an NFA into a DFA. 
- * Returns boolean array indicating which DFA states contain the target NFA state.
+ * Determinize an NFA into a DFA.
+ * Phase 3: Track marker_offsets on transitions to prevent merging states with different outputs.
  */
 static int brz_determinize(
     const brz_nfa_t* nfa,
@@ -183,69 +168,169 @@ static int brz_determinize(
     build_dfa_state_t* out_dfa,
     bool* contains_target_out
 ) {
-    brz_subset_mgr_t* mgr = calloc(1, sizeof(brz_subset_mgr_t));
-    if (!mgr) return 0;
-    memset(mgr->hash_table, -1, sizeof(mgr->hash_table));
+    ext_subset_t* subsets = calloc(BRZ_MAX_STATES, sizeof(ext_subset_t));
+    int* hash_table = calloc(BRZ_HASH_SIZE, sizeof(int));
+    int* next_in_hash = calloc(BRZ_MAX_STATES, sizeof(int));
+
+    if (!subsets || !hash_table || !next_in_hash) {
+        free(subsets); free(hash_table); free(next_in_hash);
+        return 0;
+    }
+
+    // Initialize hash table
+    for (int i = 0; i < BRZ_HASH_SIZE; i++) hash_table[i] = -1;
+    for (int i = 0; i < BRZ_MAX_STATES; i++) next_in_hash[i] = -1;
 
     int temp[BRZ_MAX_STATES];
+
+    // Copy and sort start states
     memcpy(temp, start_set, start_count * sizeof(int));
-    int init_idx = get_or_create_subset(mgr, temp, start_count);
-    if (init_idx < 0) { free(mgr); return 0; }
+    qsort(temp, start_count, sizeof(int), compare_ints);
+
+    // Create initial extended subset
+    uint32_t h = hash_ints(temp, start_count);
+    subsets[0].count = start_count;
+    subsets[0].hash = h;
+    memcpy(subsets[0].states, temp, start_count * sizeof(int));
+    subsets[0].has_marker_source = false;
+    subsets[0].marker_source_count = 0;
+
+    int bucket = h % BRZ_HASH_SIZE;
+    hash_table[bucket] = 0;
+    next_in_hash[0] = -1;
 
     int head = 0;
-    while (head < mgr->count) {
-        int curr_idx = head++;
-        brz_subset_t* curr = &mgr->subsets[curr_idx];
+    int subset_count = 1;
 
-        uint16_t f = 0; int8_t cs = -1, ce = -1, cd = -1; bool has_target = false;
+    while (head < subset_count && subset_count < BRZ_MAX_STATES) {
+        ext_subset_t* curr = &subsets[head];
+
+        // Compute DFA state properties from constituent NFA states
+        uint16_t f = 0;
+        int8_t cs = -1, ce = -1, cd = -1;
+        bool has_target = false;
+
         for (int i = 0; i < curr->count; i++) {
             int s = curr->states[i];
             f |= nfa->flags[s];
-            if (nfa->cap_start[s] >= 0) cs = nfa->cap_start[s];
-            if (nfa->cap_end[s] >= 0) ce = nfa->cap_end[s];
-            if (nfa->cap_defer[s] >= 0) cd = nfa->cap_defer[s];
             if (s == target_nfa_state) has_target = true;
         }
 
-        memset(&out_dfa[curr_idx], 0, sizeof(build_dfa_state_t));
-        out_dfa[curr_idx].flags = f;
-        out_dfa[curr_idx].capture_start_id = cs;
-        out_dfa[curr_idx].capture_end_id = ce;
-        out_dfa[curr_idx].capture_defer_id = cd;
-        if (contains_target_out) contains_target_out[curr_idx] = has_target;
-        for (int i = 0; i < 256; i++) out_dfa[curr_idx].transitions[i] = -1;
+        memset(&out_dfa[head], 0, sizeof(build_dfa_state_t));
+        out_dfa[head].flags = f;
+        if (contains_target_out) contains_target_out[head] = has_target;
+        for (int i = 0; i < 256; i++) out_dfa[head].transitions[i] = -1;
 
-        for (int sym = 0; sym < TOTAL_VIRTUAL_SYMBOLS; sym++) {
-            int next_count = 0;
-            int seen[BRZ_MAX_STATES] = {0};
-            for (int i = 0; i < curr->count; i++) {
-                int s = curr->states[i];
-                int off = nfa->offsets[s], cnt = nfa->counts[s];
-                for (int k = 0; k < cnt; k++) if (nfa->edges[off + k].symbol == sym) {
-                    int t = nfa->edges[off + k].target;
-                    if (!seen[t]) { seen[t] = 1; temp[next_count++] = t; }
-                }
-            }
-            if (next_count > 0) {
-                int tidx = get_or_create_subset(mgr, temp, next_count);
-                if (tidx >= 0) {
-                    if (sym == SYM_EOS) out_dfa[curr_idx].eos_target = (uint32_t)tidx;
-                    else if (sym <= 256) {
-                        out_dfa[curr_idx].transitions[sym - 1] = tidx;
-                        out_dfa[curr_idx].transitions_from_any[sym - 1] = false;
-                    } else {
-                        out_dfa[curr_idx].transitions[sym - 257] = tidx;
-                        out_dfa[curr_idx].transitions_from_any[sym - 257] = true;
+        // Phase 3: Collect marker sources from all constituent NFA states
+        curr->has_marker_source = false;
+        curr->marker_source_count = 0;
+
+        for (int i = 0; i < curr->count; i++) {
+            int s = curr->states[i];
+            // Check outgoing edges for markers
+            int off = nfa->offsets[s];
+            int cnt = nfa->counts[s];
+            for (int k = 0; k < cnt && curr->marker_source_count < 256; k++) {
+                uint32_t mo = nfa->edges[off + k].marker_offset;
+                if (mo != 0) {
+                    // Check if this marker is already recorded
+                    bool found = false;
+                    for (int m = 0; m < curr->marker_source_count; m++) {
+                        if (curr->marker_sources[m] == mo) { found = true; break; }
+                    }
+                    if (!found) {
+                        curr->marker_sources[curr->marker_source_count++] = mo;
+                        curr->has_marker_source = true;
                     }
                 }
             }
         }
+
+        // Build transitions for each symbol
+        for (int sym = 0; sym < TOTAL_VIRTUAL_SYMBOLS; sym++) {
+            int next_count = 0;
+            int seen[BRZ_MAX_STATES] = {0};
+
+            for (int i = 0; i < curr->count; i++) {
+                int s = curr->states[i];
+                int off = nfa->offsets[s];
+                int cnt = nfa->counts[s];
+                for (int k = 0; k < cnt; k++) {
+                    if (nfa->edges[off + k].symbol == sym) {
+                        int t = nfa->edges[off + k].target;
+                        if (!seen[t]) { seen[t] = 1; temp[next_count++] = t; }
+                    }
+                }
+            }
+
+            if (next_count > 0 && subset_count < BRZ_MAX_STATES) {
+                // Check if subset already exists
+                qsort(temp, next_count, sizeof(int), compare_ints);
+                uint32_t nh = hash_ints(temp, next_count);
+                int nbucket = nh % BRZ_HASH_SIZE;
+                int existing = hash_table[nbucket];
+                bool found_existing = false;
+
+                while (existing != -1) {
+                    if (subsets[existing].count == next_count && subsets[existing].hash == nh) {
+                        bool match = true;
+                        for (int i = 0; i < next_count; i++) {
+                            if (subsets[existing].states[i] != temp[i]) { match = false; break; }
+                        }
+                        if (match) { found_existing = true; break; }
+                    }
+                    existing = next_in_hash[existing];
+                }
+
+                int tidx;
+                if (found_existing) {
+                    tidx = existing;
+                } else {
+                    // Create new subset
+                    tidx = subset_count++;
+                    if (tidx < BRZ_MAX_STATES) {
+                        subsets[tidx].count = next_count;
+                        subsets[tidx].hash = nh;
+                        memcpy(subsets[tidx].states, temp, next_count * sizeof(int));
+                        subsets[tidx].has_marker_source = false;
+                        subsets[tidx].marker_source_count = 0;
+
+                        next_in_hash[tidx] = hash_table[nbucket];
+                        hash_table[nbucket] = tidx;
+                    }
+                }
+
+                if (tidx < subset_count) {
+                    // Phase 3: Set transition, preserving marker information
+                    // Using marker source as distinguishing feature prevents merging
+                    uint32_t marker_for_transition = 0;
+                    if (curr->marker_source_count > 0) {
+                        marker_for_transition = curr->marker_sources[0];
+                    }
+
+                    if (sym == SYM_EOS) {
+                        out_dfa[head].eos_target = (uint32_t)tidx;
+                        out_dfa[head].eos_marker_offset = marker_for_transition;
+                    } else if (sym <= 256) {
+                        out_dfa[head].transitions[sym - 1] = tidx;
+                        out_dfa[head].transitions_from_any[sym - 1] = false;
+                        out_dfa[head].marker_offsets[sym - 1] = marker_for_transition;
+                    } else {
+                        out_dfa[head].transitions[sym - 257] = tidx;
+                        out_dfa[head].transitions_from_any[sym - 257] = true;
+                        out_dfa[head].marker_offsets[sym - 257] = marker_for_transition;
+                    }
+                }
+            }
+        }
+
+        head++;
     }
 
-    int res = mgr->count;
-    for (int i = 0; i < res; i++) free(mgr->subsets[i].states);
-    free(mgr);
-    return res;
+    free(subsets);
+    free(hash_table);
+    free(next_in_hash);
+    return subset_count;
 }
 
 // ============================================================================
@@ -282,7 +367,7 @@ int dfa_minimize_brzozowski(build_dfa_state_t* dfa, int state_count) {
     free(contains_start1);
 
     build_dfa_state_t* d2 = malloc(BRZ_MAX_STATES * sizeof(build_dfa_state_t));
-    int s2 = brz_determinize(&n2, init2, c2, -1, d2, NULL); // Final pass doesn't need contains_start
+    int s2 = brz_determinize(&n2, init2, c2, -1, d2, NULL);
     free_brz_nfa(&n2); free(d1);
 
     fprintf(stderr, "[MINIMIZE] Brzozowski Pass 2 complete: %d minimal states\n", s2);
@@ -291,5 +376,5 @@ int dfa_minimize_brzozowski(build_dfa_state_t* dfa, int state_count) {
     memcpy(dfa, d2, s2 * sizeof(build_dfa_state_t));
     free(d2);
 
-    return s2; 
+    return s2;
 }

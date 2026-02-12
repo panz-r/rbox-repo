@@ -250,9 +250,6 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
 
 static bool are_properties_equivalent(const build_dfa_state_t* s1, const build_dfa_state_t* s2) {
     if (s1->flags != s2->flags) return false;
-    if (s1->capture_start_id != s2->capture_start_id) return false;
-    if (s1->capture_end_id != s2->capture_end_id) return false;
-    if (s1->capture_defer_id != s2->capture_defer_id) return false;
     if ((s1->eos_target != 0) != (s2->eos_target != 0)) return false;
     if (s1->eos_marker_offset != s2->eos_marker_offset) return false;
     return true;
@@ -276,9 +273,6 @@ static bool are_transitions_equivalent(const build_dfa_state_t* s1, const build_
 static uint16_t compute_hash(const build_dfa_state_t* state, const int* partition_map) {
     uint32_t hash = FNV_OFFSET_BASIS;
     hash ^= (state->flags & 0xFFFF); hash *= FNV_PRIME;
-    hash ^= (uint8_t)state->capture_start_id; hash *= FNV_PRIME;
-    hash ^= (uint8_t)state->capture_end_id; hash *= FNV_PRIME;
-    hash ^= (uint8_t)state->capture_defer_id; hash *= FNV_PRIME;
     hash ^= state->eos_marker_offset; hash *= FNV_PRIME;
     for (int c = 0; c < 256; c += 8) {
         int t = state->transitions[c];

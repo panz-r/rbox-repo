@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include "multi_target_array.h"
 #include "../include/dfa_types.h"
 #include "../include/nfa.h"
 
@@ -245,11 +246,27 @@ typedef struct {
 // END PHASE 2 TYPE DEFINITIONS
 // ============================================================================
 
+// Pending markers for the next character transitions
+// When a capture tag is parsed, markers are queued here. When nfa_add_transition
+// is called for a non-EPSILON symbol, ALL queued markers are attached to that transition.
+// This supports multiple pending markers (for nested/adjacent captures).
+static pending_marker_t pending_markers[MAX_PENDING_MARKERS];
+static int pending_marker_count = 0;
+
 // For + quantifier on literal characters: tracks the last symbol added
 static int last_element_sid = -1;
 
 // For + quantifier: tracks if we're inside a capture (capture ID to defer)
 static int8_t pending_capture_defer_id = -1;
+
+// Reset pattern state - clears pending markers and capture stack for a new pattern
+// This prevents cross-pattern contamination when states are shared
+static void reset_nfa_builder_pattern_state(void) {
+    pending_marker_count = 0;
+    capture_stack_depth = 0;
+    pending_capture_defer_id = -1;
+    last_element_sid = -1;
+}
 
 // ============================================================================
 // DECOUPLED ARCHITECTURE: Explicit data structures replacing globals
@@ -670,6 +687,27 @@ void nfa_add_transition(int from, int to, int symbol_id) {
     if (added) {
         nfa[from].transition_count++;
     }
+
+    // Transfer ALL pending capture markers to character transitions (not EPSILON/EOS)
+    // PATTERN-AWARE: Only transfer if marker belongs to current pattern
+    // This prevents cross-pattern contamination when states are shared
+    if (pending_marker_count > 0 && symbol_id < 256) {
+        multi_target_array_t* mta = &nfa[from].multi_targets;
+        for (int m = 0; m < pending_marker_count; m++) {
+            pending_marker_t* marker = &pending_markers[m];
+            // CRITICAL: Only transfer if marker pattern_id matches current pattern
+            if (marker->pattern_id == (uint16_t)current_pattern_index) {
+                DEBUG_PRINT("nfa_add_transition: transferring marker pid=%d uid=%d type=%d to (%d -> %d) sym %d [CURRENT PATTERN]\n",
+                            marker->pattern_id, marker->uid, marker->type, from, to, symbol_id);
+                mta_add_marker(mta, symbol_id, marker->pattern_id, marker->uid, marker->type);
+            } else {
+                DEBUG_PRINT("nfa_add_transition: SKIP marker pid=%d (current pattern=%d)\n",
+                            marker->pattern_id, current_pattern_index);
+            }
+        }
+        // Clear all pending markers after transfer
+        pending_marker_count = 0;
+    }
 }
 
 // ============================================================================
@@ -805,17 +843,28 @@ static int parse_capture_start(const char* pattern, int* pos, int start_state) {
         (*pos)++;
     }
 
-    // NEW APPROACH: Set capture_start_id on start_state directly
-    // This way, the capture marker is intrinsic to the state and won't be lost
-    // when states are merged during DFA construction
-    nfa[start_state].capture_start_id = cap_id;
-    DEBUG_PRINT("parse_capture_start '%s' -> cap_id=%d on state %d\n", cap_name, cap_id, start_state);
+    // Queue START marker for the next character transition
+    // Markers will be attached when nfa_add_transition is called
+    // This supports multiple pending markers (for nested/adjacent captures)
+    if (pending_marker_count < MAX_PENDING_MARKERS) {
+        pending_markers[pending_marker_count].pattern_id = (uint16_t)current_pattern_index;
+        pending_markers[pending_marker_count].uid = (uint32_t)cap_id;  // Just the capture ID
+        pending_markers[pending_marker_count].type = MARKER_TYPE_START;
+        pending_markers[pending_marker_count].active = true;
+        pending_marker_count++;
+        DEBUG_PRINT("parse_capture_start '%s' -> queued marker pid=%d uid=%d type=%d (count=%d)\n",
+                    cap_name, pending_markers[pending_marker_count-1].pattern_id,
+                    pending_markers[pending_marker_count-1].uid,
+                    pending_markers[pending_marker_count-1].type, pending_marker_count);
+    } else {
+        DEBUG_PRINT("parse_capture_start '%s' -> ERROR: too many pending markers\n", cap_name);
+    }
 
     // Push capture ID onto stack and mark for potential deferral (for + quantifier)
     capture_stack[capture_stack_depth++] = cap_id;
     pending_capture_defer_id = cap_id;  // Will be used if followed by + quantifier
 
-    // Return start_state - the capture starts HERE before consuming any content
+    // Return start_state - the capture marker will be attached to the next transition
     return start_state;
 }
 
@@ -840,17 +889,34 @@ static int parse_capture_end(const char* pattern, int* pos, int start_state) {
         (*pos)++;
     }
 
-    // NEW APPROACH: Set capture_end_id on start_state directly
-    // The capture ends at start_state (position after content, before 'c')
-    nfa[start_state].capture_end_id = cap_id;
-    DEBUG_PRINT("parse_capture_end '%s' -> cap_id=%d on state %d\n", cap_name, cap_id, start_state);
+    // Set END marker on the current state (the state where capture ends)
+    // This is the "at-end" capture case
+    nfa[start_state].capture_end_id = (int8_t)cap_id;
+    nfa[start_state].pattern_id = (uint16_t)current_pattern_index;
+    DEBUG_PRINT("parse_capture_end '%s' -> setting capture_end_id=%d on state %d (pattern %d)\n",
+                cap_name, cap_id, start_state, current_pattern_index);
+
+    // ALSO queue END marker to pending_markers for INTERMEDIATE captures
+    // This ensures the END marker gets attached to the NEXT character transition
+    // For patterns like <p1>abc</p1>d, this attaches the END marker to 'd'
+    if (pending_marker_count < MAX_PENDING_MARKERS) {
+        pending_markers[pending_marker_count].pattern_id = (uint16_t)current_pattern_index;
+        pending_markers[pending_marker_count].uid = (uint32_t)cap_id;
+        pending_markers[pending_marker_count].type = MARKER_TYPE_END;
+        pending_markers[pending_marker_count].active = true;
+        pending_marker_count++;
+        DEBUG_PRINT("parse_capture_end '%s' -> queued END marker pid=%d uid=%d (count=%d)\n",
+                    cap_name, current_pattern_index, cap_id, pending_marker_count);
+    } else {
+        DEBUG_PRINT("parse_capture_end '%s' -> ERROR: too many pending markers\n", cap_name);
+    }
 
     // Pop capture ID from stack (verify it matches)
     if (capture_stack_depth > 0) {
         capture_stack_depth--;
     }
 
-    // Return start_state - the capture ends HERE after consuming content
+    // Return start_state - the capture marker will be attached to the next transition
     return start_state;
 }
 
@@ -1580,6 +1646,11 @@ static int parse_rdp_sequence(const char* pattern, int* pos, int start_state) {
 
 // Parse alternation: sequence ('|' sequence)*
 static int parse_rdp_alternation(const char* pattern, int* pos, int start_state) {
+    // CRITICAL: Reset pattern state at the start of each alternative
+    // This isolates each pattern's pending markers from other patterns
+    // Prevents cross-pattern contamination when states are shared
+    reset_nfa_builder_pattern_state();
+
     // Create Anchor State (Dedicated Entry Point)
     int anchor_state;
     int epsilon_sid = VSYM_EPS;
@@ -1823,11 +1894,10 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 // No common prefix - create new start state
                 start_state = nfa_add_state_with_minimization(false);
                 DEBUG_PRINT("NEW start_state=%d for pattern_id %d, adding transition 0->%d on %d\n",
-                        start_state, current_pattern_index, start_state, first_char_sid);
+                         start_state, current_pattern_index, start_state, first_char_sid);
                 nfa_add_transition(0, start_state, first_char_sid);
-                DEBUG_PRINT("After add_transition: transitions[%d]=%d, multi_targets[%d]='%s'\n",
-                        first_char_sid, nfa[0].transitions[first_char_sid], first_char_sid,
-                        nfa[0].multi_targets[first_char_sid]);
+                DEBUG_PRINT("After add_transition: transitions[%d]=%d\n",
+                        first_char_sid, nfa[0].transitions[first_char_sid]);
                 pattern_start_pos = 1;  // Skip first character (already consumed)
             }
         } else {
@@ -2133,7 +2203,11 @@ void parse_advanced_pattern(const char* line) {
         fprintf(stderr, "[DEBUG] After increment: pattern_count=%d\n", pattern_count);
     }
 
-    // Set the pattern index for this NFA construction
+    // CRITICAL: Clear all pending markers before starting new pattern
+    // This prevents cross-pattern contamination from any leftover markers
+    pending_marker_count = 0;
+
+    // Use the new recursive descent parser to build NFA
     // This prevents states from different patterns from being merged
     // current_pattern_index was already set to the current pattern's index above
 
@@ -2371,6 +2445,22 @@ void write_nfa_file(const char* filename) {
                     fprintf(file, "    Symbol %d -> ", s);
                     for (int k = 0; k < count; k++) {
                         fprintf(file, "%d%s", targets[k], (k < count - 1) ? "," : "");
+                    }
+                    // Write markers attached to this transition
+                    int marker_count = 0;
+                    transition_marker_t* markers = mta_get_markers(&nfa[i].multi_targets, s, &marker_count);
+                    if (markers && marker_count > 0) {
+                        fprintf(stderr, "[WRITE NFA] State %d, sym %d: reading %d markers from MTA\n", i, s, marker_count);
+                        fprintf(file, " [Markers:");
+                        for (int m = 0; m < marker_count; m++) {
+                            uint32_t full_marker = MARKER_PACK(markers[m].pattern_id, markers[m].uid, markers[m].type);
+                            fprintf(stderr, "[WRITE NFA]   marker[%d] pid=%d uid=%d type=%d -> 0x%08X\n",
+                                    m, markers[m].pattern_id, markers[m].uid, markers[m].type, full_marker);
+                            fprintf(file, " 0x%08X", full_marker);
+                        }
+                        fprintf(file, "]");
+                    } else if (marker_count > 0) {
+                        fprintf(stderr, "[WRITE NFA] State %d, sym %d: MTA has %d markers but markers ptr is NULL!\n", i, s, marker_count);
                     }
                     fprintf(file, "\n");
                 }
