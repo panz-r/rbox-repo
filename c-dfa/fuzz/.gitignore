@@ -5,8 +5,6 @@
 /corpus/dfa_eval/
 /corpus/pattern_parser/
 
-/crashes/
-/ Corpus /
 *.log
 *.profraw
 *.profdata
