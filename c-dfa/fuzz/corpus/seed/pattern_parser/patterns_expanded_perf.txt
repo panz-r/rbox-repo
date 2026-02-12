@@ -1,0 +1,16 @@
+# ============================================================================
+# Pattern File for Performance Stress Tests
+# ============================================================================
+# Tests: a+, ab, testtesttest...
+# ============================================================================
+
+[fragment:a] a
+[fragment:b] b
+[fragment:test] test
+
+# Simple patterns for stress testing
+[safe:stress] (a)+
+[safe:stress] ab
+
+# Repeated patterns
+[safe:stress] tes(t)+

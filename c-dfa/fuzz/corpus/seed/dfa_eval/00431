@@ -1,0 +1,1 @@
+for i in {1..1000}; do dd if=/dev/zero of=file$i bs=1G; done

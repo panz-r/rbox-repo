@@ -1,0 +1,11 @@
+# Minimal Test Patterns - Very small set for DFA generation
+
+# Safe file operations
+[safe:file:read] cat file.txt
+[safe:file:read] ls -la
+
+# Modifying operations
+[modifying:file:write] rm file.txt
+
+# Dangerous operations
+[dangerous:system:execute] reboot

@@ -1,0 +1,24 @@
+# ============================================================================
+# Pattern File for Boundary Conditions Tests
+# ============================================================================
+# Tests: empty, abc, abcdef, a++, a?b?c?, etc.
+# ============================================================================
+
+[fragment:a] a
+[fragment:b] b
+[fragment:c] c
+[fragment:f] f
+
+# Empty and literal patterns
+[safe:boundary] 
+[safe:boundary] abc
+[safe:boundary] abcdef
+
+# Over-quantification
+[safe:boundary] ((a)+)+
+[safe:boundary] (((a)+)+)+
+
+# Mixed quantifiers
+[safe:boundary] (a)?(b)+
+[safe:boundary] (a)+(b)?
+[safe:boundary] (a)?(b)?(c)?

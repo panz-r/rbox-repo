@@ -1,0 +1,3 @@
+# Simple + quantifier test
+[fragment:B] b
+[safe:quantifier:test] a((B))+

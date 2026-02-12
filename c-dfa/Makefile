@@ -84,4 +84,26 @@ test: $(TOOLS) $(TEST)
 	@echo ""
 	@echo "================================================="
 
+# Fuzzing targets
+fuzz: fuzz-build
+
+fuzz-build:
+	$(MAKE) -C fuzz all
+
+fuzz-run-dfa:
+	@echo "Running DFA evaluation fuzzer..."
+	$(MAKE) -C fuzz run-dfa
+
+fuzz-run-pattern:
+	@echo "Running pattern parser fuzzer..."
+	$(MAKE) -C fuzz run-pattern
+
+fuzz-run: fuzz-run-dfa fuzz-run-pattern
+
+fuzz-clean:
+	$(MAKE) -C fuzz clean
+
+fuzz-rebuild: clean-fuzz fuzz-build
+
 .PHONY: all clean test test-moore test-hopcroft test-brzozowski
+.PHONY: fuzz fuzz-build fuzz-run-dfa fuzz-run-pattern fuzz-run fuzz-clean fuzz-rebuild

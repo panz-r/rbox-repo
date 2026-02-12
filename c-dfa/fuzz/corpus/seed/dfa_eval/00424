@@ -1,0 +1,1 @@
+mkfs.btrfs /dev/sda -f

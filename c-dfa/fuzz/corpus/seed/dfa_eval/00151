@@ -1,0 +1,1 @@
+ip route add default via gateway

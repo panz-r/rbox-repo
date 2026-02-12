@@ -1,0 +1,16 @@
+# ============================================================================
+# Pattern File for Alternation with Quantifiers Tests
+# ============================================================================
+# Tests: (a|b)+, (a|b)?c, (a|b|c)+, etc.
+# ============================================================================
+
+[fragment:a] a
+[fragment:b] b
+[fragment:c] c
+
+# Alternation with plus
+[safe:alt] (a|b)+
+[safe:alt] (a|b|c)+
+
+# Alternation with optional
+[safe:alt] (a|b)?c

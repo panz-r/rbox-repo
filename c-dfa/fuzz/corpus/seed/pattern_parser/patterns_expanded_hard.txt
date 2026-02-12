@@ -1,0 +1,24 @@
+# ============================================================================
+# Pattern File for Hard Edge Cases Tests
+# ============================================================================
+# Tests: (a+a+)+b, ((a))+((a))+, (ab)+, (a|aa)+, [abc]+
+# ============================================================================
+
+[fragment:a] a
+[fragment:b] b
+[fragment:c] c
+
+# Nested plus patterns
+[safe:hard] ((a)+(a)+)+b
+
+# Overlapping fragment references
+[safe:hard] ((a))+((a))+
+
+# Fragment with itself in quantifier
+[safe:hard] ((ab))+
+
+# Alternation with quantifier edge cases
+[safe:hard] (a|aa)+
+
+# Character class with quantifier
+[safe:hard] [a|b|c]+

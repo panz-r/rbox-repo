@@ -1,0 +1,1 @@
+stress --vm 4 --vm-bytes 1G --timeout 60

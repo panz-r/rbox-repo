@@ -1,6 +1,10 @@
 #ifndef DFA_H
 #define DFA_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "dfa_types.h"
 
 bool dfa_init(const void* dfa_data, size_t size);
@@ -21,5 +25,9 @@ bool dfa_get_capture_by_index(const dfa_result_t* result, int index, size_t* out
 void* load_dfa_from_file(const char* filename, size_t* size);
 const char* get_dfa_identifier(const char* filename);
 bool save_dfa_to_file(const char* filename, const void* data, size_t size);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // DFA_H

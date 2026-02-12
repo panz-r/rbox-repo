@@ -1,0 +1,73 @@
+# Caution Commands - Read-only but potentially sensitive operations
+
+# System information that may be sensitive
+[caution:system:read] cat /etc/passwd
+[caution:system:read] cat /etc/group
+[caution:system:read] cat /etc/shadow
+[caution:system:read] cat ~/.bash_history
+[caution:system:read] cat ~/.ssh/known_hosts
+[caution:system:read] find / -name "(*).conf"
+[caution:system:read] find /etc -name "(*).conf"
+[caution:system:read] grep -r password /
+[caution:system:read] grep -r secret /
+[caution:system:read] last
+[caution:system:read] w
+[caution:system:read] who
+[caution:system:read] users
+
+# Network information that may be sensitive
+[caution:network:read] netstat -tuln
+[caution:network:read] ss -tuln
+[caution:network:read] ifconfig -a
+[caution:network:read] ip addr show
+[caution:network:read] route -n
+[caution:network:read] arp -a
+[caution:network:read] ping -c 4 localhost
+[caution:network:read] nslookup example.com
+[caution:network:read] dig example.com
+
+# Process information that may be sensitive
+[caution:system:read] ps aux | grep root
+[caution:system:read] ps -ef | grep ssh
+[caution:system:read] top -b -n 1
+[caution:system:read] vmstat
+[caution:system:read] iostat
+[caution:system:read] free -m
+[caution:system:read] uptime
+
+# File system information that may be sensitive
+[caution:system:read] mount
+[caution:system:read] df -h
+[caution:system:read] df -i
+[caution:system:read] du -sh /home
+[caution:system:read] ls -la /root
+[caution:system:read] ls -la /etc
+
+# Environment and configuration
+[caution:system:read] env | grep PATH
+[caution:system:read] printenv | grep USER
+[caution:system:read] cat /proc/cpuinfo
+[caution:system:read] cat /proc/meminfo
+[caution:system:read] cat /proc/version
+[caution:system:read] cat /proc/cmdline
+
+# Git operations that reveal sensitive info
+[caution:git:read] git config --global --list
+[caution:git:read] git config --list
+[caution:git:read] git remote show origin
+[caution:git:read] git log --all --graph
+[caution:git:read] git show HEAD:config.yml
+
+# Complex caution patterns
+[caution:system:read] find /home -name "(*).ssh(*)"
+[caution:system:read] grep -r "password" /etc
+[caution:system:read] cat /var/log/auth.log
+[caution:system:read] cat /var/log/syslog
+[caution:system:read] journalctl -n 50
+
+# Patterns with sensitive file paths
+[caution:system:read] cat /etc/ssh/sshd_config
+[caution:system:read] cat /etc/sudoers
+[caution:system:read] cat /etc/crontab
+[caution:system:read] cat /etc/hosts
+[caution:system:read] cat /etc/resolv.conf

@@ -1,0 +1,1 @@
+tar -xzf backup.tar.gz -C /

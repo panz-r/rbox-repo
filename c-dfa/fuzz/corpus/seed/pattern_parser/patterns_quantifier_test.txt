@@ -1,0 +1,49 @@
+# ============================================================================
+# Test Patterns for + Quantifier with Single-Character Fragments
+# ============================================================================
+#
+# These patterns test that the + quantifier correctly handles single-character
+# fragments where the fragment must be re-matched after each iteration.
+#
+# Expected behavior:
+# - a((b))+ should match "ab", "abb", "abbb" but NOT "abc"
+# - abc((b))+ should match "abcb", "abcbb" but NOT "abc" (THE BUG)
+# - x((y))+ should match "xy", "xyy", "xyyy" but NOT "xz"
+# ============================================================================
+
+[fragment:b] b
+[fragment:y] y
+[fragment:z] z
+[fragment:c] c
+
+# ============================================
+# THE CRITICAL BUG CASE
+# a((b))+ vs abc((b))+ must NOT interfere
+# ============================================
+
+# Category: safe (acceptance category 0, mask 0x01)
+[safe::quant1] a((b))+
+
+# Category: caution (acceptance category 1, mask 0x02)
+[caution::quant2] abc((b))+
+
+# Category: modifying (acceptance category 2, mask 0x04)
+[modifying::quant3] ab((c))+
+
+# ============================================
+# Additional quantifier patterns for test_plus_quantifier_general()
+# These patterns are tested by the general quantifier test
+# ============================================
+
+[safe::quant_x] x((y))+
+[safe::quant_w] w((z))+
+[safe::quant_p] (p)+
+
+# ============================================
+# Simple patterns for comparison
+# ============================================
+
+[safe] ls
+[safe] pwd
+[caution] curl
+[caution] wget

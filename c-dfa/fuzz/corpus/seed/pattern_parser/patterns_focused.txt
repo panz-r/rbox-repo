@@ -1,0 +1,32 @@
+# Focused Test Patterns - Small set for successful DFA generation
+
+# Safe file operations
+[safe:file:read] cat file.txt
+[safe:file:read] cat (*).txt
+[safe:file:read] grep pattern file.txt
+[safe:file:read] find . -name "(*).txt"
+[safe:file:read] ls -la
+
+# Safe git operations
+[safe:git:read] git log
+[safe:git:read] git status
+[safe:git:read] git diff
+
+# Safe system operations
+[safe:system:read] ps aux
+[safe:system:read] whoami
+[safe:system:read] date
+
+# Modifying operations
+[modifying:file:write] rm file.txt
+[modifying:file:write] rm -rf /
+[modifying:file:write] touch file.txt
+
+# Dangerous operations
+[dangerous:system:execute] reboot
+[dangerous:system:execute] shutdown
+[dangerous:system:execute] dd if=/dev/sda of=/dev/null
+
+# Complex patterns
+[safe:file:read] cat file.txt | grep pattern
+[safe:file:read] git log | head -10

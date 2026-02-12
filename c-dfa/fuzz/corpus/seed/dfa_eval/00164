@@ -1,0 +1,1 @@
+lvm lvremove /dev/pool/vol

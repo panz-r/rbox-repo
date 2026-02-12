@@ -35,20 +35,22 @@ Command String → DFA Evaluator → Command Category
 
 ## Build System
 
-This project uses **Meson** build system:
+This project uses **GNU Make**:
 
 ```bash
-# Configure build
-meson setup build
+# Build all tools and tests
+make
 
-# Build
-cd build && ninja
+# Run test suite
+make test
 
-# Run tests
-ninja test
+# Clean
+make clean
 
-# Install
-ninja install
+# Individual test sets
+make test-moore      # Moore minimization algorithm
+make test-hopcroft   # Hopcroft algorithm
+make test-brzozowski # Brzozowski algorithm
 ```
 
 ## Command Specification Format
@@ -75,15 +77,22 @@ The DFA is built from a command specification file (`commands.txt`):
 
 ## Building the DFA
 
+The NFA and DFA tools are built with `make`. To create a DFA from pattern specifications:
+
 ```bash
-# Build the DFA from specification
-cd build
-./tools/nfa2dfa ../tools/commands.txt readonlybox.dfa
+# Build the tools
+make
+
+# Generate DFA using the combined patterns
+./tools/nfa_builder patterns_combined.txt readonlybox.nfa
+./tools/nfa2dfa --minimize-hopcroft readonlybox.nfa readonlybox.dfa
 
 # This creates:
-# - readonlybox.dfa (binary DFA)
-# - readonlybox.dfa.txt (human-readable DFA)
+# - readonlybox.nfa (NFA in text format)
+# - readonlybox.dfa (binary DFA for runtime)
 ```
+
+For testing with the test suite, the DFA is built automatically by `dfa_test`.
 
 ## Using the DFA in Applications
 
@@ -132,24 +141,31 @@ The C DFA layer integrates with the main ReadOnlyBox system:
 
 ```
 c-dfa/
-├── build/              # Build directory (created by meson)
 ├── include/            # Public headers
 │   ├── dfa.h           # Main DFA API
-│   └── dfa_types.h     # DFA data types
-├── src/               # Source code
-│   ├── dfa.c           # DFA evaluation
-│   ├── dfa_loader.c    # DFA loading
-│   ├── dfa_eval.c      # Command evaluation
-│   ├── dfa_test.c      # Test program
-│   └── dfa_bench.c     # Benchmark program
-├── tools/             # Build tools
-│   ├── nfa2dfa.c       # NFA to DFA converter
-│   ├── dfaser.c        # DFA serializer
-│   ├── dfaviz.c        # DFA visualizer
-│   └── commands.txt    # Command specification
-├── meson.build        # Main build configuration
+│   ├── dfa_types.h     # DFA data types
+│   ├── nfa.h           # NFA structures (shared with tools)
+│   └── multi_target_array.h  # Transition storage
+├── src/               # Library source code
+│   ├── dfa_eval.c      # DFA evaluation engine
+│   ├── dfa_loader.c    # DFA loading and I/O
+│   ├── dfa_test.c      # Comprehensive test runner
+│   └── dfa_bench.c     # (optional) Benchmark program
+├── tools/             # Build-time utilities
+│   ├── nfa_builder.c   # Pattern → NFA compiler
+│   ├── nfa2dfa.c       # NFA → DFA converter with minimization
+│   ├── dfa_minimize.c  # Minimization algorithms (Moore, Hopcroft)
+│   ├── dfa_minimize_brzozowski.c  # Brzozowski's algorithm
+│   └── multi_target_array.c  # Efficient transition storage
+├── fuzz/              # LibFuzzer fuzzers
+│   ├── dfa_eval_fuzzer.cpp
+│   ├── pattern_parse_fuzzer.cpp
+│   ├── corpus/         # Seed corpus
+│   └── Makefile        # Fuzzer build
+├── patterns_*.txt      # Pattern specifications for different categories
+├── Makefile           # Main build system (GNU Make)
 ├── README.md          # This file
-└── data/              # Generated DFA files
+└── TEST_ORGANIZATION.md  # Test structure details
 ```
 
 ## Command Categories
@@ -205,6 +221,25 @@ ninja
 - **Context Awareness**: Command context analysis
 - **Performance**: SIMD optimization for evaluation
 - **Compression**: Compressed DFA storage
+
+## Fuzzing
+
+This project includes LibFuzzer-based fuzzers for continuous testing:
+
+```bash
+# Build fuzzers
+make fuzz-build
+
+# Run DFA evaluation fuzzer
+make fuzz-run-dfa
+
+# Run pattern parser fuzzer
+make fuzz-run-pattern
+```
+
+Fuzzers are located in the `fuzz/` subdirectory. See `fuzz/README.md` for details.
+
+Corpus and dictionary files are in `fuzz/corpus/`. Generated crashes appear as `crash-*` files.
 
 ## License
 

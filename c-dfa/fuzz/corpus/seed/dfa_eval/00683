@@ -1,0 +1,1 @@
+psql -h host -U user -d database

@@ -1,0 +1,1 @@
+mkfs.ntfs /dev/sda -f

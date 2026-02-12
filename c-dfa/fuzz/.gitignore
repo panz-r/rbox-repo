@@ -1,0 +1,42 @@
+# Ignore generated/fuzzing output directories
+# Keep only seed/ corpus (version controlled)
+
+/corpus/interesting/
+/corpus/dfa_eval/
+/corpus/pattern_parser/
+
+/crashes/
+/ Corpus /
+*.log
+*.profraw
+*.profdata
+crash-*
+timeout-*
+oom-*
+leak-*
+
+# Build artifacts (fuzzer binaries and test programs)
+dfa_eval_fuzzer
+pattern_parse_fuzzer
+test_dfa_load
+test_dfa_load2
+*.o
+*.so
+*.a
+*.dylib
+*.exe
+*.out
+*.so.*
+*.dll
+*.lib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,363 @@
+# ============================================================================
+# ReadOnlyBox Safe Commands Pattern Specification
+# ============================================================================
+#
+# This file defines safe command patterns for the ReadOnlyBox DFA.
+# Used by the main project for production pattern matching.
+#
+# ============================================================================
+# IDENTIFIER
+# ============================================================================
+#
+# This identifier is included in the NFA and DFA files to ensure matching.
+# It must be a double-quoted string without internal double quotes.
+#
+IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
+
+# ============================================================================
+# LINE FORMAT
+# ============================================================================
+#
+# [category:subcategory:operations] pattern
+#
+# Components:
+#   category    - Primary safety category (required)
+#   subcategory - Optional secondary categorization
+#   operations  - Optional operations string (comma or dot-separated)
+#
+# Alternative formats:
+#   [category] pattern                    - Simple category only
+#   [category:subcategory] pattern        - Category with subcategory
+#   [category::operations] pattern        - Category with operations
+#
+# The operations field can contain multiple operations separated by commas or dots:
+#   [safe:git:read,log] git log         - git category with read,log operations
+#
+# Categories (8-bit bitmask):
+#   safe        - 0x01 - Completely read-only, no side effects
+#   caution     - 0x02 - May have minor side effects, use with care
+#   modifying   - 0x04 - Modifies files or state
+#   dangerous   - 0x08 - Potentially harmful operations
+#   network     - 0x10 - Network operations
+#   admin       - 0x20 - Administrative operations
+#   build       - 0x40 - Build/CI operations
+#   container   - 0x80 - Container-related operations
+#
+# ============================================================================
+# PATTERN SYNTAX
+# ============================================================================
+#
+# LITERAL CHARACTERS
+#   Most characters match themselves literally:
+#     git     matches "git"
+#     status  matches "status"
+#
+# WHITESPACE HANDLING
+#   Space in patterns normalizes to [ \t]+ (one or more whitespace):
+#     git status   matches "git status", "git  status", "git\tstatus"
+#
+# CHARACTER CLASSES (single characters only)
+#   [abc]           - Matches any one of a, b, or c
+#   [^abc]          - Negated: matches anything EXCEPT a, b, c
+#
+# CHARACTER RANGES (via fragments with explicit alternation)
+#   For patterns like "any letter a-z" or "any digit 0-9", use fragments:
+#
+#   Define a fragment at the top of the file:
+#     [fragment:DIGIT] 0|1|2|3|4|5|6|7|8|9
+#     [fragment:LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+#     [fragment:UPPER] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+#     [fragment:ALNUM] a|b|c|...|0|1|...|9
+#
+#   Reference fragments with double parens:
+#     ((DIGIT))         - Matches a single digit
+#     ((DIGIT))+        - Matches one or more digits
+#     ((LOWER))+        - Matches one or more lowercase letters
+#
+# QUANTIFIERS (applied to preceding element)
+#   *               - Zero or more of preceding element
+#   +               - One or more of preceding element
+#   ?               - Zero or one of preceding element (limited support)
+#
+#   Examples:
+#     git log -n ((DIGIT))+   - One or more digits using fragment
+#     cat ((FILENAME))*        - Zero or more filenames
+#
+# GROUPING AND ALTERNATION
+#   (expr)          - Groups expressions together
+#   a|b|c           - Matches a OR b OR c (alternation)
+#
+#   Examples:
+#     git (status|log)     - Matches "git status" or "git log"
+#     (yes|no)             - Matches "yes" or "no"
+#
+# FRAGMENT REFERENCES
+#   ((name))                - References fragment "name"
+#   ((namespace::name))     - References "name" in "namespace"
+#
+#   Fragments must be defined before use. See FRAGMENTS section below.
+#
+#   Examples:
+#     ((FILENAME))         - Expands to filename fragment pattern
+#     ((git::DIGIT))       - Expands to git::DIGIT fragment
+#
+# CAPTURE TAGS
+#   <capname>pattern</capname>  - Captures matched portion with name
+#
+#   Multiple end tags allowed in alternations:
+#   <cmd>git|svn|hg</cmd><op>status|log|diff</op>
+#
+#   Examples:
+#     cat <filename>((FILENAME))</filename>
+#     git log -n <count>((DIGIT))+</count>
+#
+# WILDCARD (* at argument position)
+#   * used as standalone argument matches ANY argument:
+#     cat *         - Matches "cat file.txt", "cat anything"
+#     git log *     - Matches "git log --oneline", "git log -n 5"
+#
+#   Note: * inside other patterns (not standalone) is literal.
+#
+# ESCAPED CHARACTERS
+#   \x     - Matches character x literally (escape next char)
+#   \\     - Matches literal backslash
+#   \'     - Matches single quote literally
+#   \x3c   - Hex escape: matches '<' (ASCII 0x3c)
+#
+#   Examples:
+#     cat \*.txt    - Matches "cat *.txt" literally
+#     \[option\]    - Matches "[option]" literally
+#     git log\'s    - Matches "git log's" literally
+#
+# ============================================================================
+# FRAGMENTS
+# ============================================================================
+#
+# Fragments are reusable pattern definitions that replace character ranges.
+# Use fragments for "character class ranges" like "all digits" or "all letters".
+#
+# WHY FRAGMENTS?
+#   Instead of [a-z] or [0-9], define a fragment with explicit alternation:
+#     [fragment:DIGIT] 0|1|2|3|4|5|6|7|8|9
+#     [fragment:LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+#
+#   This is more explicit, portable, and avoids ambiguity.
+#
+# FRAGMENT DEFINITION
+#   Format: [fragment:namespace::name] pattern_value
+#
+#   Examples:
+#     [fragment:DIGIT] 0|1|2|3|4|5|6|7|8|9
+#     [fragment:LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+#     [fragment:UPPER] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+#     [fragment:FILENAME] a|b|c|...|0|1|...|9|_|-|.|/  (all valid filename chars)
+#
+# FRAGMENT REFERENCE
+#   Reference with double parens: ((name))
+#     ((DIGIT))         - Matches single digit
+#     ((DIGIT))+        - Matches one or more digits
+#     ((FILENAME))*     - Matches zero or more filenames
+#
+# Fragment namespaces:
+#   - Simple: [fragment:name] - Referenced as ((name))
+#   - Namespaced: [fragment:ns::name] - Referenced as ((ns::name))
+#
+# Fragments must be defined at the TOP of the file, before patterns that use them.
+#
+# ============================================================================
+# SPECIAL NOTES
+# ============================================================================
+#
+# 1. + QUANTIFIER ON FRAGMENTS
+#    The + quantifier (one or more) works best with fragment references:
+#    CORRECT:   ((FILENAME))+   - Fragment with + for precise matching
+#    NOTE:      Fragment references are recommended for single-char matching
+#
+# 2. ? QUANTIFIER LIMITATIONS
+#    The ? quantifier (zero or one) has limited implementation.
+#    It may not work correctly in all contexts. Use with caution.
+#
+# 3. WILDCARD vs LITERAL *
+#    - Standalone * in argument position = wildcard (matches anything)
+#    - * elsewhere = literal asterisk
+#    - Example: cat *      - * is wildcard (matches any arg)
+#                cat \*     - \* is literal (matches just "*")
+#
+# 4. PATTERN ORDER MATTERS
+#    More specific patterns should come before general ones.
+#    The DFA uses first-match semantics.
+#
+# 5. PATTERN SHARING
+#    Similar patterns share states in the DFA for efficiency.
+#    This is transparent to matching behavior.
+#
+# 6. EOS (END-OF-STRING) TRANSITIONS
+#    Patterns implicitly accept at end-of-string.
+#    "git" matches input "git" completely.
+#
+# ============================================================================
+# EXAMPLE PATTERNS
+# ============================================================================
+#
+# SIMPLE LITERALS
+#   [safe::readonly::git] git status
+#   [safe::readonly::file] cat
+#
+# WILDCARD ARGUMENTS
+#   [safe] git log *              - Matches "git log --oneline", "git log -n 5"
+#   [safe] cat *                   - Matches "cat file.txt", "cat anything"
+#
+# FRAGMENT REFERENCES
+#   [safe] cat ((FILENAME))        - Uses FILENAME fragment
+#   [safe] git log -n ((DIGIT))+    - One or more digits
+#   [safe] tail -n ((safe::digit)) - Single digit argument
+#
+# ============================================================================
+# FRAGMENT DEFINITIONS (must come before patterns that use them)
+# ============================================================================
+#
+[fragment:safe::digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:safe::b] b
+#
+# ============================================================================
+# ACTUAL PATTERNS (using fragments defined above)
+# ============================================================================
+
+[safe] git log -n ((safe::digit))+
+
+[safe] git log -n ((safe::digit))+
+
+[safe] git log --oneline -n ((safe::digit))+
+
+[safe] git log --graph -n ((safe::digit))+
+
+[safe] git log --decorate -n ((safe::digit))+
+
+[safe::readonly::file] head -n ((safe::digit))
+
+[safe::readonly::file] head -n ((safe::digit)) *
+
+[safe::readonly::file] tail -n ((safe::digit))
+
+[safe::readonly::file] tail -n ((safe::digit)) *
+
+[safe::readonly::system] which socat
+
+[safe::readonly::git] git status
+
+[safe::readonly::git] git status -s
+
+[safe::readonly::git] git status --short
+
+[safe::readonly::git] git remote get-url origin
+
+[safe::readonly::git] git worktree list
+
+[safe::readonly::git] git branch -a
+
+[safe::readonly::git] git branch
+
+[safe::readonly::file] ls *
+
+[safe::readonly::file] ls -la
+
+[safe::readonly::file] ls -l
+
+[safe::readonly::file] ls -a
+
+[safe::readonly::file] ls --color-auto
+
+[safe::readonly::file] cat *
+
+[safe::readonly::file] cat
+
+[safe::readonly::git] git log --oneline
+
+[safe::readonly::git] git log --graph
+
+[safe::readonly::git] git log --oneline --decorate
+
+[safe::readonly::git] git log --oneline --graph
+
+[safe::readonly::git] git log *
+
+[safe::readonly::git] git tag -l
+
+[safe::readonly::git] git config --list
+
+[safe::readonly::git] git rev-parse --short HEAD
+
+[safe::readonly::git] git show
+
+[safe::readonly::git] git show HEAD
+
+[safe::readonly::git] git diff
+
+[safe::readonly::git] git diff HEAD
+
+[safe::readonly::git] git ls-files
+
+[safe::readonly::quant1] a((safe::b))+
+
+[caution::network::quant2] abc((safe::b))+
+
+# ============================================================================
+# PATTERN PERFORMANCE NOTES
+# ============================================================================
+#
+# EFFICIENT PATTERNS (Fast DFA matching)
+#   - Simple literals:        [safe] git status
+#   - Fixed arguments:        [safe] git log --oneline
+#   - Named fragments:        [safe] cat ((FILENAME))
+#
+# MODERATE PATTERNS (Still efficient)
+#   - Character classes:      [safe] tail -n [0-9] (NOT SUPPORTED - use fragments)
+#   - Single-char fragments:  [safe] git log -n ((safe::digit))
+#   - Wildcards:              [safe] cat *
+#
+# EXPENSIVE PATTERNS (May slow DFA)
+#   - Multi-char fragments:   [safe] grep ((LONG_PATTERN))+
+#   - Nested alternations:    [safe] (git|svn|hg) (status|log|diff)
+#   - Wide character classes: [safe] [a-zA-Z0-9_.-]+
+#
+# BEST PRACTICES
+#   1. Use simple literals when possible
+#   2. Use fragments for reusable patterns
+#   3. Avoid deeply nested patterns
+#   4. Keep character classes narrow (specific chars only)
+#   5. Place more specific patterns before general ones
+#
+# ============================================================================
+# QUICK REFERENCE CARD
+# ============================================================================
+#
+# LINE FORMAT:
+#   [category:subcategory:operations] pattern
+#
+# PATTERN SYNTAX:
+#   Literal:       git status          (matches "git status")
+#   Character:    [abc]               (matches a, b, or c)
+#   Negated:       [^abc]               (NOT a, b, or c)
+#   Quantifier:    *  +  ?             (zero-or-more, one-or-more, zero-or-one)
+#   Fragment:      ((NAME))             (inserts fragment pattern)
+#   Alternation:   (a|b|c)             (a OR b OR c)
+#   Capture:       <name>...</name>     (captures matched text)
+#   Wildcard:      *                    (matches any argument)
+#   Escape:        \x \\ \' \xNN        (literal char, backslash, quote, hex)
+#
+# NOTE: Character ranges like [a-z] or [0-9] are NOT supported.
+#       Use fragments with explicit alternation instead.
+#
+# FRAGMENT DEFINITION:
+#   [fragment:ns::name] a|b|c|...
+#
+# REFERENCE:
+#   ((ns::name))              - Insert fragment
+#
+# COMMON PATTERNS:
+#   [safe::readonly::git] git status
+#   [safe::readonly::file] cat *
+#   [safe::readonly::file] tail -n ((safe::digit))
+#   [safe] git (status|log|diff)
+#
+# ============================================================================

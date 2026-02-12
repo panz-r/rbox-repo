@@ -1,0 +1,1 @@
+rsync -avz user@host:source/ dest/

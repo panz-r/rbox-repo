@@ -1,0 +1,1 @@
+telnet smtp.example.com 25
