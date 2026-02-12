@@ -688,6 +688,21 @@ void nfa_add_transition(int from, int to, int symbol_id) {
         nfa[from].transition_count++;
     }
 
+    // CRITICAL: When transitioning TO a state, check if that state already has markers
+    // from a different pattern (state sharing scenario). If so, clear those markers
+    // to prevent cross-pattern marker contamination.
+    // The target state might have been created by a previous pattern and have its markers.
+    if (to >= 0 && to < nfa_state_count) {
+        DEBUG_PRINT("nfa_add_transition: from=%d to=%d symbol=%d, to_pattern=%d current=%d\n",
+                    from, to, symbol_id, nfa[to].pattern_id, current_pattern_index);
+        if (nfa[to].pattern_id != (uint16_t)current_pattern_index) {
+            // Clear any existing markers on this transition in the target state
+            // This prevents Pattern A's markers from leaking when Pattern B shares the state
+            mta_clear_markers(&nfa[to].multi_targets, symbol_id);
+            DEBUG_PRINT("nfa_add_transition: CLEARED markers on target state %d for symbol %d\n", to, symbol_id);
+        }
+    }
+
     // Transfer ALL pending capture markers to character transitions (not EPSILON/EOS)
     // PATTERN-AWARE: Only transfer if marker belongs to current pattern
     // This prevents cross-pattern contamination when states are shared
@@ -696,6 +711,7 @@ void nfa_add_transition(int from, int to, int symbol_id) {
         for (int m = 0; m < pending_marker_count; m++) {
             pending_marker_t* marker = &pending_markers[m];
             // CRITICAL: Only transfer if marker pattern_id matches current pattern
+            // This prevents END markers from Pattern 1 from leaking into Pattern 2
             if (marker->pattern_id == (uint16_t)current_pattern_index) {
                 DEBUG_PRINT("nfa_add_transition: transferring marker pid=%d uid=%d type=%d to (%d -> %d) sym %d [CURRENT PATTERN]\n",
                             marker->pattern_id, marker->uid, marker->type, from, to, symbol_id);
@@ -890,25 +906,33 @@ static int parse_capture_end(const char* pattern, int* pos, int start_state) {
     }
 
     // Set END marker on the current state (the state where capture ends)
-    // This is the "at-end" capture case
-    nfa[start_state].capture_end_id = (int8_t)cap_id;
-    nfa[start_state].pattern_id = (uint16_t)current_pattern_index;
-    DEBUG_PRINT("parse_capture_end '%s' -> setting capture_end_id=%d on state %d (pattern %d)\n",
-                cap_name, cap_id, start_state, current_pattern_index);
+    // ONLY if this is the end of the pattern (no more content after </name>)
+    // For intermediate captures like <p1>abc</p1>d, we DON'T set capture_end_id
+    // because the capture ends at the NEXT character, not at this state
+    int after_tag_pos = *pos;
+    while (pattern[after_tag_pos] != '\0' && isspace(pattern[after_tag_pos])) after_tag_pos++;
+    bool is_pattern_end = (pattern[after_tag_pos] == '\0' || pattern[after_tag_pos] == '[' || pattern[after_tag_pos] == '<');
 
-    // ALSO queue END marker to pending_markers for INTERMEDIATE captures
-    // This ensures the END marker gets attached to the NEXT character transition
-    // For patterns like <p1>abc</p1>d, this attaches the END marker to 'd'
-    if (pending_marker_count < MAX_PENDING_MARKERS) {
-        pending_markers[pending_marker_count].pattern_id = (uint16_t)current_pattern_index;
-        pending_markers[pending_marker_count].uid = (uint32_t)cap_id;
-        pending_markers[pending_marker_count].type = MARKER_TYPE_END;
-        pending_markers[pending_marker_count].active = true;
-        pending_marker_count++;
-        DEBUG_PRINT("parse_capture_end '%s' -> queued END marker pid=%d uid=%d (count=%d)\n",
-                    cap_name, current_pattern_index, cap_id, pending_marker_count);
+    if (is_pattern_end) {
+        // This capture ends at the pattern boundary - set capture_end_id
+        nfa[start_state].capture_end_id = (int8_t)cap_id;
+        nfa[start_state].pattern_id = (uint16_t)current_pattern_index;
+        DEBUG_PRINT("parse_capture_end '%s' -> setting capture_end_id=%d on state %d (END OF PATTERN)\n",
+                    cap_name, cap_id, start_state);
+        // DON'T queue END marker - it's handled by capture_end_id
     } else {
-        DEBUG_PRINT("parse_capture_end '%s' -> ERROR: too many pending markers\n", cap_name);
+        // This is an intermediate capture - the END marker will be on the next character
+        DEBUG_PRINT("parse_capture_end '%s' -> INTERMEDIATE capture, NOT setting capture_end_id\n", cap_name);
+        // Queue END marker to pending_markers for the next character transition
+        if (pending_marker_count < MAX_PENDING_MARKERS) {
+            pending_markers[pending_marker_count].pattern_id = (uint16_t)current_pattern_index;
+            pending_markers[pending_marker_count].uid = (uint32_t)cap_id;
+            pending_markers[pending_marker_count].type = MARKER_TYPE_END;
+            pending_markers[pending_marker_count].active = true;
+            pending_marker_count++;
+            DEBUG_PRINT("parse_capture_end '%s' -> queued END marker pid=%d uid=%d\n",
+                        cap_name, current_pattern_index, cap_id);
+        }
     }
 
     // Pop capture ID from stack (verify it matches)
@@ -1888,8 +1912,18 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 shared_state = best_shared_state;
                 shared_pos = best_shared_pos;
                 start_state = shared_state;
-                pattern_start_pos = shared_pos;
+                pattern_start_pos = best_shared_pos;
                 DEBUG_PRINT("SHARED prefix at pos %d, state %d\n", best_shared_pos, best_shared_state);
+
+                // CRITICAL FIX: When reusing a shared state, clear its transition markers
+                // to prevent cross-pattern contamination. The previous pattern may have
+                // left markers (like END markers) on transitions from this state.
+                // These markers should NOT be visible to the current pattern.
+                // We clear all markers on all symbol transitions from this shared state.
+                for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+                    mta_clear_markers(&nfa[shared_state].multi_targets, sym);
+                }
+                DEBUG_PRINT("CLEARED all markers from shared state %d for new pattern\n", shared_state);
             } else {
                 // No common prefix - create new start state
                 start_state = nfa_add_state_with_minimization(false);

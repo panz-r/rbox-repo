@@ -93,57 +93,30 @@ static void process_marker_list(const uint32_t* marker_base, size_t pos,
                                  uint16_t winning_pattern_id,
                                  capture_range_t* capture_stack, int* stack_depth,
                                  dfa_result_t* result) {
-    if (!marker_base) {
-        fprintf(stderr, "[PROCESS MARKER] pos=%zu: marker_base is NULL\n", pos);
-        return;
-    }
-    fprintf(stderr, "[PROCESS MARKER] pos=%zu, winning_pattern_id=%u, stack_depth=%d\n", pos, winning_pattern_id, *stack_depth);
+    if (!marker_base) return;
 
-    /*
-     * Process a list of markers at a given input position.
-     *
-     * CRITICAL: Filter by winning_pattern_id!
-     * During NFA-to-DFA conversion, multiple patterns may contribute markers
-     * to the same transition. The winning_pattern_id tells us which pattern
-     * actually matched, so we only extract captures from that pattern.
-     *
-     * Marker format: [16-bit PatternID][15-bit UID][1-bit Type]
-     *   - Type 0 = CAPTURE_START (pushes onto stack)
-     *   - Type 1 = CAPTURE_END (pops from stack, creates capture)
-     */
-    for (int i = 0; marker_base[i] != MARKER_SENTINEL && marker_base[i] != 0; i++) {
+    for (int i = 0; marker_base[i] != MARKER_SENTINEL; i++) {
         uint32_t m = marker_base[i];
         uint16_t pattern_id = MARKER_GET_PATTERN_ID(m);
         uint16_t capture_id = MARKER_GET_UID(m);
         uint8_t type = MARKER_GET_TYPE(m);
-        fprintf(stderr, "[PROCESS MARKER]   marker[%d]=0x%08X: pid=%u, uid=%u, type=%u\n", i, m, pattern_id, capture_id, type);
 
-        // Filter by winning pattern ID
         if (winning_pattern_id != UINT16_MAX && pattern_id != winning_pattern_id) {
-            fprintf(stderr, "[PROCESS MARKER]   -> FILTERED (winning_pattern_id=%u)\n", winning_pattern_id);
             continue;
         }
 
         if (type == MARKER_TYPE_START) {
-            fprintf(stderr, "[PROCESS MARKER]   -> START marker, pushing capture_id=%u\n", capture_id);
-            // Stack safety: bounds check before push
             if (*stack_depth < MAX_CAPTURE_STACK) {
                 capture_stack[*stack_depth].capture_id = capture_id;
                 capture_stack[*stack_depth].start_pos = pos;
                 capture_stack[*stack_depth].end_pos = 0;
                 (*stack_depth)++;
-                fprintf(stderr, "[PROCESS MARKER]   -> stack_depth now %d\n", *stack_depth);
-            } else {
-                fprintf(stderr, "[PROCESS MARKER]   -> STACK OVERFLOW!\n");
             }
-        } else {
-            fprintf(stderr, "[PROCESS MARKER]   -> END marker, looking for capture_id=%u\n", capture_id);
-            // Stack safety: bounds check before iteration
+        } else if (type == MARKER_TYPE_END) {
             if (*stack_depth > 0) {
                 for (int j = *stack_depth - 1; j >= 0; j--) {
                     if (capture_stack[j].capture_id == capture_id && capture_stack[j].end_pos == 0) {
                         capture_stack[j].end_pos = pos;
-                        fprintf(stderr, "[PROCESS MARKER]   -> Found matching START at pos %zu, adding capture\n", capture_stack[j].start_pos);
                         add_capture(result, capture_id, capture_stack[j].start_pos, pos, pattern_id);
                         break;
                     }
@@ -246,12 +219,6 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     const uint8_t* marker_base = NULL;
     if (current_dfa->metadata_offset != 0 && current_dfa->version >= 6) {
         marker_base = (const uint8_t*)current_dfa + current_dfa->metadata_offset;
-        fprintf(stderr, "[EVAL] marker_base=%p, metadata_offset=%u\n", (void*)marker_base, current_dfa->metadata_offset);
-        const uint32_t* first_markers = (const uint32_t*)marker_base;
-        if (first_markers) {
-            fprintf(stderr, "[EVAL] First 3 markers: 0x%08X, 0x%08X, 0x%08X\n", 
-                    first_markers[0], first_markers[1], first_markers[2]);
-        }
     }
     
     uint32_t trace_buffer[MAX_TRACE_LENGTH];
@@ -374,25 +341,8 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
              * When transitioning from trace[t-1] to trace[t]:
              *   - We consumed character at position (t-1)
              *   - Markers on that transition fire at position (t-1)
-             *   - We filter by winning_pattern_id to only extract the matched pattern's captures
+              *   - We filter by winning_pattern_id to only extract the matched pattern's captures
              */
-
-            // Check for markers on the first transition (from initial state, before first char)
-            // Note: In the trace, this is covered when t=1, looking at the rule from state 0
-            const dfa_state_t* initial_state = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
-            if (initial_state->transition_count > 0 && initial_state->transitions_offset != 0) {
-                const dfa_rule_t* init_rules = (const dfa_rule_t*)(raw_base + initial_state->transitions_offset);
-                for (uint16_t r = 0; r < initial_state->transition_count; r++) {
-                    if (init_rules[r].marker_offset != 0 && marker_base) {
-                        fprintf(stderr, "[EVAL] Initial rule %u has marker_offset=%u\n", r, init_rules[r].marker_offset);
-                        const uint32_t* init_markers = (const uint32_t*)((const uint8_t*)current_dfa + init_rules[r].marker_offset);
-                        fprintf(stderr, "[EVAL] Initial markers ptr=%p, first marker=0x%08X\n", 
-                                (void*)init_markers, init_markers ? init_markers[0] : 0);
-                        process_marker_list(init_markers, 0, winning_pattern_id,
-                                            capture_stack, &stack_depth, result);
-                    }
-                }
-            }
 
             // Phase 4: Pass 2 - Replay trace and process markers at each transition
             /*
@@ -425,17 +375,12 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
                     if (r->target == to_state_offset) {
                         if (r->marker_offset != 0 && marker_base) {
                             transition_markers = (const uint32_t*)((const uint8_t*)current_dfa + r->marker_offset);
-                            EVAL_DEBUG_PRINT("  Found markers at byte offset %u\n", r->marker_offset);
                         }
                         break;
                     }
                 }
 
                 if (transition_markers) {
-                    EVAL_DEBUG_PRINT("  Processing markers at pos %d, winning_pattern_id=%u\n", t - 1, winning_pattern_id);
-                    for (int m = 0; transition_markers[m] != MARKER_SENTINEL && transition_markers[m] != 0; m++) {
-                        EVAL_DEBUG_PRINT("    marker[%d] = 0x%08X\n", m, transition_markers[m]);
-                    }
                     process_marker_list(transition_markers, t - 1, winning_pattern_id,
                                        capture_stack, &stack_depth, result);
                 }

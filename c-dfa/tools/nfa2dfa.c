@@ -385,26 +385,27 @@ static void collect_transition_markers(int source_count, int* source_states, int
             }
         }
 
-        // Also collect VSYM_EOS (258) markers - these are END markers attached to states
-        // that should be harvested whenever we visit those states
-        int eos_marker_count = 0;
-        int eos_sid = -1;
-        for (int as = 0; as < alphabet_size; as++) {
-            if (alphabet[as].symbol_id == 258) { eos_sid = as; break; }
-        }
-        if (eos_sid >= 0) {
-            transition_marker_t* eos_markers = mta_get_markers(&nfa[s].multi_targets, eos_sid, &eos_marker_count);
-            if (eos_markers && eos_marker_count > 0) {
-                for (int m = 0; m < eos_marker_count && count < max_markers; m++) {
-                    uint32_t marker = ((uint32_t)eos_markers[m].pattern_id << 17) |
-                                      ((uint32_t)eos_markers[m].uid << 1) |
-                                      (uint32_t)eos_markers[m].type;
-                    bool exists = false;
-                    for (int j = 0; j < count; j++) {
-                        if (out_markers[j] == marker) { exists = true; break; }
-                    }
-                    if (!exists) {
-                        out_markers[count++] = marker;
+        // Collect VSYM_EOS (258) markers ONLY when processing symbol 258
+        if (sid == 258) {
+            int eos_marker_count = 0;
+            int eos_sid = -1;
+            for (int as = 0; as < alphabet_size; as++) {
+                if (alphabet[as].symbol_id == 258) { eos_sid = as; break; }
+            }
+            if (eos_sid >= 0) {
+                transition_marker_t* eos_markers = mta_get_markers(&nfa[s].multi_targets, eos_sid, &eos_marker_count);
+                if (eos_markers && eos_marker_count > 0) {
+                    for (int m = 0; m < eos_marker_count && count < max_markers; m++) {
+                        uint32_t marker = ((uint32_t)eos_markers[m].pattern_id << 17) |
+                                          ((uint32_t)eos_markers[m].uid << 1) |
+                                          (uint32_t)eos_markers[m].type;
+                        bool exists = false;
+                        for (int j = 0; j < count; j++) {
+                            if (out_markers[j] == marker) { exists = true; break; }
+                        }
+                        if (!exists) {
+                            out_markers[count++] = marker;
+                        }
                     }
                 }
             }
@@ -434,6 +435,7 @@ void nfa_to_dfa(void) {
             for (int j = 0; j < mc; j++) ms[j] = dfa[cur].nfa_states[j];
 
             uint32_t markers[MAX_MARKERS_PER_DFA_TRANSITION];
+            memset(markers, 0, sizeof(markers));
             int marker_count = 0;
             collect_transition_markers(mc, ms, symbol, markers, &marker_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
@@ -444,7 +446,7 @@ void nfa_to_dfa(void) {
                     if (alphabet[as].symbol_id == 258) { eos_sid = as; break; }
                 }
                 if (eos_sid >= 0 && symbol == alphabet[eos_sid].symbol_id) {
-                    uint32_t eos_offset = store_marker_list(markers, marker_count);
+                    store_marker_list(markers, marker_count);
                 }
                 continue;
             }
@@ -453,12 +455,6 @@ void nfa_to_dfa(void) {
             uint8_t mm = 0; for (int j = 0; j < tc2; j++) mm |= nfa[temp2[j]].category_mask;
 
             collect_markers_from_states(temp2, tc2, markers, &marker_count);
-            if (marker_count > 0) {
-                fprintf(stderr, "[DEBUG MARKER] tc2=%d, collected %d markers\n", tc2, marker_count);
-                for (int m = 0; m < marker_count; m++) {
-                    fprintf(stderr, "  marker[%d] = 0x%08X\n", m, markers[m]);
-                }
-            }
             uint32_t marker_list_offset = store_marker_list(markers, marker_count);
             if (marker_list_offset > 0) {
                 fprintf(stderr, "[DEBUG MARKER] Stored at offset %u (count=%d)\n", marker_list_offset, marker_count);
@@ -677,7 +673,6 @@ void write_dfa_file(const char* filename) {
                 fprintf(stderr, "[DEBUG MARKER WRITE] State %d, rule %d, list_idx=%u\n", i, r, list_idx);
                 if (list_idx > 0 && list_idx <= (uint32_t)marker_list_count) {
                     MarkerList* ml = &dfa_marker_lists[list_idx - 1];
-                    fprintf(stderr, "[DEBUG MARKER WRITE] Writing %d markers from list %d\n", ml->count, list_idx - 1);
                     // Set dst->marker_offset BEFORE writing markers
                     dst->marker_offset = (uint32_t)(metadata_offset + moffset * sizeof(uint32_t));
                     for (int k = 0; k < ml->count; k++) {
@@ -687,7 +682,6 @@ void write_dfa_file(const char* filename) {
                         ((uint8_t*)marker_base)[moffset * 4 + 1] = (val >> 8) & 0xFF;
                         ((uint8_t*)marker_base)[moffset * 4 + 2] = (val >> 16) & 0xFF;
                         ((uint8_t*)marker_base)[moffset * 4 + 3] = (val >> 24) & 0xFF;
-                        fprintf(stderr, "  marker[%zu] = 0x%08X\n", moffset, ml->markers[k]);
                         moffset++;
                     }
                     uint32_t sentinel = MARKER_SENTINEL;
@@ -705,14 +699,9 @@ void write_dfa_file(const char* filename) {
                 marker_base[moffset++] = MARKER_SENTINEL;
             }
         }
-        fprintf(stderr, "[DEBUG WRITE] Total markers written: %zu\n", moffset);
-    } else {
-        fprintf(stderr, "[DEBUG WRITE] No markers to write\n");
     }
 
     size_t total_size = dfa_size + marker_data_size;
-    fprintf(stderr, "[DEBUG WRITE] total_size=%zu, dfa_size=%zu, marker_data_size=%zu\n",
-            total_size, dfa_size, marker_data_size);
     if (fwrite(ds, 1, total_size, file) != total_size) exit(1);
     fclose(file); free(ds); free(all_rules);
 }
