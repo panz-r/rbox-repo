@@ -18,6 +18,17 @@
 #define MAX_TARGETS 256
 #define MAX_TARGET_BUFFER 4096
 
+/* Maximum markers per transition */
+#define MAX_MARKERS_PER_TRANSITION 8
+
+/* Transition marker - attached to a specific transition */
+typedef struct {
+    uint16_t pattern_id;     // Pattern this capture belongs to
+    uint32_t uid;            // Unique ID for the capture
+    uint8_t type;            // 0 = START, 1 = END
+} transition_marker_t;
+
+/* Entry for a symbol in the transition table */
 typedef struct {
     int symbol_id;
     int target_count;
@@ -25,6 +36,9 @@ typedef struct {
     int* targets;
     bool dirty;
     char* cached_csv;
+    /* Marker support for this symbol */
+    transition_marker_t markers[MAX_MARKERS_PER_TRANSITION];
+    int marker_count;
 } mta_entry_t;
 
 typedef struct {
@@ -59,5 +73,22 @@ void mta_clear_symbol(multi_target_array_t* arr, int symbol_id);
 void mta_print(multi_target_array_t* arr, const char* label);
 
 int mta_get_entry_count(multi_target_array_t* arr);
+
+/**
+ * Add a marker to a transition for a specific symbol
+ */
+bool mta_add_marker(multi_target_array_t* arr, int symbol_id,
+                   uint16_t pattern_id, uint32_t uid, uint8_t type);
+
+/**
+ * Get all markers for a specific symbol
+ * Returns pointer to internal markers array, count via out_count
+ */
+transition_marker_t* mta_get_markers(multi_target_array_t* arr, int symbol_id, int* out_count);
+
+/**
+ * Clear all markers for a specific symbol
+ */
+void mta_clear_markers(multi_target_array_t* arr, int symbol_id);
 
 #endif

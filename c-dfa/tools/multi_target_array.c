@@ -248,6 +248,112 @@ void mta_print(multi_target_array_t* arr, const char* label) {
             printf("%d%s", entry->targets[j], (j < entry->target_count - 1) ? ", " : "");
         }
         printf("]\n");
+        if (entry->marker_count > 0) {
+            printf("    Markers: ");
+            for (int j = 0; j < entry->marker_count; j++) {
+                printf("[pat=%d uid=%u type=%d] ",
+                       entry->markers[j].pattern_id,
+                       entry->markers[j].uid,
+                       entry->markers[j].type);
+            }
+            printf("\n");
+        }
     }
     printf("==========================\n");
+}
+
+bool mta_add_marker(multi_target_array_t* arr, int symbol_id,
+                   uint16_t pattern_id, uint32_t uid, uint8_t type) {
+    if (symbol_id < 0 || symbol_id >= MAX_SYMBOLS) return false;
+    if (type > 1) return false;  // Only START(0) or END(1) allowed
+
+    // Get or create the multi-target entry
+    mta_entry_t* entry = arr->symbol_map[symbol_id];
+
+    if (entry == NULL && !arr->has_first_target[symbol_id]) {
+        // No transition exists for this symbol, create a placeholder entry
+        entry = mta_create_entry(symbol_id);
+        int new_cap = arr->entry_capacity == 0 ? 8 : arr->entry_capacity * 2;
+        mta_entry_t** next_active = realloc(arr->active_entries, new_cap * sizeof(mta_entry_t*));
+        if (next_active == NULL) {
+            mta_free_entry(entry);
+            return false;
+        }
+        arr->active_entries = next_active;
+        arr->entry_capacity = new_cap;
+        arr->active_entries[arr->entry_count++] = entry;
+        arr->symbol_map[symbol_id] = entry;
+    } else if (entry == NULL && arr->has_first_target[symbol_id]) {
+        // Single-target transition exists, need to upgrade
+        entry = mta_create_entry(symbol_id);
+        entry->targets[0] = arr->first_targets[symbol_id];
+        entry->target_count = 1;
+
+        int new_cap = arr->entry_capacity == 0 ? 8 : arr->entry_capacity * 2;
+        mta_entry_t** next_active = realloc(arr->active_entries, new_cap * sizeof(mta_entry_t*));
+        if (next_active == NULL) {
+            mta_free_entry(entry);
+            return false;
+        }
+        arr->active_entries = next_active;
+        arr->entry_capacity = new_cap;
+        arr->active_entries[arr->entry_count++] = entry;
+        arr->symbol_map[symbol_id] = entry;
+
+        arr->first_targets[symbol_id] = -1;
+        arr->has_first_target[symbol_id] = false;
+    }
+
+    // Check for duplicate marker
+    for (int i = 0; i < entry->marker_count; i++) {
+        if (entry->markers[i].pattern_id == pattern_id &&
+            entry->markers[i].uid == uid &&
+            entry->markers[i].type == type) {
+            return true;  // Already exists
+        }
+    }
+
+    // Add new marker
+    if (entry->marker_count >= MAX_MARKERS_PER_TRANSITION) {
+        return false;  // Too many markers
+    }
+
+    entry->markers[entry->marker_count].pattern_id = pattern_id;
+    entry->markers[entry->marker_count].uid = uid;
+    entry->markers[entry->marker_count].type = type;
+    entry->marker_count++;
+    entry->dirty = true;
+
+    return true;
+}
+
+transition_marker_t* mta_get_markers(multi_target_array_t* arr, int symbol_id, int* out_count) {
+    if (symbol_id < 0 || symbol_id >= MAX_SYMBOLS) {
+        if (out_count) *out_count = 0;
+        return NULL;
+    }
+
+    mta_entry_t* entry = arr->symbol_map[symbol_id];
+    if (entry == NULL) {
+        // No multi-target entry, check first-target
+        if (arr->has_first_target[symbol_id]) {
+            // We need a way to return markers for single-target
+            // For now, return NULL - single-target uses nfa.transitions
+        }
+        if (out_count) *out_count = 0;
+        return NULL;
+    }
+
+    if (out_count) *out_count = entry->marker_count;
+    return entry->markers;
+}
+
+void mta_clear_markers(multi_target_array_t* arr, int symbol_id) {
+    if (symbol_id < 0 || symbol_id >= MAX_SYMBOLS) return;
+
+    mta_entry_t* entry = arr->symbol_map[symbol_id];
+    if (entry != NULL) {
+        entry->marker_count = 0;
+        entry->dirty = true;
+    }
 }

@@ -4,8 +4,79 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stddef.h>
 
 #define MAX_LINE_LENGTH 1024
+
+// Compile-time struct validation
+_Static_assert(sizeof(dfa_state_t) == 18, "dfa_state_t must be exactly 18 bytes (packed)");
+_Static_assert(sizeof(dfa_t) == 23, "dfa_t must be exactly 23 bytes (packed)");
+_Static_assert(sizeof(dfa_rule_t) == 12, "dfa_rule_t must be exactly 12 bytes (packed)");
+_Static_assert(offsetof(dfa_state_t, transitions_offset) == 0, "transitions_offset must be at offset 0");
+_Static_assert(offsetof(dfa_state_t, transition_count) == 4, "transition_count must be at offset 4");
+_Static_assert(offsetof(dfa_state_t, flags) == 6, "flags must be at offset 6");
+_Static_assert(offsetof(dfa_t, identifier) == 23, "identifier must be at offset 23 in dfa_t");
+
+// Validation function to verify DFA structure integrity
+static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
+    // Validate header fields
+    if (dfa->magic != DFA_MAGIC) {
+        fprintf(stderr, "ERROR: Invalid magic number (expected 0x%08X, got 0x%08X)\n", DFA_MAGIC, dfa->magic);
+        return false;
+    }
+
+    if (dfa->version < 5 || dfa->version > 6) {
+        fprintf(stderr, "ERROR: Unsupported DFA version %u (expected 5 or 6)\n", dfa->version);
+        return false;
+    }
+
+    if (dfa->state_count == 0) {
+        fprintf(stderr, "ERROR: state_count is zero\n");
+        return false;
+    }
+
+    if (dfa->state_count > DFA_MAX_STATES) {
+        fprintf(stderr, "ERROR: state_count %u exceeds maximum %u\n", dfa->state_count, DFA_MAX_STATES);
+        return false;
+    }
+
+    // Validate initial_state offset
+    size_t min_state_offset = dfa->initial_state;
+    if (min_state_offset < sizeof(dfa_t) + dfa->identifier_length) {
+        fprintf(stderr, "ERROR: initial_state %u is before expected start of states\n", dfa->initial_state);
+        return false;
+    }
+
+    // Validate that states fit in file
+    size_t states_size = (size_t)dfa->state_count * sizeof(dfa_state_t);
+    if (dfa->initial_state + states_size > file_size) {
+        fprintf(stderr, "ERROR: States array extends beyond file size\n");
+        return false;
+    }
+
+    // Validate accepting_mask only has bits for existing states
+    if (dfa->accepting_mask != 0) {
+        if (dfa->state_count < 32) {
+            uint32_t max_valid_mask = (1u << dfa->state_count) - 1;
+            if ((dfa->accepting_mask & ~max_valid_mask) != 0) {
+                fprintf(stderr, "ERROR: accepting_mask 0x%08X has bits beyond state_count %u (max mask: 0x%08X)\n",
+                        dfa->accepting_mask, dfa->state_count, max_valid_mask);
+                return false;
+            }
+        } else {
+            // For state_count >= 32, check each bit individually
+            for (int i = 32; i < dfa->state_count; i++) {
+                if ((dfa->accepting_mask & (1u << i)) != 0) {
+                    fprintf(stderr, "ERROR: accepting_mask has bit %d set but state_count is only %u\n",
+                            i, dfa->state_count);
+                    return false;
+                }
+            }
+        }
+    }
+
+    return true;
+}
 
 // Get identifier from DFA file
 const char* get_dfa_identifier(const char* filename) {
@@ -51,6 +122,7 @@ const char* get_dfa_identifier(const char* filename) {
             while (*id_start == ' ') id_start++;
             id_start[strcspn(id_start, "\r\n")] = '\0';
             strncpy(identifier, id_start, sizeof(identifier) - 1);
+            identifier[sizeof(identifier) - 1] = '\0';
             fclose(file);
             return identifier;
         }
@@ -86,17 +158,8 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
         if (fread(&flags, sizeof(flags), 1, file) != 1) flags = 0;
 
         uint8_t id_len = 0;
-        size_t header_size = 19; // dfa_t base (magic through identifier_length)
         if (version >= 4) {
             if (fread(&id_len, sizeof(id_len), 1, file) != 1) id_len = 0;
-            header_size = 19 + id_len;
-            // Version 6+ has additional metadata_offset field
-            if (version >= 6) {
-                uint32_t metadata_offset;
-                if (fread(&metadata_offset, sizeof(metadata_offset), 1, file) == 1) {
-                    header_size = 23 + id_len; // 19 + id_len + 4 for metadata_offset
-                }
-            }
         }
 
         fseek(file, 0, SEEK_END);
@@ -119,6 +182,14 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
         fclose(file);
 
         if (bytes_read != (size_t)dfa_size) {
+            free(dfa_data);
+            return NULL;
+        }
+
+        // Validate DFA structure
+        const dfa_t* dfa = (const dfa_t*)dfa_data;
+        if (!validate_dfa_structure(dfa, (size_t)dfa_size)) {
+            fprintf(stderr, "ERROR: DFA structure validation failed for %s\n", filename);
             free(dfa_data);
             return NULL;
         }
@@ -179,4 +250,40 @@ bool save_dfa_to_file(const char* filename, const void* data, size_t size) {
     fclose(file);
 
     return (written == size);
+}
+
+// Look up capture name by UID from the Name Table
+const char* lookup_capture_name(const void* dfa_data, uint16_t uid) {
+    if (!dfa_data || uid == 0) return NULL;
+
+    const dfa_t* dfa = (const dfa_t*)dfa_data;
+    if (dfa->version < 6 || dfa->metadata_offset == 0) return NULL;
+
+    const uint32_t* name_table = (const uint32_t*)((const char*)dfa_data + dfa->metadata_offset);
+    uint32_t entry_count = name_table[0];
+
+    size_t byte_offset = 4; // start after entry_count
+    for (uint32_t i = 0; i < entry_count && byte_offset < 10000; i++) {
+        // Read UID at current position
+        uint32_t entry_uid = *(const uint32_t*)((const char*)name_table + byte_offset);
+        byte_offset += 4;
+
+        // Read name length
+        uint16_t name_len = *(const uint16_t*)((const char*)name_table + byte_offset);
+        byte_offset += 2;
+
+        // Check if this is the UID we're looking for
+        if (entry_uid == uid) {
+            static char name_buffer[64];
+            if (name_len >= sizeof(name_buffer)) name_len = sizeof(name_buffer) - 1;
+            memcpy(name_buffer, (const char*)name_table + byte_offset, name_len);
+            name_buffer[name_len] = '\0';
+            return name_buffer;
+        }
+
+        // Skip past name data
+        byte_offset += name_len;
+    }
+
+    return NULL;
 }

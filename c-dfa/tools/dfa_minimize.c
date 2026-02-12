@@ -25,7 +25,7 @@
 #define FNV_OFFSET_BASIS 2166136261u
 
 // Debug and Configuration
-static bool minimize_verbose = false;
+static bool minimize_verbose = true;  // Enable for debugging
 static dfa_min_algo_t current_algo = DFA_MIN_HOPCROFT;
 static dfa_minimize_stats_t last_stats = {0};
 
@@ -149,22 +149,44 @@ static bool build_inverse_graph(const build_dfa_state_t* dfa, int state_count, i
 }
 
 // ============================================================================
-// Phase 1: Dead State Pruning
+// Phase 1: Dead State Pruning (Two-Pass: Forward + Backward)
 // ============================================================================
 
 static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
-    bool* reachable = calloc(state_count, sizeof(bool));
+    // Phase 1: Forward reachability from start state (state 0)
+    bool* forward_reachable = calloc(state_count, sizeof(bool));
     int* queue = malloc(state_count * sizeof(int));
-    inverse_graph_t inv;
-    
-    if (!reachable || !queue || !build_inverse_graph(dfa, state_count, &inv)) {
-        free(reachable); free(queue); return state_count;
+    if (!forward_reachable || !queue) {
+        free(forward_reachable); free(queue); return state_count;
     }
 
     int head = 0, tail = 0;
+    forward_reachable[0] = true;
+    queue[tail++] = 0;
+
+    while (head < tail) {
+        int s = queue[head++];
+        for (int c = 0; c < 256; c++) {
+            int t = dfa[s].transitions[c];
+            if (t != -1 && !forward_reachable[t]) {
+                forward_reachable[t] = true;
+                queue[tail++] = t;
+            }
+        }
+    }
+
+    // Phase 2: Backward reachability from accepting states
+    bool* backward_reachable = calloc(state_count, sizeof(bool));
+    inverse_graph_t inv;
+
+    if (!backward_reachable || !build_inverse_graph(dfa, state_count, &inv)) {
+        free(forward_reachable); free(backward_reachable); free(queue); return state_count;
+    }
+
+    head = 0; tail = 0;
     for (int s = 0; s < state_count; s++) {
-        if ((dfa[s].flags & 0xFF00) != 0) { // Accepting states
-            reachable[s] = true;
+        if ((dfa[s].flags & 0xFF00) != 0) {  // Accepting states
+            backward_reachable[s] = true;
             queue[tail++] = s;
         }
     }
@@ -174,25 +196,38 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
         int start = inv.offsets[target], count = inv.counts[target];
         for (int i = 0; i < count; i++) {
             int src = inv.sources[start + i];
-            if (!reachable[src]) {
-                reachable[src] = true;
+            if (!backward_reachable[src]) {
+                backward_reachable[src] = true;
                 queue[tail++] = src;
             }
         }
     }
+    free_inverse_graph(&inv);
+    free(queue);
 
-    if (!reachable[0]) reachable[0] = true; // Protect start state
+    // Phase 3: Keep states that are BOTH forward and backward reachable
+    bool* useful = malloc(state_count * sizeof(bool));
+    int useful_count = 0;
+    for (int s = 0; s < state_count; s++) {
+        if (forward_reachable[s] && backward_reachable[s]) {
+            useful[s] = true;
+            useful_count++;
+        }
+    }
+    useful[0] = true;  // Always keep start state
 
+    // Phase 4: Compact the DFA
     int* map = malloc(state_count * sizeof(int));
     int new_count = 0;
     for (int s = 0; s < state_count; s++) {
-        if (reachable[s]) {
+        if (useful[s]) {
             map[s] = new_count;
             if (s != new_count) dfa[new_count] = dfa[s];
             new_count++;
         } else map[s] = -1;
     }
 
+    // Phase 5: Update transitions using the compact map
     for (int s = 0; s < new_count; s++) {
         for (int c = 0; c < 256; c++) {
             int t = dfa[s].transitions[c];
@@ -203,8 +238,9 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
         }
     }
 
-    VERBOSE_PRINT("Pruned %d dead states\n", state_count - new_count);
-    free(reachable); free(queue); free(map); free_inverse_graph(&inv);
+    VERBOSE_PRINT("Pruned %d dead states (forward=%d, backward=%d, useful=%d)\n",
+                  state_count - new_count, useful_count, useful_count, new_count);
+    free(forward_reachable); free(backward_reachable); free(useful); free(map);
     return new_count;
 }
 
@@ -287,6 +323,7 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
     build_dfa_state_t* new_dfa = malloc(ms->partition_count * sizeof(build_dfa_state_t));
     alloc_or_abort(new_dfa, "Alloc New DFA Buffer");
     int state_remap[MAX_STATES];
+    for (int i = 0; i < MAX_STATES; i++) state_remap[i] = -1;  // Initialize to -1
     int new_count = 0;
 
     for (int p = 0; p < ms->partition_count; p++) {
@@ -300,10 +337,16 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
     for (int s = 0; s < new_count; s++) {
         for (int c = 0; c < 256; c++) {
             int t = new_dfa[s].transitions[c];
-            if (t != -1 && t < old_state_count) new_dfa[s].transitions[c] = state_remap[t];
+            if (t != -1 && t < old_state_count && state_remap[t] != -1) {
+                new_dfa[s].transitions[c] = state_remap[t];
+            } else if (t != -1) {
+                new_dfa[s].transitions[c] = -1;  // Transition to removed state
+            }
         }
-        if (new_dfa[s].eos_target != 0 && new_dfa[s].eos_target < (uint32_t)old_state_count) {
+        if (new_dfa[s].eos_target != 0 && new_dfa[s].eos_target < (uint32_t)old_state_count && state_remap[new_dfa[s].eos_target] != -1) {
             new_dfa[s].eos_target = (uint32_t)state_remap[new_dfa[s].eos_target];
+        } else if (new_dfa[s].eos_target != 0) {
+            new_dfa[s].eos_target = 0;  // EOS transition to removed state
         }
         new_dfa[s].nfa_state_count = 0;
     }

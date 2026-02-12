@@ -29,12 +29,9 @@ typedef struct __attribute__((packed)) {
     uint32_t transitions_offset;      // Offset to rule table (absolute, from DFA base, 0 = no rules)
     uint16_t transition_count;        // Number of rules
     uint16_t flags;                   // State flags (accepting, capture markers, etc.)
-    int8_t capture_start_id;          // Capture ID for CAPTURE_START (-1 = none)
-    int8_t capture_end_id;            // Capture ID for CAPTURE_END (-1 = none)
-    int8_t capture_defer_id;          // Capture ID for deferred CAPTURE_END (-1 = none)
-    uint16_t accepting_pattern_id;     // Pattern ID for accepting state (0 = not accepting, >0 = accepting with pattern)
+    uint16_t accepting_pattern_id;    // Pattern ID for accepting state (0 = not accepting, >0 = accepting with pattern)
     uint32_t eos_target;              // Offset to EOS target state (absolute, 0 = no EOS transition)
-    uint32_t eos_marker_offset;       // Offset to EOS marker list (absolute, 0 = no markers)
+    uint32_t eos_marker_offset;      // Offset to EOS marker list (absolute, 0 = no markers)
 } dfa_state_t;
 
 /**

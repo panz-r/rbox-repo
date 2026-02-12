@@ -16,6 +16,7 @@
 #define MAX_LINE_LENGTH 2048
 #define MAX_TAGS 16
 #define SIGNATURE_TABLE_SIZE 4096
+#define MAX_PENDING_MARKERS 8
 
 /* Category bitmask constants (8 categories, one bit each) */
 #define CAT_MASK_SAFE       0x01
@@ -29,6 +30,14 @@
 
 #include "multi_target_array.h"
 
+/* Pending marker for tracking markers that need to be attached to transitions */
+typedef struct {
+    uint16_t pattern_id;
+    uint32_t uid;
+    uint8_t type;  /* 0 = START, 1 = END */
+    bool active;
+} pending_marker_t;
+
 /* Shared NFA state structure for both nfa_builder and nfa2dfa */
 typedef struct {
     uint8_t category_mask;
@@ -39,6 +48,9 @@ typedef struct {
     int8_t capture_end_id;
     int8_t capture_defer_id;
     bool is_eos_target;
+    /* Pending markers to attach to outgoing transitions */
+    pending_marker_t pending_markers[MAX_PENDING_MARKERS];
+    int pending_marker_count;
 } nfa_state_t;
 
 #endif // NFA_H

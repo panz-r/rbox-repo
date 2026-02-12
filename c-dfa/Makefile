@@ -34,10 +34,12 @@ all: $(TOOLS) $(TEST)
 $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
 
-$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c \
-		$(TOOLS_DIR)/dfa_minimize_brzozowski.c $(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/dfa_minimize.c \
-		$(TOOLS_DIR)/dfa_minimize_brzozowski.c $(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
+$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/nfa_builder.c \
+		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
+		$(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -DNFABUILDER_NO_MAIN -DNFABUILDER_EXCLUDE_NFA_INIT -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/nfa_builder.c \
+		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
+		$(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
 
 # Build test binary
 $(TEST): $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(SRC_DIR)/dfa_test.c $(INCLUDE_DIR)/*.h

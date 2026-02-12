@@ -16,6 +16,7 @@
 
 // Forward declaration
 int find_symbol_id(char c);
+void nfa_init(void);
 
 static char pattern_identifier[256] = "";
 static bool flag_verbose = false;
@@ -60,11 +61,6 @@ typedef struct {
 
 static MarkerList dfa_marker_lists[MAX_DFA_MARKER_LISTS];
 static int marker_list_count = 0;
-
-// Initialize marker lists
-static void init_marker_lists(void) {
-    marker_list_count = 0;
-}
 
 // Get unique marker list (store if new)
 static uint32_t store_marker_list(const uint32_t* markers, int count) {
@@ -159,6 +155,8 @@ static int find_dfa_state_hashed(uint32_t hash, const int* states, int count, ui
     return -1;
 }
 
+#ifndef NFABUILDER_EXCLUDE_NFA_INIT
+
 void nfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
         nfa[i].category_mask = 0;
@@ -172,8 +170,10 @@ void nfa_init(void) {
         nfa[i].is_eos_target = false;
     }
     nfa_state_count = 0;
-    init_marker_lists();
+    marker_list_count = 0;
 }
+
+#endif  // NFABUILDER_EXCLUDE_NFA_INIT
 
 void dfa_init(void) {
     memset(dfa_hash_table, -1, sizeof(dfa_hash_table));
@@ -200,8 +200,6 @@ void epsilon_closure(int* states, int* count, int max_states) {
         if (alphabet[s].symbol_id == 257) { epsilon_sid = s; break; }
     }
     if (epsilon_sid < 0) {
-        static bool warned = false;
-
         return;
     }
 
@@ -513,9 +511,6 @@ void write_dfa_file(const char* filename) {
         if (rc > 256) rc = 256;
         sarr[i].transition_count = (uint16_t)rc; sarr[i].transitions_offset = (rc > 0) ? (uint32_t)cro : 0;
         sarr[i].flags = dfa[i].flags;
-        sarr[i].capture_start_id = dfa[i].capture_start_id;
-        sarr[i].capture_end_id = dfa[i].capture_end_id;
-        sarr[i].capture_defer_id = dfa[i].capture_defer_id;
         sarr[i].accepting_pattern_id = dfa[i].accepting_pattern_id;
         sarr[i].eos_marker_offset = 0;
         if (dfa[i].eos_target != 0) sarr[i].eos_target = (uint32_t)(ds->initial_state + (size_t)dfa[i].eos_target * sizeof(dfa_state_t));
@@ -536,7 +531,7 @@ void write_dfa_file(const char* filename) {
     }
 
     size_t metadata_offset = cro;
-    fprintf(stderr, "[DEBUG WRITE] id_len=%zu, initial_state=%zu, cro=%zu, marker_list_count=%d\n",
+    fprintf(stderr, "[DEBUG WRITE] id_len=%zu, initial_state=%u, cro=%zu, marker_list_count=%d\n",
             id_len, ds->initial_state, cro, marker_list_count);
     if (marker_list_count > 0) {
         fprintf(stderr, "[DEBUG WRITE] Setting metadata_offset=%zu\n", metadata_offset);
@@ -558,6 +553,8 @@ void write_dfa_file(const char* filename) {
                 if (list_idx > 0 && list_idx <= (uint32_t)marker_list_count) {
                     MarkerList* ml = &dfa_marker_lists[list_idx - 1];
                     fprintf(stderr, "[DEBUG MARKER WRITE] Writing %d markers from list %d\n", ml->count, list_idx - 1);
+                    // Set dst->marker_offset BEFORE writing markers
+                    dst->marker_offset = (uint32_t)(metadata_offset + moffset * sizeof(uint32_t));
                     for (int k = 0; k < ml->count; k++) {
                         marker_base[moffset] = ml->markers[k];
                         fprintf(stderr, "  marker[%zu] = 0x%08X\n", moffset, marker_base[moffset]);
@@ -566,9 +563,9 @@ void write_dfa_file(const char* filename) {
                     marker_base[moffset++] = MARKER_SENTINEL;
                 }
             }
-            if (dfa[i].eos_marker_offset > 0 && dfa[i].eos_marker_offset <= (uint32_t)marker_list_count) {
-                sarr[i].eos_marker_offset = (uint32_t)(metadata_offset + moffset * sizeof(uint32_t));
+            if (dfa[i].eos_marker_offset > 0 && dfa[i].eos_marker_offset < (uint32_t)marker_list_count) {
                 MarkerList* ml = &dfa_marker_lists[dfa[i].eos_marker_offset - 1];
+                sarr[i].eos_marker_offset = (uint32_t)(metadata_offset + moffset * sizeof(uint32_t));
                 for (int k = 0; k < ml->count; k++) marker_base[moffset++] = ml->markers[k];
                 marker_base[moffset++] = MARKER_SENTINEL;
             }
@@ -591,7 +588,9 @@ void load_nfa_file(const char* filename) {
     char line[1024]; 
     if (!fgets(line, sizeof(line), file)) { fprintf(stderr, "FATAL: Empty NFA file\n"); exit(1); }
     if (!strstr(line, "NFA_ALPHABET")) { fprintf(stderr, "FATAL: Invalid NFA header\n"); exit(1); }
+#ifndef NFABUILDER_EXCLUDE_NFA_INIT
     nfa_init();
+#endif
     while (fgets(line, sizeof(line), file)) {
         if (strncmp(line, "Identifier:", 11) == 0) sscanf(line + 11, "%s", pattern_identifier);
         else if (strncmp(line, "AlphabetSize:", 13) == 0) {

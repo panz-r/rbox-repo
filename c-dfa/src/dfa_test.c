@@ -24,13 +24,25 @@ static int tracked_dfa_count = 0;
 
 static void track_nfa_file(const char* filepath) {
     if (tracked_nfa_count < MAX_TRACKED_FILES) {
-        strncpy(tracked_nfa_files[tracked_nfa_count++], filepath, sizeof(tracked_nfa_files[0]) - 1);
+        size_t len = strlen(filepath);
+        if (len >= sizeof(tracked_nfa_files[0])) {
+            len = sizeof(tracked_nfa_files[0]) - 1;
+        }
+        memcpy(tracked_nfa_files[tracked_nfa_count], filepath, len);
+        tracked_nfa_files[tracked_nfa_count][len] = '\0';
+        tracked_nfa_count++;
     }
 }
 
 static void track_dfa_file(const char* filepath) {
     if (tracked_dfa_count < MAX_TRACKED_FILES) {
-        strncpy(tracked_dfa_files[tracked_dfa_count++], filepath, sizeof(tracked_dfa_files[0]) - 1);
+        size_t len = strlen(filepath);
+        if (len >= sizeof(tracked_nfa_files[0])) {
+            len = sizeof(tracked_nfa_files[0]) - 1;
+        }
+        memcpy(tracked_nfa_files[tracked_dfa_count], filepath, len);
+        tracked_nfa_files[tracked_dfa_count][len] = '\0';
+        tracked_dfa_count++;
     }
 }
 
@@ -76,18 +88,19 @@ static void print_usage(const char* progname) {
 }
 
 static void build_dfa(const char* patterns_file, const char* dfa_file) {
-    // Track the NFA file for cleanup
     char nfa_file[256];
     snprintf(nfa_file, sizeof(nfa_file), "%s/test.nfa", build_dir);
     track_nfa_file(nfa_file);
 
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd),
+    char cmd[1024];
+    (void)snprintf(cmd, sizeof(cmd),
         "mkdir -p %s && "
         "./tools/nfa_builder %s %s && "
         "./tools/nfa2dfa_advanced %s %s %s",
         build_dir, patterns_file, nfa_file, minimize_algo, nfa_file, dfa_file);
-    system(cmd);
+    if (system(cmd) != 0) {
+        fprintf(stderr, "Warning: DFA build failed for %s\n", patterns_file);
+    }
 }
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,

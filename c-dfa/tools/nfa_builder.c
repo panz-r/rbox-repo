@@ -46,13 +46,13 @@
 
 // Conditional debug print macro - only prints if NFA_BUILDER_DEBUG is true
 #if NFA_BUILDER_DEBUG
-#define DEBUG_PRINT(fmt, ...) fprintf(stderr, "//DEBUG: " fmt, ##__VA_ARGS__)
+#define DEBUG_PRINT(...) fprintf(stderr, "//DEBUG: " __VA_ARGS__)
 #else
-#define DEBUG_PRINT(fmt, ...) ((void)0)
+#define DEBUG_PRINT(...) ((void)0)
 #endif
 
 // Conditional verbose print macro - uses runtime flag_verbose
-#define VERBOSE_PRINT(fmt, ...) do { if (flag_verbose) fprintf(stderr, fmt, ##__VA_ARGS__); } while (0)
+#define VERBOSE_PRINT(...) do { if (flag_verbose) fprintf(stderr, __VA_ARGS__); } while (0)
 
 // Debug print macro for NFA/DFA construction details - uses runtime flag_verbose_nfa
 #define DEBUG_NFA_PRINT(fmt, ...) do { if (flag_verbose_nfa) fprintf(stderr, fmt, ##__VA_ARGS__); } while (0)
@@ -92,8 +92,6 @@ typedef struct {
 // Alphabet construction state
 static char_class_t built_alphabet[MAX_SYMBOLS];
 static int built_alphabet_size = 0;
-static bool alphabet_constructed = false;
-static const char* spec_file_for_validation = NULL;
 
 // Command-line flags
 static bool flag_validate_only = false;
@@ -243,23 +241,9 @@ typedef struct {
     bool used;
 } CaptureUIDMapping;
 
-// Marker list - variable length list of markers attached to a transition
-typedef struct MarkerList {
-    MarkerEntry markers[MAX_MARKERS_PER_TRANSITION];
-    int count;
-    struct MarkerList* next;  // For chaining if more markers needed
-} MarkerList;
-
 // ============================================================================
 // END PHASE 2 TYPE DEFINITIONS
 // ============================================================================
-
-// Phase 2: Marker system globals
-static MarkerList* all_marker_lists[MAX_MARKER_LISTS];
-static int marker_list_count = 0;
-static uint32_t next_marker_uid = 0;
-static CaptureUIDMapping capture_uid_map[MAX_CAPTURES];
-static int capture_uid_count = 0;
 
 // For + quantifier on literal characters: tracks the last symbol added
 static int last_element_sid = -1;
@@ -299,10 +283,7 @@ static FragmentResult current_fragment;
 static int current_class_symbols[MAX_CLASS_SYMBOLS];
 static int current_class_symbol_count = 0;
 
-static int current_element_sid = -1;
-static int current_capture_defer_id = -1;
 static bool current_is_char_class = false;
-static int last_parsed_state = -1;
 static bool has_pending_quantifier = false;
 static bool current_is_in_group = false;
 
@@ -395,83 +376,6 @@ void nfa_init(void) {
 #define MARKER_TYPE_END 1
 
 // Generate a globally unique marker UID
-static uint32_t generate_marker_uid(void) {
-    return next_marker_uid++;
-}
-
-// Register a capture name with its UID
-static uint32_t register_capture_uid(const char* name) {
-    for (int i = 0; i < capture_uid_count; i++) {
-        if (strcmp(capture_uid_map[i].name, name) == 0) {
-            return capture_uid_map[i].uid;
-        }
-    }
-    if (capture_uid_count < MAX_CAPTURES) {
-        strncpy(capture_uid_map[capture_uid_count].name, name, MAX_CAPTURE_NAME - 1);
-        capture_uid_map[capture_uid_count].name[MAX_CAPTURE_NAME - 1] = '\0';
-        capture_uid_map[capture_uid_count].uid = generate_marker_uid();
-        capture_uid_map[capture_uid_count].used = true;
-        return capture_uid_map[capture_uid_count].uid++;
-    }
-    return 0;
-}
-
-// Create a new marker list with a single marker
-static MarkerList* create_marker_list(uint16_t pattern_id, uint32_t uid, uint8_t type) {
-    if (marker_list_count >= MAX_MARKER_LISTS) return NULL;
-    MarkerList* ml = calloc(1, sizeof(MarkerList));
-    if (ml) {
-        all_marker_lists[marker_list_count++] = ml;
-        ml->markers[0].pattern_id = pattern_id;
-        ml->markers[0].uid = uid;
-        ml->markers[0].type = type;
-        ml->count = 1;
-        ml->next = NULL;
-    }
-    return ml;
-}
-
-// Add a marker to an existing marker list
-static void marker_list_add(MarkerList* ml, uint16_t pattern_id, uint32_t uid, uint8_t type) {
-    if (!ml || ml->count >= MAX_MARKERS_PER_TRANSITION) return;
-    for (int i = 0; i < ml->count; i++) {
-        if (ml->markers[i].pattern_id == pattern_id && ml->markers[i].uid == uid) {
-            return;  // Already exists
-        }
-    }
-    ml->markers[ml->count].pattern_id = pattern_id;
-    ml->markers[ml->count].uid = uid;
-    ml->markers[ml->count].type = type;
-    ml->count++;
-}
-
-// Create or merge marker list
-static MarkerList* get_or_create_marker_list(MarkerList* existing, uint16_t pattern_id, uint32_t uid, uint8_t type) {
-    if (!existing) {
-        return create_marker_list(pattern_id, uid, type);
-    }
-    // Check if already in list
-    for (int i = 0; i < existing->count; i++) {
-        if (existing->markers[i].pattern_id == pattern_id && existing->markers[i].uid == uid) {
-            return existing;  // Already has this marker
-        }
-    }
-    // Add to existing list
-    if (existing->count < MAX_MARKERS_PER_TRANSITION) {
-        existing->markers[existing->count].pattern_id = pattern_id;
-        existing->markers[existing->count].uid = uid;
-        existing->markers[existing->count].type = type;
-        existing->count++;
-        return existing;
-    }
-    // List is full, need to chain (rare case)
-    if (!existing->next) {
-        existing->next = create_marker_list(pattern_id, uid, type);
-        return existing->next;
-    }
-    return get_or_create_marker_list(existing->next, pattern_id, uid, type);
-}
-
 // ============================================================================
 // END PHASE 2 MARKER SYSTEM
 // ============================================================================
@@ -502,6 +406,7 @@ negated_transition_t* find_negated_transition_for_target(nfa_builder_state_t* st
 }
 
 bool should_use_negation(int from_state, int to_state, char input_char) {
+    (void)input_char;  // Reserved for future negation support
     // More aggressive heuristic: use negation more frequently
     // 1. Always use if we already have a negated transition to this target
     // 2. Use if we're adding a second transition to the same target
@@ -606,7 +511,6 @@ int find_special_symbol_id(int special_char) {
 
 // Forward declarations for minimization functions
 static uint64_t compute_state_signature(int state);
-static int find_equivalent_state(uint64_t signature, int current_state);
 static void add_state_to_signature_table(int state, uint64_t signature);
 static int nfa_finalize_state(int state);
 
@@ -716,55 +620,6 @@ static uint64_t compute_state_signature(int state) {
     }
 
     return signature;
-}
-
-// Find equivalent state using signature
-static int find_equivalent_state(uint64_t signature, int current_state) {
-    unsigned int hash = hash_signature(signature);
-    StateSignature* entry = signature_table[hash];
-
-    while (entry != NULL) {
-        // Skip states that should not be shared
-        if (state_do_not_share[current_state] || state_do_not_share[entry->state_index]) {
-            entry = entry->next;
-            continue;
-        }
-
-        if (entry->signature == signature) {
-            // Found a state with matching signature, verify it's truly equivalent
-            int candidate_state = entry->state_index;
-
-            // Check if states are truly equivalent
-            if (nfa[current_state].category_mask == nfa[candidate_state].category_mask &&
-                nfa[current_state].tag_count == nfa[candidate_state].tag_count) {
-
-                // Check tags
-                bool tags_match = true;
-                for (int i = 0; i < nfa[current_state].tag_count; i++) {
-                    if (strcmp(nfa[current_state].tags[i], nfa[candidate_state].tags[i]) != 0) {
-                        tags_match = false;
-                        break;
-                    }
-                }
-
-                // Check transitions
-                bool transitions_match = true;
-                for (int s = 0; s < MAX_SYMBOLS; s++) {
-                    if (nfa[current_state].transitions[s] != nfa[candidate_state].transitions[s]) {
-                        transitions_match = false;
-                        break;
-                    }
-                }
-
-                if (tags_match && transitions_match) {
-                    return candidate_state; // States are equivalent
-                }
-            }
-        }
-        entry = entry->next;
-    }
-
-    return -1; // No equivalent state found
 }
 
 // Add state to signature table
@@ -1842,8 +1697,6 @@ static int lookup_acceptance_category(const char* category, const char* subcateg
 static void parse_pattern_full(const char* pattern, const char* category,
                                 const char* subcategory, const char* operations,
                                 const char* action) {
-    int pos = 0;
-
     // Clear per-pattern globals to avoid stale values between patterns
     last_element_sid = -1;
     pending_capture_defer_id = -1;
@@ -2873,7 +2726,6 @@ static bool construct_alphabet_from_patterns(const char* spec_file) {
         alphabet[i] = built_alphabet[i];
     }
     alphabet_size = built_alphabet_size;
-    alphabet_constructed = true;
     
     if (flag_verbose_alphabet) {
         fprintf(stderr, "\nAlphabet constructed successfully\n");
@@ -2883,6 +2735,7 @@ static bool construct_alphabet_from_patterns(const char* spec_file) {
 }
 
 // Main function
+#ifndef NFABUILDER_NO_MAIN
 int main(int argc, char* argv[]) {
     const char* spec_file = NULL;
     const char* output_file = NULL;
@@ -2933,3 +2786,4 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+#endif

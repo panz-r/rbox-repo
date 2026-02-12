@@ -25,6 +25,7 @@ bool dfa_get_capture_by_index(const dfa_result_t* result, int index, size_t* out
 void* load_dfa_from_file(const char* filename, size_t* size);
 const char* get_dfa_identifier(const char* filename);
 bool save_dfa_to_file(const char* filename, const void* data, size_t size);
+const char* lookup_capture_name(const void* dfa_data, uint16_t uid);
 
 #ifdef __cplusplus
 }

@@ -29,6 +29,7 @@
 
 // Machine state - Set once via dfa_init
 static const dfa_t* current_dfa = NULL;
+static size_t current_dfa_size = 0;
 static char current_identifier[256] = "";
 
 #define MAX_EVAL_LENGTH 16384 
@@ -107,8 +108,9 @@ bool dfa_init_with_identifier(const void* data, size_t size, const char* expecte
     }
 
     current_dfa = dfa;
-    EVAL_DEBUG_PRINT("DFA LOADED: initial_state=%u, state_count=%u, id_len=%u\n", 
-                     dfa->initial_state, dfa->state_count, dfa->identifier_length);
+    current_dfa_size = size;
+    EVAL_DEBUG_PRINT("DFA LOADED: initial_state=%u, state_count=%u, id_len=%u, size=%zu\n", 
+                     dfa->initial_state, dfa->state_count, dfa->identifier_length, size);
     return true;
 }
 
@@ -133,10 +135,17 @@ const char* dfa_category_string(dfa_command_category_t cat) {
  * Pass 2: Replay the trace to extract captures filtered by winning pattern
  */
 bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_caps) {
+    (void)max_caps;  // Reserved for future capture limit feature
     if (!current_dfa || !input || !result) return false;
 
     memset(result, 0, sizeof(dfa_result_t));
     result->category = DFA_CMD_UNKNOWN;
+
+    // Runtime validation: verify current_dfa structure
+    if (current_dfa->magic != DFA_MAGIC || current_dfa->version < 5 || current_dfa->version > 6) {
+        fprintf(stderr, "ERROR: Invalid DFA state in evaluator\n");
+        return false;
+    }
 
     if (length == 0) length = strlen(input);
     if (length == 0) {
@@ -158,10 +167,17 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     const char* raw_base = (const char*)current_dfa;
     const dfa_state_t* curr = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
     
-    EVAL_DEBUG_PRINT("Starting evaluation, initial_state=%u, first_state_offset=%u\n", 
+    EVAL_DEBUG_PRINT("DFA LOADED: initial_state=%u, first_state_offset=%u\n", 
                      current_dfa->initial_state, (unsigned int)((const char*)curr - raw_base));
     EVAL_DEBUG_PRINT("State 0: tc=%u, to=%u, flags=0x%04X\n", 
                      curr->transition_count, curr->transitions_offset, curr->flags);
+    
+    // Validate initial state
+    if ((const char*)curr - raw_base != current_dfa->initial_state) {
+        fprintf(stderr, "ERROR: Initial state offset mismatch (expected %u, got %zu)\n",
+                current_dfa->initial_state, (const char*)curr - raw_base);
+        return false;
+    }
     
     const uint32_t* marker_base = NULL;
     if (current_dfa->metadata_offset != 0 && current_dfa->version >= 6) {
@@ -176,6 +192,8 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     }
     
     size_t pos = 0;
+    size_t dfa_total_size = current_dfa->initial_state + current_dfa->state_count * sizeof(dfa_state_t);
+    size_t rules_start = dfa_total_size;
 
     while (pos < length && pos < MAX_EVAL_LENGTH) {
         unsigned char c = (unsigned char)input[pos];
@@ -184,29 +202,50 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         EVAL_DEBUG_PRINT("Pos %zu: char='%c'(0x%02X), state_offset=%u, tc=%u\n",
                          pos, c, c, (unsigned int)((const char*)curr - raw_base), curr->transition_count);
 
+        // Validate current state is within DFA bounds
+        size_t curr_offset = (const char*)curr - raw_base;
+        if (curr_offset < current_dfa->initial_state || curr_offset >= dfa_total_size) {
+            fprintf(stderr, "ERROR: Current state offset %zu is out of bounds [%u, %zu)\n",
+                    curr_offset, current_dfa->initial_state, dfa_total_size);
+            return false;
+        }
+
         if (curr->transition_count > 0) {
-            const dfa_rule_t* r = (const dfa_rule_t*)(raw_base + curr->transitions_offset);
-            for (uint16_t i = 0; i < curr->transition_count; i++, r++) {
-                bool m = false;
-                switch (r->type) {
-                    case DFA_RULE_LITERAL: m = (c == r->data1); break;
-                    case DFA_RULE_RANGE:   m = (c >= r->data1 && c <= r->data2); break;
-                    case DFA_RULE_LITERAL_2: m = (c == r->data1 || c == r->data2); break;
-                    case DFA_RULE_LITERAL_3: m = (c == r->data1 || c == r->data2 || c == r->data3); break;
-                    case DFA_RULE_RANGE_LITERAL: m = ((c >= r->data1 && c <= r->data2) || c == r->data3); break;
-                    case DFA_RULE_DEFAULT: m = true; break;
-                    case DFA_RULE_NOT_LITERAL: m = (c != r->data1); break;
-                    case DFA_RULE_NOT_RANGE:   m = (c < r->data1 || c > r->data2); break;
-                }
-                if (m) {
-                    EVAL_DEBUG_PRINT("  Rule %u: type=%u matched, target=%u\n", i, r->type, r->target);
-                    if (r->target >= 1000000) {
-                        fprintf(stderr, "FATAL: Evaluator encountered corrupt target offset %u\n", r->target);
+            // Validate transitions_offset is reasonable (should point to rules area after states)
+            if (curr->transitions_offset >= rules_start && curr->transitions_offset < current_dfa_size) {
+                const dfa_rule_t* r = (const dfa_rule_t*)(raw_base + curr->transitions_offset);
+                for (uint16_t i = 0; i < curr->transition_count; i++, r++) {
+                    // Validate target is within DFA bounds (should be at state start)
+                    if (r->target < current_dfa->initial_state || r->target >= dfa_total_size) {
+                        fprintf(stderr, "ERROR: Rule target %u is out of bounds [%u, %zu)\n",
+                                r->target, current_dfa->initial_state, dfa_total_size);
                         return false;
                     }
-                    next = (const dfa_state_t*)(raw_base + r->target);
-                    break;
+                    bool m = false;
+                    switch (r->type) {
+                        case DFA_RULE_LITERAL: m = (c == r->data1); break;
+                        case DFA_RULE_RANGE:   m = (c >= r->data1 && c <= r->data2); break;
+                        case DFA_RULE_LITERAL_2: m = (c == r->data1 || c == r->data2); break;
+                        case DFA_RULE_LITERAL_3: m = (c == r->data1 || c == r->data2 || c == r->data3); break;
+                        case DFA_RULE_RANGE_LITERAL: m = ((c >= r->data1 && c <= r->data2) || c == r->data3); break;
+                        case DFA_RULE_DEFAULT: m = true; break;
+                        case DFA_RULE_NOT_LITERAL: m = (c != r->data1); break;
+                        case DFA_RULE_NOT_RANGE:   m = (c < r->data1 || c > r->data2); break;
+                    }
+                    if (m) {
+                        EVAL_DEBUG_PRINT("  Rule %u: type=%u matched, target=%u\n", i, r->type, r->target);
+                        if (r->target >= 1000000) {
+                            fprintf(stderr, "FATAL: Evaluator encountered corrupt target offset %u\n", r->target);
+                            return false;
+                        }
+                        next = (const dfa_state_t*)(raw_base + r->target);
+                        break;
+                    }
                 }
+            } else {
+                fprintf(stderr, "ERROR: transitions_offset %u is out of bounds [%zu, %zu)\n",
+                        curr->transitions_offset, rules_start, current_dfa_size);
+                return false;
             }
         }
 
@@ -223,30 +262,40 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     }
 
     uint16_t winning_pattern_id = UINT16_MAX;  // UINT16_MAX = no accepting pattern
+    EVAL_DEBUG_PRINT("POST-LOOP: curr_offset=%u, eos_target=%u, trace_depth=%d\n",
+                     (unsigned int)((const char*)curr - raw_base), curr->eos_target, trace_depth);
+
     if (curr->eos_target != 0) {
         const dfa_state_t* eos = (const dfa_state_t*)(raw_base + curr->eos_target);
         curr = eos;
+        EVAL_DEBUG_PRINT("EOS: jumped to offset %u\n", (unsigned int)((const char*)curr - raw_base));
         if (trace_depth < MAX_TRACE_LENGTH) {
             trace_buffer[trace_depth++] = (uint32_t)((const char*)curr - raw_base);
         }
         winning_pattern_id = curr->accepting_pattern_id;
     } else {
+        EVAL_DEBUG_PRINT("NO EOS: staying at offset %u\n", (unsigned int)((const char*)curr - raw_base));
         winning_pattern_id = curr->accepting_pattern_id;
     }
 
     uint8_t mask = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+    EVAL_DEBUG_PRINT("CATEGORY: final_offset=%u, flags=0x%04X, mask=0x%02X, winning_pattern_id=%u\n",
+                     (unsigned int)((const char*)curr - raw_base), curr->flags, mask, winning_pattern_id);
+
     if (mask != 0 || winning_pattern_id != UINT16_MAX) {
         result->matched = true;
         result->matched_length = pos;
         result->category_mask = mask;
         result->final_state = (uint32_t)((const char*)curr - raw_base);
+        EVAL_DEBUG_PRINT("RESULT: matched=%d, len=%zu, cat=0x%02X, final_state=%u\n",
+                         result->matched, pos, mask, result->final_state);
         for (int i = 0; i < 8; i++) if (mask & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
         
         if (current_dfa->version >= 6 && winning_pattern_id != UINT16_MAX) {
             capture_range_t capture_stack[MAX_CAPTURE_STACK];
             int stack_depth = 0;
             
-            for (int t = 1; t < trace_depth && t <= pos; t++) {
+            for (int t = 1; t < trace_depth && (size_t)t <= pos; t++) {
                 uint32_t from_state_offset = trace_buffer[t - 1];
                 uint32_t to_state_offset = trace_buffer[t];
                 
@@ -260,19 +309,19 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         if (r->target == to_state_offset) {
             if (r->marker_offset != 0 && marker_base) {
                 transition_markers = marker_base + r->marker_offset;
-                fprintf(stderr, "[EVAL] Found markers at rule offset %u\n", r->marker_offset);
+                EVAL_DEBUG_PRINT("  Found markers at rule offset %u\n", r->marker_offset);
             }
             break;
         }
     }
     
     if (transition_markers) {
-        fprintf(stderr, "[EVAL] Processing markers, winning_pattern_id=%u\n", winning_pattern_id);
+        EVAL_DEBUG_PRINT("  Processing markers, winning_pattern_id=%u\n", winning_pattern_id);
         for (int m = 0; transition_markers[m] != MARKER_SENTINEL && transition_markers[m] != 0; m++) {
-            fprintf(stderr, "  marker[%d] = 0x%08X\n", m, transition_markers[m]);
+            EVAL_DEBUG_PRINT("    marker[%d] = 0x%08X\n", m, transition_markers[m]);
         }
         process_marker_list(transition_markers, t - 1, winning_pattern_id,
-                                       capture_stack, &stack_depth, result);
+                                   capture_stack, &stack_depth, result);
                 }
             }
             
