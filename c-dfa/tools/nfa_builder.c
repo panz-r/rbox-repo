@@ -66,12 +66,14 @@ typedef struct {
     bool is_special;
 } char_class_t;
 
-// Forward declarations for new functions
+// Forward declarations for main binary functions
+#ifndef NFABUILDER_NO_MAIN
 static void parse_arguments(int argc, char* argv[],
                            const char** spec_file, const char** output_file);
 static bool validate_pattern_file(const char* spec_file);
 static bool construct_alphabet_from_patterns(const char* spec_file);
 static void print_usage(const char* progname);
+#endif
 
 // Negated transition structure
 typedef struct {
@@ -90,17 +92,21 @@ typedef struct {
 #define CAT_MASK_BUILD      0x40
 #define CAT_MASK_CONTAINER  0x80
 
+#ifndef NFABUILDER_NO_MAIN
 // Alphabet construction state
 static char_class_t built_alphabet[MAX_SYMBOLS];
 static int built_alphabet_size = 0;
 
-// Command-line flags
+// Command-line flags (main binary only)
 static bool flag_validate_only = false;
-static bool flag_verbose = false;
 static bool flag_verbose_alphabet = false;
 static bool flag_verbose_validation = false;
-static bool flag_verbose_nfa = false;
 static const char* external_alphabet_file = NULL;
+#endif
+
+// Shared flags (used by VERBOSE_PRINT/DEBUG macros)
+static bool flag_verbose = false;
+static bool flag_verbose_nfa = false;
 
 // Pattern file identifier (for NFA/DFA matching)
 static char pattern_identifier[256] = "";
@@ -2601,6 +2607,8 @@ void cleanup(void) {
 // NEW: Integrated Validation and Alphabet Construction Functions
 // =============================================================================
 
+#ifndef NFABUILDER_NO_MAIN
+
 static void print_usage(const char* progname) {
     fprintf(stderr, "Usage: %s [options] <spec_file> [output.nfa]\n", progname);
     fprintf(stderr, "\n");
@@ -2912,6 +2920,8 @@ static bool construct_alphabet_from_patterns(const char* spec_file) {
     
     return true;
 }
+
+#endif  // NFABUILDER_NO_MAIN
 
 // Main function
 #ifndef NFABUILDER_NO_MAIN

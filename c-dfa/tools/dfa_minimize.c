@@ -245,29 +245,9 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
 }
 
 // ============================================================================
-// Shared: Partition Equivalence logic
+// Shared: Partition Equivalence logic - NOTE: are_properties_equivalent was
+// removed as it was dead code (never called from anywhere)
 // ============================================================================
-
-static bool are_properties_equivalent(const build_dfa_state_t* s1, const build_dfa_state_t* s2, const int* partition_map) {
-    (void)s1; (void)s2; (void)partition_map;
-    if (s1->flags != s2->flags) return false;
-    if ((s1->eos_target != 0) != (s2->eos_target != 0)) return false;
-    if (s1->eos_marker_offset != s2->eos_marker_offset) return false;
-    
-    // Also check transitions for initial equivalence
-    for (int c = 0; c < 256; c++) {
-        int t1 = s1->transitions[c], t2 = s2->transitions[c];
-        if (t1 == -1 && t2 == -1) continue;
-        if (t1 == -1 || t2 == -1) return false;
-        // If transitions go to states within current partition map, they must be equivalent
-        if (t1 >= 0 && t1 < MAX_STATES && t2 >= 0 && t2 < MAX_STATES) {
-            if (partition_map[t1] != partition_map[t2]) return false;
-        } else {
-            if (t1 != t2) return false;
-        }
-    }
-    return true;
-}
 
 static bool are_transitions_equivalent(const build_dfa_state_t* s1, const build_dfa_state_t* s2, const int* partition_map) {
     for (int c = 0; c < 256; c++) {
