@@ -126,22 +126,23 @@ static void collect_markers_from_states(const int* states, int state_count,
 static int dfa_hash_table[DFA_HASH_SIZE];
 static int dfa_next_in_bucket[MAX_STATES];
 
-static uint32_t hash_nfa_set(const int* states, int count, uint8_t mask) {
+static uint32_t hash_nfa_set(const int* states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
     uint32_t hash = 2166136261u;
     for (int i = 0; i < count; i++) {
         hash ^= (uint32_t)states[i];
         hash *= 16777619;
     }
     hash ^= (uint32_t)mask << 24;
+    hash ^= (uint32_t)first_accepting_pattern;
     return hash;
 }
 
-static int find_dfa_state_hashed(uint32_t hash, const int* states, int count, uint8_t mask) {
+static int find_dfa_state_hashed(uint32_t hash, const int* states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
     int idx = dfa_hash_table[hash % DFA_HASH_SIZE];
     while (idx != -1) {
         if (dfa[idx].nfa_state_count == count) {
             uint8_t existing_mask = (uint8_t)(dfa[idx].flags >> 8);
-            if (existing_mask == mask) {
+            if (existing_mask == mask && dfa[idx].first_accepting_pattern == first_accepting_pattern) {
                 bool match = true;
                 for (int j = 0; j < count; j++) {
                     if (dfa[idx].nfa_states[j] != states[j]) { match = false; break; }
@@ -283,9 +284,9 @@ void epsilon_closure(int* states, int* count, int max_states) {
     }
 }
 
-int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id) {
-    uint32_t h = hash_nfa_set(nfa_states, nfa_count, category_mask);
-    int existing = find_dfa_state_hashed(h, nfa_states, nfa_count, category_mask);
+int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id, uint16_t first_accepting_pattern) {
+    uint32_t h = hash_nfa_set(nfa_states, nfa_count, category_mask, first_accepting_pattern);
+    int existing = find_dfa_state_hashed(h, nfa_states, nfa_count, category_mask, first_accepting_pattern);
     if (existing != -1) return existing;
     if (dfa_state_count >= MAX_STATES) { fprintf(stderr, "FATAL: Max DFA states reached\n"); exit(1); }
     int state = dfa_state_count++;
@@ -294,6 +295,7 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     dfa[state].flags = (category_mask << 8);
     if (category_mask != 0) dfa[state].flags |= DFA_STATE_ACCEPTING;
     dfa[state].accepting_pattern_id = accepting_pattern_id;
+    dfa[state].first_accepting_pattern = first_accepting_pattern;
     dfa[state].nfa_state_count = nfa_count;
     for (int i = 0; i < nfa_count && i < 8192; i++) dfa[state].nfa_states[i] = nfa_states[i];
     int bucket = h % DFA_HASH_SIZE;
@@ -397,24 +399,31 @@ void nfa_to_dfa(void) {
     }
 
     // Compute category mask and find accepting pattern ID
-    // Category from ALL states in the closure (including epsilon-reached)
-    // But accept_pattern from ANY state in the closure (including epsilon-reached)
+    // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
+    // This prevents category leakage from intermediate states
     uint8_t im = 0;
     uint16_t accept_pattern = 0;
+    uint64_t reachable_accepting_patterns = 0;
     for (int i = 0; i < tc; i++) {
         int ns = temp[i];
-        // Category from ALL states in the closure
-        if (nfa[ns].category_mask != 0) {
+        // Category from states that are either accepting (pattern_id) or EOS targets
+        if ((nfa[ns].pattern_id != 0 || nfa[ns].is_eos_target) && nfa[ns].category_mask != 0) {
             im |= nfa[ns].category_mask;
         }
         // Accept pattern from any state in the closure (epsilon-reached states included)
         if (nfa[ns].pattern_id != 0 && accept_pattern == 0) {
             accept_pattern = nfa[ns].pattern_id - 1;  // Convert back to 0-based
         }
+        // Track all reachable accepting patterns for state deduplication
+        if (nfa[ns].pattern_id != 0) {
+            if (nfa[ns].pattern_id <= 64) {
+                reachable_accepting_patterns |= (1ULL << (nfa[ns].pattern_id - 1));
+            }
+        }
     }
     fprintf(stderr, "[DEBUG] Initial category mask: 0x%02X\n", im);
 
-    int idfa = dfa_add_state(im, temp, tc, accept_pattern);
+    int idfa = dfa_add_state(im, temp, tc, accept_pattern, (uint16_t)reachable_accepting_patterns);
     int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
 
     while (h < t) {
@@ -447,26 +456,34 @@ void nfa_to_dfa(void) {
             epsilon_closure_with_markers(temp2, &tc2, MAX_STATES, markers, &marker_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
             // Compute category mask and accepting pattern for target state
-            // Category from ALL states in the closure (including epsilon-reached)
-            // Accept pattern from ANY state in the closure (including epsilon-reached)
+            // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
+            // This prevents category leakage from intermediate states
             uint8_t mm = 0;
             uint16_t accept_pattern2 = 0;
+            uint64_t reachable_accepting_patterns2 = 0;
             for (int j = 0; j < tc2; j++) {
                 int ns = temp2[j];
-                // Category from ALL states in the closure
-                if (nfa[ns].category_mask != 0) {
+                // Category from states that are either accepting (pattern_id) or EOS targets
+                if ((nfa[ns].pattern_id != 0 || nfa[ns].is_eos_target) && nfa[ns].category_mask != 0) {
                     mm |= nfa[ns].category_mask;
                 }
                 // Accept pattern from any state in the closure (epsilon-reached states included)
                 if (nfa[ns].pattern_id != 0 && accept_pattern2 == 0) {
                     accept_pattern2 = nfa[ns].pattern_id - 1;  // Convert back to 0-based
                 }
+                // Track all reachable accepting patterns for state deduplication
+                if (nfa[ns].pattern_id != 0) {
+                    if (nfa[ns].pattern_id <= 64) {
+                        reachable_accepting_patterns2 |= (1ULL << (nfa[ns].pattern_id - 1));
+                    }
+                }
             }
+            // DO NOT inherit from source - that breaks prefix sharing
 
             collect_markers_from_states(temp2, tc2, markers, &marker_count);
             uint32_t marker_list_offset = store_marker_list(markers, marker_count);
 
-             int target = dfa_add_state(mm, temp2, tc2, accept_pattern2);
+             int target = dfa_add_state(mm, temp2, tc2, accept_pattern2, (uint16_t)reachable_accepting_patterns2);
 
             // Handle both literal symbols (sid < 256) and virtual symbols (VSYM_SPACE=259, VSYM_TAB=260)
             int sid = alphabet[i].symbol_id;
@@ -519,24 +536,26 @@ void nfa_to_dfa(void) {
         }
 
         // Not accepting - check if it contains an EOS target NFA state
+        // Find the DFA state that CONTAINS this EOS target NFA state (not just any with matching category)
         int eos_nfa_state = -1;
-        uint8_t eos_mask = 0;
         for (int j = 0; j < dfa[cur].nfa_state_count; j++) {
             int nfa_state = dfa[cur].nfa_states[j];
             if (nfa[nfa_state].is_eos_target) {
                 eos_nfa_state = nfa_state;
-                eos_mask = nfa[nfa_state].category_mask;
                 break;
             }
         }
 
-        if (eos_nfa_state >= 0 && eos_mask != 0) {
+        if (eos_nfa_state >= 0) {
+            // Find the DFA state that contains this exact EOS target NFA state
             for (int s = 0; s < dfa_state_count; s++) {
-                uint8_t state_mask = dfa[s].flags >> 8;
-                if ((state_mask & eos_mask) != 0 && state_mask != 0) {
-                    dfa[cur].eos_target = s;
-                    break;
+                for (int j = 0; j < dfa[s].nfa_state_count; j++) {
+                    if (dfa[s].nfa_states[j] == eos_nfa_state) {
+                        dfa[cur].eos_target = s;
+                        break;
+                    }
                 }
+                if (dfa[cur].eos_target != 0) break;
             }
         }
 
