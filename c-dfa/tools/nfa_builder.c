@@ -1456,8 +1456,9 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
             }
             if (c == ' ' || c == '\t') {
                 // Handle space and tab characters - create transitions
-                int space_sid = VSYM_SPACE;  // Normalized Space
-                int tab_sid = VSYM_TAB;     // Normalized Tab
+                // Per documentation: "Space normalizes to [ \t]+ (one or more whitespace)"
+                 int space_sid = VSYM_SPACE;
+                int tab_sid = VSYM_TAB;
                 int sid = (c == ' ') ? space_sid : tab_sid;
                 if (sid != -1) {
                     // Ensure dedicated anchor state
@@ -1467,18 +1468,38 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                         nfa_add_transition(0, anchor, VSYM_EPS);
                     }
 
-                    int new_state = nfa_add_state_with_minimization(false);
-                    nfa_add_transition(anchor, new_state, sid);
-                    int finalized_state = nfa_finalize_state(new_state);
+                    // Create loop state for one-or-more spaces (implicit + quantifier)
+                    int loop_state = nfa_add_state_with_minimization(false);
+                    state_do_not_share[loop_state] = true;
+
+                    // Create exit state for when done consuming spaces
+                    int exit_state = nfa_add_state_with_minimization(false);
+                    state_do_not_share[exit_state] = true;
+
+                    // EPSILON: anchor --EPSILON--> loop_state (so space/tab transitions are reachable via epsilon closure)
+                    nfa_add_transition(anchor, loop_state, VSYM_EPS);
+
+                    // Loop: loop_state --space/tab--> loop_state
+                    nfa_add_transition(loop_state, loop_state, space_sid);
+                    nfa_add_transition(loop_state, loop_state, tab_sid);
+
+                    // Entry: anchor --space/tab--> loop_state (add BOTH space and tab)
+                    nfa_add_transition(anchor, loop_state, space_sid);
+                    nfa_add_transition(anchor, loop_state, tab_sid);
+
+                    // Exit: loop_state --EPSILON--> exit_state (to continue after spaces)
+                    nfa_add_transition(loop_state, exit_state, VSYM_EPS);
+
+                    nfa_finalize_state(exit_state);
                     memset(&current_fragment, 0, sizeof(current_fragment));
                     current_fragment.anchor_state = anchor;
                     current_fragment.is_single_char = true;
                     current_fragment.loop_char = c;
-                    current_fragment.loop_entry_state = finalized_state;
-                    current_fragment.exit_state = finalized_state;
+                    current_fragment.loop_entry_state = loop_state;
+                    current_fragment.exit_state = exit_state;
                     current_is_char_class = false;
                     (*pos)++;
-                    return finalized_state;
+                    return exit_state;
                 }
                 (*pos)++;
                 break;

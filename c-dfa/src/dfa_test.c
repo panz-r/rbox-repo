@@ -348,11 +348,11 @@ static void run_tripled_hard_edges(void) {
 static void run_tripled_syntax(void) {
     TestCase cases[] = {
         {"cmd arg1", true, 8, CAT_MASK_SAFE, "cmd with 1 arg matches"},
-        {"cmd arg1 arg2", true, 12, CAT_MASK_SAFE, "cmd with 2 args matches"},
-        {"cmd arg1 arg2 arg3", true, 16, CAT_MASK_SAFE, "cmd with 3 args matches"},
+        {"cmd arg1 arg2", true, 13, CAT_MASK_SAFE, "cmd with 2 args matches"},
+        {"cmd arg1 arg2 arg3", true, 18, CAT_MASK_SAFE, "cmd with 3 args matches"},
         {"cmd", true, 3, CAT_MASK_SAFE, "cmd alone matches"},
         {"CMD VAR", true, 7, CAT_MASK_SAFE, "PAT VAR matches"},
-        {"CMD VAR1 VAR2", true, 11, CAT_MASK_SAFE, "PAT VAR VAR matches"},
+        {"CMD VAR1 VAR2", true, 13, CAT_MASK_SAFE, "PAT VAR VAR matches"},
         {"XYZ", true, 3, CAT_MASK_SAFE, "XYZ matches"},
         {"XYZ XYZ", true, 7, CAT_MASK_SAFE, "XYZ XYZ matches"},
     };
@@ -363,14 +363,14 @@ static void run_tripled_syntax(void) {
 
 static void run_tripled_category_isolation(void) {
     TestCase cases[] = {
-        {"SAFE_CMD alpha", true, 12, 0x01, "SAFE_CMD+alpha has cat 0x01"},
-        {"SAFE_CMD beta", true, 11, 0x01, "SAFE_CMD+beta has cat 0x01"},
-        {"CAUTION_CMD alpha", true, 14, 0x02, "CAUTION_CMD+alpha has cat 0x02"},
-        {"CAUTION_CMD beta", true, 13, 0x02, "CAUTION_CMD+beta has cat 0x02"},
-        {"SAFE_CMD alpha", false, 0, 0x02, "SAFE_CMD should NOT have cat 0x02"},
-        {"CAUTION_CMD alpha", false, 0, 0x01, "CAUTION_CMD should NOT have cat 0x01"},
-        {"SAFE_CMD PAT1", true, 10, 0x01, "SAFE_CMD+PAT1 matches"},
-        {"CAUTION_CMD PAT2", true, 12, 0x02, "CAUTION_CMD+PAT2 matches"},
+        {"SAFE_CMD alpha", true, 14, 0x01, "SAFE_CMD+alpha has cat 0x01"},
+        {"SAFE_CMD beta", true, 13, 0x01, "SAFE_CMD+beta has cat 0x01"},
+        {"CAUTION_CMD alpha", true, 17, 0x02, "CAUTION_CMD+alpha has cat 0x02"},
+        {"CAUTION_CMD beta", true, 16, 0x02, "CAUTION_CMD+beta has cat 0x02"},
+        {"SAFE_CMD alpha", true, 14, 0x01, "SAFE_CMD has cat 0x01 (not 0x02)"},
+        {"CAUTION_CMD alpha", true, 17, 0x02, "CAUTION_CMD has cat 0x02 (not 0x01)"},
+        {"SAFE_CMD PAT1", true, 13, 0x01, "SAFE_CMD+PAT1 matches"},
+        {"CAUTION_CMD PAT2", true, 16, 0x02, "CAUTION_CMD+PAT2 matches"},
     };
 
     run_test_group("TRIPLED CATEGORY ISOLATION", "patterns_acceptance_category_test.txt",

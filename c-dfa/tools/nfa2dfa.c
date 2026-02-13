@@ -457,11 +457,18 @@ void nfa_to_dfa(void) {
             collect_markers_from_states(temp2, tc2, markers, &marker_count);
             uint32_t marker_list_offset = store_marker_list(markers, marker_count);
 
-            int target = dfa_add_state(mm, temp2, tc2, accept_pattern2);
+             int target = dfa_add_state(mm, temp2, tc2, accept_pattern2);
+
+            // Handle both literal symbols (sid < 256) and virtual symbols (VSYM_SPACE=259, VSYM_TAB=260)
             int sid = alphabet[i].symbol_id;
-            if (sid < 256) {
-                fprintf(stderr, "[DEBUG SET] state %d: transitions[%d] = %d (was %d)\n",
-                        cur, sid, target, dfa[cur].transitions[sid]);
+            if (sid < 256 || sid == 259 || sid == 260) {
+                if (sid == 259 || sid == 260) {
+                    fprintf(stderr, "[DEBUG SET] state %d: transitions[%d] = %d (was %d)\n",
+                            cur, sid, target, dfa[cur].transitions[sid]);
+                } else {
+                    fprintf(stderr, "[DEBUG SET] state %d: transitions[%d] = %d (was %d)\n",
+                            cur, sid, target, dfa[cur].transitions[sid]);
+                }
                 dfa[cur].transitions[sid] = target;
                 dfa[cur].marker_offsets[sid] = marker_list_offset;
             }
@@ -542,11 +549,11 @@ void flatten_dfa(void) {
         else if (alphabet[s].symbol_id == 260) tab_sid = s;
     }
     
-    for (int s = 0; s < dfa_state_count; s++) {
+     for (int s = 0; s < dfa_state_count; s++) {
         int nt[256]; bool any[256]; uint32_t markers[256];
         for (int i = 0; i < 256; i++) { nt[i] = -1; any[i] = false; markers[i] = 0; }
 
-        uint32_t any_marker = (any_sid != -1) ? dfa[s].marker_offsets[any_sid] : 0;
+        uint32_t any_marker = (any_sid != -1) ? dfa[s].marker_offsets[256] : 0;
 
         // First, set specific symbol transitions
         for (int i = 0; i < alphabet_size; i++) {
@@ -559,17 +566,19 @@ void flatten_dfa(void) {
             }
         }
 
-        // Override with space and tab transitions
-        if (space_sid != -1 && dfa[s].transitions[space_sid] != -1) {
-            nt[32] = dfa[s].transitions[space_sid];
+        // Override with space and tab transitions (use symbol IDs directly, not alphabet indices)
+        if (space_sid != -1 && dfa[s].transitions[259] != -1) {
+            fprintf(stderr, "[FLATTEN] State %d: setting space (32) -> %d\n", s, dfa[s].transitions[259]);
+            nt[32] = dfa[s].transitions[259];
             any[32] = false;
-            markers[32] = dfa[s].marker_offsets[space_sid];
+            markers[32] = dfa[s].marker_offsets[259];
         }
 
-        if (tab_sid != -1 && dfa[s].transitions[tab_sid] != -1) {
-            nt[9] = dfa[s].transitions[tab_sid];
+        if (tab_sid != -1 && dfa[s].transitions[260] != -1) {
+            fprintf(stderr, "[FLATTEN] State %d: setting tab (9) -> %d\n", s, dfa[s].transitions[260]);
+            nt[9] = dfa[s].transitions[260];
             any[9] = false;
-            markers[9] = dfa[s].marker_offsets[tab_sid];
+            markers[9] = dfa[s].marker_offsets[260];
         }
 
         // Finally, override with ANY transition (fills in gaps)
