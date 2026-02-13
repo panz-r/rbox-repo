@@ -248,10 +248,23 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
 // Shared: Partition Equivalence logic
 // ============================================================================
 
-static bool are_properties_equivalent(const build_dfa_state_t* s1, const build_dfa_state_t* s2) {
+static bool are_properties_equivalent(const build_dfa_state_t* s1, const build_dfa_state_t* s2, const int* partition_map) {
     if (s1->flags != s2->flags) return false;
     if ((s1->eos_target != 0) != (s2->eos_target != 0)) return false;
     if (s1->eos_marker_offset != s2->eos_marker_offset) return false;
+    
+    // Also check transitions for initial equivalence
+    for (int c = 0; c < 256; c++) {
+        int t1 = s1->transitions[c], t2 = s2->transitions[c];
+        if (t1 == -1 && t2 == -1) continue;
+        if (t1 == -1 || t2 == -1) return false;
+        // If transitions go to states within current partition map, they must be equivalent
+        if (t1 >= 0 && t1 < MAX_STATES && t2 >= 0 && t2 < MAX_STATES) {
+            if (partition_map[t1] != partition_map[t2]) return false;
+        } else {
+            if (t1 != t2) return false;
+        }
+    }
     return true;
 }
 
@@ -308,7 +321,19 @@ static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t
     for (int s = 0; s < state_count; s++) {
         bool found = false;
         for (int g = 0; g < group_count; g++) {
-            if (are_properties_equivalent(&dfa[s], &dfa[ms->partitions[g].states[0]])) {
+            int rep = ms->partitions[g].states[0];
+            // Check if state s has identical transitions to partition representative
+            // During initialization, just compare actual transition targets directly
+            bool equivalent = true;
+            for (int c = 0; c < 256; c++) {
+                int t1 = dfa[s].transitions[c];
+                int t2 = dfa[rep].transitions[c];
+                if (t1 != t2) { equivalent = false; break; }
+            }
+            // Also check eos_target
+            if (equivalent && dfa[s].eos_target != dfa[rep].eos_target) equivalent = false;
+            if (equivalent && dfa[s].flags == dfa[rep].flags &&
+                dfa[s].eos_marker_offset == dfa[rep].eos_marker_offset) {
                 ms->partitions[g].states[ms->partitions[g].count++] = s;
                 ms->partition_map[s] = g;
                 found = true; break;
@@ -322,6 +347,7 @@ static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t
         }
     }
     ms->partition_count = group_count;
+    fprintf(stderr, "[MINIMIZE DEBUG] initialize_partitions: created %d initial partitions\n", group_count);
 }
 
 static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* ms, int old_state_count) {
@@ -331,18 +357,34 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
     for (int i = 0; i < MAX_STATES; i++) state_remap[i] = -1;  // Initialize to -1
     int new_count = 0;
 
+    fprintf(stderr, "[MINIMIZE DEBUG] Old state count: %d, Partitions: %d\n", old_state_count, ms->partition_count);
+
     for (int p = 0; p < ms->partition_count; p++) {
         if (ms->partitions[p].count == 0) continue;
         int rep = ms->partitions[p].states[0];
+        fprintf(stderr, "[MINIMIZE DEBUG] Partition %d: rep=%d (orig transitions['a']=%d), states=[",
+              p, rep, dfa[rep].transitions['a']);
+        for (int i = 0; i < ms->partitions[p].count; i++) {
+            fprintf(stderr, "%d ", ms->partitions[p].states[i]);
+        }
+        fprintf(stderr, "]\n");
         memcpy(&new_dfa[new_count], &dfa[rep], sizeof(build_dfa_state_t));
         for (int i = 0; i < ms->partitions[p].count; i++) state_remap[ms->partitions[p].states[i]] = new_count;
         new_count++;
+    }
+
+    fprintf(stderr, "[MINIMIZE DEBUG] After partition loop: new_count=%d\n", new_count);
+    for (int s = 0; s < new_count; s++) {
+        fprintf(stderr, "[MINIMIZE DEBUG] New state %d: trans['a']=%d (from rep=%d)\n",
+              s, new_dfa[s].transitions['a'], ms->partitions[s].states[0]);
     }
 
     for (int s = 0; s < new_count; s++) {
         for (int c = 0; c < 256; c++) {
             int t = new_dfa[s].transitions[c];
             if (t != -1 && t < old_state_count && state_remap[t] != -1) {
+                fprintf(stderr, "[MINIMIZE DEBUG] Remap: state %d, char '%c'(%d): %d -> %d\n",
+                      s, c >= 32 ? c : '?', c, t, state_remap[t]);
                 new_dfa[s].transitions[c] = state_remap[t];
             } else if (t != -1) {
                 new_dfa[s].transitions[c] = -1;  // Transition to removed state

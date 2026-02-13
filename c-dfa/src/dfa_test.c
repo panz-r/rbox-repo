@@ -93,11 +93,19 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
     track_nfa_file(nfa_file);
 
     char cmd[1024];
-    (void)snprintf(cmd, sizeof(cmd),
-        "mkdir -p %s && "
-        "./tools/nfa_builder %s %s && "
-        "./tools/nfa2dfa_advanced %s %s %s",
-        build_dir, patterns_file, nfa_file, minimize_algo, nfa_file, dfa_file);
+    if (minimize_algo && strlen(minimize_algo) > 0) {
+        (void)snprintf(cmd, sizeof(cmd),
+            "mkdir -p %s && "
+            "./tools/nfa_builder %s %s && "
+            "./tools/nfa2dfa_advanced %s %s %s",
+            build_dir, patterns_file, nfa_file, minimize_algo, nfa_file, dfa_file);
+    } else {
+        (void)snprintf(cmd, sizeof(cmd),
+            "mkdir -p %s && "
+            "./tools/nfa_builder %s %s && "
+            "./tools/nfa2dfa_advanced %s %s",
+            build_dir, patterns_file, nfa_file, nfa_file, dfa_file);
+    }
     if (system(cmd) != 0) {
         fprintf(stderr, "Warning: DFA build failed for %s\n", patterns_file);
     }

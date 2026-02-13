@@ -460,6 +460,8 @@ void nfa_to_dfa(void) {
             int target = dfa_add_state(mm, temp2, tc2, accept_pattern2);
             int sid = alphabet[i].symbol_id;
             if (sid < 256) {
+                fprintf(stderr, "[DEBUG SET] state %d: transitions[%d] = %d (was %d)\n",
+                        cur, sid, target, dfa[cur].transitions[sid]);
                 dfa[cur].transitions[sid] = target;
                 dfa[cur].marker_offsets[sid] = marker_list_offset;
             }
@@ -528,6 +530,7 @@ void nfa_to_dfa(void) {
 }
 
 void flatten_dfa(void) {
+    fprintf(stderr, "[FLATTEN] dfa_state_count=%d\n", dfa_state_count);
     int any_sid = -1;
     int space_sid = -1;
     int tab_sid = -1;
@@ -597,6 +600,9 @@ void flatten_dfa(void) {
         }
         dfa[s].transition_count = rc;
     }
+    // Debug: show state 0 transitions for key characters
+    fprintf(stderr, "[FLATTEN] State 0 transitions: a=%d g=%d w=%d\n",
+            dfa[0].transitions[97], dfa[0].transitions[103], dfa[0].transitions[119]);
 }
 
 typedef struct { uint8_t type, d1, d2, d3; int target_state_index; } intermediate_rule_t;
@@ -832,6 +838,7 @@ int main(int argc, char* argv[]) {
         if (argv[i][0] == '-') {
             if (strcmp(argv[i], "--no-minimize") == 0) minimize = false;
             else if (strcmp(argv[i], "-v") == 0) flag_verbose = true;
+            else if (strcmp(argv[i], "--minimize-hopcroft") == 0) dfa_minimize_set_algorithm(DFA_MIN_HOPCROFT);
             else if (strcmp(argv[i], "--minimize-moore") == 0) dfa_minimize_set_algorithm(DFA_MIN_MOORE);
             else if (strcmp(argv[i], "--minimize-brzozowski") == 0) dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
         } else {
@@ -846,6 +853,7 @@ int main(int argc, char* argv[]) {
     
     if (minimize) {
         dfa_state_count = dfa_minimize(dfa, dfa_state_count);
+        flatten_dfa();  // Re-flatten with new state indices after minimization
     }
     write_dfa_file(output_file);
     return 0;
