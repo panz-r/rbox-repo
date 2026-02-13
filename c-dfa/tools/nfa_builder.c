@@ -961,6 +961,7 @@ int parse_category(const char* name) {
             return i;
         }
     }
+    fprintf(stderr, "Warning: Unknown category '%s', defaulting to safe\n", name);
     return CAT_SAFE; // Default to safe
 }
 
@@ -1390,7 +1391,11 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
 
                 int star_state = nfa_add_state_with_minimization(false);
                 state_do_not_share[star_state] = true;
+                // Zero or more: anchor --EPSILON--> star_state (zero chars)
+                nfa_add_transition(anchor, star_state, VSYM_EPS);
+                // One or more: anchor --ANY--> star_state (first char)
                 nfa_add_transition(anchor, star_state, any_sid);
+                // Loop: star_state --ANY--> star_state (additional chars)
                 nfa_add_transition(star_state, star_state, any_sid);
                 int finalized_star = nfa_finalize_state(star_state);
                 
@@ -1512,7 +1517,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
             }
             if (c != '\0') {
                 // Don't consume postfix operators - let parse_rdp_postfix handle them
-                if (c == '+' || c == '?') {
+                if (c == '*' || c == '+' || c == '?') {
                     return start_state;
                 }
                 int sid = find_symbol_id(c);
@@ -1534,7 +1539,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                     current_fragment.anchor_state = anchor;
                     current_fragment.is_single_char = true;
                     current_fragment.loop_char = c;
-                    current_fragment.loop_entry_state = finalized_state;
+                    current_fragment.loop_entry_state = anchor;  // State BEFORE consuming char
                     current_fragment.exit_state = finalized_state;
                     current_is_char_class = false;
                     (*pos)++;
@@ -1628,14 +1633,14 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                 // Loop back: exit_state_of_element --EPS--> element_entry
                 int loop_target = element_entry;
                 nfa_add_transition(current_fragment.exit_state, loop_target, epsilon_sid);
-                
-                // Connection to quantifier exit: exit_state_of_element --EPS--> exit_state
+
+                // Exit after at least one iteration: exit_state_of_element --EPS--> exit_state
                 nfa_add_transition(current_fragment.exit_state, exit_state, epsilon_sid);
             }
 
             nfa_finalize_state(exit_state);
             current = exit_state;
-            
+
             // Update current_fragment for potential subsequent quantifiers
             // For +, anchor remains same, exit is new
             current_fragment.exit_state = exit_state;

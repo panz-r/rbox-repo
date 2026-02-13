@@ -306,7 +306,8 @@ static void run_tripled_quantifier_depth(void) {
         {"ab", true, 2, CAT_MASK_SAFE, "a((b))+ matches 'ab'"},
         {"abb", true, 3, CAT_MASK_SAFE, "a((b))+ matches 'abb'"},
         {"abbb", true, 4, CAT_MASK_SAFE, "a((b))+ matches 'abbb'"},
-        {"a", false, 0, 0, "a((b))+ should NOT match 'a'"},
+        // NOTE: Cannot test "a((b))+ should NOT match 'a'" in combined DFA
+        // because other patterns like (*) and (a*)+ also match 'a'
         {"a", true, 1, CAT_MASK_SAFE, "((a))+ matches 'a'"},
         {"aa", true, 2, CAT_MASK_SAFE, "((a))+ matches 'aa'"},
         {"aaa", true, 3, CAT_MASK_SAFE, "((a))+ matches 'aaa'"},

@@ -533,7 +533,7 @@ void nfa_to_dfa(void) {
         if (eos_nfa_state >= 0 && eos_mask != 0) {
             for (int s = 0; s < dfa_state_count; s++) {
                 uint8_t state_mask = dfa[s].flags >> 8;
-                if (state_mask == eos_mask && state_mask != 0) {
+                if ((state_mask & eos_mask) != 0 && state_mask != 0) {
                     dfa[cur].eos_target = s;
                     break;
                 }
