@@ -90,10 +90,12 @@ static void add_capture(dfa_result_t* result, int capture_id, size_t start, size
 }
 
 static void process_marker_list(const uint32_t* marker_base, size_t pos,
-                                 uint16_t winning_pattern_id,
+                                 uint16_t winning_pattern_id, uint8_t category_mask,
                                  capture_range_t* capture_stack, int* stack_depth,
                                  dfa_result_t* result) {
     if (!marker_base) return;
+
+    bool filter_by_pattern = (category_mask != 0 && winning_pattern_id != UINT16_MAX);
 
     for (int i = 0; marker_base[i] != MARKER_SENTINEL; i++) {
         uint32_t m = marker_base[i];
@@ -101,7 +103,7 @@ static void process_marker_list(const uint32_t* marker_base, size_t pos,
         uint16_t capture_id = MARKER_GET_UID(m);
         uint8_t type = MARKER_GET_TYPE(m);
 
-        if (winning_pattern_id != UINT16_MAX && pattern_id != winning_pattern_id) {
+        if (filter_by_pattern && pattern_id != winning_pattern_id) {
             continue;
         }
 
@@ -381,7 +383,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
                 }
 
                 if (transition_markers) {
-                    process_marker_list(transition_markers, t - 1, winning_pattern_id,
+                    process_marker_list(transition_markers, t - 1, winning_pattern_id, mask,
                                        capture_stack, &stack_depth, result);
                 }
             }
@@ -389,7 +391,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             // Phase 4: Process EOS markers at the final position
             if (curr->eos_marker_offset != 0 && marker_base) {
                 const uint32_t* eos_markers = (const uint32_t*)((const uint8_t*)current_dfa + curr->eos_marker_offset);
-                process_marker_list(eos_markers, pos, winning_pattern_id,
+                process_marker_list(eos_markers, pos, winning_pattern_id, mask,
                                    capture_stack, &stack_depth, result);
             }
         }

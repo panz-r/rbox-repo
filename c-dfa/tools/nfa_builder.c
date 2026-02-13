@@ -105,6 +105,9 @@ static const char* external_alphabet_file = NULL;
 // Pattern file identifier (for NFA/DFA matching)
 static char pattern_identifier[256] = "";
 
+// Current input file name (for error messages)
+static const char* current_input_file = NULL;
+
 // Extended NFA state for nfa_builder - includes additional fields not needed for DFA construction
 typedef struct {
     uint8_t category_mask;
@@ -2075,6 +2078,31 @@ void parse_advanced_pattern(const char* line) {
     // Skip leading whitespace
     while (*line == ' ' || *line == '\t') line++;
 
+    // DETECT OLD FORMAT PATTERNS
+    // Old format: pattern :one :cat :ops (annotations after pattern)
+    // New format: [category:subcategory:operations] pattern -> action
+    // Also check for patterns that start with annotations like :one :cat :ops
+    if (*line != '[' && *line != '#') {
+        // Check for old-style annotations at start of line
+        if (*line == ':' || 
+            (line[0] == 'a' && line[1] == '(') ||
+            (strstr(line, " :one") != NULL) ||
+            (strstr(line, " :cat") != NULL) ||
+            (strstr(line, " :ops") != NULL) ||
+            (strstr(line, " :fragment") != NULL) ||
+            (strstr(line, " :allow") != NULL) ||
+            (strstr(line, " :block") != NULL)) {
+            fprintf(stderr, "ERROR: Detected OLD FORMAT pattern. Please update to new format.\n");
+            fprintf(stderr, "  Old format: pattern :one :cat :ops\n");
+            fprintf(stderr, "  New format: [category:subcategory:operations] pattern -> action\n");
+            fprintf(stderr, "  Example: [safe:test] abc -> allow\n");
+            fprintf(stderr, "  Found: %s\n", line);
+            fprintf(stderr, "  NOTE: Annotations (:one, :cat, :ops) must now be inside brackets [].\n");
+            fprintf(stderr, "  File: %s\n", current_input_file ? current_input_file : "(unknown)");
+            exit(1);
+        }
+    }
+
     // Check if this is a fragment or character set definition BEFORE category parsing
     // Syntax: [fragment:name] value
     //         [fragment:namespace:name] value
@@ -2362,6 +2390,8 @@ void read_advanced_spec_file(const char* filename) {
     int line_num = 0;
 
     nfa_init();
+
+    current_input_file = filename;
 
     while (fgets(line, sizeof(line), file)) {
         line_num++;

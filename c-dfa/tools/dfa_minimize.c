@@ -260,12 +260,20 @@ static bool are_transitions_equivalent(const build_dfa_state_t* s1, const build_
         int t1 = s1->transitions[c], t2 = s2->transitions[c];
         if (t1 == -1 && t2 == -1) continue;
         if (t1 == -1 || t2 == -1) return false;
-        if (partition_map[t1] != partition_map[t2]) return false;
+        if (t1 >= 0 && t1 < MAX_STATES && t2 >= 0 && t2 < MAX_STATES) {
+            if (partition_map[t1] != partition_map[t2]) return false;
+        } else {
+            if (t1 != t2) return false;
+        }
         if (s1->transitions_from_any[c] != s2->transitions_from_any[c]) return false;
         if (s1->marker_offsets[c] != s2->marker_offsets[c]) return false;
     }
     if (s1->eos_target != 0 && s2->eos_target != 0) {
-        if (partition_map[s1->eos_target] != partition_map[s2->eos_target]) return false;
+        if (s1->eos_target < MAX_STATES && s2->eos_target < MAX_STATES) {
+            if (partition_map[s1->eos_target] != partition_map[s2->eos_target]) return false;
+        } else {
+            if (s1->eos_target != s2->eos_target) return false;
+        }
     }
     return true;
 }
@@ -276,7 +284,10 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
     hash ^= state->eos_marker_offset; hash *= FNV_PRIME;
     for (int c = 0; c < 256; c += 8) {
         int t = state->transitions[c];
-        int target_p = (t != -1) ? partition_map[t] : -1;
+        int target_p = -1;
+        if (t != -1 && t < MAX_STATES) {
+            target_p = partition_map[t];
+        }
         hash ^= c; hash *= FNV_PRIME;
         hash ^= (uint8_t)target_p; hash *= FNV_PRIME;
         hash ^= (state->marker_offsets[c] & 0xFF); hash *= FNV_PRIME;
@@ -284,7 +295,7 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
     for (int c = 0; c < 256; c += 32) {
         hash ^= (state->marker_offsets[c] >> 8); hash *= FNV_PRIME;
     }
-    if (state->eos_target != 0) {
+    if (state->eos_target != 0 && state->eos_target < MAX_STATES) {
         int eos_p = partition_map[state->eos_target];
         hash ^= (uint8_t)eos_p; hash *= FNV_PRIME;
     }
