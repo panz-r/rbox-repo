@@ -207,7 +207,6 @@ static int brz_determinize(
 
         // Compute DFA state properties from constituent NFA states
         uint16_t f = 0;
-        int8_t cs = -1, ce = -1, cd = -1;
         bool has_target = false;
 
         for (int i = 0; i < curr->count; i++) {

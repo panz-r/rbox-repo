@@ -53,8 +53,14 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 
 [safe::readonly] ls
 [safe::readonly] pwd
+[safe::readonly] SAFE_CMD alpha
+[safe::readonly] SAFE_CMD beta
+[safe::readonly] SAFE_CMD PAT1
 [caution::network] curl
 [caution::network] wget
+[caution::network] CAUTION_CMD alpha
+[caution::network] CAUTION_CMD beta
+[caution::network] CAUTION_CMD PAT2
 [modifying::filesystem] touch
 [modifying::filesystem] mkdir
 

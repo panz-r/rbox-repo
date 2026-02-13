@@ -1842,7 +1842,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
     if (nfa_state_count > 1 && pattern[0] != '\0') {
         // Try to find a common prefix with existing NFA paths
         int shared_state = 0;
-        int shared_pos = 0;
 
         int first_char_sid = find_symbol_id(pattern[0]);
 
@@ -1935,7 +1934,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
             if (best_shared_pos > 1) {
                 // Found common prefix - start from there
                 shared_state = best_shared_state;
-                shared_pos = best_shared_pos;
+                (void)best_shared_pos;
                 start_state = shared_state;
                 pattern_start_pos = best_shared_pos;
                 DEBUG_PRINT("SHARED prefix at pos %d, state %d\n", best_shared_pos, best_shared_state);

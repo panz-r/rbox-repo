@@ -14,16 +14,19 @@
 # - Mixed spaces and tabs should both work
 # ============================================================================
 
-# Basic space handling tests
-[safe:space:test] git status
-[safe:space:test] ls -la
-[safe:space:test] cat file.txt
-[safe:space:test] echo hello world
-[safe:space:test] mkdir new folder
+# Longer patterns first (to avoid early matching)
+[safe:space:test] cmd arg1 arg2 arg3
+[safe:space:test] cmd arg1 arg2
+[safe:space:test] CMD VAR1 VAR2
+[safe:space:test] XYZ XYZ
+[safe:space:test] cmd arg1
+[safe:space:test] CMD VAR
+[safe:space:test] XYZ
+[safe:space:test] cmd
 
 # Multiple spaces
-[safe:space:test] git  status
-[safe:space:test] ls   -la
+[safe:space:test] cmd  arg1
+[safe:space:test] cmd   arg1
 
 # Commands that should NOT match (wrong spacing)
 # These are negative test cases to ensure we don't over-match

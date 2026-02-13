@@ -15,6 +15,41 @@
 [fragment:y] y
 [fragment:z] z
 [fragment:c] c
+[fragment:d] d
+[fragment:x] x
+
+# ============================================
+# THE CRITICAL BUG CASE
+# a((b))+ vs abc((b))+ must NOT interfere
+# ============================================
+
+# Category: safe (acceptance category 0, mask 0x01)
+[safe::quant1] a((b))+
+
+# Category: caution (acceptance category 1, mask 0x02)
+[caution::quant2] abc((b))+
+
+# Category: modifying (acceptance category 2, mask 0x04)
+[modifying::quant3] ab((c))+
+
+# ============================================
+# Additional quantifier patterns for test_plus_quantifier_general()
+# These patterns are tested by the general quantifier test
+# ============================================
+
+[safe::quant_x] x((y))+
+[safe::quant_w] w((z))+
+[safe::quant_p] (p)+
+
+# ============================================
+# Star and question quantifier patterns for tripled tests
+# ============================================
+
+[safe::quant1_star] a((b))*
+[safe::quant1_opt] a((b))?
+[caution::quant2_plus] abc((d))+
+[safe::quant_x_plus] ((x)y)+
+[safe::quant_x_star] ((x)y)*
 
 # ============================================
 # THE CRITICAL BUG CASE

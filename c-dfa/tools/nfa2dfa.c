@@ -388,6 +388,14 @@ void nfa_to_dfa(void) {
     int dummy_count = 0;
     epsilon_closure_with_markers(temp, &tc, MAX_STATES, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
+    // DEBUG: Print all states in epsilon closure
+    fprintf(stderr, "[DEBUG] Epsilon closure of 0 has %d states:\n", tc);
+    for (int i = 0; i < tc; i++) {
+        int s = temp[i];
+        fprintf(stderr, "  [%d] state %d: cat=0x%02x, eos=%s\n", 
+                i, s, nfa[s].category_mask, nfa[s].is_eos_target ? "yes" : "no");
+    }
+
     // Compute category mask and find accepting pattern ID
     // Category from ALL states in the closure (including epsilon-reached)
     // But accept_pattern from ANY state in the closure (including epsilon-reached)
@@ -404,6 +412,7 @@ void nfa_to_dfa(void) {
             accept_pattern = nfa[ns].pattern_id - 1;  // Convert back to 0-based
         }
     }
+    fprintf(stderr, "[DEBUG] Initial category mask: 0x%02X\n", im);
 
     int idfa = dfa_add_state(im, temp, tc, accept_pattern);
     int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
@@ -486,7 +495,6 @@ void nfa_to_dfa(void) {
     // - If not accepting but contains an EOS target NFA state:
     //   - Find the accept DFA state with matching category
     for (int cur = 0; cur < dfa_state_count; cur++) {
-        uint8_t cur_mask = dfa[cur].flags >> 8;
 
         // Find accept NFA state (pattern_id != 0) in this DFA state's set
         int accept_nfa_state = -1;

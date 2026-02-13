@@ -1,2 +1,2 @@
 # Fragment + quantifier test
-a((TQ::B))+ :one :cat :ops
+[safe:test] a((TQ::B))+

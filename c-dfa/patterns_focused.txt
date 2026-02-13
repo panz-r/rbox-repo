@@ -1,5 +1,8 @@
 # Focused Test Patterns - Small set for successful DFA generation
 
+# Alternation tests - isolated from other patterns
+[safe:alternation:test] (a|b)
+
 # Safe file operations
 [safe:file:read] cat file.txt
 [safe:file:read] cat (*).txt

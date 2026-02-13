@@ -249,6 +249,7 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
 // ============================================================================
 
 static bool are_properties_equivalent(const build_dfa_state_t* s1, const build_dfa_state_t* s2, const int* partition_map) {
+    (void)s1; (void)s2; (void)partition_map;
     if (s1->flags != s2->flags) return false;
     if ((s1->eos_target != 0) != (s2->eos_target != 0)) return false;
     if (s1->eos_marker_offset != s2->eos_marker_offset) return false;

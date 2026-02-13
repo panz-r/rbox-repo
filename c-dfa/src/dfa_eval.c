@@ -48,6 +48,8 @@ typedef struct {
  * The name table maps pattern IDs to human-readable capture names.
  */
 static const char* get_capture_name_from_table(int capture_id, int pattern_id) {
+    (void)capture_id;
+    (void)pattern_id;
     if (!current_dfa || current_dfa->metadata_offset == 0) {
         return NULL;
     }
@@ -81,7 +83,7 @@ static void add_capture(dfa_result_t* result, int capture_id, size_t start, size
     // Phase 4: Look up capture name from name table
     const char* name = get_capture_name_from_table(capture_id, pattern_id);
     if (name) {
-        snprintf(cap->name, sizeof(cap->name), "%s", name);
+        snprintf(cap->name, sizeof(cap->name), "%.31s", name);
     } else {
         snprintf(cap->name, sizeof(cap->name), "capture_%d", capture_id);
     }
