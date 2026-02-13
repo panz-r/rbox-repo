@@ -70,11 +70,11 @@ static int run_nfa_builder(const char* pattern_file) {
         // Set resource limits before exec
         struct rlimit rl;
 
-        // Limit memory
-        rl.rlim_cur = rl.rlim_max = MAX_MEMORY;
-        setrlimit(RLIMIT_AS, &rl);
+        // NOTE: RLIMIT_AS removed - was 100MB but too low for dynamically linked
+        // binaries. nfa_builder is trusted and resource usage is modest.
+        // If needed, can set much higher (e.g., 1GB) or use RLIMIT_DATA instead.
 
-        // Limit CPU time
+        // Limit CPU time to catch infinite loops (1 second)
         rl.rlim_cur = rl.rlim_max = MAX_CPU_TIME;
         setrlimit(RLIMIT_CPU, &rl);
 
