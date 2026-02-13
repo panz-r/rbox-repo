@@ -546,8 +546,9 @@ int nfa_add_state_with_category(uint8_t category_mask) {
     // First create the state normally
     int new_state = nfa_state_count;
     nfa[new_state].category_mask = category_mask;
-    fprintf(stderr, "[DEBUG] nfa_add_state: state=%d, current_pattern_index=%d\n", new_state, current_pattern_index);
-    nfa[new_state].pattern_id = current_pattern_index;  // Set pattern_id
+    // Only set pattern_id for accepting states (category_mask != 0)
+    // pattern_id = 0 means "no pattern", so we use current_pattern_index + 1
+    nfa[new_state].pattern_id = (category_mask != 0) ? (uint16_t)(current_pattern_index + 1) : 0;
     nfa[new_state].tag_count = 0;
     for (int j = 0; j < MAX_TAGS; j++) {
         nfa[new_state].tags[j] = NULL;
@@ -1975,6 +1976,8 @@ static void parse_pattern_full(const char* pattern, const char* category,
     int acceptance_cat = lookup_acceptance_category(category, subcategory, operations);
     uint8_t cat_mask = (1 << acceptance_cat);  // Convert 0-7 to bit mask 0x01, 0x02, etc.
     current_pattern_cat_mask = cat_mask;  // Store for use by quantifier handlers
+    fprintf(stderr, "[DEBUG] parse_pattern_full: category='%s', acceptance_cat=%d, cat_mask=0x%02x\n",
+            category, acceptance_cat, cat_mask);
 
     int parse_pos = 0;
     int end_state;
@@ -2036,6 +2039,8 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // DO NOT mark end_state as EOS target - it has outgoing transitions (shared state)
         }
 
+        fprintf(stderr, "[DEBUG] Creating accept state with cat_mask=0x%02x, has_outgoing=%d, end_state=%d\n",
+                cat_mask, has_outgoing, end_state);
         int accepting = nfa_add_state_with_category(cat_mask);
         nfa[accepting].is_eos_target = true;  // This state can accept via EOS
         state_do_not_share[accepting] = true;  // CONSERVATIVE: Don't share accepting states

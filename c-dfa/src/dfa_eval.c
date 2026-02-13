@@ -321,7 +321,10 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     EVAL_DEBUG_PRINT("CATEGORY: final_offset=%u, flags=0x%04X, mask=0x%02X, winning_pattern_id=%u\n",
                      (unsigned int)((const char*)curr - raw_base), curr->flags, mask, winning_pattern_id);
 
-    if (mask != 0 || winning_pattern_id != UINT16_MAX) {
+    // Check for valid accepting state: either has category mask OR has valid pattern_id
+    // winning_pattern_id = 0 means "not accepting", UINT16_MAX means "no pattern"
+    bool has_valid_accept = (mask != 0) || (winning_pattern_id != 0 && winning_pattern_id != UINT16_MAX);
+    if (has_valid_accept) {
         result->matched = true;
         result->matched_length = pos;
         result->category_mask = mask;
@@ -330,7 +333,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
                          result->matched, pos, mask, result->final_state);
         for (int i = 0; i < 8; i++) if (mask & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
         
-        if (current_dfa->version >= 6 && winning_pattern_id != UINT16_MAX) {
+        if (current_dfa->version >= 6 && winning_pattern_id != 0 && winning_pattern_id != UINT16_MAX) {
             capture_range_t capture_stack[MAX_CAPTURE_STACK];
             int stack_depth = 0;
 

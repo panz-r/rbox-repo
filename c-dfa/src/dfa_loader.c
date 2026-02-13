@@ -62,13 +62,13 @@ static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
                 return false;
             }
         } else {
-            // For state_count >= 32, check each bit individually
-            for (int i = 32; i < dfa->state_count; i++) {
-                if ((dfa->accepting_mask & (1u << i)) != 0) {
-                    fprintf(stderr, "ERROR: accepting_mask has bit %d set but state_count is only %u\n",
-                            i, dfa->state_count);
-                    return false;
-                }
+            // For state_count >= 32, accepting_mask is a 32-bit mask
+            // so bits 0-31 are valid. Check that no bits >= 32 are set
+            // by verifying the upper bits of accepting_mask are zero
+            if ((dfa->accepting_mask & 0xFFFFFFFF00000000u) != 0) {
+                fprintf(stderr, "ERROR: accepting_mask 0x%08X has bits beyond 32 for state_count %u\n",
+                        dfa->accepting_mask, dfa->state_count);
+                return false;
             }
         }
     }

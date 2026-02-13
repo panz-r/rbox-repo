@@ -194,12 +194,10 @@ void dfa_init(void) {
 void epsilon_closure_with_markers(int* states, int* count, int max_states,
                                   uint32_t* markers, int* marker_count, int max_markers) {
     int epsilon_sid = -1;
-    int eos_sid = -1;
     for (int s = 0; s < alphabet_size; s++) {
-        if (alphabet[s].symbol_id == 257) { epsilon_sid = s; }
-        if (alphabet[s].symbol_id == 258) { eos_sid = s; }
+        if (alphabet[s].symbol_id == 257) { epsilon_sid = s; break; }
     }
-    if (epsilon_sid < 0 && eos_sid < 0) {
+    if (epsilon_sid < 0) {
         return;
     }
 
@@ -216,66 +214,33 @@ void epsilon_closure_with_markers(int* states, int* count, int max_states,
         int s = stack[--top];
 
         // Process EPSILON transitions (257)
-        if (epsilon_sid >= 0) {
-            int t = nfa[s].transitions[epsilon_sid];
-            if (t != -1 && t < nfa_state_count && !in_set[t]) {
-                if (*count < max_states) { states[(*count)++] = t; stack[top++] = t; in_set[t] = true; }
-            }
-            int mta_cnt = 0;
-            int* mta_targets = mta_get_target_array(&nfa[s].multi_targets, epsilon_sid, &mta_cnt);
-            if (mta_targets) {
-                for (int i = 0; i < mta_cnt; i++) {
-                    int target = mta_targets[i];
-                    if (target >= 0 && target < nfa_state_count && !in_set[target]) {
-                        if (*count < max_states) { states[(*count)++] = target; stack[top++] = target; in_set[target] = true; }
-                    }
-                }
-            }
-
-            int mta_marker_count = 0;
-            transition_marker_t* mta_markers = mta_get_markers(&nfa[s].multi_targets, epsilon_sid, &mta_marker_count);
-            if (mta_markers) {
-                for (int m = 0; m < mta_marker_count && *marker_count < max_markers; m++) {
-                    uint32_t marker = ((uint32_t)mta_markers[m].pattern_id << 17) |
-                                      ((uint32_t)mta_markers[m].uid << 1) |
-                                      (uint32_t)mta_markers[m].type;
-                    bool exists = false;
-                    for (int j = 0; j < *marker_count; j++) {
-                        if (markers[j] == marker) { exists = true; break; }
-                    }
-                    if (!exists) markers[(*marker_count)++] = marker;
+        int t = nfa[s].transitions[epsilon_sid];
+        if (t != -1 && t < nfa_state_count && !in_set[t]) {
+            if (*count < max_states) { states[(*count)++] = t; stack[top++] = t; in_set[t] = true; }
+        }
+        int mta_cnt = 0;
+        int* mta_targets = mta_get_target_array(&nfa[s].multi_targets, epsilon_sid, &mta_cnt);
+        if (mta_targets) {
+            for (int i = 0; i < mta_cnt; i++) {
+                int target = mta_targets[i];
+                if (target >= 0 && target < nfa_state_count && !in_set[target]) {
+                    if (*count < max_states) { states[(*count)++] = target; stack[top++] = target; in_set[target] = true; }
                 }
             }
         }
 
-        // Process EOS transitions (258) - follow them and harvest END markers
-        if (eos_sid >= 0) {
-            // First, harvest markers from EOS transitions on this state
-            int mta_marker_count = 0;
-            transition_marker_t* mta_markers = mta_get_markers(&nfa[s].multi_targets, eos_sid, &mta_marker_count);
-            if (mta_markers) {
-                for (int m = 0; m < mta_marker_count && *marker_count < max_markers; m++) {
-                    uint32_t marker = ((uint32_t)mta_markers[m].pattern_id << 17) |
-                                      ((uint32_t)mta_markers[m].uid << 1) |
-                                      (uint32_t)mta_markers[m].type;
-                    bool exists = false;
-                    for (int j = 0; j < *marker_count; j++) {
-                        if (markers[j] == marker) { exists = true; break; }
-                    }
-                    if (!exists) markers[(*marker_count)++] = marker;
+        int mta_marker_count = 0;
+        transition_marker_t* mta_markers = mta_get_markers(&nfa[s].multi_targets, epsilon_sid, &mta_marker_count);
+        if (mta_markers) {
+            for (int m = 0; m < mta_marker_count && *marker_count < max_markers; m++) {
+                uint32_t marker = ((uint32_t)mta_markers[m].pattern_id << 17) |
+                                  ((uint32_t)mta_markers[m].uid << 1) |
+                                  (uint32_t)mta_markers[m].type;
+                bool exists = false;
+                for (int j = 0; j < *marker_count; j++) {
+                    if (markers[j] == marker) { exists = true; break; }
                 }
-            }
-
-            // Then, traverse EOS transitions to discover more states
-            int mta_cnt = 0;
-            int* eos_targets = mta_get_target_array(&nfa[s].multi_targets, eos_sid, &mta_cnt);
-            if (eos_targets) {
-                for (int i = 0; i < mta_cnt; i++) {
-                    int target = eos_targets[i];
-                    if (target >= 0 && target < nfa_state_count && !in_set[target]) {
-                        if (*count < max_states) { states[(*count)++] = target; stack[top++] = target; in_set[target] = true; }
-                    }
-                }
+                if (!exists) markers[(*marker_count)++] = marker;
             }
         }
     }
@@ -422,9 +387,27 @@ void nfa_to_dfa(void) {
     uint32_t dummy_markers[MAX_MARKERS_PER_DFA_TRANSITION];
     int dummy_count = 0;
     epsilon_closure_with_markers(temp, &tc, MAX_STATES, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
-    uint8_t im = 0; for (int i = 0; i < tc; i++) { im |= nfa[temp[i]].category_mask; }
-    int idfa = dfa_add_state(im, temp, tc, 0);
+
+    // Compute category mask and find accepting pattern ID
+    // Category from ALL states in the closure (including epsilon-reached)
+    // But accept_pattern from ANY state in the closure (including epsilon-reached)
+    uint8_t im = 0;
+    uint16_t accept_pattern = 0;
+    for (int i = 0; i < tc; i++) {
+        int ns = temp[i];
+        // Category from ALL states in the closure
+        if (nfa[ns].category_mask != 0) {
+            im |= nfa[ns].category_mask;
+        }
+        // Accept pattern from any state in the closure (epsilon-reached states included)
+        if (nfa[ns].pattern_id != 0 && accept_pattern == 0) {
+            accept_pattern = nfa[ns].pattern_id - 1;  // Convert back to 0-based
+        }
+    }
+
+    int idfa = dfa_add_state(im, temp, tc, accept_pattern);
     int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
+
     while (h < t) {
         int cur = q[h++];
         for (int i = 0; i < alphabet_size; i++) {
@@ -440,6 +423,7 @@ void nfa_to_dfa(void) {
             collect_transition_markers(mc, ms, symbol, markers, &marker_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
             nfa_move(ms, &mc, symbol, MAX_STATES);
+
             if (mc == 0) {
                 int eos_sid = -1;
                 for (int as = 0; as < alphabet_size; as++) {
@@ -452,32 +436,94 @@ void nfa_to_dfa(void) {
             }
             int tc2 = mc; int temp2[MAX_STATES]; memcpy(temp2, ms, mc * sizeof(int));
             epsilon_closure_with_markers(temp2, &tc2, MAX_STATES, markers, &marker_count, MAX_MARKERS_PER_DFA_TRANSITION);
-            uint8_t mm = 0; for (int j = 0; j < tc2; j++) mm |= nfa[temp2[j]].category_mask;
+
+            // Compute category mask and accepting pattern for target state
+            // Category from ALL states in the closure (including epsilon-reached)
+            // Accept pattern from ANY state in the closure (including epsilon-reached)
+            uint8_t mm = 0;
+            uint16_t accept_pattern2 = 0;
+            for (int j = 0; j < tc2; j++) {
+                int ns = temp2[j];
+                // Category from ALL states in the closure
+                if (nfa[ns].category_mask != 0) {
+                    mm |= nfa[ns].category_mask;
+                }
+                // Accept pattern from any state in the closure (epsilon-reached states included)
+                if (nfa[ns].pattern_id != 0 && accept_pattern2 == 0) {
+                    accept_pattern2 = nfa[ns].pattern_id - 1;  // Convert back to 0-based
+                }
+            }
 
             collect_markers_from_states(temp2, tc2, markers, &marker_count);
             uint32_t marker_list_offset = store_marker_list(markers, marker_count);
-            if (marker_list_offset > 0) {
-                fprintf(stderr, "[DEBUG MARKER] Stored at offset %u (count=%d)\n", marker_list_offset, marker_count);
-            }
 
-            int target = dfa_add_state(mm, temp2, tc2, 0);
+            int target = dfa_add_state(mm, temp2, tc2, accept_pattern2);
             int sid = alphabet[i].symbol_id;
             if (sid < 256) {
                 dfa[cur].transitions[sid] = target;
                 dfa[cur].marker_offsets[sid] = marker_list_offset;
-                if (sid == 103) {
-                    fprintf(stderr, "[DEBUG] nfa_to_dfa: DFA state %d, 'g'(103) -> %d\n", cur, target);
-                }
-            }
-
-            if (alphabet[i].symbol_id == 258) {
-                dfa[cur].eos_target = target;
-                dfa[cur].eos_marker_offset = marker_list_offset;
             }
 
             bool is_new = true; for (int j = 0; j < t; j++) if (q[j] == target) { is_new = false; break; }
             if (is_new && t < MAX_STATES) q[t++] = target;
         }
+    }
+
+    // Post-process ALL states to set EOS targets correctly
+    // For each DFA state:
+    // - If this DFA state contains an accept NFA state (pattern_id != 0):
+    //   - Find the DFA state that represents that accept NFA state
+    //   - Set eos_target to that DFA state
+    // - If not accepting but contains an EOS target NFA state:
+    //   - Find the accept DFA state with matching category
+    for (int cur = 0; cur < dfa_state_count; cur++) {
+        uint8_t cur_mask = dfa[cur].flags >> 8;
+
+        // Find accept NFA state (pattern_id != 0) in this DFA state's set
+        int accept_nfa_state = -1;
+        for (int j = 0; j < dfa[cur].nfa_state_count; j++) {
+            int nfa_state = dfa[cur].nfa_states[j];
+            if (nfa[nfa_state].pattern_id != 0) {
+                accept_nfa_state = nfa_state;
+                break;
+            }
+        }
+
+        if (accept_nfa_state >= 0) {
+            // This DFA state contains an accept NFA state - find the DFA state for it
+            for (int s = 0; s < dfa_state_count; s++) {
+                for (int j = 0; j < dfa[s].nfa_state_count; j++) {
+                    if (dfa[s].nfa_states[j] == accept_nfa_state) {
+                        dfa[cur].eos_target = s;
+                        goto eos_done;
+                    }
+                }
+            }
+        }
+
+        // Not accepting - check if it contains an EOS target NFA state
+        int eos_nfa_state = -1;
+        uint8_t eos_mask = 0;
+        for (int j = 0; j < dfa[cur].nfa_state_count; j++) {
+            int nfa_state = dfa[cur].nfa_states[j];
+            if (nfa[nfa_state].is_eos_target) {
+                eos_nfa_state = nfa_state;
+                eos_mask = nfa[nfa_state].category_mask;
+                break;
+            }
+        }
+
+        if (eos_nfa_state >= 0 && eos_mask != 0) {
+            for (int s = 0; s < dfa_state_count; s++) {
+                uint8_t state_mask = dfa[s].flags >> 8;
+                if (state_mask == eos_mask && state_mask != 0) {
+                    dfa[cur].eos_target = s;
+                    break;
+                }
+            }
+        }
+
+        eos_done:;
     }
 }
 
@@ -611,17 +657,8 @@ void write_dfa_file(const char* filename) {
     }
     ds->accepting_mask = accepting_mask;
 
-    ds->identifier_length = (uint8_t)id_len; 
-    fprintf(stderr, "[DEBUG ID] ds at %p\n", (void*)ds);
-    fprintf(stderr, "[DEBUG ID] id_len at offset %zu = %d\n", offsetof(dfa_t, identifier_length), ds->identifier_length);
-    fprintf(stderr, "[DEBUG ID] identifier at offset %zu\n", offsetof(dfa_t, identifier));
+    ds->identifier_length = (uint8_t)id_len;
     memcpy(ds->identifier, pattern_identifier, id_len);
-    fprintf(stderr, "[DEBUG ID] After memcpy, bytes at ds[18..26]: %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-            ((unsigned char*)ds)[18], ((unsigned char*)ds)[19],
-            ((unsigned char*)ds)[20], ((unsigned char*)ds)[21],
-            ((unsigned char*)ds)[22], ((unsigned char*)ds)[23],
-            ((unsigned char*)ds)[24], ((unsigned char*)ds)[25],
-            ((unsigned char*)ds)[26]);
 
     dfa_state_t* sarr = (dfa_state_t*)((char*)ds + ds->initial_state);
     dfa_rule_t* rarr = (dfa_rule_t*)((char*)sarr + dfa_state_count * sizeof(dfa_state_t));
@@ -634,7 +671,12 @@ void write_dfa_file(const char* filename) {
         sarr[i].flags = dfa[i].flags;
         sarr[i].accepting_pattern_id = dfa[i].accepting_pattern_id;
         sarr[i].eos_marker_offset = 0;
-        if (dfa[i].eos_target != 0) sarr[i].eos_target = (uint32_t)(ds->initial_state + (size_t)dfa[i].eos_target * sizeof(dfa_state_t));
+        if (dfa[i].eos_target != 0) {
+            uint32_t eos_offset = (uint32_t)(ds->initial_state + (size_t)dfa[i].eos_target * sizeof(dfa_state_t));
+            sarr[i].eos_target = eos_offset;
+        } else {
+            sarr[i].eos_target = 0;
+        }
         for (int r = 0; r < rc; r++) {
             dfa_rule_t* dst = &rarr[gri++];
             dst->type = all_rules[i * MAX_SYMBOLS + r].type; dst->data1 = all_rules[i * MAX_SYMBOLS + r].d1;
@@ -646,22 +688,17 @@ void write_dfa_file(const char* filename) {
                         i, r, tidx, dfa_state_count - 1);
                 exit(1);
             }
-            dst->target = (uint32_t)(ds->initial_state + (size_t)tidx * sizeof(dfa_state_t));
+            uint32_t calculated_target = (uint32_t)(ds->initial_state + (size_t)tidx * sizeof(dfa_state_t));
+            dst->target = calculated_target;
         }
         cro += rc * sizeof(dfa_rule_t);
     }
 
     size_t metadata_offset = cro;
-    fprintf(stderr, "[DEBUG WRITE] id_len=%zu, initial_state=%u, cro=%zu, marker_list_count=%d\n",
-            id_len, ds->initial_state, cro, marker_list_count);
     if (marker_list_count > 0) {
-        fprintf(stderr, "[DEBUG WRITE] Setting metadata_offset=%zu\n", metadata_offset);
         ds->metadata_offset = (uint32_t)metadata_offset;
-        fprintf(stderr, "[DEBUG WRITE] ds->metadata_offset = %u (0x%X)\n",
-                ds->metadata_offset, ds->metadata_offset);
 
         uint32_t* marker_base = (uint32_t*)((char*)ds + metadata_offset);
-        fprintf(stderr, "[DEBUG WRITE] marker_base at %p\n", (void*)marker_base);
         size_t moffset = 0;
 
         for (int i = 0; i < dfa_state_count; i++) {
@@ -670,7 +707,6 @@ void write_dfa_file(const char* filename) {
             for (int r = 0; r < rule_count && r < 256; r++) {
                 dfa_rule_t* dst = (dfa_rule_t*)((char*)ds + rule_offset + r * sizeof(dfa_rule_t));
                 uint32_t list_idx = dfa[i].marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1];
-                fprintf(stderr, "[DEBUG MARKER WRITE] State %d, rule %d, list_idx=%u\n", i, r, list_idx);
                 if (list_idx > 0 && list_idx <= (uint32_t)marker_list_count) {
                     MarkerList* ml = &dfa_marker_lists[list_idx - 1];
                     // Set dst->marker_offset BEFORE writing markers
@@ -807,7 +843,10 @@ int main(int argc, char* argv[]) {
     load_nfa_file(input_file);
     nfa_to_dfa();
     flatten_dfa();
-    if (minimize) dfa_state_count = dfa_minimize(dfa, dfa_state_count);
+    
+    if (minimize) {
+        dfa_state_count = dfa_minimize(dfa, dfa_state_count);
+    }
     write_dfa_file(output_file);
     return 0;
 }
