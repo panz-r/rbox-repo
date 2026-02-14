@@ -1130,7 +1130,13 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     }
 
     // Populate FragmentResult
-    result.anchor_state = start_state;
+    // For fragments with alternation, use frag_start as anchor to avoid looping back to state 0
+    // This helps with patterns like ((a|b))+ where the alternation creates EPSILON from state 0
+    if (has_alternation && start_state == 0) {
+        result.anchor_state = frag_start;  // Use the actual fragment start, not state 0
+    } else {
+        result.anchor_state = start_state;
+    }
     if (is_single_char) {
         result.is_single_char = true;
         result.loop_char = frag_value[0];
