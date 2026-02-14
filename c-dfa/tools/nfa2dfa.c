@@ -160,6 +160,7 @@ static int find_dfa_state_hashed(uint32_t hash, const int* states, int count, ui
 void nfa_init(void) {
     for (int i = 0; i < MAX_STATES; i++) {
         nfa[i].category_mask = 0;
+        nfa[i].pattern_id = 0;
         for (int j = 0; j < MAX_SYMBOLS; j++) {
             nfa[i].transitions[j] = -1;
         }
@@ -288,7 +289,12 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     memset(&dfa[state], 0, sizeof(build_dfa_state_t));
     for (int i = 0; i < 256; i++) dfa[state].transitions[i] = -1;
     dfa[state].flags = (category_mask << 8);
-    if (category_mask != 0) dfa[state].flags |= DFA_STATE_ACCEPTING;
+    // Only mark as accepting if there's an actual accepting pattern
+    // Don't mark as accepting just because category_mask is non-zero
+    // (category comes from is_eos_target states which include fork states)
+    if (accepting_pattern_id != 0 || first_accepting_pattern != 0) {
+        dfa[state].flags |= DFA_STATE_ACCEPTING;
+    }
     dfa[state].accepting_pattern_id = accepting_pattern_id;
     dfa[state].first_accepting_pattern = first_accepting_pattern;
     dfa[state].nfa_state_count = nfa_count;
@@ -399,6 +405,22 @@ void nfa_to_dfa(void) {
         // Accept pattern from any state in the closure (epsilon-reached states included)
         if (nfa[ns].pattern_id != 0 && accept_pattern == 0) {
             accept_pattern = nfa[ns].pattern_id - 1;  // Convert back to 0-based
+        }
+        // Also check EOS target states (for *, ?, | patterns where fork state leads to accept state)
+        if (nfa[ns].is_eos_target && accept_pattern == 0) {
+            // Check if this EOS target state has transitions to accepting states
+            // Look for EOS transitions (symbol 258) from this state
+            int eos_cnt = 0;
+            int* eos_targets = mta_get_target_array(&nfa[ns].multi_targets, 258, &eos_cnt);
+            if (eos_targets) {
+                for (int e = 0; e < eos_cnt; e++) {
+                    int eos_t = eos_targets[e];
+                    if (nfa[eos_t].pattern_id != 0) {
+                        accept_pattern = nfa[eos_t].pattern_id - 1;  // Convert back to 0-based
+                        break;
+                    }
+                }
+            }
         }
         // Track all reachable accepting patterns for state deduplication
         if (nfa[ns].pattern_id != 0) {
@@ -525,11 +547,14 @@ void nfa_to_dfa(void) {
         }
 
         // Not accepting - check if it contains an EOS target NFA state
-        // Find the DFA state that CONTAINS this EOS target NFA state (not just any with matching category)
+        // IMPORTANT: Only consider states with pattern_id != 0 as valid EOS targets
+        // Fork states (like for + quantifier) have is_eos_target but no pattern_id
+        // and should NOT allow empty matching
         int eos_nfa_state = -1;
         for (int j = 0; j < dfa[cur].nfa_state_count; j++) {
             int nfa_state = dfa[cur].nfa_states[j];
-            if (nfa[nfa_state].is_eos_target) {
+            // Only accept via empty string if the state has an actual pattern_id
+            if (nfa[nfa_state].is_eos_target && nfa[nfa_state].pattern_id != 0) {
                 eos_nfa_state = nfa_state;
                 break;
             }
@@ -541,6 +566,11 @@ void nfa_to_dfa(void) {
                 for (int j = 0; j < dfa[s].nfa_state_count; j++) {
                     if (dfa[s].nfa_states[j] == eos_nfa_state) {
                         dfa[cur].eos_target = s;
+                        // Also set accepting pattern if not already set
+                        if (dfa[cur].accepting_pattern_id == 0 && nfa[eos_nfa_state].pattern_id != 0) {
+                            dfa[cur].accepting_pattern_id = nfa[eos_nfa_state].pattern_id - 1;  // Convert to 0-based
+                            dfa[cur].flags |= DFA_STATE_ACCEPTING;
+                        }
                         break;
                     }
                 }
@@ -802,6 +832,14 @@ void load_nfa_file(const char* filename) {
             while (fgets(line, sizeof(line), file) && line[0] != '\n' && line[0] != '\r') {
                 if (strstr(line, "CategoryMask:")) { unsigned int m; sscanf(strstr(line, "0x"), "%x", &m); nfa[s_idx].category_mask = (uint8_t)m; }
                 else if (strstr(line, "EosTarget:")) nfa[s_idx].is_eos_target = (strstr(line, "yes") != NULL);
+                else if (strstr(line, "PatternId:")) { 
+                    unsigned int p; 
+                    char* pstr = strstr(line, "PatternId:");
+                    if (pstr) {
+                        sscanf(pstr + 10, "%u", &p); 
+                        nfa[s_idx].pattern_id = (uint16_t)p;
+                    }
+                }
                 // Phase 2: markers are now stored as edge payloads, not on states
                 // BUT CaptureEnd needs special handling: END markers attach to the state itself
                 // We add them to the state's multi_targets using a special marker transition (VSYM_EOS)
