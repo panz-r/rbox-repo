@@ -1595,9 +1595,10 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             int exit_state = nfa_add_state_with_minimization(false);
             state_do_not_share[exit_state] = true;
 
-            // Bug 3 fix: Use loop_entry_state for proper loop-back targets
-            // The anchor_state may be 0 or -1 for root patterns, but loop_entry_state tracks actual entry
-            int element_entry = (current_fragment.loop_entry_state != -1) ? current_fragment.loop_entry_state : start_state;
+            // Loop back to the START of the element (anchor_state), not the end
+            // This is critical for multi-character sequences like (AB)*
+            int element_entry = current_fragment.anchor_state;
+            if (element_entry < 0) element_entry = start_state;
 
             // Skip path (zero iterations): entry_state --EPS--> exit_state
             int skip_origin = element_entry;
@@ -1626,8 +1627,10 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             int exit_state = nfa_add_state_with_minimization(false);
             state_do_not_share[exit_state] = true;
 
-            // Bug 3 fix: Use loop_entry_state for proper loop-back targets
-            int element_entry = (current_fragment.loop_entry_state != -1) ? current_fragment.loop_entry_state : start_state;
+            // Loop back to the START of the element (anchor_state), not the end
+            // This is critical for multi-character sequences like (AB)+
+            int element_entry = current_fragment.anchor_state;
+            if (element_entry < 0) element_entry = start_state;
 
             if (current_fragment.exit_state != -1) {
                 // Loop back: exit_state_of_element --EPS--> element_entry
@@ -1652,8 +1655,10 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             int exit_state = nfa_add_state_with_minimization(false);
             state_do_not_share[exit_state] = true;
 
-            // Bug 3 fix: Use loop_entry_state for proper skip targets
-            int element_entry = (current_fragment.loop_entry_state != -1) ? current_fragment.loop_entry_state : start_state;
+            // Skip to the START of the element (anchor_state), not the end
+            // This is critical for multi-character sequences like (AB)?
+            int element_entry = current_fragment.anchor_state;
+            if (element_entry < 0) element_entry = start_state;
 
             // Skip path (zero iterations): entry_state --EPS--> exit_state
             int skip_origin = element_entry;
