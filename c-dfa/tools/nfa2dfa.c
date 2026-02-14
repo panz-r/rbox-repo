@@ -400,6 +400,7 @@ void nfa_to_dfa(void) {
 
     // Compute category mask and find accepting pattern ID
     // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
+    // is_eos_target states are reachable via epsilon from intermediate states and have category
     // This prevents category leakage from intermediate states
     uint8_t im = 0;
     uint16_t accept_pattern = 0;
@@ -457,6 +458,7 @@ void nfa_to_dfa(void) {
 
             // Compute category mask and accepting pattern for target state
             // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
+            // is_eos_target states are reachable via epsilon from intermediate states and have category
             // This prevents category leakage from intermediate states
             uint8_t mm = 0;
             uint16_t accept_pattern2 = 0;
