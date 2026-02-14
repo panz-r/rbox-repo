@@ -560,6 +560,43 @@ void nfa_to_dfa(void) {
             }
         }
 
+        // If no direct EOS target found, check EOS target states for EOS transitions
+        // This handles + quantifier where fork state leads to accept state via EOS
+        if (eos_nfa_state < 0) {
+            for (int j = 0; j < dfa[cur].nfa_state_count; j++) {
+                int nfa_state = dfa[cur].nfa_states[j];
+                if (nfa[nfa_state].is_eos_target) {
+                    // Check if this EOS target state has transitions to accepting states
+                    int eos_cnt = 0;
+                    int* eos_targets = mta_get_target_array(&nfa[nfa_state].multi_targets, 258, &eos_cnt);
+                    if (eos_targets) {
+                        for (int e = 0; e < eos_cnt; e++) {
+                            int eos_t = eos_targets[e];
+                            if (nfa[eos_t].pattern_id != 0) {
+                                // Found accepting state via EOS transition
+                                // Find or create DFA state for this accept state
+                                for (int s = 0; s < dfa_state_count; s++) {
+                                    for (int k = 0; k < dfa[s].nfa_state_count; k++) {
+                                        if (dfa[s].nfa_states[k] == eos_t) {
+                                            dfa[cur].eos_target = s;
+                                            if (dfa[cur].accepting_pattern_id == 0) {
+                                                dfa[cur].accepting_pattern_id = nfa[eos_t].pattern_id - 1;
+                                                dfa[cur].flags |= DFA_STATE_ACCEPTING;
+                                            }
+                                            break;
+                                        }
+                                    }
+                                    if (dfa[cur].eos_target != 0) break;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (eos_nfa_state >= 0 || dfa[cur].eos_target != 0) break;
+            }
+        }
+
         if (eos_nfa_state >= 0) {
             // Find the DFA state that contains this exact EOS target NFA state
             for (int s = 0; s < dfa_state_count; s++) {
