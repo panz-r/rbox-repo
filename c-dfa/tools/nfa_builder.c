@@ -1712,10 +1712,15 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
     reset_nfa_builder_pattern_state();
 
     // Create Anchor State (Dedicated Entry Point)
+    // CRITICAL FIX: Always create dedicated anchor state for alternation
+    // This prevents multiple alternatives from sharing the same state and ensures
+    // each branch gets its own literal transitions
     int anchor_state;
     int epsilon_sid = VSYM_EPS;
     if (start_state == 0) {
-        anchor_state = 0; // Use State 0 directly
+        // Create dedicated anchor for alternation - isolated from state 0
+        anchor_state = nfa_add_state_with_minimization(false);
+        nfa_add_transition(0, anchor_state, VSYM_EPS);
     } else {
         anchor_state = nfa_add_state_with_minimization(false);
         if (epsilon_sid != -1) {

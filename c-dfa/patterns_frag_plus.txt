@@ -1,16 +1,16 @@
 # Fragment + quantifier test
-[fragment:TQ::B] b
-[fragment:TQ::A] a
-[fragment:alpha] alpha
-[fragment:outer] outer
-[fragment:inner] inner
-[fragment:xyz] xyz
-[fragment:ABC] ABC
-[fragment:AB] AB
+[fragment:TQ_B] b
+[fragment:TQ_A] a
+[fragment:frag_alpha] alpha
+[fragment:frag_outer] outer
+[fragment:frag_inner] inner
+[fragment:frag_xyz] x|y|z
+[fragment:frag_ABC] A|B|C
+[fragment:frag_AB] A|B
 
-[safe:test] a((TQ::B))+
+[safe:test] a((TQ_B))+
 [safe:test] alpha beta
 [safe:test] outer inner
-[safe:test] ((xyz))+
-[safe:test] ((ABC))+
-[safe:test] ((AB))+
+[safe:test] ((frag_xyz))+
+[safe:test] ((frag_ABC))+
+[safe:test] ((frag_AB))+
