@@ -98,7 +98,7 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
             "mkdir -p %s && "
             "./tools/nfa_builder %s %s && "
             "./tools/nfa2dfa_advanced %s %s %s",
-            build_dir, patterns_file, nfa_file, minimize_algo, nfa_file, dfa_file);
+            build_dir, patterns_file, nfa_file, nfa_file, dfa_file, minimize_algo);
     } else {
         (void)snprintf(cmd, sizeof(cmd),
             "mkdir -p %s && "
@@ -106,6 +106,7 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
             "./tools/nfa2dfa_advanced %s %s",
             build_dir, patterns_file, nfa_file, nfa_file, dfa_file);
     }
+    fprintf(stderr, "DEBUG CMD: %s\n", cmd);
     if (system(cmd) != 0) {
         fprintf(stderr, "Warning: DFA build failed for %s\n", patterns_file);
     }
@@ -536,7 +537,6 @@ static void run_expanded_alternation_tests(void) {
         {"aa", true, 2, CAT_MASK_SAFE, "(a|b)+ matches 'aa'"},
         {"ab", true, 2, CAT_MASK_SAFE, "(a|b)+ matches 'ab'"},
         {"ba", true, 2, CAT_MASK_SAFE, "(a|b)+ matches 'ba'"},
-        {"abc", true, 1, CAT_MASK_SAFE, "(a|b|c)+ matches 'a'"},
         {"c", true, 1, CAT_MASK_SAFE, "(a|b|c)+ matches 'c'"},
         {"abc", true, 3, CAT_MASK_SAFE, "(a|b|c)+ matches 'abc'"},
         {"ac", true, 2, CAT_MASK_SAFE, "(a|b)?c matches 'ac'"},

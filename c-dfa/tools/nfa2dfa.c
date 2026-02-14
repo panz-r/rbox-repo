@@ -287,7 +287,7 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     if (dfa_state_count >= MAX_STATES) { fprintf(stderr, "FATAL: Max DFA states reached\n"); exit(1); }
     int state = dfa_state_count++;
     memset(&dfa[state], 0, sizeof(build_dfa_state_t));
-    for (int i = 0; i < 256; i++) dfa[state].transitions[i] = -1;
+    for (int i = 0; i < MAX_SYMBOLS; i++) dfa[state].transitions[i] = -1;
     dfa[state].flags = (category_mask << 8);
     // Only mark as accepting if there's an actual accepting pattern
     // Don't mark as accepting just because category_mask is non-zero
@@ -498,7 +498,7 @@ void nfa_to_dfa(void) {
             collect_markers_from_states(temp2, tc2, markers, &marker_count);
             uint32_t marker_list_offset = store_marker_list(markers, marker_count);
 
-             int target = dfa_add_state(mm, temp2, tc2, accept_pattern2, (uint16_t)reachable_accepting_patterns2);
+            int target = dfa_add_state(mm, temp2, tc2, accept_pattern2, (uint16_t)reachable_accepting_patterns2);
 
             // Handle both literal symbols (sid < 256) and virtual symbols (VSYM_SPACE=259, VSYM_TAB=260)
             int sid = alphabet[i].symbol_id;
@@ -631,7 +631,7 @@ void flatten_dfa(void) {
         else if (alphabet[s].symbol_id == 260) tab_sid = s;
     }
     
-     for (int s = 0; s < dfa_state_count; s++) {
+    for (int s = 0; s < dfa_state_count; s++) {
         int nt[256]; bool any[256]; uint32_t markers[256];
         for (int i = 0; i < 256; i++) { nt[i] = -1; any[i] = false; markers[i] = 0; }
 
