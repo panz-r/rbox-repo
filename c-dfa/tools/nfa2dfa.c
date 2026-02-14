@@ -380,14 +380,6 @@ void nfa_to_dfa(void) {
     int dummy_count = 0;
     epsilon_closure_with_markers(temp, &tc, MAX_STATES, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
-    // DEBUG: Print all states in epsilon closure
-    fprintf(stderr, "[DEBUG] Epsilon closure of 0 has %d states:\n", tc);
-    for (int i = 0; i < tc; i++) {
-        int s = temp[i];
-        fprintf(stderr, "  [%d] state %d: cat=0x%02x, eos=%s\n", 
-                i, s, nfa[s].category_mask, nfa[s].is_eos_target ? "yes" : "no");
-    }
-
     // Compute category mask and find accepting pattern ID
     // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
     // is_eos_target states are reachable via epsilon from intermediate states and have category
@@ -423,8 +415,6 @@ void nfa_to_dfa(void) {
 
     // Allow empty matching for all patterns - the core fix is in category propagation
     // (not including category from is_eos_target states), which prevents false category matches
-
-    fprintf(stderr, "[DEBUG] Initial category mask: 0x%02X\n", im);
 
     int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
 
@@ -491,13 +481,6 @@ void nfa_to_dfa(void) {
             // Handle both literal symbols (sid < 256) and virtual symbols (VSYM_SPACE=259, VSYM_TAB=260)
             int sid = alphabet[i].symbol_id;
             if (sid < 256 || sid == 259 || sid == 260) {
-                if (sid == 259 || sid == 260) {
-                    fprintf(stderr, "[DEBUG SET] state %d: transitions[%d] = %d (was %d)\n",
-                            cur, sid, target, dfa[cur].transitions[sid]);
-                } else {
-                    fprintf(stderr, "[DEBUG SET] state %d: transitions[%d] = %d (was %d)\n",
-                            cur, sid, target, dfa[cur].transitions[sid]);
-                }
                 dfa[cur].transitions[sid] = target;
                 dfa[cur].marker_offsets[sid] = marker_list_offset;
             }
@@ -570,7 +553,6 @@ void nfa_to_dfa(void) {
 }
 
 void flatten_dfa(void) {
-    fprintf(stderr, "[FLATTEN] dfa_state_count=%d\n", dfa_state_count);
     int any_sid = -1;
     int space_sid = -1;
     int tab_sid = -1;
@@ -601,14 +583,12 @@ void flatten_dfa(void) {
 
         // Override with space and tab transitions (use symbol IDs directly, not alphabet indices)
         if (space_sid != -1 && dfa[s].transitions[259] != -1) {
-            fprintf(stderr, "[FLATTEN] State %d: setting space (32) -> %d\n", s, dfa[s].transitions[259]);
             nt[32] = dfa[s].transitions[259];
             any[32] = false;
             markers[32] = dfa[s].marker_offsets[259];
         }
 
         if (tab_sid != -1 && dfa[s].transitions[260] != -1) {
-            fprintf(stderr, "[FLATTEN] State %d: setting tab (9) -> %d\n", s, dfa[s].transitions[260]);
             nt[9] = dfa[s].transitions[260];
             any[9] = false;
             markers[9] = dfa[s].marker_offsets[260];
@@ -642,9 +622,6 @@ void flatten_dfa(void) {
         }
         dfa[s].transition_count = rc;
     }
-    // Debug: show state 0 transitions for key characters
-    fprintf(stderr, "[FLATTEN] State 0 transitions: a=%d g=%d w=%d\n",
-            dfa[0].transitions[97], dfa[0].transitions[103], dfa[0].transitions[119]);
 }
 
 typedef struct { uint8_t type, d1, d2, d3; int target_state_index; } intermediate_rule_t;

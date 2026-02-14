@@ -1557,7 +1557,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
 static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
     DEBUG_NFA_PRINT("parse_rdp_postfix: has_pending_quantifier=%d, exit_state=%d, loop_entry=%d\n",
                     has_pending_quantifier, current_fragment.exit_state, current_fragment.loop_entry_state);
-#ifdef NFA_BUILDER_VERBOSE
+#if NFA_BUILDER_VERBOSE
     fprintf(stderr, ">>> parse_rdp_postfix ENTRY: pattern='%s', pos=%d\n", pattern, *pos);
     fflush(stderr);
 #endif
@@ -2015,8 +2015,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
     int acceptance_cat = lookup_acceptance_category(category, subcategory, operations);
     uint8_t cat_mask = (1 << acceptance_cat);  // Convert 0-7 to bit mask 0x01, 0x02, etc.
     current_pattern_cat_mask = cat_mask;  // Store for use by quantifier handlers
-    fprintf(stderr, "[DEBUG] parse_pattern_full: category='%s', acceptance_cat=%d, cat_mask=0x%02x\n",
-            category, acceptance_cat, cat_mask);
 
     int parse_pos = 0;
     int end_state;
@@ -2083,8 +2081,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // DO NOT mark end_state as EOS target - it has outgoing transitions (shared state)
         }
 
-        fprintf(stderr, "[DEBUG] Creating accept state with cat_mask=0x%02x, has_outgoing=%d, end_state=%d\n",
-                cat_mask, has_outgoing, end_state);
         int accepting = nfa_add_state_with_category(cat_mask);
         nfa[accepting].is_eos_target = true;  // This state can accept via EOS
         state_do_not_share[accepting] = true;  // CONSERVATIVE: Don't share accepting states
@@ -2308,10 +2304,8 @@ void parse_advanced_pattern(const char* line) {
         strncpy(patterns[pattern_count].operations, operations, sizeof(patterns[pattern_count].operations));
         strncpy(patterns[pattern_count].action, action, sizeof(patterns[pattern_count].action));
         patterns[pattern_count].category_id = parse_category(category);
-        fprintf(stderr, "[DEBUG] Before parse_pattern_full: pattern_count=%d, current_pattern_index=%d\n", pattern_count, current_pattern_index);
         current_pattern_index = pattern_count;  // Set BEFORE incrementing
         pattern_count++;
-        fprintf(stderr, "[DEBUG] After increment: pattern_count=%d\n", pattern_count);
     }
 
     // CRITICAL: Clear all pending markers before starting new pattern

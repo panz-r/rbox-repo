@@ -339,8 +339,6 @@ static int brz_determinize(
 int dfa_minimize_brzozowski(build_dfa_state_t* dfa, int state_count) {
     if (state_count <= 1) return state_count;
 
-    fprintf(stderr, "[MINIMIZE] Brzozowski Extreme Minimization pass 1...\n");
-
     // Pass 1: D1 = determinize(reverse(D_orig))
     brz_nfa_t n1;
     if (!build_reversed_nfa(dfa, state_count, &n1)) return state_count;
@@ -354,9 +352,6 @@ int dfa_minimize_brzozowski(build_dfa_state_t* dfa, int state_count) {
     int s1 = brz_determinize(&n1, init1, c1, 0, d1, contains_start1);
     free_brz_nfa(&n1);
 
-    fprintf(stderr, "[MINIMIZE] Brzozowski Pass 1 complete: %d intermediate states\n", s1);
-    fprintf(stderr, "[MINIMIZE] Brzozowski Extreme Minimization pass 2...\n");
-
     // Pass 2: D_min = determinize(reverse(D1))
     brz_nfa_t n2;
     if (!build_reversed_nfa(d1, s1, &n2)) { free(d1); free(contains_start1); return state_count; }
@@ -368,8 +363,6 @@ int dfa_minimize_brzozowski(build_dfa_state_t* dfa, int state_count) {
     build_dfa_state_t* d2 = malloc(BRZ_MAX_STATES * sizeof(build_dfa_state_t));
     int s2 = brz_determinize(&n2, init2, c2, -1, d2, NULL);
     free_brz_nfa(&n2); free(d1);
-
-    fprintf(stderr, "[MINIMIZE] Brzozowski Pass 2 complete: %d minimal states\n", s2);
 
     // Copy result back
     memcpy(dfa, d2, s2 * sizeof(build_dfa_state_t));
