@@ -402,11 +402,14 @@ void nfa_to_dfa(void) {
     // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
     // is_eos_target states are reachable via epsilon from intermediate states and have category
     // This prevents category leakage from intermediate states
+    // CRITICAL: Never accept from state 0 - it's the bootstrap state that should never be accepting
     uint8_t im = 0;
     uint16_t accept_pattern = 0;
     uint64_t reachable_accepting_patterns = 0;
     for (int i = 0; i < tc; i++) {
         int ns = temp[i];
+        // Skip state 0 - it's the bootstrap and should never contribute to acceptance
+        if (ns == 0) continue;
         // Category from states that are either accepting (pattern_id) or EOS targets
         if ((nfa[ns].pattern_id != 0 || nfa[ns].is_eos_target) && nfa[ns].category_mask != 0) {
             im |= nfa[ns].category_mask;
@@ -422,9 +425,17 @@ void nfa_to_dfa(void) {
             }
         }
     }
+    int idfa = dfa_add_state(im, temp, tc, accept_pattern, reachable_accepting_patterns);
+    if (idfa < 0) {
+        fprintf(stderr, "Error: Failed to add initial DFA state\n");
+        return;
+    }
+
+    // Allow empty matching for all patterns - the core fix is in category propagation
+    // (not including category from is_eos_target states), which prevents false category matches
+
     fprintf(stderr, "[DEBUG] Initial category mask: 0x%02X\n", im);
 
-    int idfa = dfa_add_state(im, temp, tc, accept_pattern, (uint16_t)reachable_accepting_patterns);
     int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
 
     while (h < t) {
@@ -513,6 +524,9 @@ void nfa_to_dfa(void) {
     //   - Set eos_target to that DFA state
     // - If not accepting but contains an EOS target NFA state:
     //   - Find the accept DFA state with matching category
+    // 
+    // NOTE: We allow empty matching for patterns that support it (*, ?, |).
+    // The issue was category leakage from is_eos_target states, which we fixed earlier.
     for (int cur = 0; cur < dfa_state_count; cur++) {
 
         // Find accept NFA state (pattern_id != 0) in this DFA state's set

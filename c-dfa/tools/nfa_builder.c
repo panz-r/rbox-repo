@@ -2018,9 +2018,14 @@ static void parse_pattern_full(const char* pattern, const char* category,
     // to prevent pattern interference.
     if (remaining[0] != '\0') {
         if (start_state == 0) {
-            // For root patterns starting at 0, we use parse_rdp_sequence directly
-            // instead of parse_rdp_alternation which adds an EPSILON anchor.
-            end_state = parse_rdp_sequence(remaining, &parse_pos, 0);
+            // CRITICAL FIX: Create dedicated entry state to prevent
+            // quantifier zero-match paths from making state 0 accepting.
+            // Each pattern now gets its own entry state reachable from state 0 via epsilon,
+            // rather than using state 0 directly. This prevents patterns like (a)+ from
+            // creating accepting paths from the initial state.
+            int real_start = nfa_add_state_with_minimization(false);
+            nfa_add_transition(0, real_start, VSYM_EPS);
+            end_state = parse_rdp_sequence(remaining, &parse_pos, real_start);
         } else {
             end_state = parse_rdp_alternation(remaining, &parse_pos, start_state);
         }
