@@ -216,6 +216,7 @@ typedef struct {
 
 static fragment_t fragments[MAX_FRAGMENTS];
 static int fragment_count = 0;
+static bool has_fragment_error = false;  // Flag for fragment validation errors
 
 // Capture name to ID mapping
 typedef struct {
@@ -298,7 +299,6 @@ typedef struct {
     char capture_name[MAX_CAPTURE_NAME];  // Capture name if applicable
     int fragment_entry_state;  // State BEFORE first char transition (legacy, rarely used)
     char loop_first_char;      // First character of fragment (legacy, rarely used)
-    bool is_from_fragment;     // True if single char came from a fragment reference
 } FragmentResult;
 
 // Stack-based context for nested quantifiers
@@ -1141,14 +1141,12 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
         result.is_single_char = true;
         result.loop_char = frag_value[0];
         result.loop_entry_state = frag_start;  // State BEFORE consuming char
-        result.is_from_fragment = true;
     } else {
         result.is_single_char = false;
         result.loop_char = '\0';
         result.loop_entry_state = frag_start;  // State BEFORE consuming fragment
         result.fragment_entry_state = start_state;
         result.loop_first_char = frag_value[0];
-        result.is_from_fragment = false;
     }
 
     result.exit_state = frag_end;
@@ -2202,9 +2200,29 @@ void parse_advanced_pattern(const char* line) {
                 } else {
                      DEBUG_PRINT("Fragment '%s' already has ::, skipping normalization\n", fragments[fragment_count].name);
                 }
-                // Skip past ] and whitespace to get value
+                
+                // Validate: Check for empty fragment value
                 const char* value_start = name_end + 1;
                 while (*value_start == ' ' || *value_start == '\t') value_start++;
+                // Check for empty value (end of line, comment, or whitespace only)
+                if (*value_start == '\0' || *value_start == '\n' || *value_start == '#') {
+                    fprintf(stderr, "ERROR: Fragment '%s' has empty value. Fragment must have a non-empty value.\n",
+                            fragments[fragment_count].name);
+                    has_fragment_error = true;
+                    return;
+                }
+                
+                // Validate: Check for duplicate fragment name
+                for (int i = 0; i < fragment_count; i++) {
+                    if (strcmp(fragments[i].name, fragments[fragment_count].name) == 0) {
+                        fprintf(stderr, "ERROR: Duplicate fragment name '%s'. Each fragment must have a unique name.\n",
+                                fragments[fragment_count].name);
+                        has_fragment_error = true;
+                        return;
+                    }
+                }
+                
+                // Store fragment value
                 strncpy(fragments[fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
                 fragments[fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
 
@@ -2744,17 +2762,38 @@ static bool validate_pattern_file(const char* spec_file) {
         line[strcspn(line, "\r\n")] = 0;
         
         // Check for fragment definition [fragment:name] value
-        if (strncmp(line, "[fragment:", 11) == 0) {
-            char* bracket = strchr(line, ']');
+        if (strncmp(line, "[fragment:", 10) == 0) {
+            char* name_start = line + 10;
+            char* bracket = strchr(name_start, ']');
             if (!bracket) {
                 fprintf(stderr, "Error: Malformed fragment definition at line %d: %s\n", line_num, line);
                 errors++;
                 continue;
             }
+            
+            // Extract fragment name
+            size_t name_len = bracket - name_start;
+            char frag_name[64];
+            if (name_len >= sizeof(frag_name)) {
+                fprintf(stderr, "Error: Fragment name too long at line %d\n", line_num);
+                errors++;
+                continue;
+            }
+            strncpy(frag_name, name_start, name_len);
+            frag_name[name_len] = '\0';
+            
+            // Check for empty value
+            const char* value_start = bracket + 1;
+            while (*value_start == ' ' || *value_start == '\t') value_start++;
+            if (*value_start == '\0' || *value_start == '\n' || *value_start == '#') {
+                fprintf(stderr, "Error: Fragment '%s' has empty value at line %d. Fragment must have a non-empty value.\n", 
+                        frag_name, line_num);
+                errors++;
+                continue;
+            }
+            
             if (flag_verbose_validation) {
-                char fragment_name[64] = {0};
-                strncpy(fragment_name, line + 11, bracket - (line + 11));
-                fprintf(stderr, "  Line %d: Fragment '%s'\n", line_num, fragment_name);
+                fprintf(stderr, "  Line %d: Fragment '%s' = '%s'\n", line_num, frag_name, value_start);
             }
             continue;
         }
