@@ -2,6 +2,7 @@
 
 # Alternation tests - isolated from other patterns
 [safe:alternation:test] (a|b)
+[safe:alternation:test] (ABC|DEF)
 
 # Safe file operations
 [safe:file:read] cat file.txt

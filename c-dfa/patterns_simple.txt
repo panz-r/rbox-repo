@@ -1,1 +1,6 @@
-[safe:test] (a)+
+# Simple Boundary Test Patterns
+# Tests: empty, abc, abcdef should match
+
+# Empty string match - use optional with empty
+[safe] (abc)|
+[safe] (abcdef)|

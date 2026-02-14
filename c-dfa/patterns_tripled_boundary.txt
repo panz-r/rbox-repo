@@ -1,0 +1,12 @@
+# Triple Boundary Test Patterns
+# Tests for pattern repetitions and boundaries
+
+[safe] a
+[safe] aa
+[safe] aaa
+[safe] (ab)+
+[safe] (ab)|
+[safe] (xy)+
+[safe] (xy)|
+[safe] (test)+
+[safe] (test)|

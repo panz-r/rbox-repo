@@ -1,2 +1,16 @@
 # Fragment + quantifier test
+[fragment:TQ::B] b
+[fragment:TQ::A] a
+[fragment:alpha] alpha
+[fragment:outer] outer
+[fragment:inner] inner
+[fragment:xyz] xyz
+[fragment:ABC] ABC
+[fragment:AB] AB
+
 [safe:test] a((TQ::B))+
+[safe:test] alpha beta
+[safe:test] outer inner
+[safe:test] ((xyz))+
+[safe:test] ((ABC))+
+[safe:test] ((AB))+

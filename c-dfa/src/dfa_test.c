@@ -248,8 +248,8 @@ static void run_quantifier_tests(void) {
 
 static void run_fragment_tests(void) {
     TestCase cases[] = {
-        {"alpha beta", true, 11, CAT_MASK_SAFE, "alpha beta matches"},
-        {"outer inner", true, 12, CAT_MASK_SAFE, "outer inner matches"},
+        {"alpha beta", true, 10, CAT_MASK_SAFE, "alpha beta matches"},
+        {"outer inner", true, 11, CAT_MASK_SAFE, "outer inner matches"},
         {"inner", false, 0, 0, "inner alone should NOT match"},
         {"outer", false, 0, 0, "outer alone should NOT match"},
         {"xyz", true, 3, CAT_MASK_SAFE, "((xyz))+ matches 'xyz'"},
@@ -385,8 +385,8 @@ static void run_tripled_quantifier_depth(void) {
 
 static void run_tripled_fragment_interactions(void) {
     TestCase cases[] = {
-        {"alpha beta", true, 11, CAT_MASK_SAFE, "alpha beta matches"},
-        {"outer inner", true, 12, CAT_MASK_SAFE, "outer inner matches"},
+        {"alpha beta", true, 10, CAT_MASK_SAFE, "alpha beta matches"},
+        {"outer inner", true, 11, CAT_MASK_SAFE, "outer inner matches"},
         {"xyz", true, 3, CAT_MASK_SAFE, "((xyz))+ matches 'xyz'"},
         {"xyzxyz", true, 6, CAT_MASK_SAFE, "((xyz))+ matches 'xyzxyz'"},
         {"ABC ABC ABC", true, 11, CAT_MASK_SAFE, "ABC repeated 3x matches"},
@@ -410,7 +410,7 @@ static void run_tripled_boundary(void) {
         {"testtesttesttesttest", true, 20, CAT_MASK_SAFE, "5 'test' repetitions match"},
     };
 
-    run_test_group("TRIPLED BOUNDARY CONDITIONS", "patterns_simple.txt",
+    run_test_group("TRIPLED BOUNDARY CONDITIONS", "patterns_tripled_boundary.txt",
                    "build_test/tripled_bound.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 

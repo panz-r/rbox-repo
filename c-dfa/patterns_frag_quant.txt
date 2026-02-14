@@ -1,3 +1,14 @@
 # Fragment quantifier test
 [fragment:TEST::DIGIT] 0|1|2|3|4|5|6|7|8|9
+[fragment:TEST::ALPHA] x|y|z
+[fragment:alpha] alpha
+[fragment:beta] beta
+[fragment:outer] outer
+[fragment:inner] inner
+[fragment:xyz] xyz
+
+# Fragment patterns
+[safe:frag:test] alpha beta
+[safe:frag:test] outer inner
+[safe:frag:test] ((xyz))+
 [safe:frag:test] num (((TEST::DIGIT)))+
