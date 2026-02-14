@@ -66,3 +66,166 @@
 # Multiple categories on same literal
 [safe:multi_cat1] literal
 [caution:multi_cat2] literal
+
+# ============================================================================
+# ESCAPED CHARACTER TESTS
+# ============================================================================
+
+# Escaped special characters
+[safe:escape_plus] cmd a\+b
+[safe:escape_star] cmd a\*b
+[safe:escape_qmark] cmd a\?b
+[safe:escape_pipe] cmd a\|b
+[safe:escape_paren] cmd a\(b\)
+[safe:escape_bracket] cmd a\[b\]
+[safe:escape_backslash] cmd a\\b
+
+# Multiple escaped chars
+[safe:escape_multi] cmd a\+\*b
+
+# ============================================================================
+# MULTIPLE CAPTURE TESTS
+# ============================================================================
+
+# Multiple captures in one pattern
+[safe:cap_two] cmd <first>a</first> <second>b</second>
+[safe:cap_three] cmd <a>x</a> <b>y</b> <c>z</c>
+[safe:cap_adj] cmd <x>a</x><y>b</y>
+
+# Captures with different positions
+[safe:cap_start] cmd <start>abc</start>
+[safe:cap_mid] cmd x <mid>abc</mid>
+[safe:cap_end] cmd abc <end>x</end>
+
+# ============================================================================
+# CAPTURE WITH QUANTIFIERS
+# ============================================================================
+
+[safe:cap_plus] cmd <num>((digit))+</num>
+[safe:cap_star] cmd <chars>((letter))*</chars>
+[safe:cap_quest] cmd <opt>((letter))?</opt>
+
+# ============================================================================
+# DEEP FRAGMENT NESTING
+# ============================================================================
+
+# Level 1-5 nesting
+[fragment:l1] x
+[fragment:l2] ((l1))y
+[fragment:l3] ((l2))z
+[fragment:l4] ((l3))w
+[fragment:l5] ((l4))v
+
+[safe:nest1] cmd ((l1))
+[safe:nest2] cmd ((l2))
+[safe:nest3] cmd ((l3))
+[safe:nest4] cmd ((l4))
+[safe:nest5] cmd ((l5))
+
+# ============================================================================
+# FRAGMENT + ALTERNATION
+# ============================================================================
+
+[safe:frag_alt1] cmd ((digit)|x)
+[safe:frag_alt2] cmd ((a)|b|(c))
+[safe:frag_alt3] cmd ((digit))+((letter)|x)
+
+# ============================================================================
+# FRAGMENT + FRAGMENT INTERACTIONS
+# ============================================================================
+
+[safe:frag_frag1] cmd ((digit))((letter))
+[safe:frag_frag2] cmd ((letter))*((digit))+
+[safe:frag_frag3] cmd ((digit))+((letter))*((digit))?
+
+# ============================================================================
+# LONG PATTERN STRESS
+# ============================================================================
+
+[safe:long1] cmd aaaaa
+[safe:long2] cmd aaaaaa
+[safe:long3] cmd aaaaaaa
+[safe:long4] cmd aaaaaaaaaa
+[safe:long5] cmd ((digit))((digit))((digit))((digit))
+[safe:long6] cmd ((digit))((digit))((digit))((digit))((digit))
+[safe:long7] cmd (a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z)+
+[safe:long8] cmd prefix((digit))+middle((letter))*suffix
+
+# ============================================================================
+# EMPTY PATTERNS
+# ============================================================================
+
+[safe:empty1]
+[safe:empty2] cmd
+[safe:empty3] 
+
+# ============================================================================
+# ALTERNATION EDGE CASES
+# ============================================================================
+
+[safe:alt_many] cmd (a|b|c|d|e|f|g|h|i|j)
+[safe:alt_nested1] cmd ((a|b)|(c|d))
+[safe:alt_nested2] cmd (a|(b|(c|d)))
+[safe:alt_empty1] cmd (a|)
+[safe:alt_empty2] cmd (|a)
+[safe:alt_empty3] cmd (|)
+
+# ============================================================================
+# QUANTIFIER EDGE CASES
+# ============================================================================
+
+[safe:quant_zero] a{0}
+[safe:quant_one] a{1}
+[safe:quant_many] a{3}
+
+# ============================================================================
+# BOUNDARY EDGE CASES
+# ============================================================================
+
+[safe:boundary1] a
+[safe:boundary2] ab
+[safe:boundary3] abc
+[safe:boundary4] abcd
+[safe:boundary5] abcde
+
+# ============================================================================
+# WHITESPACE NORMALIZATION TESTS
+# ============================================================================
+
+[safe:ws_single] cmd a b
+[safe:ws_double] cmd a  b
+[safe:ws_triple] cmd a   b
+[safe:ws_tab] cmd a	b
+[safe:ws_mix] cmd a 	b
+[safe:ws_mix2] cmd 	a	b
+
+# ============================================================================
+# CATEGORY + SYNTAX INTERACTIONS
+# ============================================================================
+
+[safe:cat_quant] ((digit))+
+[caution:cat_quant] ((letter))+
+[modifying:cat_quant] ((digit))*((letter))
+
+[safe:cat_alt] (a|b|c)
+[caution:cat_alt] (x|y|z)
+[dangerous:cat_alt] (1|2|3)
+
+[safe:cat_frag] ((digit))
+[caution:cat_frag] ((letter))
+[modifying:cat_frag] ((word))
+
+# ============================================================================
+# IDENTICAL PATTERNS, MULTIPLE CATEGORIES
+# ============================================================================
+
+[safe:multi1] testpattern
+[caution:multi2] testpattern
+[modifying:multi3] testpattern
+[dangerous:multi4] testpattern
+[network:multi5] testpattern
+[admin:multi6] testpattern
+
+[safe:multi_frag1] x((d))+
+[caution:multi_frag2] x((d))+
+[modifying:multi_frag3] x((d))+

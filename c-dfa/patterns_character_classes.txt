@@ -136,3 +136,97 @@
 [safe:overlap1] cmd ((abc))
 [safe:overlap2] cmd ((xy))
 [safe:overlap_both] cmd ((abc)) ((xy))
+
+# ============================================================================
+# QUOTED CHARACTER EDGE CASES
+# ============================================================================
+
+# Quoted digits
+[safe:quoted_digit] cmd '0'
+[safe:quoted_digit] cmd '9'
+
+# Quoted special chars
+[safe:quoted_special] cmd '\.'
+[safe:quoted_special] cmd '\-'
+[safe:quoted_special] cmd '\_'
+
+# Multiple quoted
+[safe:quoted_multi] cmd 'a''b''c'
+[safe:quoted_space] cmd ' '
+[safe:quoted_tab] cmd '	'
+
+# ============================================================================
+# NESTED ALTERNATION
+# ============================================================================
+
+[safe:nested_alt1] cmd (a|b|c|d|e)
+[safe:nested_alt2] cmd ((a|b)|(c|d))
+[safe:nested_alt3] cmd (a|(b|(c|d)))
+[safe:nested_alt4] cmd ((a)|(b)|(c)|(d)|(e))
+
+# ============================================================================
+# FRAGMENT QUANTIFIER COMBINATIONS
+# ============================================================================
+
+# Different quantifiers on same fragment
+[safe:frag_q1] cmd ((abc))
+[safe:frag_q2] cmd ((abc))+
+[safe:frag_q3] cmd ((abc))*
+[safe:frag_q4] cmd ((abc))?
+
+# Multiple fragments, different quantifiers
+[safe:frag_q5] cmd ((abc))+((xyz))*
+[safe:frag_q6] cmd ((abc))*((xyz))+
+[safe:frag_q7] cmd ((abc))?((xyz))?
+[safe:frag_q8] cmd ((abc))+((xyz))+((abc))*
+
+# ============================================================================
+# CATEGORY + FRAGMENT INTERACTIONS
+# ============================================================================
+
+[safe:cat_frag1] ((digit))+
+[caution:cat_frag2] ((letter))+
+[modifying:cat_frag3] ((digit))*((letter))
+
+[safe:cat_alt1] (a|b|c)
+[caution:cat_alt2] (x|y|z)
+
+# ============================================================================
+# MULTI-CHAR FRAGMENTS
+# ============================================================================
+
+[fragment:hello] h|e|l|l|o
+[fragment:world] w|o|r|l|d
+[fragment:hi] h|i
+
+[safe:multi_frag_word] cmd ((hello))
+[safe:multi_frag_world] cmd ((world))
+[safe:multi_frag_both] cmd ((hello)) ((world))
+[safe:multi_frag_chain] cmd ((hi))((hello))
+
+# ============================================================================
+# BOUNDARY: SINGLE CHAR
+# ============================================================================
+
+[safe:bound_single1] a
+[safe:bound_single2] b
+[safe:bound_single3] c
+
+# ============================================================================
+# BOUNDARY: TWO CHARS
+# ============================================================================
+
+[safe:bound_two1] ab
+[safe:bound_two2] xy
+
+# ============================================================================
+# EMPTY ALTERNATION VARIANTS
+# ============================================================================
+
+[safe:empty1] (x|)
+[safe:empty2] (abc|)
+[safe:empty3] (|xyz)
+[safe:empty4] (|)
+[safe:empty5] cmd (a|)b
+[safe:empty6] cmd a(b|)
+[safe:empty7] cmd (a|b|)

@@ -337,6 +337,33 @@ static void run_character_class_tests(void) {
         
         // Fragment + fragment
         {"cmd a1", true, 7, CAT_MASK_SAFE, "frag+frag matches"},
+        
+        // NEW: Quoted digit
+        {"cmd 0", true, 6, CAT_MASK_SAFE, "quoted digit matches"},
+        {"cmd 9", true, 6, CAT_MASK_SAFE, "quoted digit 9 matches"},
+        
+        // NEW: Nested alternation
+        {"cmd a", true, 6, CAT_MASK_SAFE, "nested alt matches a"},
+        {"cmd b", true, 6, CAT_MASK_SAFE, "nested alt matches b"},
+        
+        // NEW: Fragment quantifier combos
+        {"cmd abc", true, 8, CAT_MASK_SAFE, "frag+ quant matches"},
+        {"cmd abcd", true, 9, CAT_MASK_SAFE, "frag++ quant matches"},
+        
+        // NEW: Category + fragment
+        {"cmd 1", true, 6, CAT_MASK_SAFE, "safe digit frag matches"},
+        
+        // NEW: Multi-char fragments
+        {"cmd hello", true, 10, CAT_MASK_SAFE, "multi-char frag matches"},
+        {"cmd world", true, 10, CAT_MASK_SAFE, "multi-char frag world"},
+        
+        // NEW: Boundary tests
+        {"cmd a", true, 6, CAT_MASK_SAFE, "single char boundary"},
+        {"cmd ab", true, 7, CAT_MASK_SAFE, "two char boundary"},
+        
+        // NEW: Empty alternation variants
+        {"cmd x", true, 6, CAT_MASK_SAFE, "empty alt (x|)"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "empty alt (|)"},
     };
 
     run_test_group("CHARACTER CLASS TESTS", "patterns_character_classes.txt",
