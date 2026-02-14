@@ -1,0 +1,100 @@
+b
+c
+d
+y
+z
+r
+s
+git
+status
+push
+value
+a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+0|1|2|3|4|5|6|7|8|9
+a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
+ls
+pwd
+curl
+wget
+touch
+mkdir
+git status
+git log
+git push
+git fetch
+git log --oneline
+git log --graph
+git commit
+git commit -m
+a((b))+
+abc((b))+
+ab((c))+
+abcd((d))+
+git log --oneline -n
+git log --oneline -n 1
+git log --graph -n
+git log --oneline --all
+git log --oneline -p
+git status -s
+git status --short
+git status -b
+git status --branch
+git status -u
+git status --untracked-files
+git show *
+git diff *
+git add *
+git rm *
+git
+git status
+git remote
+git remote -v
+git config
+git config --list
+ls ((lowercase))*
+curl ((alphanum))*
+touch ((uppercase))*
+rm -rf ((lowercase))*
+a((b))+
+abc((b))+
+git log
+git log --oneline
+git status -s
+git status -s -b
+git status -s -u
+git log --oneline -n 10 --graph
+git log --oneline -n 10 --all
+git log --oneline -n 10 --patch
+x((y))+((z))+
+xy((z))+((z))+
+a((b))+((c))+
+ab((c))+((d))+
+q
+p((q))+((r))+
+pq((r))+((s))+
+git (status|log)
+git (push|fetch)
+(git|hg) status
+(git|hg) push
+git (status --short|log --oneline)
+git (push --force|fetch --all)
+cmd [abc]*
+cmd [ab]*
+[[:alpha:]]+
+[[:alnum:]]+
+a((digit))b((digit))c
+a((digit))b((digit))c
+git
+status
+log
+push
+cmd sub1
+cmd sub3
+((git)) ((status))+
+((git)) ((push))+
+git (status|)
+git (push|)
+a((b))*((c))+
+ab((c))*((d))+
+a((b))+((c))*
