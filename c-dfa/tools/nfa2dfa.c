@@ -195,6 +195,7 @@ void dfa_init(void) {
 void epsilon_closure_with_markers(int* states, int* count, int max_states,
                                   uint32_t* markers, int* marker_count, int max_markers) {
     int epsilon_sid = -1;
+    int epsilon_symbol_id = 257;
     for (int s = 0; s < alphabet_size; s++) {
         if (alphabet[s].symbol_id == 257) { epsilon_sid = s; break; }
     }
@@ -214,13 +215,9 @@ void epsilon_closure_with_markers(int* states, int* count, int max_states,
     while (top > 0) {
         int s = stack[--top];
 
-        // Process EPSILON transitions (257)
-        int t = nfa[s].transitions[epsilon_sid];
-        if (t != -1 && t < nfa_state_count && !in_set[t]) {
-            if (*count < max_states) { states[(*count)++] = t; stack[top++] = t; in_set[t] = true; }
-        }
+        // Process EPSILON transitions (257) - use multi_targets only
         int mta_cnt = 0;
-        int* mta_targets = mta_get_target_array(&nfa[s].multi_targets, epsilon_sid, &mta_cnt);
+        int* mta_targets = mta_get_target_array(&nfa[s].multi_targets, epsilon_symbol_id, &mta_cnt);
         if (mta_targets) {
             for (int i = 0; i < mta_cnt; i++) {
                 int target = mta_targets[i];
@@ -231,7 +228,7 @@ void epsilon_closure_with_markers(int* states, int* count, int max_states,
         }
 
         int mta_marker_count = 0;
-        transition_marker_t* mta_markers = mta_get_markers(&nfa[s].multi_targets, epsilon_sid, &mta_marker_count);
+        transition_marker_t* mta_markers = mta_get_markers(&nfa[s].multi_targets, epsilon_symbol_id, &mta_marker_count);
         if (mta_markers) {
             for (int m = 0; m < mta_marker_count && *marker_count < max_markers; m++) {
                 uint32_t marker = ((uint32_t)mta_markers[m].pattern_id << 17) |
@@ -249,6 +246,7 @@ void epsilon_closure_with_markers(int* states, int* count, int max_states,
 
 void epsilon_closure(int* states, int* count, int max_states) {
     int epsilon_sid = -1;
+    int epsilon_symbol_id = 257;
     for (int s = 0; s < alphabet_size; s++) {
         if (alphabet[s].symbol_id == 257) { epsilon_sid = s; break; }
     }
@@ -267,12 +265,9 @@ void epsilon_closure(int* states, int* count, int max_states) {
 
     while (top > 0) {
         int s = stack[--top];
-        int t = nfa[s].transitions[epsilon_sid];
-        if (t != -1 && t < nfa_state_count && !in_set[t]) {
-            if (*count < max_states) { states[(*count)++] = t; stack[top++] = t; in_set[t] = true; }
-        }
+        // Process EPSILON transitions (257) - use multi_targets only
         int mta_cnt = 0;
-        int* mta_targets = mta_get_target_array(&nfa[s].multi_targets, epsilon_sid, &mta_cnt);
+        int* mta_targets = mta_get_target_array(&nfa[s].multi_targets, epsilon_symbol_id, &mta_cnt);
         if (mta_targets) {
             for (int i = 0; i < mta_cnt; i++) {
                 int target = mta_targets[i];
@@ -310,12 +305,7 @@ void nfa_move(int* states, int* count, int sid, int max_states) {
     for (int i = 0; i < *count; i++) {
         int s = states[i]; if (s < 0 || s >= nfa_state_count) continue;
 
-        // Check both single target and multi-target transitions
-        int t_single = nfa[s].transitions[sid];
-        if (t_single != -1 && t_single < nfa_state_count && !is[t_single]) {
-            if (nc < max_states) { ns[nc++] = t_single; is[t_single] = true; }
-        }
-
+        // Use multi_targets only - transitions[] array is not populated
         int mta_cnt = 0;
         int* targets = mta_get_target_array(&nfa[s].multi_targets, sid, &mta_cnt);
         if (targets) {

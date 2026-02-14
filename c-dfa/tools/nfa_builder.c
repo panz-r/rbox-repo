@@ -1756,6 +1756,14 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
             }
         }
 
+        // CRITICAL FIX: Mark merge_state as accepting if any branch path is accepting
+        // The merge state should be accepting because all alternatives flow into it
+        // Check if we have a valid pattern index (meaning this is part of a pattern)
+        if (current_pattern_index >= 0) {
+            nfa[merge_state].category_mask = current_pattern_cat_mask;
+            nfa[merge_state].is_eos_target = true;
+        }
+
         // Close paren if present
         if (pattern[*pos] == ')') {
             (*pos)++;
