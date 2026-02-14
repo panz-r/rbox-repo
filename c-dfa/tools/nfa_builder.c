@@ -1092,9 +1092,16 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     // Track if this is a single-char fragment
     bool is_single_char = (frag_value[0] != '\0' && frag_value[1] == '\0');
 
-    // Detect if fragment starts with an alternation (Bug 2.9)
-    // If it does, we must DISABLE the first-char peeking optimization
-    bool has_alternation = (frag_value[0] != '\0' && frag_value[1] == '|');
+    // Detect if fragment contains alternation (Bug 2.9)
+    // Must check for '|' anywhere in the value, not just at position 1
+    // For example: [fragment:a] a|b contains alternation, not just at start
+    bool has_alternation = false;
+    for (int i = 0; frag_value[i] != '\0'; i++) {
+        if (frag_value[i] == '|') {
+            has_alternation = true;
+            break;
+        }
+    }
 
     // Add transition from start_state to frag_start using first char of fragment value
     // For single-char fragments, use start_state directly as frag_start
