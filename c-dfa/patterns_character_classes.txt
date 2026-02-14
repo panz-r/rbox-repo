@@ -1,0 +1,138 @@
+# ============================================================================
+# Character Classes Test Patterns - Test Set A
+# ============================================================================
+# Tests for character classes (via fragments), quoted chars, and related syntax
+# Note: We use fragments with alternation instead of character ranges like [a-z]
+# ============================================================================
+
+# ============================================================================
+# FRAGMENT DEFINITIONS (replaces character classes)
+# ============================================================================
+[fragment:abc] a|b|c
+[fragment:xyz] x|y|z
+[fragment:digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:lower] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[fragment:upper] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:alphanum] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
+[fragment:xy] x|y
+
+# ============================================================================
+# CHARACTER CLASS TESTS - Using fragments with alternation
+# ============================================================================
+
+# Simple fragment (replaces [abc])
+[safe:class_pos] cmd ((abc))
+[safe:class_pos] cmd ((abc)) extra
+
+# Fragment with quantifier
+[safe:class_quant] cmd ((abc))+
+[safe:class_quant] cmd ((abc))*
+[safe:class_quant] cmd ((abc))?
+
+# Fragment with multiple quantifiers
+[safe:class_multi] cmd ((abc))+ extra
+[safe:class_multi] cmd ((abc))* extra
+
+# ============================================================================
+# NEGATED "CLASS" TESTS - Using fragments with alternation
+# Note: True negation [^xyz] not supported, testing with positive fragments
+# ============================================================================
+
+# Fragment as alternative to negated class
+[safe:class_neg] cmd ((xyz))
+[safe:class_neg] cmd ((xyz)) extra
+
+# Fragment with quantifier
+[safe:class_neg_quant] cmd ((xyz))+
+[safe:class_neg_quant] cmd ((xyz))*
+
+# ============================================================================
+# QUOTED CHARACTER TESTS - 'x' syntax
+# ============================================================================
+
+# Single quoted character - matches literally
+[safe:quoted_single] cmd 'a'
+[safe:quoted_single] cmd 'a' 'b'
+[safe:quoted_single] cmd ' '   # quoted space
+
+# Quoted with quantifier
+[safe:quoted_quant] cmd 'a'+
+[safe:quoted_quant] cmd 'a'*
+[safe:quoted_quant] cmd 'a'?
+
+# ============================================================================
+# NESTED FRAGMENT TESTS
+# ============================================================================
+
+# Fragment containing fragment
+[fragment:nested_inner] ((lower))
+[safe:nested_frag] cmd ((nested_inner))
+[safe:nested_frag] cmd ((nested_inner))+
+
+# Deeply nested fragments
+[fragment:deep1] a
+[fragment:deep2] ((deep1))b
+[fragment:deep3] ((deep2))c
+[safe:deep_nested] cmd ((deep3))
+
+# ============================================================================
+# MULTIPLE CAPTURE TESTS
+# ============================================================================
+
+# Multiple captures in one pattern
+[safe:multi_cap] cmd <first>((abc))</first> <second>((xyz))</second>
+[safe:multi_cap] cmd <a>((lower))</a> <b>((digit))</b>
+
+# Captures with quantifiers
+[safe:cap_quant] cmd <num>((digit))+</num>
+[safe:cap_quant] cmd <chars>((lower))*</chars>
+
+# ============================================================================
+# EMPTY ALTERNATION TESTS - (a|) syntax
+# ============================================================================
+
+# Empty alternative - matches with or without the element
+[safe:empty_alt] cmd (a|)
+[safe:empty_alt] cmd (abc|)
+
+# Empty alternation with literal prefix
+[safe:empty_alt2] cmd prefix(a|)
+[safe:empty_alt2] cmd prefix(abc|)
+
+# ============================================================================
+# INTERACTION: Fragment + alternation
+# ============================================================================
+
+[safe:class_alt] ((abc))|((xyz))
+[safe:class_alt] ((abc)|((xyz)))+
+
+# ============================================================================
+# INTERACTION: Quoted + alternation
+# ============================================================================
+
+[safe:quoted_alt] cmd ('a'|'b')
+[safe:quoted_alt] cmd ('a'|'b')+
+
+# ============================================================================
+# INTERACTION: Fragment + fragment
+# ============================================================================
+
+[safe:frag_class] cmd ((lower))((digit))
+[safe:frag_class] cmd ((digit))+((lower))*
+
+# ============================================================================
+# EDGE CASES: Single char vs fragment
+# ============================================================================
+
+# Single char should behave same as single-char fragment
+[safe:single_vs_class] cmd a
+[safe:single_vs_class] cmd ((abc))
+[safe:single_vs_class] cmd ((abc))+
+
+# ============================================================================
+# EDGE CASES: Overlapping fragments
+# ============================================================================
+
+[safe:overlap1] cmd ((abc))
+[safe:overlap2] cmd ((xy))
+[safe:overlap_both] cmd ((abc)) ((xy))

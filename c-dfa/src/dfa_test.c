@@ -289,6 +289,60 @@ static void run_boundary_tests(void) {
                    "build_test/boundary.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
+// Test Set A: Character classes (using fragments with alternation)
+static void run_character_class_tests(void) {
+    TestCase cases[] = {
+        // Fragment-based "character classes" (replaces [abc])
+        {"cmd a", true, 6, CAT_MASK_SAFE, "cmd ((abc)) matches 'a'"},
+        {"cmd b", true, 6, CAT_MASK_SAFE, "cmd ((abc)) matches 'b'"},
+        {"cmd c", true, 6, CAT_MASK_SAFE, "cmd ((abc)) matches 'c'"},
+        {"cmd d", false, 0, 0, "cmd ((abc)) should NOT match 'd'"},
+        
+        // Fragment with quantifier +
+        {"cmd abc", true, 8, CAT_MASK_SAFE, "cmd ((abc))+ matches 'abc'"},
+        {"cmd a", true, 6, CAT_MASK_SAFE, "cmd ((abc))+ matches single"},
+        {"cmd", false, 0, 0, "cmd ((abc))+ should NOT match empty"},
+        
+        // Fragment with quantifier *
+        {"cmd abc", true, 8, CAT_MASK_SAFE, "cmd ((abc))* matches 'abc'"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "cmd ((abc))* matches empty"},
+        
+        // Fragment with quantifier ?
+        {"cmd a", true, 6, CAT_MASK_SAFE, "cmd ((abc))? matches 'a'"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "cmd ((abc))? matches empty"},
+        
+        // Quoted characters
+        {"cmd a", true, 6, CAT_MASK_SAFE, "cmd 'a' matches 'a'"},
+        {"cmd ab", true, 7, CAT_MASK_SAFE, "cmd 'a' 'b' matches 'ab'"},
+        {"cmd b", false, 0, 0, "cmd 'a' should NOT match 'b'"},
+        
+        // Quoted with quantifier
+        {"cmd aaa", true, 8, CAT_MASK_SAFE, "cmd 'a'+ matches 'aaa'"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "cmd 'a'* matches empty"},
+        
+        // Nested fragments
+        {"cmd a", true, 6, CAT_MASK_SAFE, "nested fragment matches"},
+        
+        // Multiple captures
+        {"cmd a x", true, 8, CAT_MASK_SAFE, "multi capture matches"},
+        
+        // Empty alternation
+        {"cmd a", true, 6, CAT_MASK_SAFE, "cmd (a|) matches 'a'"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "cmd (a|) matches empty"},
+        {"cmd abc", true, 8, CAT_MASK_SAFE, "cmd (abc|) matches 'abc'"},
+        
+        // Alternation with fragments
+        {"cmd a", true, 6, CAT_MASK_SAFE, "((abc)|((xyz)) matches 'a'"},
+        {"cmd x", true, 6, CAT_MASK_SAFE, "((abc)|((xyz)) matches 'x'"},
+        
+        // Fragment + fragment
+        {"cmd a1", true, 7, CAT_MASK_SAFE, "frag+frag matches"},
+    };
+
+    run_test_group("CHARACTER CLASS TESTS", "patterns_character_classes.txt",
+                   "build_test/char_classes.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
 static void run_category_tests(void) {
     TestCase cases[] = {
         {"SAFE_CMD alpha", true, 14, 0x01, "SAFE_CMD matches with cat 0x01"},
@@ -616,6 +670,79 @@ static void run_expanded_perf_tests(void) {
                    "build_test/expanded_perf.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
+// Test Set B: Edge cases
+static void run_edge_case_tests(void) {
+    TestCase cases[] = {
+        // Whitespace edge cases
+        {"cmd a b", true, 9, CAT_MASK_SAFE, "multiple spaces matches"},
+        {"cmd a\tb", true, 8, CAT_MASK_SAFE, "tab matches"},
+        
+        // Quantifier + fragment interactions
+        {"cmd 1", true, 6, CAT_MASK_SAFE, "digit+ matches single digit"},
+        {"cmd 123", true, 8, CAT_MASK_SAFE, "digit+ matches multiple digits"},
+        {"cmd 1", true, 6, CAT_MASK_SAFE, "digit* matches single digit"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "digit* matches empty"},
+        {"cmd 1", true, 6, CAT_MASK_SAFE, "digit? matches single digit"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "digit? matches empty"},
+        
+        // Multiple fragment quantifiers
+        {"cmd a1b", true, 8, CAT_MASK_SAFE, "multi frag quant matches"},
+        {"cmd 1ab2c", true, 9, CAT_MASK_SAFE, "complex multi frag matches"},
+        
+        // Alternation + quantifier
+        {"cmd a", true, 6, CAT_MASK_SAFE, "(a|b)+ matches 'a'"},
+        {"cmd b", true, 6, CAT_MASK_SAFE, "(a|b)+ matches 'b'"},
+        {"cmd ab", true, 7, CAT_MASK_SAFE, "(a|b)+ matches 'ab'"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "(a|b)* matches empty"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "(a|b)? matches empty"},
+        
+        // Category + syntax interactions
+        {"cmd 1", true, 6, CAT_MASK_SAFE, "safe frag matches"},
+        {"cmd a", true, 6, CAT_MASK_CAUTION, "caution frag matches"},
+        
+        // Long patterns
+        {"cmd 12345", true, 10, CAT_MASK_SAFE, "long digit sequence matches"},
+        
+        // Boundary - empty patterns
+        {"cmd", true, 3, CAT_MASK_SAFE, "empty frag pattern matches"},
+        
+        // Overlapping patterns
+        {"cmd abc", true, 8, CAT_MASK_SAFE, "overlap1 matches"},
+        {"cmd abd", true, 8, CAT_MASK_SAFE, "overlap2 matches"},
+        
+        // Capture interactions
+        {"cmd 123", true, 7, CAT_MASK_SAFE, "capture with quantifier matches"},
+        
+        // Escape sequences
+        {"cmd a+b", true, 8, CAT_MASK_SAFE, "escaped + matches"},
+        {"cmd a*b", true, 8, CAT_MASK_SAFE, "escaped * matches"},
+        
+        // Deep nesting
+        {"cmd a", true, 6, CAT_MASK_SAFE, "deep nested fragment matches"},
+        
+        // Identical patterns, different categories
+        {"specific_pattern", true, 16, CAT_MASK_SAFE, "same pattern safe matches"},
+        {"specific_pattern", true, 16, CAT_MASK_CAUTION, "same pattern caution matches"},
+        
+        // Empty vs non-empty
+        {"cmd ab", true, 7, CAT_MASK_SAFE, "(a|)b matches 'ab'"},
+        {"cmd b", true, 6, CAT_MASK_SAFE, "(a|)b matches 'b' (empty alt)"},
+        {"cmd a", true, 6, CAT_MASK_SAFE, "a(b|) matches 'a'"},
+        {"cmd ab", true, 7, CAT_MASK_SAFE, "a(b|) matches 'ab'"},
+        
+        // Consecutive quantifiers
+        {"cmd a", true, 6, CAT_MASK_SAFE, "a? matches 'a'"},
+        {"cmd", true, 3, CAT_MASK_SAFE, "a?? matches empty"},
+        
+        // Category combinations
+        {"cmd1", true, 5, CAT_MASK_SAFE, "same literal safe matches"},
+        {"cmd1", true, 5, CAT_MASK_CAUTION, "same literal caution matches"},
+    };
+
+    run_test_group("EDGE CASE TESTS", "patterns_edge_cases.txt",
+                   "build_test/edge_cases.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
 static void run_admin_command_tests(void) {
     TestCase cases[] = {
         {"sudo command", true, 0, CAT_MASK_ADMIN, "sudo command matches"},
@@ -857,6 +984,7 @@ int main(int argc, char* argv[]) {
         run_alternation_tests();
         run_boundary_tests();
         run_category_tests();
+        run_character_class_tests();
         run_tripled_quantifier_depth();
         run_tripled_fragment_interactions();
         run_tripled_boundary();
@@ -877,6 +1005,7 @@ int main(int argc, char* argv[]) {
         run_expanded_mixed_tests();
         run_expanded_hard_tests();
         run_expanded_perf_tests();
+        run_edge_case_tests();
     }
 
     if (test_set_mask & TEST_SET_C) {

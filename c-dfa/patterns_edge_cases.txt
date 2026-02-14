@@ -1,0 +1,68 @@
+# ============================================================================
+# Edge Cases Test Patterns - Test Set B
+# ============================================================================
+# Tests for edge cases, corner cases, and interactions
+# Note: We use fragments with alternation instead of character ranges like [a-z]
+# ============================================================================
+
+# ============================================================================
+# FRAGMENT DEFINITIONS
+# ============================================================================
+[fragment:digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:letter] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[fragment:word] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:a] a
+[fragment:b] b
+[fragment:c] c
+
+# ============================================================================
+# WHITESPACE EDGE CASES
+# ============================================================================
+
+# Multiple spaces
+[safe:ws_multi] cmd a   b
+[safe:ws_multi] cmd a    b
+
+# Mixed tab and space
+[safe:ws_mixed] cmd a 	 b
+[safe:ws_mixed] cmd a	 b
+
+# Leading/trailing whitespace
+[safe:ws_leading]  cmd arg
+[safe:ws_trailing] arg  
+[safe:ws_both]  cmd arg 
+
+# Whitespace with quantifier
+[safe:ws_quant] a+
+[safe:ws_quant] a*
+
+# ============================================================================
+# CONSECUTIVE QUANTIFIERS (edge case)
+# ============================================================================
+
+[safe:consec_quant] a?  
+[safe:consec_quant2] a??
+
+# ============================================================================
+# WHITESPACE NORMALIZATION EDGE CASES
+# ============================================================================
+
+# Tab only
+[safe:tab_only] cmd	a
+[safe:tab_only2] cmd a	b
+
+# Multiple tabs
+[safe:tab_multi] cmd a			b
+
+# ============================================================================
+# CATEGORY COMBINATIONS
+# ============================================================================
+
+# Same pattern, different subcategories
+[safe:sub1:op1] cmd1
+[safe:sub1:op2] cmd2
+[caution:sub2:op1] cmd3
+
+# Multiple categories on same literal
+[safe:multi_cat1] literal
+[caution:multi_cat2] literal
