@@ -1,7 +1,8 @@
 # ============================================================================
 # Pattern File for Hard Edge Cases Tests
 # ============================================================================
-# Tests: (a+a+)+b, ((a))+((a))+, (ab)+, (a|aa)+, [abc]+
+# Tests: (a+a+)+b, ((a))+((a))+, (ab)+, (a|aa)+, (a|b|c)+
+# Note: [abc]+ syntax not supported, using (a|b|c)+ instead
 # ============================================================================
 
 [fragment:a] a
@@ -20,5 +21,5 @@
 # Alternation with quantifier edge cases
 [safe:hard] (a|aa)+
 
-# Character class with quantifier
-[safe:hard] [a|b|c]+
+# Alternation with quantifier - using parentheses instead of character class
+[safe:hard] (a|b|c)+

@@ -209,16 +209,22 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 
 # ============================================
 # GROUP 13: CHARACTER CLASS OVERLAP
-# Character classes that overlap can cause category interference
+# Using FRAGMENTS instead of character classes
 # ============================================
 
-# Overlapping character classes in different categories
-[safe::readonly::overlap1] cmd [abc]*
-[caution::network::overlap2] cmd [ab]*
+# Define fragments for character alternatives
+[fragment:overlap_a] a|b|c
+[fragment:overlap_b] a|b
 
-# Nested character classes
-[safe::readonly::class_nest1] [[:alpha:]]+
-[caution::network::class_nest2] [[:alnum:]]+
+# Overlapping character classes in different categories - using fragments
+[safe::readonly::overlap1] cmd ((overlap_a))*
+[caution::network::overlap2] cmd ((overlap_b))*
+
+# Nested character classes - using fragments
+[fragment:alpha_frag] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:alnum_frag] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
+[safe::readonly::class_nest1] cmd ((alpha_frag))+
+[caution::network::class_nest2] cmd ((alnum_frag))+
 
 # Character range edge cases (using fragments instead of ranges)
 [safe::readonly::range1] a((digit))b((digit))c

@@ -1168,99 +1168,25 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 }
 
 static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
-    memset(&current_fragment, 0, sizeof(current_fragment));
-    current_is_char_class = true;
-    current_class_symbol_count = 0;
-
-    int class_state = nfa_add_state_with_minimization(false);
-
-    (*pos)++; // Skip opening [
-
-    // Check for negation like [^abc]
-    bool negated = false;
-    if (pattern[*pos] == '^') {
-        negated = true;
-        (*pos)++;
-    }
-
-    // Collect all characters/alternatives in the class
-    char alt_chars[256];
-    int alt_count = 0;
-
-    while (pattern[*pos] != '\0' && pattern[*pos] != ']') {
-        if (pattern[*pos] == '\\' && pattern[*pos + 1] != '\0') {
-            // Escaped character
-            alt_chars[alt_count++] = pattern[*pos + 1];
-            *pos += 2;
-        } else if (pattern[*pos] == '|' || pattern[*pos] == ' ') {
-            // Skip alternation markers and spaces within class
-            (*pos)++;
-        } else if (pattern[*pos] == '-' && alt_count > 0 &&
-                   isalnum(alt_chars[alt_count - 1]) &&
-                   isalnum(pattern[*pos + 1])) {
-            // Character ranges like [a-z] are NOT supported
-            // Use fragments with explicit alternation instead
-            fprintf(stderr, "Error: Character ranges like [a-z] are not supported.\n");
-            fprintf(stderr, "       Use fragments with explicit alternation instead.\n");
-            fprintf(stderr, "       Example: [fragment: DIGIT] 0|1|2|3|4|5|6|7|8|9\n");
-            fprintf(stderr, "       Then reference as ((DIGIT))\n");
-            exit(1);
-        } else if (pattern[*pos] != ']') {
-            alt_chars[alt_count++] = pattern[*pos];
-            (*pos)++;
-        }
-    }
-
-    // Add transitions for each unique character
-    if (!negated) {
-        // Normal class: add transitions for characters in the class
-        bool seen[256] = {false};
-        for (int i = 0; i < alt_count; i++) {
-            unsigned char uc = (unsigned char)alt_chars[i];
-            if (!seen[uc]) {
-                seen[uc] = true;
-                int sid = find_symbol_id(alt_chars[i]);
-                if (sid != -1) {
-                    nfa_add_transition(start_state, class_state, sid);
-                    if (current_class_symbol_count < MAX_CLASS_SYMBOLS) {
-                        current_class_symbols[current_class_symbol_count++] = sid;
-                    }
-                }
-            }
-        }
-    } else {
-        // Negated class (Bug 15.4): add transitions for all symbols NOT in the class
-        bool excluded[256] = {false};
-        for (int i = 0; i < alt_count; i++) {
-            excluded[(unsigned char)alt_chars[i]] = true;
-        }
-
-        // Iterate through all literal symbols in the alphabet (0-255)
-        for (int sid = 0; sid < 256; sid++) {
-            // Find character associated with this symbol
-            // For literal symbols, sid is the character code
-            if (!excluded[sid]) {
-                nfa_add_transition(start_state, class_state, sid);
-                if (current_class_symbol_count < MAX_CLASS_SYMBOLS) {
-                    current_class_symbols[current_class_symbol_count++] = sid;
-                }
-            }
-        }
-    }
-
-    if (pattern[*pos] == ']') {
-        (*pos)++; // Skip closing ]
-    }
-
-    nfa_finalize_state(class_state);
-
-    // Set current_fragment for quantifier handling
-    current_fragment.anchor_state = start_state;
-    current_fragment.is_single_char = false;
-    current_fragment.loop_entry_state = class_state;
-    current_fragment.exit_state = class_state;
-
-    return class_state;
+    // Character classes [abc] are NOT supported.
+    // Generate a clear error message explaining alternatives.
+    fprintf(stderr, "ERROR: Character class syntax [abc] is not supported.\n");
+    fprintf(stderr, "  The '[' character is reserved.\n");
+    fprintf(stderr, "  To match '[' literally, escape it as '\\['\n");
+    fprintf(stderr, "  For alternatives, use parentheses:\n");
+    fprintf(stderr, "    - For single chars (a OR b OR c): (a|b|c)\n");
+    fprintf(stderr, "    - For multi-char alternatives (ab OR bc): (ab|bc)\n");
+    fprintf(stderr, "  For character ranges, use fragments:\n");
+    fprintf(stderr, "    [fragment:LOWER] a|b|c|d|e|f|...\n");
+    fprintf(stderr, "    Reference as: ((LOWER))\n");
+    fprintf(stderr, "Pattern position: %d\n", *pos);
+    fprintf(stderr, "Pattern: %s\n", pattern);
+    
+    // Exit with error to stop pattern processing
+    exit(1);
+    
+    // Return value is unreachable due to exit()
+    return -1;
 }
 
 // Parse primary element: char, escaped, quoted, class, group, or capture tag
@@ -1386,8 +1312,14 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
             }
             break;
 
-        case '[':
-            return parse_rdp_class(pattern, pos, start_state);
+        case '[': {
+            int result = parse_rdp_class(pattern, pos, start_state);
+            if (result < 0) {
+                // Error already printed by parse_rdp_class
+                exit(1);
+            }
+            return result;
+        }
 
         case '(':
             // Check for (*) explicit wildcard syntax
