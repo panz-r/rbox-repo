@@ -269,6 +269,9 @@ static int last_element_sid = -1;
 // For + quantifier: tracks if we're inside a capture (capture ID to defer)
 static int8_t pending_capture_defer_id = -1;
 
+// For fragment chaining: tracks the fragment's entry point for alternation branches
+static int pending_frag_start = -1;
+
 // Reset pattern state - clears pending markers and capture stack for a new pattern
 // This prevents cross-pattern contamination when states are shared
 static void reset_nfa_builder_pattern_state(void) {
@@ -304,10 +307,6 @@ typedef struct {
 // Stack-based context for nested quantifiers
 // Current parsing context - explicit instead of scattered globals
 static FragmentResult current_fragment;
-// For character class symbols in current fragment
-#define MAX_CLASS_SYMBOLS 64
-static int current_class_symbols[MAX_CLASS_SYMBOLS];
-static int current_class_symbol_count = 0;
 
 static bool current_is_char_class = false;
 static bool has_pending_quantifier = false;
@@ -1125,6 +1124,10 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
         }
     }
 
+    // Store frag_start in a global so alternation code can access it
+    // This allows branches to connect to the fragment continuation
+    pending_frag_start = frag_start;
+
     // Parse the fragment value starting from frag_start
     // For multi-char fragments (without alternation), skip first char since we handled it
     int frag_pos = 0;
@@ -1135,6 +1138,10 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     } else {
         frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
     }
+
+    // For fragments used in sequence (start_state != 0 and has_alternation),
+    // we need to connect the fragment's exit to allow continuation to next fragment
+    // This is handled by the caller when it chains fragments
 
     // Populate FragmentResult
     // For fragments with alternation, ALWAYS use frag_start as anchor
@@ -1168,6 +1175,7 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 }
 
 static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
+    (void)start_state;  // Not used - character classes are disallowed
     // Character classes [abc] are NOT supported.
     // Generate a clear error message explaining alternatives.
     fprintf(stderr, "ERROR: Character class syntax [abc] is not supported.\n");
@@ -1369,8 +1377,28 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                         // Only treat as fragment if it exists
                         if (find_fragment(frag_name) != NULL) {
                             FragmentResult frag_result = parse_rdp_fragment(pattern, pos, start_state);
+                            
                             // Store in current_fragment for quantifier handler
                             current_fragment = frag_result;
+                            
+                            // For fragments in sequence like ((frag1))((frag2)):
+                            // Connect from previous fragment's EXIT to this fragment's anchor
+                            // This allows continuation after completing the first fragment
+                            static int prev_frag_exit = -1;
+                            
+                            if (prev_frag_exit >= 0) {
+                                int epsilon_sid = VSYM_EPS;
+                                if (epsilon_sid != -1) {
+                                    // Connect previous exit to this anchor
+                                    DEBUG_PRINT("  Connecting prev_exit %d -> anchor %d via EPSILON\n",
+                                                prev_frag_exit, frag_result.anchor_state);
+                                    nfa_add_transition(prev_frag_exit, frag_result.anchor_state, epsilon_sid);
+                                }
+                            }
+                            
+                            // Store this fragment's exit for the next fragment
+                            prev_frag_exit = frag_result.exit_state;
+                            
                             // For element parsing, return the exit state
                             return frag_result.exit_state;
                         }
@@ -1704,6 +1732,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
         }
 
         // Parse remaining alternatives
+        int last_branch_end = first_end;
         while (pattern[*pos] == '|') {
             (*pos)++; // Skip |
             
@@ -1721,6 +1750,18 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
             if (epsilon_sid != -1) {
                 nfa_add_transition(branch_end, merge_state, epsilon_sid);
             }
+            
+            // Track the last branch end for continuation
+            last_branch_end = branch_end;
+        }
+
+        // CRITICAL FIX: Propagate continuation from last branch to merge_state
+        // The merge_state (where all branches converge) needs outgoing transitions
+        // to allow continuation to subsequent fragments in the pattern.
+        // Add EPSILON from merge_state to last_branch_end, so from merge_state
+        // you can continue to the next fragment via the last branch's path.
+        if (last_branch_end != merge_state && epsilon_sid != -1) {
+            nfa_add_transition(merge_state, last_branch_end, epsilon_sid);
         }
 
         // CRITICAL FIX: Mark merge_state as accepting if any branch path is accepting
@@ -1813,7 +1854,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
     memset(&current_fragment, 0, sizeof(current_fragment));
     current_fragment.exit_state = -1;
     current_is_char_class = false;
-    current_class_symbol_count = 0;
     has_pending_quantifier = false;
 
     // Find entry state - try to share prefix with existing patterns

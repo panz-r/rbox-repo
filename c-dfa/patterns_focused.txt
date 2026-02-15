@@ -4,6 +4,10 @@
 [safe:alternation:test] (a|b)
 [safe:alternation:test] (ABC|DEF)
 
+# Alternation with quantifiers
+[safe:alternation:test] (a|b)+
+[safe:alternation:test] (a|b|c)+
+
 # Safe file operations
 [safe:file:read] cat file.txt
 [safe:file:read] cat (*).txt
