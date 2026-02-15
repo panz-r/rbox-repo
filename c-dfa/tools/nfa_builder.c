@@ -1573,7 +1573,11 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
     fflush(stderr);
 #endif
     int current;
-    if (has_pending_quantifier && current_fragment.exit_state != -1) {
+    // CRITICAL FIX: Only use current_fragment if it was set for this specific element
+    // The exit_state must be valid (>= 0) AND not be a stale value from a previous parse
+    // We track this by checking if we're in a pending quantifier context
+    bool current_fragment_valid = (current_fragment.exit_state >= 0 && has_pending_quantifier);
+    if (current_fragment_valid) {
         // Element was already parsed in parse_rdp_sequence, use its exit state
         current = current_fragment.exit_state;
         DEBUG_NFA_PRINT("Using existing exit_state: %d\n", current);
@@ -1637,6 +1641,10 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             // Create exit state
             int exit_state = nfa_add_state_with_minimization(false);
             state_do_not_share[exit_state] = true;
+
+            // DEBUG: Print what anchor_state we're using
+            fprintf(stderr, "DEBUG +: current_fragment.anchor_state=%d, exit_state=%d\n", 
+                    current_fragment.anchor_state, current_fragment.exit_state);
 
             // Loop back to the START of the element (anchor_state), not the end
             // This is critical for multi-character sequences like (AB)+
@@ -2076,11 +2084,38 @@ static void parse_pattern_full(const char* pattern, const char* category,
         // If so, create a fork state to avoid marking the shared state as accepting
         // CRITICAL: Also create fork state if end_state is an accepting state (category_mask != 0)
         // This prevents marking + quantifier intermediate states as EOS target
+        // PHASE 2 FIX: Exclude self-loops (EPSILON from X to X) from has_outgoing check
         bool has_outgoing = false;
         for (int s = 0; s < MAX_SYMBOLS; s++) {
-            if (nfa[end_state].transitions[s] != -1 || mta_is_multi(&nfa[end_state].multi_targets, s)) {
+            int t = nfa[end_state].transitions[s];
+            // Exclude self-loops: transition to same state
+            if (t != -1 && t != end_state) {
                 has_outgoing = true;
                 break;
+            }
+            // Check multi-target transitions, excluding self-loops
+            if (mta_is_multi(&nfa[end_state].multi_targets, s)) {
+                int cnt = 0;
+                int* targets = mta_get_target_array(&nfa[end_state].multi_targets, s, &cnt);
+                for (int i = 0; i < cnt; i++) {
+                    if (targets[i] != end_state) {  // Exclude self-loop
+                        has_outgoing = true;
+                        break;
+                    }
+                }
+                if (has_outgoing) break;
+            }
+        }
+        
+        // PHASE 2 FIX: Also check EPSILON transitions, excluding self-loops
+        if (!has_outgoing && mta_is_multi(&nfa[end_state].multi_targets, VSYM_EPS)) {
+            int eps_cnt = 0;
+            int* eps_targets = mta_get_target_array(&nfa[end_state].multi_targets, VSYM_EPS, &eps_cnt);
+            for (int i = 0; i < eps_cnt; i++) {
+                if (eps_targets[i] != end_state) {  // Exclude self-loop
+                    has_outgoing = true;
+                    break;
+                }
             }
         }
         // If end_state is an accepting state (has category_mask), treat as having outgoing
@@ -2097,12 +2132,16 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // IMPORTANT: Don't mark end_state as EOS target - it's shared and shouldn't accept here
             eos_target_state = nfa_add_state_with_minimization(false);
             nfa[eos_target_state].is_eos_target = true;  // Only the fork state accepts
+            // PHASE 3 FIX: Set category on FORK state, not on accepting state
+            nfa[eos_target_state].category_mask = cat_mask;
+            state_do_not_share[eos_target_state] = true;  // CONSERVATIVE: Don't share fork states
             nfa_add_transition(end_state, eos_target_state, eos_sid);
             nfa_finalize_state(end_state);
             // DO NOT mark end_state as EOS target - it has outgoing transitions (shared state)
         }
 
-        int accepting = nfa_add_state_with_category(cat_mask);
+        // PHASE 3 FIX: Accepting state does NOT get category - it's inherited from fork
+        int accepting = nfa_add_state_with_category(0);  // No category on accepting state
         nfa[accepting].is_eos_target = true;  // This state can accept via EOS
         state_do_not_share[accepting] = true;  // CONSERVATIVE: Don't share accepting states
         nfa_add_transition(eos_target_state, accepting, eos_sid);

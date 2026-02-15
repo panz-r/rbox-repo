@@ -422,6 +422,23 @@ void nfa_to_dfa(void) {
                 }
             }
         }
+        
+        // Also collect category from EOS target states (fork states can reach accepting states via EOS)
+        // This ensures we get categories from patterns that require multiple iterations
+        if (nfa[ns].is_eos_target && nfa[ns].category_mask == 0) {
+            int eos_cnt = 0;
+            int* eos_targets = mta_get_target_array(&nfa[ns].multi_targets, 258, &eos_cnt);
+            if (eos_targets) {
+                for (int e = 0; e < eos_cnt; e++) {
+                    int eos_t = eos_targets[e];
+                    if (nfa[eos_t].category_mask != 0) {
+                        im |= nfa[eos_t].category_mask;
+                        break;
+                    }
+                }
+            }
+        }
+        
         // Track all reachable accepting patterns for state deduplication
         if (nfa[ns].pattern_id != 0) {
             if (nfa[ns].pattern_id <= 64) {
@@ -476,12 +493,30 @@ void nfa_to_dfa(void) {
             uint8_t mm = 0;
             uint16_t accept_pattern2 = 0;
             uint64_t reachable_accepting_patterns2 = 0;
+            
             for (int j = 0; j < tc2; j++) {
                 int ns = temp2[j];
                 // Category from states that are either accepting (pattern_id) or EOS targets
                 if ((nfa[ns].pattern_id != 0 || nfa[ns].is_eos_target) && nfa[ns].category_mask != 0) {
                     mm |= nfa[ns].category_mask;
                 }
+                
+                // Also collect category from EOS target states (fork states can reach accepting states via EOS)
+                // This ensures we get categories from patterns that require multiple iterations
+                if (nfa[ns].is_eos_target && nfa[ns].category_mask == 0) {
+                    int eos_cnt = 0;
+                    int* eos_targets = mta_get_target_array(&nfa[ns].multi_targets, 258, &eos_cnt);
+                    if (eos_targets) {
+                        for (int e = 0; e < eos_cnt; e++) {
+                            int eos_t = eos_targets[e];
+                            if (nfa[eos_t].category_mask != 0) {
+                                mm |= nfa[eos_t].category_mask;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
                 // Accept pattern from any state in the closure (epsilon-reached states included)
                 if (nfa[ns].pattern_id != 0 && accept_pattern2 == 0) {
                     accept_pattern2 = nfa[ns].pattern_id - 1;  // Convert back to 0-based
@@ -493,6 +528,7 @@ void nfa_to_dfa(void) {
                     }
                 }
             }
+            
             // DO NOT inherit from source - that breaks prefix sharing
 
             collect_markers_from_states(temp2, tc2, markers, &marker_count);
