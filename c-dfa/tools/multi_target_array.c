@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <errno.h>
-#include "multi_target_array.h"
+#include "../include/multi_target_array.h"
 
 /**
  * Check allocation result and abort on failure

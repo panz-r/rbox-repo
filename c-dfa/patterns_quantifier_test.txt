@@ -49,7 +49,7 @@
 [safe::quant1_opt] a((b))?
 [caution::quant2_plus] abc((d))+
 [safe::quant_x_plus] ((x)y)+
-[safe::quant_x_star] ((x)y)*
+[caution::quant_x_star] ((x)y)*
 
 # ============================================
 # THE CRITICAL BUG CASE

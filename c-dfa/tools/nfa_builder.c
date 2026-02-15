@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <ctype.h>
-#include "multi_target_array.h"
+#include "../include/multi_target_array.h"
 #include "../include/dfa_types.h"
 #include "../include/nfa.h"
 

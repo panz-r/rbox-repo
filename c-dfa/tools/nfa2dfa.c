@@ -6,7 +6,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include "../include/dfa_types.h"
-#include "multi_target_array.h"
+#include "../include/multi_target_array.h"
 #include "../include/nfa.h"
 #include "dfa_minimize.h"
 
@@ -49,13 +49,25 @@ typedef struct {
     bool is_special;
 } alphabet_entry_t;
 
-// Global NFA/DFA storage
+// Global NFA/DFA storage - use larger static arrays for practical workloads
+// For truly astronomical state counts (>32K), a more sophisticated solution would be needed
 static nfa_state_t nfa[MAX_STATES];
 static build_dfa_state_t dfa[MAX_STATES];
 static alphabet_entry_t alphabet[MAX_SYMBOLS];
 static int nfa_state_count = 0;
 static int dfa_state_count = 0;
 static int alphabet_size = 0;
+static int max_states = MAX_STATES;
+
+// DFA Deduplication Hash Table
+#define DFA_HASH_SIZE 32749
+static int dfa_hash_table[DFA_HASH_SIZE];
+static int dfa_next_in_bucket[MAX_STATES];
+
+static void init_hash_table(void) {
+    memset(dfa_hash_table, -1, sizeof(dfa_hash_table));
+    memset(dfa_next_in_bucket, -1, sizeof(dfa_next_in_bucket));
+}
 
 // Phase 3: Marker harvesting system
 #define MAX_MARKERS_PER_DFA_TRANSITION 16
@@ -67,8 +79,18 @@ typedef struct {
     int count;
 } MarkerList;
 
-static MarkerList dfa_marker_lists[MAX_DFA_MARKER_LISTS];
+static MarkerList* dfa_marker_lists = NULL;
 static int marker_list_count = 0;
+
+static void init_marker_lists(void) {
+    dfa_marker_lists = alloc_or_abort(malloc(sizeof(MarkerList) * MAX_DFA_MARKER_LISTS), "Failed to allocate marker lists");
+    memset(dfa_marker_lists, 0, sizeof(MarkerList) * MAX_DFA_MARKER_LISTS);
+}
+
+static void free_marker_lists(void) {
+    if (dfa_marker_lists) free(dfa_marker_lists);
+    dfa_marker_lists = NULL;
+}
 
 // Get unique marker list (store if new)
 static uint32_t store_marker_list(const uint32_t* markers, int count) {
@@ -121,15 +143,30 @@ static void collect_markers_from_states(const int* states, int state_count,
     *out_count = count;
 }
 
-// DFA Deduplication Hash Table
-#define DFA_HASH_SIZE 32749
-static int dfa_hash_table[DFA_HASH_SIZE];
-static int dfa_next_in_bucket[MAX_STATES];
+// Comparator for sorting NFA states (for canonical ordering)
+static int compare_ints(const void* a, const void* b) {
+    return (*(int*)a - *(int*)b);
+}
+
+// Sort states canonically before hashing to enable better state merging
+// This ensures that equivalent NFA state sets get the same hash even if
+// they were discovered in different orders during NFA-to-DFA conversion
+static void sort_states_canonical(int* states, int count) {
+    qsort(states, count, sizeof(int), compare_ints);
+}
 
 static uint32_t hash_nfa_set(const int* states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
+    // Sort states canonically for consistent hashing
+    int sorted[MAX_STATES];
+    int sorted_count = count;
+    for (int i = 0; i < count && i < MAX_STATES; i++) {
+        sorted[i] = states[i];
+    }
+    sort_states_canonical(sorted, sorted_count);
+    
     uint32_t hash = 2166136261u;
-    for (int i = 0; i < count; i++) {
-        hash ^= (uint32_t)states[i];
+    for (int i = 0; i < sorted_count; i++) {
+        hash ^= (uint32_t)sorted[i];
         hash *= 16777619;
     }
     hash ^= (uint32_t)mask << 24;
@@ -138,14 +175,22 @@ static uint32_t hash_nfa_set(const int* states, int count, uint8_t mask, uint16_
 }
 
 static int find_dfa_state_hashed(uint32_t hash, const int* states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
+    // Sort states canonically for comparison
+    int sorted[MAX_STATES];
+    int sorted_count = count;
+    for (int i = 0; i < count && i < MAX_STATES; i++) {
+        sorted[i] = states[i];
+    }
+    sort_states_canonical(sorted, sorted_count);
+    
     int idx = dfa_hash_table[hash % DFA_HASH_SIZE];
     while (idx != -1) {
-        if (dfa[idx].nfa_state_count == count) {
+        if (dfa[idx].nfa_state_count == sorted_count) {
             uint8_t existing_mask = (uint8_t)(dfa[idx].flags >> 8);
             if (existing_mask == mask && dfa[idx].first_accepting_pattern == first_accepting_pattern) {
                 bool match = true;
-                for (int j = 0; j < count; j++) {
-                    if (dfa[idx].nfa_states[j] != states[j]) { match = false; break; }
+                for (int j = 0; j < sorted_count; j++) {
+                    if (dfa[idx].nfa_states[j] != sorted[j]) { match = false; break; }
                 }
                 if (match) return idx;
             }
@@ -178,16 +223,22 @@ void nfa_init(void) {
 #endif  // NFABUILDER_EXCLUDE_NFA_INIT
 
 void dfa_init(void) {
-    memset(dfa_hash_table, -1, sizeof(dfa_hash_table));
-    for (int i = 0; i < MAX_STATES; i++) {
-        dfa_next_in_bucket[i] = -1;
-        dfa[i].flags = 0;
-        dfa[i].transition_count = 0;
-        dfa[i].nfa_state_count = 0;
-        dfa[i].eos_target = 0;
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
-            dfa[i].transitions[j] = -1;
-            dfa[i].transitions_from_any[j] = false;
+    if (dfa_hash_table) {
+        memset(dfa_hash_table, -1, sizeof(int) * DFA_HASH_SIZE);
+    }
+    if (dfa_next_in_bucket && max_states > 0) {
+        memset(dfa_next_in_bucket, -1, sizeof(int) * max_states);
+    }
+    if (dfa && max_states > 0) {
+        for (int i = 0; i < max_states; i++) {
+            dfa[i].flags = 0;
+            dfa[i].transition_count = 0;
+            dfa[i].nfa_state_count = 0;
+            dfa[i].eos_target = 0;
+            for (int j = 0; j < MAX_SYMBOLS; j++) {
+                dfa[i].transitions[j] = -1;
+                dfa[i].transitions_from_any[j] = false;
+            }
         }
     }
     dfa_state_count = 0;
@@ -284,7 +335,7 @@ void epsilon_closure(int* states, int* count, int max_states) {
 // This is used to fix quantifier category mixing bug where different patterns with shared prefixes
 // have fork states that can only reach SOME accepting states, not all
 // KEY: We search from ALL starting states TOGETHER to find all reachable accepting states
-static uint8_t collect_fork_categories(int* states, int count) {
+static uint8_t collect_fork_categories(int* states, int count, bool is_initial_state) {
     uint8_t fork_cats = 0;
     
     // Check if there are any fork states in the NFA (is_eos_target with category but pattern_id=0)
@@ -304,12 +355,23 @@ static uint8_t collect_fork_categories(int* states, int count) {
     int stack[MAX_STATES];
     int stack_top = 0;
     
-    // Add all starting states to the stack
-    for (int s = 0; s < count; s++) {
-        int start = states[s];
-        if (start >= 0 && start < nfa_state_count && !visited[start]) {
-            stack[stack_top++] = start;
-            visited[start] = true;
+    // Add starting states to the stack
+    // For initial state, only use state 0 to find fork states that can match empty
+    // For non-initial states, search from all states
+    if (is_initial_state) {
+        // For initial state, only start from state 0
+        if (0 >= 0 && 0 < nfa_state_count) {
+            stack[stack_top++] = 0;
+            visited[0] = true;
+        }
+    } else {
+        // For non-initial states, search from all states
+        for (int s = 0; s < count; s++) {
+            int start = states[s];
+            if (start >= 0 && start < nfa_state_count && !visited[start]) {
+                stack[stack_top++] = start;
+                visited[start] = true;
+            }
         }
     }
     
@@ -344,7 +406,18 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     uint32_t h = hash_nfa_set(nfa_states, nfa_count, category_mask, first_accepting_pattern);
     int existing = find_dfa_state_hashed(h, nfa_states, nfa_count, category_mask, first_accepting_pattern);
     if (existing != -1) return existing;
-    if (dfa_state_count >= MAX_STATES) { fprintf(stderr, "FATAL: Max DFA states reached\n"); exit(1); }
+    if (dfa_state_count >= MAX_STATES) { 
+        fprintf(stderr, "FATAL: Max DFA states reached (%d states)\n", MAX_STATES);
+        fprintf(stderr, "This usually happens when:\n");
+        fprintf(stderr, "  1. The pattern file has too many complex patterns\n");
+        fprintf(stderr, "  2. Patterns have many alternatives (e.g., large character classes)\n");
+        fprintf(stderr, "  3. Patterns use nested quantifiers that cause state explosion\n");
+        fprintf(stderr, "\nSuggestions:\n");
+        fprintf(stderr, "  - Split patterns into multiple files\n");
+        fprintf(stderr, "  - Use fragments instead of large alternations\n");
+        fprintf(stderr, "  - Simplify complex patterns\n");
+        exit(1); 
+    }
     int state = dfa_state_count++;
     memset(&dfa[state], 0, sizeof(build_dfa_state_t));
     for (int i = 0; i < MAX_SYMBOLS; i++) dfa[state].transitions[i] = -1;
@@ -357,8 +430,15 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     }
     dfa[state].accepting_pattern_id = accepting_pattern_id;
     dfa[state].first_accepting_pattern = first_accepting_pattern;
+    
+    // Store sorted states for canonical form (helps with later minimization)
+    int sorted[MAX_STATES];
+    for (int i = 0; i < nfa_count && i < MAX_STATES; i++) {
+        sorted[i] = nfa_states[i];
+    }
+    sort_states_canonical(sorted, nfa_count);
     dfa[state].nfa_state_count = nfa_count;
-    for (int i = 0; i < nfa_count && i < 8192; i++) dfa[state].nfa_states[i] = nfa_states[i];
+    for (int i = 0; i < nfa_count && i < 8192; i++) dfa[state].nfa_states[i] = sorted[i];
     int bucket = h % DFA_HASH_SIZE;
     dfa_next_in_bucket[state] = dfa_hash_table[bucket];
     dfa_hash_table[bucket] = state;
@@ -501,10 +581,10 @@ void nfa_to_dfa(void) {
             }
         }
         
-        // Also collect category from EOS target states (fork states can reach accepting states via EOS)
-        // This ensures we get categories from patterns that require multiple iterations
-        // CRITICAL: For initial DFA state, don't collect from is_eos_target states
-        if (!is_initial_state && nfa[ns].is_eos_target && nfa[ns].category_mask == 0) {
+    // Also collect category from EOS target states (fork states can reach accepting states via EOS)
+    // This ensures we get categories from patterns that require multiple iterations
+    // CRITICAL: For initial DFA state, don't collect from is_eos_target states
+    if (!is_initial_state && nfa[ns].is_eos_target && nfa[ns].category_mask == 0) {
             int eos_cnt = 0;
             int* eos_targets = mta_get_target_array(&nfa[ns].multi_targets, 258, &eos_cnt);
             if (eos_targets) {
@@ -526,7 +606,7 @@ void nfa_to_dfa(void) {
         }
     }
     // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
-    uint8_t fork_cats = collect_fork_categories(temp, tc);
+    uint8_t fork_cats = collect_fork_categories(temp, tc, is_initial_state);
     im |= fork_cats;
     int idfa = dfa_add_state(im, temp, tc, accept_pattern, reachable_accepting_patterns);
     if (idfa < 0) {
@@ -614,7 +694,7 @@ void nfa_to_dfa(void) {
             
             // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
             // This ensures patterns with shared prefixes but different categories are all considered
-            uint8_t fork_cats = collect_fork_categories(temp2, tc2);
+            uint8_t fork_cats = collect_fork_categories(temp2, tc2, false);
             mm |= fork_cats;
             // DO NOT inherit from source - that breaks prefix sharing
 
@@ -1064,6 +1144,9 @@ int main(int argc, char* argv[]) {
         }
     }
     if (input_file == NULL) return 1;
+    
+    init_hash_table();
+    
     load_nfa_file(input_file);
     nfa_to_dfa();
     flatten_dfa();

@@ -492,6 +492,7 @@ static void run_tripled_quantifier_interactions(void) {
     TestCase cases[] = {
         {"ab", true, 2, CAT_MASK_SAFE, "a((b))+ matches 'ab'"},
         {"abbb", true, 4, CAT_MASK_SAFE, "a((b))+ matches 'abbb'"},
+        {"", true, 0, CAT_MASK_CAUTION, "a((b))* should NOT match empty (requires 'a') - but ((x)y)* in caution does match, so DFA returns caution"},
         {"a", true, 1, CAT_MASK_SAFE, "a((b))* matches 'a' (zero 'b's)"},
         {"abb", true, 3, CAT_MASK_SAFE, "a((b))* matches 'abb'"},
         {"a", true, 1, CAT_MASK_SAFE, "a((b))? matches 'a'"},
@@ -499,6 +500,8 @@ static void run_tripled_quantifier_interactions(void) {
         {"abcd", true, 4, CAT_MASK_CAUTION, "abc((d))+ matches 'abcd'"},
         {"xy", true, 2, CAT_MASK_SAFE, "((x)y)+ matches 'xy'"},
         {"xyxy", true, 4, CAT_MASK_SAFE, "((x)y)+ matches 'xyxy'"},
+        {"", true, 0, CAT_MASK_CAUTION, "((x)y)* matches empty (zero repetitions of xy is valid, now caution category)"},
+        {"xy", true, 2, CAT_MASK_SAFE, "((x)y)* matches 'xy'"},
     };
 
     run_test_group("TRIPLED QUANTIFIER INTERACTIONS", "patterns_quantifier_interactions_isolated.txt",

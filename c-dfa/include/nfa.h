@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define MAX_STATES 8192
+#define MAX_STATES 32768
 #define MAX_SYMBOLS 320
 #define MAX_CHARS 256
 #define MAX_PATTERNS 2048
@@ -18,6 +18,11 @@
 #define SIGNATURE_TABLE_SIZE 4096
 #define MAX_PENDING_MARKERS 8
 #define MAX_TRANSITION_MARKERS 65536
+
+/* Dynamic allocation for large arrays - use malloc at runtime */
+#ifndef STATIC_ARRAYS
+#define USE_DYNAMIC_ARRAYS 1
+#endif
 
 /* Category bitmask constants (8 categories, one bit each) */
 #define CAT_MASK_SAFE       0x01
