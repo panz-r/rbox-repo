@@ -42,12 +42,12 @@
 #endif
 
 #ifndef NFA_BUILDER_VERBOSE
-#define NFA_BUILDER_VERBOSE 0
+#define NFA_BUILDER_VERBOSE 1
 #endif
 
 // Conditional debug print macro - only prints if NFA_BUILDER_DEBUG is true
 #if NFA_BUILDER_DEBUG
-#define DEBUG_PRINT(...) fprintf(stderr, "//DEBUG: " __VA_ARGS__)
+#define DEBUG_PRINT(...) fprintf(stderr, "//DEBUG: " __VA_ARGS__); fflush(stderr)
 #else
 #define DEBUG_PRINT(...) ((void)0)
 #endif
@@ -1803,6 +1803,7 @@ static int lookup_acceptance_category(const char* category, const char* subcateg
 static void parse_pattern_full(const char* pattern, const char* category,
                                 const char* subcategory, const char* operations,
                                 const char* action) {
+    fprintf(stderr, "DEBUG parse_pattern_full called: pattern='%s'\n", pattern);
     // Clear per-pattern globals to avoid stale values between patterns
     last_element_sid = -1;
     pending_capture_defer_id = -1;
@@ -2078,8 +2079,21 @@ static void parse_pattern_full(const char* pattern, const char* category,
         }
         DEBUG_PRINT("finalize: end_state=%d, has_outgoing=%d, is_eos_target before=%d, cat_mask=0x%02x\n",
                 end_state, has_outgoing, nfa[end_state].is_eos_target, nfa[end_state].category_mask);
+        
+        // Debug: print EPSILON transitions from end_state
+        int eps_sid = VSYM_EPS;
+        if (eps_sid != -1 && mta_is_multi(&nfa[end_state].multi_targets, eps_sid)) {
+            int eps_cnt = 0;
+            int* eps_targets = mta_get_target_array(&nfa[end_state].multi_targets, eps_sid, &eps_cnt);
+            fprintf(stderr, "DEBUG: end_state=%d has %d EPSILON targets: ", end_state, eps_cnt);
+            for (int i = 0; i < eps_cnt; i++) {
+                fprintf(stderr, "%d ", eps_targets[i]);
+            }
+            fprintf(stderr, "\n");
+        }
 
         if (has_outgoing) {
+            fprintf(stderr, "DEBUG: has_outgoing=true, creating fork state\n");
             // Create a fork state - this is where the pattern can end
             // The shared end_state continues to its other transitions
             // IMPORTANT: Don't mark end_state as EOS target - it's shared and shouldn't accept here
@@ -2090,13 +2104,22 @@ static void parse_pattern_full(const char* pattern, const char* category,
             nfa_add_transition(end_state, eos_target_state, eos_sid);
             nfa_finalize_state(end_state);
             // DO NOT mark end_state as EOS target - it has outgoing transitions (shared state)
-        }
 
-        // PHASE 3 FIX: Accepting state does NOT get category - it's inherited from fork
-        int accepting = nfa_add_state_with_category(0);  // No category on accepting state
-        nfa[accepting].is_eos_target = true;  // This state can accept via EOS
-        state_do_not_share[accepting] = true;  // CONSERVATIVE: Don't share accepting states
-        nfa_add_transition(eos_target_state, accepting, eos_sid);
+            // CRITICAL FIX: The accepting state needs pattern_id set to be recognized as accepting
+            // Create accepting state with proper initialization
+            int accepting = nfa_state_count;
+            nfa_state_count++;
+            nfa[accepting].category_mask = 0;  // No category - inherited from fork
+            nfa[accepting].pattern_id = (current_pattern_index >= 0) ? (uint16_t)(current_pattern_index + 1) : 0;
+            fprintf(stderr, "DEBUG: Created accepting state %d with pattern_id=%d\n", accepting, nfa[accepting].pattern_id);
+            nfa[accepting].is_eos_target = true;
+            nfa[accepting].tag_count = 0;
+            for (int j = 0; j < MAX_TAGS; j++) nfa[accepting].tags[j] = NULL;
+            for (int j = 0; j < MAX_SYMBOLS; j++) nfa[accepting].transitions[j] = -1;
+            mta_init(&nfa[accepting].multi_targets);
+            state_do_not_share[accepting] = true;
+            nfa_add_transition(eos_target_state, accepting, eos_sid);
+        }
 
         // When has_outgoing=false, eos_target_state == end_state, so mark it as EOS target
         if (!has_outgoing) {
@@ -2105,13 +2128,12 @@ static void parse_pattern_full(const char* pattern, const char* category,
             state_do_not_share[eos_target_state] = true;  // CONSERVATIVE: Don't share accepting states
         }
 
-        nfa_add_tag(accepting, category);
-        if (subcategory[0] != '\0') nfa_add_tag(accepting, subcategory);
-        if (operations[0] != '\0') nfa_add_tag(accepting, operations);
-        nfa_add_tag(accepting, action);
+        nfa_add_tag(eos_target_state, category);
+        if (subcategory[0] != '\0') nfa_add_tag(eos_target_state, subcategory);
+        if (operations[0] != '\0') nfa_add_tag(eos_target_state, operations);
+        nfa_add_tag(eos_target_state, action);
 
         nfa_finalize_state(eos_target_state);
-        nfa_finalize_state(accepting);
     }
 }
 
