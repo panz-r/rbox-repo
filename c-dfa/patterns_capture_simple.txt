@@ -26,3 +26,12 @@ git log -n <n>((digit))+</n>
 
 # Simple word capture
 [safe:capture:word] echo <msg>((lowercase))+</msg>
+
+# head with capture - test input: head -n 10 file.txt
+[safe:capture:head] head -n <lines>((digit))+</lines> <file>((alphanum))+\.txt</file>
+
+# tail with capture - test input: tail -n 5 file.txt
+[safe:capture:tail] tail -n <lines>((digit))+</lines> <file>((alphanum))+\.txt</file>
+
+# grep with capture - test input: grep pattern file.txt
+[safe:capture:grep] grep <pattern>((lowercase))+</pattern> <file>((alphanum))+\.txt</file>

@@ -1,0 +1,21 @@
+# ============================================================================
+# HTTP Capture Test Patterns
+# ============================================================================
+# Tests for HTTP request parsing and curl command captures
+# ============================================================================
+
+# Fragments for character classes
+[fragment:HTTP::UPPER] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:HTTP::LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[fragment:HTTP::DIGIT] 0|1|2|3|4|5|6|7|8|9
+[fragment:HTTP::ALNUM] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|_|-|\.
+
+# HTTP request capture - test input: GET /api/users HTTP/1.1
+# Method is GET or POST at the start
+[safe:capture:get] GET /api/<resource>((HTTP::LOWER))+</resource> HTTP/1\.1
+
+# POST request capture - test input: POST /api/data HTTP/1.1
+[safe:capture:post] POST /api/<resource>((HTTP::LOWER))+</resource> HTTP/1\.1
+
+# curl with method capture - test input: curl -X GET http://api.example.com
+[safe:capture:curl] curl -X <method>((HTTP::UPPER))+</method> http://api.example.com

@@ -1,0 +1,13 @@
+# ============================================================================
+# Pattern File for Hard Edge Cases Tests
+# ============================================================================
+# Tests: X followed by 1-4 digits followed by Y
+# ============================================================================
+
+[fragment:DIGIT] 0|1|2|3|4|5|6|7|8|9
+
+# X followed by exactly 1-4 digits followed by Y (no spaces)
+[safe:hard:d1] X((DIGIT))Y
+[safe:hard:d2] X((DIGIT))((DIGIT))Y
+[safe:hard:d3] X((DIGIT))((DIGIT))((DIGIT))Y
+[safe:hard:d4] X((DIGIT))((DIGIT))((DIGIT))((DIGIT))Y

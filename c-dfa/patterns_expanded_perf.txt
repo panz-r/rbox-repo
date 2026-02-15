@@ -11,6 +11,8 @@
 # Simple patterns for stress testing
 [safe:stress] (a)+
 [safe:stress] ab
+[safe:stress] (ab)+
 
 # Repeated patterns
 [safe:stress] tes(t)+
+[safe:stress] (test)+

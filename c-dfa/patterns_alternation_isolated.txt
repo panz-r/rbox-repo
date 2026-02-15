@@ -1,0 +1,12 @@
+# Isolated Alternation Test Patterns
+# This file contains ONLY the patterns needed for the ALTERNATION TESTS
+# No overlapping patterns that would cause unexpected matches
+
+# (a|b) - matches single 'a' or 'b'
+[safe:alt] (a|b)
+
+# (a|b)+ - matches one or more of 'a' or 'b' (NOT 'c')
+[safe:alt] (a|b)+
+
+# (ABC|DEF) - matches literal ABC or DEF
+[safe:alt] (ABC|DEF)

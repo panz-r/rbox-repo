@@ -1,11 +1,17 @@
-# Fragment-based character range test
-#
-# CHARACTER RANGES VIA FRAGMENTS
-# ------------------------------
-# Instead of [a-z], use a fragment:
-#   [fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
-# Reference with: ((lowercase))+
-# ============================================================================
+# Test patterns for the TEST PATTERN TESTS group
+# These patterns should match the test cases in run_test_pattern_tests()
 
+# Fragment for alphanumeric characters
 [fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
-[safe:test] test <w>((lowercase))+</w>
+[fragment:uppercase] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:alphanum] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
+
+# Matches "test arg1"
+[safe:test] test ((alphanum))+
+
+# Matches "TEST uppercase" (with space)
+[safe:test] TEST ((uppercase))+
+
+# Matches "test1"
+[safe:test] test((digit))+

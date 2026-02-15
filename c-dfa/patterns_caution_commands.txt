@@ -27,8 +27,8 @@
 [caution:network:read] dig example.com
 
 # Process information that may be sensitive
-[caution:system:read] ps aux | grep root
-[caution:system:read] ps -ef | grep ssh
+[caution:system:read] ps aux \| grep root
+[caution:system:read] ps -ef \| grep ssh
 [caution:system:read] top -b -n 1
 [caution:system:read] vmstat
 [caution:system:read] iostat

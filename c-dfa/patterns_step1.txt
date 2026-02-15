@@ -1,1 +1,9 @@
-[safe:test] a(b)+
+# Step patterns - progressive matching tests
+# step1: 'a' should match
+[safe:test:step1] a
+
+# step2: 'ab' should match
+[safe:test:step2] ab
+
+# step3: 'abc' should match
+[safe:test:step3] abc

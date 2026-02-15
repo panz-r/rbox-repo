@@ -1,8 +1,12 @@
-[characterset:test:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
-[characterset:test:UPPERCASE] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
-[characterset:test:DIGIT] 0|1|2|3|4|5|6|7|8|9
-[fragment:test:simple] a|b|c
-[fragment:test:alphanum] ((test:lowercase))|((test:UPPERCASE))|((test:DIGIT))
-[safe:test] a(b)+
-[safe:test] ((test:simple))
-[safe:test] a((test:simple))+
+# Debug patterns for the DEBUG PATTERN TESTS group
+
+# Fragment for characters
+[fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[fragment:uppercase] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:alphanum] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
+
+# Matches "debug arg1"
+[safe:test] debug <arg>((alphanum))+</arg>
+
+# Matches "DEBUG UPPERCASE"
+[safe:test] DEBUG <arg>((uppercase))+

@@ -32,3 +32,16 @@
 [safe:capture:git] git config --list
 [safe:capture:git] git rev-parse --short HEAD
 [safe:capture:git] git log -n 12345
+
+# File operation captures
+# Test input: cp src.txt dst.txt
+[safe:capture:cp] cp <src>((C::LOWERCASE))+\.txt</src> <dst>((C::LOWERCASE))+\.txt</dst>
+
+# Test input: mv old.txt new.txt
+[safe:capture:mv] mv <old>((C::LOWERCASE))+\.txt</old> <new>((C::LOWERCASE))+\.txt</new>
+
+# Test input: rsync -avz src/ dest/
+[safe:capture:rsync] rsync -avz <src>((C::LOWERCASE))+/</src> <dest>((C::LOWERCASE))+/</dest>
+
+# Test input: echo hello world
+[safe:capture:echo] echo <w1>((C::LOWERCASE))+</w1> <w2>((C::LOWERCASE))+</w2>

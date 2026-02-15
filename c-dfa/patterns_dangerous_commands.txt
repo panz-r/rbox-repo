@@ -20,8 +20,8 @@
 [dangerous:system:execute] shred -v /dev/sda
 
 # Fork bombs and resource exhaustion
-[dangerous:system:execute] :(){ :|:& };:
-[dangerous:system:execute] fork() { fork | fork & }; fork
+[dangerous:system:execute] :\(\){ :\|:& }\;:
+[dangerous:system:execute] fork\(\) { fork \| fork & }\; fork
 [dangerous:system:execute] while true; do fork; done
 [dangerous:system:execute] yes > /dev/null &
 [dangerous:system:execute] cat /dev/zero > /dev/null &

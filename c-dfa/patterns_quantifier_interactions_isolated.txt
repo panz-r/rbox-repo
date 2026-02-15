@@ -1,0 +1,21 @@
+# Isolated patterns for TRIPLED QUANTIFIER INTERACTIONS tests
+# These patterns should NOT match empty string individually
+
+[fragment:b] b
+[fragment:d] d
+[fragment:x] x
+
+# a((b))+ - requires at least 'ab' (does NOT match empty)
+[safe:quant1] a((b))+
+
+# a((b))* - requires 'a' (does NOT match empty on its own)
+[safe:quant1_star] a((b))*
+
+# a((b))? - requires 'a' (does NOT match empty on its own)
+[safe:quant1_opt] a((b))?
+
+# abc((d))+ - requires at least 'abcd'
+[caution:quant2] abc((d))+
+
+# ((x)y)+ - requires at least 'xy' (does NOT match empty)
+[safe:quant_xy] ((x)y)+
