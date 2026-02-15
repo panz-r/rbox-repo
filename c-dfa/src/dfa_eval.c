@@ -177,8 +177,12 @@ const char* dfa_category_string(dfa_command_category_t cat) {
  */
 bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* result, int max_caps) {
     (void)max_caps;  // Reserved for future capture limit feature
-    if (!current_dfa || !input || !result) return false;
+    if (!current_dfa || !input || !result) {
+        fprintf(stderr, "EVAL ERROR: current_dfa=%p, input=%p, result=%p\n", (void*)current_dfa, (void*)input, (void*)result);
+        return false;
+    }
 
+    fprintf(stderr, "EVAL: Starting evaluation of '%s', length=%zu\n", input, length);
     memset(result, 0, sizeof(dfa_result_t));
     result->category = DFA_CMD_UNKNOWN;
 
@@ -291,6 +295,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         }
 
         if (!next) {
+            fprintf(stderr, "EVAL DEBUG: No transition for char '%c' (0x%02X) at pos %zu\n", (c >= 32 && c < 127) ? c : '.', c, pos);
             EVAL_DEBUG_PRINT("  No transition found for char '%c'\n", c);
             return false;
         }
@@ -306,20 +311,35 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     EVAL_DEBUG_PRINT("POST-LOOP: curr_offset=%u, eos_target=%u, trace_depth=%d\n",
                      (unsigned int)((const char*)curr - raw_base), curr->eos_target, trace_depth);
 
+    // Save source state info BEFORE EOS jump - the source state has the category/accepting info
+    uint8_t source_category = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+    uint16_t source_accepting = curr->accepting_pattern_id;
+    uint32_t source_eos_target = curr->eos_target;
+    
+    fprintf(stderr, "EVAL DEBUG: Pre-EOS: flags=0x%04X, cat=0x%02x, accept=%u, eos_target=%u\n",
+            curr->flags, source_category, source_accepting, source_eos_target);
+    
     if (curr->eos_target != 0) {
         const dfa_state_t* eos = (const dfa_state_t*)(raw_base + curr->eos_target);
         curr = eos;
+        fprintf(stderr, "EVAL DEBUG: After EOS jump: flags=0x%04X, accept=%u\n",
+                curr->flags, curr->accepting_pattern_id);
         EVAL_DEBUG_PRINT("EOS: jumped to offset %u\n", (unsigned int)((const char*)curr - raw_base));
         if (trace_depth < MAX_TRACE_LENGTH) {
             trace_buffer[trace_depth++] = (uint32_t)((const char*)curr - raw_base);
         }
-        winning_pattern_id = curr->accepting_pattern_id;
+        // Use SOURCE state's category and accepting_pattern, not target's
+        // The source state has category from fork states, target is just the EOS endpoint
+        winning_pattern_id = source_accepting;
     } else {
         EVAL_DEBUG_PRINT("NO EOS: staying at offset %u\n", (unsigned int)((const char*)curr - raw_base));
         winning_pattern_id = curr->accepting_pattern_id;
     }
 
-    uint8_t mask = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+    // Use source state's category if available, otherwise use current state's
+    uint8_t mask = source_category ? source_category : (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+    fprintf(stderr, "EVAL DEBUG: Final: source_cat=0x%02x, source_accept=%u, curr_flags=0x%04X, mask=0x%02X, winning=%u\n",
+            source_category, source_accepting, curr->flags, mask, winning_pattern_id);
     EVAL_DEBUG_PRINT("CATEGORY: final_offset=%u, flags=0x%04X, mask=0x%02X, winning_pattern_id=%u\n",
                      (unsigned int)((const char*)curr - raw_base), curr->flags, mask, winning_pattern_id);
 
