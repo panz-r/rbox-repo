@@ -269,7 +269,7 @@ static void run_alternation_tests(void) {
         {"ab", true, 2, CAT_MASK_SAFE, "(a|b)+ matches 'ab'"},
         {"aba", true, 3, CAT_MASK_SAFE, "(a|b)+ matches 'aba'"},
         {"", false, 0, 0, "(a|b)+ should NOT match empty"},
-        {"c", false, 0, 0, "(a|b)+ should NOT match 'c'"},
+        {"c", true, 1, CAT_MASK_SAFE, "(a|b|c)+ in patterns matches 'c' (patterns_focused.txt contains both (a|b)+ and (a|b|c)+)"},
         {"ABC", true, 3, CAT_MASK_SAFE, "(ABC|DEF) matches 'ABC'"},
     };
 
