@@ -1726,9 +1726,12 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
         // CRITICAL FIX: Mark merge_state as accepting if any branch path is accepting
         // The merge state should be accepting because all alternatives flow into it
         // Check if we have a valid pattern index (meaning this is part of a pattern)
+        // IMPORTANT: Only set category and eos_target for REAL patterns, not for fragment parsing
+        // Fragment parsing happens before current_pattern_index is set
         if (current_pattern_index >= 0) {
             nfa[merge_state].category_mask = current_pattern_cat_mask;
             nfa[merge_state].is_eos_target = true;
+            nfa[merge_state].pattern_id = current_pattern_index + 1;
         }
 
         // Close paren if present
@@ -2109,9 +2112,8 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // Create accepting state with proper initialization
             int accepting = nfa_state_count;
             nfa_state_count++;
-            nfa[accepting].category_mask = 0;  // No category - inherited from fork
+            nfa[accepting].category_mask = cat_mask;  // Set category for proper matching
             nfa[accepting].pattern_id = (current_pattern_index >= 0) ? (uint16_t)(current_pattern_index + 1) : 0;
-            fprintf(stderr, "DEBUG: Created accepting state %d with pattern_id=%d\n", accepting, nfa[accepting].pattern_id);
             nfa[accepting].is_eos_target = true;
             nfa[accepting].tag_count = 0;
             for (int j = 0; j < MAX_TAGS; j++) nfa[accepting].tags[j] = NULL;
@@ -2599,8 +2601,8 @@ void write_nfa_file(const char* filename) {
         fprintf(file, "  Transitions: %d\n", nfa[i].transition_count);
 
         for (int s = 0; s < MAX_SYMBOLS; s++) {
-            if (mta_get_target_count(&nfa[i].multi_targets, s) > 0) {
-                int count = 0;
+            int count = mta_get_target_count(&nfa[i].multi_targets, s);
+            if (count > 0) {
                 int* targets = mta_get_target_array(&nfa[i].multi_targets, s, &count);
                 if (targets && count > 0) {
                     fprintf(file, "    Symbol %d -> ", s);

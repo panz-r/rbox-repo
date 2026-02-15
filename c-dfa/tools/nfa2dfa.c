@@ -446,6 +446,11 @@ void nfa_to_dfa(void) {
     int dummy_count = 0;
     epsilon_closure_with_markers(temp, &tc, MAX_STATES, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
+    // Debug: print initial closure
+    fprintf(stderr, "DEBUG: Initial NFA closure: {");
+    for (int i = 0; i < tc; i++) fprintf(stderr, "%d ", temp[i]);
+    fprintf(stderr, "}\n");
+
     // Compute category mask and find accepting pattern ID
     // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
     // is_eos_target states are reachable via epsilon from intermediate states and have category
