@@ -5,10 +5,10 @@
 [fragment:beta] beta
 [fragment:outer] outer
 [fragment:inner] inner
-[fragment:xyzfrag] x|y|z
+[fragment:xyz] x|y|z
 
 # Fragment patterns
 [safe:frag:test] alpha beta
 [safe:frag:test] outer inner
-[safe:frag:test] ((xyzfrag))+
+[safe:frag:test] ((xyz))+
 [safe:frag:test] num (((TEST::DIGIT)))+
