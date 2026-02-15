@@ -1778,6 +1778,16 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
         // Parse remaining alternatives
         while (pattern[*pos] == '|') {
             (*pos)++; // Skip |
+            
+            // FIX: Check for empty alternative - nothing after | before ) or end
+            if (pattern[*pos] == ')' || pattern[*pos] == '\0') {
+                // Empty alternative - connect anchor to merge for empty match
+                if (epsilon_sid != -1) {
+                    nfa_add_transition(anchor_state, merge_state, epsilon_sid);
+                }
+                continue;
+            }
+            
             int branch_end = parse_rdp_sequence(pattern, pos, anchor_state);
 
             if (epsilon_sid != -1) {
@@ -2060,7 +2070,22 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // creating accepting paths from the initial state.
             int real_start = nfa_add_state_with_minimization(false);
             nfa_add_transition(0, real_start, VSYM_EPS);
-            end_state = parse_rdp_sequence(remaining, &parse_pos, real_start);
+            
+            // Check if remaining contains alternation - if so, use parse_rdp_alternation
+            // to handle cases like (abc)| at root level
+            bool has_alternation = false;
+            for (int i = 0; remaining[i] != '\0'; i++) {
+                if (remaining[i] == '|' && i > 0 && remaining[i-1] != '\\') {
+                    has_alternation = true;
+                    break;
+                }
+            }
+            
+            if (has_alternation) {
+                end_state = parse_rdp_alternation(remaining, &parse_pos, real_start);
+            } else {
+                end_state = parse_rdp_sequence(remaining, &parse_pos, real_start);
+            }
         } else {
             end_state = parse_rdp_alternation(remaining, &parse_pos, start_state);
         }
@@ -2132,9 +2157,8 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // IMPORTANT: Don't mark end_state as EOS target - it's shared and shouldn't accept here
             eos_target_state = nfa_add_state_with_minimization(false);
             nfa[eos_target_state].is_eos_target = true;  // Only the fork state accepts
-            // PHASE 3 FIX: Set category on FORK state, not on accepting state
+            // QUANTIFIER FIX: Set category on fork state so DFA can see it in epsilon closure
             nfa[eos_target_state].category_mask = cat_mask;
-            state_do_not_share[eos_target_state] = true;  // CONSERVATIVE: Don't share fork states
             nfa_add_transition(end_state, eos_target_state, eos_sid);
             nfa_finalize_state(end_state);
             // DO NOT mark end_state as EOS target - it has outgoing transitions (shared state)

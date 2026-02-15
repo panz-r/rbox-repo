@@ -280,6 +280,66 @@ void epsilon_closure(int* states, int* count, int max_states) {
     }
 }
 
+// Helper: Collect category mask from ALL accepting states reachable from given NFA states via epsilon
+// This is used to fix quantifier category mixing bug where different patterns with shared prefixes
+// have fork states that can only reach SOME accepting states, not all
+// KEY: We search from ALL starting states TOGETHER to find all reachable accepting states
+static uint8_t collect_fork_categories(int* states, int count) {
+    uint8_t fork_cats = 0;
+    
+    // Check if there are any fork states in the NFA (is_eos_target with category but pattern_id=0)
+    bool has_fork = false;
+    for (int i = 0; i < nfa_state_count; i++) {
+        if (nfa[i].is_eos_target && nfa[i].category_mask != 0 && nfa[i].pattern_id == 0) {
+            has_fork = true;
+            break;
+        }
+    }
+    if (!has_fork) return 0;
+    
+    // Search from ALL starting states TOGETHER to find all reachable fork states
+    static bool visited[MAX_STATES];
+    memset(visited, 0, sizeof(visited));
+    
+    int stack[MAX_STATES];
+    int stack_top = 0;
+    
+    // Add all starting states to the stack
+    for (int s = 0; s < count; s++) {
+        int start = states[s];
+        if (start >= 0 && start < nfa_state_count && !visited[start]) {
+            stack[stack_top++] = start;
+            visited[start] = true;
+        }
+    }
+    
+    int epsilon_symbol_id = 257;
+    
+    while (stack_top > 0) {
+        int cur = stack[--stack_top];
+        
+        // If this is a fork state (is_eos_target with category), collect its category
+        if (nfa[cur].is_eos_target && nfa[cur].category_mask != 0) {
+            fork_cats |= nfa[cur].category_mask;
+        }
+        
+        // Continue exploring via EPSILON transitions
+        int mta_cnt = 0;
+        int* mta_targets = mta_get_target_array(&nfa[cur].multi_targets, epsilon_symbol_id, &mta_cnt);
+        if (mta_targets) {
+            for (int i = 0; i < mta_cnt; i++) {
+                int target = mta_targets[i];
+                if (target >= 0 && target < nfa_state_count && !visited[target]) {
+                    visited[target] = true;
+                    stack[stack_top++] = target;
+                }
+            }
+        }
+    }
+    
+    return fork_cats;
+}
+
 int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id, uint16_t first_accepting_pattern) {
     uint32_t h = hash_nfa_set(nfa_states, nfa_count, category_mask, first_accepting_pattern);
     int existing = find_dfa_state_hashed(h, nfa_states, nfa_count, category_mask, first_accepting_pattern);
@@ -446,6 +506,9 @@ void nfa_to_dfa(void) {
             }
         }
     }
+    // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
+    uint8_t fork_cats = collect_fork_categories(temp, tc);
+    im |= fork_cats;
     int idfa = dfa_add_state(im, temp, tc, accept_pattern, reachable_accepting_patterns);
     if (idfa < 0) {
         fprintf(stderr, "Error: Failed to add initial DFA state\n");
@@ -490,6 +553,7 @@ void nfa_to_dfa(void) {
             // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
             // is_eos_target states are reachable via epsilon from intermediate states and have category
             // This prevents category leakage from intermediate states
+            // QUANTIFIER FIX: Also collect categories from all reachable fork states
             uint8_t mm = 0;
             uint16_t accept_pattern2 = 0;
             uint64_t reachable_accepting_patterns2 = 0;
@@ -529,6 +593,10 @@ void nfa_to_dfa(void) {
                 }
             }
             
+            // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
+            // This ensures patterns with shared prefixes but different categories are all considered
+            uint8_t fork_cats = collect_fork_categories(temp2, tc2);
+            mm |= fork_cats;
             // DO NOT inherit from source - that breaks prefix sharing
 
             collect_markers_from_states(temp2, tc2, markers, &marker_count);
