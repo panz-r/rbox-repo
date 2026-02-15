@@ -447,32 +447,45 @@ void nfa_to_dfa(void) {
     epsilon_closure_with_markers(temp, &tc, MAX_STATES, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
     // Debug: print initial closure
-    fprintf(stderr, "DEBUG: Initial NFA closure: {");
-    for (int i = 0; i < tc; i++) fprintf(stderr, "%d ", temp[i]);
-    fprintf(stderr, "}\n");
+    // fprintf(stderr, "DEBUG: Initial NFA closure: {");
+    // for (int i = 0; i < tc; i++) fprintf(stderr, "%d ", temp[i]);
+    // fprintf(stderr, "}\n");
 
     // Compute category mask and find accepting pattern ID
     // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
     // is_eos_target states are reachable via epsilon from intermediate states and have category
     // This prevents category leakage from intermediate states
     // CRITICAL: Never accept from state 0 - it's the bootstrap state that should never be accepting
+    // CRITICAL FIX: For the INITIAL DFA state, don't accept based on is_eos_target states
+    // is_eos_target states are reached via epsilon without consuming characters, which is
+    // correct for patterns like (a)* that allow zero iterations, but should NOT make the
+    // initial DFA state accepting for patterns like (a)+ that require at least one character.
     uint8_t im = 0;
     uint16_t accept_pattern = 0;
     uint64_t reachable_accepting_patterns = 0;
+    bool is_initial_state = (ic == 1 && in[0] == 0);  // Only state 0 in initial input (before epsilon closure)
+    
     for (int i = 0; i < tc; i++) {
         int ns = temp[i];
         // Skip state 0 - it's the bootstrap and should never contribute to acceptance
         if (ns == 0) continue;
+        
+        // CRITICAL: For initial DFA state, don't use is_eos_target for acceptance
+        // This prevents patterns like (a)+ from incorrectly accepting empty when
+        // combined with patterns like (x)* in the same NFA
+        
         // Category from states that are either accepting (pattern_id) or EOS targets
-        if ((nfa[ns].pattern_id != 0 || nfa[ns].is_eos_target) && nfa[ns].category_mask != 0) {
+        // BUT for initial state, exclude EOS-only states
+        if ((nfa[ns].pattern_id != 0 || (nfa[ns].is_eos_target && !is_initial_state)) && nfa[ns].category_mask != 0) {
+            // fprintf(stderr, "DEBUG: adding cat 0x%02x from state %d\n", nfa[ns].category_mask, ns);
             im |= nfa[ns].category_mask;
         }
-        // Accept pattern from any state in the closure (epsilon-reached states included)
+        // Accept pattern from states with pattern_id (true accepting states)
         if (nfa[ns].pattern_id != 0 && accept_pattern == 0) {
             accept_pattern = nfa[ns].pattern_id - 1;  // Convert back to 0-based
         }
-        // Also check EOS target states (for *, ?, | patterns where fork state leads to accept state)
-        if (nfa[ns].is_eos_target && accept_pattern == 0) {
+        // Also check EOS target states for non-initial states
+        if (!is_initial_state && nfa[ns].is_eos_target && accept_pattern == 0) {
             // Check if this EOS target state has transitions to accepting states
             // Look for EOS transitions (symbol 258) from this state
             int eos_cnt = 0;
@@ -490,7 +503,8 @@ void nfa_to_dfa(void) {
         
         // Also collect category from EOS target states (fork states can reach accepting states via EOS)
         // This ensures we get categories from patterns that require multiple iterations
-        if (nfa[ns].is_eos_target && nfa[ns].category_mask == 0) {
+        // CRITICAL: For initial DFA state, don't collect from is_eos_target states
+        if (!is_initial_state && nfa[ns].is_eos_target && nfa[ns].category_mask == 0) {
             int eos_cnt = 0;
             int* eos_targets = mta_get_target_array(&nfa[ns].multi_targets, 258, &eos_cnt);
             if (eos_targets) {
