@@ -1793,6 +1793,17 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
             }
         }
 
+        // CRITICAL FIX: Ensure anchor_state is set before quantifier handling
+        // For patterns like (a|b)+, we reach here without going through the ) branch above,
+        // so current_fragment.anchor_state is not set. The + quantifier needs anchor_state
+        // to properly loop back to the start of the alternation.
+        if (current_fragment.anchor_state < 0) {
+            current_fragment.anchor_state = anchor_state;
+        }
+        if (current_fragment.exit_state < 0) {
+            current_fragment.exit_state = merge_state;
+        }
+
         // Handle postfix quantifiers (* + ?) on the alternation result
         // IMPORTANT: Pass merge_state, not first_end
         int postfix_result = parse_rdp_postfix(pattern, pos, merge_state);
