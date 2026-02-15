@@ -623,9 +623,9 @@ void nfa_to_dfa(void) {
 
             int target = dfa_add_state(mm, temp2, tc2, accept_pattern2, (uint16_t)reachable_accepting_patterns2);
 
-            // Handle both literal symbols (sid < 256) and virtual symbols (VSYM_SPACE=259, VSYM_TAB=260)
+            // Handle both literal symbols (sid < 256) and virtual symbols (VSYM_ANY=256, VSYM_SPACE=259, VSYM_TAB=260)
             int sid = alphabet[i].symbol_id;
-            if (sid < 256 || sid == 259 || sid == 260) {
+            if (sid < 256 || sid == 256 || sid == 259 || sid == 260) {
                 dfa[cur].transitions[sid] = target;
                 dfa[cur].marker_offsets[sid] = marker_list_offset;
             }
