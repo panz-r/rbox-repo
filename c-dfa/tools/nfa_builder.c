@@ -1137,10 +1137,10 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     }
 
     // Populate FragmentResult
-    // For fragments with alternation, use frag_start as anchor to avoid looping back to state 0
-    // This helps with patterns like ((a|b))+ where the alternation creates EPSILON from state 0
-    if (has_alternation && start_state == 0) {
-        result.anchor_state = frag_start;  // Use the actual fragment start, not state 0
+    // For fragments with alternation, ALWAYS use frag_start as anchor
+    // This is critical for patterns like ((x|y|z))+ where we need to loop back to the fragment start
+    if (has_alternation) {
+        result.anchor_state = frag_start;  // Always use actual fragment start for alternation
     } else {
         result.anchor_state = start_state;
     }
@@ -1573,10 +1573,6 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
             // Create exit state
             int exit_state = nfa_add_state_with_minimization(false);
             state_do_not_share[exit_state] = true;
-
-            // DEBUG: Print what anchor_state we're using
-            fprintf(stderr, "DEBUG +: current_fragment.anchor_state=%d, exit_state=%d\n", 
-                    current_fragment.anchor_state, current_fragment.exit_state);
 
             // Loop back to the START of the element (anchor_state), not the end
             // This is critical for multi-character sequences like (AB)+
