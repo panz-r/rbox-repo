@@ -4,6 +4,7 @@
 [fragment:b] b
 [fragment:d] d
 [fragment:x] x
+[fragment:y] y
 
 # a((b))+ - requires at least 'ab' (does NOT match empty)
 [safe:quant1] a((b))+
@@ -19,3 +20,6 @@
 
 # ((x)y)+ - requires at least 'xy' (does NOT match empty)
 [safe:quant_xy] ((x)y)+
+
+# ((x)y)* - CAN match empty (zero repetitions is valid)
+[caution:quant_xy_star] ((x)y)*

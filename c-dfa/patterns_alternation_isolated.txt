@@ -8,5 +8,8 @@
 # (a|b)+ - matches one or more of 'a' or 'b' (NOT 'c')
 [safe:alt] (a|b)+
 
+# (a|b|c)+ - matches one or more of 'a', 'b', or 'c'
+[safe:alt] (a|b|c)+
+
 # (ABC|DEF) - matches literal ABC or DEF
 [safe:alt] (ABC|DEF)
