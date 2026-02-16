@@ -87,15 +87,17 @@ static void print_usage(const char* progname) {
     printf("Options:\n");
     printf("  --minimize-moore       Use Moore's algorithm for DFA minimization (default)\n");
     printf("  --minimize-hopcroft    Use Hopcroft's algorithm for DFA minimization\n");
+    printf("  --minimize-sat         Use SAT-based minimization (requires CaDiCaL)\n");
     printf("  --test-set A|B|C       Run only tests for specified test set(s)\n");
-    printf("                          A = Core + Command tests\n");
-    printf("                          B = Expanded tests\n");
-    printf("                          C = Stress tests (structural integrity + captures)\n");
-    printf("                          Can combine: AB, ABC, A, B, C\n");
+    printf("                          A = Core tests (quantifiers, fragments, etc.)\n");
+    printf("                          B = Expanded tests (quantifier expansions)\n");
+    printf("                          C = Command tests (admin, caution, captures)\n");
+    printf("                          Can combine: ABC, AB, AC, BC, etc.\n");
     printf("  --help                 Show this help message\n");
     printf("\nExamples:\n");
     printf("  %s --minimize-hopcroft --test-set A\n", progname);
-    printf("  %s --test-set AB\n", progname);
+    printf("  %s --minimize-sat --test-set C\n", progname);
+    printf("  %s --minimize-moore --test-set ABC\n", progname);
 }
 
 static void build_dfa(const char* patterns_file, const char* dfa_file) {
@@ -103,19 +105,25 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
     snprintf(nfa_file, sizeof(nfa_file), "%s/test.nfa", build_dir);
     track_nfa_file(nfa_file);
 
+    // Use nfa2dfa_sat for SAT minimization, otherwise nfa2dfa_advanced
+    const char* nfa2dfa_binary = "./tools/nfa2dfa_advanced";
+    if (minimize_algo && strcmp(minimize_algo, "--minimize-sat") == 0) {
+        nfa2dfa_binary = "./tools/nfa2dfa_sat";
+    }
+
     char cmd[1024];
     if (minimize_algo && strlen(minimize_algo) > 0) {
         (void)snprintf(cmd, sizeof(cmd),
             "mkdir -p %s && "
             "./tools/nfa_builder %s %s && "
-            "./tools/nfa2dfa_advanced %s %s %s",
-            build_dir, patterns_file, nfa_file, nfa_file, dfa_file, minimize_algo);
+            "%s %s %s %s",
+            build_dir, patterns_file, nfa_file, nfa2dfa_binary, nfa_file, dfa_file, minimize_algo);
     } else {
         (void)snprintf(cmd, sizeof(cmd),
             "mkdir -p %s && "
             "./tools/nfa_builder %s %s && "
-            "./tools/nfa2dfa_advanced %s %s",
-            build_dir, patterns_file, nfa_file, nfa_file, dfa_file);
+            "%s %s %s",
+            build_dir, patterns_file, nfa_file, nfa2dfa_binary, nfa_file, dfa_file);
     }
     fprintf(stderr, "DEBUG CMD: %s\n", cmd);
     if (system(cmd) != 0) {
@@ -1014,6 +1022,8 @@ int main(int argc, char* argv[]) {
             minimize_algo = "--minimize-moore";
         } else if (strcmp(argv[i], "--minimize-hopcroft") == 0) {
             minimize_algo = "--minimize-hopcroft";
+        } else if (strcmp(argv[i], "--minimize-sat") == 0) {
+            minimize_algo = "--minimize-sat";
         } else if (strcmp(argv[i], "--test-set") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: --test-set requires an argument\n");

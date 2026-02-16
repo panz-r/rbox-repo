@@ -1152,6 +1152,8 @@ int main(int argc, char* argv[]) {
             else if (strcmp(argv[i], "-v") == 0) flag_verbose = true;
             else if (strcmp(argv[i], "--minimize-hopcroft") == 0) dfa_minimize_set_algorithm(DFA_MIN_HOPCROFT);
             else if (strcmp(argv[i], "--minimize-moore") == 0) dfa_minimize_set_algorithm(DFA_MIN_MOORE);
+            else if (strcmp(argv[i], "--minimize-brzozowski") == 0) dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
+            else if (strcmp(argv[i], "--minimize-sat") == 0) dfa_minimize_set_algorithm(DFA_MIN_SAT);
         } else {
             if (input_file == NULL) input_file = argv[i];
             else output_file = argv[i];
@@ -1166,8 +1168,12 @@ int main(int argc, char* argv[]) {
     flatten_dfa();
     
     if (minimize) {
+        dfa_min_algo_t algo = dfa_minimize_get_algorithm();
         dfa_state_count = dfa_minimize(dfa, dfa_state_count);
-        flatten_dfa();
+        // Don't re-flatten after Brzozowski - it already produces correct transitions
+        if (algo != DFA_MIN_BRZOZOWSKI) {
+            flatten_dfa();  // Re-flatten with new state indices after minimization
+        }
     }
     write_dfa_file(output_file);
     return 0;

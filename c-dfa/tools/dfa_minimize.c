@@ -5,6 +5,7 @@
  * 1. Dead State Pruning (Reverse Reachability)
  * 2. Hopcroft's Algorithm (Worklist-based Partition Refinement)
  * 3. Moore's Algorithm (Fallback/Verification option)
+ * 4. SAT-based Algorithm (requires CaDiCaL, linked separately)
  */
 
 #include <stdio.h>
@@ -478,6 +479,7 @@ int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
 // ============================================================================
 
 void dfa_minimize_set_algorithm(dfa_min_algo_t algo) { current_algo = algo; }
+dfa_min_algo_t dfa_minimize_get_algorithm(void) { return current_algo; }
 void dfa_minimize_set_moore(bool use_moore) { current_algo = use_moore ? DFA_MIN_MOORE : DFA_MIN_HOPCROFT; }
 void dfa_minimize_set_verbose(bool verbose) { minimize_verbose = verbose; }
 void dfa_minimize_get_stats(dfa_minimize_stats_t* stats) { if(stats) *stats = last_stats; }
@@ -505,6 +507,10 @@ int dfa_minimize(build_dfa_state_t* dfa, int state_count) {
     int new_count;
     if (current_algo == DFA_MIN_MOORE) {
         new_count = dfa_minimize_moore(dfa, state_count);
+    } else if (current_algo == DFA_MIN_BRZOZOWSKI) {
+        new_count = dfa_minimize_brzozowski(dfa, state_count);
+    } else if (current_algo == DFA_MIN_SAT) {
+        new_count = dfa_minimize_sat(dfa, state_count);
     } else {
         new_count = dfa_minimize_hopcroft(dfa, state_count);
     }
