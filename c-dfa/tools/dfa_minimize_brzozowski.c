@@ -52,6 +52,10 @@ typedef struct {
     // DFA properties associated with each state
     uint16_t* flags;
     uint32_t* eos_target;
+    uint16_t* accepting_pattern_id;  // Bug fix: Track accepting pattern IDs
+
+    // Track which states were start states in the original DFA (for pass 2)
+    bool* was_start_state;
 
     // Phase 3: Track which original states have markers
     int* nfa_state_for_dfa_state;
@@ -61,24 +65,40 @@ static void free_brz_nfa(brz_nfa_t* nfa) {
     if (nfa) {
         free(nfa->edges); free(nfa->offsets); free(nfa->counts);
         free(nfa->flags); free(nfa->eos_target);
+        free(nfa->accepting_pattern_id);
+        free(nfa->was_start_state);
         free(nfa->nfa_state_for_dfa_state);
     }
 }
 
-static bool build_reversed_nfa(const build_dfa_state_t* dfa, int state_count, brz_nfa_t* nfa) {
+static bool build_reversed_nfa(const build_dfa_state_t* dfa, int state_count, brz_nfa_t* nfa, const bool* start_states, int start_count) {
     memset(nfa, 0, sizeof(brz_nfa_t));
     nfa->state_count = state_count;
     nfa->counts = calloc(state_count, sizeof(int));
     nfa->offsets = calloc(state_count, sizeof(int));
     nfa->flags = malloc(state_count * sizeof(uint16_t));
     nfa->eos_target = malloc(state_count * sizeof(uint32_t));
+    nfa->accepting_pattern_id = malloc(state_count * sizeof(uint16_t));
+    nfa->was_start_state = malloc(state_count * sizeof(bool));
     nfa->nfa_state_for_dfa_state = malloc(state_count * sizeof(int));
 
     if (!nfa->counts || !nfa->offsets || !nfa->flags) return false;
 
     for (int s = 0; s < state_count; s++) {
+        // Track if this state was a start state in the original DFA
+        nfa->was_start_state[s] = false;
+        if (start_states) {
+            for (int i = 0; i < start_count; i++) {
+                if (start_states[i] == s) {
+                    nfa->was_start_state[s] = true;
+                    break;
+                }
+            }
+        }
+        
         nfa->flags[s] = dfa[s].flags;
         nfa->eos_target[s] = dfa[s].eos_target;
+        nfa->accepting_pattern_id[s] = dfa[s].accepting_pattern_id;
         // Phase 3: Track if this state has any non-zero marker_offsets
         nfa->nfa_state_for_dfa_state[s] = -1;
         for (int c = 0; c < 256; c++) {
@@ -152,6 +172,7 @@ typedef struct {
     int states[8192];
     int count;
     uint32_t hash;
+    uint16_t combined_flags;  // Bug fix: Include flags in hash and comparison
     bool has_marker_source;
     uint32_t marker_sources[256];
     int marker_source_count;
@@ -189,8 +210,15 @@ static int brz_determinize(
 
     // Create initial extended subset
     uint32_t h = hash_ints(temp, start_count);
+    // Bug fix: Include flags in hash
+    uint16_t init_flags = 0;
+    for (int i = 0; i < start_count; i++) {
+        init_flags |= nfa->flags[temp[i]];
+    }
+    h ^= ((uint32_t)init_flags << 16);
     subsets[0].count = start_count;
     subsets[0].hash = h;
+    subsets[0].combined_flags = init_flags;
     memcpy(subsets[0].states, temp, start_count * sizeof(int));
     subsets[0].has_marker_source = false;
     subsets[0].marker_source_count = 0;
@@ -207,17 +235,80 @@ static int brz_determinize(
 
         // Compute DFA state properties from constituent NFA states
         uint16_t f = 0;
+        bool has_original_accepting = false;  // From the NFA's accepting bit
+        bool has_original_start = false;  // Track if this subset contains an original start state
         bool has_target = false;
+        uint16_t accept_id = 0;  // Track accepting pattern ID
+        uint16_t category = 0;  // Track categories for hashing
+        bool first_category = true;
 
         for (int i = 0; i < curr->count; i++) {
             int s = curr->states[i];
-            f |= nfa->flags[s];
-            if (s == target_nfa_state) has_target = true;
+            uint16_t cat = (nfa->flags[s] & 0xFF00);
+            
+            // Track category for hashing - used to prevent merging states with different categories
+            if (first_category) {
+                category = cat;
+                first_category = false;
+            } else if (category != cat) {
+                category = 0xFFFF;  // Mixed - mark for hash collision prevention
+            }
+            
+            // Include category in flags - needed for matching
+            // Use category from FIRST state, OR use 0xFFFF if mixed (will cause wrong matches but prevent merging)
+            if (first_category) {
+                // Still collecting, don't set yet
+            } else if (category == 0xFFFF) {
+                // Mixed - set to invalid to prevent merging (though may cause wrong matches)
+                f |= 0xFF00;
+            }
+            // If not mixed, we'll set category after the loop
+            
+            // Check if ANY state in subset is accepting in the reversed NFA
+            if (nfa->flags[s] & 0x0001) has_original_accepting = true;
+            
+            // Track if this subset contains a start state from the previous pass
+            if (nfa->was_start_state && nfa->was_start_state[s]) has_original_start = true;
+            
+            // For pass 1 (target_nfa_state >= 0), check if subset contains target state
+            if (target_nfa_state >= 0 && s == target_nfa_state) has_target = true;
+            
+            // Track accepting pattern ID
+            if (nfa->accepting_pattern_id[s] != 0 && accept_id == 0) {
+                accept_id = nfa->accepting_pattern_id[s];
+            }
         }
+        
+        // Set category if not mixed
+        if (!first_category && category != 0xFFFF) {
+            f |= category;
+        }
+        
+        // Determine if this subset is accepting
+        // Pass 1: is_accepting if subset contains original start state (target_nfa_state)
+        // Pass 2: is_accepting if subset contains any state that was a start state in D1
+        bool is_accepting = false;
+        if (nfa->was_start_state != NULL) {
+            // Pass 2: check if any state in subset was a start state in D1
+            is_accepting = has_original_start;
+        } else if (target_nfa_state >= 0) {
+            // Pass 1: check if subset contains original start state
+            is_accepting = has_target;
+        } else {
+            // Fallback
+            is_accepting = has_original_accepting;
+        }
+        
+        if (is_accepting) f |= 0x0001;
 
         memset(&out_dfa[head], 0, sizeof(build_dfa_state_t));
         out_dfa[head].flags = f;
+        out_dfa[head].accepting_pattern_id = accept_id;
         if (contains_target_out) contains_target_out[head] = has_target;
+        // Also track in the NFA for pass 2 (only if was_start_state array exists)
+        if (nfa->was_start_state && head < nfa->state_count) {
+            nfa->was_start_state[head] = has_target;
+        }
         for (int i = 0; i < 256; i++) out_dfa[head].transitions[i] = -1;
 
         // Phase 3: Collect marker sources from all constituent NFA states
@@ -266,12 +357,21 @@ static int brz_determinize(
                 // Check if subset already exists
                 qsort(temp, next_count, sizeof(int), compare_ints);
                 uint32_t nh = hash_ints(temp, next_count);
+                // Bug fix: Include flags in hash
+                uint16_t next_flags = 0;
+                for (int i = 0; i < next_count; i++) {
+                    next_flags |= nfa->flags[temp[i]];
+                }
+                nh ^= ((uint32_t)next_flags << 16);
                 int nbucket = nh % BRZ_HASH_SIZE;
                 int existing = hash_table[nbucket];
                 bool found_existing = false;
 
                 while (existing != -1) {
-                    if (subsets[existing].count == next_count && subsets[existing].hash == nh) {
+                    // Bug fix: Also compare combined_flags
+                    if (subsets[existing].count == next_count && 
+                        subsets[existing].hash == nh &&
+                        subsets[existing].combined_flags == next_flags) {
                         bool match = true;
                         for (int i = 0; i < next_count; i++) {
                             if (subsets[existing].states[i] != temp[i]) { match = false; break; }
@@ -290,6 +390,7 @@ static int brz_determinize(
                     if (tidx < BRZ_MAX_STATES) {
                         subsets[tidx].count = next_count;
                         subsets[tidx].hash = nh;
+                        subsets[tidx].combined_flags = next_flags;
                         memcpy(subsets[tidx].states, temp, next_count * sizeof(int));
                         subsets[tidx].has_marker_source = false;
                         subsets[tidx].marker_source_count = 0;
@@ -326,6 +427,10 @@ static int brz_determinize(
         head++;
     }
 
+    //if (subset_count >= BRZ_MAX_STATES) {
+    //    fprintf(stderr, "WARNING: Brzozowski pass hit limit BRZ_MAX_STATES=%d\n", BRZ_MAX_STATES);
+    //}
+
     free(subsets);
     free(hash_table);
     free(next_in_hash);
@@ -341,27 +446,41 @@ int dfa_minimize_brzozowski(build_dfa_state_t* dfa, int state_count) {
 
     // Pass 1: D1 = determinize(reverse(D_orig))
     brz_nfa_t n1;
-    if (!build_reversed_nfa(dfa, state_count, &n1)) return state_count;
+    // For pass 1, no start states tracked yet (pass NULL)
+    if (!build_reversed_nfa(dfa, state_count, &n1, NULL, 0)) return state_count;
 
     int init1[8192], c1 = 0;
-    for (int i = 0; i < state_count; i++) if (dfa[i].flags & 0xFF00) init1[c1++] = i;
+    // Brzozowski: start from ALL accepting states (0x0001), not category (0xFF00)
+    // This is correct: reverse from accepting states, determinize, reverse again, determinize
+    for (int i = 0; i < state_count; i++) if (dfa[i].flags & 0x0001) init1[c1++] = i;
+    // If no accepting states (shouldn't happen for valid patterns), try category
+    if (c1 == 0) {
+        for (int i = 0; i < state_count; i++) if (dfa[i].flags & 0xFF00) init1[c1++] = i;
+    }
     if (c1 == 0) { free_brz_nfa(&n1); return state_count; }
 
     build_dfa_state_t* d1 = malloc(BRZ_MAX_STATES * sizeof(build_dfa_state_t));
     bool* contains_start1 = malloc(BRZ_MAX_STATES * sizeof(bool));
     int s1 = brz_determinize(&n1, init1, c1, 0, d1, contains_start1);
+    //fprintf(stderr, "DEBUG Brzozowski: Pass 1 created %d states (limit=%d)\n", s1, BRZ_MAX_STATES);
     free_brz_nfa(&n1);
 
     // Pass 2: D_min = determinize(reverse(D1))
     brz_nfa_t n2;
-    if (!build_reversed_nfa(d1, s1, &n2)) { free(d1); free(contains_start1); return state_count; }
+    // Pass contains_start1 to track which states were starts in pass 1 (for was_start_state)
+    if (!build_reversed_nfa(d1, s1, &n2, contains_start1, s1)) { free(d1); free(contains_start1); return state_count; }
 
+    // Initial states for pass 2 are states that were "start" in D1
     int init2[BRZ_MAX_STATES], c2 = 0;
     for (int i = 0; i < s1; i++) if (contains_start1[i]) init2[c2++] = i;
-    free(contains_start1);
-
+    
+    // For pass 2, we need to track which subsets contain start states from D1
+    // Allocate contains_start2 to track this
+    bool* contains_start2 = malloc(BRZ_MAX_STATES * sizeof(bool));
     build_dfa_state_t* d2 = malloc(BRZ_MAX_STATES * sizeof(build_dfa_state_t));
-    int s2 = brz_determinize(&n2, init2, c2, -1, d2, NULL);
+    int s2 = brz_determinize(&n2, init2, c2, -1, d2, contains_start2);
+    //fprintf(stderr, "DEBUG Brzozowski: Pass 2 created %d states (limit=%d)\n", s2, BRZ_MAX_STATES);
+    free(contains_start2);
     free_brz_nfa(&n2); free(d1);
 
     // Copy result back

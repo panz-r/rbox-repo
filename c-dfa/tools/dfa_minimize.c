@@ -505,8 +505,6 @@ int dfa_minimize(build_dfa_state_t* dfa, int state_count) {
     int new_count;
     if (current_algo == DFA_MIN_MOORE) {
         new_count = dfa_minimize_moore(dfa, state_count);
-    } else if (current_algo == DFA_MIN_BRZOZOWSKI) {
-        new_count = dfa_minimize_brzozowski(dfa, state_count);
     } else {
         new_count = dfa_minimize_hopcroft(dfa, state_count);
     }

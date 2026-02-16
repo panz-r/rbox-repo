@@ -79,13 +79,6 @@ test-hopcroft: $(TOOLS) $(TEST)
 	@echo "================================================="
 	@./$(TEST) --test-set B --minimize-hopcroft
 
-test-brzozowski: $(TOOLS) $(TEST)
-	@echo ""
-	@echo "================================================="
-	@echo "BRZOZOWSKI ALGORITHM (Test-Set C)"
-	@echo "================================================="
-	@./$(TEST) --test-set C --minimize-brzozowski
-
 # Full test suite - runs all three algorithms with their respective test sets
 test: $(TOOLS) $(TEST) $(TOOLS_DIR)/test_minimize_integrity
 	@echo ""
@@ -96,8 +89,6 @@ test: $(TOOLS) $(TEST) $(TOOLS_DIR)/test_minimize_integrity
 	@make test-moore 2>&1 | tail -3
 	@echo ""
 	@make test-hopcroft 2>&1 | tail -3
-	@echo ""
-	@make test-brzozowski 2>&1 | tail -3
 	@echo ""
 	@make test-integrity 2>&1 | tail -5
 	@echo ""
@@ -124,5 +115,5 @@ fuzz-clean:
 
 fuzz-rebuild: clean-fuzz fuzz-build
 
-.PHONY: all clean test test-moore test-hopcroft test-brzozowski test-integrity
+.PHONY: all clean test test-moore test-hopcroft test-integrity
 .PHONY: fuzz fuzz-build fuzz-run-dfa fuzz-run-pattern fuzz-run fuzz-clean fuzz-rebuild

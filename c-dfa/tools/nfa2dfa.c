@@ -403,9 +403,17 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
 }
 
 int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id, uint16_t first_accepting_pattern) {
+    //fprintf(stderr, "DEBUG dfa_add_state: START count=%d, dfa_state_count=%d\n", nfa_count, dfa_state_count);
     uint32_t h = hash_nfa_set(nfa_states, nfa_count, category_mask, first_accepting_pattern);
+    //fprintf(stderr, "DEBUG dfa_add_state: hash done\n");
+    int bucket = h % DFA_HASH_SIZE;
+    //fprintf(stderr, "DEBUG dfa_add_state: bucket=%d\n", bucket);
     int existing = find_dfa_state_hashed(h, nfa_states, nfa_count, category_mask, first_accepting_pattern);
-    if (existing != -1) return existing;
+    //fprintf(stderr, "DEBUG dfa_add_state: find done, existing=%d\n", existing);
+    if (existing != -1) {
+        return existing;
+    }
+    //fprintf(stderr, "DEBUG dfa_add_state: adding new state\n");
     if (dfa_state_count >= MAX_STATES) { 
         fprintf(stderr, "FATAL: Max DFA states reached (%d states)\n", MAX_STATES);
         fprintf(stderr, "This usually happens when:\n");
@@ -439,7 +447,6 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     sort_states_canonical(sorted, nfa_count);
     dfa[state].nfa_state_count = nfa_count;
     for (int i = 0; i < nfa_count && i < 8192; i++) dfa[state].nfa_states[i] = sorted[i];
-    int bucket = h % DFA_HASH_SIZE;
     dfa_next_in_bucket[state] = dfa_hash_table[bucket];
     dfa_hash_table[bucket] = state;
     return state;
@@ -518,19 +525,21 @@ static void collect_transition_markers(int source_count, int* source_states, int
 }
 
 void nfa_to_dfa(void) {
+    fprintf(stderr, "DEBUG nfa_to_dfa: nfa_state_count=%d, alphabet_size=%d\n", nfa_state_count, alphabet_size);
     dfa_init();
+    fprintf(stderr, "DEBUG after dfa_init\n");
 
     int in[MAX_STATES] = {0}; int ic = 1;
+    fprintf(stderr, "DEBUG before epsilon_closure\n");
     int temp[MAX_STATES]; memcpy(temp, in, sizeof(int)); int tc = ic;
     uint32_t dummy_markers[MAX_MARKERS_PER_DFA_TRANSITION];
     int dummy_count = 0;
     epsilon_closure_with_markers(temp, &tc, MAX_STATES, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
-
-    // Debug: print initial closure
-    // fprintf(stderr, "DEBUG: Initial NFA closure: {");
-    // for (int i = 0; i < tc; i++) fprintf(stderr, "%d ", temp[i]);
-    // fprintf(stderr, "}\n");
-
+    fprintf(stderr, "DEBUG after epsilon_closure, tc=%d\n", tc);
+    fprintf(stderr, "DEBUG temp states: ");
+    for (int i = 0; i < tc; i++) fprintf(stderr, "%d ", temp[i]);
+    fprintf(stderr, "\n");
+    
     // Compute category mask and find accepting pattern ID
     // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
     // is_eos_target states are reachable via epsilon from intermediate states and have category
@@ -605,9 +614,12 @@ void nfa_to_dfa(void) {
             }
         }
     }
+    fprintf(stderr, "DEBUG before collect_fork_categories, im=0x%02x\n", im);
     // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
     uint8_t fork_cats = collect_fork_categories(temp, tc, is_initial_state);
+    fprintf(stderr, "DEBUG after collect_fork_categories, fork_cats=0x%02x\n", fork_cats);
     im |= fork_cats;
+    fprintf(stderr, "DEBUG before dfa_add_state\n");
     int idfa = dfa_add_state(im, temp, tc, accept_pattern, reachable_accepting_patterns);
     if (idfa < 0) {
         fprintf(stderr, "Error: Failed to add initial DFA state\n");
@@ -618,9 +630,11 @@ void nfa_to_dfa(void) {
     // (not including category from is_eos_target states), which prevents false category matches
 
     int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
+    //fprintf(stderr, "DEBUG: Starting main BFS loop, initial dfa_state_count=%d\n", dfa_state_count);
 
     while (h < t) {
         int cur = q[h++];
+        //fprintf(stderr, "DEBUG: Processing DFA state %d (h=%d, t=%d, total_states=%d)\n", cur, h, t, dfa_state_count);
         for (int i = 0; i < alphabet_size; i++) {
             int symbol = alphabet[i].symbol_id;
             if (symbol == 257) continue;
@@ -820,6 +834,7 @@ void nfa_to_dfa(void) {
 
         eos_done:;
     }
+    //fprintf(stderr, "DEBUG nfa_to_dfa: COMPLETED, dfa_state_count=%d\n", dfa_state_count);
 }
 
 void flatten_dfa(void) {
@@ -1137,7 +1152,6 @@ int main(int argc, char* argv[]) {
             else if (strcmp(argv[i], "-v") == 0) flag_verbose = true;
             else if (strcmp(argv[i], "--minimize-hopcroft") == 0) dfa_minimize_set_algorithm(DFA_MIN_HOPCROFT);
             else if (strcmp(argv[i], "--minimize-moore") == 0) dfa_minimize_set_algorithm(DFA_MIN_MOORE);
-            else if (strcmp(argv[i], "--minimize-brzozowski") == 0) dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
         } else {
             if (input_file == NULL) input_file = argv[i];
             else output_file = argv[i];
@@ -1153,7 +1167,7 @@ int main(int argc, char* argv[]) {
     
     if (minimize) {
         dfa_state_count = dfa_minimize(dfa, dfa_state_count);
-        flatten_dfa();  // Re-flatten with new state indices after minimization
+        flatten_dfa();
     }
     write_dfa_file(output_file);
     return 0;
