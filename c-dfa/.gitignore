@@ -3,6 +3,7 @@ dfa_test
 tools/nfa_builder
 tools/nfa2dfa_advanced
 tools/test_minimize_integrity 
+tools/nfa2dfa_sat
 src/dfa_test
 src/test_single
 src/test_single_quant

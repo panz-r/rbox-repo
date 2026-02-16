@@ -93,9 +93,11 @@ $(TEST): $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(SRC_DIR)/dfa_test.c $(I
 # Build minimization integrity test
 $(TOOLS_DIR)/test_minimize_integrity: $(TOOLS_DIR)/test_minimize_integrity.c \
 		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
+		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
 		$(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/test_minimize_integrity.c \
-		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c $(LDFLAGS)
+		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
+		$(TOOLS_DIR)/dfa_minimize_sat_stub.c $(LDFLAGS)
 
 # Run minimization integrity test
 test-integrity: $(TOOLS_DIR)/test_minimize_integrity
