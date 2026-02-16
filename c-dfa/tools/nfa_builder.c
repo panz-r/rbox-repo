@@ -704,12 +704,6 @@ void nfa_add_transition(int from, int to, int symbol_id) {
     if (to >= 0 && to < nfa_state_count) {
         DEBUG_PRINT("nfa_add_transition: from=%d to=%d symbol=%d, to_pattern=%d current=%d\n",
                     from, to, symbol_id, nfa[to].pattern_id, current_pattern_index);
-        if (nfa[to].pattern_id != (uint16_t)current_pattern_index) {
-            // Clear any existing markers on this transition in the target state
-            // This prevents Pattern A's markers from leaking when Pattern B shares the state
-            mta_clear_markers(&nfa[to].multi_targets, symbol_id);
-            DEBUG_PRINT("nfa_add_transition: CLEARED markers on target state %d for symbol %d\n", to, symbol_id);
-        }
     }
 
     // Transfer ALL pending capture markers to character transitions (not EPSILON/EOS)
@@ -1458,9 +1452,6 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                     int exit_state = nfa_add_state_with_minimization(false);
                     state_do_not_share[exit_state] = true;
 
-                    // EPSILON: anchor --EPSILON--> loop_state (so space/tab transitions are reachable via epsilon closure)
-                    nfa_add_transition(anchor, loop_state, VSYM_EPS);
-
                     // Loop: loop_state --space/tab--> loop_state
                     nfa_add_transition(loop_state, loop_state, space_sid);
                     nfa_add_transition(loop_state, loop_state, tab_sid);
@@ -1764,15 +1755,26 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
             nfa_add_transition(merge_state, last_branch_end, epsilon_sid);
         }
 
-        // CRITICAL FIX: Mark merge_state as accepting if any branch path is accepting
-        // The merge state should be accepting because all alternatives flow into it
-        // Check if we have a valid pattern index (meaning this is part of a pattern)
-        // IMPORTANT: Only set category and eos_target for REAL patterns, not for fragment parsing
-        // Fragment parsing happens before current_pattern_index is set
+        // Mark merge_state as accepting IF:
+        // - This is a real pattern (current_pattern_index >= 0)
+        // - AND the group is followed by a quantifier (+, *, ?) or end of ENTIRE pattern
+        // This fixes premature acceptance where (git|svn) would match "git" alone
+        // while still allowing (a)+ to work correctly
+        // IMPORTANT: We must check what comes AFTER the closing ), not just what comes after content
         if (current_pattern_index >= 0) {
-            nfa[merge_state].category_mask = current_pattern_cat_mask;
-            nfa[merge_state].is_eos_target = true;
-            nfa[merge_state].pattern_id = current_pattern_index + 1;
+            // First, skip past any ) to find what really follows the group
+            int check_pos = *pos;
+            while (pattern[check_pos] == ')') check_pos++;
+            
+            char next_char = pattern[check_pos];
+            bool followed_by_quantifier = (next_char == '+' || next_char == '*' || next_char == '?');
+            bool end_of_pattern = (next_char == '\0');
+            
+            if (followed_by_quantifier || end_of_pattern) {
+                nfa[merge_state].category_mask = current_pattern_cat_mask;
+                nfa[merge_state].is_eos_target = true;
+                nfa[merge_state].pattern_id = current_pattern_index + 1;
+            }
         }
 
         // Close paren if present
@@ -1979,16 +1981,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 start_state = shared_state;
                 pattern_start_pos = best_shared_pos;
                 DEBUG_PRINT("SHARED prefix at pos %d, state %d\n", best_shared_pos, best_shared_state);
-
-                // CRITICAL FIX: When reusing a shared state, clear its transition markers
-                // to prevent cross-pattern contamination. The previous pattern may have
-                // left markers (like END markers) on transitions from this state.
-                // These markers should NOT be visible to the current pattern.
-                // We clear all markers on all symbol transitions from this shared state.
-                for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                    mta_clear_markers(&nfa[shared_state].multi_targets, sym);
-                }
-                DEBUG_PRINT("CLEARED all markers from shared state %d for new pattern\n", shared_state);
             } else {
                 // No common prefix - create new start state
                 start_state = nfa_add_state_with_minimization(false);

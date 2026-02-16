@@ -16,7 +16,7 @@
 # ============================================================================
 
 CC = gcc
-CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -O2 -mcmodel=medium
+CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -O2 -mcmodel=medium -Wno-missing-field-initializers
 LDFLAGS = -lm -mcmodel=medium
 
 BUILD_DIR = build
@@ -79,6 +79,13 @@ test-hopcroft: $(TOOLS) $(TEST)
 	@echo "================================================="
 	@./$(TEST) --test-set B --minimize-hopcroft
 
+test-stress: $(TOOLS) $(TEST)
+	@echo ""
+	@echo "================================================="
+	@echo "STRESS TESTS (Test-Set C)"
+	@echo "================================================="
+	@./$(TEST) --test-set C --minimize-moore
+
 # Full test suite - runs all three algorithms with their respective test sets
 test: $(TOOLS) $(TEST) $(TOOLS_DIR)/test_minimize_integrity
 	@echo ""
@@ -89,6 +96,8 @@ test: $(TOOLS) $(TEST) $(TOOLS_DIR)/test_minimize_integrity
 	@make test-moore 2>&1 | tail -3
 	@echo ""
 	@make test-hopcroft 2>&1 | tail -3
+	@echo ""
+	@make test-stress 2>&1 | tail -3
 	@echo ""
 	@make test-integrity 2>&1 | tail -5
 	@echo ""
@@ -115,5 +124,5 @@ fuzz-clean:
 
 fuzz-rebuild: clean-fuzz fuzz-build
 
-.PHONY: all clean test test-moore test-hopcroft test-integrity
+.PHONY: all clean test test-moore test-hopcroft test-stress test-integrity
 .PHONY: fuzz fuzz-build fuzz-run-dfa fuzz-run-pattern fuzz-run fuzz-clean fuzz-rebuild
