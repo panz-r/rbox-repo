@@ -1724,6 +1724,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
 
         // Parse remaining alternatives
         int last_branch_end = first_end;
+        bool has_empty_alternative = false;
         while (pattern[*pos] == '|') {
             (*pos)++; // Skip |
             
@@ -1733,6 +1734,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
                 if (epsilon_sid != -1) {
                     nfa_add_transition(anchor_state, merge_state, epsilon_sid);
                 }
+                has_empty_alternative = true;
                 continue;
             }
             
@@ -1757,20 +1759,20 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
 
         // Mark merge_state as accepting IF:
         // - This is a real pattern (current_pattern_index >= 0)
-        // - AND the group is followed by a quantifier (+, *, ?) or end of ENTIRE pattern
+        // - AND (the group has an empty alternative OR the group ends at pattern end OR followed by + which requires at least one)
+        // NOTE: Don't mark as accepting when followed by * or ? - those are handled by parse_rdp_postfix
         // This fixes premature acceptance where (git|svn) would match "git" alone
-        // while still allowing (a)+ to work correctly
-        // IMPORTANT: We must check what comes AFTER the closing ), not just what comes after content
+        // while still allowing (a)+ to work correctly and (a|)b to match "b"
         if (current_pattern_index >= 0) {
             // First, skip past any ) to find what really follows the group
             int check_pos = *pos;
             while (pattern[check_pos] == ')') check_pos++;
             
             char next_char = pattern[check_pos];
-            bool followed_by_quantifier = (next_char == '+' || next_char == '*' || next_char == '?');
+            bool followed_by_plus = (next_char == '+');
             bool end_of_pattern = (next_char == '\0');
             
-            if (followed_by_quantifier || end_of_pattern) {
+            if (has_empty_alternative || followed_by_plus || end_of_pattern) {
                 nfa[merge_state].category_mask = current_pattern_cat_mask;
                 nfa[merge_state].is_eos_target = true;
                 nfa[merge_state].pattern_id = current_pattern_index + 1;

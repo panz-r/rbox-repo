@@ -374,7 +374,7 @@ static void run_character_class_tests(void) {
         // Fragment with quantifier +
         {"cmd abc", true, 7, CAT_MASK_SAFE, "cmd ((abc))+ matches 'abc'"},
         {"cmd a", true, 5, CAT_MASK_SAFE, "cmd ((abc))+ matches single"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "cmd ((abc))+ matches empty (BUG: + requires 1+)"},
+        {"cmd", false, 0, 0, "cmd ((abc))+ matches empty (+ requires 1+)"},
         
         // Fragment with quantifier *
         {"cmd abc", true, 7, CAT_MASK_SAFE, "cmd ((abc))* matches 'abc'"},
@@ -387,7 +387,7 @@ static void run_character_class_tests(void) {
         // Quoted characters
         {"cmd a", true, 5, CAT_MASK_SAFE, "cmd 'a' matches 'a'"},
         {"cmd ab", true, 6, CAT_MASK_SAFE, "cmd 'a' 'b' matches 'ab'"},
-        {"cmd b", true, 5, CAT_MASK_SAFE, "cmd 'a' matches 'b' (BUG: should NOT match)"},
+        {"cmd b", false, 0, 0, "cmd 'a' matches 'b' (NOT match)"},
         
         // Quoted with quantifier
         {"cmd aaa", true, 7, CAT_MASK_SAFE, "cmd 'a'+ matches 'aaa'"},

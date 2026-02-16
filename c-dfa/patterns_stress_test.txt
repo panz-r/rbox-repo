@@ -1,0 +1,40 @@
+# ============================================================================
+# Stress Test Patterns - Structural Integrity & Capture Precision
+# ============================================================================
+#
+# These patterns test edge cases in NFA construction and capture handling.
+# ============================================================================
+
+# ============================================================================
+# CATEGORY 1: STRUCTURAL INTEGRITY
+# Tests for premature acceptance bugs in alternations and groups
+# ============================================================================
+
+# Test 1.1: Sequence After Group
+# Pattern: (git|svn) status
+# Should match: "git status", "svn status"
+# Should NOT match: "git", "svn"
+[safe:stress:git_svn] (git|svn) status
+
+# Test 1.2: Quantifier on Group
+# Pattern: (ab)+c
+# Should match: "abc", "ababc"
+# Should NOT match: "ab", "abab", "abcab"
+[safe:stress:ab_quant] (ab)+c
+
+# Test 1.3: Nested Alternation with Suffix
+# Pattern: (a|(b|c)d)e
+# Should match: "ae", "bde", "cde"
+# Should NOT match: "a", "b", "bd", "cd"
+[safe:stress:alt_nested] (a|(b|c)d)e
+
+# ============================================================================
+# CATEGORY 2: WHITESPACE & WILDCARD EDGE CASES
+# ============================================================================
+
+# Test 2.1: Strict Whitespace
+# Pattern: ls -l (normalizes to [ \t]+ between tokens)
+[safe:stress:ls_l] ls -l
+
+# Test 2.2: Git status strict whitespace
+[safe:stress:git_status] git status

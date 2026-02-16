@@ -19,7 +19,7 @@
 #define MAX_TARGET_BUFFER 4096
 
 /* Maximum markers per transition */
-#define MAX_MARKERS_PER_TRANSITION 8
+#define MAX_MARKERS_PER_TRANSITION 16
 
 /* Transition marker - attached to a specific transition */
 typedef struct {

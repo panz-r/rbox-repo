@@ -527,6 +527,7 @@ static void collect_transition_markers(int source_count, int* source_states, int
 void nfa_to_dfa(void) {
     fprintf(stderr, "DEBUG nfa_to_dfa: nfa_state_count=%d, alphabet_size=%d\n", nfa_state_count, alphabet_size);
     dfa_init();
+    init_marker_lists();
     fprintf(stderr, "DEBUG after dfa_init\n");
 
     int in[MAX_STATES] = {0}; int ic = 1;
