@@ -335,43 +335,49 @@ void epsilon_closure(int* states, int* count, int max_states) {
 // This is used to fix quantifier category mixing bug where different patterns with shared prefixes
 // have fork states that can only reach SOME accepting states, not all
 // KEY: We search from ALL starting states TOGETHER to find all reachable accepting states
+// CRITICAL FIX: For INITIAL state, collect ALL fork categories unconditionally because
+// patterns like "cmd ((abc))*" have fork states that aren't reachable via epsilon from state 0
+// (they're after the literal characters), but should still contribute to initial state for empty match
 static uint8_t collect_fork_categories(int* states, int count, bool is_initial_state) {
     uint8_t fork_cats = 0;
     
-    // Check if there are any fork states in the NFA (is_eos_target with category but pattern_id=0)
+    // Check if there are any fork states in the NFA (is_eos_target with category)
+    // A fork state is a state that can match empty (is_eos_target) and has a category
+    // Note: We used to check pattern_id == 0, but that's wrong - fork states can now have pattern_id
     bool has_fork = false;
     for (int i = 0; i < nfa_state_count; i++) {
-        if (nfa[i].is_eos_target && nfa[i].category_mask != 0 && nfa[i].pattern_id == 0) {
+        if (nfa[i].is_eos_target && nfa[i].category_mask != 0) {
             has_fork = true;
             break;
         }
     }
     if (!has_fork) return 0;
     
-    // Search from ALL starting states TOGETHER to find all reachable fork states
+    // CRITICAL FIX: For initial state, collect ALL fork categories unconditionally
+    // This ensures patterns like "cmd ((abc))*" match empty even though the fork state
+    // isn't reachable via epsilon from state 0 (it's after the literal chars)
+    if (is_initial_state) {
+        for (int i = 0; i < nfa_state_count; i++) {
+            if (nfa[i].is_eos_target && nfa[i].category_mask != 0) {
+                fork_cats |= nfa[i].category_mask;
+            }
+        }
+        return fork_cats;
+    }
+    
+    // For non-initial states, search from all states via epsilon closure
     static bool visited[MAX_STATES];
     memset(visited, 0, sizeof(visited));
     
     int stack[MAX_STATES];
     int stack_top = 0;
     
-    // Add starting states to the stack
-    // For initial state, only use state 0 to find fork states that can match empty
     // For non-initial states, search from all states
-    if (is_initial_state) {
-        // For initial state, only start from state 0
-        if (0 >= 0 && 0 < nfa_state_count) {
-            stack[stack_top++] = 0;
-            visited[0] = true;
-        }
-    } else {
-        // For non-initial states, search from all states
-        for (int s = 0; s < count; s++) {
-            int start = states[s];
-            if (start >= 0 && start < nfa_state_count && !visited[start]) {
-                stack[stack_top++] = start;
-                visited[start] = true;
-            }
+    for (int s = 0; s < count; s++) {
+        int start = states[s];
+        if (start >= 0 && start < nfa_state_count && !visited[start]) {
+            stack[stack_top++] = start;
+            visited[start] = true;
         }
     }
     

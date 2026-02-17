@@ -195,11 +195,19 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     if (length == 0) length = strlen(input);
     if (length == 0) {
         const char* raw_base = (const char*)current_dfa;
-        const dfa_state_t* curr = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
-        if (curr->eos_target != 0) {
-            curr = (const dfa_state_t*)(raw_base + curr->eos_target);
+        const dfa_state_t* initial = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
+        uint8_t initial_cat = (uint8_t)DFA_GET_CATEGORY_MASK(initial->flags);
+        
+        const dfa_state_t* curr = initial;
+        uint8_t eos_cat = 0;
+        if (initial->eos_target != 0) {
+            curr = (const dfa_state_t*)(raw_base + initial->eos_target);
+            eos_cat = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
         }
-        uint8_t m = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+        // Use category from initial state if available, otherwise use eos_target state's category
+        // This fixes the issue where eos_target points to a fork state that doesn't have category
+        // but the initial state has the correct category in its flags
+        uint8_t m = initial_cat ? initial_cat : eos_cat;
         if (m != 0) {
             result->matched = true;
             result->matched_length = 0;

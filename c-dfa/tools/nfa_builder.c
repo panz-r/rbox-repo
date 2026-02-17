@@ -2172,6 +2172,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
         if (!has_outgoing) {
             nfa[eos_target_state].is_eos_target = true;
             nfa[eos_target_state].category_mask = cat_mask;  // Set category for end_state
+            nfa[eos_target_state].pattern_id = (current_pattern_index >= 0) ? (uint16_t)(current_pattern_index + 1) : 0;
             state_do_not_share[eos_target_state] = true;  // CONSERVATIVE: Don't share accepting states
         }
 

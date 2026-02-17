@@ -1,0 +1,12 @@
+# ============================================================================
+# Negative Integrity Tests - Ensure we're not over-accepting
+# ============================================================================
+
+# Alternation - (git|svn) status should only match with "status" suffix
+[safe:git_status] (git|svn) status
+
+# Quantifier - (ab)+c should require 'c' at the end
+[safe:ab_plus_c] (ab)+c
+
+# Whitespace required - ls -l requires space
+[safe:ls_minus_l] ls -l
