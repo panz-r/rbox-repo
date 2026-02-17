@@ -7,6 +7,12 @@
 [caution:qes2] a+
 [safe:qes3] a?
 
+# Mixed safe/category in same file - critical for testing fork state leakage
+# a* allows empty (fork state), a+ requires at least one (not fork)
+# Testing empty with CAUTION should NOT match (a+ requires char)
+# Testing empty with SAFE should match (a* allows empty)
+[caution:mixed1] b+
+
 # Two chars with all quantifiers
 [safe:qes4] ab*
 [caution:qes5] ab+

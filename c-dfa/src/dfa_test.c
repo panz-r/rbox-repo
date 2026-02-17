@@ -1394,6 +1394,12 @@ static void run_quantifier_edge_tests(void) {
         {"", true, 0, CAT_MASK_SAFE, "a? matches empty"},
         {"a", true, 1, CAT_MASK_SAFE, "a? matches a"},
         
+        // Mixed patterns: a* (safe, fork) + b+ (caution, not fork)
+        // Testing empty string: should match ( safea* allows empty), caution should NOT (b+ requires char)
+        {"", true, 0, CAT_MASK_SAFE, "a*+b+ empty matches safe (a* allows empty)"},
+        {"", false, 0, CAT_MASK_CAUTION, "a*+b+ empty should NOT match caution (b+ requires char)"},
+        {"b", true, 1, CAT_MASK_CAUTION, "b+ matches b"},
+        
         // After alternation
         {"", true, 0, CAT_MASK_SAFE, "(a|b)* matches empty"},
         {"a", true, 1, CAT_MASK_SAFE, "(a|b)* matches a"},
