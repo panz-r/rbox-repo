@@ -617,6 +617,7 @@ void nfa_to_dfa(void) {
     }
     fprintf(stderr, "DEBUG before collect_fork_categories, im=0x%02x\n", im);
     // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
+    // This ensures patterns with shared prefixes but different categories are all considered
     uint8_t fork_cats = collect_fork_categories(temp, tc, is_initial_state);
     fprintf(stderr, "DEBUG after collect_fork_categories, fork_cats=0x%02x\n", fork_cats);
     im |= fork_cats;
@@ -707,9 +708,13 @@ void nfa_to_dfa(void) {
                 }
             }
             
-            // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
-            // This ensures patterns with shared prefixes but different categories are all considered
-            uint8_t fork_cats = collect_fork_categories(temp2, tc2, false);
+            // QUANTIFIER FIX: Only collect fork categories for INITIAL state
+            // For non-initial states, don't collect fork categories as they can cause
+            // incorrect matching where patterns like a* and b* match any character
+            uint8_t fork_cats = 0;
+            if (is_initial_state) {
+                fork_cats = collect_fork_categories(temp2, tc2, false);
+            }
             mm |= fork_cats;
             // DO NOT inherit from source - that breaks prefix sharing
 
