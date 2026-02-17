@@ -1,0 +1,29 @@
+# ============================================================================
+# Long Chain Pattern Tests
+# Tests patterns with many consecutive elements
+# ============================================================================
+
+[fragment:a] a
+[fragment:b] b
+[fragment:c] c
+[fragment:d] d
+
+# Long chains - each should match exact length
+[safe:chain3] a b c
+[safe:chain4] a b c d
+[safe:chain5] a b c d e
+
+# With quantifiers in chain
+[safe:chainq1] a+ b
+[safe:chainq2] a b+
+[safe:chainq3] a+ b+
+[safe:chainq4] a+ b c+
+
+# Longer chains with mixed quantifiers
+[safe:chainq5] a+ b+ c
+[safe:chainq6] a b+ c+
+[safe:chainq7] a+ b c+ d
+[safe:chainq8] a+ b+ c+ d+
+
+# Very long chain
+[safe:chainlong] a b c d e f g h i j

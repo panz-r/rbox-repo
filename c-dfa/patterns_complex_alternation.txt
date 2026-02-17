@@ -1,0 +1,47 @@
+# ============================================================================
+# Complex Alternation Tests  
+# Tests patterns with many alternatives
+# ============================================================================
+
+# Two alternatives
+[safe:alt2a] a|b
+[safe:alt2b] x|y
+
+# Three alternatives
+[safe:alt3a] a|b|c
+[safe:alt3b] x|y|z
+
+# Four alternatives
+[safe:alt4a] a|b|c|d
+
+# Five alternatives
+[safe:alt5a] a|b|c|d|e
+
+# Many alternatives (10)
+[safe:alt10a] a|b|c|d|e|f|g|h|i|j
+
+# Alternations with different lengths
+[safe:altlen1] a|ab
+[safe:altlen2] a|ab|abc
+[safe:altlen3] a|ab|abc|abcd
+
+# Alternations with quantifiers
+[safe:altq1] (a|b)+
+[safe:altq2] (a|b)*
+[safe:altq3] (a|b|c)+
+
+# Empty alternatives
+[safe:altempty1] a|
+[safe:altempty2] |a
+[safe:altempty3] a|b|
+[safe:altempty4] |a|b
+
+# Nested alternations
+[safe:altnest1] (a|b)|c
+[safe:altnest2] a|(b|c)
+[safe:altnest3] (a|(b|c))|d
+
+# Complex mixed
+[safe:altmix1] (a|b|c)+
+[safe:altmix2] (a|ab|abc)+
+[safe:altmix3] (a+|b+|c+)

@@ -1,0 +1,41 @@
+# ============================================================================
+# Boundary and Exact Length Tests
+# Tests exact length matching and boundary conditions
+# ============================================================================
+
+# Exact length matching
+[safe:exact1] a
+[safe:exact2] aa
+[safe:exact3] aaa
+[safe:exact4] aaaa
+[safe:exact5] aaaaa
+
+# With quantifiers - exact counts
+[safe:exactq1] a{2}
+[safe:exactq2] a{3}
+[safe:exactq3] a{4}
+
+# Range quantifiers (if supported)
+[safe:rangeq1] a{2,4}
+[safe:rangeq2] a{1,3}
+
+# Boundary at start
+[safe:bound1] ^abc
+[safe:bound2] ^a
+
+# Boundary at end  
+[safe:bound3] abc$
+[safe:bound4] c$
+
+# Word boundaries
+[safe:word1] a b
+[safe:word2] a\tb
+
+# Empty patterns
+[safe:empty1] 
+[safe:empty2] 
+
+# Single char variations
+[safe:single1] x
+[safe:single2] y
+[safe:single3] z

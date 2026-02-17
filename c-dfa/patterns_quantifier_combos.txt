@@ -1,0 +1,53 @@
+# ============================================================================
+# Quantifier Combination Tests
+# Tests mixing different quantifiers in various combinations
+# ============================================================================
+
+# Simple quantifier variations
+[safe:q1] a+
+[safe:q2] a*
+[safe:q3] a?
+
+# Two elements with different quantifiers
+[safe:q4] a+ b+
+[safe:q5] a+ b*
+[safe:q6] a+ b?
+[safe:q7] a* b+
+[safe:q8] a* b*
+[safe:q9] a* b?
+[safe:q10] a? b+
+[safe:q11] a? b*
+[safe:q12] a? b?
+
+# Same quantifier on both
+[safe:q13] a+ b+
+[safe:q14] a* b*
+[safe:q15] a? b?
+
+# Triple combinations
+[safe:q16] a+ b+ c+
+[safe:q17] a+ b* c?
+[safe:q18] a* b+ c?
+[safe:q19] a? b+ c*
+[safe:q20] a? b? c?
+
+# With alternation inside quantifier
+[safe:q21] (a|b)+
+[safe:q22] (a|b)*
+[safe:q23] (a|b)?
+[safe:q24] (a|b|c)+
+
+# Nested quantifiers
+[safe:q25] (a+)+
+[safe:q26] (a*)*
+[safe:q27] (a?)? 
+
+# Quantifier after group
+[safe:q28] (ab)+
+[safe:q29] (ab)*
+[safe:q30] (ab)?
+
+# Complex chains with quantifiers
+[safe:q31] a+ b+ c+ d+
+[safe:q32] a* b* c* d*
+[safe:q33] a+ b* c? d+

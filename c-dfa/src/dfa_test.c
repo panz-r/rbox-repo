@@ -134,6 +134,15 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
 static void run_stress_structural_tests(void);
 static void run_stress_capture_tests(void);
 static void run_stress_whitespace_tests(void);
+static void run_long_chain_tests(void);
+static void run_deep_nested_tests(void);
+static void run_complex_alternation_tests(void);
+static void run_quantifier_combo_tests(void);
+static void run_overlapping_prefix_tests(void);
+static void run_quantifier_edge_tests(void);
+static void run_fragment_interact_tests(void);
+static void run_whitespace_tests(void);
+static void run_boundary_new_tests(void);
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
@@ -1084,6 +1093,15 @@ int main(int argc, char* argv[]) {
         run_simple_quantifier_tests();
         run_step_tests();
         run_test_pattern_tests();
+        // New edge case tests
+        run_long_chain_tests();
+        run_deep_nested_tests();
+        run_complex_alternation_tests();
+        run_quantifier_combo_tests();
+        run_overlapping_prefix_tests();
+        run_quantifier_edge_tests();
+        run_fragment_interact_tests();
+        run_whitespace_tests();
     }
 
     if (test_set_mask & TEST_SET_B) {
@@ -1102,6 +1120,8 @@ int main(int argc, char* argv[]) {
         run_with_captures_tests();
         run_capture_simple_tests();
         run_capture_test_tests();
+        // New tests
+        run_boundary_new_tests();
     }
 
     if (test_set_mask & TEST_SET_C) {
@@ -1195,4 +1215,255 @@ static void run_stress_whitespace_tests(void) {
 
     run_test_group("STRESS: Whitespace & Wildcards", "patterns_stress_test.txt",
                    "build_test/stress_whitespace.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// NEW: Long Chain Pattern Tests
+// ============================================================================
+
+static void run_long_chain_tests(void) {
+    TestCase cases[] = {
+        // Long chains - exact lengths
+        {"abc", true, 3, CAT_MASK_SAFE, "chain3 matches abc"},
+        {"abcd", true, 4, CAT_MASK_SAFE, "chain4 matches abcd"},
+        {"abcde", true, 5, CAT_MASK_SAFE, "chain5 matches abcde"},
+        {"abcde f", false, 0, 0, "chain5 should NOT match with space"},
+        
+        // With quantifiers
+        {"aab", true, 3, CAT_MASK_SAFE, "chainq1 matches aab"},
+        {"ab", true, 2, CAT_MASK_SAFE, "chainq1 matches ab"},
+        {"abbbb", true, 5, CAT_MASK_SAFE, "chainq2 matches abbbb"},
+        {"ab", true, 2, CAT_MASK_SAFE, "chainq2 matches ab"},
+        {"aab b", true, 4, CAT_MASK_SAFE, "chainq3 matches aab b"},
+        {"aabbb cc", true, 6, CAT_MASK_SAFE, "chainq4 matches aabbb cc"},
+        
+        // Very long chain
+        {"abcdefghij", true, 10, CAT_MASK_SAFE, "chainlong matches full"},
+    };
+
+    run_test_group("LONG CHAIN TESTS", "patterns_long_chain.txt",
+                   "build_test/long_chain.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// NEW: Deeply Nested Pattern Tests  
+// ============================================================================
+
+static void run_deep_nested_tests(void) {
+    TestCase cases[] = {
+        // Simple nesting
+        {"a", true, 1, CAT_MASK_SAFE, "nest1 matches a"},
+        {"a", true, 1, CAT_MASK_SAFE, "nest2 matches a"},
+        {"a", true, 1, CAT_MASK_SAFE, "nest3 matches a"},
+        
+        // Nested with quantifiers
+        {"a", true, 1, CAT_MASK_SAFE, "nest4 matches a"},
+        {"aa", true, 2, CAT_MASK_SAFE, "nest4 matches aa"},
+        {"", true, 0, CAT_MASK_SAFE, "nest5 matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "nest5 matches a"},
+        {"", true, 0, CAT_MASK_SAFE, "nest6 matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "nest6 matches a"},
+        
+        // Nested alternations
+        {"a", true, 1, CAT_MASK_SAFE, "nest16 matches a"},
+        {"b", true, 1, CAT_MASK_SAFE, "nest16 matches b"},
+        {"ab", true, 2, CAT_MASK_SAFE, "nest10 matches ab"},
+    };
+
+    run_test_group("DEEP NESTED TESTS", "patterns_deep_nested.txt",
+                   "build_test/deep_nested.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// NEW: Complex Alternation Tests
+// ============================================================================
+
+static void run_complex_alternation_tests(void) {
+    TestCase cases[] = {
+        // Two alternatives
+        {"a", true, 1, CAT_MASK_SAFE, "alt2a matches a"},
+        {"b", true, 1, CAT_MASK_SAFE, "alt2a matches b"},
+        {"c", false, 0, 0, "alt2a should NOT match c"},
+        
+        // Three alternatives
+        {"a", true, 1, CAT_MASK_SAFE, "alt3a matches a"},
+        {"b", true, 1, CAT_MASK_SAFE, "alt3a matches b"},
+        {"c", true, 1, CAT_MASK_SAFE, "alt3a matches c"},
+        {"d", false, 0, 0, "alt3a should NOT match d"},
+        
+        // Empty alternatives
+        {"", true, 0, CAT_MASK_SAFE, "altempty1 matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "altempty1 matches a"},
+        {"", true, 0, CAT_MASK_SAFE, "altempty2 matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "altempty2 matches a"},
+        
+        // Alternations with quantifiers
+        {"a", true, 1, CAT_MASK_SAFE, "altq1 matches a"},
+        {"aa", true, 2, CAT_MASK_SAFE, "altq1 matches aa"},
+        {"ab", true, 2, CAT_MASK_SAFE, "altq1 matches ab"},
+        {"ba", true, 2, CAT_MASK_SAFE, "altq1 matches ba"},
+        {"", true, 0, CAT_MASK_SAFE, "altq2 matches empty"},
+    };
+
+    run_test_group("COMPLEX ALTERNATION TESTS", "patterns_complex_alternation.txt",
+                   "build_test/complex_alternation.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// NEW: Quantifier Combination Tests
+// ============================================================================
+
+static void run_quantifier_combo_tests(void) {
+    TestCase cases[] = {
+        // Simple quantifiers
+        {"a", true, 1, CAT_MASK_SAFE, "q1 matches a"},
+        {"aa", true, 2, CAT_MASK_SAFE, "q1 matches aa"},
+        {"", false, 0, 0, "q1 should NOT match empty"},
+        {"", true, 0, CAT_MASK_SAFE, "q2 matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "q2 matches a"},
+        {"", true, 0, CAT_MASK_SAFE, "q3 matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "q3 matches a"},
+        
+        // Two elements with different quantifiers
+        {"ab", true, 2, CAT_MASK_SAFE, "q4 matches ab"},
+        {"aab", true, 3, CAT_MASK_SAFE, "q4 matches aab"},
+        {"aabb", true, 4, CAT_MASK_SAFE, "q4 matches aabb"},
+        {"a", false, 0, 0, "q4 should NOT match single a"},
+        
+        {"ab", true, 2, CAT_MASK_SAFE, "q5 matches ab"},
+        {"aab", true, 3, CAT_MASK_SAFE, "q5 matches aab"},
+        {"", true, 0, CAT_MASK_SAFE, "q5 matches empty"},
+    };
+
+    run_test_group("QUANTIFIER COMBO TESTS", "patterns_quantifier_combos.txt",
+                   "build_test/quantifier_combos.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// NEW: Overlapping Prefix Tests
+// ============================================================================
+
+static void run_overlapping_prefix_tests(void) {
+    TestCase cases[] = {
+        // Shared prefix, different suffixes
+        {"git log", true, 8, CAT_MASK_SAFE, "ov1a matches git log"},
+        {"git status", true, 11, CAT_MASK_SAFE, "ov1b matches git status"},
+        {"git diff", true, 8, CAT_MASK_SAFE, "ov1c matches git diff"},
+        {"git", false, 0, 0, "ov1a should NOT match git"},
+        
+        // Prefix with different lengths
+        {"abc", true, 3, CAT_MASK_SAFE, "ov2a matches abc"},
+        {"abcdef", true, 6, CAT_MASK_SAFE, "ov2b matches abcdef"},
+        {"abcxyz", true, 6, CAT_MASK_SAFE, "ov2c matches abcxyz"},
+        
+        // Prefix with quantifiers
+        {"test", true, 4, CAT_MASK_SAFE, "ov4a matches test"},
+        {"testttt", true, 7, CAT_MASK_SAFE, "ov4a matches testttt"},
+        {"", true, 0, CAT_MASK_SAFE, "ov4b matches empty"},
+        {"test", true, 4, CAT_MASK_SAFE, "ov4c matches test"},
+    };
+
+    run_test_group("OVERLAPPING PREFIX TESTS", "patterns_overlapping_prefix.txt",
+                   "build_test/overlapping_prefix.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// NEW: Quantifier Edge Case Tests
+// ============================================================================
+
+static void run_quantifier_edge_tests(void) {
+    TestCase cases[] = {
+        // Empty vs single vs multiple
+        {"", true, 0, CAT_MASK_SAFE, "a* matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "a* matches a"},
+        {"aa", true, 2, CAT_MASK_SAFE, "a* matches aa"},
+        {"", false, 0, 0, "a+ should NOT match empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "a+ matches a"},
+        {"", true, 0, CAT_MASK_SAFE, "a? matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "a? matches a"},
+        
+        // After alternation
+        {"", true, 0, CAT_MASK_SAFE, "(a|b)* matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a|b)* matches a"},
+        {"b", true, 1, CAT_MASK_SAFE, "(a|b)* matches b"},
+        
+        // After group
+        {"", true, 0, CAT_MASK_SAFE, "(ab)* matches empty"},
+        {"ab", true, 2, CAT_MASK_SAFE, "(ab)* matches ab"},
+        {"abab", true, 4, CAT_MASK_SAFE, "(ab)* matches abab"},
+    };
+
+    run_test_group("QUANTIFIER EDGE TESTS", "patterns_quantifier_edge.txt",
+                   "build_test/quantifier_edge.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// NEW: Fragment Interaction Tests
+// ============================================================================
+
+static void run_fragment_interact_tests(void) {
+    TestCase cases[] = {
+        // Single fragments
+        {"x", true, 1, CAT_MASK_SAFE, "X matches x"},
+        {"y", true, 1, CAT_MASK_SAFE, "Y matches y"},
+        
+        // Two fragments
+        {"x y", true, 3, CAT_MASK_SAFE, "X Y matches x y"},
+        {"x z", true, 3, CAT_MASK_SAFE, "X Z matches x z"},
+        
+        // Complex fragments
+        {"one two", true, 7, CAT_MASK_SAFE, "ONE TWO matches"},
+        {"hello world", true, 11, CAT_MASK_SAFE, "HELLO WORLD matches"},
+        
+        // Fragments with alternation
+        {"x", true, 1, CAT_MASK_SAFE, "(X|Y) matches x"},
+        {"y", true, 1, CAT_MASK_SAFE, "(X|Y) matches y"},
+        {"z", false, 0, 0, "(X|Y) should NOT match z"},
+    };
+
+    run_test_group("FRAGMENT INTERACT TESTS", "patterns_fragment_interact.txt",
+                   "build_test/fragment_interact.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// NEW: Whitespace Handling Tests
+// ============================================================================
+
+static void run_whitespace_tests(void) {
+    TestCase cases[] = {
+        // Single space
+        {"foo bar", true, 7, CAT_MASK_SAFE, "ws1 matches"},
+        {"foo  bar", true, 8, CAT_MASK_SAFE, "ws4 matches double space"},
+        {"foo\tbar", true, 7, CAT_MASK_SAFE, "ws7 matches tab"},
+        
+        // No space - should NOT match
+        {"foobar", false, 0, 0, "ws14 should NOT match no space"},
+        {"helloworld", false, 0, 0, "ws15 should NOT match"},
+        
+        // Command patterns
+        {"git status", true, 11, CAT_MASK_SAFE, "ws3 matches"},
+        {"git  status", true, 12, CAT_MASK_SAFE, "ws3 matches double space"},
+        {"git\tstatus", true, 11, CAT_MASK_SAFE, "ws3 matches tab"},
+    };
+
+    run_test_group("WHITESPACE TESTS", "patterns_whitespace.txt",
+                   "build_test/whitespace.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+// NEW: Boundary Tests
+// ============================================================================
+
+static void run_boundary_new_tests(void) {
+    TestCase cases[] = {
+        // Simple exact length
+        {"a", true, 1, CAT_MASK_SAFE, "exact1 matches a"},
+        {"aa", true, 2, CAT_MASK_SAFE, "exact2 matches aa"},
+        {"aaa", true, 3, CAT_MASK_SAFE, "exact3 matches aaa"},
+        
+        // Category interaction
+        {"safe arg", true, 0, CAT_MASK_SAFE, "pre1a matches"},
+        {"admin arg", true, 0, CAT_MASK_ADMIN, "pre1b matches"},
+    };
+
+    run_test_group("BOUNDARY NEW TESTS", "patterns_boundary.txt",
+                   "build_test/boundary_new.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }

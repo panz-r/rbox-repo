@@ -1,0 +1,51 @@
+# ============================================================================
+# Fragment Interactions - Focus on combining fragments
+# ============================================================================
+
+[fragment:X] x
+[fragment:Y] y
+[fragment:Z] z
+[fragment:ONE] one
+[fragment:TWO] two
+[fragment:THREE] three
+[fragment:HELLO] hello
+[fragment:WORLD] world
+
+# Single fragments
+[safe:fi1] X
+[safe:fi2] Y
+[safe:fi3] Z
+
+# Two fragments
+[safe:fi4] X Y
+[safe:fi5] X Z
+[safe:fi6] Y Z
+
+# Three fragments
+[safe:fi7] X Y Z
+[safe:fi8] X X X
+[safe:fi9] Y Y Y
+
+# With quantifiers on fragments
+[safe:fi10] X+
+[safe:fi11] X*
+[safe:fi12] X?
+[safe:fi13] X+ Y+
+[safe:fi14] X* Y*
+
+# Complex fragments
+[safe:fi15] ONE TWO
+[safe:fi16] ONE TWO THREE
+[safe:fi17] HELLO WORLD
+[safe:fi18] HELLO WORLD ONE
+
+# Fragment with alternation
+[safe:fi19] (X|Y)
+[safe:fi20] (X|Y|Z)
+[safe:fi21] (ONE|TWO|THREE)
+
+# Fragments with quantifiers mixed
+[safe:fi22] ONE+ TWO
+[safe:fi23] ONE TWO+
+[safe:fi24] ONE+ TWO+
+[safe:fi25] HELLO+ WORLD+

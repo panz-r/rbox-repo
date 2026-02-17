@@ -1,0 +1,38 @@
+# ============================================================================
+# Overlapping Prefix Tests
+# Tests patterns that share common prefixes
+# ============================================================================
+
+# Same prefix, different suffixes
+[safe:ov1a] git log
+[safe:ov1b] git status
+[safe:ov1c] git diff
+
+# Shared prefix of different lengths
+[safe:ov2a] abc
+[safe:ov2b] abcdef
+[safe:ov2c] abcxyz
+
+# Multiple patterns sharing prefix
+[safe:ov3a] foo bar
+[safe:ov3b] foo baz
+[safe:ov3c] foo qux
+
+# Prefix with quantifier variations
+[safe:ov4a] test+
+[safe:ov4b] test*
+[safe:ov4c] test?
+
+# Prefix with alternation
+[safe:ov5a] (a|b)c
+[safe:ov5b] (a|b)d
+
+# More complex overlap
+[safe:ov6a] hello world
+[safe:ov6b] hello there
+[safe:ov6c] goodbye world
+
+# Long shared prefix
+[safe:ov7a] the quick brown fox
+[safe:ov7b] the quick red fox
+[safe:ov7c] the slow brown fox

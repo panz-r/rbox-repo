@@ -1,0 +1,42 @@
+# ============================================================================
+# Quantifier Edge Cases - Focus on * and ? behavior
+# ============================================================================
+
+# Empty vs single vs multiple
+[safe:qes1] a*
+[safe:qes2] a+
+[safe:qes3] a?
+
+# Two chars with all quantifiers
+[safe:qes4] ab*
+[safe:qes5] ab+
+[safe:qes6] ab?
+
+# Three chars
+[safe:qes7] abc*
+[safe:qes8] abc+
+[safe:qes9] abc?
+
+# Mixed in sequence
+[safe:qes10] a* b*
+[safe:qes11] a+ b+
+[safe:qes12] a? b?
+
+# After alternation
+[safe:qes13] (a|b)*
+[safe:qes14] (a|b)+
+[safe:qes15] (a|b)?
+
+# After group
+[safe:qes16] (ab)*
+[safe:qes17] (ab)+
+[safe:qes18] (ab)?
+
+# Multiple ? in sequence
+[safe:qes19] a? b? c?
+[safe:qes20] a? a? a?
+
+# Star after plus
+[safe:qes21] a+*
+[safe:qes22] a*+
+[safe:qes23] a?+

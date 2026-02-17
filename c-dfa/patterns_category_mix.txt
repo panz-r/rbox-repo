@@ -1,0 +1,30 @@
+# ============================================================================
+# Category Interaction Tests
+# Tests patterns with multiple categories interacting
+# ============================================================================
+
+# Simple category
+[safe:cat1] foo
+[admin:cat2] bar
+[caution:cat3] baz
+
+# Same prefix, different categories
+[safe:pre1a] safe arg
+[admin:pre1b] admin arg
+
+# Category with quantifier
+[safe:catq1] safe+
+[admin:catq2] admin+
+
+# Category with alternation  
+[safe:catalt1] safe|admin
+[admin:catalt2] admin|caution
+
+# Multiple tokens with categories
+[safe:mult1] safe one two
+[admin:mult2] admin three four
+
+# Category boundary tests
+[safe:catbound1] safe a
+[safe:catbound2] safe a b
+[admin:catbound3] admin x

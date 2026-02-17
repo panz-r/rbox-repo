@@ -1,0 +1,45 @@
+# ============================================================================
+# Whitespace Handling - Focus on various whitespace patterns
+# ============================================================================
+
+# Single space between tokens
+[safe:ws1] foo bar
+[safe:ws2] hello world
+[safe:ws3] git status
+
+# Multiple spaces
+[safe:ws4] foo  bar
+[safe:ws5] hello   world
+[safe:ws6] git   status
+
+# Tab instead of space
+[safe:ws7] foo	bar
+[safe:ws8] hello	world
+
+# Mixed whitespace
+[safe:ws9] foo 	bar
+[safe:ws10] foo	 bar
+
+# Multiple tokens with spaces
+[safe:ws11] a b c
+[safe:ws12] a  b  c
+[safe:ws13] a	b	c
+
+# No space - should NOT match
+[safe:ws14] foobar
+[safe:ws15] helloworld
+[safe:ws16] gitstatus
+
+# Space at end
+[safe:ws17] foo 
+[safe:ws18] bar 
+
+# Command-like patterns
+[safe:ws19] cmd arg
+[safe:ws20] cmd  arg
+[safe:ws21] cmd   arg
+
+# Long command
+[safe:ws22] git log --oneline
+[safe:ws23] git  log  --oneline
+[safe:ws24] git	log	--oneline
