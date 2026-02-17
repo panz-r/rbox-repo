@@ -1759,20 +1759,21 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
 
         // Mark merge_state as accepting IF:
         // - This is a real pattern (current_pattern_index >= 0)
-        // - AND (the group has an empty alternative OR the group ends at pattern end OR followed by + which requires at least one)
+        // - AND (the group has an empty alternative OR the group ends at pattern end)
         // NOTE: Don't mark as accepting when followed by * or ? - those are handled by parse_rdp_postfix
         // This fixes premature acceptance where (git|svn) would match "git" alone
-        // while still allowing (a)+ to work correctly and (a|)b to match "b"
+        // while still allowing (a|)b to match "b"
+        // CRITICAL FIX: Don't include followed_by_plus - + quantifier requires at least one match
+        // and should NOT be marked as is_eos_target (which allows empty matching)
         if (current_pattern_index >= 0) {
             // First, skip past any ) to find what really follows the group
             int check_pos = *pos;
             while (pattern[check_pos] == ')') check_pos++;
             
             char next_char = pattern[check_pos];
-            bool followed_by_plus = (next_char == '+');
             bool end_of_pattern = (next_char == '\0');
             
-            if (has_empty_alternative || followed_by_plus || end_of_pattern) {
+            if (has_empty_alternative || end_of_pattern) {
                 nfa[merge_state].category_mask = current_pattern_cat_mask;
                 nfa[merge_state].is_eos_target = true;
                 nfa[merge_state].pattern_id = current_pattern_index + 1;

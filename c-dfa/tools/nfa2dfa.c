@@ -354,13 +354,41 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
     }
     if (!has_fork) return 0;
     
-    // CRITICAL FIX: For initial state, collect ALL fork categories unconditionally
-    // This ensures patterns like "cmd ((abc))*" match empty even though the fork state
-    // isn't reachable via epsilon from state 0 (it's after the literal chars)
+    // For initial state, do epsilon closure from state 0 and collect fork categories
+    // that are actually reachable via epsilon transitions
+    // This ensures + quantifier (which has NO skip path) doesn't incorrectly match empty
     if (is_initial_state) {
-        for (int i = 0; i < nfa_state_count; i++) {
-            if (nfa[i].is_eos_target && nfa[i].category_mask != 0) {
-                fork_cats |= nfa[i].category_mask;
+        static bool visited[MAX_STATES];
+        memset(visited, 0, sizeof(visited));
+        
+        int stack[MAX_STATES];
+        int stack_top = 0;
+        
+        // Start from state 0 (initial state)
+        stack[stack_top++] = 0;
+        visited[0] = true;
+        
+        int epsilon_symbol_id = 257;
+        
+        while (stack_top > 0) {
+            int cur = stack[--stack_top];
+            
+            // If this is a fork state (is_eos_target with category), collect its category
+            if (nfa[cur].is_eos_target && nfa[cur].category_mask != 0) {
+                fork_cats |= nfa[cur].category_mask;
+            }
+            
+            // Continue exploring via EPSILON transitions
+            int mta_cnt = 0;
+            int* mta_targets = mta_get_target_array(&nfa[cur].multi_targets, epsilon_symbol_id, &mta_cnt);
+            if (mta_targets) {
+                for (int i = 0; i < mta_cnt; i++) {
+                    int target = mta_targets[i];
+                    if (target >= 0 && target < nfa_state_count && !visited[target]) {
+                        visited[target] = true;
+                        stack[stack_top++] = target;
+                    }
+                }
             }
         }
         return fork_cats;

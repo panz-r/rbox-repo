@@ -1380,11 +1380,17 @@ static void run_overlapping_prefix_tests(void) {
 static void run_quantifier_edge_tests(void) {
     TestCase cases[] = {
         // Empty vs single vs multiple
+        // Note: a* is [safe], a+ is [caution], a? is [safe] to distinguish patterns
         {"", true, 0, CAT_MASK_SAFE, "a* matches empty"},
         {"a", true, 1, CAT_MASK_SAFE, "a* matches a"},
         {"aa", true, 2, CAT_MASK_SAFE, "a* matches aa"},
-        {"", false, 0, 0, "a+ should NOT match empty"},
-        {"a", true, 1, CAT_MASK_SAFE, "a+ matches a"},
+        // a+ is [caution], so when testing category SAFE it won't match
+        // Testing with category SAFE: since a+ is caution, SAFE won't match empty
+        // But this test is flawed - we can't distinguish patterns in same category
+        // The DFA returns combined category, not individual patterns
+        // a+ should NOT match empty (requires at least one character)
+        {"", false, 0, CAT_MASK_CAUTION, "a+ should NOT match empty"},
+        {"a", true, 1, CAT_MASK_CAUTION, "a+ matches a"},
         {"", true, 0, CAT_MASK_SAFE, "a? matches empty"},
         {"a", true, 1, CAT_MASK_SAFE, "a? matches a"},
         
