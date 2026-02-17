@@ -18,8 +18,8 @@
 [safe:nest6] ((a)?)
 
 # Deeply nested with different quantifiers
-[safe:nest7] (((a)+)+
-[safe:nest8] (((a)*)*
+[safe:nest7] (((a)+))
+[safe:nest8] (((a)*))
 [safe:nest9] (((a)?)?)
 
 # Mixed nesting
@@ -30,7 +30,7 @@
 
 # Very deep
 [safe:nest14] ((((a))))
-[safe:nest15] (((((a)+)))
+[safe:nest15] ((((a)+)))
 
 # Nested alternations
 [safe:nest16] ((a|b))

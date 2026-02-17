@@ -20,8 +20,8 @@
 [safe:rangeq2] a{1,3}
 
 # Boundary at start
-[safe:bound1] ^abc
-[safe:bound2] ^a
+[safe:bound1] abc^
+[safe:bound2] a^
 
 # Boundary at end  
 [safe:bound3] abc$

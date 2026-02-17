@@ -32,9 +32,9 @@
 
 # Empty alternatives
 [safe:altempty1] a|
-[safe:altempty2] |a
+[safe:altempty2] (a|)
 [safe:altempty3] a|b|
-[safe:altempty4] |a|b
+[safe:altempty4] (|a|b)
 
 # Nested alternations
 [safe:altnest1] (a|b)|c

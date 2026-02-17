@@ -142,6 +142,7 @@ static void run_overlapping_prefix_tests(void);
 static void run_quantifier_edge_tests(void);
 static void run_fragment_interact_tests(void);
 static void run_whitespace_tests(void);
+static void run_empty_matching_tests(void);
 static void run_boundary_new_tests(void);
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
@@ -1102,6 +1103,7 @@ int main(int argc, char* argv[]) {
         run_quantifier_edge_tests();
         run_fragment_interact_tests();
         run_whitespace_tests();
+        run_empty_matching_tests();
     }
 
     if (test_set_mask & TEST_SET_B) {
@@ -1449,6 +1451,40 @@ static void run_whitespace_tests(void) {
     run_test_group("WHITESPACE TESTS", "patterns_whitespace.txt",
                    "build_test/whitespace.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
+
+// ============================================================================
+// NEW: Empty Matching Tests
+// ============================================================================
+
+static void run_empty_matching_tests(void) {
+    TestCase cases[] = {
+        // Star quantifier (matches empty)
+        {"", true, 0, CAT_MASK_SAFE, "a* matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "a* matches a"},
+        {"aa", true, 2, CAT_MASK_SAFE, "a* matches aa"},
+        {"b", false, 0, 0, "a* should NOT match b"},
+        
+        // Nested star
+        {"", true, 0, CAT_MASK_SAFE, "(a)* matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "(a)* matches a"},
+        {"aa", true, 2, CAT_MASK_SAFE, "(a)* matches aa"},
+        
+        // Question mark (optional - matches empty)
+        {"", true, 0, CAT_MASK_SAFE, "a? matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "a? matches a"},
+        {"aa", false, 0, 0, "a? should NOT match aa"},
+        
+        // Empty alternatives
+        {"", true, 0, CAT_MASK_SAFE, "a| matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "a| matches a"},
+        {"", true, 0, CAT_MASK_SAFE, "|a matches empty"},
+        {"a", true, 1, CAT_MASK_SAFE, "|a matches a"},
+    };
+
+    run_test_group("EMPTY MATCHING TESTS", "patterns_empty_matching.txt",
+                   "build_test/empty_matching.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
 // NEW: Boundary Tests
 // ============================================================================
 
