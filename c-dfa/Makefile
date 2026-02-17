@@ -45,10 +45,12 @@ $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(INCLUDE_DIR)/*.h
 $(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/nfa_builder.c \
 		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
 		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
+		$(TOOLS_DIR)/dfa_layout.c \
 		$(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -DNFABUILDER_NO_MAIN -DNFABUILDER_EXCLUDE_NFA_INIT -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/nfa_builder.c \
 		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
 		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
+		$(TOOLS_DIR)/dfa_layout.c \
 		$(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
 
 # Build with SAT minimization support (requires CaDiCaL)
@@ -56,10 +58,12 @@ $(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/nfa_builder.c
 $(TOOLS_DIR)/nfa2dfa_sat: $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o \
 		$(TOOLS_DIR)/dfa_minimize.o $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
 		$(TOOLS_DIR)/dfa_minimize_sat.o $(TOOLS_DIR)/multi_target_array.o \
+		$(TOOLS_DIR)/dfa_layout.o \
 		$(CADICAL_LIB)
 	$(CXX) -o $@ $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o \
 		$(TOOLS_DIR)/dfa_minimize.o $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
 		$(TOOLS_DIR)/dfa_minimize_sat.o $(TOOLS_DIR)/multi_target_array.o \
+		$(TOOLS_DIR)/dfa_layout.o \
 		$(CADICAL_LIB) $(LDFLAGS) -lstdc++
 
 # Object files for SAT build
@@ -78,6 +82,9 @@ $(TOOLS_DIR)/dfa_minimize_brzozowski.o: $(TOOLS_DIR)/dfa_minimize_brzozowski.c $
 $(TOOLS_DIR)/multi_target_array.o: $(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(TOOLS_DIR)/dfa_layout.o: $(TOOLS_DIR)/dfa_layout.c $(TOOLS_DIR)/dfa_layout.h $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(TOOLS_DIR)/dfa_minimize_sat.o: $(TOOLS_DIR)/dfa_minimize_sat.cpp $(INCLUDE_DIR)/*.h $(CADICAL_LIB)
 	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -c -o $@ $<
 
@@ -94,10 +101,12 @@ $(TEST): $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(SRC_DIR)/dfa_test.c $(I
 $(TOOLS_DIR)/test_minimize_integrity: $(TOOLS_DIR)/test_minimize_integrity.c \
 		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
 		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
+		$(TOOLS_DIR)/dfa_layout.c \
 		$(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/test_minimize_integrity.c \
 		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
-		$(TOOLS_DIR)/dfa_minimize_sat_stub.c $(LDFLAGS)
+		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
+		$(TOOLS_DIR)/dfa_layout.c $(LDFLAGS)
 
 # Run minimization integrity test
 test-integrity: $(TOOLS_DIR)/test_minimize_integrity
@@ -180,7 +189,7 @@ fuzz-clean:
 
 fuzz-rebuild: clean-fuzz fuzz-build
 
-.PHONY: all clean clean-all test test-moore test-hopcroft test-brzozowski test-integrity build-sat test-sat
+.PHONY: all clean clean-all test test-moore test-hopcroft test-brzozowski test-integrity build-sat test-sat test-sat-full
 .PHONY: fuzz fuzz-build fuzz-run-dfa fuzz-run-pattern fuzz-run fuzz-clean fuzz-rebuild
 
 # SAT encoding tests
@@ -200,3 +209,17 @@ test-sat: $(TEST_SAT)
 	@echo "SAT ENCODING TESTS"
 	@echo "================================================="
 	@./$(TEST_SAT)
+
+# Full test suite with SAT minimization (requires CaDiCaL)
+test-sat-full: build-sat $(TEST)
+	@echo ""
+	@echo "================================================="
+	@echo "FULL TEST SUITE WITH SAT MINIMIZATION"
+	@echo "================================================="
+	@./$(TEST) --minimize-sat --test-set A
+	@./$(TEST) --minimize-sat --test-set BC
+	@echo ""
+	@echo "================================================="
+	@echo "MINIMIZATION INTEGRITY (SAT)"
+	@echo "================================================="
+	@./$(TOOLS_DIR)/test_minimize_integrity

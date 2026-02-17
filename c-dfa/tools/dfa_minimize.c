@@ -16,6 +16,7 @@
 #include <errno.h>
 #include "../include/dfa_types.h"
 #include "dfa_minimize.h"
+#include "dfa_layout.h"
 
 // Constants matching nfa.h
 #include "../include/nfa.h"
@@ -251,6 +252,9 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
 // ============================================================================
 
 static bool are_transitions_equivalent(const build_dfa_state_t* s1, const build_dfa_state_t* s2, const int* partition_map) {
+    // For delayed-output Mealy machine minimization:
+    // States are equivalent if they have the same transition targets.
+    // Markers are stored as lists on merged transitions and disambiguated by accepting state.
     for (int c = 0; c < 256; c++) {
         int t1 = s1->transitions[c], t2 = s2->transitions[c];
         if (t1 == -1 && t2 == -1) continue;
@@ -260,8 +264,10 @@ static bool are_transitions_equivalent(const build_dfa_state_t* s1, const build_
         } else {
             if (t1 != t2) return false;
         }
+        // NOTE: marker_offsets are NOT checked here - they are stored as lists
+        // on merged transitions and disambiguated by the accepting state in pass 2.
+        // However, transitions_from_any affects the transition structure itself.
         if (s1->transitions_from_any[c] != s2->transitions_from_any[c]) return false;
-        if (s1->marker_offsets[c] != s2->marker_offsets[c]) return false;
     }
     if (s1->eos_target != 0 && s2->eos_target != 0) {
         if (s1->eos_target < MAX_STATES && s2->eos_target < MAX_STATES) {
@@ -274,9 +280,11 @@ static bool are_transitions_equivalent(const build_dfa_state_t* s1, const build_
 }
 
 static uint16_t compute_hash(const build_dfa_state_t* state, const int* partition_map) {
+    // For delayed-output Mealy machine minimization:
+    // Hash only transition structure, not markers (markers are stored as lists)
     uint32_t hash = FNV_OFFSET_BASIS;
     hash ^= (state->flags & 0xFFFF); hash *= FNV_PRIME;
-    hash ^= state->eos_marker_offset; hash *= FNV_PRIME;
+    // NOTE: eos_marker_offset not included - markers resolved by accepting state
     for (int c = 0; c < 256; c += 8) {
         int t = state->transitions[c];
         int target_p = -1;
@@ -285,10 +293,7 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
         }
         hash ^= c; hash *= FNV_PRIME;
         hash ^= (uint8_t)target_p; hash *= FNV_PRIME;
-        hash ^= (state->marker_offsets[c] & 0xFF); hash *= FNV_PRIME;
-    }
-    for (int c = 0; c < 256; c += 32) {
-        hash ^= (state->marker_offsets[c] >> 8); hash *= FNV_PRIME;
+        // NOTE: marker_offsets not included in hash
     }
     if (state->eos_target != 0 && state->eos_target < MAX_STATES) {
         int eos_p = partition_map[state->eos_target];
@@ -298,24 +303,18 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
 }
 
 static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t* dfa, int state_count) {
+    // For delayed-output Mealy machine minimization:
+    // Start with coarse partitions based only on acceptance status and category.
+    // Hopcroft's refinement will split partitions based on transition structure.
     for (int i = 0; i < MAX_STATES; i++) ms->partition_map[i] = -1;
     int group_count = 0;
     for (int s = 0; s < state_count; s++) {
         bool found = false;
         for (int g = 0; g < group_count; g++) {
             int rep = ms->partitions[g].states[0];
-            // Check if state s has identical transitions to partition representative
-            // During initialization, just compare actual transition targets directly
-            bool equivalent = true;
-            for (int c = 0; c < 256; c++) {
-                int t1 = dfa[s].transitions[c];
-                int t2 = dfa[rep].transitions[c];
-                if (t1 != t2) { equivalent = false; break; }
-            }
-            // Also check eos_target
-            if (equivalent && dfa[s].eos_target != dfa[rep].eos_target) equivalent = false;
-            if (equivalent && dfa[s].flags == dfa[rep].flags &&
-                dfa[s].eos_marker_offset == dfa[rep].eos_marker_offset) {
+            // Only check flags (acceptance status and category)
+            // Transition structure will be handled by Hopcroft refinement
+            if (dfa[s].flags == dfa[rep].flags) {
                 ms->partitions[g].states[ms->partitions[g].count++] = s;
                 ms->partition_map[s] = g;
                 found = true; break;
@@ -374,6 +373,7 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
 int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
+    VERBOSE_PRINT("Initial partitions: %d (from %d states)\n", ms->partition_count, state_count);
     inverse_graph_t inv;
     if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
     if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
@@ -427,7 +427,17 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
     }
 
     int new_count = build_minimized_dfa(dfa, ms, state_count);
+    VERBOSE_PRINT("Minimized to %d states (from %d)\n", new_count, state_count);
     free(ms); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
+    
+    // Apply cache-optimized layout
+    layout_options_t layout_opts = get_default_layout_options();
+    int* order = optimize_dfa_layout(dfa, new_count, &layout_opts);
+    if (order) {
+        VERBOSE_PRINT("Applied cache-optimized layout\n");
+        free(order);
+    }
+    
     return new_count;
 }
 
