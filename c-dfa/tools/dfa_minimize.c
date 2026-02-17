@@ -31,8 +31,8 @@ static bool minimize_verbose = true;  // Enable for debugging
 static dfa_min_algo_t current_algo = DFA_MIN_HOPCROFT;
 static dfa_minimize_stats_t last_stats = {0};
 
-#define VERBOSE_PRINT(fmt, ...) do { \
-    if (minimize_verbose) fprintf(stderr, "[MINIMIZE] " fmt, ##__VA_ARGS__); \
+#define VERBOSE_PRINT(...) do { \
+    if (minimize_verbose) fprintf(stderr, "[MINIMIZE] " __VA_ARGS__); \
 } while(0)
 
 /**

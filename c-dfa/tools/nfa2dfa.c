@@ -9,6 +9,7 @@
 #include "../include/multi_target_array.h"
 #include "../include/nfa.h"
 #include "dfa_minimize.h"
+#include "dfa_compress.h"
 
 #if MAX_SYMBOLS != 320
 #error "MAX_SYMBOLS must be 320"
@@ -1156,16 +1157,20 @@ void load_nfa_file(const char* filename) {
 
 int main(int argc, char* argv[]) {
     bool minimize = true;
+    bool compress = true;   // Compression ON by default (greedy algorithm)
+    bool compress_sat = false;
     const char* input_file = NULL;
     const char* output_file = "out.dfa";
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
             if (strcmp(argv[i], "--no-minimize") == 0) minimize = false;
+            else if (strcmp(argv[i], "--no-compress") == 0) compress = false;
             else if (strcmp(argv[i], "-v") == 0) flag_verbose = true;
             else if (strcmp(argv[i], "--minimize-hopcroft") == 0) dfa_minimize_set_algorithm(DFA_MIN_HOPCROFT);
             else if (strcmp(argv[i], "--minimize-moore") == 0) dfa_minimize_set_algorithm(DFA_MIN_MOORE);
             else if (strcmp(argv[i], "--minimize-brzozowski") == 0) dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
             else if (strcmp(argv[i], "--minimize-sat") == 0) dfa_minimize_set_algorithm(DFA_MIN_SAT);
+            else if (strcmp(argv[i], "--compress-sat") == 0) compress_sat = true;
         } else {
             if (input_file == NULL) input_file = argv[i];
             else output_file = argv[i];
@@ -1187,6 +1192,14 @@ int main(int argc, char* argv[]) {
             flatten_dfa();  // Re-flatten with new state indices after minimization
         }
     }
+    
+    if (compress) {
+        compress_options_t opts = get_default_compress_options();
+        opts.verbose = flag_verbose;
+        opts.use_sat = compress_sat;  // Enable SAT-based optimal merging if requested
+        dfa_compress(dfa, dfa_state_count, &opts);
+    }
+    
     write_dfa_file(output_file);
     return 0;
 }

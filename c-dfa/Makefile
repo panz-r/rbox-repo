@@ -42,31 +42,26 @@ all: $(TOOLS) $(TEST)
 $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
 
-$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/nfa_builder.c \
-		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
-		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
-		$(TOOLS_DIR)/dfa_layout.c \
-		$(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -DNFABUILDER_NO_MAIN -DNFABUILDER_EXCLUDE_NFA_INIT -o $@ $(TOOLS_DIR)/nfa2dfa.c $(TOOLS_DIR)/nfa_builder.c \
-		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
-		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
-		$(TOOLS_DIR)/dfa_layout.c \
-		$(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
-
-# Build with SAT minimization support (requires CaDiCaL)
-# C files compiled as C, SAT file compiled as C++, then linked together
-$(TOOLS_DIR)/nfa2dfa_sat: $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o \
+# Main tool with compression support (includes SAT compression via CaDiCaL)
+# C files compiled as C, SAT compression compiled as C++, then linked together
+$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o \
 		$(TOOLS_DIR)/dfa_minimize.o $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
-		$(TOOLS_DIR)/dfa_minimize_sat.o $(TOOLS_DIR)/multi_target_array.o \
+		$(TOOLS_DIR)/dfa_minimize_sat_stub.o \
 		$(TOOLS_DIR)/dfa_layout.o \
+		$(TOOLS_DIR)/dfa_compress.o \
+		$(TOOLS_DIR)/dfa_compress_sat.o \
+		$(TOOLS_DIR)/multi_target_array.o \
 		$(CADICAL_LIB)
 	$(CXX) -o $@ $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o \
 		$(TOOLS_DIR)/dfa_minimize.o $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
-		$(TOOLS_DIR)/dfa_minimize_sat.o $(TOOLS_DIR)/multi_target_array.o \
+		$(TOOLS_DIR)/dfa_minimize_sat_stub.o \
 		$(TOOLS_DIR)/dfa_layout.o \
+		$(TOOLS_DIR)/dfa_compress.o \
+		$(TOOLS_DIR)/dfa_compress_sat.o \
+		$(TOOLS_DIR)/multi_target_array.o \
 		$(CADICAL_LIB) $(LDFLAGS) -lstdc++
 
-# Object files for SAT build
+# Object files for nfa2dfa_advanced
 $(TOOLS_DIR)/nfa2dfa.o: $(TOOLS_DIR)/nfa2dfa.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -DNFABUILDER_NO_MAIN -DNFABUILDER_EXCLUDE_NFA_INIT -c -o $@ $<
 
@@ -79,11 +74,39 @@ $(TOOLS_DIR)/dfa_minimize.o: $(TOOLS_DIR)/dfa_minimize.c $(INCLUDE_DIR)/*.h
 $(TOOLS_DIR)/dfa_minimize_brzozowski.o: $(TOOLS_DIR)/dfa_minimize_brzozowski.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TOOLS_DIR)/multi_target_array.o: $(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h
+$(TOOLS_DIR)/dfa_minimize_sat_stub.o: $(TOOLS_DIR)/dfa_minimize_sat_stub.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(TOOLS_DIR)/dfa_layout.o: $(TOOLS_DIR)/dfa_layout.c $(TOOLS_DIR)/dfa_layout.h $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TOOLS_DIR)/dfa_compress.o: $(TOOLS_DIR)/dfa_compress.c $(TOOLS_DIR)/dfa_compress.h $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TOOLS_DIR)/dfa_compress_sat.o: $(TOOLS_DIR)/dfa_compress_sat.cpp $(TOOLS_DIR)/dfa_compress.h $(INCLUDE_DIR)/*.h $(CADICAL_LIB)
+	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -c -o $@ $<
+
+$(TOOLS_DIR)/multi_target_array.o: $(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# Build with SAT minimization support (requires CaDiCaL)
+# Uses dfa_minimize_sat.o instead of dfa_minimize_sat_stub.o
+$(TOOLS_DIR)/nfa2dfa_sat: $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o \
+		$(TOOLS_DIR)/dfa_minimize.o $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
+		$(TOOLS_DIR)/dfa_minimize_sat.o \
+		$(TOOLS_DIR)/dfa_layout.o \
+		$(TOOLS_DIR)/dfa_compress.o \
+		$(TOOLS_DIR)/dfa_compress_sat.o \
+		$(TOOLS_DIR)/multi_target_array.o \
+		$(CADICAL_LIB)
+	$(CXX) -o $@ $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o \
+		$(TOOLS_DIR)/dfa_minimize.o $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
+		$(TOOLS_DIR)/dfa_minimize_sat.o \
+		$(TOOLS_DIR)/dfa_layout.o \
+		$(TOOLS_DIR)/dfa_compress.o \
+		$(TOOLS_DIR)/dfa_compress_sat.o \
+		$(TOOLS_DIR)/multi_target_array.o \
+		$(CADICAL_LIB) $(LDFLAGS) -lstdc++
 
 $(TOOLS_DIR)/dfa_minimize_sat.o: $(TOOLS_DIR)/dfa_minimize_sat.cpp $(INCLUDE_DIR)/*.h $(CADICAL_LIB)
 	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -c -o $@ $<
