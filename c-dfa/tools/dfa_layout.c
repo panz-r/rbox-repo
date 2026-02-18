@@ -14,7 +14,7 @@
 #include <stdbool.h>
 #include "dfa_layout.h"
 
-#define MAX_STATES 65536
+// MAX_STATES is defined in nfa.h which is included via dfa_minimize.h -> dfa_layout.h
 
 // Global sort key for qsort comparison (not thread-safe, but OK for single-threaded use)
 static const int* g_layout_sort_key = NULL;

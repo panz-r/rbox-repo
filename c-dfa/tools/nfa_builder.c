@@ -205,8 +205,7 @@ const char* category_names[CAT_COUNT] = {
 #define MAX_CAPTURES 16
 #define MAX_CAPTURE_NAME 32
 
-// Phase 2: Marker system constants
-#define MAX_MARKERS_PER_TRANSITION 8
+// Phase 2: Marker system constants - use header value
 #define MAX_MARKER_LISTS 4096
 
 typedef struct {
@@ -254,6 +253,14 @@ typedef struct {
 
 // ============================================================================
 // END PHASE 2 TYPE DEFINITIONS
+// ============================================================================
+
+// ============================================================================
+// NFA BUILDER STATE DOCUMENTATION
+// 
+// The following global variables hold the NFA builder state. For a production-
+// quality refactor, these should be encapsulated in a context structure.
+// Current design: CLI tool that runs once and exits - globals are acceptable.
 // ============================================================================
 
 // Pending markers for the next character transitions

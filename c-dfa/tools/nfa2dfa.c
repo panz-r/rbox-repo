@@ -60,6 +60,14 @@ static int dfa_state_count = 0;
 static int alphabet_size = 0;
 static int max_states = MAX_STATES;
 
+// ============================================================================
+// NFA-TO-DFA CONVERTER STATE DOCUMENTATION
+// 
+// The following global variables hold the NFA-to-DFA conversion state.
+// For a production-quality refactor, these should be encapsulated in a context.
+// Current design: CLI tool that runs once and exits - globals are acceptable.
+// ============================================================================
+
 // DFA Deduplication Hash Table
 #define DFA_HASH_SIZE 32749
 static int dfa_hash_table[DFA_HASH_SIZE];
@@ -224,22 +232,16 @@ void nfa_init(void) {
 #endif  // NFABUILDER_EXCLUDE_NFA_INIT
 
 void dfa_init(void) {
-    if (dfa_hash_table) {
-        memset(dfa_hash_table, -1, sizeof(int) * DFA_HASH_SIZE);
-    }
-    if (dfa_next_in_bucket && max_states > 0) {
-        memset(dfa_next_in_bucket, -1, sizeof(int) * max_states);
-    }
-    if (dfa && max_states > 0) {
-        for (int i = 0; i < max_states; i++) {
-            dfa[i].flags = 0;
-            dfa[i].transition_count = 0;
-            dfa[i].nfa_state_count = 0;
-            dfa[i].eos_target = 0;
-            for (int j = 0; j < MAX_SYMBOLS; j++) {
-                dfa[i].transitions[j] = -1;
-                dfa[i].transitions_from_any[j] = false;
-            }
+    memset(dfa_hash_table, -1, sizeof(int) * DFA_HASH_SIZE);
+    memset(dfa_next_in_bucket, -1, sizeof(int) * max_states);
+    for (int i = 0; i < max_states; i++) {
+        dfa[i].flags = 0;
+        dfa[i].transition_count = 0;
+        dfa[i].nfa_state_count = 0;
+        dfa[i].eos_target = 0;
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            dfa[i].transitions[j] = -1;
+            dfa[i].transitions_from_any[j] = false;
         }
     }
     dfa_state_count = 0;
