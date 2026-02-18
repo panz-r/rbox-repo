@@ -76,7 +76,7 @@ static bool can_merge(int target1, uint32_t markers1, int target2, uint32_t mark
  * 
  * @return Number of rules saved
  */
-static int merge_rules_for_state(build_dfa_state_t* state, int max_group_size) {
+int merge_rules_for_state(build_dfa_state_t* state, int max_group_size) {
     // Count transitions by target
     int transition_count = 0;
     for (int c = 0; c < 256; c++) {

@@ -156,23 +156,23 @@ build-sat: $(TOOLS_DIR)/nfa2dfa_sat
 test-moore: $(TOOLS) $(TEST)
 	@echo ""
 	@echo "================================================="
-	@echo "MOORE ALGORITHM (Test-Set A)"
+	@echo "MOORE ALGORITHM (Test-Set A) with SAT compression"
 	@echo "================================================="
-	@./$(TEST) --test-set A --minimize-moore
+	@./$(TEST) --test-set A --minimize-moore --compress-sat
 
 test-hopcroft: $(TOOLS) $(TEST)
 	@echo ""
 	@echo "================================================="
-	@echo "HOPCROFT ALGORITHM (Test-Set B)"  
+	@echo "HOPCROFT ALGORITHM (Test-Set B) with SAT compression"
 	@echo "================================================="
-	@./$(TEST) --test-set B --minimize-hopcroft
+	@./$(TEST) --test-set B --minimize-hopcroft --compress-sat
 
 test-stress: $(TOOLS) $(TEST)
 	@echo ""
 	@echo "================================================="
-	@echo "STRESS TESTS (Test-Set C)"
+	@echo "STRESS TESTS (Test-Set C) with SAT compression"
 	@echo "================================================="
-	@./$(TEST) --test-set C --minimize-moore
+	@./$(TEST) --test-set C --minimize-moore --compress-sat
 
 # Full test suite - runs all three algorithms with their respective test sets
 test: $(TOOLS) $(TEST) $(TOOLS_DIR)/test_minimize_integrity

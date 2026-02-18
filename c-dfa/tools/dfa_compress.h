@@ -86,6 +86,16 @@ int sat_merge_rules_for_state(build_dfa_state_t* state, int max_group_size);
 int sat_compress_dfa(build_dfa_state_t* dfa, int state_count, int max_group_size);
 
 /**
+ * Greedy rule merging for a single state.
+ * Used as preprocessing for SAT compression.
+ *
+ * @param state DFA state to optimize
+ * @param max_group_size Maximum characters per group (typically 3)
+ * @return Number of rules saved by greedy grouping
+ */
+int merge_rules_for_state(build_dfa_state_t* state, int max_group_size);
+
+/**
  * Estimate compression ratio without modifying DFA.
  * 
  * @param dfa DFA state array

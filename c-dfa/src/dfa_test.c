@@ -11,6 +11,7 @@ static int total_tests_run = 0;
 static int total_tests_passed = 0;
 static const char* build_dir = "build_test";
 static const char* minimize_algo = "--minimize-moore";
+static bool use_compress_sat = false;
 static char test_set_mask = 0;
 #define TEST_SET_A 0x01
 #define TEST_SET_B 0x02
@@ -88,6 +89,7 @@ static void print_usage(const char* progname) {
     printf("  --minimize-moore       Use Moore's algorithm for DFA minimization (default)\n");
     printf("  --minimize-hopcroft    Use Hopcroft's algorithm for DFA minimization\n");
     printf("  --minimize-sat         Use SAT-based minimization (requires CaDiCaL)\n");
+    printf("  --compress-sat         Use SAT-based compression for optimal rule merging\n");
     printf("  --test-set A|B|C       Run only tests for specified test set(s)\n");
     printf("                          A = Core tests (quantifiers, fragments, etc.)\n");
     printf("                          B = Expanded tests (quantifier expansions)\n");
@@ -97,7 +99,7 @@ static void print_usage(const char* progname) {
     printf("\nExamples:\n");
     printf("  %s --minimize-hopcroft --test-set A\n", progname);
     printf("  %s --minimize-sat --test-set C\n", progname);
-    printf("  %s --minimize-moore --test-set ABC\n", progname);
+    printf("  %s --minimize-moore --compress-sat --test-set ABC\n", progname);
 }
 
 static void build_dfa(const char* patterns_file, const char* dfa_file) {
@@ -112,12 +114,13 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
     }
 
     char cmd[1024];
+    const char* compress_flag = use_compress_sat ? " --compress-sat" : "";
     if (minimize_algo && strlen(minimize_algo) > 0) {
         (void)snprintf(cmd, sizeof(cmd),
             "mkdir -p %s && "
             "./tools/nfa_builder %s %s && "
-            "%s %s %s %s",
-            build_dir, patterns_file, nfa_file, nfa2dfa_binary, nfa_file, dfa_file, minimize_algo);
+            "%s %s %s %s%s",
+            build_dir, patterns_file, nfa_file, nfa2dfa_binary, nfa_file, dfa_file, minimize_algo, compress_flag);
     } else {
         (void)snprintf(cmd, sizeof(cmd),
             "mkdir -p %s && "
@@ -1036,6 +1039,8 @@ int main(int argc, char* argv[]) {
             minimize_algo = "--minimize-hopcroft";
         } else if (strcmp(argv[i], "--minimize-sat") == 0) {
             minimize_algo = "--minimize-sat";
+        } else if (strcmp(argv[i], "--compress-sat") == 0) {
+            use_compress_sat = true;
         } else if (strcmp(argv[i], "--test-set") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: --test-set requires an argument\n");
