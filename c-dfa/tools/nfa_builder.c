@@ -591,14 +591,16 @@ int nfa_finalize_state(int state) {
     return state;
 }
 
-// Simple string duplication function
+// Simple string duplication function - aborts on allocation failure
 static char* my_strdup(const char* str) {
     if (str == NULL) return NULL;
     size_t len = strlen(str) + 1;
     char* copy = malloc(len);
-    if (copy) {
-        memcpy(copy, str, len);
+    if (copy == NULL) {
+        fprintf(stderr, "FATAL: Failed to allocate %zu bytes for string duplication\n", len);
+        exit(EXIT_FAILURE);
     }
+    memcpy(copy, str, len);
     return copy;
 }
 
@@ -654,7 +656,8 @@ static void add_state_to_signature_table(int state, uint64_t signature) {
 
     StateSignature* new_entry = malloc(sizeof(StateSignature));
     if (new_entry == NULL) {
-        return; // Memory allocation failed
+        fprintf(stderr, "FATAL: Failed to allocate StateSignature for signature table\n");
+        exit(EXIT_FAILURE);
     }
 
     new_entry->signature = signature;
@@ -669,7 +672,13 @@ void nfa_add_tag(int state, const char* tag) {
         return;
     }
 
+    if (tag == NULL) {
+        fprintf(stderr, "ERROR: Attempting to add NULL tag to state %d\n", state);
+        return;
+    }
+
     if (nfa[state].tag_count >= MAX_TAGS) {
+        fprintf(stderr, "ERROR: Maximum tags (%d) reached for state %d\n", MAX_TAGS, state);
         return;
     }
 

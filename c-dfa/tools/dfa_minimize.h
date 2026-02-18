@@ -23,6 +23,7 @@ typedef struct build_dfa_state {
     uint32_t eos_target;
     uint32_t eos_marker_offset;  // Phase 3: Markers for EOS transition
     uint16_t first_accepting_pattern;  // First pattern ID in closure (0 = none) - prevents incorrect state merging
+    uint64_t reachable_accepting_patterns;  // ALL patterns reachable from this state - prevents incorrect minimization merging
 } build_dfa_state_t;
 
 /**

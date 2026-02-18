@@ -46,12 +46,13 @@ typedef struct {
 /*
  * Look up capture name from the DFA's name table.
  * The name table maps pattern IDs to human-readable capture names.
+ * Copies result into provided buffer (must be at least 64 bytes).
+ * Returns true if name was found and copied, false otherwise.
  */
-static const char* get_capture_name_from_table(int capture_id, int pattern_id) {
+static bool get_capture_name_from_table(int capture_id, int pattern_id, char* buffer, size_t buffer_size) {
     (void)capture_id;
-    (void)pattern_id;
-    if (!current_dfa || current_dfa->metadata_offset == 0) {
-        return NULL;
+    if (!current_dfa || current_dfa->metadata_offset == 0 || !buffer || buffer_size == 0) {
+        return false;
     }
 
     const char* base = (const char*)current_dfa;
@@ -63,14 +64,13 @@ static const char* get_capture_name_from_table(int capture_id, int pattern_id) {
         uint16_t name_len = *(const uint16_t*)(p + 2);
 
         if (entry_pattern_id == (uint16_t)pattern_id) {
-            static char name_buf[64];
-            snprintf(name_buf, sizeof(name_buf), "%.*s", name_len, p + 4);
-            return name_buf;
+            snprintf(buffer, buffer_size, "%.*s", name_len, p + 4);
+            return true;
         }
 
         p += 4 + name_len;
     }
-    return NULL;
+    return false;
 }
 
 static void add_capture(dfa_result_t* result, int capture_id, size_t start, size_t end, uint16_t pattern_id) {
@@ -81,9 +81,9 @@ static void add_capture(dfa_result_t* result, int capture_id, size_t start, size
     cap->capture_id = capture_id;
 
     // Phase 4: Look up capture name from name table
-    const char* name = get_capture_name_from_table(capture_id, pattern_id);
-    if (name) {
-        snprintf(cap->name, sizeof(cap->name), "%.31s", name);
+    char name_buf[64];
+    if (get_capture_name_from_table(capture_id, pattern_id, name_buf, sizeof(name_buf))) {
+        snprintf(cap->name, sizeof(cap->name), "%.31s", name_buf);
     } else {
         snprintf(cap->name, sizeof(cap->name), "capture_%d", capture_id);
     }
@@ -182,9 +182,14 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         return false;
     }
 
+#if DFA_EVAL_DEBUG
     fprintf(stderr, "EVAL: Starting evaluation of '%s', length=%zu\n", input, length);
+#endif
     memset(result, 0, sizeof(dfa_result_t));
     result->category = DFA_CMD_UNKNOWN;
+#if DFA_EVAL_DEBUG
+    fprintf(stderr, "EVAL: After memset, result=%p\n", (void*)result);
+#endif
 
     // Runtime validation: verify current_dfa structure
     if (current_dfa->magic != DFA_MAGIC || current_dfa->version < 5 || current_dfa->version > 6) {
@@ -193,7 +198,14 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     }
 
     if (length == 0) length = strlen(input);
+#if DFA_EVAL_DEBUG
+    fprintf(stderr, "EVAL: input='%s', original_length=0, computed_length=%zu\n", input, length);
+    fprintf(stderr, "EVAL: About to check length==0, length=%zu\n", length);
+#endif
     if (length == 0) {
+#if DFA_EVAL_DEBUG
+        fprintf(stderr, "EVAL: length=0 case - treating as empty string!\n");
+#endif
         const char* raw_base = (const char*)current_dfa;
         const dfa_state_t* initial = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
         uint8_t initial_cat = (uint8_t)DFA_GET_CATEGORY_MASK(initial->flags);
@@ -248,9 +260,18 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     size_t dfa_total_size = current_dfa->initial_state + current_dfa->state_count * sizeof(dfa_state_t);
     size_t rules_start = dfa_total_size;
 
+#if DFA_EVAL_DEBUG
+    fprintf(stderr, "EVAL BEFORE LOOP: length=%zu, pos=%zu\n", length, pos);
+#endif
+
     while (pos < length && pos < MAX_EVAL_LENGTH) {
         unsigned char c = (unsigned char)input[pos];
         const dfa_state_t* next = NULL;
+        
+#if DFA_EVAL_DEBUG
+        fprintf(stderr, "EVAL LOOP: pos=%zu, char='%c'(0x%02X), state_offset=%u\n",
+                pos, (c >= 32 && c < 127) ? c : '.', c, (unsigned int)((const char*)curr - raw_base));
+#endif
         
         EVAL_DEBUG_PRINT("Pos %zu: char='%c'(0x%02X), state_offset=%u, tc=%u\n",
                          pos, c, c, (unsigned int)((const char*)curr - raw_base), curr->transition_count);
@@ -303,8 +324,14 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         }
 
         if (!next) {
-            fprintf(stderr, "EVAL DEBUG: No transition for char '%c' (0x%02X) at pos %zu\n", (c >= 32 && c < 127) ? c : '.', c, pos);
-            EVAL_DEBUG_PRINT("  No transition found for char '%c'\n", c);
+            // Check if the current state is accepting before returning false
+#if DFA_EVAL_DEBUG
+            fprintf(stderr, "EVAL DEBUG: No transition for '%c' at pos %zu - current state flags=0x%04X, accept=%u, eos=%u\n",
+                    (c >= 32 && c < 127) ? c : '.', pos, curr->flags, curr->accepting_pattern_id, curr->eos_target);
+            // BUG FIX: If there's no transition, we should NOT match, regardless of whether current state is accepting
+            // The input has a character that doesn't match any transition, so it's not a match
+            fprintf(stderr, "EVAL DEBUG: No transition - returning false (no match)\n");
+#endif
             return false;
         }
 
@@ -324,14 +351,18 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     uint16_t source_accepting = curr->accepting_pattern_id;
     uint32_t source_eos_target = curr->eos_target;
     
+#if DFA_EVAL_DEBUG
     fprintf(stderr, "EVAL DEBUG: Pre-EOS: flags=0x%04X, cat=0x%02x, accept=%u, eos_target=%u\n",
             curr->flags, source_category, source_accepting, source_eos_target);
+#endif
     
     if (curr->eos_target != 0) {
         const dfa_state_t* eos = (const dfa_state_t*)(raw_base + curr->eos_target);
         curr = eos;
+#if DFA_EVAL_DEBUG
         fprintf(stderr, "EVAL DEBUG: After EOS jump: flags=0x%04X, accept=%u\n",
                 curr->flags, curr->accepting_pattern_id);
+#endif
         EVAL_DEBUG_PRINT("EOS: jumped to offset %u\n", (unsigned int)((const char*)curr - raw_base));
         if (trace_depth < MAX_TRACE_LENGTH) {
             trace_buffer[trace_depth++] = (uint32_t)((const char*)curr - raw_base);
@@ -346,8 +377,10 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
     // Use source state's category if available, otherwise use current state's
     uint8_t mask = source_category ? source_category : (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+#if DFA_EVAL_DEBUG
     fprintf(stderr, "EVAL DEBUG: Final: source_cat=0x%02x, source_accept=%u, curr_flags=0x%04X, mask=0x%02X, winning=%u\n",
             source_category, source_accepting, curr->flags, mask, winning_pattern_id);
+#endif
     EVAL_DEBUG_PRINT("CATEGORY: final_offset=%u, flags=0x%04X, mask=0x%02X, winning_pattern_id=%u\n",
                      (unsigned int)((const char*)curr - raw_base), curr->flags, mask, winning_pattern_id);
 

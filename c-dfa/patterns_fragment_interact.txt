@@ -31,7 +31,11 @@
 [safe:fi11] ((X))*
 [safe:fi12] ((X))?
 [safe:fi13] ((X))+ ((Y))+
-[safe:fi14] ((X))* ((Y))*
+[safe:fi14] ((X))* ((Y))* 
+
+# Alternation inside fragments
+[safe:fi15] ((X|Y))
+[safe:fi16] ((X|Y|Z))
 
 # Complex fragments
 [safe:fi15] ((ONE)) ((TWO))

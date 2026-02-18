@@ -304,7 +304,8 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
 
 static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t* dfa, int state_count) {
     // For delayed-output Mealy machine minimization:
-    // Start with coarse partitions based only on acceptance status and category.
+    // Start with coarse partitions based on acceptance status, category, AND reachable accepting patterns.
+    // This prevents states that can reach different patterns from being merged incorrectly.
     // Hopcroft's refinement will split partitions based on transition structure.
     for (int i = 0; i < MAX_STATES; i++) ms->partition_map[i] = -1;
     int group_count = 0;
@@ -312,9 +313,10 @@ static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t
         bool found = false;
         for (int g = 0; g < group_count; g++) {
             int rep = ms->partitions[g].states[0];
-            // Only check flags (acceptance status and category)
-            // Transition structure will be handled by Hopcroft refinement
-            if (dfa[s].flags == dfa[rep].flags) {
+            // Check flags (acceptance status and category) AND reachable accepting patterns
+            // This prevents incorrect merging of states from different patterns
+            if (dfa[s].flags == dfa[rep].flags && 
+                dfa[s].reachable_accepting_patterns == dfa[rep].reachable_accepting_patterns) {
                 ms->partitions[g].states[ms->partitions[g].count++] = s;
                 ms->partition_map[s] = g;
                 found = true; break;

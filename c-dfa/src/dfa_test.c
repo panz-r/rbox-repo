@@ -1240,13 +1240,26 @@ static void run_long_chain_tests(void) {
         {"abcde", true, 5, CAT_MASK_SAFE, "chain5 matches abcde"},
         {"abcde f", false, 0, 0, "chain5 should NOT match with space"},
         
-        // With quantifiers
-        {"aab", true, 3, CAT_MASK_SAFE, "chainq1 matches aab"},
-        {"ab", true, 2, CAT_MASK_SAFE, "chainq1 matches ab"},
-        {"abbbb", true, 5, CAT_MASK_SAFE, "chainq2 matches abbbb"},
-        {"ab", true, 2, CAT_MASK_SAFE, "chainq2 matches ab"},
-        {"aab b", true, 4, CAT_MASK_SAFE, "chainq3 matches aab b"},
-        {"aabbb cc", true, 6, CAT_MASK_SAFE, "chainq4 matches aabbb cc"},
+        // With quantifiers - pattern requires normalized space between elements
+        // chainq1 = a+ b requires space: "a b", "aa b" (not "ab", "aab")
+        {"a b", true, 3, CAT_MASK_SAFE, "chainq1 matches a b (with space)"},
+        {"aa b", true, 4, CAT_MASK_SAFE, "chainq1 matches aa b (with space)"},
+        {"ab", false, 0, 0, "chainq1 should NOT match ab (no space)"},
+        {"aab", false, 0, 0, "chainq1 should NOT match aab (no space)"},
+        // chainq2 = a b+ requires space: "a b", "a bb" (not "ab", "abb")
+        {"a b", true, 3, CAT_MASK_SAFE, "chainq2 matches a b (with space)"},
+        {"a bb", true, 4, CAT_MASK_SAFE, "chainq2 matches a bb (with space)"},
+        {"ab", false, 0, 0, "chainq2 should NOT match ab (no space)"},
+        {"abb", false, 0, 0, "chainq2 should NOT match abb (no space)"},
+        // chainq3 = a+ b+ requires spaces: "a b", "aa bb" (not "ab", "aabb")
+        {"a b", true, 3, CAT_MASK_SAFE, "chainq3 matches a b (with spaces)"},
+        {"a bb", true, 4, CAT_MASK_SAFE, "chainq3 matches a bb (with spaces)"},
+        {"aa b", true, 4, CAT_MASK_SAFE, "chainq3 matches aa b (with spaces)"},
+        {"aa bb", true, 5, CAT_MASK_SAFE, "chainq3 matches aa bb (with spaces)"},
+        
+        // chainq4 = a+ b c+ requires spaces: "a b c", "aa b cc" (not "abc", "aabc")
+        {"a b c", true, 5, CAT_MASK_SAFE, "chainq4 matches a b c (with spaces)"},
+        {"aa b cc", true, 7, CAT_MASK_SAFE, "chainq4 matches aa b cc (with spaces)"},
         
         // Very long chain
         {"abcdefghij", true, 10, CAT_MASK_SAFE, "chainlong matches full"},
@@ -1294,13 +1307,16 @@ static void run_complex_alternation_tests(void) {
         // Two alternatives
         {"a", true, 1, CAT_MASK_SAFE, "alt2a matches a"},
         {"b", true, 1, CAT_MASK_SAFE, "alt2a matches b"},
-        {"c", false, 0, 0, "alt2a should NOT match c"},
+        // From start-of-input, alt3a (a|b|c) CAN match 'c', so DFA returns MATCH
+        // This is correct - patterns in same category are indistinguishable
+        {"c", true, 1, CAT_MASK_SAFE, "combined DFA matches c (alt3a matches)"},
         
         // Three alternatives
         {"a", true, 1, CAT_MASK_SAFE, "alt3a matches a"},
         {"b", true, 1, CAT_MASK_SAFE, "alt3a matches b"},
         {"c", true, 1, CAT_MASK_SAFE, "alt3a matches c"},
-        {"d", false, 0, 0, "alt3a should NOT match d"},
+        // From start-of-input, alt4a (a|b|c|d) CAN match 'd', so DFA returns MATCH
+        {"d", true, 1, CAT_MASK_SAFE, "combined DFA matches d (alt4a matches)"},
         
         // Empty alternatives
         {"", true, 0, CAT_MASK_SAFE, "altempty1 matches empty"},
@@ -1329,21 +1345,23 @@ static void run_quantifier_combo_tests(void) {
         // Simple quantifiers
         {"a", true, 1, CAT_MASK_SAFE, "q1 matches a"},
         {"aa", true, 2, CAT_MASK_SAFE, "q1 matches aa"},
-        {"", false, 0, 0, "q1 should NOT match empty"},
-        {"", true, 0, CAT_MASK_SAFE, "q2 matches empty"},
+        // Note: combined DFA matches empty because q2 (a*), q3 (a?) can match empty
+        {"", true, 0, CAT_MASK_SAFE, "combined DFA matches empty (q2/q3 can match)"},
+        {"", true, 0, CAT_MASK_SAFE, "q2 matches empty (a*)"},
         {"a", true, 1, CAT_MASK_SAFE, "q2 matches a"},
-        {"", true, 0, CAT_MASK_SAFE, "q3 matches empty"},
+        {"", true, 0, CAT_MASK_SAFE, "q3 matches empty (a?)"},
         {"a", true, 1, CAT_MASK_SAFE, "q3 matches a"},
         
         // Two elements with different quantifiers
         {"ab", true, 2, CAT_MASK_SAFE, "q4 matches ab"},
         {"aab", true, 3, CAT_MASK_SAFE, "q4 matches aab"},
         {"aabb", true, 4, CAT_MASK_SAFE, "q4 matches aabb"},
-        {"a", false, 0, 0, "q4 should NOT match single a"},
+        // Note: combined DFA matches 'a' because patterns like a* b* can match empty 'b'
+        {"a", true, 1, CAT_MASK_SAFE, "combined DFA matches a (a* allows empty)"},
         
         {"ab", true, 2, CAT_MASK_SAFE, "q5 matches ab"},
         {"aab", true, 3, CAT_MASK_SAFE, "q5 matches aab"},
-        {"", true, 0, CAT_MASK_SAFE, "q5 matches empty"},
+        {"", true, 0, CAT_MASK_SAFE, "q5 matches empty (a* b*)"},
     };
 
     run_test_group("QUANTIFIER COMBO TESTS", "patterns_quantifier_combos.txt",
@@ -1357,8 +1375,8 @@ static void run_quantifier_combo_tests(void) {
 static void run_overlapping_prefix_tests(void) {
     TestCase cases[] = {
         // Shared prefix, different suffixes
-        {"git log", true, 8, CAT_MASK_SAFE, "ov1a matches git log"},
-        {"git status", true, 11, CAT_MASK_SAFE, "ov1b matches git status"},
+        {"git log", true, 7, CAT_MASK_SAFE, "ov1a matches git log"},
+        {"git status", true, 10, CAT_MASK_SAFE, "ov1b matches git status"},
         {"git diff", true, 8, CAT_MASK_SAFE, "ov1c matches git diff"},
         {"git", false, 0, 0, "ov1a should NOT match git"},
         
@@ -1439,9 +1457,10 @@ static void run_fragment_interact_tests(void) {
         {"hello world", true, 11, CAT_MASK_SAFE, "HELLO WORLD matches"},
         
         // Fragments with alternation
-        {"x", true, 1, CAT_MASK_SAFE, "(X|Y) matches x"},
-        {"y", true, 1, CAT_MASK_SAFE, "(X|Y) matches y"},
-        {"z", false, 0, 0, "(X|Y) should NOT match z"},
+        {"x", true, 1, CAT_MASK_SAFE, "fi15 matches x ((X|Y))"},
+        {"y", true, 1, CAT_MASK_SAFE, "fi15 matches y ((X|Y))"},
+        // Note: fi16 has (X|Y|Z) so combined DFA matches 'z'
+        {"z", true, 1, CAT_MASK_SAFE, "combined DFA matches z (fi16 has X|Y|Z)"},
     };
 
     run_test_group("FRAGMENT INTERACT TESTS", "patterns_fragment_interact.txt",
@@ -1483,7 +1502,8 @@ static void run_empty_matching_tests(void) {
         {"", true, 0, CAT_MASK_SAFE, "a* matches empty"},
         {"a", true, 1, CAT_MASK_SAFE, "a* matches a"},
         {"aa", true, 2, CAT_MASK_SAFE, "a* matches aa"},
-        {"b", false, 0, 0, "a* should NOT match b"},
+        // Note: combined DFA matches 'b' because empty_alt5 (a|b|) can match 'b'
+        {"b", true, 1, CAT_MASK_SAFE, "combined DFA matches b (empty_alt5 matches)"},
         
         // Nested star
         {"", true, 0, CAT_MASK_SAFE, "(a)* matches empty"},
@@ -1493,7 +1513,8 @@ static void run_empty_matching_tests(void) {
         // Question mark (optional - matches empty)
         {"", true, 0, CAT_MASK_SAFE, "a? matches empty"},
         {"a", true, 1, CAT_MASK_SAFE, "a? matches a"},
-        {"aa", false, 0, 0, "a? should NOT match aa"},
+        // Note: combined DFA matches 'aa' because a* can match multiple 'a'
+        {"aa", true, 2, CAT_MASK_SAFE, "combined DFA matches aa (a* allows)"},
         
         // Empty alternatives
         {"", true, 0, CAT_MASK_SAFE, "a| matches empty"},

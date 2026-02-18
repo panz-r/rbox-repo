@@ -560,21 +560,21 @@ static void collect_transition_markers(int source_count, int* source_states, int
 }
 
 void nfa_to_dfa(void) {
-    fprintf(stderr, "DEBUG nfa_to_dfa: nfa_state_count=%d, alphabet_size=%d\n", nfa_state_count, alphabet_size);
+    DEBUG_PRINT("nfa_to_dfa: nfa_state_count=%d, alphabet_size=%d\n", nfa_state_count, alphabet_size);
     dfa_init();
     init_marker_lists();
-    fprintf(stderr, "DEBUG after dfa_init\n");
+    DEBUG_PRINT("after dfa_init\n");
 
     int in[MAX_STATES] = {0}; int ic = 1;
-    fprintf(stderr, "DEBUG before epsilon_closure\n");
+    DEBUG_PRINT("before epsilon_closure\n");
     int temp[MAX_STATES]; memcpy(temp, in, sizeof(int)); int tc = ic;
     uint32_t dummy_markers[MAX_MARKERS_PER_DFA_TRANSITION];
     int dummy_count = 0;
     epsilon_closure_with_markers(temp, &tc, MAX_STATES, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
-    fprintf(stderr, "DEBUG after epsilon_closure, tc=%d\n", tc);
-    fprintf(stderr, "DEBUG temp states: ");
-    for (int i = 0; i < tc; i++) fprintf(stderr, "%d ", temp[i]);
-    fprintf(stderr, "\n");
+    DEBUG_PRINT("after epsilon_closure, tc=%d\n", tc);
+    DEBUG_PRINT("temp states: ");
+    for (int i = 0; i < tc; i++) DEBUG_PRINT("%d ", temp[i]);
+    DEBUG_PRINT("\n");
     
     // Compute category mask and find accepting pattern ID
     // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
@@ -650,13 +650,13 @@ void nfa_to_dfa(void) {
             }
         }
     }
-    fprintf(stderr, "DEBUG before collect_fork_categories, im=0x%02x\n", im);
+    DEBUG_PRINT("before collect_fork_categories, im=0x%02x\n", im);
     // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
     // This ensures patterns with shared prefixes but different categories are all considered
     uint8_t fork_cats = collect_fork_categories(temp, tc, is_initial_state);
-    fprintf(stderr, "DEBUG after collect_fork_categories, fork_cats=0x%02x\n", fork_cats);
+    DEBUG_PRINT("after collect_fork_categories, fork_cats=0x%02x\n", fork_cats);
     im |= fork_cats;
-    fprintf(stderr, "DEBUG before dfa_add_state\n");
+    DEBUG_PRINT("before dfa_add_state\n");
     int idfa = dfa_add_state(im, temp, tc, accept_pattern, reachable_accepting_patterns);
     if (idfa < 0) {
         fprintf(stderr, "Error: Failed to add initial DFA state\n");

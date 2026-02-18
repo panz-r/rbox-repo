@@ -311,3 +311,70 @@ func TestParseFailures(t *testing.T) {
 - **Fast path**: DFA validates safe commands immediately
 - **Fallback**: Unknown commands redirect through `readonlybox --run`
 - **Status**: Active development, recommended for production use
+
+## c-dfa Subproject
+
+The `c-dfa/` subproject is a high-performance C implementation of a Deterministic Finite Automata (DFA) for fast validation of read-only commands. It serves as the first-layer security validation in ReadOnlyBox.
+
+### Architecture
+
+```
+Command String → DFA Evaluator → Command Category
+                          ↓
+                   Binary DFA (static data)
+```
+
+### Build Commands
+
+```bash
+# Build all c-dfa tools and tests
+cd c-dfa && make
+
+# Run full test suite
+cd c-dfa && make test
+
+# Run specific algorithm tests
+cd c-dfa && make test-moore      # Moore minimization
+cd c-dfa && make test-hopcroft   # Hopcroft algorithm (recommended)
+cd c-dfa && make test-brzozowski # Brzozowski algorithm
+
+# Run SAT minimization tests
+cd c-dfa && make build-sat
+cd c-dfa && make test-sat
+
+# Clean
+cd c-dfa && make clean
+cd c-dfa && make clean-all       # Also cleans vendor builds
+```
+
+### Key Components
+
+| Component | Purpose |
+|-----------|---------|
+| `tools/nfa_builder` | Converts command specifications to NFA |
+| `tools/nfa2dfa_advanced` | Converts NFA to DFA with minimization |
+| `tools/nfa2dfa_sat` | SAT-based minimal DFA (requires CaDiCaL) |
+| `src/dfa_eval.c` | Core DFA evaluation engine |
+| `src/dfa_test.c` | Comprehensive test runner |
+
+### Pattern Syntax
+
+- `*` - Matches any sequence of characters
+- `+` - Matches one or more characters
+- `?` - Matches any single character
+- `[...]` - Character classes
+- `{a,b}` - Alternation
+
+### Current Development
+
+The c-dfa project is actively being debugged. Known issues being investigated:
+- Alternation handling in combined DFAs
+- Chain patterns requiring normalized space between elements
+- Whitespace prefix sharing in NFA builder
+
+### Integration
+
+The C DFA layer integrates with the main ReadOnlyBox:
+1. **First Layer (C DFA)**: Quick validation of obviously safe commands
+2. **Second Layer (Go Parsers)**: Detailed semantic analysis for complex commands
+3. **Fallback**: Conservative blocking for unknown commands
