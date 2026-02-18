@@ -1,3 +1,6 @@
+#define DFA_ERROR_PROGRAM "dfa_loader"
+#include "../include/dfa_errors.h"
+
 #include "../include/dfa_types.h"
 #include "../include/dfa.h"
 #include <stdio.h>
@@ -21,17 +24,17 @@ _Static_assert(offsetof(dfa_t, identifier) == 23, "identifier must be at offset 
 static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
     // Validate header fields
     if (dfa->magic != DFA_MAGIC) {
-        fprintf(stderr, "ERROR: Invalid magic number (expected 0x%08X, got 0x%08X)\n", DFA_MAGIC, dfa->magic);
+        ERROR("Invalid magic number (expected 0x%08X, got 0x%08X)", DFA_MAGIC, dfa->magic);
         return false;
     }
 
     if (dfa->version < 5 || dfa->version > 6) {
-        fprintf(stderr, "ERROR: Unsupported DFA version %u (expected 5 or 6)\n", dfa->version);
+        ERROR("Unsupported DFA version %u (expected 5 or 6)", dfa->version);
         return false;
     }
 
     if (dfa->state_count == 0) {
-        fprintf(stderr, "ERROR: state_count is zero\n");
+        ERROR("state_count is zero");
         return false;
     }
 
@@ -41,14 +44,14 @@ static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
     // Validate initial_state offset
     size_t min_state_offset = dfa->initial_state;
     if (min_state_offset < sizeof(dfa_t) + dfa->identifier_length) {
-        fprintf(stderr, "ERROR: initial_state %u is before expected start of states\n", dfa->initial_state);
+        ERROR("initial_state %u is before expected start of states", dfa->initial_state);
         return false;
     }
 
     // Validate that states fit in file
     size_t states_size = (size_t)dfa->state_count * sizeof(dfa_state_t);
     if (dfa->initial_state + states_size > file_size) {
-        fprintf(stderr, "ERROR: States array extends beyond file size\n");
+        ERROR("States array extends beyond file size");
         return false;
     }
 
@@ -57,7 +60,7 @@ static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
         if (dfa->state_count < 32) {
             uint32_t max_valid_mask = (1u << dfa->state_count) - 1;
             if ((dfa->accepting_mask & ~max_valid_mask) != 0) {
-                fprintf(stderr, "ERROR: accepting_mask 0x%08X has bits beyond state_count %u (max mask: 0x%08X)\n",
+                ERROR("accepting_mask 0x%08X has bits beyond state_count %u (max: 0x%08X)",
                         dfa->accepting_mask, dfa->state_count, max_valid_mask);
                 return false;
             }
@@ -66,7 +69,7 @@ static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
             // so bits 0-31 are valid. Check that no bits >= 32 are set
             // by verifying the upper bits of accepting_mask are zero
             if ((dfa->accepting_mask & 0xFFFFFFFF00000000u) != 0) {
-                fprintf(stderr, "ERROR: accepting_mask 0x%08X has bits beyond 32 for state_count %u\n",
+                ERROR("accepting_mask 0x%08X has bits beyond 32 for state_count %u",
                         dfa->accepting_mask, dfa->state_count);
                 return false;
             }
@@ -187,7 +190,7 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
         // Validate DFA structure
         const dfa_t* dfa = (const dfa_t*)dfa_data;
         if (!validate_dfa_structure(dfa, (size_t)dfa_size)) {
-            fprintf(stderr, "ERROR: DFA structure validation failed for %s\n", filename);
+            ERROR("DFA structure validation failed for %s", filename);
             free(dfa_data);
             return NULL;
         }

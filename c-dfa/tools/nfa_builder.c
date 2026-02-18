@@ -1,5 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 
+#define DFA_ERROR_PROGRAM "nfa_builder"
+#include "../include/dfa_errors.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -491,8 +494,8 @@ void add_negated_transition(int from_state, int to_state, char excluded_char) {
 void load_alphabet(const char* filename) {
     FILE* file = fopen(filename, "r");
     if (file == NULL) {
-        fprintf(stderr, "Error: Cannot open alphabet file %s\n", filename);
-        exit(1);
+        FATAL_SYS("Cannot open alphabet file '%s'", filename);
+        exit(EXIT_FAILURE);
     }
 
     char line[MAX_LINE_LENGTH];
@@ -509,8 +512,8 @@ void load_alphabet(const char* filename) {
 
         if (sscanf(line, "%d %d %d %15s", &symbol_id, &start_char, &end_char, special) >= 3) {
             if (alphabet_size >= MAX_SYMBOLS) {
-                fprintf(stderr, "Error: Maximum symbols reached\n");
-                exit(1);
+                FATAL("Maximum symbols (%d) reached", MAX_SYMBOLS);
+                exit(EXIT_FAILURE);
             }
 
             alphabet[alphabet_size].symbol_id = symbol_id;
@@ -604,7 +607,7 @@ static char* my_strdup(const char* str) {
     size_t len = strlen(str) + 1;
     char* copy = malloc(len);
     if (copy == NULL) {
-        fprintf(stderr, "FATAL: Failed to allocate %zu bytes for string duplication\n", len);
+        FATAL("Failed to allocate %zu bytes for string duplication", len);
         exit(EXIT_FAILURE);
     }
     memcpy(copy, str, len);
@@ -663,7 +666,7 @@ static void add_state_to_signature_table(int state, uint64_t signature) {
 
     StateSignature* new_entry = malloc(sizeof(StateSignature));
     if (new_entry == NULL) {
-        fprintf(stderr, "FATAL: Failed to allocate StateSignature for signature table\n");
+        FATAL("Failed to allocate StateSignature for signature table");
         exit(EXIT_FAILURE);
     }
 
@@ -680,12 +683,12 @@ void nfa_add_tag(int state, const char* tag) {
     }
 
     if (tag == NULL) {
-        fprintf(stderr, "ERROR: Attempting to add NULL tag to state %d\n", state);
+        ERROR("Attempting to add NULL tag to state %d", state);
         return;
     }
 
     if (nfa[state].tag_count >= MAX_TAGS) {
-        fprintf(stderr, "ERROR: Maximum tags (%d) reached for state %d\n", MAX_TAGS, state);
+        ERROR("Maximum tags (%d) reached for state %d", MAX_TAGS, state);
         return;
     }
 
@@ -697,13 +700,13 @@ void nfa_add_tag(int state, const char* tag) {
 // For State 0, if a transition already exists, create an intermediate dispatch state
 void nfa_add_transition(int from, int to, int symbol_id) {
     if (from < 0 || from >= nfa_state_count || to < 0 || to >= nfa_state_count) {
-        fprintf(stderr, "Error: Invalid state index\n");
-        exit(1);
+        FATAL("Invalid state index (from=%d, to=%d, state_count=%d)", from, to, nfa_state_count);
+        exit(EXIT_FAILURE);
     }
 
     if (symbol_id < 0 || symbol_id >= MAX_SYMBOLS) {
-        fprintf(stderr, "Error: Invalid symbol ID\n");
-        exit(1);
+        FATAL("Invalid symbol ID %d", symbol_id);
+        exit(EXIT_FAILURE);
     }
 
     // ALWAYS use multi-target array for all transitions in the builder
@@ -770,7 +773,7 @@ static int get_capture_id(const char* name) {
     
     // Register new capture
     if (capture_count >= MAX_CAPTURES) {
-        fprintf(stderr, "Error: Maximum captures (%d) reached\n", MAX_CAPTURES);
+        ERROR("Maximum captures (%d) reached", MAX_CAPTURES);
         return -1;
     }
     
@@ -970,7 +973,7 @@ int parse_category(const char* name) {
             return i;
         }
     }
-    fprintf(stderr, "Warning: Unknown category '%s', defaulting to safe\n", name);
+    WARNING("Unknown category '%s', defaulting to safe", name);
     return CAT_SAFE; // Default to safe
 }
 
@@ -1060,7 +1063,7 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 
     // Check for proper closing
     if (pattern[j] != ')' || pattern[j + 1] != ')') {
-        fprintf(stderr, "WARNING: Malformed fragment reference at position %d\n", *pos);
+        WARNING("Malformed fragment reference at position %d", *pos);
         result.exit_state = start_state;
         return result;
     }
@@ -1069,7 +1072,7 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
     char frag_name[MAX_FRAGMENT_NAME];
     size_t name_len = j - (*pos + 2);
     if (name_len >= sizeof(frag_name)) {
-        fprintf(stderr, "WARNING: Fragment name too long at position %d\n", *pos);
+        WARNING("Fragment name too long at position %d", *pos);
         *pos = j + 2;
         result.exit_state = start_state;
         return result;
@@ -1087,7 +1090,7 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 
     const char* frag_value = find_fragment(frag_name);
     if (frag_value == NULL) {
-        fprintf(stderr, "WARNING: Fragment '%s' not found, skipping\n", frag_name);
+        WARNING("Fragment '%s' not found, skipping", frag_name);
         *pos = j + 2;
         result.exit_state = start_state;
         return result;
@@ -1188,20 +1191,12 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
     (void)start_state;  // Not used - character classes are disallowed
     // Character classes [abc] are NOT supported.
     // Generate a clear error message explaining alternatives.
-    fprintf(stderr, "ERROR: Character class syntax [abc] is not supported.\n");
-    fprintf(stderr, "  The '[' character is reserved.\n");
-    fprintf(stderr, "  To match '[' literally, escape it as '\\['\n");
-    fprintf(stderr, "  For alternatives, use parentheses:\n");
-    fprintf(stderr, "    - For single chars (a OR b OR c): (a|b|c)\n");
-    fprintf(stderr, "    - For multi-char alternatives (ab OR bc): (ab|bc)\n");
-    fprintf(stderr, "  For character ranges, use fragments:\n");
-    fprintf(stderr, "    [fragment:LOWER] a|b|c|d|e|f|...\n");
-    fprintf(stderr, "    Reference as: ((LOWER))\n");
-    fprintf(stderr, "Pattern position: %d\n", *pos);
-    fprintf(stderr, "Pattern: %s\n", pattern);
+    ERROR("Character class syntax [abc] is not supported at position %d", *pos);
+    ERROR("  Use (a|b|c) for alternatives, escape '\\[' for literal bracket");
+    ERROR("  Pattern: %s", pattern);
     
     // Exit with error to stop pattern processing
-    exit(1);
+    exit(EXIT_FAILURE);
     
     // Return value is unreachable due to exit()
     return -1;
@@ -2236,14 +2231,10 @@ void parse_advanced_pattern(const char* line) {
             (strstr(line, " :fragment") != NULL) ||
             (strstr(line, " :allow") != NULL) ||
             (strstr(line, " :block") != NULL)) {
-            fprintf(stderr, "ERROR: Detected OLD FORMAT pattern. Please update to new format.\n");
-            fprintf(stderr, "  Old format: pattern :one :cat :ops\n");
-            fprintf(stderr, "  New format: [category:subcategory:operations] pattern -> action\n");
-            fprintf(stderr, "  Example: [safe:test] abc -> allow\n");
-            fprintf(stderr, "  Found: %s\n", line);
-            fprintf(stderr, "  NOTE: Annotations (:one, :cat, :ops) must now be inside brackets [].\n");
-            fprintf(stderr, "  File: %s\n", current_input_file ? current_input_file : "(unknown)");
-            exit(1);
+            ERROR("Detected OLD FORMAT pattern. Use: [category:subcategory:ops] pattern -> action");
+            ERROR("  Found: %s", line);
+            ERROR("  File: %s", current_input_file ? current_input_file : "(unknown)");
+            exit(EXIT_FAILURE);
         }
     }
 
@@ -2291,8 +2282,7 @@ void parse_advanced_pattern(const char* line) {
                 while (*value_start == ' ' || *value_start == '\t') value_start++;
                 // Check for empty value (end of line, comment, or whitespace only)
                 if (*value_start == '\0' || *value_start == '\n' || *value_start == '#') {
-                    fprintf(stderr, "ERROR: Fragment '%s' has empty value. Fragment must have a non-empty value.\n",
-                            fragments[fragment_count].name);
+                    ERROR("Fragment '%s' has empty value", fragments[fragment_count].name);
                     has_fragment_error = true;
                     return;
                 }
@@ -2300,8 +2290,7 @@ void parse_advanced_pattern(const char* line) {
                 // Validate: Check for duplicate fragment name
                 for (int i = 0; i < fragment_count; i++) {
                     if (strcmp(fragments[i].name, fragments[fragment_count].name) == 0) {
-                        fprintf(stderr, "ERROR: Duplicate fragment name '%s'. Each fragment must have a unique name.\n",
-                                fragments[fragment_count].name);
+                        ERROR("Duplicate fragment name '%s'", fragments[fragment_count].name);
                         has_fragment_error = true;
                         return;
                     }
@@ -2459,7 +2448,7 @@ static void parse_acceptance_mapping(const char* line) {
     // Find the mapping arrow
     const char* arrow = strstr(line, "->");
     if (arrow == NULL) {
-        fprintf(stderr, "Warning: Invalid ACCEPTANCE_MAPPING syntax (no ->): %s\n", line);
+        WARNING("Invalid ACCEPTANCE_MAPPING syntax (no ->): %s", line);
         return;
     }
 
@@ -2467,7 +2456,7 @@ static void parse_acceptance_mapping(const char* line) {
     const char* bracket_open = strchr(line, '[');
     const char* bracket_close = strchr(line, ']');
     if (bracket_open == NULL || bracket_close == NULL || bracket_close > arrow) {
-        fprintf(stderr, "Warning: Invalid ACCEPTANCE_MAPPING syntax (bad brackets): %s\n", line);
+        WARNING("Invalid ACCEPTANCE_MAPPING syntax (bad brackets): %s", line);
         return;
     }
 
@@ -2482,7 +2471,7 @@ static void parse_acceptance_mapping(const char* line) {
     char* end;
     long acceptance_cat_long = strtol(arrow + 2, &end, 10);
     if (end == arrow + 2 || acceptance_cat_long < 0 || acceptance_cat_long > 7) {
-        fprintf(stderr, "Warning: Invalid acceptance category: %s\n", line);
+        WARNING("Invalid acceptance category: %s", line);
         return;
     }
     int acceptance_cat = (int)acceptance_cat_long;
@@ -2520,7 +2509,7 @@ static void parse_acceptance_mapping(const char* line) {
         VERBOSE_PRINT("ACCEPTANCE_MAPPING: [%s:%s:%s] -> %d\n",
                 category, subcategory, operations, acceptance_cat);
     } else {
-        fprintf(stderr, "Warning: Too many category mappings, ignoring: %s\n", line);
+        WARNING("Too many category mappings, ignoring: %s", line);
     }
 }
 
@@ -2544,8 +2533,8 @@ static int lookup_acceptance_category(const char* category, const char* subcateg
 void read_advanced_spec_file(const char* filename) {
     FILE* file = fopen(filename, "r");
     if (file == NULL) {
-        fprintf(stderr, "Error: Cannot open file %s\n", filename);
-        exit(1);
+        FATAL_SYS("Cannot open file '%s'", filename);
+        exit(EXIT_FAILURE);
     }
 
     char line[MAX_LINE_LENGTH];
@@ -2598,7 +2587,7 @@ void read_advanced_spec_file(const char* filename) {
 void write_nfa_file(const char* filename) {
     FILE* file = fopen(filename, "wb");
     if (file == NULL) {
-        fprintf(stderr, "Error: Cannot create file %s\n", filename);
+        FATAL_SYS("Cannot create file '%s'", filename);
         return;
     }
 
@@ -2790,16 +2779,16 @@ static void parse_arguments(int argc, char* argv[],
             flag_verbose_nfa = true;
         } else if (strcmp(argv[0], "--alphabet") == 0) {
             if (argc < 2) {
-                fprintf(stderr, "Error: --alphabet requires a filename\n");
-                exit(1);
+                ERROR("--alphabet requires a filename");
+                exit(EXIT_FAILURE);
             }
             external_alphabet_file = argv[1];
             argc--;
             argv++;
         } else if (argv[0][0] == '-') {
-            fprintf(stderr, "Error: Unknown option '%s'\n", argv[0]);
+            ERROR("Unknown option '%s'", argv[0]);
             print_usage(argv[0]);
-            exit(1);
+            exit(EXIT_FAILURE);
         } else {
             break;  // First non-option argument is spec_file
         }
@@ -2809,9 +2798,9 @@ static void parse_arguments(int argc, char* argv[],
     
     // Check for spec_file
     if (argc < 1) {
-        fprintf(stderr, "Error: No spec file provided\n");
+        ERROR("No spec file provided");
         print_usage("nfa_builder");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
     
     *spec_file = argv[0];
@@ -2826,7 +2815,7 @@ static bool validate_pattern_file(const char* spec_file) {
     
     FILE* file = fopen(spec_file, "r");
     if (!file) {
-        fprintf(stderr, "Error: Cannot open spec file '%s'\n", spec_file);
+        ERROR("Cannot open spec file '%s'", spec_file);
         return false;
     }
     
@@ -2851,7 +2840,7 @@ static bool validate_pattern_file(const char* spec_file) {
             char* name_start = line + 10;
             char* bracket = strchr(name_start, ']');
             if (!bracket) {
-                fprintf(stderr, "Error: Malformed fragment definition at line %d: %s\n", line_num, line);
+                ERROR("Malformed fragment definition at line %d: %s", line_num, line);
                 errors++;
                 continue;
             }
@@ -2860,7 +2849,7 @@ static bool validate_pattern_file(const char* spec_file) {
             size_t name_len = bracket - name_start;
             char frag_name[64];
             if (name_len >= sizeof(frag_name)) {
-                fprintf(stderr, "Error: Fragment name too long at line %d\n", line_num);
+                ERROR("Fragment name too long at line %d", line_num);
                 errors++;
                 continue;
             }
@@ -2871,8 +2860,7 @@ static bool validate_pattern_file(const char* spec_file) {
             const char* value_start = bracket + 1;
             while (*value_start == ' ' || *value_start == '\t') value_start++;
             if (*value_start == '\0' || *value_start == '\n' || *value_start == '#') {
-                fprintf(stderr, "Error: Fragment '%s' has empty value at line %d. Fragment must have a non-empty value.\n", 
-                        frag_name, line_num);
+                ERROR("Fragment '%s' has empty value at line %d", frag_name, line_num);
                 errors++;
                 continue;
             }
@@ -2907,7 +2895,7 @@ static bool validate_pattern_file(const char* spec_file) {
             while (*id_start == ' ' || *id_start == '\t') id_start++;
 
             if (*id_start != '"') {
-                fprintf(stderr, "Error: IDENTIFIER must be a quoted string at line %d\n", line_num);
+                ERROR("IDENTIFIER must be a quoted string at line %d", line_num);
                 errors++;
                 continue;
             }
@@ -2915,14 +2903,14 @@ static bool validate_pattern_file(const char* spec_file) {
 
             char* id_end = strchr(id_start, '"');
             if (!id_end) {
-                fprintf(stderr, "Error: Unclosed IDENTIFIER string at line %d\n", line_num);
+                ERROR("Unclosed IDENTIFIER string at line %d", line_num);
                 errors++;
                 continue;
             }
 
             size_t id_len = id_end - id_start;
             if (id_len >= sizeof(pattern_identifier)) {
-                fprintf(stderr, "Error: IDENTIFIER too long at line %d\n", line_num);
+                ERROR("IDENTIFIER too long at line %d", line_num);
                 errors++;
                 continue;
             }
@@ -2940,7 +2928,7 @@ static bool validate_pattern_file(const char* spec_file) {
         if (line[0] == '[') {
             char* bracket = strchr(line, ']');
             if (!bracket) {
-                fprintf(stderr, "Error: Malformed pattern at line %d: %s\n", line_num, line);
+                ERROR("Malformed pattern at line %d: %s", line_num, line);
                 errors++;
                 continue;
             }
@@ -2963,13 +2951,13 @@ static bool validate_pattern_file(const char* spec_file) {
             }
 
             if (open_parens != close_parens) {
-                fprintf(stderr, "Error: Unmatched parentheses at line %d: %s\n", line_num, line);
+                ERROR("Unmatched parentheses at line %d: %s", line_num, line);
                 errors++;
             }
 
             // Check for common issues
             if (*pattern_start != '\0' && strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*?[]()-+.:\\", *pattern_start) == NULL) {
-                fprintf(stderr, "Error: Invalid pattern start at line %d: %s\n", line_num, line);
+                ERROR("Invalid pattern start at line %d: %s", line_num, line);
                 errors++;
             }
 

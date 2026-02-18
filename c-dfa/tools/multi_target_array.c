@@ -4,6 +4,9 @@
  * Optimized for O(1) symbol lookup and efficient multi-target management.
  */
 
+#define DFA_ERROR_PROGRAM "multi_target_array"
+#include "../include/dfa_errors.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +20,7 @@
  */
 static void* alloc_or_abort(void* ptr, const char* msg) {
     if (ptr == NULL) {
-        fprintf(stderr, "FATAL: %s - %s\n", msg, strerror(errno));
+        FATAL("%s", msg);
         exit(EXIT_FAILURE);
     }
     return ptr;
@@ -109,7 +112,7 @@ bool mta_add_target(multi_target_array_t* arr, int symbol_id, int target_state) 
                 int new_cap = arr->entry_capacity == 0 ? 8 : arr->entry_capacity * 2;
                 mta_entry_t** next_active = realloc(arr->active_entries, new_cap * sizeof(mta_entry_t*));
                 if (next_active == NULL) {
-                    fprintf(stderr, "FATAL: Failed to grow multi-target array - %s\n", strerror(errno));
+                    FATAL("Failed to grow multi-target array");
                     exit(EXIT_FAILURE);
                 }
                 arr->active_entries = next_active;

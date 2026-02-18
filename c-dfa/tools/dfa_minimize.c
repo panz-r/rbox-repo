@@ -8,6 +8,9 @@
  * 4. SAT-based Algorithm (requires CaDiCaL, linked separately)
  */
 
+#define DFA_ERROR_PROGRAM "dfa_minimize"
+#include "../include/dfa_errors.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,7 +43,7 @@ static dfa_minimize_stats_t last_stats = {0};
  */
 static void* alloc_or_abort(void* ptr, const char* msg) {
     if (ptr == NULL) {
-        fprintf(stderr, "FATAL: %s - %s\n", msg, strerror(errno));
+        FATAL("%s", msg);
         exit(EXIT_FAILURE);
     }
     return ptr;
@@ -532,8 +535,8 @@ int dfa_minimize(build_dfa_state_t* dfa, int state_count) {
     last_stats.states_removed = original - new_count;
     
     if (!verify_minimized_dfa(dfa, new_count)) {
-        fprintf(stderr, "FATAL: Minimized DFA failed verification.\n");
-        exit(1);
+        FATAL("Minimized DFA failed verification");
+        exit(EXIT_FAILURE);
     }
     
     return new_count;

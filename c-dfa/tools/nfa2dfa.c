@@ -1,3 +1,6 @@
+#define DFA_ERROR_PROGRAM "nfa2dfa"
+#include "../include/dfa_errors.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +40,7 @@ static bool flag_verbose = false;
  */
 static void* alloc_or_abort(void* ptr, const char* msg) {
     if (ptr == NULL) {
-        fprintf(stderr, "FATAL: %s - %s\n", msg, strerror(errno));
+        FATAL("%s", msg);
         exit(EXIT_FAILURE);
     }
     return ptr;
@@ -452,16 +455,9 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     }
     //fprintf(stderr, "DEBUG dfa_add_state: adding new state\n");
     if (dfa_state_count >= MAX_STATES) { 
-        fprintf(stderr, "FATAL: Max DFA states reached (%d states)\n", MAX_STATES);
-        fprintf(stderr, "This usually happens when:\n");
-        fprintf(stderr, "  1. The pattern file has too many complex patterns\n");
-        fprintf(stderr, "  2. Patterns have many alternatives (e.g., large character classes)\n");
-        fprintf(stderr, "  3. Patterns use nested quantifiers that cause state explosion\n");
-        fprintf(stderr, "\nSuggestions:\n");
-        fprintf(stderr, "  - Split patterns into multiple files\n");
-        fprintf(stderr, "  - Use fragments instead of large alternations\n");
-        fprintf(stderr, "  - Simplify complex patterns\n");
-        exit(1); 
+        FATAL("Max DFA states reached (%d states)", MAX_STATES);
+        ERROR("  Split patterns into multiple files or simplify complex patterns");
+        exit(EXIT_FAILURE); 
     }
     int state = dfa_state_count++;
     memset(&dfa[state], 0, sizeof(build_dfa_state_t));
@@ -661,7 +657,7 @@ void nfa_to_dfa(void) {
     DEBUG_PRINT("before dfa_add_state\n");
     int idfa = dfa_add_state(im, temp, tc, accept_pattern, reachable_accepting_patterns);
     if (idfa < 0) {
-        fprintf(stderr, "Error: Failed to add initial DFA state\n");
+        ERROR("Failed to add initial DFA state");
         return;
     }
 
@@ -973,7 +969,7 @@ int compress_state_rules(int sidx, intermediate_rule_t* out) {
 
 void write_dfa_file(const char* filename) {
     FILE* file = fopen(filename, "wb");
-    if (!file) { fprintf(stderr, "FATAL: Cannot open %s for writing\n", filename); exit(1); }
+    if (!file) { FATAL_SYS("Cannot open '%s' for writing", filename); exit(EXIT_FAILURE); }
     intermediate_rule_t* all_rules = alloc_or_abort(malloc(dfa_state_count * MAX_SYMBOLS * sizeof(intermediate_rule_t)), "Rules");
     size_t total_rules = 0;
     for (int i = 0; i < dfa_state_count; i++) total_rules += compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
@@ -997,7 +993,7 @@ void write_dfa_file(const char* filename) {
 
     size_t dfa_size = 23 + id_len + dfa_state_count * sizeof(dfa_state_t) + total_rules * sizeof(dfa_rule_t);
     dfa_t* ds = calloc(1, dfa_size + marker_data_size);
-    if (!ds) { fprintf(stderr, "FATAL: Failed to allocate DFA buffer (%zu + %zu bytes)\n", dfa_size, marker_data_size); exit(1); }
+    if (!ds) { FATAL("Failed to allocate DFA buffer (%zu + %zu bytes)", dfa_size, marker_data_size); exit(EXIT_FAILURE); }
     ds->magic = DFA_MAGIC; ds->version = DFA_VERSION;
     ds->state_count = dfa_state_count; ds->initial_state = 23 + id_len;  // Header is 23 bytes total (magic=4, ver=2, cnt=2, init=4, mask=4, flags=2, id_len=1, meta=4 = 23), identifier starts at offset 23
     ds->metadata_offset = 0;  // Will be set after states are written if needed
@@ -1037,9 +1033,8 @@ void write_dfa_file(const char* filename) {
             dst->marker_offset = 0;
             int tidx = all_rules[i * MAX_SYMBOLS + r].target_state_index;
             if (tidx < 0 || tidx >= dfa_state_count) {
-                fprintf(stderr, "FATAL: State %d rule %d target index %d out of bounds (max %d)\n",
-                        i, r, tidx, dfa_state_count - 1);
-                exit(1);
+                FATAL("State %d rule %d target index %d out of bounds (max %d)", i, r, tidx, dfa_state_count - 1);
+                exit(EXIT_FAILURE);
             }
             uint32_t calculated_target = (uint32_t)(ds->initial_state + (size_t)tidx * sizeof(dfa_state_t));
             dst->target = calculated_target;
@@ -1091,16 +1086,19 @@ void write_dfa_file(const char* filename) {
     }
 
     size_t total_size = dfa_size + marker_data_size;
-    if (fwrite(ds, 1, total_size, file) != total_size) exit(1);
+    if (fwrite(ds, 1, total_size, file) != total_size) {
+        FATAL("Failed to write DFA file - disk may be full");
+        exit(EXIT_FAILURE);
+    }
     fclose(file); free(ds); free(all_rules);
 }
 
 void load_nfa_file(const char* filename) {
     FILE* file = fopen(filename, "r");
-    if (!file) { fprintf(stderr, "FATAL: Cannot open NFA file %s\n", filename); exit(1); }
+    if (!file) { FATAL_SYS("Cannot open NFA file '%s'", filename); exit(EXIT_FAILURE); }
     char line[1024]; 
-    if (!fgets(line, sizeof(line), file)) { fprintf(stderr, "FATAL: Empty NFA file\n"); exit(1); }
-    if (!strstr(line, "NFA_ALPHABET")) { fprintf(stderr, "FATAL: Invalid NFA header\n"); exit(1); }
+    if (!fgets(line, sizeof(line), file)) { FATAL("Empty NFA file"); exit(EXIT_FAILURE); }
+    if (!strstr(line, "NFA_ALPHABET")) { FATAL("Invalid NFA header"); exit(EXIT_FAILURE); }
 #ifndef NFABUILDER_EXCLUDE_NFA_INIT
     nfa_init();
 #endif

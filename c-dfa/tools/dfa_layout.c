@@ -123,6 +123,19 @@ static int* build_backward_depths(const build_dfa_state_t* dfa, int state_count)
     for (int i = 0; i < state_count; i++) {
         if (pred_count[i] > 0) {
             preds[i] = malloc(pred_count[i] * sizeof(int));
+            if (!preds[i]) {
+                // Allocation failed - clean up and return NULL
+                for (int j = 0; j < i; j++) {
+                    free(preds[j]);
+                }
+                free(preds);
+                free(pred_count);
+                free(depths);
+                free(queue);
+                free(visited);
+                free(is_accepting);
+                return NULL;
+            }
         }
         pred_count[i] = 0;  // Reset for filling
     }
@@ -193,6 +206,7 @@ static int* build_affinity_groups(const build_dfa_state_t* dfa, int state_count,
     // This preserves original order when sorted by (group, depth)
     // Since group=i for all states, sorting becomes just by depth
     int* group_id = malloc(state_count * sizeof(int));
+    if (!group_id) return NULL;
     for (int i = 0; i < state_count; i++) {
         group_id[i] = i;  // Each state in its own group = identity order
     }
