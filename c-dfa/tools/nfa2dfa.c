@@ -100,10 +100,7 @@ static void init_marker_lists(void) {
     memset(dfa_marker_lists, 0, sizeof(MarkerList) * MAX_DFA_MARKER_LISTS);
 }
 
-static void free_marker_lists(void) {
-    if (dfa_marker_lists) free(dfa_marker_lists);
-    dfa_marker_lists = NULL;
-}
+// Note: No free_marker_lists() needed - CLI tool exits after processing
 
 // Get unique marker list (store if new)
 static uint32_t store_marker_list(const uint32_t* markers, int count) {

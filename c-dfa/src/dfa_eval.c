@@ -349,9 +349,9 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     // Save source state info BEFORE EOS jump - the source state has the category/accepting info
     uint8_t source_category = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
     uint16_t source_accepting = curr->accepting_pattern_id;
-    uint32_t source_eos_target = curr->eos_target;
     
 #if DFA_EVAL_DEBUG
+    uint32_t source_eos_target = curr->eos_target;
     fprintf(stderr, "EVAL DEBUG: Pre-EOS: flags=0x%04X, cat=0x%02x, accept=%u, eos_target=%u\n",
             curr->flags, source_category, source_accepting, source_eos_target);
 #endif

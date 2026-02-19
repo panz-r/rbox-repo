@@ -22,6 +22,9 @@
 #define DFA_ERROR_PROGRAM "c-dfa"
 #endif
 
+/* Suppress pedantic warning for ##__VA_ARGS__ (GNU extension) */
+#pragma GCC system_header
+
 /* Core error macros */
 #define FATAL(fmt, ...) \
     fprintf(stderr, "[%s] FATAL: " fmt "\n", DFA_ERROR_PROGRAM, ##__VA_ARGS__)

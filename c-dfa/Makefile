@@ -4,6 +4,14 @@
 # The test runner (dfa_test) handles all DFA building internally.
 # Simply invoke it with --test-set and --minimize-XXX flags.
 #
+# Directory Structure:
+#   include/    - Public headers
+#   src/        - Library source (eval, loader, test runner)
+#   tools/      - CLI tools and internal libraries
+#   tests/      - Test source code
+#   patterns/   - Test pattern files
+#   docs/       - Documentation
+#
 # Test Sets:
 #   A = Core tests (basic patterns, quantifiers, fragments, alternation)
 #   B = Expanded tests (complex patterns with nested quantifiers)
@@ -11,9 +19,9 @@
 #
 # Algorithms:
 #   Moore       - Simple table-filling minimization
-#   Hopcroft   - Efficient O(n log n) minimization
-#   Brzozowski - Double-reversal produces unique minimal DFA
-#   SAT        - Provably optimal using CaDiCaL solver
+#   Hopcroft    - Efficient O(n log n) minimization
+#   Brzozowski  - Double-reversal produces unique minimal DFA
+#   SAT         - Provably optimal using CaDiCaL solver
 # ============================================================================
 
 CC = gcc
@@ -25,6 +33,7 @@ LDFLAGS = -lm -mcmodel=medium
 BUILD_DIR = build
 SRC_DIR = src
 TOOLS_DIR = tools
+TESTS_DIR = tests
 INCLUDE_DIR = include
 
 # CaDiCaL SAT solver
@@ -136,28 +145,29 @@ $(TEST): $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(SRC_DIR)/dfa_test.c $(I
 	$(CC) $(CFLAGS) -o $@ $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(SRC_DIR)/dfa_test.c $(LDFLAGS)
 
 # Build minimization integrity test
-$(TOOLS_DIR)/test_minimize_integrity: $(TOOLS_DIR)/test_minimize_integrity.c \
+$(TESTS_DIR)/test_minimize_integrity: $(TESTS_DIR)/test_minimize_integrity.c \
 		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
 		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
 		$(TOOLS_DIR)/dfa_layout.c \
 		$(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/test_minimize_integrity.c \
+	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/test_minimize_integrity.c \
 		$(TOOLS_DIR)/dfa_minimize.c $(TOOLS_DIR)/dfa_minimize_brzozowski.c \
 		$(TOOLS_DIR)/dfa_minimize_sat_stub.c \
 		$(TOOLS_DIR)/dfa_layout.c $(LDFLAGS)
 
 # Run minimization integrity test
-test-integrity: $(TOOLS_DIR)/test_minimize_integrity
+test-integrity: $(TESTS_DIR)/test_minimize_integrity
 	@echo ""
 	@echo "================================================="
 	@echo "MINIMIZATION INTEGRITY TEST"
 	@echo "================================================="
-	@./$(TOOLS_DIR)/test_minimize_integrity
+	@./$(TESTS_DIR)/test_minimize_integrity
 
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR) $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced \
-		$(TOOLS_DIR)/nfa2dfa_sat $(TOOLS_DIR)/test_minimize_integrity $(TEST) $(TEST_SAT)
+		$(TOOLS_DIR)/nfa2dfa_sat $(TOOLS_DIR)/pattern_order \
+		$(TESTS_DIR)/test_minimize_integrity $(TEST) $(TEST_SAT)
 	rm -f $(TOOLS_DIR)/*.o
 
 # Clean including vendor builds
@@ -190,7 +200,7 @@ test-stress: $(TOOLS) $(TEST)
 	@./$(TEST) --test-set C --minimize-moore --compress-sat
 
 # Full test suite - runs all three algorithms with their respective test sets
-test: $(TOOLS) $(TEST) $(TOOLS_DIR)/test_minimize_integrity
+test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity
 	@echo ""
 	@echo "================================================="
 	@echo "C-DFA FULL TEST SUITE"
@@ -260,4 +270,4 @@ test-sat-full: build-sat $(TEST)
 	@echo "================================================="
 	@echo "MINIMIZATION INTEGRITY (SAT)"
 	@echo "================================================="
-	@./$(TOOLS_DIR)/test_minimize_integrity
+	@./$(TESTS_DIR)/test_minimize_integrity

@@ -1,12 +1,33 @@
-#binaries
+# Binaries
 dfa_test
 tools/nfa_builder
 tools/nfa2dfa_advanced
-tools/test_minimize_integrity 
 tools/nfa2dfa_sat
-src/dfa_test
-src/test_single
-src/test_single_quant
-#object files
+tools/pattern_order
+tests/test_minimize_integrity
+tests/test_sat_encoding
+
+# Object files
 *.o
+*.a
+
+# Build artifacts
+build/
+build_test/
+bin/
+
+# Log files
 *.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated DFA/NFA files in root (kept in tests/test_data/)
+/*.dfa
+/*.nfa
+out.*

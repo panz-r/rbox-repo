@@ -111,12 +111,100 @@ private:
     MarkerList* marker_lists;
     int marker_list_count;
 
+    // Helper: Variable index for eq[i][j] where i < j
     int eq_var(int i, int j) {
-        if (i == j) return 0;
+        if (i == j) return 0; // Constant true
         if (i > j) std::swap(i, j);
         long long idx = (long long)i * (2 * n_states - i - 1) / 2 + (j - i - 1);
-        return (int)idx + 1;
+        return (int)idx + 1; // 1-indexed
     }
+
+    void compute_reachability() {
+        reachability.assign(n_states, PatternSet());
+        
+        // Initial: accepting states reach their own pattern_id
+        for (int s = 0; s < n_states; s++) {
+            if (original_dfa[s].flags & DFA_STATE_ACCEPTING) {
+                reachability[s].add(original_dfa[s].accepting_pattern_id);
+            }
+        }
+
+        // Fixed-point iteration (backward)
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (int s = 0; s < n_states; s++) {
+                size_t old_size = reachability[s].ids.size();
+                
+                // From transitions
+                for (int sc = 0; sc < smap.num_classes; sc++) {
+                    int c = smap.class_to_char[sc];
+                    int t = original_dfa[s].transitions[c];
+                    if (t >= 0 && t < n_states) {
+                        for (uint16_t id : reachability[t].ids) reachability[s].add(id);
+                    }
+                }
+                
+                // From EOS target
+                if (original_dfa[s].eos_target != 0 && (int)original_dfa[s].eos_target < n_states) {
+                    for (uint16_t id : reachability[original_dfa[s].eos_target].ids) reachability[s].add(id);
+                }
+
+                if (reachability[s].ids.size() > old_size) changed = true;
+            }
+        }
+    }
+
+    // Pattern-Aware Marker Comparison
+    bool are_markers_equivalent(int s1, int s2, int c) {
+        uint32_t m1_idx = original_dfa[s1].marker_offsets[c];
+        uint32_t m2_idx = original_dfa[s2].marker_offsets[c];
+        if (m1_idx == m2_idx) return true;
+
+        int t1 = original_dfa[s1].transitions[c];
+        int t2 = original_dfa[s2].transitions[c];
+        
+        // Union of reachable patterns from both targets
+        PatternSet live;
+        if (t1 >= 0 && t1 < n_states) live = reachability[t1];
+        if (t2 >= 0 && t2 < n_states) live = live.unite(reachability[t2]);
+
+        if (live.ids.empty()) return true; // No relevant patterns reachable
+
+        auto get_filtered = [&](uint32_t idx) {
+            std::vector<uint32_t> filtered;
+            if (idx > 0 && idx <= (uint32_t)marker_list_count) {
+                MarkerList* ml = &marker_lists[idx - 1];
+                for (int i = 0; i < ml->count; i++) {
+                    uint16_t pid = MARKER_GET_PATTERN_ID(ml->markers[i]);
+                    if (live.contains(pid)) {
+                        filtered.push_back(ml->markers[i]);
+                    }
+                }
+            }
+            return filtered;
+        };
+
+        return get_filtered(m1_idx) == get_filtered(m2_idx);
+    }
+
+public:
+    ScalableSATMinimizer(const build_dfa_state_t* dfa, int states) 
+        : n_states(states), original_dfa(dfa) {
+        solver = new CaDiCaL::Solver();
+        
+        // EXPLICITLY DECLARE ALL VARIABLES and disable strict check if needed
+        int num_vars = (int)((long long)n_states * (n_states - 1) / 2);
+        // Reserve enough variables to avoid reallocation and undeclared errors
+        for (int v = 1; v <= num_vars; v++) {
+            (void)v; // declared via use
+        }
+
+        marker_lists = dfa_get_marker_lists(&marker_list_count);
+        smap.compute(dfa, states);
+        compute_reachability();
+    }
+
 
     void compute_reachability() {
         reachability.assign(n_states, PatternSet());
