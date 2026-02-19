@@ -15,7 +15,7 @@ LIB_OBJS = $(patsubst %.c,%.o,$(LIB_SRC))
 PATTERN_SRC = ../tools/nfa_builder.c ../tools/multi_target_array.c
 PATTERN_OBJS = $(patsubst %.c,%.o,$(PATTERN_SRC))
 
-FUZZERS = dfa_eval_fuzzer pattern_parse_fuzzer
+FUZZERS = dfa_eval_fuzzer pattern_parse_fuzzer nfa_build_fuzzer
 
 # Default target
 all: $(FUZZERS)
@@ -26,6 +26,10 @@ dfa_eval_fuzzer: dfa_eval_fuzzer.cpp $(LIB_OBJS)
 
 # Pattern parser fuzzer - uses external nfa_builder process
 pattern_parse_fuzzer: pattern_parse_fuzzer.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $< -lm
+
+# NFA build fuzzer - tests actual NFA construction (not just validation)
+nfa_build_fuzzer: nfa_build_fuzzer.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $< -lm
 
 # Build library objects
@@ -51,7 +55,11 @@ run-dfa-dict: dfa_eval_fuzzer
 
 # Run pattern parser fuzzing
 run-pattern: pattern_parse_fuzzer
-	./pattern_parse_fuzzer corpus/seed/pattern_parser -merge=corpus/interesting/pattern_parser -artifact_prefix=crashes/pattern_parse_ -max_len=8192 -jobs=4 -workers=4 -rss_mb=2048
+	./pattern_parse_fuzzer corpus/seed/pattern_parser -merge=corpus/interesting/pattern_parser -artifact_prefix=crashes/pattern_parse_ -max_len=8192 -jobs=4 -workers=4
+
+# Run NFA build fuzzing (tests actual NFA construction, not just validation)
+run-nfa-build: nfa_build_fuzzer
+	./nfa_build_fuzzer corpus/seed/pattern_parser -merge=corpus/interesting/nfa_build -artifact_prefix=crashes/nfa_build_ -max_len=32768 -jobs=2 -workers=2
 
 # Merge new corpus inputs
 merge: dfa_eval_fuzzer
@@ -113,13 +121,36 @@ replay-all-pattern-crashes: pattern_parse_fuzzer
 		echo "No pattern parser crashes found in crashes/"; \
 	fi
 
-# Replay all crashes (both fuzzers)
-replay-all-crashes: replay-all-dfa-crashes replay-all-pattern-crashes
+# Replay NFA build crashes found
+replay-crashes-nfa-build: nfa_build_fuzzer
+	@if [ -z "$(CRASHES)" ]; then \
+		echo "Error: Please specify CRASHES='file1 file2 ...'"; \
+		echo "Example: make replay-crashes-nfa-build CRASHES='crashes/nfa_build_*'"; \
+		exit 1; \
+	fi
+	@for crash in $(CRASHES); do \
+		echo "=== Replaying $$crash ==="; \
+		./nfa_build_fuzzer $$crash -runs=1; \
+	done
+
+replay-all-nfa-build-crashes: nfa_build_fuzzer
+	@if ls crashes/nfa_build_* 1>/dev/null 2>&1; then \
+		for crash in crashes/nfa_build_*; do \
+			echo "=== Replaying $$crash ==="; \
+			./nfa_build_fuzzer $$crash -runs=1; \
+		done; \
+	else \
+		echo "No NFA build crashes found in crashes/"; \
+	fi
+
+# Replay all crashes (all fuzzers)
+replay-all-crashes: replay-all-dfa-crashes replay-all-pattern-crashes replay-all-nfa-build-crashes
 
 # List crashes found
 list-crashes:
 	@echo "DFA crashes:"; ls -1 crashes/dfa_eval_* 2>/dev/null | wc -l
 	@echo "Pattern parser crashes:"; ls -1 crashes/pattern_parse_* 2>/dev/null | wc -l
+	@echo "NFA build crashes:"; ls -1 crashes/nfa_build_* 2>/dev/null | wc -l
 	@echo "Total crash files:"; find crashes -type f 2>/dev/null | wc -l
 
-.PHONY: all clean run-dfa run-dfa-dict merge minimize replay-crashes-dfa replay-all-dfa-crashes replay-all-pattern-crashes replay-all-crashes list-crashes
+.PHONY: all clean run-dfa run-dfa-dict merge minimize run-pattern run-nfa-build replay-crashes-dfa replay-crashes-pattern replay-crashes-nfa-build replay-all-dfa-crashes replay-all-pattern-crashes replay-all-nfa-build-crashes replay-all-crashes list-crashes
