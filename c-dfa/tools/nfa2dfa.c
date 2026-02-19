@@ -13,6 +13,7 @@
 #include "../include/nfa.h"
 #include "dfa_minimize.h"
 #include "dfa_compress.h"
+#include "nfa_preminimize.h"
 
 #if MAX_SYMBOLS != 320
 #error "MAX_SYMBOLS must be 320"
@@ -1209,6 +1210,12 @@ int main(int argc, char* argv[]) {
     init_hash_table();
     
     load_nfa_file(input_file);
+    
+    // Pre-minimize NFA before subset construction (always on by default)
+    nfa_premin_options_t premin_opts = nfa_premin_default_options();
+    premin_opts.verbose = flag_verbose;
+    nfa_preminimize(nfa, &nfa_state_count, &premin_opts);
+    
     nfa_to_dfa();
     flatten_dfa();
     
