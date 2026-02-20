@@ -13,12 +13,15 @@
  * - Command separators (&&, ||, ;)
  * - Quoting and escaping
  * - Subshells and command substitution
+ * - Variables: $VAR, ${VAR}, $1, $#, $?, $$
+ * - Globbing: *, ?, [abc]
  */
 
 /**
- * Token types
+ * Token types - unified enum for all token types
  */
 typedef enum {
+    // Basic types
     TOKEN_COMMAND,      // Command name or path
     TOKEN_ARGUMENT,     // Command argument
     TOKEN_PIPE,         // Pipe operator
@@ -31,7 +34,16 @@ typedef enum {
     TOKEN_OR,           // Logical OR
     TOKEN_SUBSHELL_START, // Subshell start
     TOKEN_SUBSHELL_END,   // Subshell end
-    TOKEN_END           // End of tokens
+    TOKEN_END,           // End of tokens
+
+    // Extended types
+    TOKEN_VARIABLE,        // $VAR, ${VAR}
+    TOKEN_VARIABLE_QUOTED, // "$VAR", '$VAR'
+    TOKEN_SPECIAL_VAR,     // $1, $#, $?, $$
+    TOKEN_GLOB,            // *.txt, file?
+    TOKEN_SUBSHELL,        // $(command), `command`
+    TOKEN_ARITHMETIC,      // $((expr))
+    TOKEN_PROCESS_SUB      // <(command), >(command)
 } token_type_t;
 
 /**

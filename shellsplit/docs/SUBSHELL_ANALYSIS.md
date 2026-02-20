@@ -1,4 +1,6 @@
-# Subshell Handling Analysis and Improvement
+# Subshell Handling Analysis
+
+> This document analyzes subshell handling in the **ShellSplit** library.
 
 ## Current Implementation
 

@@ -171,7 +171,8 @@ test-integrity: $(TESTS_DIR)/test_minimize_integrity
 clean:
 	rm -rf $(BUILD_DIR) $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced \
 		$(TOOLS_DIR)/nfa2dfa_sat $(TOOLS_DIR)/pattern_order \
-		$(TESTS_DIR)/test_minimize_integrity $(TEST) $(TEST_SAT)
+		$(TESTS_DIR)/test_minimize_integrity \
+		$(TEST) $(TEST_SAT)
 	rm -f $(TOOLS_DIR)/*.o
 
 # Clean including vendor builds
@@ -180,6 +181,10 @@ clean-all: clean
 
 # Build tools with SAT support
 build-sat: $(TOOLS_DIR)/nfa2dfa_sat
+
+# ============================================================================
+# Main Test Targets
+# ============================================================================
 
 # Test targets - each invokes the test runner with specific test-set and algorithm
 test-moore: $(TOOLS) $(TEST)

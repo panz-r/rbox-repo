@@ -26,6 +26,14 @@ typedef struct build_dfa_state {
     uint64_t reachable_accepting_patterns;  // ALL patterns reachable from this state - prevents incorrect minimization merging
 } build_dfa_state_t;
 
+// Marker list access for SAT minimizer
+typedef struct {
+    uint32_t markers[16]; // MAX_MARKERS_PER_DFA_TRANSITION
+    int count;
+} MarkerList;
+
+MarkerList* dfa_get_marker_lists(int* count);
+
 /**
  * Minimize a DFA in-place.
  */

@@ -1,9 +1,13 @@
-# Binaries
+# Binaries (in root)
 dfa_test
+
+# Tools (in tools/)
 tools/nfa_builder
 tools/nfa2dfa_advanced
 tools/nfa2dfa_sat
 tools/pattern_order
+
+# Test binaries
 tests/test_minimize_integrity
 tests/test_sat_encoding
 
@@ -28,6 +32,13 @@ bin/
 # Log files
 *.log
 fuzz-*.log
+
+# LSP cache
+.cache/
+
+# LSP config (should not be committed - user-specific)
+.clangd
+compile_commands.json
 
 # IDE
 .vscode/

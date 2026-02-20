@@ -37,6 +37,7 @@ public:
     std::vector<uint16_t> ids;
 
     void add(uint16_t id) {
+        if (id == 0) return; 
         auto it = std::lower_bound(ids.begin(), ids.end(), id);
         if (it == ids.end() || *it != id) {
             ids.insert(it, id);
@@ -111,106 +112,18 @@ private:
     MarkerList* marker_lists;
     int marker_list_count;
 
-    // Helper: Variable index for eq[i][j] where i < j
     int eq_var(int i, int j) {
-        if (i == j) return 0; // Constant true
+        if (i == j) return 0;
         if (i > j) std::swap(i, j);
         long long idx = (long long)i * (2 * n_states - i - 1) / 2 + (j - i - 1);
-        return (int)idx + 1; // 1-indexed
+        return (int)idx + 1;
     }
-
-    void compute_reachability() {
-        reachability.assign(n_states, PatternSet());
-        
-        // Initial: accepting states reach their own pattern_id
-        for (int s = 0; s < n_states; s++) {
-            if (original_dfa[s].flags & DFA_STATE_ACCEPTING) {
-                reachability[s].add(original_dfa[s].accepting_pattern_id);
-            }
-        }
-
-        // Fixed-point iteration (backward)
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (int s = 0; s < n_states; s++) {
-                size_t old_size = reachability[s].ids.size();
-                
-                // From transitions
-                for (int sc = 0; sc < smap.num_classes; sc++) {
-                    int c = smap.class_to_char[sc];
-                    int t = original_dfa[s].transitions[c];
-                    if (t >= 0 && t < n_states) {
-                        for (uint16_t id : reachability[t].ids) reachability[s].add(id);
-                    }
-                }
-                
-                // From EOS target
-                if (original_dfa[s].eos_target != 0 && (int)original_dfa[s].eos_target < n_states) {
-                    for (uint16_t id : reachability[original_dfa[s].eos_target].ids) reachability[s].add(id);
-                }
-
-                if (reachability[s].ids.size() > old_size) changed = true;
-            }
-        }
-    }
-
-    // Pattern-Aware Marker Comparison
-    bool are_markers_equivalent(int s1, int s2, int c) {
-        uint32_t m1_idx = original_dfa[s1].marker_offsets[c];
-        uint32_t m2_idx = original_dfa[s2].marker_offsets[c];
-        if (m1_idx == m2_idx) return true;
-
-        int t1 = original_dfa[s1].transitions[c];
-        int t2 = original_dfa[s2].transitions[c];
-        
-        // Union of reachable patterns from both targets
-        PatternSet live;
-        if (t1 >= 0 && t1 < n_states) live = reachability[t1];
-        if (t2 >= 0 && t2 < n_states) live = live.unite(reachability[t2]);
-
-        if (live.ids.empty()) return true; // No relevant patterns reachable
-
-        auto get_filtered = [&](uint32_t idx) {
-            std::vector<uint32_t> filtered;
-            if (idx > 0 && idx <= (uint32_t)marker_list_count) {
-                MarkerList* ml = &marker_lists[idx - 1];
-                for (int i = 0; i < ml->count; i++) {
-                    uint16_t pid = MARKER_GET_PATTERN_ID(ml->markers[i]);
-                    if (live.contains(pid)) {
-                        filtered.push_back(ml->markers[i]);
-                    }
-                }
-            }
-            return filtered;
-        };
-
-        return get_filtered(m1_idx) == get_filtered(m2_idx);
-    }
-
-public:
-    ScalableSATMinimizer(const build_dfa_state_t* dfa, int states) 
-        : n_states(states), original_dfa(dfa) {
-        solver = new CaDiCaL::Solver();
-        
-        // EXPLICITLY DECLARE ALL VARIABLES and disable strict check if needed
-        int num_vars = (int)((long long)n_states * (n_states - 1) / 2);
-        // Reserve enough variables to avoid reallocation and undeclared errors
-        for (int v = 1; v <= num_vars; v++) {
-            (void)v; // declared via use
-        }
-
-        marker_lists = dfa_get_marker_lists(&marker_list_count);
-        smap.compute(dfa, states);
-        compute_reachability();
-    }
-
 
     void compute_reachability() {
         reachability.assign(n_states, PatternSet());
         for (int s = 0; s < n_states; s++) {
             if (original_dfa[s].flags & DFA_STATE_ACCEPTING) {
-                reachability[s].add(original_dfa[s].accepting_pattern_id);
+                reachability[s].add(original_dfa[s].accepting_pattern_id + 1);
             }
         }
 
@@ -225,7 +138,7 @@ public:
                         for (uint16_t id : reachability[t].ids) reachability[s].add(id);
                     }
                 }
-                if (original_dfa[s].eos_target != 0 && original_dfa[s].eos_target < (uint32_t)n_states) {
+                if (original_dfa[s].eos_target != 0 && (int)original_dfa[s].eos_target < n_states) {
                     for (uint16_t id : reachability[original_dfa[s].eos_target].ids) reachability[s].add(id);
                 }
                 if (reachability[s].ids.size() > old_size) changed = true;
@@ -252,8 +165,39 @@ public:
             if (idx > 0 && idx <= (uint32_t)marker_list_count) {
                 MarkerList* ml = &marker_lists[idx - 1];
                 for (int i = 0; i < ml->count; i++) {
-                    uint16_t pid = MARKER_GET_PATTERN_ID(ml->markers[i]);
-                    if (live.contains(pid)) filtered.push_back(ml->markers[i]);
+                    uint32_t m = ml->markers[i];
+                    uint16_t pid = MARKER_GET_PATTERN_ID(m);
+                    if (live.contains(pid + 1)) filtered.push_back(m);
+                }
+            }
+            return filtered;
+        };
+
+        return get_filtered(m1_idx) == get_filtered(m2_idx);
+    }
+
+    bool are_eos_markers_equivalent(int s1, int s2) {
+        uint32_t m1_idx = original_dfa[s1].eos_marker_offset;
+        uint32_t m2_idx = original_dfa[s2].eos_marker_offset;
+        if (m1_idx == m2_idx) return true;
+
+        int t1 = original_dfa[s1].eos_target;
+        int t2 = original_dfa[s2].eos_target;
+
+        PatternSet live;
+        if (t1 > 0 && t1 < n_states) live = reachability[t1];
+        if (t2 > 0 && t2 < n_states) live = live.unite(reachability[t2]);
+
+        if (live.ids.empty()) return true;
+
+        auto get_filtered = [&](uint32_t idx) {
+            std::vector<uint32_t> filtered;
+            if (idx > 0 && idx <= (uint32_t)marker_list_count) {
+                MarkerList* ml = &marker_lists[idx - 1];
+                for (int i = 0; i < ml->count; i++) {
+                    uint32_t m = ml->markers[i];
+                    uint16_t pid = MARKER_GET_PATTERN_ID(m);
+                    if (live.contains(pid + 1)) filtered.push_back(m);
                 }
             }
             return filtered;
@@ -266,8 +210,11 @@ public:
     ScalableSATMinimizer(const build_dfa_state_t* dfa, int states) 
         : n_states(states), original_dfa(dfa) {
         solver = new CaDiCaL::Solver();
-        int num_vars = (int)((long long)n_states * (n_states - 1) / 2);
-        for (int v = 0; v < num_vars; v++) (void)solver->declare_one_more_variable();
+        
+        long long num_vars = (long long)n_states * (n_states - 1) / 2;
+        if (num_vars > 0) {
+            solver->resize((int)num_vars);
+        }
 
         marker_lists = dfa_get_marker_lists(&marker_list_count);
         smap.compute(dfa, states);
@@ -293,6 +240,7 @@ public:
                         if (!are_markers_equivalent(i, j, smap.class_to_char[sc])) { incompatible = true; break; }
                     }
                 }
+                if (!incompatible && !are_eos_markers_equivalent(i, j)) incompatible = true;
 
                 if (incompatible) { solver->add(-eq_var(i, j)); solver->add(0); unit_clauses++; }
             }
@@ -329,26 +277,34 @@ public:
                             int ti = original_dfa[i].transitions[c], tj = original_dfa[j].transitions[c];
                             if (ti != tj) {
                                 if (ti < 0 || tj < 0) violations.push_back({-eq_var(i, j)});
-                                else if (solver->val(eq_var(ti, tj)) < 0) violations.push_back({-eq_var(i, j), eq_var(ti, tj)});
+                                else {
+                                    int v = eq_var(ti, tj);
+                                    if (solver->val(v) < 0) violations.push_back({-eq_var(i, j), v});
+                                }
                             }
                         }
                         int ei = original_dfa[i].eos_target, ej = original_dfa[j].eos_target;
                         if (ei != ej) {
                             if (ei == 0 || ej == 0) violations.push_back({-eq_var(i, j)});
-                            else if (solver->val(eq_var(ei, ej)) < 0) violations.push_back({-eq_var(i, j), eq_var(ei, ej)});
+                            else {
+                                int v = eq_var(ei, ej);
+                                if (solver->val(v) < 0) violations.push_back({-eq_var(i, j), v});
+                            }
                         }
                     }
                 }
                 if (violations.size() > 50000) break;
             }
 
-            if (violations.size() < 25000) {
+            if (violations.empty()) {
                 for (int i = 0; i < n_states; i++) {
                     for (int j = i + 1; j < n_states; j++) {
                         if (solver->val(eq_var(i, j)) > 0) {
                             for (int k = j + 1; k < n_states; k++) {
-                                if (solver->val(eq_var(j, k)) > 0 && solver->val(eq_var(i, k)) < 0)
-                                    violations.push_back({-eq_var(i, j), -eq_var(j, k), eq_var(i, k)});
+                                if (solver->val(eq_var(j, k)) > 0) {
+                                    int v = eq_var(i, k);
+                                    if (solver->val(v) < 0) violations.push_back({-eq_var(i, j), -eq_var(j, k), v});
+                                }
                             }
                         }
                     }
@@ -356,7 +312,7 @@ public:
                 }
             }
 
-            if (violations.empty()) { fprintf(stderr, "[SAT] No violations found. Optimal!\n"); break; }
+            if (violations.empty()) { fprintf(stderr, "[SAT] No violations found. Success!\n"); break; }
             for (const auto& v : violations) { for (int lit : v) solver->add(lit); solver->add(0); }
             auto iter_end = std::chrono::steady_clock::now();
             auto dur = std::chrono::duration_cast<std::chrono::milliseconds>(iter_end - iter_start).count();
@@ -396,13 +352,8 @@ public:
                     int t = original_dfa[i].transitions[c];
                     new_dfa[p].transitions[c] = (t >= 0 && t < n_states) ? partition[t] : -1;
                 }
-                if (original_dfa[i].eos_target != 0) {
-                    uint32_t t = original_dfa[i].eos_target;
-                    // If eos_target is an absolute offset in the binary format, this might be wrong.
-                    // But in build_dfa_state_t, it's usually an index or offset.
-                    // dfa_minimize.c treats it as an index in some places, and offset in others.
-                    // Let's assume it's an index for now as it's pre-layout.
-                    if (t < (uint32_t)n_states) new_dfa[p].eos_target = partition[t];
+                if (original_dfa[i].eos_target != 0 && (int)original_dfa[i].eos_target < n_states) {
+                    new_dfa[p].eos_target = partition[original_dfa[i].eos_target];
                 }
                 initialized[p] = true;
             }
@@ -415,9 +366,50 @@ public:
 extern "C" {
 int dfa_minimize_sat(build_dfa_state_t* dfa, int state_count) {
     if (state_count <= 1) return state_count;
+
+    // Trap State Synthesis
+    std::vector<bool> reaches_accept(state_count, false);
+    for (int s = 0; s < state_count; s++) {
+        if (dfa[s].flags & DFA_STATE_ACCEPTING) reaches_accept[s] = true;
+    }
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (int s = 0; s < state_count; s++) {
+            if (reaches_accept[s]) continue;
+            for (int c = 0; c < MAX_SYMBOLS; c++) {
+                int t = dfa[s].transitions[c];
+                if (t >= 0 && t < state_count && reaches_accept[t]) {
+                    reaches_accept[s] = true; changed = true; break;
+                }
+            }
+            if (!reaches_accept[s] && dfa[s].eos_target != 0 && (int)dfa[s].eos_target < state_count && reaches_accept[dfa[s].eos_target]) {
+                reaches_accept[s] = true; changed = true;
+            }
+        }
+    }
+
+    int trap_state = -1;
+    for (int s = 0; s < state_count; s++) {
+        if (!reaches_accept[s]) {
+            if (trap_state == -1) {
+                trap_state = s;
+                for (int c = 0; c < MAX_SYMBOLS; c++) dfa[s].transitions[c] = s;
+                dfa[s].eos_target = 0;
+                dfa[s].flags &= ~DFA_STATE_ACCEPTING;
+            } else {
+                for (int c = 0; c < MAX_SYMBOLS; c++) dfa[s].transitions[c] = trap_state;
+                dfa[s].eos_target = 0;
+            }
+        }
+    }
+
     int hop_count = dfa_minimize_hopcroft(dfa, state_count);
-    fprintf(stderr, "[SAT] Starting minimization for %d states (after Hopcroft)\n", hop_count);
+    fprintf(stderr, "[SAT] Hopcroft reduced to %d states\n", hop_count);
+
     if (hop_count <= 1) return hop_count;
+
     ScalableSATMinimizer minimizer(dfa, hop_count);
     return minimizer.run();
 }

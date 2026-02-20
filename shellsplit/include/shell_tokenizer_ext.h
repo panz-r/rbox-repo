@@ -11,28 +11,15 @@
  * - Globbing: *, ?, [abc]
  * - Subshells: $(command), `command`
  *
- * Maintains high performance while adding functionality
+ * Note: All token types are now unified in shell_tokenizer.h (token_type_t).
+ * This header provides extended tokenizer functionality using the unified enum.
  */
-
-/**
- * Extended token types
- */
-typedef enum {
-    // Extended types (original types are in base tokenizer)
-    TOKEN_VARIABLE = 100,        // $VAR, ${VAR}
-    TOKEN_VARIABLE_QUOTED,      // "$VAR", '$VAR'
-    TOKEN_SPECIAL_VAR,          // $1, $#, $?, $$
-    TOKEN_GLOB,                 // *.txt, file?
-    TOKEN_SUBSHELL,             // $(command), `command`
-    TOKEN_ARITHMETIC,           // $((expr))
-    TOKEN_PROCESS_SUB           // <(command), >(command)
-} extended_token_type_t;
 
 /**
  * Extended command structure
  */
 typedef struct {
-    extended_token_type_t type;  // Extended token type
+    token_type_t type;  // Extended token type
     const char* start;           // Pointer to start of token
     size_t length;               // Length of token
     size_t position;             // Position in original string
@@ -106,7 +93,7 @@ void extended_shell_free_commands(
  * Get human-readable extended token type name
  */
 const char* extended_shell_token_type_name(
-    extended_token_type_t type
+    token_type_t type
 );
 
 /**

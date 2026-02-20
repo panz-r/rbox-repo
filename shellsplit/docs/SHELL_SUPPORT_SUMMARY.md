@@ -1,5 +1,8 @@
 # Shell Scripting Syntax Support Summary
 
+> This document describes the shell syntax support in the **ShellSplit** library.
+> ShellSplit provides shell command tokenization for use with the c-dfa pattern matching engine.
+
 ## ✅ Implemented Shell Syntax Support
 
 ### 1. Variable Support (Fast & Secure)

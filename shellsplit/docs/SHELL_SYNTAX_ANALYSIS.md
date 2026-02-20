@@ -1,5 +1,7 @@
 # Shell Scripting Syntax Support Analysis
 
+> This document analyzes the shell syntax support in the **ShellSplit** library.
+
 ## Performance vs. Functionality Trade-offs
 
 ### Performance Requirements

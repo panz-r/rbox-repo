@@ -87,10 +87,7 @@ static void init_hash_table(void) {
 #define MAX_DFA_MARKER_LISTS 8192
 #define MARKER_SENTINEL 0xFFFFFFFF
 
-typedef struct {
-    uint32_t markers[MAX_MARKERS_PER_DFA_TRANSITION];
-    int count;
-} MarkerList;
+// MarkerList is now defined in dfa_minimize.h (shared with SAT minimizer)
 
 static MarkerList* dfa_marker_lists = NULL;
 static int marker_list_count = 0;
