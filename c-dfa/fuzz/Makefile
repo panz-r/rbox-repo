@@ -47,11 +47,11 @@ nfa_build_fuzzer: nfa_build_fuzzer.cpp
 
 # Run fuzzing with corpus
 run-dfa: dfa_eval_fuzzer
-	./dfa_eval_fuzzer corpus/seed/dfa_eval -merge=corpus/interesting/dfa_eval -artifact_prefix=crashes/dfa_eval_ -max_len=4096 -jobs=4 -workers=4 -rss_mb=2048
+	./dfa_eval_fuzzer corpus/seed/dfa_eval -merge=corpus/interesting/dfa_eval -artifact_prefix=crashes/dfa_eval_ -max_len=4096 -jobs=4 -workers=4
 
 # Run with dictionary
 run-dfa-dict: dfa_eval_fuzzer
-	./dfa_eval_fuzzer corpus/seed/dfa_eval -merge=corpus/interesting/dfa_eval -artifact_prefix=crashes/dfa_eval_ -dict=cmd_dict.txt -max_len=4096 -jobs=4 -rss_mb=2048
+	./dfa_eval_fuzzer corpus/seed/dfa_eval -merge=corpus/interesting/dfa_eval -artifact_prefix=crashes/dfa_eval_ -dict=cmd_dict.txt -max_len=4096 -jobs=4 -workers=4
 
 # Run pattern parser fuzzing
 run-pattern: pattern_parse_fuzzer

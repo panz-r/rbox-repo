@@ -1,0 +1,173 @@
+# ============================================================================
+# Comprehensive NFA/DFA Test ((TQ::Y))+
+[safe:quantifier:roup1] xyz((TQ::A))+
+[safe:quantifier:group1] abc((TQ::B))+
+
+# ============================================================================
+# GROUP 2: Star Quantifier (*) - Fragment-based
+# ============================================================================
+# Test: Fragment-based * quantifier (zero or more)
+[safe:quantifier:group2] a((TQ::B))*
+[safe:quantifier:group2] x((TQ::Y))*
+[safe:quantifier:group2] abc((TQ::B))*
+
+# ============================================================================
+# GROUP 3: Question Mark Quantifier (?) - Fragment-based
+# ============================================================================
+# Test: Fragment-based ? quantifier (zero or one)
+[safe:quantifier:group3] git((TQ======================
+# Test: POSIX character classes with====================================================================
+# Test: Wildcard patterns with .* and combined with literals
+[safe:quantifier:group7] (*)
+[safe:quantifier:group7] (.+)
+[safe:quantifier:group7] (*)\.txt
+[safe:quantifier:group7] file(*)
+
+# ============================================================================
+# GROUP 8: Edge Casesfe:quantifier:group8] a
+[safe:quantifi#r:group8] abc
+[safe:quantifier:group8] [[:alpha:]]+[[:digit:]]+
+
+# ============================================================================
+# GROUP 9: POSIX Character Classes
+# ============================================================================
+# Test: POSIX character classes with quantifiers
+[safe:quantifier:group9] [[:alpha:]]+
+[safe9] [[:digit:]]+
+[safe:quantifier:group9] [[:alnum:]]+
+[safe:quantifier:group9] [[:space:]]*
+
+# ============================================================================
+# GROUP 10: Complex Alternation
+# ============================================================================
+# Test: Alternation patterns with multiple option+
+
+# ============================================================================
+# GROUP 5: Multiple Characters Before Quantifier
+# ============================================================================
+# Tes=========
+# Test: POSIX character classes with quantifi================================================
+# GROUP 10: Complex Alternation
+# ============================================================================
+# Test: Alternation patterns with multiple option+
+
+# ============================================================================
+# GROUP 5: Multiple Characters Before Quantifier
+# ============================================================================
+# Test: Multiple l[iteral characters before + quantifier
+[safe:quantifier:group5] abc((TQ::B))+
+[safe:quantifier:group5] xyz((TQ::A))+
+
+# ===================                                                                                                         ====================================<====================
+# GROUP 6: Escape Sequences
+# ============================================================================
+# Test: Escaped space and forward slash
+[safe:quantifier:group6] hello\ world
+[safe:quantifier:group6] path\/to\/file
+[safe:quantifier:group6] test\ path
+
+# ============================================================================
+# GROUP 7: Wildcaouping like (p)+ because a+ is ambiguous
+[safe:quantifier:group4] (p)+
+[safe:quantifier:group4] (a)+
+[safe:quantifier:group4] xy(z)+
+
+# ============================================================================
+# GROUP 5: Multiple Characters Before Quantifier
+# ============================================================================
+# Test: Multiple literal characters before + quantifier
+[safe:quantifier:group5] abc((TQ::B))+
+[safe:quantifier:group5] xyz((TQ::A))+
+
+# ===============================================-=======<====================
+# GROUP 6: Escape Sequences
+# ============================================================================
+# Test: Escaped space and forward slash
+[safe:quantifier:group6] hello\ world
+[safe:quantifier:group6] path\/to\/file
+[safe:quantifier:group6] test\ path
+
+# =========5==================================================================
+# GROUP 7: Wildcards
+# ============================================================================
+# Test: Wildcard patterns with .* and combined with literals
+[safe:quantifier:group7] (*)
+[safrds
+# ============================================================================
+# Test: Wildcard patterns with .* and combined with literals
+[safe:quantifers
+[safe:quantifier:group9] [[:alpha:]]+
+[safe:quantifier:group9] [[:digit:]]+
+[safe:quantifier:group9] [[:alnum:]]+
+[safe:quantifier:group9] [[:space:]]*
+
+# ============================================================================
+# GROUP 10: Complex Alternation
+# ============================================================================
+# Test: Alternation patterns with multiple options
+[safe:quantifier:gro# ============================================================================
+# Comprehensive NFA/DFA Test ((TQ::Y))+
+[safe:quantifier:group1] xyz((TQ::A))+
+[safe:quantifier:group1] abc((TQ::B))+
+
+# ============================================================================
+# GROUP 2: Star Quantifier (*) - Fragment-based
+# ============================================================================
+# Test: Fragment-based * quantifier (zero or more)
+[safe:quantifier:group2] a((TQ::B))*
+[safe:quantifier:group2] x((TQ::Y))*
+[safe:quantifier:group2] abc((TQ::B))*
+
+# ============================================================================
+# GROUP 3: Question Mark Quantifier (?) - Fragment-based
+# ============================================================================
+# Test: Fragment-based ? quantifier (zero or one)
+[safe:quantifier:group3] git((TQ======================
+# Test: POSIX character classes with====================================================================
+# Test: Wildcard patterns with .* and combined with literals
+[safe:quantifier:group7] (*)
+[safe:quantifier:group7] (.+)
+[safe:quantifier:group7] (*)\.txt
+[safe:quantifier:group7] file(*)
+
+# ============================================================================
+# GROUP 8: Edge Casesfe:quantifier:group8] a
+[safe:quantifi#r:group8] abc
+[safe:quantifier:group8] [[:alpha:]]+[[:digit:]]+
+
+# ============================================================================
+# GROUP 9: POSIX Character Classes
+# ============================================================================
+# Test: POSIX character classes with quantifiers
+[safe:quantifier:group9] [[:alpha:]]+
+[safe9] [[:digit:]]+
+[safe:quantifier:group9] [[:alnum:]]+
+[safup10] (cat|dog|fish)
+[safe:quantifier:group10] git (status|log|diff)
+[safe:quantifier:group10] (start|stop|reROUP 14: Escaped Special Characters
+# ====================================…¬¬¬¬¬¬¬============ 11: Literal Plus Quantifier (Extended)
+# ============================================================================
+# Test: Extended p+ tests
+[safe:quantifier:grofier:group1] abc((TQ::B))+
+
+# ============================================================================
+# GROUP 2: Star Quantifier (*) - Fragment-based
+# ============================================================================
+# Test: Fragment-based * quantifier (zero or more)
+[safe:quantifier:group2] a((TQ::e:quantifier:group9] [[:space:]]*
+
+# ============================================================================
+# GROUP 10: Complex Alternation
+# ============================================================================
+# Test: Alternation patterns with multiple option+
+
+# ============================================================================
+# GROUB))*
+[safe:quantifier:group2] _((TQ::Y))*
+[safe:quantifier:grP 5: Multiple Characters Before Quantifier
+# ============================================================================
+# Test: Multiple l[iteral characters before + quantifier
+[safe:quantifier:group5] abc((TQ::B))+
+[safe:quantifier:group5] xyz((TQ::Aoup2] ab))+
+
+# ===================           c((TQ::                
