@@ -1,0 +1,10 @@
+b
+c
+d
+y
+z
+r
+s
+git
+status
+push

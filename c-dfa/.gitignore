@@ -7,7 +7,16 @@ tools/pattern_order
 tests/test_minimize_integrity
 tests/test_sat_encoding
 
-# Object files
+# Fuzzing binaries (build artifacts)
+fuzz/nfa_build_fuzzer
+fuzz/pattern_parse_fuzzer
+fuzz/dfa_eval_fuzzer
+
+# PID files (temporary)
+*.pid
+fuzz_nfa.pid
+
+# NOTE: Do NOT ignore crashes/ or corpus/interesting/ - they contain valuable test data
 *.o
 *.a
 
@@ -18,6 +27,7 @@ bin/
 
 # Log files
 *.log
+fuzz-*.log
 
 # IDE
 .vscode/
