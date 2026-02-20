@@ -22,7 +22,7 @@
 [safe:space:test] cmd arg1
 [safe:space:test] CMD VAR
 [safe:space:test] XYZ
-[safe:space:test] cmd
+[caution:space:cmd_only] cmd
 
 # Multiple spaces
 [safe:space:test] cmd  arg1

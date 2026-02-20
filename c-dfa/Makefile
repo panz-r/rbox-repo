@@ -52,6 +52,7 @@ $(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o
 		$(TOOLS_DIR)/dfa_compress_sat.o \
 		$(TOOLS_DIR)/nfa_preminimize.o \
 		$(TOOLS_DIR)/nfa_preminimize_sat.o \
+		$(TOOLS_DIR)/nfa_preminimize_windowed.o \
 		$(TOOLS_DIR)/multi_target_array.o \
 		$(CADICAL_LIB)
 	$(CXX) -o $@ $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o \
@@ -62,6 +63,7 @@ $(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa.o $(TOOLS_DIR)/nfa_builder.o
 		$(TOOLS_DIR)/dfa_compress_sat.o \
 		$(TOOLS_DIR)/nfa_preminimize.o \
 		$(TOOLS_DIR)/nfa_preminimize_sat.o \
+		$(TOOLS_DIR)/nfa_preminimize_windowed.o \
 		$(TOOLS_DIR)/multi_target_array.o \
 		$(CADICAL_LIB) $(LDFLAGS) -lstdc++
 
@@ -94,7 +96,10 @@ $(TOOLS_DIR)/nfa_preminimize.o: $(TOOLS_DIR)/nfa_preminimize.c $(TOOLS_DIR)/nfa_
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(TOOLS_DIR)/nfa_preminimize_sat.o: $(TOOLS_DIR)/nfa_preminimize_sat.cpp $(TOOLS_DIR)/nfa_preminimize.h $(INCLUDE_DIR)/*.h $(CADICAL_LIB)
-	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -DUSE_CADICAL -c -o $@ $<
+
+$(TOOLS_DIR)/nfa_preminimize_windowed.o: $(TOOLS_DIR)/nfa_preminimize_windowed.cpp $(TOOLS_DIR)/nfa_preminimize.h $(INCLUDE_DIR)/*.h $(CADICAL_LIB)
+	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -DUSE_CADICAL -c -o $@ $<
 
 $(TOOLS_DIR)/multi_target_array.o: $(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<

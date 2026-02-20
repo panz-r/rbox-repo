@@ -1,0 +1,13 @@
+# Test patterns for prefix merging edge cases
+
+# Simple patterns that should merge
+[safe] cat a
+[safe] cat b
+
+# Patterns with quantifiers on groups - known crash case
+[safe] a((b))+
+[safe] abc((b))+
+
+# Alternation with empty - known crash case
+[safe] (abc)|
+[safe] (abcdef)|

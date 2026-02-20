@@ -263,6 +263,18 @@ See `fuzz/README.md` for details.
 - **No Allocation**: DFA evaluation uses no dynamic memory
 - **Deterministic**: Same input always produces same output
 
+## Recent Fixes
+
+### Start State Preservation (2026-02-19)
+
+A critical bug was fixed in the DFA minimization and layout optimization code. The issue was that the start state (state 0) was not being preserved at position 0 during:
+
+1. **DFA Minimization** (`dfa_minimize.c`): The `build_minimized_dfa()` function now explicitly finds and processes the partition containing state 0 first, ensuring the start state remains at position 0.
+
+2. **Layout Optimization** (`dfa_layout.c`): The `build_state_order_bfs()` function now ensures state 0 stays at position 0 after cache-optimized reordering.
+
+This fix resolved a major test regression where approximately 240 tests were failing due to the DFA evaluator starting from the wrong state.
+
 ## License
 
 This code is part of the ReadOnlyBox project and follows the same licensing terms.

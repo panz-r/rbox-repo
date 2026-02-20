@@ -342,8 +342,32 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
     for (int i = 0; i < MAX_STATES; i++) state_remap[i] = -1;  // Initialize to -1
     int new_count = 0;
 
+    // CRITICAL: Find which partition contains state 0 (the start state)
+    // The start state MUST be at position 0 in the minimized DFA
+    int start_partition = -1;
     for (int p = 0; p < ms->partition_count; p++) {
-        if (ms->partitions[p].count == 0) continue;
+        for (int i = 0; i < ms->partitions[p].count; i++) {
+            if (ms->partitions[p].states[i] == 0) {
+                start_partition = p;
+                break;
+            }
+        }
+        if (start_partition >= 0) break;
+    }
+
+    // Process start partition first to ensure it gets position 0
+    if (start_partition >= 0) {
+        int rep = ms->partitions[start_partition].states[0];
+        memcpy(&new_dfa[new_count], &dfa[rep], sizeof(build_dfa_state_t));
+        for (int i = 0; i < ms->partitions[start_partition].count; i++) {
+            state_remap[ms->partitions[start_partition].states[i]] = new_count;
+        }
+        new_count++;
+    }
+
+    // Process remaining partitions
+    for (int p = 0; p < ms->partition_count; p++) {
+        if (ms->partitions[p].count == 0 || p == start_partition) continue;
         int rep = ms->partitions[p].states[0];
         memcpy(&new_dfa[new_count], &dfa[rep], sizeof(build_dfa_state_t));
         for (int i = 0; i < ms->partitions[p].count; i++) state_remap[ms->partitions[p].states[i]] = new_count;

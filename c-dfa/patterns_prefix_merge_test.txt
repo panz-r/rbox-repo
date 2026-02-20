@@ -1,0 +1,13 @@
+# Test patterns for safe prefix merging
+# These patterns share common prefixes that can be safely merged
+
+# Simple prefix sharing - 'a' is common prefix
+[safe] aabbc
+[safe] aabrr
+
+# Another prefix - 'a' followed by different second char
+[safe] aeec
+
+# Common suffix test - same ending 'c'
+[safe] xyc
+[safe] zzc

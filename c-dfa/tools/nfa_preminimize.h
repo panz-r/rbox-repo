@@ -23,22 +23,41 @@ typedef struct {
     int original_states;      // NFA states before minimization
     int minimized_states;     // NFA states after minimization
     int epsilon_bypassed;     // States bypassed by epsilon elimination
+    int epsilon_chains;       // Epsilon chains compressed
     int landing_pads_removed; // Landing-pad states removed
     int unreachable_removed;  // Unreachable states removed
     int states_merged;        // States eliminated by merging
+    int identical_merged;     // States merged by identical state detection
     int sat_merged;           // States merged via SAT verification
 } nfa_premin_stats_t;
 
 /**
  * Options for pre-minimization
+ * 
+ * Local optimizations (O(n) or O(n log n)):
+ *   - enable_prune: Remove unreachable states (O(n))
+ *   - enable_epsilon_elim: Bypass single epsilon pass-through states (O(n))
+ *   - enable_epsilon_chain: Compress multi-hop epsilon chains (O(n))
+ *   - enable_prefix_merge: Merge states with same incoming (source, symbol) and identical outgoing (O(n log n))
+ * 
+ * Global optimizations (disabled by default, may not scale):
+ *   - enable_merge: Full bisimulation reduction (O(n²))
+ *   - enable_landing_pad: Common suffix merging (O(n²))
+ *   - enable_sat: SAT-based verification (O(2^k) per window)
+ * 
+ * DISABLED:
+ *   - enable_identical: Merge states with identical signatures - UNSAFE for NFAs
  */
 typedef struct {
-    bool enable_epsilon_elim; // Enable epsilon elimination (default: true)
-    bool enable_landing_pad;  // Enable landing-pad removal (default: true)
-    bool enable_prune;        // Enable unreachable state pruning (default: true)
-    bool enable_merge;        // Enable state merging (default: true)
-    bool enable_sat;          // Enable SAT-based bisimulation verification (default: true)
-    bool verbose;             // Print progress information
+    bool enable_epsilon_elim;   // Enable epsilon pass-through bypass (default: true)
+    bool enable_epsilon_chain;  // Enable epsilon chain compression (default: true)
+    bool enable_landing_pad;    // Enable landing-pad removal (default: false)
+    bool enable_prune;          // Enable unreachable state pruning (default: true)
+    bool enable_prefix_merge;   // Enable common prefix merging (default: true)
+    bool enable_merge;          // Enable bisimulation merging (default: false)
+    bool enable_identical;      // DISABLED: UNSAFE - NFA state merging can change language
+    bool enable_sat;            // Enable SAT-based bisimulation verification (default: false)
+    bool verbose;               // Print progress information
 } nfa_premin_options_t;
 
 /**
@@ -89,5 +108,30 @@ int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead_states, bo
  * @return true if CaDiCaL is compiled and available
  */
 bool nfa_preminimize_sat_available(void);
+
+/**
+ * Windowed SAT-based NFA pre-minimization.
+ * 
+ * Uses a sliding window approach to apply SAT optimization on bounded subproblems.
+ * Total complexity is O(n log n) in NFA size n, with O(m²) or O(2^m) within each
+ * window of size m (bounded).
+ * 
+ * @param nfa NFA state array
+ * @param state_count Number of states
+ * @param dead_states Array marking dead states (updated in-place)
+ * @param window_size Maximum states per window (0 for default)
+ * @param window_overlap Overlap between windows (0 for default)
+ * @param verbose Enable verbose output
+ * @return Number of states merged
+ */
+int nfa_preminimize_windowed_sat(nfa_state_t* nfa, int state_count, bool* dead_states,
+                                  int window_size, int window_overlap, bool verbose);
+
+/**
+ * Check if windowed SAT optimization is available.
+ * 
+ * @return true if CaDiCaL is compiled and available
+ */
+bool nfa_preminimize_windowed_sat_available(void);
 
 #endif // NFA_PREMINIMIZE_H

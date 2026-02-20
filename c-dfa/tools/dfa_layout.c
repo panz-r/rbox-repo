@@ -291,6 +291,27 @@ int* build_state_order_bfs(const build_dfa_state_t* dfa, int state_count) {
     qsort(order, state_count, sizeof(int), compare_layout_states);
     free(sort_key);
     
+    // CRITICAL: Ensure start state (state 0) remains at position 0
+    // The DFA loader assumes state 0 is the initial state
+    // After qsort, order[i] = state that should be at position i
+    // We need to find where state 0 ended up and swap it with whatever is at position 0
+    if (state_count > 0) {
+        int pos_of_state_0 = -1;
+        for (int i = 0; i < state_count; i++) {
+            if (order[i] == 0) {
+                pos_of_state_0 = i;
+                break;
+            }
+        }
+        
+        if (pos_of_state_0 > 0) {
+            // State 0 is not at position 0, swap with whatever is there
+            int state_at_0 = order[0];
+            order[0] = 0;
+            order[pos_of_state_0] = state_at_0;
+        }
+    }
+    
     // Convert to final order (old_state -> new_position)
     int* final_order = malloc(state_count * sizeof(int));
     for (int i = 0; i < state_count; i++) {
