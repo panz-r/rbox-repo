@@ -19,7 +19,7 @@ static const char* NFL_BUILDER_PATH = "../tools/nfa_builder";
 static const size_t MAX_PATTERN_SIZE = 8192;
 
 // Resource limits for child process
-static const rlim_t MAX_MEMORY = 100 * 1024 * 1024; // 100 MB
+static const rlim_t MAX_MEMORY = 2ULL * 1024 * 1024 * 1024; // 2 GB address space limit
 static const rlim_t MAX_CPU_TIME = 1; // 1 second CPU time
 
 // LLVMFuzzerInitialize - called once at startup
@@ -70,13 +70,19 @@ static int run_nfa_builder(const char* pattern_file) {
         // Set resource limits before exec
         struct rlimit rl;
 
-        // NOTE: RLIMIT_AS removed - was 100MB but too low for dynamically linked
-        // binaries. nfa_builder is trusted and resource usage is modest.
-        // If needed, can set much higher (e.g., 1GB) or use RLIMIT_DATA instead.
+        // Limit address space to 2GB to prevent OOM crashes
+        rl.rlim_cur = rl.rlim_max = MAX_MEMORY;
+        if (setrlimit(RLIMIT_AS, &rl) != 0) {
+            perror("setrlimit(RLIMIT_AS)");
+            _exit(127);
+        }
 
         // Limit CPU time to catch infinite loops (1 second)
         rl.rlim_cur = rl.rlim_max = MAX_CPU_TIME;
-        setrlimit(RLIMIT_CPU, &rl);
+        if (setrlimit(RLIMIT_CPU, &rl) != 0) {
+            perror("setrlimit(RLIMIT_CPU)");
+            _exit(127);
+        }
 
         // Redirect stdio to /dev/null to avoid clutter
         int devnull = open("/dev/null", O_WRONLY);
