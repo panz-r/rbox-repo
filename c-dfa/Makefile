@@ -41,7 +41,7 @@ CADICAL_DIR = vendor/cadical
 CADICAL_LIB = $(CADICAL_DIR)/build/libcadical.a
 CADICAL_INC = -I$(CADICAL_DIR)/src
 
-TOOLS = $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced
+TOOLS = $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TOOLS_DIR)/dfa_eval_wrapper
 TEST = dfa_test
 
 # Default target: build everything
@@ -50,6 +50,10 @@ all: $(TOOLS) $(TEST)
 # Build tools
 $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
+
+# DFA eval wrapper for fuzzing
+$(TOOLS_DIR)/dfa_eval_wrapper: $(TOOLS_DIR)/dfa_eval_wrapper.c $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/dfa_eval_wrapper.c $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(LDFLAGS)
 
 # Main tool with compression support (includes SAT compression via CaDiCaL)
 # C files compiled as C, SAT compression compiled as C++, then linked together

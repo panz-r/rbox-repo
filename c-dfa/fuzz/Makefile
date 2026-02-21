@@ -20,9 +20,13 @@ FUZZERS = dfa_eval_fuzzer pattern_parse_fuzzer nfa_build_fuzzer
 # Default target
 all: $(FUZZERS)
 
-# DFA evaluation fuzzer
-dfa_eval_fuzzer: dfa_eval_fuzzer.cpp $(LIB_OBJS)
+# DFA evaluation fuzzer (requires wrapper binary)
+dfa_eval_fuzzer: dfa_eval_fuzzer.cpp $(LIB_OBJS) ../tools/dfa_eval_wrapper
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LIB_OBJS) -lm
+
+# Build the DFA eval wrapper (needed for fuzzing)
+../tools/dfa_eval_wrapper: ../tools/dfa_eval_wrapper.c ../src/dfa_eval.c ../src/dfa_loader.c ../include/*.h
+	$(MAKE) -C .. tools/dfa_eval_wrapper
 
 # Pattern parser fuzzer - uses external nfa_builder process
 pattern_parse_fuzzer: pattern_parse_fuzzer.cpp
@@ -60,6 +64,17 @@ run-pattern: pattern_parse_fuzzer
 # Run NFA build fuzzing (tests actual NFA construction, not just validation)
 run-nfa-build: nfa_build_fuzzer
 	./nfa_build_fuzzer corpus/seed/pattern_parser -merge=corpus/interesting/nfa_build -artifact_prefix=crashes/nfa_build_ -max_len=32768 -jobs=2 -workers=2
+
+# Cgroup-wrapped versions with OS-level memory limits
+# Usage: FUZZ_MEMORY_LIMIT=4G make run-dfa-cgroup
+run-dfa-cgroup: dfa_eval_fuzzer
+	./run_in_cgroup.sh ./dfa_eval_fuzzer corpus/seed/dfa_eval -merge=corpus/interesting/dfa_eval -artifact_prefix=crashes/dfa_eval_ -max_len=4096 -jobs=4 -workers=4
+
+run-pattern-cgroup: pattern_parse_fuzzer
+	./run_in_cgroup.sh ./pattern_parse_fuzzer corpus/seed/pattern_parser -merge=corpus/interesting/pattern_parser -artifact_prefix=crashes/pattern_parse_ -max_len=8192 -jobs=4 -workers=4
+
+run-nfa-build-cgroup: nfa_build_fuzzer
+	./run_in_cgroup.sh ./nfa_build_fuzzer corpus/seed/pattern_parser -merge=corpus/interesting/nfa_build -artifact_prefix=crashes/nfa_build_ -max_len=32768 -jobs=2 -workers=2
 
 # Merge new corpus inputs
 merge: dfa_eval_fuzzer
@@ -153,4 +168,8 @@ list-crashes:
 	@echo "NFA build crashes:"; ls -1 crashes/nfa_build_* 2>/dev/null | wc -l
 	@echo "Total crash files:"; find crashes -type f 2>/dev/null | wc -l
 
-.PHONY: all clean run-dfa run-dfa-dict merge minimize run-pattern run-nfa-build replay-crashes-dfa replay-crashes-pattern replay-crashes-nfa-build replay-all-dfa-crashes replay-all-pattern-crashes replay-all-nfa-build-crashes replay-all-crashes list-crashes
+.PHONY: all clean run-dfa run-dfa-dict merge minimize run-pattern run-nfa-build \
+        run-dfa-cgroup run-pattern-cgroup run-nfa-build-cgroup \
+        replay-crashes-dfa replay-crashes-pattern replay-crashes-nfa-build \
+        replay-all-dfa-crashes replay-all-pattern-crashes replay-all-nfa-build-crashes \
+        replay-all-crashes list-crashes

@@ -71,8 +71,9 @@ static void init_nfa_builder_path() {
 // Maximum pattern size
 static const size_t MAX_PATTERN_SIZE = 8192;
 
-// CPU time limit (seconds) - no AS limit (was problematic)
-static const rlim_t MAX_CPU_TIME = 2;
+// Resource limits
+static const rlim_t MAX_MEMORY = 2ULL * 1024 * 1024 * 1024; // 2 GB address space limit
+static const rlim_t MAX_CPU_TIME = 2; // 2 seconds CPU time
 
 // LLVMFuzzerInitialize
 extern "C" void LLVMFuzzerInitialize(void) {
@@ -129,9 +130,18 @@ static int run_nfa_builder(const char* pattern_file) {
 
         // Set resource limits
         struct rlimit rl;
+
+        // Limit address space to 2GB to prevent OOM crashes
+        rl.rlim_cur = rl.rlim_max = MAX_MEMORY;
+        if (setrlimit(RLIMIT_AS, &rl) != 0) {
+            perror("setrlimit(RLIMIT_AS)");
+            _exit(127);
+        }
+
+        // Limit CPU time to catch infinite loops
         rl.rlim_cur = rl.rlim_max = MAX_CPU_TIME;
         if (setrlimit(RLIMIT_CPU, &rl) != 0) {
-            perror("setrlimit");
+            perror("setrlimit(RLIMIT_CPU)");
             _exit(127);
         }
 
@@ -199,11 +209,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     free(tmpfile);
 
     if (crashed) {
+        // Crash detected - write crash details to stderr
+        // LibFuzzer with -ignore_crashes=1 will save the artifact and continue
+        fprintf(stderr, "\n=== CRASH DETECTED ===\n");
         fprintf(stderr, "Offending pattern (size %zu):\n", size);
         fwrite(data, 1, size > 200 ? 200 : size, stderr);
         if (size > 200) fprintf(stderr, "...");
         fprintf(stderr, "\n");
-        abort();
+        // Return non-zero to signal crash to LibFuzzer without aborting
+        return 1;
     }
 
     return 0;
