@@ -1204,6 +1204,12 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
 
 // Parse primary element: char, escaped, quoted, class, group, or capture tag
 static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
+    // Bounds check: ensure we're not past end of pattern
+    if (pattern == NULL || *pos < 0 || (size_t)*pos >= strlen(pattern)) {
+        ERROR("Unexpected end of pattern at position %d", *pos);
+        return -1;
+    }
+    
     char c = pattern[*pos];
     DEBUG_PRINT("parse_rdp_element: ENTER pos=%d, start_state=%d, c='%c' (0x%02x)\n", *pos, start_state, c, (unsigned char)c);
 
@@ -1801,7 +1807,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
             current_fragment.exit_state = merge_state;
             current_fragment.fragment_entry_state = start_state;
             // Find first character of the group
-            for (int s = 0; s < MAX_SYMBOLS; s++) {
+            for (int s = 0; s < MAX_SYMBOLS && s < alphabet_size; s++) {
                 if (nfa[start_state].transitions[s] != -1) {
                     current_fragment.loop_first_char = alphabet[s].start_char;
                     break;
@@ -1847,7 +1853,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
         current_fragment.fragment_entry_state = start_state;
         // Find first character of the group (only if not single-char which already has it)
         if (!preserved_is_single_char) {
-            for (int s = 0; s < MAX_SYMBOLS; s++) {
+            for (int s = 0; s < MAX_SYMBOLS && s < alphabet_size; s++) {
                 if (nfa[start_state].transitions[s] != -1) {
                     current_fragment.loop_first_char = alphabet[s].start_char;
                     break;
@@ -1874,6 +1880,11 @@ static int lookup_acceptance_category(const char* category, const char* subcateg
 static void parse_pattern_full(const char* pattern, const char* category,
                                 const char* subcategory, const char* operations,
                                 const char* action) {
+    // Validate input: reject NULL or empty patterns
+    if (pattern == NULL || pattern[0] == '\0') {
+        return;  // Skip empty patterns gracefully
+    }
+    
     fprintf(stderr, "DEBUG parse_pattern_full called: pattern='%s'\n", pattern);
     // Clear per-pattern globals to avoid stale values between patterns
     last_element_sid = -1;
@@ -1887,10 +1898,18 @@ static void parse_pattern_full(const char* pattern, const char* category,
     int start_state;
     int pattern_start_pos = 0;
 
-     DEBUG_PRINT("parse_pattern_full '%s': nfa_state_count=%d, pattern[0]='%c' (sid=%d)\n", pattern, nfa_state_count, pattern[0], find_symbol_id(pattern[0]));
+    // Validate first character access
+    unsigned char first_byte = (unsigned char)pattern[0];
+    int first_char_sid = find_symbol_id(first_byte);
+    
+    // Bounds check: ensure symbol ID is valid before using as array index
+    if (first_char_sid < 0 || first_char_sid >= MAX_SYMBOLS) {
+        first_char_sid = -1;
+    }
+
+    DEBUG_PRINT("parse_pattern_full '%s': nfa_state_count=%d, pattern[0]='%c' (sid=%d)\n", pattern, nfa_state_count, pattern[0], first_char_sid);
 
     // DEBUG: Check if there's a shared prefix
-    int first_char_sid = find_symbol_id(pattern[0]);
     if (nfa_state_count > 1 && pattern[0] != '\0' && first_char_sid != -1) {
         DEBUG_PRINT("  Checking prefix: pattern[0]='%c', sid=%d, nfa[0].transitions[%d]=%d\n", 
                    pattern[0], first_char_sid, first_char_sid, nfa[0].transitions[first_char_sid]);
@@ -1900,13 +1919,17 @@ static void parse_pattern_full(const char* pattern, const char* category,
         // Try to find a common prefix with existing NFA paths
         int shared_state = 0;
 
-        int first_char_sid = find_symbol_id(pattern[0]);
+        // Check if this is a valid symbol ID within bounds
+        if (first_char_sid < 0 || first_char_sid >= MAX_SYMBOLS) {
+            first_char_sid = -1;
+        }
 
         // Check if this is a single-character symbol (not a range)
         // For ranges like 'a'-'z', we can't safely use prefix sharing because
         // the transition might have been built for a different character in the range
         bool is_single_char_symbol = (first_char_sid != -1 &&
-                                       alphabet[first_char_sid].start_char == alphabet[first_char_sid].end_char);
+                                     first_char_sid < alphabet_size &&
+                                     alphabet[first_char_sid].start_char == alphabet[first_char_sid].end_char);
 
         // Check if pattern[0] is safe to share (not start of complex syntax or quantified)
         // Also exclude '<' and '>' as they start capture groups which are not literal transitions

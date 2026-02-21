@@ -6,6 +6,7 @@ tools/nfa_builder
 tools/nfa2dfa_advanced
 tools/nfa2dfa_sat
 tools/pattern_order
+tools/dfa_eval_wrapper
 
 # Test binaries
 tests/test_minimize_integrity
