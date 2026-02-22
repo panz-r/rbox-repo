@@ -79,13 +79,6 @@ static bool construct_alphabet_from_patterns(const char* spec_file);
 static void print_usage(const char* progname);
 #endif
 
-// Negated transition structure
-typedef struct {
-    int target_state;
-    char excluded_chars[MAX_SYMBOLS];
-    int excluded_count;
-} negated_transition_t;
-
 // Category bitmask constants (8 categories, one bit each)
 #define CAT_MASK_SAFE       0x01
 #define CAT_MASK_CAUTION    0x02
@@ -128,10 +121,6 @@ typedef struct {
     int transitions[MAX_SYMBOLS];
     int transition_count;
     multi_target_array_t multi_targets;
-
-    // Negated transitions
-    negated_transition_t negated_transitions[MAX_SYMBOLS];
-    int negated_transition_count;
 
     // Capture markers
     int8_t capture_start_id;
@@ -380,16 +369,6 @@ void nfa_init(void) {
         mta_free(&nfa[i].multi_targets);
         mta_init(&nfa[i].multi_targets);
         nfa[i].transition_count = 0;
-
-        // Initialize negated transitions
-        nfa[i].negated_transition_count = 0;
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
-            nfa[i].negated_transitions[j].target_state = -1;
-            nfa[i].negated_transitions[j].excluded_count = 0;
-            for (int k = 0; k < MAX_SYMBOLS; k++) {
-                nfa[i].negated_transitions[j].excluded_chars[k] = 0;
-            }
-        }
         
         // Initialize capture markers
         nfa[i].capture_start_id = -1;
@@ -415,81 +394,6 @@ void nfa_init(void) {
 // ============================================================================
 // END PHASE 2 MARKER SYSTEM
 // ============================================================================
-
-// Negated transition helper functions
-bool is_char_excluded(negated_transition_t* neg_trans, char test_char) {
-    for (int i = 0; i < neg_trans->excluded_count; i++) {
-        if (neg_trans->excluded_chars[i] == test_char) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool can_add_to_negated_transition(negated_transition_t* neg_trans, char new_char) {
-    // Check if we have space and the char isn't already excluded
-    return neg_trans->excluded_count < MAX_SYMBOLS && 
-           !is_char_excluded(neg_trans, new_char);
-}
-
-negated_transition_t* find_negated_transition_for_target(nfa_builder_state_t* state, int target_state) {
-    for (int i = 0; i < state->negated_transition_count; i++) {
-        if (state->negated_transitions[i].target_state == target_state) {
-            return &state->negated_transitions[i];
-        }
-    }
-    return NULL;
-}
-
-bool should_use_negation(int from_state, int to_state, char input_char) {
-    (void)input_char;  // Reserved for future negation support
-    // More aggressive heuristic: use negation more frequently
-    // 1. Always use if we already have a negated transition to this target
-    // 2. Use if we're adding a second transition to the same target
-    // 3. Use for common patterns that benefit from negation
-
-    nfa_builder_state_t* state = &nfa[from_state];
-    
-    // If we already have a negated transition to this target, always use it
-    if (find_negated_transition_for_target(state, to_state) != NULL) {
-        return true;
-    }
-    
-    // Count how many transitions go to this target
-    int transitions_to_target = 0;
-    for (int c = 0; c < MAX_SYMBOLS; c++) {
-        if (state->transitions[c] == to_state) {
-            transitions_to_target++;
-        }
-    }
-    
-    // DISABLE negation to ensure nfa2dfa compatibility
-    // nfa2dfa does not support NotSymbol transitions
-    return false;
-}
-
-void add_negated_transition(int from_state, int to_state, char excluded_char) {
-    nfa_builder_state_t* state = &nfa[from_state];
-
-    // Check if we already have a negated transition to this target
-    negated_transition_t* existing_neg_trans = find_negated_transition_for_target(state, to_state);
-
-    if (existing_neg_trans != NULL) {
-        // Add to existing negated transition
-        if (can_add_to_negated_transition(existing_neg_trans, excluded_char)) {
-            existing_neg_trans->excluded_chars[existing_neg_trans->excluded_count++] = excluded_char;
-            return;
-        }
-    }
-
-    // Create new negated transition
-    if (state->negated_transition_count < MAX_SYMBOLS) {
-        negated_transition_t* new_neg_trans = &state->negated_transitions[state->negated_transition_count++];
-        new_neg_trans->target_state = to_state;
-        new_neg_trans->excluded_chars[0] = excluded_char;
-        new_neg_trans->excluded_count = 1;
-    }
-}
 
 // Load alphabet from file
 void load_alphabet(const char* filename) {
@@ -559,7 +463,13 @@ static int get_capture_id(const char* name);
 // NOTE: We do NOT compute signature here because transitions haven't been added yet.
 // The caller must call nfa_finalize_state() after adding all transitions.
 int nfa_add_state_with_category(uint8_t category_mask) {
-    // First create the state normally
+    // Bounds check: prevent array overflow
+    if (nfa_state_count >= MAX_STATES) {
+        ERROR("NFA state limit exceeded (max %d states)", MAX_STATES);
+        ERROR("  Pattern may be too complex or cause exponential state growth");
+        return -1; // Return invalid state to signal error
+    }
+    
     int new_state = nfa_state_count;
     nfa[new_state].category_mask = category_mask;
     // Only set pattern_id for accepting states (category_mask != 0)
@@ -583,6 +493,17 @@ int nfa_add_state_with_category(uint8_t category_mask) {
 // Backward-compatible wrapper
 int nfa_add_state_with_minimization(bool accepting) {
     return nfa_add_state_with_category(accepting ? CAT_MASK_SAFE : 0);
+}
+
+// Safe wrapper that returns start_state on allocation failure
+// Use this in parsing functions where allocation failure should abort the pattern
+static int nfa_add_state_safe(bool accepting, int start_state) {
+    int state = nfa_add_state_with_category(accepting ? CAT_MASK_SAFE : 0);
+    if (state < 0) {
+        ERROR("Failed to allocate NFA state - pattern too complex");
+        return start_state; // Return current state to avoid crash
+    }
+    return state;
 }
 
 // Finalize state after all transitions have been added
@@ -2785,19 +2706,6 @@ void write_nfa_file(const char* filename) {
                     fprintf(file, "\n");
                 }
             }
-        }
-
-        // Write negated transitions
-        for (int n = 0; n < nfa[i].negated_transition_count; n++) {
-            negated_transition_t* neg_trans = &nfa[i].negated_transitions[n];
-            fprintf(file, "    NotSymbol ");
-            
-            // Write excluded characters
-            for (int e = 0; e < neg_trans->excluded_count; e++) {
-                if (e > 0) fprintf(file, ",");
-                fprintf(file, "%d", neg_trans->excluded_chars[e]);
-            }
-            fprintf(file, " -> %d\n", neg_trans->target_state);
         }
 
         fprintf(file, "\n");
