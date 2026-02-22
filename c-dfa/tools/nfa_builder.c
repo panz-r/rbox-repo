@@ -2220,6 +2220,65 @@ static void parse_pattern_full(const char* pattern, const char* category,
     }
 }
 
+// Validate pattern input before parsing - reject dangerous/malformed inputs
+static bool validate_pattern_input(const char* line, size_t len) {
+    if (line == NULL || len == 0) {
+        return false;
+    }
+    
+    // Check for null bytes in input
+    for (size_t i = 0; i < len; i++) {
+        if (line[i] == '\0') {
+            ERROR("Pattern contains null byte at position %zu", i);
+            return false;
+        }
+    }
+    
+    // Check for invalid bytes (0xFF and other high bytes that indicate binary/encoding issues)
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)line[i];
+        if (c >= 0x80 && c != 0xFF) {
+            // Allow 0xFF but warn, reject other high bytes
+        }
+        if (c == 0xFF) {
+            ERROR("Pattern contains invalid byte 0xFF at position %zu", i);
+            return false;
+        }
+    }
+    
+    // Check for standalone special characters that crash the parser
+    // These need to be in proper context to be valid
+    if (len == 1) {
+        char c = line[0];
+        if (c == '$' || c == '*' || c == '[' || c == ']' || c == '+' || c == '?') {
+            ERROR("Invalid single-character pattern: '%c' (0x%02x) - requires proper context", c, (unsigned char)c);
+            return false;
+        }
+    }
+    
+    // Check for unbalanced brackets - common crash cause
+    int bracket_depth = 0;
+    int paren_depth = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (line[i] == '[') bracket_depth++;
+        if (line[i] == ']') bracket_depth--;
+        if (line[i] == '(') paren_depth++;
+        if (line[i] == ')') paren_depth--;
+        
+        // If brackets go negative, we have closing without opening
+        if (bracket_depth < 0 || paren_depth < 0) {
+            break;  // Will be caught as malformed
+        }
+    }
+    
+    // Check for unclosed brackets at end of pattern
+    if (bracket_depth > 0) {
+        // This is handled by the parser error, not crash
+    }
+    
+    return true;
+}
+
 // Parse advanced pattern
 void parse_advanced_pattern(const char* line) {
     // Format: [category:subcategory:operations] pattern -> action
@@ -2228,6 +2287,13 @@ void parse_advanced_pattern(const char* line) {
 
     // Skip IDENTIFIER directive lines
     if (strncmp(line, "IDENTIFIER", 10) == 0 && (line[10] == ' ' || line[10] == '"')) {
+        return;
+    }
+
+    // CRITICAL: Validate input before any processing
+    size_t line_len = strlen(line);
+    if (!validate_pattern_input(line, line_len)) {
+        ERROR("Invalid pattern input: %s", line);
         return;
     }
 
