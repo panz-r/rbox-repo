@@ -1,10 +1,65 @@
 # Fuzzing Infrastructure for c-dfa
 
-This directory contains LibFuzzer-based fuzzers for testing the DFA and pattern parser components of ReadOnlyBox.
+LibFuzzer-based fuzzers for testing the DFA and pattern parser components of ReadOnlyBox.
+
+## Quick Reference (Common Tasks)
+
+```bash
+# Build all fuzzers
+make all
+
+# List found crashes
+make list-crashes
+
+# Clear all crash artifacts (after fixing bugs)
+make clean-crashes
+
+# Replay all crashes (verify fixes)
+make replay-all-crashes
+
+# Replay crashes for specific fuzzer
+make replay-all-nfa-build-crashes
+make replay-all-dfa-crashes
+make replay-all-pattern-crashes
+
+# Replay specific crash files
+make replay-crashes-nfa-build CRASHES="crashes/nfa_build_*"
+
+# Run 4-hour fuzzing session with memory protection
+./run_fuzzing_4h.sh nfa-build
+./run_fuzzing_4h.sh dfa
+./run_fuzzing_4h.sh pattern
+```
 
 ## Fuzzers
 
-### 1. dfa_eval_fuzzer
+### 1. nfa_build_fuzzer
+
+Fuzzes NFA construction by running `nfa_builder` as a subprocess.
+
+**Target:** `c-dfa/tools/nfa_builder` (full NFA construction, not just validation)
+
+**Corpus:** `corpus/seed/pattern_parser/` - pattern specification files
+
+**Build:**
+```bash
+make nfa_build_fuzzer
+```
+
+**Run:**
+```bash
+./nfa_build_fuzzer corpus/seed/pattern_parser -max_len=32768 -jobs=2 -workers=2
+```
+
+**What it tests:**
+- Pattern file parsing
+- NFA state construction
+- Memory allocation during build
+- Crash detection in builder
+
+**Performance:** ~1K-5K execs/sec (subprocess overhead)
+
+### 2. dfa_eval_fuzzer
 
 Fuzzes the `dfa_evaluate()` function with random command strings.
 
@@ -21,7 +76,7 @@ make dfa_eval_fuzzer
 
 **Run:**
 ```bash
-./dfa_eval_fuzzer corpus/dfa_eval -max_len=4096 -jobs=4 -workers=4
+./dfa_eval_fuzzer corpus/seed/dfa_eval -max_len=4096 -jobs=4 -workers=4
 ```
 
 **What it tests:**
@@ -31,9 +86,11 @@ make dfa_eval_fuzzer
 - Memory safety (ASan)
 - Undefined behavior (UBSan)
 
-### 2. pattern_parse_fuzzer
+**Performance:** ~100K+ execs/sec on modern CPU
 
-Fuzzes the pattern file parser by invoking `nfa_builder --validate-only` as a separate process.
+### 3. pattern_parse_fuzzer
+
+Fuzzes pattern validation by invoking `nfa_builder --validate-only` as a subprocess.
 
 **Target:** `c-dfa/tools/nfa_builder` pattern validation
 
@@ -46,23 +103,31 @@ make pattern_parse_fuzzer
 
 **Run:**
 ```bash
-./pattern_parse_fuzzer corpus/pattern_parser -max_len=8192 -jobs=4
+./pattern_parse_fuzzer corpus/seed/pattern_parser -max_len=8192 -jobs=4
 ```
 
 **What it tests:**
 - Pattern file parsing
 - Syntax validation
 - Resource handling (memory limits, timeouts)
-- Crashes in nfa_builder
 
-**Caveats:**
-- Out-of-process (forks/execs nfa_builder)
-- Slower than in-process fuzzing
-- Each input spawns a new process
+**Performance:** ~1K-5K execs/sec (subprocess overhead)
+
+## Memory Protection
+
+Three layers of protection prevent OOM crashes:
+
+| Layer | Mechanism | Limit |
+|-------|-----------|-------|
+| Per-process | `RLIMIT_AS` | 2 GB per child |
+| Per-fuzzer | `-rss_limit_mb` | 4 GB LibFuzzer limit |
+| Session | `systemd-run` | 8 GB total |
+
+The `run_fuzzing_4h.sh` script applies all three layers automatically.
 
 ## Build Requirements
 
-- clang with LibFuzzer support (libfuzzer-21-dev)
+- clang with LibFuzzer support (`libfuzzer-21-dev`)
 - AddressSanitizer (ASan)
 - UndefinedBehaviorSanitizer (UBSan)
 
@@ -71,75 +136,121 @@ On Ubuntu/Debian:
 sudo apt install libfuzzer-21-dev
 ```
 
-## Integration with Main Build
+## Running Fuzzing Sessions
 
-From the `c-dfa` directory:
+### Quick Run (No Protection)
+
 ```bash
-# Build fuzzers
-make fuzz-build
-
-# Run DFA fuzzer
-make fuzz-run-dfa
-
-# Run pattern parser fuzzer
-make fuzz-run-pattern
-
-# Run both sequentially
-make fuzz-run
-
-# Clean fuzzing artifacts
-make fuzz-clean
+make run-nfa-build       # NFA build fuzzer
+make run-dfa             # DFA eval fuzzer
+make run-pattern         # Pattern parse fuzzer
 ```
 
-## Generating Additional Corpus
+### Protected 4-Hour Session
 
-The initial corpus is generated from existing pattern files and common commands:
 ```bash
-cd fuzz
+./run_fuzzing_4h.sh nfa-build   # Recommended for extended fuzzing
+./run_fuzzing_4h.sh dfa
+./run_fuzzing_4h.sh pattern
+```
+
+Logs are saved to `logs/<timestamp>/`:
+- `fuzzer.log` - LibFuzzer output
+- `watchdog.log` - Memory watchdog output
+
+### With Cgroup Memory Limits
+
+```bash
+make run-nfa-build-cgroup
+make run-dfa-cgroup
+make run-pattern-cgroup
+```
+
+## Crash Management
+
+### List Crashes
+
+```bash
+make list-crashes
+```
+
+### Replay Crashes
+
+```bash
+# Replay all crashes from all fuzzers
+make replay-all-crashes
+
+# Replay by fuzzer type
+make replay-all-nfa-build-crashes
+make replay-all-dfa-crashes
+make replay-all-pattern-crashes
+
+# Replay specific crash files
+make replay-crashes-nfa-build CRASHES="crashes/nfa_build_abc123"
+```
+
+### Clear Crashes
+
+After fixing bugs and verifying with replay:
+
+```bash
+make clean-crashes
+```
+
+## Generating Corpus
+
+Initial corpus from existing pattern files:
+
+```bash
 ./generate_corpus.sh
+./generate_multiline_corpus.sh
 ```
 
-This creates seed files in `corpus/dfa_eval/` and `corpus/pattern_parser/`.
+This creates seed files in `corpus/seed/` directories.
 
-## OSS-Fuzz Integration
+## Crash Artifacts
 
-These fuzzers are designed to be OSS-Fuzz compatible. To submit to OSS-Fuzz:
+When a crash is found, LibFuzzer saves artifacts to `crashes/`:
+- `crashes/nfa_build_*` - NFA builder crashes
+- `crashes/dfa_eval_*` - DFA evaluation crashes
+- `crashes/pattern_parse_*` - Pattern parser crashes
 
-1. Create `project.yaml` in OSS-Fuzz's `projects/readonlybox/` directory
-2. Write a `build.sh` that builds the fuzzers and copies them to `$OUT`
-3. Ensure all dependencies are statically linked or available in OSS-Fuzz environment
+Files are named with LibFuzzer's artifact prefix convention.
 
 ## Expected Findings
 
-- **dfa_eval_fuzzer:** Buffer overflows, out-of-bounds reads, invalid state transitions
-- **pattern_parse_fuzzer:** Crashes in parser, infinite loops (timed), memory exhaustion, integer overflows
+| Fuzzer | Typical Bugs |
+|--------|--------------|
+| nfa_build_fuzzer | Parser segfaults, invalid input handling, NFA construction failures |
+| dfa_eval_fuzzer | Buffer overflows, out-of-bounds reads, invalid state transitions |
+| pattern_parse_fuzzer | Parser crashes, syntax validation failures |
 
-## Crash Triage
+## Known Issues
 
-When a crash is found, LibFuzzer writes a crash artifact to the current directory:
-- `crash-*` - the input that caused the crash
-- `stacktrace` - backtrace (if ASan enabled)
+See `bug_report_nfa_builder.md` for documented crashes in `nfa_builder`:
+- Single-byte inputs (`$`, `[`, `*`, `\xFF`) cause segfaults
+- Root cause: Insufficient input validation
+- Status: Unfixed (regression confirmed)
 
-Reproduce:
-```bash
-./dfa_eval_fuzzer crash-xxxxxxxx
+## File Structure
+
 ```
-
-Then fix the underlying bug and re-run fuzzing.
-
-## Notes
-
-- The DFA used by `dfa_eval_fuzzer` is `../readonlybox.dfa`. Rebuild this if patterns change.
-- `pattern_parse_fuzzer` uses resource limits (100MB memory, 1s CPU) to prevent runaway processes.
-- Both fuzzers use ASan + UBSan for maximum bug detection.
-
-## Performance
-
-- **dfa_eval_fuzzer:** ~100K+ execs/sec on modern CPU
-- **pattern_parse_fuzzer:** ~1K-5K execs/sec (out-of-process overhead)
-
-## Current Status
-
-- ✅ dfa_eval_fuzzer: Initialized and running
-- ✅ pattern_parse_fuzzer: Initialized and running (found crash on pattern `[safe:test] (a)+`)
-- ⏳ Continuous fuzzing recommended to find additional bugs
+fuzz/
+  Makefile                    # Build and run targets
+  README.md                   # This file
+  dfa_eval_fuzzer.cpp         # DFA eval fuzzer source
+  pattern_parse_fuzzer.cpp    # Pattern parse fuzzer source
+  nfa_build_fuzzer.cpp        # NFA build fuzzer source
+  run_fuzzing_4h.sh           # 4-hour session runner
+  run_in_cgroup.sh            # Cgroup memory limit wrapper
+  memory_watchdog.sh          # Memory monitor (95% kill)
+  generate_corpus.sh          # Corpus generator
+  crashes/                    # Crash artifacts
+  corpus/
+    seed/                     # Seed corpus
+      dfa_eval/
+      pattern_parser/
+    interesting/              # Coverage-increasing inputs
+  logs/                       # Session logs
+  bug_report_nfa_builder.md   # Documented bugs
+```

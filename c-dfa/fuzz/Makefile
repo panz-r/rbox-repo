@@ -18,7 +18,11 @@ PATTERN_OBJS = $(patsubst %.c,%.o,$(PATTERN_SRC))
 FUZZERS = dfa_eval_fuzzer pattern_parse_fuzzer nfa_build_fuzzer
 
 # Default target
-all: $(FUZZERS)
+all: setup-dirs $(FUZZERS)
+
+# Set up required directories
+setup-dirs:
+	@mkdir -p crashes corpus/interesting/dfa_eval corpus/interesting/pattern_parser corpus/interesting/nfa_build
 
 # DFA evaluation fuzzer (requires wrapper binary)
 dfa_eval_fuzzer: dfa_eval_fuzzer.cpp $(LIB_OBJS) ../tools/dfa_eval_wrapper
@@ -87,6 +91,10 @@ minimize: dfa_eval_fuzzer
 # Clean generated files
 clean:
 	rm -f $(FUZZERS) $(LIB_OBJS) $(PATTERN_OBJS)
+
+# Clear crash artifacts (useful after bug fixes)
+clean-crashes:
+	rm -rf crashes/*
 
 # Replay crashes - useful for regression testing
 # Usage: make replay-crashes-dfa CRASHES="crashes/dfa_eval_abc123 crashes/dfa_eval_def456"
@@ -172,4 +180,4 @@ list-crashes:
         run-dfa-cgroup run-pattern-cgroup run-nfa-build-cgroup \
         replay-crashes-dfa replay-crashes-pattern replay-crashes-nfa-build \
         replay-all-dfa-crashes replay-all-pattern-crashes replay-all-nfa-build-crashes \
-        replay-all-crashes list-crashes
+        replay-all-crashes list-crashes setup-dirs
