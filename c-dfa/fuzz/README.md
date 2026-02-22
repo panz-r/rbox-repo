@@ -119,9 +119,11 @@ Three layers of protection prevent OOM crashes:
 
 | Layer | Mechanism | Limit |
 |-------|-----------|-------|
-| Per-process | `RLIMIT_AS` | 2 GB per child |
+| Per-process | `RLIMIT_AS` | 8 GB per child |
 | Per-fuzzer | `-rss_limit_mb` | 4 GB LibFuzzer limit |
 | Session | `systemd-run` | 8 GB total |
+
+**Note:** The 8 GB per-process limit is required because `nfa_builder` is compiled with `-mcmodel=medium` which requires larger address space. A 2 GB limit causes SIGSEGV during initialization.
 
 The `run_fuzzing_4h.sh` script applies all three layers automatically.
 

@@ -72,7 +72,9 @@ static void init_nfa_builder_path() {
 static const size_t MAX_PATTERN_SIZE = 8192;
 
 // Resource limits
-static const rlim_t MAX_MEMORY = 2ULL * 1024 * 1024 * 1024; // 2 GB address space limit
+// NOTE: nfa_builder is compiled with -mcmodel=medium which requires more address space.
+// A 2GB limit causes SIGSEGV during initialization. Use 8GB for safety margin.
+static const rlim_t MAX_MEMORY = 8ULL * 1024 * 1024 * 1024; // 8 GB address space limit
 static const rlim_t MAX_CPU_TIME = 2; // 2 seconds CPU time
 
 // LLVMFuzzerInitialize

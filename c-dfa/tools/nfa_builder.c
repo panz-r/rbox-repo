@@ -1190,16 +1190,14 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 
 static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
     (void)start_state;  // Not used - character classes are disallowed
+    (void)pos;
     // Character classes [abc] are NOT supported.
     // Generate a clear error message explaining alternatives.
-    ERROR("Character class syntax [abc] is not supported at position %d", *pos);
+    ERROR("Character class syntax [abc] is not supported");
     ERROR("  Use (a|b|c) for alternatives, escape '\\[' for literal bracket");
     ERROR("  Pattern: %s", pattern);
     
-    // Exit with error to stop pattern processing
-    exit(EXIT_FAILURE);
-    
-    // Return value is unreachable due to exit()
+    // Return error code instead of exiting - caller should handle gracefully
     return -1;
 }
 
@@ -1336,7 +1334,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
             int result = parse_rdp_class(pattern, pos, start_state);
             if (result < 0) {
                 // Error already printed by parse_rdp_class
-                exit(1);
+                return start_state; // Return current state, don't crash
             }
             return result;
         }
@@ -2273,7 +2271,25 @@ static bool validate_pattern_input(const char* line, size_t len) {
     
     // Check for unclosed brackets at end of pattern
     if (bracket_depth > 0) {
-        // This is handled by the parser error, not crash
+        ERROR("Unclosed '[' in pattern - not supported");
+        return false;
+    }
+    
+    // Check for negative bracket depth (']' without '[')
+    if (bracket_depth < 0) {
+        ERROR("Unmatched ']' in pattern");
+        return false;
+    }
+    
+    // Check for unbalanced parentheses
+    if (paren_depth > 0) {
+        ERROR("Unclosed '(' in pattern");
+        return false;
+    }
+    
+    if (paren_depth < 0) {
+        ERROR("Unmatched ')' in pattern");
+        return false;
     }
     
     return true;
