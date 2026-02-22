@@ -1,5 +1,8 @@
 # Test patterns for prefix merging edge cases
 
+# Fragment definitions
+[fragment:b] b
+
 # Simple patterns that should merge
 [safe] cat a
 [safe] cat b

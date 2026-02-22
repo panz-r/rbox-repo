@@ -1,0 +1,14 @@
+# Test patterns for suffix merging
+# These patterns share common suffixes that can be merged
+
+# Pattern 1 and 2 share suffix "bc" - states before 'c' should merge
+[safe] aabc
+[safe] zzbc
+
+# Pattern 3 and 4 share suffix "xyz" - states before 'z' should merge  
+[safe] abcxyz
+[safe] defxyz
+
+# Pattern 5 and 6 share suffix "ing" - states before 'g' should merge
+[safe] starting
+[safe] ending

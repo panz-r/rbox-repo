@@ -48,8 +48,8 @@ TEST = dfa_test
 all: $(TOOLS) $(TEST)
 
 # Build tools
-$(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
+$(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/pattern_order.c $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/pattern_order.c $(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)
 
 # DFA eval wrapper for fuzzing
 $(TOOLS_DIR)/dfa_eval_wrapper: $(TOOLS_DIR)/dfa_eval_wrapper.c $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(INCLUDE_DIR)/*.h

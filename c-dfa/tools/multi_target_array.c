@@ -34,6 +34,7 @@ static mta_entry_t* mta_create_entry(int symbol_id) {
     entry->target_capacity = INITIAL_TARGET_CAPACITY;
     entry->dirty = true;
     entry->cached_csv = NULL;
+    entry->marker_count = 0;  // Initialize marker count
     entry->targets = alloc_or_abort(malloc(INITIAL_TARGET_CAPACITY * sizeof(int)), 
                                     "Failed to allocate initial targets array");
     

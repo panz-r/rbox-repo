@@ -148,8 +148,8 @@
 [safe:quantifier:group12] ((alpha))+
 [safe:quantifier:group12] ((ALPHA))+
 [safe:quantifier:group12] ((digit))+
-[safe:quantifier:group12] ((ALPHA)|((alpha)))*
-[safe:quantifier:group12] ((ALPHA)|((alpha))|((digit))|_)+
+[safe:quantifier:group12] ((ALPHA))|((alpha))*
+[safe:quantifier:group12] ((ALPHA))|((alpha))|((digit))|_+
 
 # ============================================================================
 # GROUP 13: Nested Quantifiers

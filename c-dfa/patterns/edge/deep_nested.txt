@@ -6,6 +6,9 @@
 [fragment:x] x
 [fragment:y] y
 [fragment:z] z
+[fragment:a] a
+[fragment:b] b
+[fragment:c] c
 
 # Simple nesting
 [safe:nest1] (a)
@@ -33,8 +36,8 @@
 [safe:nest15] ((((a)+)))
 
 # Nested alternations
-[safe:nest16] ((a|b))
-[safe:nest17] ((a|b|c))
-[safe:nest18] (((a|b)|c))
+[safe:nest16] (a|b)
+[safe:nest17] (a|b|c)
+[safe:nest18] (a|b|c)
 [safe:nest19] (a|(b|c))
-[safe:nest20] ((a|(b|c))+)
+[safe:nest20] (a|(b|c))+

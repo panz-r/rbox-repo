@@ -3,6 +3,10 @@
  * 
  * Reorders patterns to minimize NFA/DFA states by grouping
  * patterns with common prefixes together.
+ * 
+ * Also performs validation:
+ * - Duplicate detection (warns and removes)
+ * - Fragment reference validation (errors if missing)
  */
 
 #ifndef PATTERN_ORDER_H
@@ -19,6 +23,8 @@ typedef struct {
     char* pattern;        // Pattern part only
     char* category;       // Category part (or NULL)
     int original_index;   // Original position in file
+    bool is_duplicate;    // Marked as duplicate (to be removed)
+    bool has_error;       // Has validation error
 } pattern_entry_t;
 
 /**
@@ -28,6 +34,8 @@ typedef struct {
     int original_count;      // Number of patterns
     int prefix_groups;       // Number of prefix groups found
     int patterns_reordered;  // Patterns that changed position
+    int duplicates_found;    // Number of duplicate patterns removed
+    int fragment_errors;     // Number of missing fragment references
     double avg_prefix_len;   // Average prefix length shared
 } pattern_order_stats_t;
 
@@ -48,10 +56,14 @@ pattern_order_options_t pattern_order_default_options(void);
 /**
  * Order patterns for optimal NFA construction.
  * 
+ * Also performs validation:
+ * - Detects and removes duplicate patterns (with warning)
+ * - Validates fragment references (returns -1 on error)
+ * 
  * @param patterns Array of pattern entries
  * @param count Number of patterns
  * @param options Ordering options (NULL for defaults)
- * @return Number of patterns that changed position
+ * @return Number of patterns that changed position, or -1 on validation error
  */
 int pattern_order_optimize(pattern_entry_t* patterns, int count, 
                            const pattern_order_options_t* options);

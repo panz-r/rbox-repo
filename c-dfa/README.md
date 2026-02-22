@@ -78,6 +78,116 @@ The DFA uses an 8-bit category mask - the meaning of each bit is defined by the 
 
 Other projects can define their own category meanings.
 
+## Command Specification Format
+
+The DFA is built from a command specification file:
+
+```
+# Comments start with #
+# Format: [category] command_pattern
+# Categories: safe, caution, modifying, dangerous, network, admin
+
+[safe] cat *
+[safe] grep * *
+[dangerous] rm *
+[network] curl *
+```
+
+### Fragments
+
+Fragments are reusable pattern components with namespace support:
+
+```
+# Define a fragment in a namespace
+[fragment:safe::digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:caution::word] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+
+# Reference fragments
+[safe] ((digit))+        → Looks for safe::digit
+[caution] ((word))+      → Looks for caution::word
+[test] ((safe::digit))+  → Cross-namespace reference (looks for safe::digit)
+```
+
+**Namespace Semantics:**
+- `((a::b))` - References fragment 'b' in namespace 'a' (explicit)
+- `((c))` - References fragment 'c' in the **same namespace** as the pattern
+
+### Validation
+
+The NFA builder performs automatic validation:
+
+1. **Duplicate Detection**: Warns and removes duplicate patterns
+2. **Fragment Reference Validation**: Errors on undefined fragment references
+3. **Namespace Validation**: Ensures fragments are looked up in correct namespace
+
+## Building the DFA
+
+```bash
+# Build the tools
+make
+
+# Generate DFA using Hopcroft minimization (recommended)
+./tools/nfa_builder patterns_combined.txt readonlybox.nfa
+./tools/nfa2dfa_advanced --minimize-hopcroft readonlybox.nfa readonlybox.dfa
+
+# Or use SAT-based minimal DFA construction
+./tools/nfa2dfa_sat readonlybox.nfa readonlybox.dfa
+```
+
+## Using the DFA in Applications
+
+```c
+#include "dfa.h"
+#include "dfa_types.h"
+
+// Load DFA from file
+void* dfa_data = load_dfa_from_file("readonlybox.dfa");
+dfa_init(dfa_data, size);
+
+// Evaluate a command
+dfa_result_t result;
+if (dfa_evaluate("cat file.txt", 0, &result)) {
+    if (result.category == DFA_CMD_READONLY_SAFE) {
+        // Command is safe
+    }
+}
+
+// Cleanup
+dfa_reset();
+```
+
+## Test Organization
+
+The test suite is organized into three sets:
+
+| Test Set | Description |
+|----------|-------------|
+| **A** | Core tests: basic patterns, quantifiers, fragments, alternation |
+| **B** | Expanded tests: complex patterns with nested quantifiers |
+| **C** | Command tests: admin, caution, modifying, dangerous, network commands |
+
+Run specific test sets:
+```bash
+./dfa_test --minimize-hopcroft --test-set A
+./dfa_test --minimize-hopcroft --test-set BC
+```
+
+## Performance Characteristics
+
+- **Evaluation Time**: <1μs per command (typical)
+- **Memory Usage**: ~10-100KB for typical DFAs
+- **Initialization**: <10μs
+- **Throughput**: 1M+ commands/second
+
+### Minimization Performance
+
+| Algorithm | 100 states | 1000 states |
+|-----------|------------|-------------|
+| Moore | ~1ms | ~100ms |
+| Hopcroft | ~0.5ms | ~10ms |
+| Brzozowski | ~5ms | ~500ms |
+| SAT | ~50ms | varies |
+
 ## File Structure
 
 ```
@@ -113,12 +223,6 @@ The C DFA layer is the first line of defense in ReadOnlyBox:
 2. **Go Parsers** - Detailed semantic analysis
 3. **Fallback** - Conservative blocking for unknown commands
 
-## Performance
-
-- **Evaluation**: <1μs per command
-- **Memory**: ~10-100KB for typical DFAs
-- **Throughput**: 1M+ commands/second
-
 ## Fuzzing
 
 This project includes LibFuzzer-based fuzzers for continuous testing:
@@ -144,6 +248,19 @@ See `fuzz/README.md` for details.
 - **Deterministic**: Same input always produces same output
 
 ## Recent Fixes
+
+### Pattern Ordering Memory Fix (2026-02-22)
+
+A double-free bug was fixed in the pattern ordering code. The issue was that `pattern_order_optimize()` compacts the pattern array (removing duplicates), but the caller was still using the original `pattern_count` when freeing memory.
+
+**Fix**: The caller now uses `pattern_order_get_stats()` to get the correct count after optimization:
+
+```c
+pattern_order_optimize(patterns, pattern_count, &opts);
+pattern_order_stats_t stats;
+pattern_order_get_stats(&stats);
+pattern_count = stats.original_count - stats.duplicates_found;
+```
 
 ### NFA Builder Crash Fixes (2026-02-21)
 

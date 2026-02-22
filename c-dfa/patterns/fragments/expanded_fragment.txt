@@ -21,4 +21,4 @@
 [safe:frag] ((a))+
 
 # Fragment alternation
-[safe:frag] ((a|b))+((c|d))+
+[safe:frag] (a|b)+(c|d)+

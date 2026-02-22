@@ -142,3 +142,58 @@ After prefix-based ordering, use SAT to optimize within groups:
 1. **Profile-guided ordering**: Use runtime frequency data
 2. **Conflict-aware ordering**: Separate patterns that cause DFA blowup
 3. **Incremental updates**: Reorder when patterns are added/removed
+
+## Validation Features
+
+The pattern ordering module also performs validation before NFA construction:
+
+### Duplicate Detection
+
+Patterns are checked for duplicates using full line comparison. Duplicates are warned and removed:
+
+```
+WARNING: Duplicate pattern detected:
+  Duplicate: [safe] cat file.txt
+  (duplicate will be removed)
+```
+
+### Fragment Reference Validation
+
+Fragment references are validated with namespace semantics:
+
+- `((name))` - Looks for `name` in the **same namespace** as the pattern's category
+- `((ns::name))` - Looks for `ns::name` explicitly (cross-namespace)
+
+Example:
+```
+[fragment:safe::digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:caution::word] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+
+[safe] ((digit))+        → Looks for safe::digit ✓
+[caution] ((word))+      → Looks for caution::word ✓
+[test] ((safe::digit))+  → Cross-namespace reference ✓
+[caution] ((digit))+     → ERROR: Looks for caution::digit (not defined)
+```
+
+### Fragment Syntax
+
+**Correct syntax:**
+- `((fragment))` - Reference to a fragment
+- `(a|b)` - Alternation (single parentheses)
+
+**Incorrect syntax:**
+- `((a|b))` - This is NOT a fragment reference, it's malformed alternation
+- `((a|b|c))` - Same issue
+
+If you see errors like "undefined fragment 'a|b'", check that you're using single parentheses for alternation: `(a|b)` not `((a|b))`.
+
+## Current Status
+
+| Feature | Status |
+|---------|--------|
+| Prefix Tree Ordering | ✅ Complete |
+| Category-Aware Grouping | ✅ Complete |
+| Wildcard Last Placement | ✅ Complete |
+| Duplicate Detection | ✅ Complete |
+| Fragment Validation | ✅ Complete |
+| Namespace Semantics | ✅ Complete |

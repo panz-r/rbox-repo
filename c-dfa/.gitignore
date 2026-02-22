@@ -23,6 +23,14 @@ fuzz/dfa_eval_fuzzer
 fuzz_nfa.pid
 
 # NOTE: Do NOT ignore crashes/ or corpus/interesting/ - they contain valuable test data
+
+# Build test artifacts
+build_test/*
+src/dfa_test
+src/test_single
+src/test_single_quant
+
+# Object files
 *.o
 *.a
 

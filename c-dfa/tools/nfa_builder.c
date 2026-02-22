@@ -12,6 +12,7 @@
 #include "../include/multi_target_array.h"
 #include "../include/dfa_types.h"
 #include "../include/nfa.h"
+#include "pattern_order.h"
 
 /**
  * Advanced NFA Builder with Integrated Validation and Alphabet Construction
@@ -45,7 +46,7 @@
 #endif
 
 #ifndef NFA_BUILDER_VERBOSE
-#define NFA_BUILDER_VERBOSE 1
+#define NFA_BUILDER_VERBOSE 0
 #endif
 
 // Conditional debug print macro - only prints if NFA_BUILDER_DEBUG is true
@@ -1885,7 +1886,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
         return;  // Skip empty patterns gracefully
     }
     
-    fprintf(stderr, "DEBUG parse_pattern_full called: pattern='%s'\n", pattern);
     // Clear per-pattern globals to avoid stale values between patterns
     last_element_sid = -1;
     pending_capture_defer_id = -1;
@@ -3181,20 +3181,71 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Read patterns into memory for ordering
+    pattern_entry_t* patterns = NULL;
+    int pattern_count = pattern_order_read_file(spec_file, &patterns);
+    if (pattern_count < 0) {
+        fprintf(stderr, "Failed to read patterns for ordering\n");
+        return 1;
+    }
+
+    // Apply pattern ordering optimization (groups by prefix for better NFA sharing)
+    // Also validates: duplicate detection, fragment references
+    if (pattern_count > 1) {
+        pattern_order_options_t order_opts = pattern_order_default_options();
+        order_opts.verbose = flag_verbose;
+        int reordered = pattern_order_optimize(patterns, pattern_count, &order_opts);
+        
+        // Check for validation errors (fragment references)
+        if (reordered < 0) {
+            fprintf(stderr, "Pattern validation failed (see errors above)\n");
+            pattern_order_free(patterns, pattern_count);
+            return 1;
+        }
+        
+        if (flag_verbose && reordered > 0) {
+            VERBOSE_PRINT("Pattern ordering: reordered %d/%d patterns\n", reordered, pattern_count);
+        }
+        
+        // Update pattern_count to reflect removed duplicates
+        pattern_order_stats_t stats;
+        pattern_order_get_stats(&stats);
+        pattern_count = stats.original_count - stats.duplicates_found;
+    }
+
     if (external_alphabet_file) {
         load_alphabet(external_alphabet_file);
     } else {
+        // Build alphabet from patterns (need to process from memory)
+        // For now, use the file-based approach since alphabet construction
+        // is tightly coupled with file parsing
         if (!construct_alphabet_from_patterns(spec_file)) {
             fprintf(stderr, "Failed to construct alphabet from patterns\n");
+            pattern_order_free(patterns, pattern_count);
             return 1;
         }
     }
 
-    read_advanced_spec_file(spec_file);
+    // Initialize NFA
+    nfa_init();
+    current_input_file = spec_file;
+
+    // Build NFA from reordered patterns (skip duplicates and errors)
+    int patterns_added = 0;
+    for (int i = 0; i < pattern_count; i++) {
+        if (!patterns[i].is_duplicate && !patterns[i].has_error) {
+            parse_advanced_pattern(patterns[i].line);
+            patterns_added++;
+        }
+    }
+
+    VERBOSE_PRINT("Read %d patterns from %s (%d duplicates removed)\n", 
+                  patterns_added, spec_file, pattern_count - patterns_added);
 
     write_nfa_file(output_file);
 
     cleanup();
+    pattern_order_free(patterns, pattern_count);
 
     if (flag_verbose) {
         VERBOSE_PRINT("\nDone!\n");

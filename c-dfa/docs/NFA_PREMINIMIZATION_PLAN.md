@@ -4,6 +4,25 @@
 
 The current NFA pre-minimization is too aggressive and causes test regressions. We need a correct approach that considers full NFA semantics while being scalable.
 
+## Current Status (2026-02-22)
+
+### Completed Features
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Prefix Merging | ✅ Complete | Merges states with same (source, symbol) and identical outgoing behavior |
+| Suffix Merging | ✅ Complete | Merges states with same (target, symbol) and identical accepting properties |
+| MTA Fast-Path | ✅ Fixed | Correctly handles single transitions in `first_targets[]` array |
+| Pattern Ordering | ✅ Complete | Groups patterns with common prefixes using trie |
+| Duplicate Detection | ✅ Complete | Warns and removes duplicate patterns |
+| Fragment Validation | ✅ Complete | Validates fragment references with namespace semantics |
+
+### Test Results
+
+- All core tests passing
+- Suffix merging correctly handles MTA fast-path transitions
+- Fragment validation enforces correct namespace semantics
+
 ## Status Update (2026-02-19)
 
 ### Critical Bug Fixed: Start State Preservation

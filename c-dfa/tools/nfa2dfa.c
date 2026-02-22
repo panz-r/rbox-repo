@@ -1120,6 +1120,11 @@ void load_nfa_file(const char* filename) {
         }
         else if (strncmp(line, "State ", 6) == 0) {
             int s_idx; sscanf(line + 6, "%d:", &s_idx);
+            // Initialize the state's transitions array to -1 (nfa_init may not have been called)
+            for (int j = 0; j < MAX_SYMBOLS; j++) {
+                nfa[s_idx].transitions[j] = -1;
+            }
+            mta_init(&nfa[s_idx].multi_targets);
             while (fgets(line, sizeof(line), file) && line[0] != '\n' && line[0] != '\r') {
                 if (strstr(line, "CategoryMask:")) { unsigned int m; sscanf(strstr(line, "0x"), "%x", &m); nfa[s_idx].category_mask = (uint8_t)m; }
                 else if (strstr(line, "EosTarget:")) nfa[s_idx].is_eos_target = (strstr(line, "yes") != NULL);

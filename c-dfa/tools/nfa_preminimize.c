@@ -68,10 +68,12 @@ nfa_premin_options_t nfa_premin_default_options(void) {
         .enable_epsilon_chain = true,   // Compress multi-hop epsilon chains (O(n))
         .enable_prune = true,           // Remove unreachable states (O(n))
         .enable_prefix_merge = true,    // ENABLED: Merge states with same prefix, combine transitions
+        .enable_final_dedup = true,     // ENABLED: Deduplicate equivalent final states (needed for suffix merge)
+        .enable_suffix_merge = true,    // ENABLED: Merge states with same suffix, combine pasts
         
         // Disabled - unsafe or too aggressive
         .enable_identical = false,      // DISABLED: NFA state merging can change language
-        .enable_landing_pad = false,    // Common suffix merging (O(n²)) - too aggressive
+        .enable_landing_pad = false,    // Common suffix merging (O(n²)) - superseded by enable_suffix_merge
         .enable_merge = false,          // Full bisimulation (O(n²)) - too aggressive
         .enable_sat = false,            // SAT-based verification - for bounded subproblems only
         
@@ -328,15 +330,17 @@ uint64_t nfa_compute_state_signature(const nfa_state_t* nfa, int state_idx) {
     hash *= 1099511628211ULL;
     
     // Hash pending markers - ALL fields (prefix property)
-    for (int i = 0; i < state->pending_marker_count; i++) {
-        hash ^= state->pending_markers[i].pattern_id;
-        hash *= 1099511628211ULL;
-        hash ^= state->pending_markers[i].uid;
-        hash *= 1099511628211ULL;
-        hash ^= state->pending_markers[i].type;
-        hash *= 1099511628211ULL;
-        hash ^= state->pending_markers[i].active ? 1 : 0;
-        hash *= 1099511628211ULL;
+    if (state->pending_marker_count > 0 && state->pending_markers != NULL) {
+        for (int i = 0; i < state->pending_marker_count; i++) {
+            hash ^= state->pending_markers[i].pattern_id;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].uid;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].type;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].active ? 1 : 0;
+            hash *= 1099511628211ULL;
+        }
     }
     
     // NOTE: We do NOT hash outgoing transitions or multi-targets
@@ -1295,6 +1299,10 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
         // Skip start state
         if (s == 0) continue;
         
+        // Skip if source is dead (can happen after multiple passes)
+        int src = single_source[s];
+        if (src < 0 || src >= state_count || dead_states[src]) continue;
+        
         // Skip states with accepting properties - these have semantic meaning
         if (nfa[s].category_mask != 0) continue;
         
@@ -1311,7 +1319,6 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
     }
     
     VERBOSE_PRINT("  Found %d prefix merge candidates\n", candidate_count);
-    fprintf(stderr, "[PREMIN] Found %d prefix merge candidates (total_edges=%d)\n", candidate_count, total_edges);
     
     // Sort by (source, symbol, sig) for grouping
     qsort(candidates, candidate_count, sizeof(prefix_candidate_t), compare_prefix_candidates);
@@ -1331,22 +1338,38 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
         
         // If multiple candidates, merge them by combining transitions
         if (j - i > 1) {
-            fprintf(stderr, "[PREMIN] Found group of %d candidates with same (source=%d, symbol=%d, sig=%lu)\n",
-                    j - i, candidates[i].source, candidates[i].symbol, candidates[i].sig);
             int rep = candidates[i].state;
+            
+            // Skip if rep is dead (was merged in a previous iteration)
+            if (dead_states[rep]) {
+                i = j;
+                continue;
+            }
             
             for (int k = i + 1; k < j; k++) {
                 int s = candidates[k].state;
                 if (dead_states[s]) continue;
+                if (s == rep) continue;  // Skip if same state
+                
+                // Check if rep was merged in a previous iteration
+                if (dead_states[rep]) {
+                    break;
+                }
+                
+                // Skip if either state is out of bounds
+                if (s >= state_count || rep >= state_count) {
+                    continue;
+                }
                 
                 // Check for mutual transitions (would create self-loop)
                 bool has_mutual = false;
                 for (int sym = 0; sym < MAX_SYMBOLS && !has_mutual; sym++) {
-                    if (nfa[rep].transitions[sym] == s) has_mutual = true;
-                    if (nfa[s].transitions[sym] == rep) has_mutual = true;
+                    int rep_target = nfa[rep].transitions[sym];
+                    int s_target = nfa[s].transitions[sym];
+                    if (rep_target >= 0 && rep_target == s) has_mutual = true;
+                    if (s_target >= 0 && s_target == rep) has_mutual = true;
                 }
                 if (has_mutual) {
-                    fprintf(stderr, "[PREMIN] States %d and %d have mutual transitions, skipping\n", rep, s);
                     continue;
                 }
                 
@@ -1357,15 +1380,17 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                 
                 // Combine single transitions
                 for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                    if (s_state->transitions[sym] >= 0) {
-                        if (rep_state->transitions[sym] < 0) {
+                    int s_trans = s_state->transitions[sym];
+                    int rep_trans = rep_state->transitions[sym];
+                    if (s_trans >= 0) {
+                        if (rep_trans < 0) {
                             // rep doesn't have this transition, add it
-                            rep_state->transitions[sym] = s_state->transitions[sym];
-                        } else if (rep_state->transitions[sym] != s_state->transitions[sym]) {
+                            rep_state->transitions[sym] = s_trans;
+                        } else if (rep_trans != s_trans) {
                             // Both have transitions on this symbol to different targets
                             // Add to multi-targets
-                            mta_add_target(&rep_state->multi_targets, sym, rep_state->transitions[sym]);
-                            mta_add_target(&rep_state->multi_targets, sym, s_state->transitions[sym]);
+                            mta_add_target(&rep_state->multi_targets, sym, rep_trans);
+                            mta_add_target(&rep_state->multi_targets, sym, s_trans);
                             rep_state->transitions[sym] = -1;  // Clear single transition
                         }
                         // If same target, nothing to do
@@ -1375,7 +1400,9 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                 // Combine multi-targets from s_state into rep_state
                 for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
                     // First, check if rep has a single transition that needs to be merged with s's multi-targets
-                    if (rep_state->transitions[sym] >= 0) {
+                    int rep_trans_val = rep_state->transitions[sym];
+                    
+                    if (rep_trans_val >= 0) {
                         int s_count;
                         int* s_targets = mta_get_target_array(&s_state->multi_targets, sym, &s_count);
                         if (s_targets && s_count > 0) {
@@ -1402,7 +1429,8 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                     // Also combine transition markers
                     int marker_count;
                     transition_marker_t* markers = mta_get_markers(&s_state->multi_targets, sym, &marker_count);
-                    if (markers && marker_count > 0) {
+                    // Sanity check: marker_count should be reasonable
+                    if (markers && marker_count > 0 && marker_count < 1000) {
                         for (int m = 0; m < marker_count; m++) {
                             mta_add_marker(&rep_state->multi_targets, sym, 
                                           markers[m].pattern_id, markers[m].uid, markers[m].type);
@@ -1414,17 +1442,22 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                 rep_state->category_mask |= s_state->category_mask;
                 
                 // Combine pending markers (if any)
-                for (int m = 0; m < s_state->pending_marker_count && rep_state->pending_marker_count < MAX_PENDING_MARKERS; m++) {
-                    // Check if this marker already exists
-                    bool exists = false;
-                    for (int r = 0; r < rep_state->pending_marker_count && !exists; r++) {
-                        if (rep_state->pending_markers[r].uid == s_state->pending_markers[m].uid &&
-                            rep_state->pending_markers[r].type == s_state->pending_markers[m].type) {
-                            exists = true;
+                if (s_state->pending_markers != NULL && s_state->pending_marker_count > 0) {
+                    for (int m = 0; m < s_state->pending_marker_count && rep_state->pending_marker_count < MAX_PENDING_MARKERS; m++) {
+                        // Check if this marker already exists
+                        bool exists = false;
+                        for (int r = 0; r < rep_state->pending_marker_count && !exists; r++) {
+                            if (rep_state->pending_markers != NULL &&
+                                rep_state->pending_markers[r].uid == s_state->pending_markers[m].uid &&
+                                rep_state->pending_markers[r].type == s_state->pending_markers[m].type) {
+                                exists = true;
+                            }
                         }
-                    }
-                    if (!exists) {
-                        rep_state->pending_markers[rep_state->pending_marker_count++] = s_state->pending_markers[m];
+                        if (!exists) {
+                            if (rep_state->pending_markers != NULL) {
+                                rep_state->pending_markers[rep_state->pending_marker_count++] = s_state->pending_markers[m];
+                            }
+                        }
                     }
                 }
                 
@@ -1457,7 +1490,6 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                 
                 dead_states[s] = true;
                 merged++;
-                fprintf(stderr, "[PREMIN] Merged prefix state %d into %d (combined transitions)\n", s, rep);
                 VERBOSE_PRINT("  Merged prefix state %d into %d (source=%d, symbol=%d)\n", 
                              s, rep, candidates[i].source, candidates[i].symbol);
             }
@@ -1473,6 +1505,744 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
     free(candidates);
     
     return merged;
+}
+
+// ============================================================================
+// FINAL STATE DEDUPLICATION - O(n log n)
+// ============================================================================
+
+// Forward declarations - defined later in suffix merging section
+static uint64_t compute_accepting_signature(const nfa_state_t* state);
+static uint64_t compute_final_state_signature(const nfa_state_t* state);
+
+/**
+ * Final state deduplication merges accepting states that have:
+ * 1. Identical accepting properties (category_mask, pattern_id, pending_markers)
+ * 2. Identical outgoing transitions (typically none for final states)
+ * 
+ * This is a prerequisite for effective suffix merging - by merging equivalent
+ * final states first, we create longer common suffixes that suffix merging
+ * can then optimize.
+ * 
+ * Algorithm (O(n log n)):
+ * 1. Find all accepting states
+ * 2. Group by (accepting_signature, outgoing_signature)
+ * 3. Merge states in same group
+ */
+
+// Structure for final state deduplication candidate
+typedef struct {
+    int state;
+    uint64_t accept_sig;    // Hash of accepting properties
+    uint64_t outgoing_sig;  // Hash of outgoing transitions
+} final_state_candidate_t;
+
+// Comparison function for final state candidates
+static int compare_final_state_candidates(const void* a, const void* b) {
+    const final_state_candidate_t* ca = (const final_state_candidate_t*)a;
+    const final_state_candidate_t* cb = (const final_state_candidate_t*)b;
+    if (ca->accept_sig < cb->accept_sig) return -1;
+    if (ca->accept_sig > cb->accept_sig) return 1;
+    if (ca->outgoing_sig < cb->outgoing_sig) return -1;
+    if (ca->outgoing_sig > cb->outgoing_sig) return 1;
+    return 0;
+}
+
+/**
+ * Compute hash of outgoing transitions for a state.
+ * This captures the "future" of the state - where it can transition to.
+ */
+static uint64_t compute_outgoing_signature(const nfa_state_t* state) {
+    // FNV-1a hash
+    uint64_t hash = 14695981039346656037ULL;
+    
+    // Hash single transitions
+    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+        if (state->transitions[sym] >= 0) {
+            hash ^= (uint64_t)sym;
+            hash *= 1099511628211ULL;
+            hash ^= (uint64_t)state->transitions[sym];
+            hash *= 1099511628211ULL;
+        }
+    }
+    
+    // Hash multi-targets
+    int mta_count = mta_get_entry_count((multi_target_array_t*)&state->multi_targets);
+    if (mta_count > 0) {
+        hash ^= mta_count;
+        hash *= 1099511628211ULL;
+        
+        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+            int count;
+            int* targets = mta_get_target_array((multi_target_array_t*)&state->multi_targets, sym, &count);
+            if (targets && count > 0) {
+                hash ^= (uint64_t)sym;
+                hash *= 1099511628211ULL;
+                hash ^= (uint64_t)count;
+                hash *= 1099511628211ULL;
+                
+                // Sort targets for consistent hashing
+                int* sorted = malloc(count * sizeof(int));
+                memcpy(sorted, targets, count * sizeof(int));
+                for (int i = 0; i < count - 1; i++) {
+                    for (int j = i + 1; j < count; j++) {
+                        if (sorted[i] > sorted[j]) {
+                            int t = sorted[i]; sorted[i] = sorted[j]; sorted[j] = t;
+                        }
+                    }
+                }
+                for (int i = 0; i < count; i++) {
+                    hash ^= (uint64_t)sorted[i];
+                    hash *= 1099511628211ULL;
+                }
+                free(sorted);
+            }
+        }
+    }
+    
+    return hash;
+}
+
+/**
+ * Deduplicate equivalent final states - O(n log n).
+ * 
+ * Merges accepting states that have identical accepting properties
+ * and identical outgoing transitions.
+ */
+static int deduplicate_final_states(nfa_state_t* nfa, int state_count, bool* dead_states) {
+    // Count accepting states
+    int accept_count = 0;
+    for (int s = 0; s < state_count; s++) {
+        if (!dead_states[s] && nfa[s].category_mask != 0) {
+            accept_count++;
+        }
+    }
+    
+    if (accept_count < 2) {
+        return 0;  // Need at least 2 accepting states to merge
+    }
+    
+    // Build candidate list
+    final_state_candidate_t* candidates = malloc(accept_count * sizeof(final_state_candidate_t));
+    int idx = 0;
+    
+    for (int s = 0; s < state_count; s++) {
+        if (!dead_states[s] && nfa[s].category_mask != 0) {
+            candidates[idx].state = s;
+            candidates[idx].accept_sig = compute_final_state_signature(&nfa[s]);
+            candidates[idx].outgoing_sig = compute_outgoing_signature(&nfa[s]);
+            idx++;
+        }
+    }
+    
+    VERBOSE_PRINT("  Found %d accepting states for deduplication\n", accept_count);
+    
+    // Sort by (accept_sig, outgoing_sig)
+    qsort(candidates, accept_count, sizeof(final_state_candidate_t), compare_final_state_candidates);
+    
+    // Find groups and merge
+    int merged = 0;
+    int i = 0;
+    while (i < accept_count) {
+        int j = i + 1;
+        // Find all candidates with same (accept_sig, outgoing_sig)
+        while (j < accept_count &&
+               candidates[j].accept_sig == candidates[i].accept_sig &&
+               candidates[j].outgoing_sig == candidates[i].outgoing_sig) {
+            j++;
+        }
+        
+        // If multiple candidates, merge them
+        if (j - i > 1) {
+            int rep = candidates[i].state;
+            
+            for (int k = i + 1; k < j; k++) {
+                int s = candidates[k].state;
+                if (dead_states[s]) continue;
+                
+                // Merge state s into rep by redirecting all incoming transitions
+                for (int src = 0; src < state_count; src++) {
+                    if (dead_states[src]) continue;
+                    
+                    nfa_state_t* src_state = &nfa[src];
+                    
+                    // Redirect single transitions
+                    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+                        if (src_state->transitions[sym] == s) {
+                            src_state->transitions[sym] = rep;
+                        }
+                    }
+                    
+                    // Redirect multi-targets
+                    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+                        int count;
+                        int* targets = mta_get_target_array(&src_state->multi_targets, sym, &count);
+                        if (targets && count > 0) {
+                            for (int t = 0; t < count; t++) {
+                                if (targets[t] == s) {
+                                    targets[t] = rep;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                dead_states[s] = true;
+                merged++;
+                VERBOSE_PRINT("  Merged final state %d into %d\n", s, rep);
+            }
+        }
+        
+        i = j;
+    }
+    
+    free(candidates);
+    return merged;
+}
+
+// ============================================================================
+// SUFFIX MERGING - O(n log n) backward analysis
+// ============================================================================
+
+/**
+ * Suffix merging is the reverse of prefix merging:
+ * 
+ * PREFIX: Same INCOMING (source, symbol) + identical accepting props → merge by combining outgoing
+ * SUFFIX: Same OUTGOING (set of transitions) + identical accepting props → merge by combining incoming
+ * 
+ * Key insight: Two states that have the same SET of outgoing transitions
+ * and identical accepting properties can be merged by combining their
+ * incoming transitions (union of pasts).
+ * 
+ * CRITICAL: Accepting states have semantic meaning (category, pattern_id).
+ * Two accepting states can only be merged if they have IDENTICAL accepting
+ * properties (category_mask, pattern_id, pending_markers).
+ * 
+ * Algorithm (O(n log n)):
+ * 1. Compute outgoing signature for each state (hash of all outgoing transitions)
+ * 2. Group by (outgoing_signature, accepting_properties)
+ * 3. For each group, verify states have identical outgoing transitions
+ * 4. Merge states in same group by redirecting incoming transitions
+ */
+
+// Structure for suffix merge candidate
+typedef struct {
+    int state;
+    int target;           // Single outgoing transition target
+    int symbol;           // Single outgoing transition symbol
+    uint64_t accept_sig;  // Hash of accepting properties (prefix properties)
+} suffix_candidate_t;
+
+// Comparison function for suffix candidates
+static int compare_suffix_candidates(const void* a, const void* b) {
+    const suffix_candidate_t* ca = (const suffix_candidate_t*)a;
+    const suffix_candidate_t* cb = (const suffix_candidate_t*)b;
+    if (ca->target != cb->target) return ca->target - cb->target;
+    if (ca->symbol != cb->symbol) return ca->symbol - cb->symbol;
+    if (ca->accept_sig < cb->accept_sig) return -1;
+    if (ca->accept_sig > cb->accept_sig) return 1;
+    return 0;
+}
+
+/**
+ * Compute hash of accepting properties for a state.
+ * 
+ * For suffix merging, we need to be conservative - states from different
+ * patterns should NOT be merged even if they have the same category_mask,
+ * because they represent different pattern matches.
+ * 
+ * ALWAYS include pattern_id to ensure states from different patterns
+ * are kept separate.
+ */
+static uint64_t compute_accepting_signature(const nfa_state_t* state) {
+    // FNV-1a hash
+    uint64_t hash = 14695981039346656037ULL;
+    
+    // Hash category mask (the actual outcome)
+    hash ^= state->category_mask;
+    hash *= 1099511628211ULL;
+    
+    // Hash pattern_id - ALWAYS include to keep patterns separate
+    hash ^= state->pattern_id;
+    hash *= 1099511628211ULL;
+    
+    // Hash EOS target flag (affects outcome)
+    hash ^= state->is_eos_target ? 1 : 0;
+    hash *= 1099511628211ULL;
+    
+    // Hash pending markers
+    hash ^= state->pending_marker_count;
+    hash *= 1099511628211ULL;
+    
+    if (state->pending_marker_count > 0 && state->pending_markers != NULL) {
+        for (int i = 0; i < state->pending_marker_count; i++) {
+            hash ^= state->pending_markers[i].pattern_id;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].uid;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].type;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].active ? 1 : 0;
+            hash *= 1099511628211ULL;
+        }
+    }
+    
+    return hash;
+}
+
+/**
+ * Compute hash for final state deduplication.
+ * 
+ * For final state deduplication, we only care about the OUTCOME,
+ * not which pattern produced it. Two accepting states with:
+ *   - Same category_mask
+ *   - Same EOS target flag
+ *   - No pending markers (or identical markers)
+ * can be safely merged because they produce identical outcomes.
+ * 
+ * This is different from compute_accepting_signature() which keeps
+ * patterns separate for suffix merging.
+ */
+static uint64_t compute_final_state_signature(const nfa_state_t* state) {
+    // FNV-1a hash
+    uint64_t hash = 14695981039346656037ULL;
+    
+    // Hash category mask (the actual outcome)
+    hash ^= state->category_mask;
+    hash *= 1099511628211ULL;
+    
+    // Hash EOS target flag (affects outcome)
+    hash ^= state->is_eos_target ? 1 : 0;
+    hash *= 1099511628211ULL;
+    
+    // Hash pending markers - if present, we need full details
+    hash ^= state->pending_marker_count;
+    hash *= 1099511628211ULL;
+    
+    if (state->pending_marker_count > 0 && state->pending_markers != NULL) {
+        for (int i = 0; i < state->pending_marker_count; i++) {
+            hash ^= state->pending_markers[i].pattern_id;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].uid;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].type;
+            hash *= 1099511628211ULL;
+            hash ^= state->pending_markers[i].active ? 1 : 0;
+            hash *= 1099511628211ULL;
+        }
+    }
+    
+    // NOTE: We do NOT include pattern_id - final states with the same
+    // outcome can be merged regardless of which pattern produced them.
+    
+    return hash;
+}
+
+/**
+ * Compute hash of incoming transitions for a state.
+ * This captures the "past" of the state - which states can reach it.
+ */
+static uint64_t compute_incoming_signature(nfa_state_t* nfa, int state_count, 
+                                           int state_idx, const bool* dead_states) {
+    // FNV-1a hash
+    uint64_t hash = 14695981039346656037ULL;
+    
+    // Hash all incoming transitions
+    for (int src = 0; src < state_count; src++) {
+        if (dead_states[src]) continue;
+        
+        nfa_state_t* src_state = &nfa[src];
+        
+        // Check single transitions
+        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+            if (src_state->transitions[sym] == state_idx) {
+                hash ^= (uint64_t)src;
+                hash *= 1099511628211ULL;
+                hash ^= (uint64_t)sym;
+                hash *= 1099511628211ULL;
+            }
+        }
+        
+        // Check multi-targets
+        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+            int count;
+            int* targets = mta_get_target_array(&src_state->multi_targets, sym, &count);
+            if (targets && count > 0) {
+                for (int i = 0; i < count; i++) {
+                    if (targets[i] == state_idx) {
+                        hash ^= (uint64_t)src;
+                        hash *= 1099511628211ULL;
+                        hash ^= (uint64_t)sym;
+                        hash *= 1099511628211ULL;
+                        hash ^= (uint64_t)i;  // Position in multi-target
+                        hash *= 1099511628211ULL;
+                    }
+                }
+            }
+        }
+    }
+    
+    return hash;
+}
+
+/**
+ * Check if two states have identical outgoing transitions.
+ * This is used for suffix merging - states with identical outgoing behavior
+ * can be merged by combining their incoming transitions.
+ * 
+ * Unlike states_truly_identical(), this function:
+ * - Does NOT check for mutual transitions (that's handled separately)
+ * - Does NOT reject states with no outgoing transitions
+ * - Only checks that the FUTURE (outgoing transitions) is identical
+ */
+static bool states_have_identical_outgoing(const nfa_state_t* nfa, int s1, int s2) {
+    const nfa_state_t* state1 = &nfa[s1];
+    const nfa_state_t* state2 = &nfa[s2];
+    
+    // Check accepting properties - must match for safe merging
+    if (state1->category_mask != state2->category_mask) return false;
+    if (state1->pattern_id != state2->pattern_id) return false;
+    if (state1->pending_marker_count != state2->pending_marker_count) return false;
+    if (state1->is_eos_target != state2->is_eos_target) return false;
+    
+    // Check pending markers - ALL fields must match
+    for (int i = 0; i < state1->pending_marker_count; i++) {
+        if (state1->pending_markers[i].pattern_id != state2->pending_markers[i].pattern_id) return false;
+        if (state1->pending_markers[i].uid != state2->pending_markers[i].uid) return false;
+        if (state1->pending_markers[i].type != state2->pending_markers[i].type) return false;
+        if (state1->pending_markers[i].active != state2->pending_markers[i].active) return false;
+    }
+    
+    // Check single transitions - all must match exactly (same target states)
+    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+        if (state1->transitions[sym] != state2->transitions[sym]) return false;
+    }
+    
+    // Check multi-targets - must have same entry count
+    int mta1_count = mta_get_entry_count((multi_target_array_t*)&state1->multi_targets);
+    int mta2_count = mta_get_entry_count((multi_target_array_t*)&state2->multi_targets);
+    
+    if (mta1_count != mta2_count) return false;
+    
+    if (mta1_count > 0) {
+        // Check each symbol's multi-targets AND transition markers
+        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+            int count1, count2;
+            int* targets1 = mta_get_target_array((multi_target_array_t*)&state1->multi_targets, sym, &count1);
+            int* targets2 = mta_get_target_array((multi_target_array_t*)&state2->multi_targets, sym, &count2);
+            
+            if (count1 != count2) return false;
+            if (count1 > 0) {
+                // Targets must be IDENTICAL (same state indices)
+                // Sorting allows {A,B} to match {B,A}
+                int* sorted1 = malloc(count1 * sizeof(int));
+                int* sorted2 = malloc(count1 * sizeof(int));
+                memcpy(sorted1, targets1, count1 * sizeof(int));
+                memcpy(sorted2, targets2, count1 * sizeof(int));
+                
+                // Simple sort
+                for (int i = 0; i < count1 - 1; i++) {
+                    for (int j = i + 1; j < count1; j++) {
+                        if (sorted1[i] > sorted1[j]) { int t = sorted1[i]; sorted1[i] = sorted1[j]; sorted1[j] = t; }
+                        if (sorted2[i] > sorted2[j]) { int t = sorted2[i]; sorted2[i] = sorted2[j]; sorted2[j] = t; }
+                    }
+                }
+                
+                bool match = (memcmp(sorted1, sorted2, count1 * sizeof(int)) == 0);
+                free(sorted1);
+                free(sorted2);
+                if (!match) return false;
+            }
+            
+            // Check transition markers for this symbol
+            int marker_count1, marker_count2;
+            transition_marker_t* markers1 = mta_get_markers((multi_target_array_t*)&state1->multi_targets, sym, &marker_count1);
+            transition_marker_t* markers2 = mta_get_markers((multi_target_array_t*)&state2->multi_targets, sym, &marker_count2);
+            
+            if (marker_count1 != marker_count2) return false;
+            
+            for (int m = 0; m < marker_count1; m++) {
+                if (markers1[m].pattern_id != markers2[m].pattern_id) return false;
+                if (markers1[m].uid != markers2[m].uid) return false;
+                if (markers1[m].type != markers2[m].type) return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
+/**
+ * Merge common suffix states - single pass (O(n log n)).
+ * 
+ * Finds states with a SINGLE outgoing transition and identical accepting properties.
+ * States that transition to the same (target, symbol) pair can be safely merged
+ * by combining their incoming transitions (union of pasts).
+ * 
+ * This is the reverse of prefix merging:
+ * - PREFIX: Same incoming (source, symbol) → merge by combining outgoing
+ * - SUFFIX: Same outgoing (target, symbol) → merge by combining incoming
+ */
+static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* dead_states) {
+    // First pass: count states with single outgoing transition
+    int candidate_count = 0;
+    
+    for (int s = 0; s < state_count; s++) {
+        if (dead_states[s]) continue;
+        if (s == 0) continue;  // Don't merge start state
+        
+        nfa_state_t* state = &nfa[s];
+        
+        // Count outgoing transitions
+        int out_count = 0;
+        int out_target = -1;
+        int out_symbol = -1;
+        int single_trans_count = 0;  // Count from transitions[] array
+        int mta_trans_count = 0;     // Count from multi_targets
+        
+        // Check single transitions (old format)
+        for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
+            if (state->transitions[sym] >= 0) {
+                if (out_count == 0) {
+                    out_target = state->transitions[sym];
+                    out_symbol = sym;
+                }
+                out_count++;
+                single_trans_count++;
+            }
+        }
+        
+        // Check multi-targets (new format - used for ALL transitions in NFA builder)
+        if (out_count <= 1) {
+            // First check the fast-path single targets (has_first_target)
+            for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
+                if (state->multi_targets.has_first_target[sym]) {
+                    if (out_count == 0) {
+                        out_target = state->multi_targets.first_targets[sym];
+                        out_symbol = sym;
+                    }
+                    out_count++;
+                    mta_trans_count++;
+                }
+            }
+        }
+        
+        // Then check multi-target entries (2+ targets on same symbol)
+        if (out_count <= 1) {
+            int mta_entries = mta_get_entry_count(&state->multi_targets);
+            if (mta_entries > 0) {
+                // Count all multi-target transitions
+                for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
+                    int count;
+                    int* targets = mta_get_target_array(&state->multi_targets, sym, &count);
+                    if (targets && count > 0) {
+                        for (int i = 0; i < count && out_count <= 1; i++) {
+                            if (out_count == 0) {
+                                out_target = targets[i];
+                                out_symbol = sym;
+                            }
+                            out_count++;
+                            mta_trans_count++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Only consider states with exactly one outgoing transition
+        if (out_count == 1 && out_target >= 0 && !dead_states[out_target]) {
+            candidate_count++;
+        }
+    }
+    
+    VERBOSE_PRINT("  Found %d suffix merge candidates\n", candidate_count);
+    
+    if (candidate_count < 2) {
+        VERBOSE_PRINT("  Not enough suffix candidates (found %d)\n", candidate_count);
+        return 0;  // Need at least 2 candidates to merge
+    }
+    
+    // Build candidate list
+    suffix_candidate_t* candidates = malloc(candidate_count * sizeof(suffix_candidate_t));
+    int idx = 0;
+    
+    for (int s = 0; s < state_count; s++) {
+        if (dead_states[s]) continue;
+        if (s == 0) continue;
+        
+        nfa_state_t* state = &nfa[s];
+        
+        // Find single outgoing transition
+        int out_target = -1;
+        int out_symbol = -1;
+        int out_count = 0;
+        
+        // Check single transitions (old format)
+        for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
+            if (state->transitions[sym] >= 0) {
+                if (out_count == 0) {
+                    out_target = state->transitions[sym];
+                    out_symbol = sym;
+                }
+                out_count++;
+            }
+        }
+        
+        // Check fast-path single targets (has_first_target)
+        if (out_count <= 1) {
+            for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
+                if (state->multi_targets.has_first_target[sym]) {
+                    if (out_count == 0) {
+                        out_target = state->multi_targets.first_targets[sym];
+                        out_symbol = sym;
+                    }
+                    out_count++;
+                }
+            }
+        }
+        
+        // Check multi-target entries (2+ targets on same symbol)
+        if (out_count <= 1) {
+            int mta_entries = mta_get_entry_count(&state->multi_targets);
+            if (mta_entries > 0) {
+                for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
+                    int count;
+                    int* targets = mta_get_target_array(&state->multi_targets, sym, &count);
+                    if (targets && count > 0) {
+                        for (int i = 0; i < count && out_count <= 1; i++) {
+                            if (out_count == 0) {
+                                out_target = targets[i];
+                                out_symbol = sym;
+                            }
+                            out_count++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (out_count == 1 && out_target >= 0 && !dead_states[out_target]) {
+            candidates[idx].state = s;
+            candidates[idx].target = out_target;
+            candidates[idx].symbol = out_symbol;
+            candidates[idx].accept_sig = compute_accepting_signature(state);
+            idx++;
+        }
+    }
+    
+    VERBOSE_PRINT("  Found %d suffix merge candidates\n", candidate_count);
+    
+    // Sort by (target, symbol, accept_sig)
+    qsort(candidates, candidate_count, sizeof(suffix_candidate_t), compare_suffix_candidates);
+    
+    // Find groups and merge
+    int merged = 0;
+    int i = 0;
+    while (i < candidate_count) {
+        int j = i + 1;
+        // Find all candidates with same (target, symbol, accept_sig)
+        while (j < candidate_count &&
+               candidates[j].target == candidates[i].target &&
+               candidates[j].symbol == candidates[i].symbol &&
+               candidates[j].accept_sig == candidates[i].accept_sig) {
+            j++;
+        }
+        
+        // If multiple candidates, merge them
+        if (j - i > 1) {
+            VERBOSE_PRINT("  Found group of %d states with same (target=%d, sym=%d, accept_sig=%016lx)\n",
+                         j - i, candidates[i].target, candidates[i].symbol, 
+                         (unsigned long)candidates[i].accept_sig);
+            int rep = candidates[i].state;
+            
+            for (int k = i + 1; k < j; k++) {
+                int s = candidates[k].state;
+                if (dead_states[s]) continue;
+                if (dead_states[rep]) {
+                    // Representative was merged, pick a new one
+                    rep = s;
+                    continue;
+                }
+                
+                // Check for mutual transitions (would create self-loop)
+                bool has_mutual = false;
+                for (int sym = 0; sym < MAX_SYMBOLS && !has_mutual; sym++) {
+                    if (nfa[rep].transitions[sym] == s) has_mutual = true;
+                    if (nfa[s].transitions[sym] == rep) has_mutual = true;
+                }
+                if (has_mutual) {
+                    VERBOSE_PRINT("  Skipping merge due to mutual transition between %d and %d\n", rep, s);
+                    continue;
+                }
+                
+                // Merge state s into rep by redirecting all incoming transitions
+                // This is the "union of pasts" - all sources now point to rep
+                for (int src = 0; src < state_count; src++) {
+                    if (dead_states[src]) continue;
+                    
+                    nfa_state_t* src_state = &nfa[src];
+                    
+                    // Redirect single transitions
+                    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+                        if (src_state->transitions[sym] == s) {
+                            src_state->transitions[sym] = rep;
+                        }
+                    }
+                    
+                    // Redirect multi-targets
+                    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+                        int count;
+                        int* targets = mta_get_target_array(&src_state->multi_targets, sym, &count);
+                        if (targets && count > 0) {
+                            for (int t = 0; t < count; t++) {
+                                if (targets[t] == s) {
+                                    targets[t] = rep;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                dead_states[s] = true;
+                merged++;
+                VERBOSE_PRINT("  Merged suffix state %d into %d (target=%d, symbol=%d)\n", 
+                             s, rep, candidates[i].target, candidates[i].symbol);
+            }
+        }
+        
+        i = j;
+    }
+    
+    free(candidates);
+    return merged;
+}
+
+/**
+ * Merge common suffix states - iterative passes.
+ * 
+ * After each pass, previously unreachable merge opportunities may become
+ * available as states get merged. We iterate until no more merges happen.
+ */
+static int merge_common_suffixes_fast(nfa_state_t* nfa, int state_count, bool* dead_states) {
+    int total_merged = 0;
+    int pass = 1;
+    const int max_passes = 10;
+    
+    while (pass <= max_passes) {
+        VERBOSE_PRINT("  Suffix merge pass %d...\n", pass);
+        int merged = merge_common_suffixes_pass(nfa, state_count, dead_states);
+        total_merged += merged;
+        
+        if (merged == 0) {
+            VERBOSE_PRINT("  No more suffix merges possible after pass %d\n", pass);
+            break;
+        }
+        
+        VERBOSE_PRINT("  Pass %d merged %d suffix states (total: %d)\n", pass, merged, total_merged);
+        pass++;
+    }
+    
+    return total_merged;
 }
 
 /**
@@ -1523,8 +2293,8 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     
     // Early exit if no optimizations enabled - avoid allocating dead_states
     if (!opts.enable_prune && !opts.enable_epsilon_elim && !opts.enable_epsilon_chain &&
-        !opts.enable_prefix_merge && !opts.enable_landing_pad && !opts.enable_merge && 
-        !opts.enable_identical && !opts.enable_sat) {
+        !opts.enable_prefix_merge && !opts.enable_final_dedup && !opts.enable_suffix_merge && 
+        !opts.enable_landing_pad && !opts.enable_merge && !opts.enable_identical && !opts.enable_sat) {
         VERBOSE_PRINT("Pre-minimization: No optimizations enabled, skipping\n");
         return 0;
     }
@@ -1559,34 +2329,47 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     // Phase 4: Merge common prefixes (O(n log n))
     if (opts.enable_prefix_merge) {
         VERBOSE_PRINT("Merging common prefixes...\n");
-        last_stats.identical_merged = merge_common_prefixes(nfa, original_count, dead_states);
-        VERBOSE_PRINT("Merged %d prefix states\n", last_stats.identical_merged);
-        // Always print this for now to verify prefix merging works
-        fprintf(stderr, "[PREMIN] Merged %d prefix states\n", last_stats.identical_merged);
+        last_stats.prefix_merged = merge_common_prefixes(nfa, original_count, dead_states);
+        VERBOSE_PRINT("Merged %d prefix states\n", last_stats.prefix_merged);
     }
     
-    // Phase 5: Merge identical states (O(n log n)) - DISABLED by default
+    // Phase 5: Deduplicate equivalent final states (O(n log n))
+    // This MUST run before suffix merging to create longer common suffixes
+    if (opts.enable_final_dedup) {
+        VERBOSE_PRINT("Deduplicating final states...\n");
+        last_stats.final_deduped = deduplicate_final_states(nfa, original_count, dead_states);
+        VERBOSE_PRINT("Deduplicated %d final states\n", last_stats.final_deduped);
+    }
+    
+    // Phase 6: Merge common suffixes (O(n log n))
+    if (opts.enable_suffix_merge) {
+        VERBOSE_PRINT("Merging common suffixes...\n");
+        last_stats.suffix_merged = merge_common_suffixes_fast(nfa, original_count, dead_states);
+        VERBOSE_PRINT("Merged %d suffix states\n", last_stats.suffix_merged);
+    }
+    
+    // Phase 7: Merge identical states (O(n log n)) - DISABLED by default
     if (opts.enable_identical) {
         VERBOSE_PRINT("Merging identical states...\n");
         last_stats.identical_merged = merge_identical_states(nfa, original_count, dead_states);
         VERBOSE_PRINT("Merged %d identical states\n", last_stats.identical_merged);
     }
     
-    // Phase 5: Merge common suffix states (O(n²) - disabled by default)
+    // Phase 8: Merge common suffix states (O(n²) - disabled by default, superseded by enable_suffix_merge)
     if (opts.enable_landing_pad) {
-        VERBOSE_PRINT("Merging common suffix states...\n");
+        VERBOSE_PRINT("Merging common suffix states (legacy)...\n");
         last_stats.landing_pads_removed = merge_common_suffixes(nfa, original_count, dead_states);
         VERBOSE_PRINT("Merged %d common suffix states\n", last_stats.landing_pads_removed);
     }
     
-    // Phase 6: Bisimulation reduction (O(n²) - disabled by default)
+    // Phase 9: Bisimulation reduction (O(n²) - disabled by default)
     if (opts.enable_merge) {
         VERBOSE_PRINT("Running bisimulation reduction...\n");
         last_stats.states_merged = bisimulation_reduce(nfa, original_count, dead_states, partition);
         VERBOSE_PRINT("Merged %d bisimilar states\n", last_stats.states_merged);
     }
     
-    // Phase 7: Windowed SAT-based optimization (O(n log n) with bounded subproblems)
+    // Phase 10: Windowed SAT-based optimization (O(n log n) with bounded subproblems)
     if (opts.enable_sat && nfa_preminimize_windowed_sat_available()) {
         VERBOSE_PRINT("Running windowed SAT optimization...\n");
         last_stats.sat_merged = nfa_preminimize_windowed_sat(nfa, original_count, dead_states, 
@@ -1599,7 +2382,7 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
         VERBOSE_PRINT("SAT merged %d states\n", last_stats.sat_merged);
     }
     
-    // Phase 8: Final unreachable cleanup
+    // Phase 11: Final unreachable cleanup
     if (opts.enable_prune) {
         VERBOSE_PRINT("Final unreachable cleanup...\n");
         int final_unreachable = remove_unreachable(nfa, original_count, dead_states);

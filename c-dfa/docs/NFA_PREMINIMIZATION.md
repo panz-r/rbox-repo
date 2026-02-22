@@ -4,102 +4,79 @@
 
 NFA construction from patterns can create redundant states. Subset construction (NFA→DFA) can cause exponential blowup. Pre-minimizing the NFA reduces this blowup.
 
-## Scalable SAT Encoding
+## Optimization Phases
 
-### Key Insight: Signature-Based Grouping
+The pre-minimization pipeline consists of multiple phases, each with O(n) or O(n log n) complexity:
 
-Instead of O(n²) pairwise comparison, we use signature-based grouping:
+### Phase 1: Unreachable State Pruning (O(n))
+- BFS from start state to find reachable states
+- Marks unreachable states as dead
 
-1. **Compute signatures** for all states (O(n))
-2. **Group states** by identical signatures (O(n log n))
-3. **SAT merge verification** within groups only (O(g × s²) where s = avg group size)
+### Phase 2: Epsilon Pass-Through Bypass (O(n))
+- Finds states with single epsilon transition and no accepting properties
+- Redirects incoming transitions directly to epsilon target
+- Safe because it only shortens paths without changing language
 
-This is scalable because well-structured NFAs have small signature groups.
+### Phase 3: Epsilon Chain Compression (O(n))
+- Generalizes pass-through bypass for multi-hop epsilon chains
+- Follows chains to find ultimate target
+- Compresses A→B→C→D to A→D
 
-### State Signature
+### Phase 4: Common Prefix Merging (O(n log n))
+- Groups states by (source, symbol, outgoing_signature)
+- Merges states reached via same (source, symbol) pair
+- Combines outgoing transitions using UNION (preserves all futures)
 
-A state's signature captures its behavior:
+### Phase 5: Common Suffix Merging (O(n log n))
+- Groups states by (target, symbol, incoming_signature, accepting_properties)
+- Merges states that transition to same (target, symbol) pair
+- Combines incoming transitions using UNION (preserves all pasts)
+- **Critical**: Only merges states with identical accepting properties
 
-```c
-typedef struct {
-    uint64_t transition_hash;   // Hash of outgoing transitions
-    uint8_t category_mask;       // Accepting categories
-    bool is_accepting;           // Has pattern_id
-    bool has_epsilon;            // Has epsilon transitions
-} state_signature_t;
-```
+## Prefix vs Suffix Merging
 
-Two states with identical signatures are **candidates** for merging.
+| Aspect | Prefix Merging | Suffix Merging |
+|--------|---------------|----------------|
+| Direction | Forward from start | Backward from accepting |
+| Grouping key | (source, symbol, outgoing_sig) | (target, symbol, incoming_sig, accept_sig) |
+| Merge operation | Union of outgoing transitions | Union of incoming transitions |
+| Safety condition | Same incoming path | Same outgoing path + accepting props |
 
-### SAT Encoding for Merge Verification
+## Safety Guarantees
 
-For a signature group with k states:
+### Prefix Merging Safety
+Two states can be merged if:
+1. They have exactly one incoming transition
+2. That incoming transition is from the same (source, symbol) pair
+3. They have identical outgoing behavior (transitions, markers, etc.)
+4. They do NOT have accepting properties (category_mask == 0)
 
-**Variables:**
-- `merge[i,j]` = 1 if states i and j should merge (k²/2 variables)
+### Suffix Merging Safety
+Two states can be merged if:
+1. They have exactly one outgoing transition
+2. That outgoing transition is to the same (target, symbol) pair
+3. They have identical incoming behavior
+4. They have IDENTICAL accepting properties (category_mask, pattern_id, markers)
 
-**Constraints:**
-1. **Transitivity**: If merge[i,j] and merge[j,k], then merge[i,k]
-2. **Behavior preservation**: Merged states must have compatible transitions
+**Key Difference**: Accepting states have semantic meaning. Two accepting states can only be merged if they have identical accepting properties.
 
-**Objective:** Maximize number of merges
+## Scalability Analysis
 
-### Scalability Analysis
+| NFA Size | Prefix Merging | Suffix Merging |
+|----------|---------------|----------------|
+| 1K states | ~10K candidates | ~10K candidates |
+| 10K states | ~100K candidates | ~100K candidates |
+| 100K states | ~1M candidates | ~1M candidates |
 
-| NFA Size | Naive O(n²) | Signature-based O(g × s²) |
-|----------|-------------|---------------------------|
-| 1K states | 1M pairs | ~10K pairs (100 groups × 10 avg size) |
-| 10K states | 100M pairs | ~100K pairs (1000 groups × 10 avg size) |
-| 100K states | 10B pairs | ~1M pairs (10K groups × 10 avg size) |
-
-**Speedup: 100-1000x** for typical NFAs.
-
-## Algorithm
-
-```
-NFA Pre-Minimization:
-
-1. Compute signatures for all states
-   - Hash outgoing transitions
-   - Include category and accepting status
-   
-2. Group states by signature
-   - Use hash table for O(n) grouping
-   
-3. For each signature group:
-   a. If group size = 1, skip
-   b. Build SAT instance for merge verification
-   c. Solve for optimal merging
-   d. Apply merges
-   
-4. Remove unreachable states
-   - BFS from start state
-   - Delete unreachable states
-   
-5. Renumber states consecutively
-```
-
-## Implementation Plan
-
-### Phase 1: Signature Computation
-- `compute_state_signature()` - O(transitions per state)
-- `group_by_signature()` - O(n) with hash table
-
-### Phase 2: Merge Verification
-- `build_merge_sat()` - Create SAT instance for group
-- `solve_merges()` - Find optimal merges
-- `apply_merges()` - Redirect transitions
-
-### Phase 3: Cleanup
-- `remove_unreachable()` - Delete dead states
-- `renumber_states()` - Compact state IDs
+Both algorithms are O(n log n) due to sorting by signature.
 
 ## Expected Results
 
 For typical pattern sets:
-- **10-30% reduction** in NFA states
-- **5-15% reduction** in resulting DFA states
-- **Minimal overhead** (signature computation is fast)
+- **10-30% reduction** in NFA states from prefix merging
+- **5-15% reduction** in NFA states from suffix merging
+- **10-25% total reduction** in resulting DFA states
+- **Minimal overhead** (O(n log n) complexity)
 
 ## Integration Point
 
@@ -108,6 +85,97 @@ Pattern File → NFA Builder → [NFA Pre-Minimization] → Subset Construction 
 ```
 
 Pre-minimization runs between NFA construction and DFA conversion.
+
+## Configuration Options
+
+```c
+typedef struct {
+    bool enable_epsilon_elim;   // O(n) - safe, default: true
+    bool enable_epsilon_chain;  // O(n) - safe, default: true
+    bool enable_prune;          // O(n) - safe, default: true
+    bool enable_prefix_merge;   // O(n log n) - safe, default: true
+    bool enable_suffix_merge;   // O(n log n) - safe, default: true
+    
+    // Advanced options (disabled by default)
+    bool enable_landing_pad;    // O(n²) - superseded by suffix_merge
+    bool enable_merge;          // O(n²) - too aggressive
+    bool enable_sat;            // For bounded subproblems only
+} nfa_premin_options_t;
+```
+
+## Implementation Notes
+
+### Multi-Target Array (MTA) Fast Path
+
+The NFA builder uses an optimization for storing transitions:
+- **Single transitions**: Stored in `first_targets[symbol_id]` with `has_first_target[symbol_id]` flag
+- **Multiple transitions**: Stored in `mta_entry_t` array
+
+This means `mta_get_entry_count()` returns 0 for states with only single transitions. The suffix merging code must check both:
+1. `has_first_target[symbol_id]` and `first_targets[symbol_id]` for single transitions
+2. `mta_get_entry_count()` and `mta_get_entries()` for multiple transitions
+
+### Final State Deduplication
+
+Final state deduplication MUST run before suffix merging. This creates longer common suffixes by merging accepting states with identical:
+- `category_mask`
+- `eos_target`
+- `marker_count` and marker contents
+
+### Iterative Passes
+
+Both prefix and suffix merging use iterative passes (max 10) because:
+- After merging states at one level, their children/parents may become merge candidates
+- Each pass may enable new merge opportunities
+- Convergence is typically reached in 3-6 passes
+
+## Pattern Ordering Integration
+
+Pattern ordering is now integrated into the NFA builder pipeline, running before NFA construction:
+
+```
+Pattern File → [Pattern Ordering] → NFA Builder → [NFA Pre-Minimization] → Subset Construction
+```
+
+### Features
+
+1. **Prefix Tree Ordering**: Groups patterns with common prefixes using a trie structure
+2. **Duplicate Detection**: Warns and removes duplicate patterns (using full line comparison)
+3. **Fragment Reference Validation**: Validates fragment references with namespace semantics
+
+### Fragment Namespace Semantics
+
+Fragments follow namespace-qualified naming:
+
+- `((a::b))` - References fragment 'b' in namespace 'a' (explicit cross-namespace)
+- `((c))` - References fragment 'c' in the **same namespace** as the pattern
+
+Example:
+```
+[fragment:safe::digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:caution::word] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+
+[safe] ((digit))+     → Looks for safe::digit ✓
+[caution] ((word))+   → Looks for caution::word ✓
+[test] ((safe::digit))+ → Looks for safe::digit directly ✓
+[caution] ((digit))+  → ERROR: Looks for caution::digit (not defined)
+```
+
+### Implementation
+
+See `tools/pattern_order.c` and `tools/pattern_order.h` for the implementation.
+
+## Current Status
+
+| Feature | Status |
+|---------|--------|
+| Prefix Merging | ✅ Complete |
+| Suffix Merging | ✅ Complete |
+| MTA Fast-Path Handling | ✅ Fixed |
+| Pattern Ordering Integration | ✅ Complete |
+| Duplicate Detection | ✅ Complete |
+| Fragment Validation | ✅ Complete |
+| Namespace Semantics | ✅ Complete |
 
 ## Future Enhancements
 
