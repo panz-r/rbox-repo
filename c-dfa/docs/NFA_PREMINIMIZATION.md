@@ -93,11 +93,11 @@ typedef struct {
     bool enable_epsilon_elim;   // O(n) - safe, default: true
     bool enable_epsilon_chain;  // O(n) - safe, default: true
     bool enable_prune;          // O(n) - safe, default: true
-    bool enable_prefix_merge;   // O(n log n) - safe, default: true
-    bool enable_suffix_merge;   // O(n log n) - safe, default: true
+    bool enable_final_dedup;    // O(n log n) - safe, default: true
+    bool enable_bidirectional;  // O(n log n) - safe, default: true
     
     // Advanced options (disabled by default)
-    bool enable_landing_pad;    // O(n²) - superseded by suffix_merge
+    bool enable_landing_pad;    // O(n²) - superseded by bidirectional
     bool enable_merge;          // O(n²) - too aggressive
     bool enable_sat;            // For bounded subproblems only
 } nfa_premin_options_t;
@@ -105,26 +105,34 @@ typedef struct {
 
 ## Implementation Notes
 
+### Bidirectional Incremental Merging
+
+The core optimization combines prefix and suffix merging into an incremental
+fixpoint algorithm that:
+1. Processes only "dirty" states that may have new merge opportunities
+2. Alternates between prefix and suffix merging until no more merges
+3. Maintains O(n log n) overall complexity through amortized analysis
+
 ### Multi-Target Array (MTA) Fast Path
 
 The NFA builder uses an optimization for storing transitions:
 - **Single transitions**: Stored in `first_targets[symbol_id]` with `has_first_target[symbol_id]` flag
 - **Multiple transitions**: Stored in `mta_entry_t` array
 
-This means `mta_get_entry_count()` returns 0 for states with only single transitions. The suffix merging code must check both:
+This means `mta_get_entry_count()` returns 0 for states with only single transitions. The merging code must check both:
 1. `has_first_target[symbol_id]` and `first_targets[symbol_id]` for single transitions
 2. `mta_get_entry_count()` and `mta_get_entries()` for multiple transitions
 
 ### Final State Deduplication
 
-Final state deduplication MUST run before suffix merging. This creates longer common suffixes by merging accepting states with identical:
+Final state deduplication MUST run before bidirectional merging. This creates longer common suffixes by merging accepting states with identical:
 - `category_mask`
 - `eos_target`
 - `marker_count` and marker contents
 
 ### Iterative Passes
 
-Both prefix and suffix merging use iterative passes (max 10) because:
+Bidirectional merging uses iterative passes (max 20) because:
 - After merging states at one level, their children/parents may become merge candidates
 - Each pass may enable new merge opportunities
 - Convergence is typically reached in 3-6 passes

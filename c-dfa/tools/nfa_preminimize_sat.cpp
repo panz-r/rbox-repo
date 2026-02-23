@@ -145,7 +145,6 @@ static std::set<int> get_used_symbols(const nfa_state_t* nfa, int state_idx) {
 static std::map<int, int> verify_bisimulation_sat_partition(
     const nfa_state_t* nfa,
     const std::vector<int>& states,
-    int state_count,
     const int* partition_map
 ) {
     std::map<int, int> result;
@@ -439,7 +438,7 @@ extern "C" int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead
         VERBOSE_PRINT("Processing partition %d with %zu states\n", pg.first, states.size());
         
         // Run SAT verification
-        std::map<int, int> merges = verify_bisimulation_sat_partition(nfa, states, state_count, partition);
+        std::map<int, int> merges = verify_bisimulation_sat_partition(nfa, states, partition);
         
         // Merge results
         for (auto& m : merges) {

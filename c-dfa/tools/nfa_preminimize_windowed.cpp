@@ -88,7 +88,7 @@ static std::vector<int> get_successors(const nfa_state_t* nfa, int state_idx, in
  * Compute epsilon closure for a state.
  * Returns all states reachable via epsilon transitions (including the state itself).
  */
-static std::set<int> epsilon_closure(const nfa_state_t* nfa, int state_idx, int state_count, const bool* dead_states) {
+static std::set<int> epsilon_closure(const nfa_state_t* nfa, int state_idx, int /* state_count */, const bool* dead_states) {
     std::set<int> closure;
     std::queue<int> queue;
     

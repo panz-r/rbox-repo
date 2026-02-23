@@ -56,7 +56,7 @@ struct GreedyResult {
  */
 static GreedyResult run_greedy_detailed(build_dfa_state_t* state, int max_group_size,
                                         int* idx_to_char, int n,
-                                        std::map<std::pair<int, uint32_t>, std::vector<int>>& target_groups) {
+                                        std::map<std::pair<int, uint32_t>, std::vector<int>>& /* target_groups */) {
     GreedyResult result;
     result.total_rules = 0;
     result.saved = 0;
@@ -98,7 +98,9 @@ static GreedyResult run_greedy_detailed(build_dfa_state_t* state, int max_group_
 /**
  * Count consecutive ranges in a sorted list of character values.
  * A range of 3+ consecutive characters can be encoded as 1 rule.
+ * (Currently unused but kept for future optimization)
  */
+__attribute__((unused))
 static int count_range_rules(const std::vector<int>& chars, int* idx_to_char) {
     if (chars.empty()) return 0;
     
@@ -134,7 +136,7 @@ static int count_range_rules(const std::vector<int>& chars, int* idx_to_char) {
  *
  * This can improve upon greedy by considering rule ordering.
  */
-static int ordering_aware_compress(build_dfa_state_t* state, int max_group_size,
+static int ordering_aware_compress(build_dfa_state_t* /* state */, int /* max_group_size */,
                                    int* idx_to_char, int n,
                                    std::map<std::pair<int, uint32_t>, std::vector<int>>& target_groups) {
     std::vector<bool> assigned(n, false);
@@ -170,7 +172,7 @@ static int ordering_aware_compress(build_dfa_state_t* state, int max_group_size,
             
             // Look behind too
             for (size_t j = i; j > 0; j--) {
-                if (idx_to_char[sorted_chars[j-1]] == idx_to_char[sorted_chars[i]] - (i - j + 1)) {
+                if (idx_to_char[sorted_chars[j-1]] == idx_to_char[sorted_chars[i]] - (int)(i - j + 1)) {
                     consecutive++;
                 } else {
                     break;
@@ -207,7 +209,6 @@ static int ordering_aware_compress(build_dfa_state_t* state, int max_group_size,
             
             // Find consecutive unassigned range
             size_t range_start = i;
-            int start_val = idx_to_char[sorted_chars[i]];
             
             while (i < sorted_chars.size() && 
                    !assigned[sorted_chars[i]] &&
@@ -249,12 +250,10 @@ static int ordering_aware_compress(build_dfa_state_t* state, int max_group_size,
 extern "C" int sat_merge_rules_for_state(build_dfa_state_t* state, int max_group_size) {
     // Collect all characters with transitions
     int n = 0;
-    int char_to_idx[256];
     int idx_to_char[256];
     
     for (int c = 0; c < 256; c++) {
         if (state->transitions[c] >= 0) {
-            char_to_idx[c] = n;
             idx_to_char[n] = c;
             n++;
         }

@@ -4,9 +4,9 @@
  * Reduces NFA states before subset construction to minimize DFA blowup.
  * Focuses on:
  * 1. Epsilon elimination - bypass states connected only by epsilon
- * 2. Landing-pad removal - remove intermediate states from RDP parser
+ * 2. Bidirectional incremental merging - O(n log n) prefix/suffix merging
  * 3. Unreachable state pruning
- * 4. SAT-based bisimulation verification for safe state merging
+ * 4. Final state deduplication
  */
 
 #ifndef NFA_PREMINIMIZE_H
@@ -28,9 +28,9 @@ typedef struct {
     int unreachable_removed;  // Unreachable states removed
     int states_merged;        // States eliminated by merging
     int identical_merged;     // States merged by identical state detection
-    int prefix_merged;        // States merged by prefix merging
+    int prefix_merged;        // States merged by bidirectional merging
     int final_deduped;        // Final states deduplicated
-    int suffix_merged;        // States merged by suffix merging
+    int suffix_merged;        // States merged by suffix merging (deprecated)
     int sat_merged;           // States merged via SAT verification
 } nfa_premin_stats_t;
 
@@ -41,9 +41,8 @@ typedef struct {
  *   - enable_prune: Remove unreachable states (O(n))
  *   - enable_epsilon_elim: Bypass single epsilon pass-through states (O(n))
  *   - enable_epsilon_chain: Compress multi-hop epsilon chains (O(n))
- *   - enable_prefix_merge: Merge states with same incoming (source, symbol) and identical outgoing (O(n log n))
  *   - enable_final_dedup: Deduplicate equivalent final/accepting states (O(n log n))
- *   - enable_suffix_merge: Merge states with same outgoing (target, symbol) and identical incoming (O(n log n))
+ *   - enable_bidirectional: Bidirectional incremental merging (O(n log n))
  * 
  * Global optimizations (disabled by default, may not scale):
  *   - enable_merge: Full bisimulation reduction (O(n²))
@@ -58,9 +57,8 @@ typedef struct {
     bool enable_epsilon_chain;  // Enable epsilon chain compression (default: true)
     bool enable_landing_pad;    // Enable landing-pad removal (default: false)
     bool enable_prune;          // Enable unreachable state pruning (default: true)
-    bool enable_prefix_merge;   // Enable common prefix merging (default: true)
     bool enable_final_dedup;    // Enable final state deduplication (default: true)
-    bool enable_suffix_merge;   // Enable common suffix merging (default: true)
+    bool enable_bidirectional;  // Enable bidirectional incremental merging (default: true)
     bool enable_merge;          // Enable bisimulation merging (default: false)
     bool enable_identical;      // DISABLED: UNSAFE - NFA state merging can change language
     bool enable_sat;            // Enable SAT-based bisimulation verification (default: false)

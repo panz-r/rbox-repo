@@ -5,6 +5,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* Suppress pedantic warnings for flexible array members in C++ 
+ * This is a GCC/Clang extension that is widely supported */
+#if defined(__cplusplus) && defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#endif
+
 /**
  * DFA State - represents a single state in the DFA
  *
@@ -55,7 +62,7 @@ typedef struct __attribute__((packed)) {
     uint16_t flags;                   // DFA flags
     uint8_t identifier_length;        // Length of identifier (0-255)
     uint32_t metadata_offset;          // Offset to name table (absolute, from DFA base)
-    uint8_t identifier[];            // Identifier string (not null-terminated)
+    uint8_t identifier[];             // Identifier string (not null-terminated) - flexible array member
 } dfa_t;
 
 /**
@@ -216,7 +223,7 @@ typedef struct {
 typedef struct {
     uint16_t pattern_id;      // Pattern identifier
     uint16_t name_length;     // Length of capture name (excluding null terminator)
-    char name_data[];         // Capture name (not null-terminated)
+    char name_data[];         // Capture name (not null-terminated) - flexible array member
 } dfa_name_entry_t;
 
 /**
@@ -225,5 +232,9 @@ typedef struct {
  * Lists are terminated by MARKER_SENTINEL (0xFFFFFFFF).
  */
 typedef uint32_t dfa_marker_t;
+
+#if defined(__cplusplus) && defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 #endif // DFA_TYPES_H

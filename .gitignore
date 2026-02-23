@@ -1,4 +1,4 @@
-bin/*
+bin/
 *.so
 *.o
 */*.so
@@ -12,3 +12,4 @@ c-dfa/test_dfa_debug
 c-dfa/test_dfa_simple
 *.dfa
 *.nfa
+plans/

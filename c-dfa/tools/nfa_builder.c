@@ -2227,6 +2227,11 @@ void parse_advanced_pattern(const char* line) {
         return;
     }
 
+    // Skip ACCEPTANCE_MAPPING directive lines
+    if (strncmp(line, "ACCEPTANCE_MAPPING", 18) == 0) {
+        return;
+    }
+
     // CRITICAL: Validate input before any processing
     size_t line_len = strlen(line);
     if (!validate_pattern_input(line, line_len)) {
@@ -2893,7 +2898,7 @@ static bool validate_pattern_file(const char* spec_file) {
         }
         
         // Check for ACCEPTANCE_MAPPING directive
-        if (strncmp(line, "ACCEPTANCE_MAPPING", 19) == 0) {
+        if (strncmp(line, "ACCEPTANCE_MAPPING", 18) == 0) {
             if (flag_verbose_validation) {
                 fprintf(stderr, "  Line %d: Acceptance mapping\n", line_num);
             }
