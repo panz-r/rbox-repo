@@ -28,6 +28,8 @@
 #define EVAL_DEBUG_FLUSH() ((void)0)
 #endif
 
+#define MAX_MARKER_LIST_SIZE 1024
+
 // Machine state - Set once via dfa_init
 static const dfa_t* current_dfa = NULL;
 static size_t current_dfa_size = 0;
@@ -56,12 +58,31 @@ static bool get_capture_name_from_table(int capture_id, int pattern_id, char* bu
     }
 
     const char* base = (const char*)current_dfa;
+    
+    // Bounds check for metadata_offset
+    if (current_dfa->metadata_offset >= current_dfa_size ||
+        current_dfa->metadata_offset + 4 > current_dfa_size) {
+        return false;
+    }
+    
     uint32_t entry_count = *(const uint32_t*)(base + current_dfa->metadata_offset);
 
     const char* p = base + current_dfa->metadata_offset + 4;
+    const char* end = base + current_dfa_size;
+    
     for (uint32_t i = 0; i < entry_count; i++) {
+        // Bounds check for entry header
+        if (p + 4 > end) {
+            return false;
+        }
+        
         uint16_t entry_pattern_id = *(const uint16_t*)p;
         uint16_t name_len = *(const uint16_t*)(p + 2);
+
+        // Bounds check for name data
+        if (p + 4 + name_len > end) {
+            return false;
+        }
 
         if (entry_pattern_id == (uint16_t)pattern_id) {
             snprintf(buffer, buffer_size, "%.*s", name_len, p + 4);
@@ -94,12 +115,15 @@ static void add_capture(dfa_result_t* result, int capture_id, size_t start, size
 static void process_marker_list(const uint32_t* marker_base, size_t pos,
                                  uint16_t winning_pattern_id, uint8_t category_mask,
                                  capture_range_t* capture_stack, int* stack_depth,
-                                 dfa_result_t* result) {
+                                 dfa_result_t* result, size_t marker_max_count,
+                                 size_t marker_data_size) {
     if (!marker_base) return;
 
     bool filter_by_pattern = (category_mask != 0 && winning_pattern_id != UINT16_MAX);
 
-    for (int i = 0; marker_base[i] != MARKER_SENTINEL; i++) {
+    // Limit iterations to prevent reading out of bounds on malformed marker lists
+    // Also ensure we don't read past marker_data_size bytes
+    for (size_t i = 0; i < marker_max_count && (i + 1) * sizeof(uint32_t) <= marker_data_size && marker_base[i] != MARKER_SENTINEL; i++) {
         uint32_t m = marker_base[i];
         uint16_t pattern_id = MARKER_GET_PATTERN_ID(m);
         uint16_t capture_id = MARKER_GET_UID(m);
@@ -197,13 +221,13 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         return false;
     }
 
-    if (length == 0) length = strlen(input);
-#if DFA_EVAL_DEBUG
-    fprintf(stderr, "EVAL: input='%s', original_length=0, computed_length=%zu\n", input, length);
-    fprintf(stderr, "EVAL: About to check length==0, length=%zu\n", length);
-#endif
+    // Don't use strlen on potentially non-null-terminated input
+    // If length is 0, treat as empty string
     if (length == 0) {
+        // Empty input - check if initial state has category
 #if DFA_EVAL_DEBUG
+        fprintf(stderr, "EVAL: input='%s', original_length=0, computed_length=%zu\n", input, length);
+        fprintf(stderr, "EVAL: About to check length==0, length=%zu\n", length);
         fprintf(stderr, "EVAL: length=0 case - treating as empty string!\n");
 #endif
         const char* raw_base = (const char*)current_dfa;
@@ -212,7 +236,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         
         const dfa_state_t* curr = initial;
         uint8_t eos_cat = 0;
-        if (initial->eos_target != 0) {
+        if (initial->eos_target != 0 && initial->eos_target < current_dfa_size) {
             curr = (const dfa_state_t*)(raw_base + initial->eos_target);
             eos_cat = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
         }
@@ -251,6 +275,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
     
     uint32_t trace_buffer[MAX_TRACE_LENGTH];
     int trace_depth = 0;
+    size_t marker_data_size = 0;
     
     if (trace_depth < MAX_TRACE_LENGTH) {
         trace_buffer[trace_depth++] = (uint32_t)((const char*)curr - raw_base);
@@ -356,7 +381,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             curr->flags, source_category, source_accepting, source_eos_target);
 #endif
     
-    if (curr->eos_target != 0) {
+    if (curr->eos_target != 0 && curr->eos_target < current_dfa_size) {
         const dfa_state_t* eos = (const dfa_state_t*)(raw_base + curr->eos_target);
         curr = eos;
 #if DFA_EVAL_DEBUG
@@ -441,8 +466,12 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
                 for (uint16_t i = 0; i < from_state->transition_count; i++, r++) {
                     if (r->target == to_state_offset) {
-                        if (r->marker_offset != 0 && marker_base) {
+                        // Validate marker_offset is within bounds and has room for at least one marker
+                        if (r->marker_offset != 0 && marker_base && 
+                            r->marker_offset + sizeof(uint32_t) <= current_dfa_size) {
                             transition_markers = (const uint32_t*)((const uint8_t*)current_dfa + r->marker_offset);
+                            // Calculate available size for marker list
+                            marker_data_size = current_dfa_size - r->marker_offset;
                         }
                         break;
                     }
@@ -450,15 +479,18 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 
                 if (transition_markers) {
                     process_marker_list(transition_markers, t - 1, winning_pattern_id, mask,
-                                       capture_stack, &stack_depth, result);
+                                       capture_stack, &stack_depth, result, MAX_MARKER_LIST_SIZE, marker_data_size);
                 }
             }
 
             // Phase 4: Process EOS markers at the final position
-            if (curr->eos_marker_offset != 0 && marker_base) {
+            // Validate eos_marker_offset is within bounds and has room for at least one marker
+            if (curr->eos_marker_offset != 0 && marker_base && 
+                curr->eos_marker_offset + sizeof(uint32_t) <= current_dfa_size) {
                 const uint32_t* eos_markers = (const uint32_t*)((const uint8_t*)current_dfa + curr->eos_marker_offset);
+                marker_data_size = current_dfa_size - curr->eos_marker_offset;
                 process_marker_list(eos_markers, pos, winning_pattern_id, mask,
-                                   capture_stack, &stack_depth, result);
+                                   capture_stack, &stack_depth, result, MAX_MARKER_LIST_SIZE, marker_data_size);
             }
         }
     }

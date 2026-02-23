@@ -1,253 +1,186 @@
 // LibFuzzer harness for c-dfa DFA evaluator
-// Fuzzes dfa_evaluate() by running dfa_eval_wrapper as a subprocess
+// Fuzzes BOTH the DFA binary AND input strings
+// Input format: [dfa_size:4][dfa_data][num_strings:2][string1_len:2][string1]...
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <signal.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <limits.h>
-#include <libgen.h>
-#include <sys/stat.h>
 
-// Verbosity flag (set from environment)
+#include "../include/dfa.h"
+#include "../include/dfa_types.h"
+
+// Maximum sizes
+static const size_t MAX_DFA_SIZE = 1024 * 1024;  // 1 MB max DFA
+static const size_t MAX_STRING_SIZE = 4096;       // 4 KB max per string
+static const uint16_t MAX_STRINGS = 500;          // Max 500 strings per input
+
+// Verbosity flag
 static int g_verbose = 0;
 
-// Paths - will be resolved at runtime
-static const char* DFA_FILE = NULL;
-static const char* WRAPPER_PATH = NULL;
-static char dfa_file_buf[PATH_MAX];
-static char wrapper_path_buf[PATH_MAX];
+// Read little-endian values
+static inline uint32_t read_u32(const uint8_t* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | 
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
 
-// Maximum input size
-static const size_t MAX_INPUT_SIZE = 4096;
-
-// Determine paths based on the fuzzer's location
-static void init_paths() {
-    // Get the path to the current executable
-    char exe_path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path)-1);
-    if (len == -1) {
-        fprintf(stderr, "ERROR: Cannot read /proc/self/exe, using relative paths\n");
-        DFA_FILE = "../readonlybox.dfa";
-        WRAPPER_PATH = "../tools/dfa_eval_wrapper";
-        return;
-    }
-    exe_path[len] = '\0';
-
-    // Get the directory containing the executable
-    char exe_dir[PATH_MAX];
-    strncpy(exe_dir, exe_path, sizeof(exe_dir));
-    exe_dir[sizeof(exe_dir)-1] = '\0';
-    char* exe_dir_ptr = dirname(exe_dir);
-
-    // Construct paths
-    char tmp_path[PATH_MAX];
-    if (realpath(exe_dir_ptr, tmp_path) == NULL) {
-        fprintf(stderr, "WARNING: realpath failed for %s: %s\n", exe_dir_ptr, strerror(errno));
-        DFA_FILE = "../readonlybox.dfa";
-        WRAPPER_PATH = "../tools/dfa_eval_wrapper";
-        return;
-    }
-
-    snprintf(dfa_file_buf, sizeof(dfa_file_buf), "%s/../readonlybox.dfa", tmp_path);
-    snprintf(wrapper_path_buf, sizeof(wrapper_path_buf), "%s/../tools/dfa_eval_wrapper", tmp_path);
-
-    // Resolve to absolute paths
-    char resolved[PATH_MAX];
-    if (realpath(dfa_file_buf, resolved) != NULL) {
-        strncpy(dfa_file_buf, resolved, sizeof(dfa_file_buf));
-    }
-    if (realpath(wrapper_path_buf, resolved) != NULL) {
-        strncpy(wrapper_path_buf, resolved, sizeof(wrapper_path_buf));
-    }
-
-    DFA_FILE = dfa_file_buf;
-    WRAPPER_PATH = wrapper_path_buf;
-
-    if (g_verbose) {
-        fprintf(stderr, "DEBUG: DFA file: %s\n", DFA_FILE);
-        fprintf(stderr, "DEBUG: Wrapper path: %s\n", WRAPPER_PATH);
-    }
-
-    // Check if wrapper exists
-    struct stat st;
-    if (stat(WRAPPER_PATH, &st) != 0) {
-        fprintf(stderr, "ERROR: dfa_eval_wrapper not found at %s: %s\n", WRAPPER_PATH, strerror(errno));
-        fprintf(stderr, "Please build the wrapper: make -C ../tools dfa_eval_wrapper\n");
-    } else if (!S_ISREG(st.st_mode) || (st.st_mode & S_IXUSR) == 0) {
-        fprintf(stderr, "ERROR: dfa_eval_wrapper at %s is not executable\n", WRAPPER_PATH);
-    }
+static inline uint16_t read_u16(const uint8_t* p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
 
 // LLVMFuzzerInitialize
 extern "C" void LLVMFuzzerInitialize(void) {
-    // Check for verbosity flag via environment variable
     const char* verbose = getenv("DFA_EVAL_FUZZER_VERBOSE");
     if (verbose && (*verbose == '1' || *verbose == 'y' || *verbose == 'Y')) {
         g_verbose = 1;
     }
-    init_paths();
+    
+    // Ignore SIGPIPE (can happen in forked subprocess)
+    signal(SIGPIPE, SIG_IGN);
 }
 
-// Run dfa_eval_wrapper in a subprocess
-// Returns: 0 = success, 1 = crash detected, 2 = validation error
-static int run_dfa_eval_wrapper(const char* input, size_t length) {
-    // Create a pipe to capture output
-    int pipefd[2];
-    if (pipe(pipefd) < 0) {
-        perror("pipe");
-        return 0; // Skip on error
+// Validate DFA sanity checks after evaluation
+static bool validate_result(const dfa_result_t* result, size_t input_len) {
+    // Capture count should fit in array
+    if (result->capture_count > DFA_MAX_CAPTURES) {
+        fprintf(stderr, "BUG: capture_count=%d exceeds MAX_CAPTURES=%d\n",
+                result->capture_count, DFA_MAX_CAPTURES);
+        return false;
     }
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        perror("fork");
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return 0; // Skip on error
+    // Captures should be in bounds
+    for (int i = 0; i < result->capture_count; i++) {
+        if (result->captures[i].start > input_len || 
+            result->captures[i].end > input_len) {
+            fprintf(stderr, "BUG: capture %d out of bounds: start=%zu end=%zu input_len=%zu\n",
+                    i, result->captures[i].start, result->captures[i].end, input_len);
+            return false;
+        }
+        if (result->captures[i].start > result->captures[i].end) {
+            fprintf(stderr, "BUG: capture %d start > end: %zu > %zu\n",
+                    i, result->captures[i].start, result->captures[i].end);
+            return false;
+        }
     }
 
-    if (pid == 0) {
-        // Child process
-        close(pipefd[0]); // Close read end
+    // Category should be valid (0-8: UNKNOWN, SAFE, CAUTION, MODIFYING, DANGEROUS, NETWORK, ADMIN, BUILD, CONTAINER)
+    if (result->category > DFA_CMD_CONTAINER) {
+        fprintf(stderr, "BUG: invalid category: %d\n", result->category);
+        return false;
+    }
 
-        // Redirect stdout to pipe
-        dup2(pipefd[1], STDOUT_FILENO);
-        // Redirect stderr to /dev/null to avoid noise
-        int devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0) {
-            dup2(devnull, STDERR_FILENO);
-            if (devnull > 2) close(devnull);
-        }
-        close(pipefd[1]);
+    return true;
+}
 
-        // Ensure input is null-terminated for exec
-        char* input_copy = (char*)malloc(length + 1);
-        if (!input_copy) {
-            _exit(127);
-        }
-        memcpy(input_copy, input, length);
-        input_copy[length] = '\0';
-
+// Try to initialize and evaluate with a DFA blob
+// Returns: 0 = OK, 1 = bug found, -1 = invalid input (skip)
+static int test_dfa_with_strings(const uint8_t* dfa_data, size_t dfa_size,
+                                  const uint8_t* strings_data, size_t strings_size) {
+    // Try to initialize the DFA
+    // dfa_init should handle malformed input gracefully
+    if (!dfa_init(dfa_data, dfa_size)) {
+        // Initialization failed - this is OK, invalid DFA
         if (g_verbose) {
-            // Can't print here since stderr is redirected
-            // But we can write to the pipe
-            dprintf(STDOUT_FILENO, "DEBUG: Running %s %s '%s'\n", WRAPPER_PATH, DFA_FILE, input_copy);
+            fprintf(stderr, "DEBUG: DFA init failed (invalid DFA)\n");
         }
-
-        // Execute wrapper
-        execl(WRAPPER_PATH, "dfa_eval_wrapper", DFA_FILE, input_copy, (char*)NULL);
-
-        // If exec fails
-        int saved_errno = errno;
-        int errfd = open("/dev/stderr", O_WRONLY);
-        if (errfd >= 0) {
-            dprintf(errfd, "ERROR: execl failed: %s (errno=%d)\n", strerror(saved_errno), saved_errno);
-            close(errfd);
-        }
-        free(input_copy);
-        _exit(127);
+        return -1;  // Skip, not a bug
     }
 
-    // Parent process
-    close(pipefd[1]); // Close write end
-
-    // Read output from child
-    char output_buf[512];
-    ssize_t n = read(pipefd[0], output_buf, sizeof(output_buf) - 1);
-    if (n > 0) {
-        output_buf[n] = '\0';
-        if (g_verbose) {
-            fprintf(stderr, "DEBUG: Wrapper output: %s", output_buf);
-        }
-    }
-    close(pipefd[0]);
-
-    // Wait for child
-    int status;
-    if (waitpid(pid, &status, 0) < 0) {
-        perror("waitpid");
-        return 0;
-    }
-
-    if (WIFSIGNALED(status)) {
-        // Child crashed!
-        int sig = WTERMSIG(status);
-        fprintf(stderr, "\n=== CRASH DETECTED ===\n");
-        fprintf(stderr, "DFA evaluator crashed with signal %d (%s)\n",
-                sig, strsignal(sig));
-        if (WCOREDUMP(status)) {
-            fprintf(stderr, "Core dump produced\n");
-        }
-        return 1;
-    }
-
-    if (WIFEXITED(status)) {
-        int code = WEXITSTATUS(status);
-        switch (code) {
-            case 0:
-                // Success
-                break;
-            case 1:
-                // Validation error - this is a bug!
-                fprintf(stderr, "\n=== VALIDATION ERROR ===\n");
-                fprintf(stderr, "DFA evaluator detected an internal error\n");
-                return 2;
-            case 2:
-                // Initialization error
-                fprintf(stderr, "WARNING: DFA initialization failed\n");
-                break;
-            case 127:
-                fprintf(stderr, "ERROR: dfa_eval_wrapper exec failed\n");
-                break;
-            default:
-                fprintf(stderr, "WARNING: Unexpected exit code %d\n", code);
-                break;
+    // Parse string data
+    size_t pos = 0;
+    uint16_t num_strings = 0;
+    
+    if (strings_size >= 2) {
+        num_strings = read_u16(strings_data);
+        pos = 2;
+        if (num_strings > MAX_STRINGS) {
+            num_strings = MAX_STRINGS;
         }
     }
 
-    return 0;
+    int bugs_found = 0;
+
+    // Evaluate each string
+    for (uint16_t i = 0; i < num_strings && pos + 2 <= strings_size; i++) {
+        uint16_t str_len = read_u16(strings_data + pos);
+        pos += 2;
+        
+        // Clamp string length
+        if (str_len > MAX_STRING_SIZE) {
+            str_len = MAX_STRING_SIZE;
+        }
+        
+        // Check if we have enough data
+        if (pos + str_len > strings_size) {
+            str_len = (uint16_t)(strings_size - pos);
+        }
+        
+        const char* input = (const char*)(strings_data + pos);
+        pos += str_len;
+        
+        // Evaluate the string against the DFA
+        dfa_result_t result;
+        memset(&result, 0, sizeof(result));
+        
+        bool ok = dfa_evaluate_with_limit(input, str_len, &result, DFA_MAX_CAPTURES);
+        
+        if (ok) {
+            // Validate result sanity
+            if (!validate_result(&result, str_len)) {
+                fprintf(stderr, "  Input string %d: \"", i);
+                fwrite(input, 1, str_len > 100 ? 100 : str_len, stderr);
+                if (str_len > 100) fprintf(stderr, "...");
+                fprintf(stderr, "\"\n");
+                bugs_found++;
+            }
+        }
+        // Don't call dfa_reset() - it clears current_dfa pointer
+        // Each evaluation starts fresh from initial state anyway
+    }
+    
+    return bugs_found > 0 ? 1 : 0;
 }
 
 // LLVMFuzzerTestOneInput - main fuzzing entry point
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
-    // Limit input size
-    if (size > MAX_INPUT_SIZE) {
-        size = MAX_INPUT_SIZE;
-    }
-
-    if (size == 0) {
+    // Need at least 6 bytes: [dfa_size:4][num_strings:2]
+    if (size < 6) {
         return 0;
     }
-
-    // Check that wrapper exists
-    struct stat st;
-    if (!WRAPPER_PATH || stat(WRAPPER_PATH, &st) != 0) {
-        static int warned = 0;
-        if (!warned) {
-            fprintf(stderr, "ERROR: dfa_eval_wrapper not available, skipping inputs\n");
-            warned = 1;
+    
+    // Parse input format:
+    // [dfa_size:4][dfa_data][num_strings:2][strings...]
+    
+    uint32_t dfa_size = read_u32(data);
+    
+    // Sanity check DFA size
+    if (dfa_size > MAX_DFA_SIZE || dfa_size < 16) {
+        return 0;  // Skip, invalid size
+    }
+    
+    // Check if we have enough data for DFA
+    if (4 + dfa_size + 2 > size) {
+        // Not enough data - adjust dfa_size
+        dfa_size = (uint32_t)(size - 6);
+        if (dfa_size < 16) {
+            return 0;  // Too small
         }
-        return 0;
     }
-
-    // Run evaluation in subprocess via wrapper
-    int result = run_dfa_eval_wrapper((const char*)data, size);
-
-    // If crash or validation error detected, abort to signal LibFuzzer
-    if (result != 0) {
-        fprintf(stderr, "Offending input (size %zu):\n", size);
-        fwrite(data, 1, size > 200 ? 200 : size, stderr);
-        if (size > 200) fprintf(stderr, "...");
-        fprintf(stderr, "\n");
+    
+    const uint8_t* dfa_data = data + 4;
+    const uint8_t* strings_data = data + 4 + dfa_size;
+    size_t strings_size = size - 4 - dfa_size;
+    
+    // Test the DFA with the strings
+    int result = test_dfa_with_strings(dfa_data, dfa_size, strings_data, strings_size);
+    
+    if (result == 1) {
+        // Bug found - abort to signal LibFuzzer
+        fprintf(stderr, "BUG FOUND in DFA evaluation!\n");
         abort();
     }
-
+    
     return 0;
 }

@@ -43,11 +43,11 @@ trap cleanup EXIT INT TERM
 case "$FUZZER_TYPE" in
     dfa)
         FUZZER_BIN="./dfa_eval_fuzzer"
-        CORPUS="corpus/seed/dfa_eval"
-        INTERESTING="corpus/interesting/dfa_eval"
+        CORPUS="corpus/seed/dfa_binary"
+        INTERESTING="corpus/interesting/dfa_binary"
         ARTIFACT_PREFIX="crashes/dfa_eval_"
-        MAX_LEN=4096
-        JOBS=4
+        MAX_LEN=131072
+        JOBS=2
         ;;
     pattern)
         FUZZER_BIN="./pattern_parse_fuzzer"

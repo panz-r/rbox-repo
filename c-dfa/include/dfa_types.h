@@ -181,6 +181,8 @@ typedef enum {
     DFA_CMD_DANGEROUS,
     DFA_CMD_NETWORK,
     DFA_CMD_ADMIN,
+    DFA_CMD_BUILD,
+    DFA_CMD_CONTAINER,
 } dfa_command_category_t;
 
 /**

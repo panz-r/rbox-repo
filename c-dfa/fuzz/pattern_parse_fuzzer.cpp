@@ -19,7 +19,7 @@ static const char* NFL_BUILDER_PATH = "../tools/nfa_builder";
 static const size_t MAX_PATTERN_SIZE = 8192;
 
 // Resource limits for child process
-static const rlim_t MAX_MEMORY = 2ULL * 1024 * 1024 * 1024; // 2 GB address space limit
+static const rlim_t MAX_MEMORY = 8ULL * 1024 * 1024 * 1024; // 8 GB address space limit (mcmodel=medium needs more)
 static const rlim_t MAX_CPU_TIME = 1; // 1 second CPU time
 
 // LLVMFuzzerInitialize - called once at startup
