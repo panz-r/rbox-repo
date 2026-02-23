@@ -9,6 +9,8 @@
 
 static int total_tests_run = 0;
 static int total_tests_passed = 0;
+static int total_groups_run = 0;
+static int total_groups_failed = 0;
 static const char* build_dir = "build_test";
 static const char* minimize_algo = "--minimize-moore";
 static bool use_compress_sat = false;
@@ -117,6 +119,9 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
     } else if (strncmp(filename, "stress_test.txt", 15) == 0) {
         // Special case for stress test at root
         snprintf(patterns_path, sizeof(patterns_path), "patterns/%s", filename);
+    } else if (strchr(filename, '/') != NULL) {
+        // Already has subdirectory prefix (e.g., "captures/with_captures.txt")
+        snprintf(patterns_path, sizeof(patterns_path), "patterns/%s", filename);
     } else {
         // Map filename to subdirectory
         // Strip "patterns_" prefix if present
@@ -221,7 +226,7 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
 
     for (int i = 0; i < count; i++) {
         dfa_result_t result;
-        dfa_evaluate(cases[i].input, 0, &result);
+        dfa_evaluate(cases[i].input, strlen(cases[i].input), &result);
         bool passed = true;
 
         // Check match status
@@ -324,6 +329,14 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
     }
 
     printf("  Result: %d/%d passed\n", group_passed, group_run);
+    
+    // Track failing groups
+    total_groups_run++;
+    if (group_passed < group_run) {
+        total_groups_failed++;
+        fprintf(stderr, "[ERROR] Test group '%s' had %d failures\n", group_name, group_run - group_passed);
+    }
+    
     dfa_reset();
     free(data);
     remove(dfa_file);
@@ -436,15 +449,16 @@ static void run_character_class_tests(void) {
         {"cmd a", true, 5, CAT_MASK_SAFE, "cmd ((abc))+ matches single"},
         // NOTE: cmd matches because patterns_character_classes.txt has cmd ((abc))* and cmd ((abc))? 
         // which match empty. In combined DFA, cmd matches via those patterns.
-        {"cmd", true, 3, CAT_MASK_SAFE, "cmd matches (via cmd ((abc))* or cmd ((abc))?)"},
+        // Category is not checked since multiple patterns with different categories match
+        {"cmd", true, 3, 0, "cmd matches (via cmd ((abc))* or cmd ((abc))?)"},
         
         // Fragment with quantifier *
         {"cmd abc", true, 7, CAT_MASK_SAFE, "cmd ((abc))* matches 'abc'"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "cmd ((abc))* matches empty"},
+        {"cmd", true, 3, 0, "cmd ((abc))* matches empty"},
         
         // Fragment with quantifier ?
         {"cmd a", true, 5, CAT_MASK_SAFE, "cmd ((abc))? matches 'a'"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "cmd ((abc))? matches empty"},
+        {"cmd", true, 3, 0, "cmd ((abc))? matches empty"},
         
         // Quoted characters
         {"cmd a", true, 5, CAT_MASK_SAFE, "cmd 'a' matches 'a'"},
@@ -454,7 +468,7 @@ static void run_character_class_tests(void) {
         
         // Quoted with quantifier
         {"cmd aaa", true, 7, CAT_MASK_SAFE, "cmd 'a'+ matches 'aaa'"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "cmd 'a'* matches empty"},
+        {"cmd", true, 3, 0, "cmd 'a'* matches empty"},
         
         // Nested fragments
         {"cmd a", true, 5, CAT_MASK_SAFE, "nested fragment matches"},
@@ -464,7 +478,7 @@ static void run_character_class_tests(void) {
         
         // Empty alternation
         {"cmd a", true, 5, CAT_MASK_SAFE, "cmd (a|) matches 'a'"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "cmd (a|) matches empty"},
+        {"cmd", true, 3, 0, "cmd (a|) matches empty"},
         {"cmd abc", true, 7, CAT_MASK_SAFE, "cmd (abc|) matches 'abc'"},
         
         // Alternation with fragments
@@ -499,7 +513,7 @@ static void run_character_class_tests(void) {
         
         // NEW: Empty alternation variants
         {"cmd x", true, 5, CAT_MASK_SAFE, "empty alt (x|)"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "empty alt (|)"},
+        {"cmd", true, 3, 0, "empty alt (|)"},
     };
 
     run_test_group("CHARACTER CLASS TESTS", "patterns_character_classes.txt",
@@ -1041,28 +1055,119 @@ static void run_test_pattern_tests(void) {
                    "build_test/test_patterns.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
-// Capture tests temporarily disabled due to NFA-to-DFA hang with capture markers
-// These are placeholders that build/load DFA but run no test cases
+// Capture tests - now working after NFA-to-DFA fixes
+// These tests verify capture group functionality which is critical for the project
 
 static void run_with_captures_tests(void) {
-    // Skip: NFA-to-DFA conversion hangs with capture markers (known bug)
-    TestCase cases[1] = {0};
+    // Tests for patterns/captures/with_captures.txt
+    // Tests git commands, file operations with captures
+    TestCase cases[] = {
+        // Git commands (no capture groups, just matching)
+        TEST_CASE("git status", true, 10, 0, "git status matches"),
+        TEST_CASE("git branch -a", true, 13, 0, "git branch -a matches"),
+        TEST_CASE("git log -n 1", true, 12, 0, "git log -n 1 matches"),
+        TEST_CASE("git log -n 5", true, 12, 0, "git log -n 5 matches"),
+        TEST_CASE("git log -n 10", true, 13, 0, "git log -n 10 matches"),
+        TEST_CASE("git log -n 12345", true, 16, 0, "git log -n 12345 matches"),
+        TEST_CASE("git log --oneline", true, 17, 0, "git log --oneline matches"),
+        TEST_CASE("git log --graph", true, 15, 0, "git log --graph matches"),
+        TEST_CASE("git remote get-url origin", true, 25, 0, "git remote matches"),
+        TEST_CASE("git worktree list", true, 17, 0, "git worktree matches"),
+        TEST_CASE("git show", true, 8, 0, "git show matches"),
+        TEST_CASE("git show HEAD", true, 13, 0, "git show HEAD matches"),
+        TEST_CASE("git diff", true, 8, 0, "git diff matches"),
+        TEST_CASE("git diff HEAD", true, 13, 0, "git diff HEAD matches"),
+        TEST_CASE("git ls-files", true, 12, 0, "git ls-files matches"),
+        TEST_CASE("git tag -l", true, 10, 0, "git tag matches"),
+        TEST_CASE("git config --list", true, 17, 0, "git config matches"),
+        // File operations with captures - patterns use C::LOWERCASE fragment
+        // Pattern: cp <src>((C::LOWERCASE))+\.txt</src> <dst>((C::LOWERCASE))+\.txt</dst>
+        TEST_CASE("cp abc.txt xyz.txt", true, 18, 0, "cp with captures matches"),
+        TEST_CASE("cp src.txt dst.txt", true, 18, 0, "cp src.txt dst.txt matches"),
+        // Pattern: mv <old>((C::LOWERCASE))+\.txt</old> <new>((C::LOWERCASE))+\.txt</new>
+        TEST_CASE("mv old.txt new.txt", true, 18, 0, "mv with captures matches"),
+        TEST_CASE("mv abc.txt xyz.txt", true, 18, 0, "mv abc.txt xyz.txt matches"),
+        // Pattern: rsync -avz <src>((C::LOWERCASE))+/</src> <dest>((C::LOWERCASE))+/</dest>
+        TEST_CASE("rsync -avz src/ dest/", true, 21, 0, "rsync with captures matches"),
+        TEST_CASE("rsync -avz abc/ xyz/", true, 20, 0, "rsync abc/ xyz/ matches"),
+        // Pattern: echo <w1>((C::LOWERCASE))+</w1> <w2>((C::LOWERCASE))+</w2>
+        TEST_CASE("echo hello world", true, 16, 0, "echo with captures matches"),
+        TEST_CASE("echo abc xyz", true, 12, 0, "echo abc xyz matches"),
+        // Negative tests
+        TEST_CASE("git commit -m 'test'", false, 0, 0, "git commit should not match"),
+        TEST_CASE("rm file.txt", false, 0, 0, "rm should not match"),
+        TEST_CASE("invalid command", false, 0, 0, "invalid should not match"),
+    };
     run_test_group("WITH CAPTURES TESTS", "captures/with_captures.txt",
-                   "build_test/with_captures.dfa", cases, 0);
+                   "build_test/with_captures.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_capture_simple_tests(void) {
-    // Skip: NFA-to-DFA conversion hangs with capture markers (known bug)
-    TestCase cases[1] = {0};
+    // Tests for patterns/captures/capture_simple.txt
+    // Tests git log -n, cat, echo, head, tail, grep with captures
+    TestCase cases[] = {
+        // git log -n with number capture
+        TEST_CASE("git log -n 1", true, 12, 0, "git log -n 1 matches"),
+        TEST_CASE("git log -n 5", true, 12, 0, "git log -n 5 matches"),
+        TEST_CASE("git log -n 100", true, 14, 0, "git log -n 100 matches"),
+        TEST_CASE("git log -n 999", true, 14, 0, "git log -n 999 matches"),
+        // cat with file capture - pattern: cat <file>((alphanum))+</file>
+        // alphanum = lowercase|uppercase|digit|_|-, no extension
+        TEST_CASE("cat file", true, 8, 0, "cat file matches"),
+        TEST_CASE("cat test_file", true, 13, 0, "cat test_file matches"),
+        TEST_CASE("cat my-file", true, 11, 0, "cat my-file matches"),
+        TEST_CASE("cat a", true, 5, 0, "cat a matches"),
+        // echo with word capture - pattern: echo <msg>((lowercase))+</msg>
+        TEST_CASE("echo hello", true, 10, 0, "echo hello matches"),
+        TEST_CASE("echo world", true, 10, 0, "echo world matches"),
+        TEST_CASE("echo test", true, 9, 0, "echo test matches"),
+        // head with captures - pattern: head -n <lines>((digit))+</lines> <file>((alphanum))+\.txt</file>
+        TEST_CASE("head -n 10 file.txt", true, 19, 0, "head -n 10 file.txt matches"),
+        TEST_CASE("head -n 5 test.txt", true, 18, 0, "head -n 5 test.txt matches"),
+        TEST_CASE("head -n 1 a.txt", true, 15, 0, "head -n 1 a.txt matches"),
+        // tail with captures - pattern: tail -n <lines>((digit))+</lines> <file>((alphanum))+\.txt</file>
+        TEST_CASE("tail -n 5 file.txt", true, 18, 0, "tail -n 5 file.txt matches"),
+        TEST_CASE("tail -n 20 test.txt", true, 19, 0, "tail -n 20 test.txt matches"),
+        TEST_CASE("tail -n 1 a.txt", true, 15, 0, "tail -n 1 a.txt matches"),
+        // grep with captures - pattern: grep <pattern>((lowercase))+</pattern> <file>((alphanum))+\.txt</file>
+        TEST_CASE("grep pattern file.txt", true, 21, 0, "grep pattern file.txt matches"),
+        TEST_CASE("grep error test.txt", true, 19, 0, "grep error test.txt matches"),
+        TEST_CASE("grep foo a.txt", true, 14, 0, "grep foo a.txt matches"),
+        // Negative tests
+        TEST_CASE("git log", false, 0, 0, "git log without -n should not match"),
+        TEST_CASE("cat", false, 0, 0, "cat without file should not match"),
+        TEST_CASE("echo", false, 0, 0, "echo without word should not match"),
+        TEST_CASE("invalid", false, 0, 0, "invalid should not match"),
+    };
     run_test_group("CAPTURE SIMPLE TESTS", "captures/capture_simple.txt",
-                   "build_test/capture_simple.dfa", cases, 0);
+                   "build_test/capture_simple.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_capture_test_tests(void) {
-    // Skip: NFA-to-DFA conversion hangs with capture markers (known bug)
-    TestCase cases[1] = {0};
+    // Tests for patterns/captures/capture_http.txt
+    // Tests HTTP request parsing and curl command captures
+    TestCase cases[] = {
+        // GET requests - pattern: GET /api/<resource>((HTTP::LOWER))+</resource> HTTP/1\.1
+        TEST_CASE("GET /api/users HTTP/1.1", true, 23, 0, "GET /api/users matches"),
+        TEST_CASE("GET /api/data HTTP/1.1", true, 22, 0, "GET /api/data matches"),
+        TEST_CASE("GET /api/test HTTP/1.1", true, 22, 0, "GET /api/test matches"),
+        // POST requests - pattern: POST /api/<resource>((HTTP::LOWER))+</resource> HTTP/1\.1
+        TEST_CASE("POST /api/users HTTP/1.1", true, 24, 0, "POST /api/users matches"),
+        TEST_CASE("POST /api/data HTTP/1.1", true, 23, 0, "POST /api/data matches"),
+        TEST_CASE("POST /api/test HTTP/1.1", true, 23, 0, "POST /api/test matches"),
+        // curl with method capture - pattern: curl -X <method>((HTTP::UPPER))+</method> http://api.example.com
+        TEST_CASE("curl -X GET http://api.example.com", true, 34, 0, "curl -X GET matches"),
+        TEST_CASE("curl -X POST http://api.example.com", true, 35, 0, "curl -X POST matches"),
+        TEST_CASE("curl -X PUT http://api.example.com", true, 34, 0, "curl -X PUT matches"),
+        // Negative tests
+        TEST_CASE("GET /api/users HTTP/1.0", false, 0, 0, "HTTP/1.0 should not match (expects 1.1)"),
+        TEST_CASE("DELETE /api/users HTTP/1.1", false, 0, 0, "DELETE method should not match"),
+        TEST_CASE("GET /api/ HTTP/1.1", false, 0, 0, "empty resource should not match"),
+        TEST_CASE("curl http://api.example.com", false, 0, 0, "curl without -X should not match"),
+        TEST_CASE("INVALID", false, 0, 0, "invalid should not match"),
+    };
     run_test_group("CAPTURE TEST TESTS", "captures/capture_http.txt",
-                   "build_test/capture_http.dfa", cases, 0);
+                   "build_test/capture_http.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 int main(int argc, char* argv[]) {
@@ -1112,6 +1217,8 @@ int main(int argc, char* argv[]) {
 
     total_tests_run = 0;
     total_tests_passed = 0;
+    total_groups_run = 0;
+    total_groups_failed = 0;
 
     if (test_set_mask & TEST_SET_A) {
         printf("--- TEST SET A: Core + Command Tests ---\n");
@@ -1185,12 +1292,16 @@ int main(int argc, char* argv[]) {
     print_separator();
     printf("=================================================\n");
     printf("SUMMARY: %d/%d passed\n", total_tests_passed, total_tests_run);
+    if (total_groups_failed > 0) {
+        fprintf(stderr, "\n[ERROR] %d of %d test groups had failures!\n", total_groups_failed, total_groups_run);
+        printf("FAILING GROUPS: %d of %d\n", total_groups_failed, total_groups_run);
+    }
     printf("=================================================\n");
 
     // Clean up only the files we tracked during this test run
     cleanup_tracked_files();
 
-    return 0;
+    return (total_tests_passed < total_tests_run) ? 1 : 0;
 }
 
 // ============================================================================
@@ -1565,7 +1676,7 @@ static void run_empty_matching_tests(void) {
         {"a", true, 1, CAT_MASK_SAFE, "|a matches a"},
     };
 
-    run_test_group("EMPTY MATCHING TESTS", "patterns_empty_matching.txt",
+    run_test_group("EMPTY MATCHING TESTS", "empty_matching.txt",
                    "build_test/empty_matching.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
@@ -1645,15 +1756,16 @@ static void run_nested_capture_tests(void) {
     TestCase cases[] = {
         // Nested captures: cmd x<outer>a<inner>((LETTER))+</inner>d</outer>y
         // Pattern requires: cmd x a LETTER+ d y
-        // "cmd xabbbcdy" = 12 chars
+        // "cmd xabbbcdy" = 12 chars (a + bbbc + d)
         {"cmd xabbbcdy", true, 0, CAT_MASK_SAFE, "nested captures match full string"},
-        {"cmd xabcy", true, 0, CAT_MASK_SAFE, "nested captures match short string"},
+        // "cmd xabdy" = 9 chars (a + b + d) - needs at least one LETTER between a and d
+        {"cmd xabdy", true, 0, CAT_MASK_SAFE, "nested captures match short string"},
         // These fail due to + quantifier bug (matching empty):
         // {"cmd xay", false, 0, 0, "should NOT match xay (needs LETTER+)"},
         {"cmd xad y", false, 0, 0, "should NOT match with space"},
         {"abcd", false, 0, 0, "should NOT match without prefix"},
     };
 
-    run_test_group("NESTED CAPTURE TESTS", "patterns_nested_capture.txt",
+    run_test_group("NESTED CAPTURE TESTS", "nested_capture.txt",
                    "build_test/nested_capture.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }

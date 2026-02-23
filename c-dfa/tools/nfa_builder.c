@@ -162,6 +162,7 @@ static int nfa_state_count = 0;
 static int pattern_count = 0;
 static int current_pattern_index = 0;  // Track which pattern we're building
 static uint8_t current_pattern_cat_mask = 0x01;  // Category mask for current pattern (computed from #ACCEPTANCE_MAPPING)
+static bool parsing_fragment_value = false;  // True when parsing fragment definition (not main pattern)
 static StateSignature* signature_table[SIGNATURE_TABLE_SIZE] = {NULL};
 
 // CONSERVATIVE SHARING: Track states that should NOT be shared
@@ -1065,14 +1066,21 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 
     // Parse the fragment value starting from frag_start
     // For multi-char fragments (without alternation), skip first char since we handled it
+    // CRITICAL: Set parsing_fragment_value flag to prevent marking states as accepting
+    // Fragment values are sub-patterns, not complete patterns, so their end is NOT a pattern end.
     int frag_pos = 0;
     int frag_end;
+    bool saved_parsing_fragment = parsing_fragment_value;
+    parsing_fragment_value = true;
+    
     if (!has_alternation && frag_value[0] != '\0' && frag_value[1] != '\0') {
         frag_pos = 1;  // Skip first char
         frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
     } else {
         frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
     }
+    
+    parsing_fragment_value = saved_parsing_fragment;
 
     // For fragments used in sequence (start_state != 0 and has_alternation),
     // we need to connect the fragment's exit to allow continuation to next fragment
@@ -1702,7 +1710,9 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
         // while still allowing (a|)b to match "b"
         // CRITICAL FIX: Don't include followed_by_plus - + quantifier requires at least one match
         // and should NOT be marked as is_eos_target (which allows empty matching)
-        if (current_pattern_index >= 0) {
+        // CRITICAL FIX 2: Don't mark as accepting when parsing fragment values - fragments are sub-patterns
+        // that will be embedded in larger patterns, so their end is NOT the pattern end.
+        if (current_pattern_index >= 0 && !parsing_fragment_value) {
             // First, skip past any ) to find what really follows the group
             int check_pos = *pos;
             while (pattern[check_pos] == ')') check_pos++;

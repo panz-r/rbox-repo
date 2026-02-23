@@ -6,10 +6,10 @@
 # They should match the test cases in test_capture_comprehensive().
 # ============================================================================
 
-# Character set fragments
-[fragment:C::UPPERCASE] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
-[fragment:C::LOWERCASE] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
-[fragment:C::DIGIT] 0|1|2|3|4|5|6|7|8|9
+# Character set fragments (without namespace for simpler reference)
+[fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+[fragment:uppercase] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
+[fragment:digit] 0|1|2|3|4|5|6|7|8|9
 
 # Git read-only operations - simplified to match exact test cases
 [safe:capture:git] git status
@@ -34,14 +34,14 @@
 [safe:capture:git] git log -n 12345
 
 # File operation captures
-# Test input: cp src.txt dst.txt
-[safe:capture:cp] cp <src>((C::LOWERCASE))+\.txt</src> <dst>((C::LOWERCASE))+\.txt</dst>
+# Test input: cp abc.txt xyz.txt
+[safe:capture:cp] cp <src>((lowercase))+\.txt</src> <dst>((lowercase))+\.txt</dst>
 
 # Test input: mv old.txt new.txt
-[safe:capture:mv] mv <old>((C::LOWERCASE))+\.txt</old> <new>((C::LOWERCASE))+\.txt</new>
+[safe:capture:mv] mv <old>((lowercase))+\.txt</old> <new>((lowercase))+\.txt</new>
 
 # Test input: rsync -avz src/ dest/
-[safe:capture:rsync] rsync -avz <src>((C::LOWERCASE))+/</src> <dest>((C::LOWERCASE))+/</dest>
+[safe:capture:rsync] rsync -avz <src>((lowercase))+/</src> <dest>((lowercase))+/</dest>
 
 # Test input: echo hello world
-[safe:capture:echo] echo <w1>((C::LOWERCASE))+</w1> <w2>((C::LOWERCASE))+</w2>
+[safe:capture:echo] echo <w1>((lowercase))+</w1> <w2>((lowercase))+</w2>

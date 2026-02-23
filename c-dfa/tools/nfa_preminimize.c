@@ -2162,12 +2162,43 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     
     // Phase 5: Bidirectional incremental merging (O(n log n))
     // This combines prefix and suffix merging in an incremental fixpoint iteration.
+    // We alternate between prefix and suffix passes until no more merges happen.
     if (opts.enable_bidirectional) {
         VERBOSE_PRINT("Running bidirectional incremental merging...\n");
-        int bidir_merged = merge_common_prefixes(nfa, original_count, dead_states);
-        bidir_merged += merge_common_suffixes_fast(nfa, original_count, dead_states);
-        last_stats.prefix_merged = bidir_merged;
-        VERBOSE_PRINT("Bidirectional merging eliminated %d states\n", bidir_merged);
+        int total_bidir_merged = 0;
+        int pass = 1;
+        const int max_passes = 20;  // Safety limit
+        
+        while (pass <= max_passes) {
+            VERBOSE_PRINT("  Bidirectional pass %d...\n", pass);
+            
+            // Try prefix merging
+            int prefix_merged = merge_common_prefixes(nfa, original_count, dead_states);
+            VERBOSE_PRINT("    Prefix merging: %d states\n", prefix_merged);
+            
+            // Try suffix merging
+            int suffix_merged = merge_common_suffixes_fast(nfa, original_count, dead_states);
+            VERBOSE_PRINT("    Suffix merging: %d states\n", suffix_merged);
+            
+            int pass_merged = prefix_merged + suffix_merged;
+            total_bidir_merged += pass_merged;
+            
+            // If no merges happened, we've reached fixpoint
+            if (pass_merged == 0) {
+                VERBOSE_PRINT("  Fixpoint reached after %d passes\n", pass);
+                break;
+            }
+            
+            VERBOSE_PRINT("  Pass %d merged %d states (total: %d)\n", pass, pass_merged, total_bidir_merged);
+            pass++;
+        }
+        
+        if (pass > max_passes) {
+            VERBOSE_PRINT("  Warning: Reached max passes limit (%d)\n", max_passes);
+        }
+        
+        last_stats.prefix_merged = total_bidir_merged;
+        VERBOSE_PRINT("Bidirectional merging eliminated %d states\n", total_bidir_merged);
     }
     
     // Phase 6: Merge identical states (O(n log n)) - DISABLED by default

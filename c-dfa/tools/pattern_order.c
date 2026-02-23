@@ -173,7 +173,7 @@ static bool fragment_exists_in_ns(const char* name, const char* namespace) {
     
     // First, try to look up in the given namespace
     if (namespace && namespace[0] != '\0') {
-        char full_name[128];
+        char full_name[4096];
         snprintf(full_name, sizeof(full_name), "%s::%s", namespace, name);
         
         for (int i = 0; i < fragment_table.count; i++) {
@@ -190,18 +190,6 @@ static bool fragment_exists_in_ns(const char* name, const char* namespace) {
         }
     }
     
-    return false;
-}
-
-/**
- * Check if a fragment exists (simple check)
- */
-static bool fragment_exists(const char* name) {
-    for (int i = 0; i < fragment_table.count; i++) {
-        if (strcmp(fragment_table.names[i], name) == 0) {
-            return true;
-        }
-    }
     return false;
 }
 
@@ -311,15 +299,6 @@ static void trie_free(trie_node_t* node) {
 static int trie_count_nodes(trie_node_t* node) {
     if (!node) return 0;
     return 1 + trie_count_nodes(node->child) + trie_count_nodes(node->sibling);
-}
-
-/**
- * Compare patterns for qsort (by pattern string)
- */
-static int compare_patterns(const void* a, const void* b) {
-    const pattern_entry_t* pa = (const pattern_entry_t*)a;
-    const pattern_entry_t* pb = (const pattern_entry_t*)b;
-    return strcmp(pa->pattern, pb->pattern);
 }
 
 /**
