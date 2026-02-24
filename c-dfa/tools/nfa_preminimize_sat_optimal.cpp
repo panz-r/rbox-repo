@@ -850,13 +850,213 @@ static int apply_selected_merges(
 // MAIN ENTRY POINT
 // ============================================================================
 
+// Forward declaration
+static std::set<int> solve_optimal_merges_greedy(
+    const std::vector<merge_candidate_t>& candidates,
+    const std::map<int, std::set<int>>& conflicts
+);
+
 /**
- * SAT-based optimal merge selection.
+ * Collect candidates within a state range [start_state, end_state).
+ * This enables windowed processing for O(n) total complexity.
+ */
+static int collect_candidates_in_window(
+    const nfa_state_t* nfa,
+    int state_count,
+    const bool* dead_states,
+    std::vector<merge_candidate_t>& candidates,
+    int start_state,
+    int end_state
+) {
+    int count = 0;
+    
+    // Collect prefix candidates where source is in window
+    typedef std::pair<int, int> source_symbol_t;
+    std::map<source_symbol_t, std::vector<int>> incoming_map;
+    
+    for (int s = start_state; s < end_state && s < state_count; s++) {
+        if (dead_states[s]) continue;
+        
+        const nfa_state_t* state = &nfa[s];
+        
+        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+            if (state->multi_targets.has_first_target[sym]) {
+                int target = state->multi_targets.first_targets[sym];
+                if (target >= 0 && !dead_states[target] && target != 0 && nfa[target].category_mask == 0) {
+                    incoming_map[{s, sym}].push_back(target);
+                }
+            }
+            
+            int cnt;
+            int* targets = mta_get_target_array((multi_target_array_t*)&state->multi_targets, sym, &cnt);
+            if (targets && cnt > 0) {
+                for (int i = 0; i < cnt; i++) {
+                    if (targets[i] >= 0 && !dead_states[targets[i]] && targets[i] != 0 && nfa[targets[i]].category_mask == 0) {
+                        incoming_map[{s, sym}].push_back(targets[i]);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Group by (source, symbol, signature)
+    std::map<std::tuple<int, int, uint64_t>, std::vector<int>> prefix_groups;
+    for (const auto& entry : incoming_map) {
+        int source = entry.first.first;
+        int symbol = entry.first.second;
+        const std::vector<int>& targets = entry.second;
+        
+        for (int target : targets) {
+            uint64_t sig = compute_accepting_signature(&nfa[target]);
+            prefix_groups[{source, symbol, sig}].push_back(target);
+        }
+    }
+    
+    // Generate prefix candidates
+    for (auto& group : prefix_groups) {
+        std::vector<int>& states = group.second;
+        if (states.size() < 2) continue;
+        
+        std::sort(states.begin(), states.end());
+        states.erase(std::unique(states.begin(), states.end()), states.end());
+        
+        if (states.size() < 2) continue;
+        
+        for (size_t i = 0; i < states.size() && (int)candidates.size() < MAX_CANDIDATES; i++) {
+            for (size_t j = i + 1; j < states.size() && (int)candidates.size() < MAX_CANDIDATES; j++) {
+                if (states_outgoing_match(nfa, states[i], states[j], state_count)) {
+                    merge_candidate_t cand;
+                    cand.state1 = std::min(states[i], states[j]);
+                    cand.state2 = std::max(states[i], states[j]);
+                    cand.type = MERGE_TYPE_PREFIX;
+                    cand.signature = std::get<2>(group.first);
+                    cand.priority = 1;
+                    candidates.push_back(cand);
+                    count++;
+                }
+            }
+        }
+    }
+    
+    // Collect suffix candidates where state is in window
+    std::map<std::tuple<int, int, uint64_t>, std::vector<int>> suffix_groups;
+    
+    for (int s = start_state; s < end_state && s < state_count; s++) {
+        if (dead_states[s]) continue;
+        if (s == 0) continue;
+        
+        const nfa_state_t* state = &nfa[s];
+        
+        std::vector<std::pair<int, int>> outgoing;
+        
+        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+            if (state->multi_targets.has_first_target[sym]) {
+                outgoing.push_back({sym, state->multi_targets.first_targets[sym]});
+            }
+            
+            int cnt;
+            int* targets = mta_get_target_array((multi_target_array_t*)&state->multi_targets, sym, &cnt);
+            if (targets && cnt > 0) {
+                for (int i = 0; i < cnt; i++) {
+                    outgoing.push_back({sym, targets[i]});
+                }
+            }
+        }
+        
+        uint64_t sig = compute_accepting_signature(state);
+        for (const auto& out : outgoing) {
+            int symbol = out.first;
+            int target = out.second;
+            
+            if (target >= 0 && !dead_states[target]) {
+                suffix_groups[{target, symbol, sig}].push_back(s);
+            }
+        }
+    }
+    
+    // Generate suffix candidates
+    for (auto& group : suffix_groups) {
+        std::vector<int>& states = group.second;
+        if (states.size() < 2) continue;
+        
+        std::sort(states.begin(), states.end());
+        states.erase(std::unique(states.begin(), states.end()), states.end());
+        
+        if (states.size() < 2) continue;
+        
+        for (size_t i = 0; i < states.size() && (int)candidates.size() < MAX_CANDIDATES; i++) {
+            for (size_t j = i + 1; j < states.size() && (int)candidates.size() < MAX_CANDIDATES; j++) {
+                merge_candidate_t cand;
+                cand.state1 = std::min(states[i], states[j]);
+                cand.state2 = std::max(states[i], states[j]);
+                cand.type = MERGE_TYPE_SUFFIX;
+                cand.signature = std::get<2>(group.first);
+                cand.priority = 1;
+                candidates.push_back(cand);
+                count++;
+            }
+        }
+    }
+    
+    return count;
+}
+
+/**
+ * Process a single window: collect candidates, build conflicts, solve, apply.
+ */
+static int process_window(
+    nfa_state_t* nfa,
+    int state_count,
+    bool* dead_states,
+    int start_state,
+    int end_state,
+    int max_candidates,
+    bool verbose
+) {
+    std::vector<merge_candidate_t> candidates;
+    
+    int count = collect_candidates_in_window(nfa, state_count, dead_states, candidates, start_state, end_state);
+    
+    if (candidates.empty()) return 0;
+    
+    if ((int)candidates.size() > max_candidates) {
+        candidates.resize(max_candidates);
+    }
+    
+    // Build conflict graph
+    std::map<int, std::set<int>> conflicts = build_conflict_graph(candidates, nfa, state_count);
+    
+    int total_conflicts = 0;
+    for (const auto& entry : conflicts) {
+        total_conflicts += entry.second.size();
+    }
+    total_conflicts /= 2;
+    
+    if (total_conflicts == 0) {
+        // No conflicts - apply all candidates
+        std::set<int> all;
+        for (size_t i = 0; i < candidates.size(); i++) all.insert(i);
+        return apply_selected_merges(nfa, state_count, dead_states, candidates, all);
+    }
+    
+    // Solve with greedy selection
+    std::set<int> selected = solve_optimal_merges_greedy(candidates, conflicts);
+    
+    if (selected.empty()) return 0;
+    
+    return apply_selected_merges(nfa, state_count, dead_states, candidates, selected);
+}
+
+/**
+ * Iterative windowed SAT-based optimal merge selection.
+ * 
+ * Slides a window over the state space, processing each window independently.
+ * This achieves O(n) total complexity while finding more merges than single-shot.
  * 
  * @param nfa NFA state array
  * @param state_count Number of states
  * @param dead_states Array marking dead states (updated in-place)
- * @param max_candidates Maximum number of candidates to consider
+ * @param max_candidates Maximum candidates per window
  * @param verbose Enable verbose output
  * @return Number of states merged
  */
@@ -871,82 +1071,40 @@ extern "C" int nfa_preminimize_optimal_merges(
     
     if (max_candidates <= 0) max_candidates = MAX_CANDIDATES;
     
-    VERBOSE_PRINT("Starting SAT-based optimal merge selection\n");
-    VERBOSE_PRINT("NFA has %d states\n", state_count);
+    VERBOSE_PRINT("Starting iterative windowed optimal merge selection\n");
+    VERBOSE_PRINT("NFA has %d states, window size ~%d states\n", state_count, max_candidates / 4);
     
-    // Phase 1: Collect candidates
-    std::vector<merge_candidate_t> candidates;
+    int total_merged = 0;
+    int window_size = max_candidates / 4;  // States per window
+    if (window_size < 10) window_size = 10;
+    if (window_size > 100) window_size = 100;
     
-    int prefix_count = collect_prefix_candidates(nfa, state_count, dead_states, candidates);
-    VERBOSE_PRINT("Collected %d prefix candidates\n", prefix_count);
+    int window_stride = window_size * 2 / 3;  // Overlap windows for better coverage
     
-    int suffix_count = collect_suffix_candidates(nfa, state_count, dead_states, candidates);
-    VERBOSE_PRINT("Collected %d suffix candidates\n", suffix_count);
+    int start = 0;
+    int iteration = 0;
+    const int max_iterations = (state_count / window_stride) + 2;
     
-    int final_count = collect_final_candidates(nfa, state_count, dead_states, candidates);
-    VERBOSE_PRINT("Collected %d final candidates\n", final_count);
-    
-    if (candidates.empty()) {
-        VERBOSE_PRINT("No merge candidates found\n");
-        return 0;
+    while (start < state_count && iteration < max_iterations) {
+        int end = start + window_size;
+        if (end > state_count) end = state_count;
+        
+        VERBOSE_PRINT("  Window %d: states [%d, %d)\n", iteration, start, end);
+        
+        int merged = process_window(nfa, state_count, dead_states, start, end, max_candidates, verbose);
+        
+        if (merged > 0) {
+            VERBOSE_PRINT("    Merged %d states in window\n", merged);
+            total_merged += merged;
+        }
+        
+        start += window_stride;
+        iteration++;
     }
     
-    // Limit candidates if needed
-    if ((int)candidates.size() > max_candidates) {
-        VERBOSE_PRINT("Limiting candidates from %zu to %d\n", candidates.size(), max_candidates);
-        candidates.resize(max_candidates);
-    }
+    VERBOSE_PRINT("Iterative windowed merge complete: %d states merged in %d windows\n", total_merged, iteration);
     
-    VERBOSE_PRINT("Total candidates: %zu\n", candidates.size());
-    
-#ifdef USE_CADICAL
-    // Phase 2: Build conflict graph
-    VERBOSE_PRINT("Building conflict graph...\n");
-    std::map<int, std::set<int>> conflicts = build_conflict_graph(candidates, nfa, state_count);
-    
-    int total_conflicts = 0;
-    for (const auto& entry : conflicts) {
-        total_conflicts += entry.second.size();
-    }
-    total_conflicts /= 2;  // Each conflict counted twice
-    
-    VERBOSE_PRINT("Found %d conflicts\n", total_conflicts);
-    
-    // Early exit if no conflicts - SAT is overkill for simple cases
-    // Bidirectional merging already handled all non-conflicting merges
-    if (total_conflicts == 0) {
-        VERBOSE_PRINT("No conflicts found - skipping SAT (bidirectional already handled all)\n");
-        return 0;
-    }
-    
-    // Phase 3: Solve using greedy selection (SAT has issues)
-    VERBOSE_PRINT("Solving with greedy selection...\n");
-    std::set<int> selected = solve_optimal_merges_greedy(candidates, conflicts);
-    
-    // Phase 4: Apply selected merges
-    VERBOSE_PRINT("Applying %zu selected merges...\n", selected.size());
-    int merged = apply_selected_merges(nfa, state_count, dead_states, candidates, selected);
-    
-    VERBOSE_PRINT("SAT optimal merge selection complete: %d states merged\n", merged);
-    return merged;
-#else
-    VERBOSE_PRINT("CaDiCaL not available, falling back to greedy selection\n");
-    
-    // Greedy fallback: apply candidates in priority order
-    std::sort(candidates.begin(), candidates.end(), [](const merge_candidate_t& a, const merge_candidate_t& b) {
-        return a.priority > b.priority;
-    });
-    
-    int merged = 0;
-    for (const auto& cand : candidates) {
-        if (dead_states[cand.state1] || dead_states[cand.state2]) continue;
-        apply_merge(nfa, state_count, dead_states, cand.state1, cand.state2);
-        merged++;
-    }
-    
-    VERBOSE_PRINT("Greedy selection merged %d states\n", merged);
-    return merged;
-#endif
+    return total_merged;
 }
 
 /**
