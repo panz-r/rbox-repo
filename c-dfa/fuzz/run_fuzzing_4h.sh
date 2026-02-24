@@ -32,6 +32,15 @@ cleanup() {
         kill "$WATCHDOG_PID" 2>/dev/null || true
         wait "$WATCHDOG_PID" 2>/dev/null || true
     fi
+    # Kill fuzzer processes
+    if [ -n "$FUZZER_PID" ]; then
+        pkill -P "$FUZZER_PID" 2>/dev/null || true
+        kill "$FUZZER_PID" 2>/dev/null || true
+    fi
+    # Also kill any remaining fuzzer processes
+    pkill -f "dfa_eval_fuzzer" 2>/dev/null || true
+    pkill -f "nfa_build_fuzzer" 2>/dev/null || true
+    pkill -f "pattern_parse_fuzzer" 2>/dev/null || true
     # Show summary
     if [ -f "$LOG_DIR/crashes.log" ]; then
         echo "Crashes found: $(wc -l < "$LOG_DIR/crashes.log")"
