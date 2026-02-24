@@ -32,6 +32,7 @@ typedef struct {
     int final_deduped;        // Final states deduplicated
     int suffix_merged;        // States merged by suffix merging (deprecated)
     int sat_merged;           // States merged via SAT verification
+    int sat_optimal;          // States merged via SAT optimal selection
 } nfa_premin_stats_t;
 
 /**
@@ -62,6 +63,8 @@ typedef struct {
     bool enable_merge;          // Enable bisimulation merging (default: false)
     bool enable_identical;      // DISABLED: UNSAFE - NFA state merging can change language
     bool enable_sat;            // Enable SAT-based bisimulation verification (default: false)
+    bool enable_sat_optimal;    // Enable SAT-based optimal merge selection (default: false)
+    int max_sat_candidates;     // Maximum candidates for SAT optimal (default: 200)
     bool verbose;               // Print progress information
 } nfa_premin_options_t;
 
@@ -138,5 +141,35 @@ int nfa_preminimize_windowed_sat(nfa_state_t* nfa, int state_count, bool* dead_s
  * @return true if CaDiCaL is compiled and available
  */
 bool nfa_preminimize_windowed_sat_available(void);
+
+/**
+ * SAT-based optimal merge selection.
+ * 
+ * Uses SAT to find the maximum set of non-conflicting merges from
+ * pre-filtered candidates. This is an optimization approach rather
+ * than verification - SAT finds the optimal combination.
+ * 
+ * Algorithm:
+ * 1. Collect merge candidates from prefix/suffix analysis (O(n log n))
+ * 2. Build conflict graph between candidates (O(m²))
+ * 3. Encode as SAT and solve for maximum merges
+ * 4. Apply optimal merge set
+ * 
+ * @param nfa NFA state array
+ * @param state_count Number of states
+ * @param dead_states Array marking dead states (updated in-place)
+ * @param max_candidates Maximum candidates for SAT (0 for default)
+ * @param verbose Enable verbose output
+ * @return Number of states merged
+ */
+int nfa_preminimize_optimal_merges(nfa_state_t* nfa, int state_count, bool* dead_states,
+                                    int max_candidates, bool verbose);
+
+/**
+ * Check if optimal SAT merging is available.
+ * 
+ * @return true if CaDiCaL is compiled and available
+ */
+bool nfa_preminimize_optimal_available(void);
 
 #endif // NFA_PREMINIMIZE_H

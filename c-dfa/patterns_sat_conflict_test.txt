@@ -1,0 +1,71 @@
+# Test patterns for SAT optimal merge selection
+# These patterns create CONFLICTING merge candidates where greedy
+# bidirectional merging may not find the optimal solution.
+
+# === DIAMOND CONFLICT ===
+# These patterns create states that could merge via prefix OR suffix,
+# but not both simultaneously.
+
+# Pattern group 1: Creates prefix merge opportunity for 'a'
+[safe] aab
+[safe] aac
+
+# Pattern group 2: Creates prefix merge opportunity for 'b'  
+[safe] bba
+[safe] bbc
+
+# Pattern group 3: Creates suffix merge opportunity
+# States before 'c' could merge, but some also have prefix opportunities
+[safe] xyc
+[safe] zzc
+[safe] abc
+
+# === OVERLAPPING PREFIX/SUFFIX ===
+# States that are both prefix-mergeable AND suffix-mergeable
+# create decision points where greedy may choose suboptimally.
+
+[safe] cat
+[safe] car
+[safe] bat
+[safe] bar
+
+# 'cat' and 'car' share prefix 'ca' - prefix merge possible
+# 'bat' and 'bar' share prefix 'ba' - prefix merge possible  
+# 'cat' and 'bat' share suffix 'at' - suffix merge possible
+# 'car' and 'bar' share suffix 'ar' - suffix merge possible
+# But merging 'ca' prefix prevents merging 'at' suffix optimally!
+
+# === CHAIN CONFLICT ===
+# Longer chains where early merge decisions affect later opportunities
+
+[safe] abcd
+[safe] abce
+[safe] xbcd
+[safe] xbce
+
+# 'abcd' and 'abce' share prefix 'abc' 
+# 'xbcd' and 'xbce' share prefix 'xbc'
+# 'abcd' and 'xbcd' share suffix 'bcd'
+# 'abce' and 'xbce' share suffix 'bce'
+# Optimal: merge suffixes first (2 merges) vs prefixes first (2 merges)
+# But greedy order matters!
+
+# === MULTI-WAY MERGE CONFLICT ===
+# These create 4-way merge opportunities where greedy picks 2-way
+
+[safe] pqrs
+[safe] pqrt
+[safe] pqus
+[safe] pqut
+
+# All share prefix 'pq'
+# pqrs and pqrt share prefix 'pqr'
+# pqus and pqut share prefix 'pqu'
+# pqrs and pqus share suffix 'rs' (no, 's' vs 't')
+# Actually: pqrs, pqrt, pqus, pqut
+# Suffixes: rs, rt, us, ut
+# pqrs and pqus share 's' ending? No...
+# Let me think: p-q-r-s, p-q-r-t, p-q-u-s, p-q-u-t
+# Prefix merges: (pqrs, pqrt) via pqr, (pqus, pqut) via pqu
+# Suffix merges: (pqrs, pqus) via s, (pqrt, pqut) via t
+# These are CONFLICTING - can't do both prefix and suffix merges!

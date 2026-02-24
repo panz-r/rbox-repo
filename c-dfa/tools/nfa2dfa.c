@@ -1213,6 +1213,16 @@ int main(int argc, char* argv[]) {
     // Pre-minimize NFA before subset construction (always on by default)
     nfa_premin_options_t premin_opts = nfa_premin_default_options();
     premin_opts.verbose = flag_verbose;
+    
+    // Check for SAT optimal flag
+    bool enable_sat_optimal = false;
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp(argv[i], "--sat-optimal") == 0) {
+            enable_sat_optimal = true;
+            premin_opts.enable_sat_optimal = true;
+        }
+    }
+    
     nfa_preminimize(nfa, &nfa_state_count, &premin_opts);
     
     nfa_to_dfa();

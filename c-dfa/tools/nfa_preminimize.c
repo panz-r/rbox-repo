@@ -2163,6 +2163,7 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     // Phase 5: Bidirectional incremental merging (O(n log n))
     // This combines prefix and suffix merging in an incremental fixpoint iteration.
     // We alternate between prefix and suffix passes until no more merges happen.
+    // Then, if SAT optimal is enabled, we try harder merges on remaining candidates.
     if (opts.enable_bidirectional) {
         VERBOSE_PRINT("Running bidirectional incremental merging...\n");
         int total_bidir_merged = 0;
@@ -2199,6 +2200,19 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
         
         last_stats.prefix_merged = total_bidir_merged;
         VERBOSE_PRINT("Bidirectional merging eliminated %d states\n", total_bidir_merged);
+        
+        // Phase 5b: SAT-based optimal merge selection (continuation of bidirectional)
+        // After greedy fixpoint, try harder merges on remaining conflicting candidates.
+        // This reuses the same NFA state and continues where bidirectional left off.
+        if (opts.enable_sat_optimal && nfa_preminimize_optimal_available()) {
+            VERBOSE_PRINT("Continuing with SAT optimal merge selection...\n");
+            int max_cand = opts.max_sat_candidates > 0 ? opts.max_sat_candidates : 200;
+            last_stats.sat_optimal = nfa_preminimize_optimal_merges(nfa, original_count, dead_states,
+                                                                      max_cand, opts.verbose);
+            if (last_stats.sat_optimal > 0) {
+                VERBOSE_PRINT("SAT optimal merged %d additional states\n", last_stats.sat_optimal);
+            }
+        }
     }
     
     // Phase 6: Merge identical states (O(n log n)) - DISABLED by default
