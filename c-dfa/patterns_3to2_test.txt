@@ -1,0 +1,18 @@
+# Test pattern for 3-to-2 suffix merge
+# Structure:
+#   Start --a--> A --b--> Accept
+#   Start --a--> B --c--> Accept
+#   Start --d--> C --b--> Accept
+# 
+# A and C have same outgoing (b→Accept) - should merge via suffix merge
+# B has different outgoing (c→Accept) - stays separate
+# Result: 2 intermediate states instead of 3
+
+# Pattern 1: ab path - creates A state with b→Accept
+[safe] ab
+
+# Pattern 2: ac path - creates B state with c→Accept
+[safe] ac
+
+# Pattern 3: db path - creates C state with b→Accept (same outgoing as A!)
+[safe] db

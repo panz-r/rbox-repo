@@ -1,0 +1,36 @@
+# Test patterns for suffix factorization
+# These patterns test the creation of intermediate states with EPSILON transitions
+
+# Pattern 1 and 2: Multiple sources pointing to same target on same symbol
+# Before factorization: X --b--> T, Y --b--> T
+# After factorization:  X --b--> A', Y --b--> A', A' --EPSILON--> T
+[safe] ab
+[safe] cb
+
+# Pattern 3 and 4: Similar structure with different prefix
+[safe] xy
+[safe] zy
+
+# Pattern 5, 6, 7: Three sources pointing to same target
+# Should create one intermediate state for all three
+[safe] ad
+[safe] bd
+[safe] cd
+
+# Pattern 8 and 9: Test with longer suffixes
+[safe] foobar
+[safe] bazbar
+
+# Pattern 10 and 11: Test with accepting states
+# The target state is accepting - EPSILON should preserve this
+[safe] testend
+[safe] bestend
+
+# Pattern 12 and 13: Test with quantifiers
+# These create more complex NFA structures
+[safe] a+b
+[safe] c+b
+
+# Pattern 14 and 15: Test with alternations
+[safe] (x|y)z
+[safe] (w|v)z

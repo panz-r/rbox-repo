@@ -1215,10 +1215,8 @@ int main(int argc, char* argv[]) {
     premin_opts.verbose = flag_verbose;
     
     // Check for SAT optimal flag
-    bool enable_sat_optimal = false;
     for (int i = 1; i < argc - 1; i++) {
         if (strcmp(argv[i], "--sat-optimal") == 0) {
-            enable_sat_optimal = true;
             premin_opts.enable_sat_optimal = true;
         }
     }

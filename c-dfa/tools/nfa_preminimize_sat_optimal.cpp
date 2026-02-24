@@ -116,38 +116,9 @@ static std::vector<int> get_successors(const nfa_state_t* nfa, int state_idx, in
 }
 
 /**
- * Check if two states have identical accepting properties.
- */
-static bool states_accepting_match(const nfa_state_t* nfa, int s1, int s2) {
-    const nfa_state_t* state1 = &nfa[s1];
-    const nfa_state_t* state2 = &nfa[s2];
-    
-    if (state1->category_mask != state2->category_mask) return false;
-    if (state1->pattern_id != state2->pattern_id) return false;
-    if (state1->pending_marker_count != state2->pending_marker_count) return false;
-    if (state1->is_eos_target != state2->is_eos_target) return false;
-    
-    for (int i = 0; i < state1->pending_marker_count; i++) {
-        if (state1->pending_markers[i].pattern_id != state2->pending_markers[i].pattern_id) return false;
-        if (state1->pending_markers[i].uid != state2->pending_markers[i].uid) return false;
-        if (state1->pending_markers[i].type != state2->pending_markers[i].type) return false;
-        if (state1->pending_markers[i].active != state2->pending_markers[i].active) return false;
-    }
-    
-    return true;
-}
-
-/**
- * Check if two states have identical prefix properties (for prefix merging).
- */
-static bool states_prefix_match(const nfa_state_t* nfa, int s1, int s2) {
-    return states_accepting_match(nfa, s1, s2);
-}
-
-/**
  * Check if two states have identical outgoing transitions.
  */
-static bool states_outgoing_match(const nfa_state_t* nfa, int s1, int s2, int state_count) {
+static bool states_outgoing_match(const nfa_state_t* nfa, int s1, int s2) {
     const nfa_state_t* state1 = &nfa[s1];
     const nfa_state_t* state2 = &nfa[s2];
     
@@ -206,257 +177,37 @@ static uint64_t compute_accepting_signature(const nfa_state_t* state) {
     return hash;
 }
 
+/**
+ * Compute signature for a state's category only (ignoring pattern_id).
+ * This allows merging accepting states from different patterns with same category.
+ */
+static uint64_t compute_category_signature(const nfa_state_t* state) {
+    uint64_t hash = 14695981039346656037ULL;
+    
+    // Only include category_mask and is_eos_target
+    // This allows merging accepting states from different patterns
+    hash ^= state->category_mask;
+    hash *= 1099511628211ULL;
+    hash ^= state->is_eos_target ? 1 : 0;
+    hash *= 1099511628211ULL;
+    
+    // Include pending markers but without pattern_id
+    hash ^= state->pending_marker_count;
+    hash *= 1099511628211ULL;
+    
+    for (int i = 0; i < state->pending_marker_count; i++) {
+        hash ^= state->pending_markers[i].uid;
+        hash *= 1099511628211ULL;
+        hash ^= state->pending_markers[i].type;
+        hash *= 1099511628211ULL;
+    }
+    
+    return hash;
+}
+
 // ============================================================================
 // CANDIDATE GENERATION
 // ============================================================================
-
-/**
- * Collect prefix merge candidates.
- * 
- * After greedy bidirectional merging reaches fixpoint, we look for harder candidates:
- * - States with same incoming (source, symbol) but MULTIPLE incoming transitions
- * - These create conflicts: merging one pair may prevent merging another
- * - SAT finds the optimal selection among conflicting candidates
- */
-static int collect_prefix_candidates(
-    const nfa_state_t* nfa,
-    int state_count,
-    const bool* dead_states,
-    std::vector<merge_candidate_t>& candidates
-) {
-    // Build incoming transition map: for each (source, symbol), list all targets
-    typedef std::pair<int, int> source_symbol_t;  // (source, symbol)
-    std::map<source_symbol_t, std::vector<int>> incoming_map;
-    
-    for (int s = 0; s < state_count; s++) {
-        if (dead_states[s]) continue;
-        
-        const nfa_state_t* state = &nfa[s];
-        
-        // Check fast-path single targets
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            if (state->multi_targets.has_first_target[sym]) {
-                int target = state->multi_targets.first_targets[sym];
-                if (target >= 0 && !dead_states[target]) {
-                    incoming_map[{s, sym}].push_back(target);
-                }
-            }
-        }
-        
-        // Check multi-targets
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            int count;
-            int* targets = mta_get_target_array((multi_target_array_t*)&state->multi_targets, sym, &count);
-            if (targets && count > 0) {
-                for (int i = 0; i < count; i++) {
-                    if (targets[i] >= 0 && !dead_states[targets[i]]) {
-                        incoming_map[{s, sym}].push_back(targets[i]);
-                    }
-                }
-            }
-        }
-        
-        // Check legacy transitions
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            if (state->transitions[sym] >= 0 && !dead_states[state->transitions[sym]]) {
-                incoming_map[{s, sym}].push_back(state->transitions[sym]);
-            }
-        }
-    }
-    
-    // Find states reachable from each (source, symbol) pair
-    // Group by (source, symbol, signature) - including states with MULTIPLE incoming
-    std::map<std::tuple<int, int, uint64_t>, std::vector<int>> groups;
-    
-    for (const auto& entry : incoming_map) {
-        int source = entry.first.first;
-        int symbol = entry.first.second;
-        const std::vector<int>& targets = entry.second;
-        
-        for (int target : targets) {
-            if (target == 0) continue;  // Don't merge start state
-            if (nfa[target].category_mask != 0) continue;  // Skip accepting states
-            
-            uint64_t sig = compute_accepting_signature(&nfa[target]);
-            groups[{source, symbol, sig}].push_back(target);
-        }
-    }
-    
-    // Generate candidates from groups (including multi-incoming states)
-    int count = 0;
-    for (auto& group : groups) {
-        std::vector<int>& states = group.second;
-        if (states.size() < 2) continue;
-        
-        // Remove duplicates
-        std::sort(states.begin(), states.end());
-        states.erase(std::unique(states.begin(), states.end()), states.end());
-        
-        if (states.size() < 2) continue;
-        
-        // Create candidates for all pairs in this group
-        for (size_t i = 0; i < states.size() && (int)candidates.size() < MAX_CANDIDATES; i++) {
-            for (size_t j = i + 1; j < states.size() && (int)candidates.size() < MAX_CANDIDATES; j++) {
-                // Check if states can be safely merged (same outgoing structure)
-                if (states_outgoing_match(nfa, states[i], states[j], state_count)) {
-                    merge_candidate_t cand;
-                    cand.state1 = std::min(states[i], states[j]);
-                    cand.state2 = std::max(states[i], states[j]);
-                    cand.type = MERGE_TYPE_PREFIX;
-                    cand.signature = std::get<2>(group.first);
-                    cand.priority = 1;  // Base priority
-                    candidates.push_back(cand);
-                    count++;
-                }
-            }
-        }
-    }
-    
-    return count;
-}
-
-/**
- * Collect suffix merge candidates.
- * 
- * After greedy bidirectional merging reaches fixpoint, we look for harder candidates:
- * - States that share a common outgoing (target, symbol) even with MULTIPLE outgoing
- * - These create conflicts: merging one pair may prevent merging another
- * - SAT finds the optimal selection among conflicting candidates
- */
-static int collect_suffix_candidates(
-    const nfa_state_t* nfa,
-    int state_count,
-    const bool* dead_states,
-    std::vector<merge_candidate_t>& candidates
-) {
-    // For each state, collect all outgoing transitions
-    // Then group states by each (target, symbol, signature) they have
-    std::map<std::tuple<int, int, uint64_t>, std::vector<int>> groups;
-    
-    for (int s = 0; s < state_count; s++) {
-        if (dead_states[s]) continue;
-        if (s == 0) continue;  // Don't merge start state
-        
-        const nfa_state_t* state = &nfa[s];
-        
-        // Collect all outgoing transitions
-        std::vector<std::pair<int, int>> outgoing;  // (symbol, target)
-        
-        // Check fast-path single targets
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            if (state->multi_targets.has_first_target[sym]) {
-                outgoing.push_back({sym, state->multi_targets.first_targets[sym]});
-            }
-        }
-        
-        // Check multi-targets
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            int count;
-            int* targets = mta_get_target_array((multi_target_array_t*)&state->multi_targets, sym, &count);
-            if (targets && count > 0) {
-                for (int i = 0; i < count; i++) {
-                    outgoing.push_back({sym, targets[i]});
-                }
-            }
-        }
-        
-        // Check legacy transitions
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            if (state->transitions[sym] >= 0) {
-                outgoing.push_back({sym, state->transitions[sym]});
-            }
-        }
-        
-        // Add state to groups for EACH outgoing transition
-        // This allows finding states that share at least one common outgoing
-        uint64_t sig = compute_accepting_signature(state);
-        for (const auto& out : outgoing) {
-            int symbol = out.first;
-            int target = out.second;
-            
-            if (target >= 0 && !dead_states[target]) {
-                groups[{target, symbol, sig}].push_back(s);
-            }
-        }
-    }
-    
-    // Generate candidates from groups (including multi-outgoing states)
-    int count = 0;
-    for (auto& group : groups) {
-        std::vector<int>& states = group.second;
-        if (states.size() < 2) continue;
-        
-        // Remove duplicates
-        std::sort(states.begin(), states.end());
-        states.erase(std::unique(states.begin(), states.end()), states.end());
-        
-        if (states.size() < 2) continue;
-        
-        for (size_t i = 0; i < states.size() && (int)candidates.size() < MAX_CANDIDATES; i++) {
-            for (size_t j = i + 1; j < states.size() && (int)candidates.size() < MAX_CANDIDATES; j++) {
-                // For suffix merging, check if states have compatible incoming structure
-                // (We're merging by combining incoming transitions)
-                merge_candidate_t cand;
-                cand.state1 = std::min(states[i], states[j]);
-                cand.state2 = std::max(states[i], states[j]);
-                cand.type = MERGE_TYPE_SUFFIX;
-                cand.signature = std::get<2>(group.first);
-                cand.priority = 1;
-                candidates.push_back(cand);
-                count++;
-            }
-        }
-    }
-    
-    return count;
-}
-
-/**
- * Collect final state merge candidates.
- * Accepting states with identical outcomes.
- */
-static int collect_final_candidates(
-    const nfa_state_t* nfa,
-    int state_count,
-    const bool* dead_states,
-    std::vector<merge_candidate_t>& candidates
-) {
-    // Group accepting states by signature
-    std::map<uint64_t, std::vector<int>> groups;
-    
-    for (int s = 0; s < state_count; s++) {
-        if (dead_states[s]) continue;
-        if (nfa[s].category_mask == 0) continue;  // Only accepting states
-        
-        uint64_t sig = compute_accepting_signature(&nfa[s]);
-        groups[sig].push_back(s);
-    }
-    
-    // Generate candidates
-    int count = 0;
-    for (const auto& group : groups) {
-        const std::vector<int>& states = group.second;
-        if (states.size() < 2) continue;
-        
-        for (size_t i = 0; i < states.size() && (int)candidates.size() < MAX_CANDIDATES; i++) {
-            for (size_t j = i + 1; j < states.size() && (int)candidates.size() < MAX_CANDIDATES; j++) {
-                // Verify outgoing transitions match
-                if (states_outgoing_match(nfa, states[i], states[j], state_count)) {
-                    merge_candidate_t cand;
-                    cand.state1 = std::min(states[i], states[j]);
-                    cand.state2 = std::max(states[i], states[j]);
-                    cand.type = MERGE_TYPE_FINAL;
-                    cand.signature = group.first;
-                    cand.priority = 2;  // Higher priority for final states
-                    candidates.push_back(cand);
-                    count++;
-                }
-            }
-        }
-    }
-    
-    return count;
-}
 
 // ============================================================================
 // CONFLICT ANALYSIS
@@ -470,9 +221,7 @@ static int collect_final_candidates(
  */
 static bool candidates_conflict(
     const merge_candidate_t& c1,
-    const merge_candidate_t& c2,
-    const nfa_state_t* nfa,
-    int state_count
+    const merge_candidate_t& c2
 ) {
     // Extract states involved
     int a1 = c1.state1, b1 = c1.state2;
@@ -514,15 +263,13 @@ static bool candidates_conflict(
  * Returns a map from candidate index to set of conflicting candidate indices.
  */
 static std::map<int, std::set<int>> build_conflict_graph(
-    const std::vector<merge_candidate_t>& candidates,
-    const nfa_state_t* nfa,
-    int state_count
+    const std::vector<merge_candidate_t>& candidates
 ) {
     std::map<int, std::set<int>> conflicts;
     
     for (size_t i = 0; i < candidates.size(); i++) {
         for (size_t j = i + 1; j < candidates.size(); j++) {
-            if (candidates_conflict(candidates[i], candidates[j], nfa, state_count)) {
+            if (candidates_conflict(candidates[i], candidates[j])) {
                 conflicts[i].insert(j);
                 conflicts[j].insert(i);
             }
@@ -537,66 +284,6 @@ static std::map<int, std::set<int>> build_conflict_graph(
 // ============================================================================
 
 #ifdef USE_CADICAL
-
-/**
- * Solve using SAT to find optimal merge set.
- * Returns indices of candidates to apply.
- */
-static std::set<int> solve_optimal_merges_sat(
-    const std::vector<merge_candidate_t>& candidates,
-    const std::map<int, std::set<int>>& conflicts
-) {
-    std::set<int> result;
-    
-    if (candidates.empty()) return result;
-    
-    int n = candidates.size();
-    
-    VERBOSE_PRINT("Building SAT instance with %d variables\n", n);
-    
-    CaDiCaL::Solver solver;
-    solver.set("quiet", 1);
-    
-    // Add conflict constraints
-    for (const auto& entry : conflicts) {
-        int i = entry.first;
-        for (int j : entry.second) {
-            if (i < j) {  // Add each constraint once
-                // At most one of i and j can be true
-                solver.add(-(i + 1));  // Variables are 1-indexed
-                solver.add(-(j + 1));
-                solver.add(0);
-            }
-        }
-    }
-    
-    // Use assumptions to maximize merges
-    // Start by assuming all candidates are true
-    for (int i = 0; i < n; i++) {
-        solver.assume(i + 1);
-    }
-    
-    VERBOSE_PRINT("Solving SAT instance...\n");
-    
-    int res = solver.solve();
-    
-    if (res == 10) {  // SATISFIABLE
-        VERBOSE_PRINT("SAT solution found\n");
-        
-        // Extract which candidates to apply
-        for (int i = 0; i < n; i++) {
-            if (solver.val(i + 1) > 0) {
-                result.insert(i);
-            }
-        }
-        
-        VERBOSE_PRINT("Selected %zu merges from %d candidates\n", result.size(), n);
-    } else {
-        VERBOSE_PRINT("UNSAT - no valid merge set found\n");
-    }
-    
-    return result;
-}
 
 /**
  * Greedy selection for maximal set of non-conflicting merges.
@@ -651,89 +338,6 @@ static std::set<int> solve_optimal_merges_greedy(
     }
     
     VERBOSE_PRINT("Greedy selection selected %zu merges\n", result.size());
-    
-    return result;
-}
-
-/**
- * Iterative SAT solving for better optimization.
- * Uses assumptions to find maximal set of non-conflicting merges.
- */
-static std::set<int> solve_optimal_merges_iterative(
-    const std::vector<merge_candidate_t>& candidates,
-    const std::map<int, std::set<int>>& conflicts
-) {
-    std::set<int> result;
-    
-    if (candidates.empty()) return result;
-    
-    int n = candidates.size();
-    
-    VERBOSE_PRINT("Building iterative SAT instance with %d variables\n", n);
-    
-    try {
-        CaDiCaL::Solver solver;
-        solver.set("quiet", 1);
-        
-        // First, add all variables (1..n) by adding a tautology
-        // This ensures the solver knows about all variables
-        for (int i = 1; i <= n; i++) {
-            solver.add(i);
-            solver.add(-i);
-            solver.add(0);  // (x OR NOT x) is always true
-        }
-        
-        // Add conflict constraints: for each pair of conflicting candidates,
-        // at most one can be selected. Encode as: NOT(x_i) OR NOT(x_j)
-        for (const auto& entry : conflicts) {
-            int i = entry.first;
-            for (int j : entry.second) {
-                if (i < j) {
-                    solver.add(-(i + 1));
-                    solver.add(-(j + 1));
-                    solver.add(0);
-                }
-            }
-        }
-        
-        // Iteratively try to add more merges
-        std::vector<bool> applied(n, false);
-        std::vector<bool> blocked(n, false);
-        
-        // Sort candidates by priority (higher first)
-        std::vector<int> order(n);
-        for (int i = 0; i < n; i++) order[i] = i;
-        std::sort(order.begin(), order.end(), [&](int a, int b) {
-            return candidates[a].priority > candidates[b].priority;
-        });
-        
-        for (int idx : order) {
-            if (blocked[idx]) continue;
-            
-            // Try to add this candidate
-            solver.assume(idx + 1);
-            
-            // Also assume all previously applied
-            for (int i = 0; i < n; i++) {
-                if (applied[i]) solver.assume(i + 1);
-            }
-            
-            int res = solver.solve();
-            
-            if (res == 10) {  // SAT
-                applied[idx] = true;
-                result.insert(idx);
-            } else {
-                // This candidate conflicts with applied set
-                blocked[idx] = true;
-            }
-        }
-        
-        VERBOSE_PRINT("Iterative SAT selected %zu merges\n", result.size());
-    } catch (...) {
-        VERBOSE_PRINT("SAT solving failed, falling back to greedy\n");
-        return solve_optimal_merges_greedy(candidates, conflicts);
-    }
     
     return result;
 }
@@ -924,7 +528,7 @@ static int collect_candidates_in_window(
         
         for (size_t i = 0; i < states.size() && (int)candidates.size() < MAX_CANDIDATES; i++) {
             for (size_t j = i + 1; j < states.size() && (int)candidates.size() < MAX_CANDIDATES; j++) {
-                if (states_outgoing_match(nfa, states[i], states[j], state_count)) {
+                if (states_outgoing_match(nfa, states[i], states[j])) {
                     merge_candidate_t cand;
                     cand.state1 = std::min(states[i], states[j]);
                     cand.state2 = std::max(states[i], states[j]);
@@ -939,7 +543,8 @@ static int collect_candidates_in_window(
     }
     
     // Collect suffix candidates where state is in window
-    std::map<std::tuple<int, int, uint64_t>, std::vector<int>> suffix_groups;
+    // Group by (target_category_sig, symbol, source_sig) to enable 3-to-2 merging
+    std::map<std::tuple<uint64_t, int, uint64_t>, std::vector<int>> suffix_groups;
     
     for (int s = start_state; s < end_state && s < state_count; s++) {
         if (dead_states[s]) continue;
@@ -969,7 +574,10 @@ static int collect_candidates_in_window(
             int target = out.second;
             
             if (target >= 0 && !dead_states[target]) {
-                suffix_groups[{target, symbol, sig}].push_back(s);
+                // Use category signature of target to enable merging states
+                // that point to different accepting states with same category
+                uint64_t target_sig = compute_category_signature(&nfa[target]);
+                suffix_groups[{target_sig, symbol, sig}].push_back(s);
             }
         }
     }
@@ -986,14 +594,59 @@ static int collect_candidates_in_window(
         
         for (size_t i = 0; i < states.size() && (int)candidates.size() < MAX_CANDIDATES; i++) {
             for (size_t j = i + 1; j < states.size() && (int)candidates.size() < MAX_CANDIDATES; j++) {
-                merge_candidate_t cand;
-                cand.state1 = std::min(states[i], states[j]);
-                cand.state2 = std::max(states[i], states[j]);
-                cand.type = MERGE_TYPE_SUFFIX;
-                cand.signature = std::get<2>(group.first);
-                cand.priority = 1;
-                candidates.push_back(cand);
-                count++;
+                // CRITICAL: Verify states have matching outgoing transitions
+                // Without this check, we could merge states with different futures
+                if (states_outgoing_match(nfa, states[i], states[j])) {
+                    merge_candidate_t cand;
+                    cand.state1 = std::min(states[i], states[j]);
+                    cand.state2 = std::max(states[i], states[j]);
+                    cand.type = MERGE_TYPE_SUFFIX;
+                    cand.signature = std::get<2>(group.first);
+                    cand.priority = 1;
+                    candidates.push_back(cand);
+                    count++;
+                }
+            }
+        }
+    }
+    
+    // Collect final state candidates (accepting states with same category, no pending markers)
+    // This enables 3-to-2 merging by first merging accepting states
+    std::map<uint64_t, std::vector<int>> final_groups;
+    
+    for (int s = start_state; s < end_state && s < state_count; s++) {
+        if (dead_states[s]) continue;
+        if (nfa[s].category_mask == 0) continue;  // Only accepting states
+        if (nfa[s].pending_marker_count > 0) continue;  // Skip states with capture markers
+        
+        // Use category signature to allow merging across patterns
+        uint64_t sig = compute_category_signature(&nfa[s]);
+        final_groups[sig].push_back(s);
+    }
+    
+    // Generate final state candidates
+    for (auto& group : final_groups) {
+        std::vector<int>& states = group.second;
+        if (states.size() < 2) continue;
+        
+        std::sort(states.begin(), states.end());
+        states.erase(std::unique(states.begin(), states.end()), states.end());
+        
+        if (states.size() < 2) continue;
+        
+        for (size_t i = 0; i < states.size() && (int)candidates.size() < MAX_CANDIDATES; i++) {
+            for (size_t j = i + 1; j < states.size() && (int)candidates.size() < MAX_CANDIDATES; j++) {
+                // Verify outgoing transitions match (both should have none)
+                if (states_outgoing_match(nfa, states[i], states[j])) {
+                    merge_candidate_t cand;
+                    cand.state1 = std::min(states[i], states[j]);
+                    cand.state2 = std::max(states[i], states[j]);
+                    cand.type = MERGE_TYPE_FINAL;
+                    cand.signature = group.first;
+                    cand.priority = 2;  // Higher priority for final states
+                    candidates.push_back(cand);
+                    count++;
+                }
             }
         }
     }
@@ -1010,12 +663,11 @@ static int process_window(
     bool* dead_states,
     int start_state,
     int end_state,
-    int max_candidates,
-    bool verbose
+    int max_candidates
 ) {
     std::vector<merge_candidate_t> candidates;
     
-    int count = collect_candidates_in_window(nfa, state_count, dead_states, candidates, start_state, end_state);
+    collect_candidates_in_window(nfa, state_count, dead_states, candidates, start_state, end_state);
     
     if (candidates.empty()) return 0;
     
@@ -1024,7 +676,7 @@ static int process_window(
     }
     
     // Build conflict graph
-    std::map<int, std::set<int>> conflicts = build_conflict_graph(candidates, nfa, state_count);
+    std::map<int, std::set<int>> conflicts = build_conflict_graph(candidates);
     
     int total_conflicts = 0;
     for (const auto& entry : conflicts) {
@@ -1091,7 +743,7 @@ extern "C" int nfa_preminimize_optimal_merges(
         
         VERBOSE_PRINT("  Window %d: states [%d, %d)\n", iteration, start, end);
         
-        int merged = process_window(nfa, state_count, dead_states, start, end, max_candidates, verbose);
+        int merged = process_window(nfa, state_count, dead_states, start, end, max_candidates);
         
         if (merged > 0) {
             VERBOSE_PRINT("    Merged %d states in window\n", merged);

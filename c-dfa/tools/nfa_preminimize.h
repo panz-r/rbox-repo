@@ -38,32 +38,21 @@ typedef struct {
 /**
  * Options for pre-minimization
  * 
- * Local optimizations (O(n) or O(n log n)):
+ * All optimizations are O(n) or O(n log n) and safe (preserve language equivalence):
  *   - enable_prune: Remove unreachable states (O(n))
  *   - enable_epsilon_elim: Bypass single epsilon pass-through states (O(n))
  *   - enable_epsilon_chain: Compress multi-hop epsilon chains (O(n))
  *   - enable_final_dedup: Deduplicate equivalent final/accepting states (O(n log n))
  *   - enable_bidirectional: Bidirectional incremental merging (O(n log n))
- * 
- * Global optimizations (disabled by default, may not scale):
- *   - enable_merge: Full bisimulation reduction (O(n²))
- *   - enable_landing_pad: Common suffix merging (O(n²))
- *   - enable_sat: SAT-based verification (O(2^k) per window)
- * 
- * DISABLED:
- *   - enable_identical: Merge states with identical signatures - UNSAFE for NFAs
+ *   - enable_sat_optimal: SAT-based optimal merge selection (bounded complexity)
  */
 typedef struct {
     bool enable_epsilon_elim;   // Enable epsilon pass-through bypass (default: true)
     bool enable_epsilon_chain;  // Enable epsilon chain compression (default: true)
-    bool enable_landing_pad;    // Enable landing-pad removal (default: false)
     bool enable_prune;          // Enable unreachable state pruning (default: true)
     bool enable_final_dedup;    // Enable final state deduplication (default: true)
     bool enable_bidirectional;  // Enable bidirectional incremental merging (default: true)
-    bool enable_merge;          // Enable bisimulation merging (default: false)
-    bool enable_identical;      // DISABLED: UNSAFE - NFA state merging can change language
-    bool enable_sat;            // Enable SAT-based bisimulation verification (default: false)
-    bool enable_sat_optimal;    // Enable SAT-based optimal merge selection (default: false)
+    bool enable_sat_optimal;    // Enable SAT-based optimal merge selection (default: true)
     int max_sat_candidates;     // Maximum candidates for SAT optimal (default: 200)
     bool verbose;               // Print progress information
 } nfa_premin_options_t;

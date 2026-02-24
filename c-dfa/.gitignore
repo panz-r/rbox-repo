@@ -8,6 +8,7 @@ tools/nfa2dfa_sat
 tools/pattern_order
 tools/dfa_eval_wrapper
 tools/test_minimize_integrity
+tools/*_asan
 
 # Test binaries
 tests/test_minimize_integrity

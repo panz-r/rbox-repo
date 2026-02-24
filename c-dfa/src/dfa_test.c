@@ -199,6 +199,7 @@ static void run_boundary_new_tests(void);
 static void run_category_mix_tests(void);
 static void run_negative_integrity_tests(void);
 static void run_nested_capture_tests(void);
+static void run_factorization_tests(void);
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
@@ -1287,6 +1288,7 @@ int main(int argc, char* argv[]) {
         run_stress_capture_tests();
         run_stress_whitespace_tests();
         run_nested_capture_tests();
+        run_factorization_tests();
     }
 
     print_separator();
@@ -1344,14 +1346,15 @@ static void run_stress_structural_tests(void) {
     };
 
     run_test_group("STRESS: Structural Integrity", "stress_test.txt",
-                   "build_test/stress_structural.dfa", cases, 0);
-    // ... more cases
+                   "build_test/stress_structural.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_stress_capture_tests(void) {
-    TestCase cases[1] = {0};  // Empty placeholder - capture tests disabled
-    run_test_group("STRESS: Capture Precision (Mealy Replay)", "stress_test.txt",
-                   "build_test/stress_capture.dfa", cases, 0);
+    // Capture tests disabled - skip entirely
+    // TestCase cases[1] = {0};  // Empty placeholder - capture tests disabled
+    // run_test_group("STRESS: Capture Precision (Mealy Replay)", "stress_test.txt",
+    //                "build_test/stress_capture.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+    (void)0;  // No-op to avoid empty function
 }
 
 static void run_stress_whitespace_tests(void) {
@@ -1768,4 +1771,44 @@ static void run_nested_capture_tests(void) {
 
     run_test_group("NESTED CAPTURE TESTS", "nested_capture.txt",
                    "build_test/nested_capture.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// SUFFIX FACTORIZATION TESTS
+// ============================================================================
+
+static void run_factorization_tests(void) {
+    // Tests for suffix factorization optimization
+    // These patterns share common suffixes that should be factorized
+    TestCase cases[] = {
+        // Pattern 1 and 2: ab, cb - share 'b' suffix
+        {"ab", true, 2, CAT_MASK_SAFE, "ab matches (factorization test)"},
+        {"cb", true, 2, CAT_MASK_SAFE, "cb matches (factorization test)"},
+        
+        // Pattern 3 and 4: xy, zy - share 'y' suffix
+        {"xy", true, 2, CAT_MASK_SAFE, "xy matches (factorization test)"},
+        {"zy", true, 2, CAT_MASK_SAFE, "zy matches (factorization test)"},
+        
+        // Pattern 5, 6, 7: ad, bd, cd - share 'd' suffix
+        {"ad", true, 2, CAT_MASK_SAFE, "ad matches (factorization test)"},
+        {"bd", true, 2, CAT_MASK_SAFE, "bd matches (factorization test)"},
+        {"cd", true, 2, CAT_MASK_SAFE, "cd matches (factorization test)"},
+        
+        // Pattern 8 and 9: foobar, bazbar - share 'bar' suffix
+        {"foobar", true, 6, CAT_MASK_SAFE, "foobar matches (factorization test)"},
+        {"bazbar", true, 6, CAT_MASK_SAFE, "bazbar matches (factorization test)"},
+        
+        // Pattern 10 and 11: testend, bestend - share 'end' suffix
+        {"testend", true, 7, CAT_MASK_SAFE, "testend matches (factorization test)"},
+        {"bestend", true, 7, CAT_MASK_SAFE, "bestend matches (factorization test)"},
+        
+        // Negative tests - should NOT match
+        {"a", false, 0, 0, "a alone should NOT match"},
+        {"b", false, 0, 0, "b alone should NOT match"},
+        {"x", false, 0, 0, "x alone should NOT match"},
+        {"foo", false, 0, 0, "foo without bar should NOT match"},
+    };
+
+    run_test_group("SUFFIX FACTORIZATION TESTS", "basic/factorization_test.txt",
+                   "build_test/factorization.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }

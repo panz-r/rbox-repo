@@ -11,7 +11,7 @@ The pre-minimization system applies several optimization passes to reduce NFA si
 3. **Unreachable state pruning** - Remove states not reachable from start
 4. **Final state deduplication** - Merge equivalent accepting states
 5. **Bidirectional incremental merging** - O(n log n) prefix/suffix merging
-6. **SAT-based optimal merge selection** - Find maximum set of non-conflicting merges
+6. **SAT-based optimal merge selection** - Find maximum set of non-conflicting merges (enabled by default)
 
 ## Algorithm Details
 
@@ -39,7 +39,7 @@ The algorithm alternates between prefix and suffix passes until no more merges a
 
 ### SAT-Based Optimal Merge Selection
 
-The SAT-based approach uses the CaDiCaL solver to find the **maximum set of non-conflicting merges** from pre-filtered candidates.
+The SAT-based approach uses the CaDiCaL solver to find the **maximum set of non-conflicting merges** from pre-filtered candidates. This is **enabled by default** and runs after bidirectional merging reaches its fixpoint.
 
 #### Key Insight
 
@@ -53,11 +53,17 @@ Instead of using SAT for bisimulation verification (which is hard), we use SAT f
 4. **Solve**: Find maximum set of non-conflicting merges
 5. **Apply**: Execute all selected merges
 
+#### Candidate Types
+
+- **Prefix candidates**: States with same incoming (source, symbol) and matching outgoing transitions
+- **Suffix candidates**: States with same outgoing (target, symbol) and matching outgoing transitions
+- **Final candidates**: Accepting states with same category and no pending capture markers
+
 #### Configuration
 
 ```c
 nfa_premin_options_t opts = nfa_premin_default_options();
-opts.enable_sat_optimal = true;    // Enable SAT optimal selection
+// SAT optimal is enabled by default
 opts.max_sat_candidates = 200;     // Maximum candidates (bounds complexity)
 ```
 
@@ -71,17 +77,15 @@ The SAT instance size is bounded by `max_candidates`, ensuring predictable perfo
 
 ```c
 nfa_premin_options_t opts = nfa_premin_default_options();
-// Default enables: epsilon_elim, epsilon_chain, prune, final_dedup, bidirectional
-// Default disables: merge, identical, sat, sat_optimal
+// Default enables: epsilon_elim, epsilon_chain, prune, final_dedup, bidirectional, sat_optimal
+// Default disables: merge, identical, sat, landing_pad
 ```
 
-### With SAT Optimization
+### Disabling SAT Optimization
 
 ```c
 nfa_premin_options_t opts = nfa_premin_default_options();
-opts.enable_sat_optimal = true;
-opts.max_sat_candidates = 100;
-opts.verbose = true;
+opts.enable_sat_optimal = false;  // Disable SAT optimal selection
 
 int removed = nfa_preminimize(nfa, &state_count, &opts);
 ```
@@ -116,7 +120,7 @@ printf("SAT optimal merged: %d\n", stats.sat_optimal);
 | Unreachable pruning | O(n) | Enabled |
 | Final state deduplication | O(n log n) | Enabled |
 | Bidirectional merging | O(n log n) | Enabled |
-| SAT optimal selection | O(m²) + SAT | Disabled |
+| SAT optimal selection | O(m²) + SAT | Enabled |
 
 Where n = NFA states, m = number of merge candidates (bounded).
 
@@ -126,7 +130,7 @@ All enabled optimizations preserve language equivalence:
 
 - **Epsilon elimination**: Only bypasses states with no accepting properties
 - **Prefix merging**: Only merges states with identical prefix properties
-- **Suffix merging**: Only merges states with identical accepting properties
-- **SAT optimal**: Only merges pre-verified safe candidates
+- **Suffix merging**: Only merges states with identical accepting properties AND matching outgoing transitions
+- **SAT optimal**: Only merges pre-verified safe candidates with matching outgoing transitions
 
 The `enable_identical` option is **disabled by default** because merging states with identical signatures can change the language for NFAs (unlike DFAs).
