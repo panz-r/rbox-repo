@@ -1,0 +1,20 @@
+ls
+lÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿt <<aÞ <<'E@F'
+cat <<"EOF"
+cat <<- EON
+cmd <<< string
+cmmd1 | cmat <<"EOF"
+cat <<- EOF
+cmd <<< stringl
+cmt << ENDTEXT
+caÞ <<'E@F'
+cat <<"EOF"
+cat <<- EON
+cmd <<< string
+REXT
+caÞ <<'E@<'E@F'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmmd1 | cm
+cmd > ous

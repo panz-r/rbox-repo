@@ -1,0 +1,12 @@
+l
+${var%s}
+${ar
+${v${{pfix}
+${ar
+${v${{prt}
+${var:=assignedvar:=asr%s}
+${ar
+${v${{pfix}
+${ar
+${v${{prt}
+${var:${@]}

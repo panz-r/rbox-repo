@@ -1,0 +1,10 @@
+lsrerld"
+echo '[o $EXPANSION herg'
+grep -E 'pattern' file
+find . -namerld"
+echo '[o $EXPANSION herg'
+grep -'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 2>&1¬| tee build.log
+git comt -m "fix: bug 'fix"

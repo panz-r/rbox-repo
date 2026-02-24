@@ -1,0 +1,10 @@
+ls
+ls -|ah
+cat file.txt
+
+eo $VAR
+echo ${VAR}
+echo $4(1R
+echo ${VAR}
+echo $4(1+2ile?.txate)
+echoad`t ec$((1+2)

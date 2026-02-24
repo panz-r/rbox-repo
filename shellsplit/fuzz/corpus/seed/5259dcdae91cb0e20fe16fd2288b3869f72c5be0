@@ -1,0 +1,148 @@
+&&&&&&&&TEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $xt
+l” [abc].txt
+cmd1 | cmd2
+cmd1 && cm&&d2
+cmd1 || cmd2
+cmd1 ; cmd2
+ b ||date +%sì) ))
+arr=(one two three)ls
+ls -la
+cat filTEXT
+cat <<'EOF'
+cat <<"LOF"
+úcls
+ls -laar)
+$(( $(date +%{ì) ))
+arr=(one °:>>>>ls
+l&s -la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+"double quot”d <<"EOF"
+úcls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+e&cho $((1+2))
+echo $xt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+ b || c x}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+$(( $(date +%sì) ))
+arr=(one two three)ls
+ls -la
+cat filTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $xt
+ls [abc+ 1))
+$(echo $var)
+$(( $(date +%sì) ))
+arr=(one °:>>>>>ÿtwo three)ls
+ls -la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+"double quoe.°:>>>>>ÿÿÿÿÿÿÿÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>alue
+"double quoe.txt
+echoted <<"EOF"
+úcls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $xt
+ls [abc].txt
+cmìd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmÿÿÿÿÿat file.txt
+echo hello
+ec
+arr[0]=value
+"double quot”d <<"EOF"
+úcls
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+ b || c x}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+$(( $(date +%sì) ))
+arr=(one two three)ls
+ls -la
+cat filTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+l{VAR}
+echo $((1+2))
+echo $xt
+l” [abc].txt
+cmd1 | cmd2
+cmd1 && ctxt
+echo hellod1 ; cmd2
+ b ||date +%sì) ))
+arr=(one two three)ls
+ls -la
+cat filTEXT
+cat <<'EOF'
+cat <<"LOF"
+úcls
+ls -laar)
+$(( $(date +%{ì) ))
+arr=(one °:>>>>ls
+l&s -la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+"double quot”d<"EOF"
+úcls
+ls -la
+Cat file.txt
+ehoello
+ec
+arr[0]=value
+"double quoe.°:>>>¼>ÿÿÿÿÿÿÿÿÿ>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿÿÿÿ[>>>>>>VAR}
+echo $((1+2))
+echo $xt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmÿÿÿÿÿÿÿÿÿÿ

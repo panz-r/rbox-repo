@@ -1,0 +1,16 @@
+ls
+ls -la
+cat file.txt
+f [ -f file ]; then echo exists; fi
+for f in *.txt; do cat $f; done
+while read line; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hello; }
+foo() {xport PATH=/usr/bin:$PATH
+${'''''''''''''''''''''''''''''''uble quoted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $EXPANSION hercho e'
+grep -~E 'pattern' file
+-ind . -namhello
+echo $VAe '*.

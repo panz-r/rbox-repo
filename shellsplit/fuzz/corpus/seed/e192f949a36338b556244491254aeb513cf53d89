@@ -1,0 +1,34 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo $.txt
+cmd >> ap@end.txt# in a) echo a;; esac
+funca;; esac
+function foo { echo `ello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+$ho $(date)
+echo `\\\\\\\\\\\\\\\\ls
+ls -la
+nd.txt
+cmf"file ]; then echo exists; fi
+for f in *.txt; do cat $f; done
+while read line; do ecÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ)
+$(( $(date +%s) )-(echo $vr)
+$(( $(diôwluecho $line; done
+case {var%suffix}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+$(( $(date +%s) )uffix}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+$(( $(diô commit -m "fix: bug fix"

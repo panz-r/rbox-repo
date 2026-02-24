@@ -1,0 +1,4 @@
+ls
+ls -l&!& b ||str<<< string& b ||str<<< string
+cmdc 
+cat ; d | e

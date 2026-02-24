@@ -1,0 +1,6 @@
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["[[[[[[[[[[[[[[[[[AR
+ output.txt
+cmd >> append.txt
+cmd 2> err
+ls -l | cmd2
+cmd1 

@@ -1,0 +1,6 @@
+lsrerld"
+ec fkle
+find . -name '*.log'
+docker ps -a
+make all 2>&1 | tee build.log
+git comt -m "fi"

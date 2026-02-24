@@ -1,0 +1,3 @@
+ls
+|s EOFcmd <<< sf s
+ls

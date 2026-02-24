@@ -1,0 +1,9 @@
+ls
+lR}
+echo $((1+2))
+echo $(date)
+echomd2
+cfile?.txta &!& b ||<<< string
+cmd < file.txt
+cm c 
+cat ; d | e

@@ -1,0 +1,42 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${V*.txt
+ls file?.txt
+ls tabc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat < done
+case $var in a) echo a;;ON here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 4>#1 | tee build.log
+git commit mm "fix: ffffffffffffffffffffffffffffffff esac
+function foo { echo hello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var%suæf))
+$(echo $var)
+$(( $(date +me '*.log'one two three)
+arr[0]=value
+"d/uble quoted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $EXPANSION here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 4>&1 | tee build.log
+git commit -m "fix: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffuoted $Vho $

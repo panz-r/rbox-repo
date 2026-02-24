@@ -1,0 +1,37 @@
+ls
+ls -la
+cat file.t+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].t2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOFEOF
+cmd <<< string | ce?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 N&& cmd2
+cmd1 || cmd2o `date`
+lsxt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 N&& cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | ce?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 N&& cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d; done
+while re

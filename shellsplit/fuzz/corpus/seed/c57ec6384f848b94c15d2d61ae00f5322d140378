@@ -1,0 +1,11 @@
+lsÿÿy×?¬>“
+ls -Nle.txt
+echo hd1 | cmd2 | cmd3
+a && b || c ; d | e
+catls
+ << EOF
+<< ENDTEXT
+ãat <<'EO
+cat <<"E 1))
+$(echo $var)
+mit -m "fix: iug fix"

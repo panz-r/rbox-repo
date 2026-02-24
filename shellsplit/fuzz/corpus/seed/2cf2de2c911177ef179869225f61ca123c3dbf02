@@ -1,0 +1,18 @@
+ls
+ls -la
+catho hello
+echo $ATH
+${var:-default}
+$+var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x' + y))4>&1
+i [ -f file ]; then echo exists; fi
+for f in *.txt; do caF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < file.txt
+cmdt $f; done
+while re

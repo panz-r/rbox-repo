@@ -1,0 +1,21 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo $.txt
+cmd >> append.txt
+cmd 2> error.txt
+cmd > outunction foo { echo `ello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PAls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+TH
+${var:-eefecauh

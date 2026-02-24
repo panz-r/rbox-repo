@@ -1,0 +1,12 @@
+ls
+ppend.txt
+cmd 2> error.txt
+cmd > out.txt cmd >> aAr}
+echo cmd3
+a && b || c ; d | e
+cat << E; then echo end.txt
+cmd 2> error.txt
+cmd > out.txt cmd >> append.txt
+cmd 2> error.txt
+co `date`
+ls nd

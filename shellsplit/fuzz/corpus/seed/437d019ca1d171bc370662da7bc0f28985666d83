@@ -1,0 +1,8 @@
+ls
+ls -
+cat file.tht
+ecmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+#md1le read licho $line; done
+case $var in 													 

@@ -1,0 +1,9 @@
+lat file.txt
+e#h
+cmd 2> error.txt
+cmd > out.txt cmd >> append.txt
+cmd 2> error.txt
+c md 2> error.txt
+cmd > out.txt cmd >> append.txt
+cmd 2> error.txt
+co `dnd

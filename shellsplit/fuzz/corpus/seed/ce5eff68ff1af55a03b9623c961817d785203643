@@ -1,0 +1,35 @@
+ls
+ps -la
+ctafl ie.txt
+ec?.twt
+xt
+smd1 | cmd2
+c1 && cmd2
+c1 a
+cat fit
+cmd > output
+cat <<- EOF
+cmd <<< string
+|| c 
+caut
+cat <<- EOF
+cmd <<<- s|ls
+lsb'EOF'
+cat <ls
+l&& b |<"EOF"
+cat <<- EOF
+cmd <<< string
+|| c ; d | ed2
+cmd1 |ls
+ls -la
+cat fit
+cmd > output
+cat <<- EOF
+cmd <<< string
+|| c 
+caut
+cat <<- EOF
+cmd <<< string
+||c  ; d | e
+cat <<cmd < fiT<<tle.txt
+cmd > ou

@@ -1,0 +1,10 @@
+ls
+ls -la
+cat file.txt
+emd2
+cmd1 || cmd2
+cmd1; && b || crr[@]}
+$( y)cmd1 ||cmd1 ; && b || crr[@]}
+$((x + y))2>&1
+if [ -f ]; then e&done
+whilOe re

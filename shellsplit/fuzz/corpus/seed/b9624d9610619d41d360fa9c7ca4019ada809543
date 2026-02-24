@@ -1,0 +1,5 @@
+>~ ENDTEXã <<'EO
+cat <<"EOF" 1))
+$(echo $var)
+mit -m "fatls
+ x"

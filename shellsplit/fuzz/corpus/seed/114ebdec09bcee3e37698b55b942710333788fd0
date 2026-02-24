@@ -1,0 +1,14 @@
+lw
+
+s¹¹¹¹¹¹¹¹¹¹ ${VAR}
+<< EOF
+c£4 << ${VAR}
+<< EOF
+c£t << axt
+cmd > oo ${VAR}
+<< EOu
+cls -la
+ho ${VAR}
+<< 
+lsc.txAR}
+<< EOFmdEÝ 

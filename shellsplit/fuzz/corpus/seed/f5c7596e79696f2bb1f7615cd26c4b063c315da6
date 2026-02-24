@@ -1,0 +1,21 @@
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[<"EOF"
+catls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+e <<- EOF
+cmd <<< string
+cmd < file.txt
+cmd > output.txt
+cmd >> append.txt
+cmd 2> error.txt
+cmd cho ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ <cOE
+<'> out.txt 2>aF'at <<"EOF"
+cat <<- EOF
+cmd <<
+cat f< strinil

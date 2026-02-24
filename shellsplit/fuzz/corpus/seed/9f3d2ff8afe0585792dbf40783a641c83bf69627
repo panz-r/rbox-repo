@@ -1,0 +1,7 @@
+ls
+ls -la9|atx<< EOF
+c|atx<< EOF
+cat << ENle.Txt
+echo hello
+echo $VAR
+eccmd eingn

@@ -1,0 +1,17 @@
+lÿÿÿÿÿÿÿÿÿÿÿÿÿt <<aÞ <<'E@F'
+cat <<"EOF"
+cat <<- EON
+cmd <<<F"
+cat <<- EOF
+cmd <<< stringl
+cmt << EáNDTEXT
+caÞ <<'E@F'
+cat <<"EOF"
+cat <<- E<< string
+REXT
+caÞ <<'E@<'E@F'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmmd1 | cm
+cmd > ous

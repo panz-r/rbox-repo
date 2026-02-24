@@ -1,0 +1,4 @@
+(0bc].txt
+cmd1 cat <<'EOF'
+cat <<"EOF"
+cat <

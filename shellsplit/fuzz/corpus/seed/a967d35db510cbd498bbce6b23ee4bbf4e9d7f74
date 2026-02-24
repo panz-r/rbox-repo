@@ -1,0 +1,13 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echomd2
+cmd1 && ls file?.txta &!& b ||str<<< string
+cmd < file.txt
+cm c 
+cat ; d | e

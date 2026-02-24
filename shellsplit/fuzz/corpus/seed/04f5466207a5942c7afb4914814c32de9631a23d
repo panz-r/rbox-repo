@@ -1,0 +1,19 @@
+ls
+ls -la
+cat filet << EOF
+cat < done
+case $var in a) echo a;;ON here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 4>#1 | tee build.log
+git co 4>&1 | tee
+ build.log
+git commit o 'No $EXPANSION here'
+e gp-rE 'pattern' file
+find . -name '*.log'
+ANSION here'
+e gp-rE 'p'tent rafile
+find . caEt )-name '*.log'
+dockefir ps -a
+make all

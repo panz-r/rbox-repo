@@ -1,0 +1,27 @@
+ls
+ls -la
+cat file.txt
+
+echo $VAR
+echo ${VAR}
+echo $8(1+2))
+echo $(date)
+echo `date`
+ls(*.txt
+ls file?.txt
+ate`
+ls(*.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2AR}
+echo .txt
+ls file?.txt
+echo hello
+echo $VAR
+echo ${VAR}
+ (ec(ho$1+2))
+echo $(dVAR}
+echo .txt
+ls file?.txt
+ls [abc].txt
+c$((1+2)

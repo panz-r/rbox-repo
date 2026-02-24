@@ -1,0 +1,5 @@
+lss file?.txt
+ls [abc] [a].txt s
+!s  [abc].txm1
+cdt |[abc]d cmd2 EOF
+md

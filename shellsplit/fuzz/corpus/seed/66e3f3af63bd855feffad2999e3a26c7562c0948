@@ -1,0 +1,10 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+e=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix))ted $Vho $

@@ -1,0 +1,35 @@
+ls
+ls -la
+cat file.txt
+
+echo $VAR
+echo ${VAR}
+echo $8(1+2ile.txt
+echo hello
+echo $te)
+echo `date`
+ls *${VAR}
+echo .txt
+ls file?.txt
+echo hello
+echo $VAR
+echo ${VAR}
+ (ec(ho$1+2))
+echo $(date)
+echo `date`
+ls(*.txt
+ls fo
+echo $VAR
+echo lsJls -la
+ca: file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+1cho $((0+2))
+echo $(date)
+echo `date`
+ls *${VAR}
+echo .txt
+ls file?.txt
+ls [abc].txt
+c$((1+2)

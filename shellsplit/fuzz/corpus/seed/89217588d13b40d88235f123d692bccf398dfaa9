@@ -1,0 +1,12 @@
+ls
+ls -la
+cat cho $Vxt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echod1 || c ; d | e
+cat << ls
+ls -lacat file.txt
+echca t|

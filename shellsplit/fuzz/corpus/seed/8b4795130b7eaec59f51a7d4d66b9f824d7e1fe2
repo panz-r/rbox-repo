@@ -1,0 +1,6 @@
+ls
+ls -la9|at << EOF
+cat << ENle.txt
+echo hello
+echo $VAR
+eccmd <<< st r]; theingn

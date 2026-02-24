@@ -1,0 +1,31 @@
+ls
+lo { e2))
+echo $(date)
+eccho hello; }
+foo() ??????????????????????????????????????????????1 | cmd2
+cmd1 && cmd2
+cms -lañœž‹ß™–õls(*.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cm | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENle.txt
+echo hello
+echk xt
+echo hello
+echo $VAR
+echo ${VAR}
+echo o hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+mit -m "fix: bug fix"

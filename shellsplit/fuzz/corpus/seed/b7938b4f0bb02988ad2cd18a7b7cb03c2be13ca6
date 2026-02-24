@@ -1,0 +1,120 @@
+&&&&&&&&TEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $xt
+l” [abc].txt
+cmd1 | cmd2
+cmd1 && cm&&d2
+cmd1 || cmd2
+cmd1 ; cmd2
+ b || c x}
+${arr[@]}
+$((›››››››››››››››››››››x + y))
+$((x * 2 + 1))
+$(echo $var)
+$(( $(date +%sì) ))
+arr=(one two three)ls
+ls -la
+cat file.tx* 2 + 1))
+$(echo $var)
+$(( $(date +%sì) ))
+arr=(one two three)ls
+ls -la
+cat filTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls -laar)
+$(( $(date +%sì) ))
+arr=(one °:>>>>ls
+ls -la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+"double quot”d <<"EOF"
+úcls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+e&cho $((1+2))
+echo $xt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd)
+echo $xt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmÿÿÿÿÿÿÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿd1 ; cmd2
+ b || c x}
+${arr[@]}
+ hello
+ec
+arre.°:>>>>>ÿÿÿÿÿÿÿÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿÿÿÿ[>>>>>>VAR}
+echo $((<<<1+2))
+echo $xt
+ls [abc].tx?
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmÿÿÿÿ=value
+ $Vho $((x + y))
+$((x * 2 + 1))
+$(echo $varÿÿÿ[>>>>>)
+$(( $(date +%sì) ))
+arr=(on>e two three)ÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿd1 ; cmd2
+ b || c x}
+${arr[@]}
+ hello
+ec
+arr[0]=value
+ $Vho $((x + y))
+$((x * 2 + 1))
+$(echo $varÿÿÿ[>>>two three)ls
+ls -la
+cat file.txt
+echl heolo
+ec
+arr[0]=value
+<<ã
+ ÿ"double quoe.°:>>>>>ÿÿÿÿÿÿÿÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿÿÿÿ[>>>>>>VAR}
+echo $((<<<1+2))
+echo $xt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmÿÿÿÿÿÿÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿd1 ; cmdÔ
+ b || c x}
+${arr[@]}
+ hello
+ec
+arr[0]=value
+ $Vho $((x + y))
+$((x * 2 + 1))
+$(echo $varÿÿÿ[>>>>>)
+$(( $(date +%sì) ))
+arr=(on>e two three)l $Vho $((x + y))
+$((x * 2 + 1))
+$(echo $varÿÿÿ[>>>>>)
+$(( $(date +%sì) ))
+arr=(on>e two three)ls
+ls -$la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+ $Vho $

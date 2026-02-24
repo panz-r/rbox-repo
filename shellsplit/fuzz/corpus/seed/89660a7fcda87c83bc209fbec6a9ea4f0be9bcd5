@@ -1,0 +1,29 @@
+ls
+ls )
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1lslsd2
+cmd1 && cmd2
+cmd$((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+F"
+cat <<- EOF
+cmd <<< string
+cmd < file. cmd2
+cmd1 ;txt
+cmdt one
+while re

@@ -1,0 +1,4 @@
+ls
+ls$$(date)
+echo `date`s
+gh# $liec

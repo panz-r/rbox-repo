@@ -1,0 +1,27 @@
+ls
+lsÿÿs;	>ê0 -la
+cat file.txt
+echo hello
+echo $V@R
+echocat << ENDTEXT
+cat <<'EOle.txt
+cmd > output.txt
+cmlw
+ls -la
+cat file.txt
+echo hello
+ech*.txt
+ls file?.txt
+ls d >> append.txt
+cmd 2 || c ; d | e
+cat <3 EOF
+c—‹ßÃÃßº±DTEXT
+cat0> error.txt
+cmd > out.txt cmd >> append.txt
+cmd 2> err<<'EOor.txt
+cmd >F'
+cat <<"EOF"
+úcat <<- ${ out.txVA&{VAR}
+echo $(t 2>&1
+if(1+2))
+ [e 

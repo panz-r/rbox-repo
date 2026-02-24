@@ -1,0 +1,27 @@
+ÿÿÿls
+F
+cmd <<< stri&g
+cm&&&&&&&&&&&&"&&&&&&&&&&&&&&&&&&&&&&&&&&&ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿxt
+cmd1 |md1 ; cmd2
+md2
+F"
+2
+t <<- EOFF
+cmd <<< stri&g
+cmd < file.txt
+cmdt $fls
+ls -lals
+ls -lsltne
+while rele.txt
+echo hello
+echo $VAR
+echo ${VAR}
+}&&&&&&&&&&&&&&&&&&&&&&&"&&&&&&&&&&&&&&&&&&&&&&&&&&&ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿxt
+cmd0 |md1 ; cmd2
+md2
+F"
+2
+t <<- EOF
+cmd <<< stri&
+cmd <<< stri&g
+cmd < file.txtŠcmdt $ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ&&&&&&&&&&&&&&&

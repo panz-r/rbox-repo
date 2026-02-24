@@ -1,0 +1,15 @@
+ls
+ls -lacmd <<< string
+cmd < fils
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+emD2
+cmd -ls -ls1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | 					a && b || c ; d | e
+xple re

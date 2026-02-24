@@ -1,0 +1,6 @@
+TElca{ <<'EOFls
+!s -la
+cat fi
+ls'
+c2e
+()

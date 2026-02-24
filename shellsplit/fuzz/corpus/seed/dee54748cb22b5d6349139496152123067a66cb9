@@ -1,0 +1,12 @@
+ls
+lne; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG${var##prefix}
+$$line;md3
+a && b || c  ;d

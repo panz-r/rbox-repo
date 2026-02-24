@@ -1,0 +1,46 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAlllllllllllllllllllllllllllllllllR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.(1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cm exists; fi
+for f in *.txt; do cat $f; done
+while read line; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var!suff))
+$(echo $var)
+$(( $(date +%s) ))
+arr=(one two three)
+arr[0]=value
+"double qucmd > out.txt 2>&1
+if [ -f file ]; then echo exists; fi
+for f oted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $EXPANSION here'
+grep -E 'pattern' file
+find .-name '*.log'
+docker ps -a
+make all 4>&1 | tee build.log
+git commit -m "fix: bug fix"

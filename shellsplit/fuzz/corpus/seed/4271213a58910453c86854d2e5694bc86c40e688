@@ -1,0 +1,6 @@
+.tx!t
+ls [abEOF
+cmd <<<i ntsrg
+ls
+ls -la
+cat file.tcmd < fxil

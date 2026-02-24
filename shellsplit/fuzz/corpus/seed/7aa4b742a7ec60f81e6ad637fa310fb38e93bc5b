@@ -1,0 +1,9 @@
+ls
+ls -la
+cat file.txt
+echo hello
+eo $VAR
+ b ||str<<< string& b ||str<<< string
+cmd < file.txt
+cm c 
+cat ; d | e

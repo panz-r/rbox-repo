@@ -1,0 +1,79 @@
+&&&&&&&&TEXT
+cÿat <<'												EOF'tac
+ <<"EOF"
+úcls
+ls -la
+ca $((1+2))
+echo $xt
+l” [abc].txt
+cmd1 | cmd2
+cmd1 && cm&&d2
+cmd1 || cmd2
+ -la
+cat file.txt
+echo hello
+ec$T
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls -laar)
+$(( $(date +%sì) ))
+arr=(one °:>>>>rr[0]=v>alue
+"double quot”d <<"EOF"ùúcls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+(1+2o $var)
+$(ne two three)ls
+ls -la
+cat filTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls cmd2
+ b || c x}
+${arr[@]}
+ls
+ls -la
+cat file.txt
+echo hcmd1 ; cmd2
+ b || c x}
+${arr[@]}
+$((››››››››››››››››››››x + y))
+$((x * 2 + 1))
+$<(echo $var)e
+"doublRe quot”d <<"EOF"
+úclscat <<'EOF'
+cat <<"EOF"
+úcls
+ls -laar)
+$(( $ date +%sì) ))
+arr=(one °:>>>>rr[0]=v>alue
+"double quot”d <<"EOF"$(ne two three)ls
+ls -la
+cat filTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls cmd2
+ b || c x}
+${arr[@]}
+ls
+ls -la
+cat file.txt0
+echo hello
+ec
+arr[0]=value
+"dou>ble quoe.°:>ðððððððððððððÿÿÿÿÿÿÿ¯ðððððððððððððððððððe
+"double quot”d <<"EOF"
+úcls
+ls -la
+caVAR
+echo ${V[R}
+echo $( $(dat”ß+%sì) ))
+a>rr=(one °:>>>>>xt
+echo hello
+ec
+arr[5]=value
+"double quoe.°:>>>>>ÿÿÿÿÿÿÿÿÿÿÿÿÿ>††††††††††††

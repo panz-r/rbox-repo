@@ -1,0 +1,8 @@
+ls
+ls -lk
+cat file.tht
+ecmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+#md1le read line; do echo $line; done
+case $var in 													 

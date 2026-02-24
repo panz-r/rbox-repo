@@ -1,0 +1,24 @@
+ls
+lne; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hello; }
+foo
+ucho `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd0 | cmd2
+r:-default}
+${var:=assigned}
+GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG${var##preecho hello; }
+foo
+uchxt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+r:-default}
+${var:=assigned}
+GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG${var##prefix}
+$$line;mdfix}
+$$line;md2
+a && b || c  ;d

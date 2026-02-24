@@ -1,0 +1,42 @@
+ls
+$((ls le.xt
+echo hlo
+echo $VAR
+echo ${VAR}
+echo  $line; done
+case $vartcase $PATH
+${var:-default}
+${var:=assigned} i
+${var:=assigned}
+${var##pre${v x=5
+exportcase $PATH
+${var:-default}
+${var:=assigned}
+${var##pre}tri
+${var##prefix 
+${vaP< }
+echo  $line; done
+case $vartcase $ar:-default}
+${var:=assigned}
+${var##pase $vartcase $PATH
+${var:-default}
+${var:=assigned} i
+${var:=assigned}
+${var##pre${v x=5
+exportcase $PATH
+${var:-default}
+${var:=assigned}
+${var##pre}tri
+${var##prefix 
+${vaP< }
+echo  $line; done
+case $vartcase $ar:-default}
+${var:=assigned}
+${var##pre}tri
+${var##pr$efix 
+${var%suffi}
+${var:=assigned}
+${var##pre}tri
+${var##prefix 
+${var%suffix}
+${arr[@]}

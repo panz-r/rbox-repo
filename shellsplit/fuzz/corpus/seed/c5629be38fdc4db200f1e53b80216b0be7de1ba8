@@ -1,0 +1,16 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAix}
+${arr[@]}
+$((x + y))2>&1
+if [ -f file ]; then echo exists; fi
+for a) echoe;t; do caF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < file.txt
+cmdt $f; done
+while re

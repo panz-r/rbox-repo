@@ -1,0 +1,4 @@
+ls
+eccmxt
+cmd 2>|e> error.txt
+c.

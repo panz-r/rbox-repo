@@ -1,0 +1,14 @@
+ls
+ls -la
+cat file.txt
+f [ -f file ]; then echo exists; fi
+for f in *.txt; do cat $f; done
+while read line; do ech"double quoted $VAR"
+'si!>(AR'
+echo "Hello World"
+echo 'No $EXPANSION here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 2>&1 | tee build.log
+git commit -m "fix: bug fix"

@@ -1,0 +1,31 @@
+TEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls -lacmd3
+a && b || c ; d | e
+cat << EOF
+ccho exists; fi
+for f in *.txt; do cat $f; done
+while read line; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hello; }
+foo() { echo hello; }
+local x=2
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+$(( $(date +%s) ))
+arr=(one two three)ls
+ls -la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+"double quoted $Vho $

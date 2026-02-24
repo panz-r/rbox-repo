@@ -1,0 +1,10 @@
+lw
+
+s¹¹¹¹¹¹¹¹¹¹ ${VAS}<< EOF
+c£4 << ${VAR}
+<< EOF
+c£t << axto ${VAR}
+<< EOu
+lcs -ala
+ho ${VAR}
+<< lscEÝ 

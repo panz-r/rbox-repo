@@ -1,0 +1,5 @@
+|||lsmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && fi
+cmd1 |cmdp"

@@ -1,0 +1,29 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)oc e
+h`date` ))
+echo $(date)
+echo `date`
+ls *.t
+ls *.txt
+ls file?.txt s
+[alb string
+cmd < file.txt
+cmdt $fmd2 | cmd3
+a && b || c ; d | e
+cat << ))
+echo $(date)
+ecoh `date`
+ls *.t
+ls *.txt
+txt
+?.txt s
+[alb string
+cmd < file.txt
+cmdt $f; done
+while re

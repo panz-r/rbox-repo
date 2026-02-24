@@ -1,0 +1,15 @@
+ls
+&& cmd2
+cmd1 || cmd2d1 ; cmd2
+F"
+cat <<- EOF
+cmd <<< string
+cmd < file.txt
+cmdt $fls -la
+cat file.txt
+ete`
+ls *.txt
+ls file?.txt
+lst
+cmdt $f; done
+while re

@@ -1,0 +1,8 @@
+>sÿÿy× | e
+catls
+ << EOF
+<< ENDTEXT
+ãat <<'EO
+cat <<"EOF" 1))
+$(echo $var)
+mit -m "fix: iu× fix"

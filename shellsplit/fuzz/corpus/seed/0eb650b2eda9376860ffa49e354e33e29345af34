@@ -1,0 +1,10 @@
+TEls
+ls :la
+cat file.txto
+echo $VAR
+echo ${VAR}
+echo $((1+XT
+cat <<'EOF'
+c2))
+echo $(date)
+echo `date`at <<"

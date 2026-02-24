@@ -1,0 +1,8 @@
+ls
+ls -lacmd <<< string
+cmd < fils
+ls te)
+echo `date`
+md2
+cmD1 | cmd2 | 					a && b || c ; d | e
+xple re

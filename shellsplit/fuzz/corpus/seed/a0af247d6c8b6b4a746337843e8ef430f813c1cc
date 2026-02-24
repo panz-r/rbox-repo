@@ -1,0 +1,7 @@
+lsrep -E 'pat
+lsSION here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 2>&1 | tee build.log
+git commit -m "fix: bug fix"

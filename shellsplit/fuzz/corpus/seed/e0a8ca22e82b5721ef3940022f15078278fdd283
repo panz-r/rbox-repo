@@ -1,0 +1,40 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $Vÿÿÿÿÿÿÿÿÿÿÿÿÿ@R
+echo ${VAR}
+echo $((1+[abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1& b || c ; d | e
+cat << EOF
+md > output.txt
+cmd >> append.txt
+cmd 2> ervor.txt
+cmd > out.tˆ‹ßœ’›ßÈ> append.txt
+cmd 2> error.txt
+cmd > out.txt 2>&1
+if [ -f file ]; then echcmd > out.txt 2>&1
+if [ -f file ]; then echo exists; fi
+for f in *.txt; do caF'
+cat < $((1+2))
+echo $(datcat << ENDTEXT
+cat <<'EOle.txt
+cmd > output.txt
+cmd >> append.txt
+cmd 2> error.txt
+cmd > out.txt cmd >> append.txt
+cmd 2>nd.txt
+cmd 2> error.txt
+cmd > out.txt 1>&1
+if [ -f file ]; then echcmd > out.tx 2>&1
+if [ -f file ]; then echo exists;ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ fi
+for f in *.txt; do caF'
+cat <<"EOls
+ls -lacat filå.txt
+echo hello
+echo $VAR
+ech Eello; }
+foOFend

@@ -1,0 +1,5 @@
+ls
+d 2>|error.txt
+cmd > out.txcmd1 &d1 |cmd; cmd2
+cmd2>|error.txt
+cmd >

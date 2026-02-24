@@ -1,0 +1,8 @@
+at file.txt
+f [ -f file ]; tXPANSION here'
+grep -E 'pattern'ÿfile
+find . -name '*.log'
+docker ps -find . -name '*.log'
+docker ps -a
+a
+make al

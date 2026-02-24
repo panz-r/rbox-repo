@@ -1,0 +1,40 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+els
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo${VAR}
+echo $((0+2))
+echo $(date)cho ${VA&& b || c ; d | e
+cat << EOF
+c—‹ßÃÃßº±DTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcat <<- EOFcmd <<< string
+cmd < fils
+ls -la
+cat A&& b || c ; d | e
+c <<< string
+cmd < fils
+ls -la
+cat A&& b || c ; d | e
+cat << EOF
+c—‹ßÃÃßº±DTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcat <<- EOFcmd <<< string
+cmd <lls
+ls -la
+cat file fils
+ls -.sla
+cat file.txt
+e
+tchxt
+o heš“õšœ— $VAR
+echo ${VAR}
+eche

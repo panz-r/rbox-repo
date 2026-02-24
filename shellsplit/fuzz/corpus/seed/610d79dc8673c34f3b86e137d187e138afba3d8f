@@ -1,0 +1,4 @@
+<< EOF
+cat << ENae.ls
+ls -lle!
+$(echo $xvar)

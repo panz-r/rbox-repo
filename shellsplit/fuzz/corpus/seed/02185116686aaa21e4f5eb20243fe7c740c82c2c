@@ -1,0 +1,7 @@
+ls [1111111F
+cmd <<< string
+t <<'EO111111111111111111111111111111111111F'
+cat <<"E¨F"
+cat <<- EOF
+cmd <<< string
+cmd <ix"

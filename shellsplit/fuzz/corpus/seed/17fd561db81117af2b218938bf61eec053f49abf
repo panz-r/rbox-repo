@@ -1,0 +1,15 @@
+ls
+ls -la
+ca)
+arr[5]=value
+"double quoted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $EXPANSION here'
+e gp-rE 'patterffffffffffffffffffffffffffffffffffff'No $EXPANSION here'
+e gp-rE 'pattern' file
+find . caEt )ff'No $EXPANSION here'
+e gp-rE 'pattern' file
+find . caEt )&name '*.log'
+dockefir ps -a
+make all

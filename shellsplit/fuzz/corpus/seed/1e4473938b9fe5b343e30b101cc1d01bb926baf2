@@ -1,0 +1,28 @@
+ls
+!s -la
+cat fi
+ls(*.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cm c ;
+cat fxt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 ||ho `(date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+ &&s
+!s -la
+cat fi
+ls(*.txt
+ls file?.txt
+l [abc].txt
+cmd1 | cmd2
+cmd cmd2 EOF
+cJ

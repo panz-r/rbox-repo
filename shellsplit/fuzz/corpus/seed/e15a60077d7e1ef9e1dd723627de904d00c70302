@@ -1,0 +1,9 @@
+ls
+ls -lk
+cat bc]1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+#md1le read line; do echo $line; done
+case $var in 												&& cmd2
+cmd1 || cmd2
+#md1le read line; do echo	 

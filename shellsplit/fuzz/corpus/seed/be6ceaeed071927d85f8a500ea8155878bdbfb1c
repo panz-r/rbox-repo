@@ -1,0 +1,51 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.(1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cm existsrt PATH=/usr/bin:$PATH
+${var:-default}
+$+var:=assigned}
+${var##prefix}
+$vs%{rauffix}
+${arr[@]}
+$((x + y))
+$((; fi
+for f in *. in a) echo a;; esac
+function foo { echo hello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-Default}
+${var:=assigned}
+${var##prefix}
+${var%suff))
+$(echo $var)
+$(( $(date +%s) ))
+arr=(one two three)
+arz[0]=value
+"double quoted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $EXPANSION here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -}
+${arr[@]}
+$((x + y))
+$((; fi
+for f in *.txt; do catfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbug fix"

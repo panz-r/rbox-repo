@@ -1,0 +1,3 @@
+ls
+ls -<<< string
+@md < < cmd| 				a	 && b |le re

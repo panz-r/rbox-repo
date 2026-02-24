@@ -1,0 +1,7 @@
+TEXT
+cat <<'EO file?.txt
+ls [abc].< string
+lo
+ec
+arr[0],value
+"double quote$ $Vho $

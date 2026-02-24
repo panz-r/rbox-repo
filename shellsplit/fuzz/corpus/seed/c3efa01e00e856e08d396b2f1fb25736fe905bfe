@@ -1,0 +1,18 @@
+ls
+ls -la
+cat file.{VAR}
+echo $((2+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.t [ -f"fil ]; then echo exist\\\\\\\\\\\\\\\ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+o $xt

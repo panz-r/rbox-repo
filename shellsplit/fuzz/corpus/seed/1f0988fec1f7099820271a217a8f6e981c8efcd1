@@ -1,0 +1,8 @@
+<< ENle.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2)l)
+ecs
+l
+$ho $s -la

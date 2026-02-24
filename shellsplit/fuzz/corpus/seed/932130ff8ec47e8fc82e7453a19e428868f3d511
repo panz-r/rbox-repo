@@ -1,0 +1,4 @@
+<< EOF
+cat << ls -lle.t< ENae.ls
+ls -ll%)
+$(echo $xvar)

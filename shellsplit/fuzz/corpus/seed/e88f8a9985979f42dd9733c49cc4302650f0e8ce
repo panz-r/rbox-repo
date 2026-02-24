@@ -1,0 +1,16 @@
+ls
+ls -l line; do echo $linline; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo `ello; }
+foo() { ar:-default}cho hello; }
+local x=4
+export PATH=/usr/bin:$PATH
+${var:-d then echo exists; fi
+for f  rein efix}
+${var%suffix}
+${arr[@]}
+$((x + n' file
+find . -name '*.log'
+docker ps -a
+make all 2>&1 | tee build.log
+git commit -m "fix: bug fix"

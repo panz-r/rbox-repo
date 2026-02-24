@@ -1,0 +1,6 @@
+ls
+ls -la
+catstr <<< string
+cmd < file.txt
+cm c 
+cat ; d | e

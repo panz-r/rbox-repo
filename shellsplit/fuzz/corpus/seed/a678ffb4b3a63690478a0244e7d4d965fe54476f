@@ -1,0 +1,6 @@
+ls
+&& cmd2
+cmd1 || cmd2ls
+ls -la
+cat file.txt
+ec hed1 ;l 

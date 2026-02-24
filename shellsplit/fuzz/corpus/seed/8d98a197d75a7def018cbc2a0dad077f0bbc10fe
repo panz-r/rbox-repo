@@ -1,0 +1,7 @@
+ls
+ls -la
+cat file.txt
+echo hellon:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix))ted $Vho $

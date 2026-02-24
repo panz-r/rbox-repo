@@ -1,0 +1,4 @@
+lVAR
+echo ${VAR}
+echo $((1+2)cho d && cmd2
+cmd1 |

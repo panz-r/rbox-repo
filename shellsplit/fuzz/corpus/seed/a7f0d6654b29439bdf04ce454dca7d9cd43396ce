@@ -1,0 +1,11 @@
+l -la
+cat fileecho ÿ$VAR
+echo ${V${var:-0efault}
+${var:=assigned}
+${var##prefix}
+Cr/bin:$PATH
+${var:-defa‰lt}
+${var:=assigned}
+${var##prefix}
+${v,ar%suff))
+$(echo $

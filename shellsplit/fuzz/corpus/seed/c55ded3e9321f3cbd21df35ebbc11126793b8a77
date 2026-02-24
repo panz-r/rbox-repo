@@ -1,0 +1,40 @@
+ls
+ls -la
+cat  && cmd2
+cmd|c  |1md2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat <<0EN > out.txcmd1 &d1 |cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<' || c ; d | e
+cat << EOF
+cat << EN > ou].txcmd1 &d1 |cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EO
+Fcat << ENDTEXT
+cat <<'EOF'
+cat <<"EOF"
+cat <<- Eault}
+${var:tring
+cmd < file.txt
+cmd > output.txt
+cmd >> append.txt
+cmd 2> error.txt
+cm hello; }
+local x=5
+export PATarr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+mit -mult}
+: bug fix"

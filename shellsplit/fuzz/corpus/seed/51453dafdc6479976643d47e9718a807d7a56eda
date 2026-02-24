@@ -1,0 +1,38 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2ls
+ldate)
+echo `da))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cDmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOV
+cat << ENDTEXT
+cat <<'EOF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < fil | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< s| cmd2'EOle.txt
+cm
+t <<- EOF
+cmd <<<i ntsrg
+cmd < file.tdxt
+cmdt $f; do n>

@@ -1,0 +1,12 @@
+l})
+local x=2
+export PATH=/usr/bin:$PATH
+${var/signed}
+${var##prefix} qu$EXPANSION here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 2>&1 | tee build.log
+gi))
+echo $(date)
+echo `date`

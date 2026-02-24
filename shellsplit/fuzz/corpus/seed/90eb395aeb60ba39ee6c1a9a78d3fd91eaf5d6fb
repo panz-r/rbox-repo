@@ -1,0 +1,21 @@
+ls
+ls )la
+catello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [ab]tc.xt
+cmd1 | cmd2
+cmd1 && cmd2
+c1 | cmd2 | cmd3
+a &!& b || c ; d | e
+cat << EOF
+ file.txmd2
+c1 | cmd2 | cmd3
+a &!& b EOF
+cato
+ 

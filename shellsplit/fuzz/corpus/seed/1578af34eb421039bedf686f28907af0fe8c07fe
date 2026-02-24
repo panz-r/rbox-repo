@@ -1,0 +1,14 @@
+ls
+ls -la
+cat file.txtread line; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hellin:$PATH
+${var:-default}
+${var:=assigd2
+)+)1$
+echo $(date)
+echo `date`
+ls *.txt
+ls file?NDTEXT
+ca<- EOFed}
+cmd <${<< 

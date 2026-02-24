@@ -1,0 +1,25 @@
+ls
+ls -la
+cat filet << EOF
+cat < done
+case $var in a) echo a;;ON heòe'c
+function foo { echo sl
+ls TEhello; }
+foo() { echo helle build.log
+%s) ))
+arr=(one two three)
+arr[5]=value
+"double quoted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $EXPANSION here'
+e gp-rE 'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 5>&1 | tee
+ build.log
+git commit -m "fix: ffffffffffffffffffffffffffffffffffffffffff'No $EXPANSION here'
+e gp-rE 'pattern' file
+find . caEt )&name '*.log'
+dockefir ps -a
+make all

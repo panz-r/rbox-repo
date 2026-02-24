@@ -1,0 +1,35 @@
+ls
+ls -la
+cat filels
+ls -la
+cat file.txt
+echo hello
+echAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd$(lo
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo $`date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 
+c/EtA)fi&& cmd2
+cmd$((1+2d1 ; cmd2
+F"
+cat <<- EOF
+cmd <<< string
+cmd < file.txt
+cmdt $f; done
+while re

@@ -1,0 +1,16 @@
+ls
+ls -la
+cat file.txt
+echo jello
+echo $VAR
+echo ${VAR}
+e=/usr/bin:$PATH
+${var:-1efault}
+${var:=assigned}
+${var##prefix}
+sr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${v,ar%suff))
+$(echo $

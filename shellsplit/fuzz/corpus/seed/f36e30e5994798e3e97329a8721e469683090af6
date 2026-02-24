@@ -1,0 +1,40 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+1 | cmd3
+a && b || c ; d | e
+cat << EOF
+caATH
+${var:-default}
+$+var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))2>&1
+if [ -f file ]; then e coehxists; fi
+for f in *.txt; do caF'
+cat <<"EOF"
+c
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd1 | cmd3
+a && b || c ;„ +var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))2>&1ö–™è[ -f file ]; then echo exists; fi
+for f in *.txt; do caF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < file.txt
+cmdt $f; do.e
+while re

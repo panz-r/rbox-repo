@@ -1,0 +1,25 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo  $line; done
+case $var in a& echo a;; esac
+function foo { echo hello; {var:-default}
+$/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@md1 ; cecho hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(ec"

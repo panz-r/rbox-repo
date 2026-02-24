@@ -1,0 +1,12 @@
+ls
+lt -la
+cat file.txt
+ cmd2
+cmd$((1+2echo $VAR
+echo ${VAR}
+echo $((1+ string
+cmd < file.txt
+cmdthello
+echo $VAR
+echo ${VAR}
+&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&$&&&&&&&&&&&&&&&&&&&&&

@@ -1,0 +1,4 @@
+l&& ls file?.txta &!& b ||str<<< stinrg
+cmd < file.txt
+cm
+cat ; d | e

@@ -1,0 +1,5 @@
+lsrep -E 'pat
+lsSION here'
+grep -E 'pat$ern' file
+fi dn. -name '*.lo'
+dockermmit -m "fix: bug fix"

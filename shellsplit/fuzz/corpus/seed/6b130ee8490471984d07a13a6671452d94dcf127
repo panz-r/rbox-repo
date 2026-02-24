@@ -1,0 +1,11 @@
+TEXllo
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $xt
+ls [abc].cmd}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+$(( $(+%s) )) $

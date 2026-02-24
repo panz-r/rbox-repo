@@ -1,0 +1,6 @@
+ls
+ls -laor f i
+cat file.txf; d""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""one
+while read line; do echo $line; done
+case $varls
+lt in  

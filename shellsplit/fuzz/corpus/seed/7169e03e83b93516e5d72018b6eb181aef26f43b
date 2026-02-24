@@ -1,0 +1,3 @@
+l -E 'patSION here'
+grep -E 'pat$ern'ame '*.lo'
+dockermmit 9-m "fix: bug fix

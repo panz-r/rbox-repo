@@ -1,0 +1,3 @@
+'&atONN here'
+grep -E 'pat$ern here'
+grep -E 'pat$ern'ame '*`ix

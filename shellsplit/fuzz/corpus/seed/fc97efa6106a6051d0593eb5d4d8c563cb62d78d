@@ -1,0 +1,40 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(ls
+ldate)
+echo `date`
+ls *.txt
+ls fi@le?.txt
+ls [abc].txt
+cmd1ls
+ls -l | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <cOE
+<'F'at <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < file.txt
+cmd > output.txt
+cmd >> append.txt
+cmd 2> error.txt
+cmd > out.txt 2>a
+cat files0-lsl.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo ile.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))

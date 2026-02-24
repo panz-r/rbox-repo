@@ -1,0 +1,10 @@
+ls
+lne; dls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+r:-default}
+v${ar:=assigned}
+GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG${var##prefix}
+$$line;mdfix}
+$$line;md2
+a && b || c  ;d

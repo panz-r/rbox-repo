@@ -1,0 +1,10 @@
+<< EOF
+cat << ENle.ls
+ls -la
+cat file.txt
+echo hetllo
+echo $VAR
+ech
+${var##prefix}
+${var%suff))
+$(echo $xvar)

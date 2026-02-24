@@ -1,0 +1,8 @@
+at file.txt
+f [ -f file ]; thenR'&
+echo "Hello World"
+echo 'No $EXPANSION here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -a
+make al

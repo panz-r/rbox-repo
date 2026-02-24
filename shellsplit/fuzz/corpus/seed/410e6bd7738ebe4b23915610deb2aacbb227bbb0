@@ -1,0 +1,6 @@
+ls
+ls -la
+cat file.txtread line; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hellin:$PATH
+$cmd <${<< 

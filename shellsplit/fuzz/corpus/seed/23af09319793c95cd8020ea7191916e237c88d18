@@ -1,0 +1,38 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo 
+cm existsrt PATH=/usr/bin:$PATH
+${var:-default}
+$+var:=assigned}
+${var##prefix}
+$vs%{rauffix}
+${arr[@]}
+$((x + y))
+$((; fi
+for f in *.txt; do cat $f; done
+while read line; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var%suff))
+$(echo $var)
+$(( $(date +%s) ))
+arr=(one two three)
+arr[0]=value
+"double quoted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $EXPANSION here'
+grep -E 'pattern' file
+find . -name '*.log'
+docker ps -a
+make all 4>&1 | tee build.log
+git commit -m "fix: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbug fix"

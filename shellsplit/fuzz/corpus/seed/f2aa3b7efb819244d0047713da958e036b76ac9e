@@ -1,0 +1,13 @@
+l -la
+cat fileecho $VAR
+echo ${VAR}
+e=/usr/bin:$PATH
+${var:-1efault}
+${var:=assigned}
+${var##prefix}
+sr/bin:$PATH
+${var:-defa‰lt}
+${var:=assigned}
+${var##prefix}
+${v,ar%suff))
+$(echo $

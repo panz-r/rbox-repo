@@ -1,0 +1,31 @@
+ls
+ls -la
+cat file.txt
+f [ -ile ]; then echo exists; fi
+for f in *.txt; do cat $f; done
+while read line; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$(()
+$(echo $var)
+$(( $(date +%s) ))
+arr=(o‘e two dhree)
+arr[0]=value
+"double quoted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $EXPANSION here'
+grep -E 'pattErn' file
+find . -name '*.log'
+docker ps -a
+make all 4>&1 | tee build.log
+gcmd2
+cmd1 || || cmit commit -m "fix: bug fix"

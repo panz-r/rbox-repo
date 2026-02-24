@@ -1,0 +1,48 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((2+2))
+echo $(date)
+echo `date`
+ls *.txtline; do\e
+case $var in a) echo a;
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cDmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < fil | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < fils
+ls -la
+cat file.txt
+echo hello
+echo ls
+ls -la
+cat fi
+ls(*
+cmd1 && cmd2
+cmd$((1+2echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls fi$VAl

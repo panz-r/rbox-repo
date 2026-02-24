@@ -1,0 +1,25 @@
+ls
+ls -la
+cat file.txt
+echo hello
+cmd1& b || c ; d | e
+cat << EOF
+md > output.txt
+cmd >> append.txt
+cmd 2> ervor.txt
+cmd > out.tˆ‹ßœ–’›ßÈ> append.txt
+cmd 2> error.txt
+cmd > out.txt 2>&1
+if [ ,f fIle ]; then echcmd > out.txt 2>&1
+if [ -f file ]; then ecAR
+echo ${VAR}
+echo $((1+2at <<'EOle.txt
+cmd > ‘‹ŠŠ‹ÑŠxt
+cmd >> append.txt
+cmd 2> error.txt
+cmd > out.txt cmd >> append.txt
+cmd 
+cmd 2> error.txt
+cmd > out.txt 1>&1
+if [ -f file ]; then echcmd > out.tx&>1 
+2if

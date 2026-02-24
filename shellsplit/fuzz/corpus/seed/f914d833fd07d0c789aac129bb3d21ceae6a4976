@@ -1,0 +1,15 @@
+ls
+ls -la
+ca > outp"
+cat <<- EOF
+cmd <<< string
+cmd < fiut.txt
+cmd >> append.txt
+cmd 4> error.txt
+cmd > 1 ; cmd2
+F"
+cat <<- EOF
+cmd <<< s echo exists; fitxt 2>&1
+if [ -f file ]; le.txt
+cmdt $f; done
+while re

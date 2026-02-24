@@ -1,0 +1,4 @@
+ls
+ls -lstr <<< string
+cmd < file c 
+cat ; d | e

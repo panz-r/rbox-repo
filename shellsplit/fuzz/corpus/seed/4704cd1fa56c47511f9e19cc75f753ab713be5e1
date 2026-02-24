@@ -1,0 +1,13 @@
+ls
+ls -la
+cat file.tt
+echo hell | cmd&&&&&&&&&&&&&&&&&&&&3
+a && b || c ; d   e
+cat << ))
+echo $(date)
+echo `date`
+ls *.txt
+ls fixt s
+[alb string
+dt $f; done
+while re

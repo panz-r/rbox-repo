@@ -1,0 +1,23 @@
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[lls
+ls -[[[[[[[[[[[[[[[ls [abc].txt
+cmd1ls
+ls -l | cmd2
+cmd1 && cmd2
+cmd1 || cmd2s fi@le?.txt
+[[[[[[[[[ls
+ls -la
+cat file.txt
+echo hello
+echo $V@
+cmd1 ; cmd2
+cmd1 | cmd2 |[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[lls
+ls -[[[[[[[[[[[[[[[ls [abc].txt
+cmd1ls
+ls -l | cmd2
+cmd1 && cmd2
+cmd1 || cmd2s fi@le?.txt
+[[[.tx
+cmd <<< string<<- EOF
+cmd <<< stri
+cmd ng
+< file.cmd t< x

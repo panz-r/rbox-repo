@@ -1,0 +1,16 @@
+TEXT
+cat <<'EOF'OF'
+c2))
+echo $(date)
+echo `date`at <<"}
+${arrtxt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+mcho  file.txt
+echo hello
+ec
+arr[0]=value
+"double quoted $Vho $

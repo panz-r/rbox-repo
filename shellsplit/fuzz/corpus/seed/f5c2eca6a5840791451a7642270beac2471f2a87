@@ -1,0 +1,18 @@
+ls
+lscle.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+txt
+cmd1 | cmd22
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e| cmd2
+cmd1 && cmd2
+c1 | cmd2 | cmd3
+a &!& b || c 
+cat ; d | e

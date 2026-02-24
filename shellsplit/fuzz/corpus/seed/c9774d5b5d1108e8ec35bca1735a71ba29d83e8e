@@ -1,0 +1,11 @@
+ls
+lscle.êxtls
+ls -lZ
+ecid0 |cmd1 | cmd2 | cmd3
+a +&& b || c ; d | e| && cmd4
+c1 |cmd2
+cmdÍ && cmd2
+c1 | c2 |dcmd2
+cmd1 && cmd2
+c1 | c2 |dc mmd3
+a &!& cmd2 | b || cmd

@@ -1,0 +1,14 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $ cmd2
+cmd1 && cmd2
+c1 | cmd2 | cmd3
+a &!& b ||str<<< string
+cmd < file.txt&
+cm c 
+cat ; d | e

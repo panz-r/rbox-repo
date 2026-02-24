@@ -1,0 +1,47 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo $.txt
+cmd >> ap@end.txt
+cmd 2> error.txt
+cmd > out.txt 2>&1
+if [ -f"file ]; then echo exists; fi
+for f in *.txt; do cat $f; done
+while read line; do echo $linline; do echo $line; done
+case $var in a) echo a;; e
+function foo { echo `ello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+$ho $(date)
+echo `\\\\\\\\\\\\\\\\ls
+ls -la
+nd.txt
+cmd 2> error.txt
+cmd > out.txt 2>&1
+if [ -f"file ]; then echo exists; fi
+for f in *.txt; do cat $f; done
+while read line; do echo $linline; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo `eassigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))
+$((x * 3 + 1))
+$(echo $var)
+$(( $(date +%s) ))
+arr=(one twluecho $line; done
+case $var in a) echo a;; esac
+function foo { echo `eassigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+$(( $(diô commit -m "fix: bug fix"

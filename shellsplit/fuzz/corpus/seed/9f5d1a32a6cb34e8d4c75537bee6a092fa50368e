@@ -1,0 +1,6 @@
+ls
+9|atx<< EOF
+c|atx<< EOF
+cat << E
+echo $VAR
+eeingn

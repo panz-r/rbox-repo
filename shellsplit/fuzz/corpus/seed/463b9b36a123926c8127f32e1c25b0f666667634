@@ -1,0 +1,28 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+els
+ls -la
+cat file.txt
+echo hello
+ec
+cat A&& b$ || c ; d | e
+cat << EOF
+c—‹ßÃÃßº±DTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcat <<- EOFcmd  || c ; d | e
+cat << EOF
+c—‹ßÃÃßº±DTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcat <<- EOFcmd <<< string
+cmd < fils
+lsšœ— $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(daÿÿÿte)
+ec.txt
+ls(*c.txmd

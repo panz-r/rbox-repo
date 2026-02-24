@@ -1,0 +1,33 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)e?.txt
+ls [abc].txt
+cmd1 | md1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd1 | cmd3
+a && b || c ; d | e
+cat << EOF
+caATH
+${var:-default}
+$+var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))2>&1
+if [ -f file ]; then ecls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+els
+ls h-la
+o exists;cat file.txt
+echo he fi
+llo
+efor c

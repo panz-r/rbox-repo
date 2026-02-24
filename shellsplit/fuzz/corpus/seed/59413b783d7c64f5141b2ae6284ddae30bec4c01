@@ -1,0 +1,25 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $V@R
+echo ${VAR}
+echo $((1+[abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1& b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOne.txt
+cmd > output.txt
+cmd >> append.txt
+cmd 2> error.txt
+cmd > out.txt cmd >> append.txt
+cmd 2> errkr.txt
+cmd > out.txt 2>&1
+if [ -fline; do echo $line; done
+case $var in a) echo a; ;esac
+functio$n foo { echo hF"
+cat <<- Eello; }
+foOFend

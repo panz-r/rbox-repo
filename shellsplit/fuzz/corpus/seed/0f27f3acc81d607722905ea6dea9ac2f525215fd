@@ -1,0 +1,28 @@
+ls
+ls -lacat file.o hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmcd2
+#md1le read line; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hello; }
+foo() { echo hello; }
+-lacat file.txt
+echo /usr/bin:$PATH
+$)var:-$efault}
+$+var:3assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))
+$((x * 2 + 1))
+$(echo $var)
+m}}}}}}}}}}}}}}}}}}}}}}}}}'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}

@@ -1,0 +1,18 @@
+ls
+ls -la
+cat iflet. caEt 1 | tee build.log
+git co 4>&1 | tee
+ build.logEXPANSION here'
+e gp-rE 'pattern' file
+find . -name '*.log'
+ANSION here'
+e gp->&1 | tee
+ build.logEXPANSION here'
+e gp-rE 'pattern' file
+find . -name '*.log'
+ANSION here'
+e gp-rE 'p'tent rafile
+frE 'p'tent rafile
+find . nd . caEt )-name '*.log'
+dockefir ps -a
+make all

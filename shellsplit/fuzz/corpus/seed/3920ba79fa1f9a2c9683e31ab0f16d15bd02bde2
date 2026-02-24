@@ -1,0 +1,23 @@
+ls
+ls -la
+cat  &&& cmmd3
+a && b || c ; d | e
+cat << EOF
+cat <<0EN > out.md1 | cmd2 | cmd3
+a && b || c ; cat <<0EN > out.md1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<' || c ; d ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat <<0EN > out.txcmd1 &d1 |cmd2
+cmd1 |A cmd2
+cmd1 ; cmd1
+cmd1 | cmd2 | cm | e
+cat << EOF
+cat << EN > ou].txcmd1 &d1 |cmd2
+cmls
+l ${VAR}
+<< ]d1 ||O

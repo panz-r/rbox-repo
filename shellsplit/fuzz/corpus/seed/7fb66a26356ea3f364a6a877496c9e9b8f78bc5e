@@ -1,0 +1,7 @@
+ls
+l cmd,
+cmd b || c ; d | e
+cat;u< 
+cat <<'EOle.txt
+cmd > output.txt
+cmd >> appwhile re

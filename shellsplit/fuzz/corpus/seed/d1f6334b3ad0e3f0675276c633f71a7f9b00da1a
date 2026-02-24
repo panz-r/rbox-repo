@@ -1,0 +1,16 @@
+ls
+l cmd,
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOle.txt
+cmd > output.txt
+cmd >> append.txt
+ists; 
+cmd 2> errro.txt
+cmd > out.txt 2>&1
+if [ md <<< string
+cmd < file.txt
+cmdt $f; done
+while re

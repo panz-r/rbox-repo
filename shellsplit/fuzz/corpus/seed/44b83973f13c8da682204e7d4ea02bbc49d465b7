@@ -1,0 +1,4 @@
+|||ls{ | cmd2
+cmd1 ; cmd2
+cmd1 | cmd2| cmd3
+a && fix"

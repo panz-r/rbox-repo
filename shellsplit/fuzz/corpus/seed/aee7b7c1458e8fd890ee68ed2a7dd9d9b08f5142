@@ -1,0 +1,25 @@
+ls
+ls -la
+cat file.txt
+echo hello
+cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+xport PATH=/usr/bin:$PATH
+${var:-default}
+$+var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))2>&1
+if [ -f file ]; then e done
+while re

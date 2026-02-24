@@ -1,0 +1,23 @@
+ls
+ls -lat file.txt
+echo heo
+echo $VAR
+els
+ls -la
+ca file?.txt
+ls [abc].Axt
+c
+cat <<'EO°'
+cat <<"EOFúcat <<2))
+echoho $(date)
+echo `œž‹œ`
+ls *.txt
+ls | e
+cad < vils
+A&& b || c ; d | e
+cat << EOF
+c—‹ßT
+cat <<'EO°'
+cat <<"EOFbúcat <<- EOFcmd <<< striAR
+echo ${VAR}
+echo $((d

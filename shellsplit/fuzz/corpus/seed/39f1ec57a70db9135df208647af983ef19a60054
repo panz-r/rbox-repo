@@ -1,0 +1,14 @@
+ls
+ls -lacmd <<< string
+cmd < fils
+ls -la
+cat file.txt
+echo hello
+echôo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+md1 ; cmd2
+cmd1 | cmd2 | 					a && b || c ; d | e
+xple re

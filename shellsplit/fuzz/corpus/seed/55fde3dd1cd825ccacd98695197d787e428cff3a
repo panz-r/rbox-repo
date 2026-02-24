@@ -1,0 +1,64 @@
+&&&&&&&&TEXT
+cÿat <<'												EOF'tac
+ <<"EOF"
+úcls
+ls -la
+cat file.txt
+echo hello
+ech ${VAR}
+echo $((1+2))
+echo $xt
+l”  helloat$<<'EOF'
+sat <<"EFO"
+úcls
+ls -laar)
+$(( $(date +%sì) ))
+arr=(one °:>>>>rr[0]=v>@alue
+"double quot”d <<"EOF"ùT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls amd3
+ b |t c x}
+${arr[@]}
+ls
+ls -la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+"dou>ble quððððððððððððððe
+"double quot”d <<"EOF"
+úcls
+ls -la
+caVAR
+echo $[5]=valouble quoe.°:>>>>>ÿÿÿÿÿÿÿÿÿÿÿÿÿ>†††††††††††file.txt
+eello
+ec$T
+cat$<<'EOF'
+sat <<"EFO"
+úcls
+ls -laar)
+$(( $(date +%sì) ))
+arr=(one °:>>>>rr[0]=v>@alue
+"double quot”d <<"EOF"ùT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls amd2
+ b || 
+
+
+
+c x}
+${arr[@]}
+ls
+ls -la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+"dou>ble quððððððððððððððe
+"double quot”d <<"EOF"
+úcls
+ls†

@@ -1,0 +1,7 @@
+ls
+ho $VAR
+echo ${VAR}
+e=/usr/bin:$PATH
+${var:-default}
+${var:=assigned}
+${#prefix))ted $Vho $

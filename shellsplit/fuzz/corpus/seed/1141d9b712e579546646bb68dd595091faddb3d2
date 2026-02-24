@@ -1,0 +1,10 @@
+ -Nle.txt
+echo hd1 | cmd2 | cmd3
+a && b || c ; e
+catls
+ << EOF
+<< ENDTAXT
+ãat <<'EO
+cat <<"E 0))
+$(echo $var)
+š–‹ßÒ’ßÝfix: iug fix"

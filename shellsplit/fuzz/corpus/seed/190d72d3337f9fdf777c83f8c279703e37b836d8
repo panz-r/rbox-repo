@@ -1,0 +1,9 @@
+ls
+ls -la
+cat fid0 | cmmd1 && cmd2
+c1 | cmd2 | cmd3
+a &!& b |c  | cmd3
+a &!& b || c ; d | e
+cat << EOF
+cato
+ 

@@ -1,0 +1,12 @@
+lat file.txt
+e#h* hello
+echo $V@R
+es; fi
+for f in *.txt; 
+cmd > output.txt
+cmd >> append.txt
+cmd 2> error.txt
+cmd > out.txt cmd >> append.txt
+cmd 2> error.txt
+co `date`
+ls nd

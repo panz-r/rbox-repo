@@ -1,0 +1,6 @@
+ |c ; d | e| cmd2
+cmd1 && cmd2
+c1 | cmd2 | cmd3
+a       ho $VAR
+echo ${VAR}
+echo $?((1c @9|e

@@ -1,0 +1,62 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOle.txt
+cmd > output.txt
+cmd >> appls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+cmd1 | cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOle.txt
+cmd > output.txt
+cmd >> append.txt
+cmd 2> error.txt
+cmd > out.txt 2>&1
+if [ -f file ]; then echo exists; fi
+for f in *.txt; do caF'
+cat <<"EOF"
+cat <<- EOFend.tx
+cmd <<< string
+cmd < file.txt
+cmdt $f; done
+whit
+cmd 2> error.txt
+cmd > out.txt 2>&1
+if [ le-f file ]; then echo exists; fi
+for f  rein *.txt; do caF'
+c

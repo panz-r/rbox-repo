@@ -1,0 +1,54 @@
+ls
+ls -la
+cat file.txt
+echo hellolo
+echo $VAR
+els
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)cho ${VA&& b || c ; d | e
+cecho hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOF'
+cat <<"EOF"
+úcat <<- EO
+echo $VAR
+els
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $(($VAR
+echo ${VAR}
+echo $((1+2))
+echo $(; d | e
+cat << EOF
+cat << ENDTEXT
+cat <date`
+ls *.txt
+ls file?.txt
+ls [abc].te.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+-))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+
+echo `date`
+ls(*c.txmd

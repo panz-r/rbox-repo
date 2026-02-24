@@ -1,0 +1,21 @@
+ls
+ls le.xt
+echo hello
+echo
+echo ${VAR}
+ech$lile; var:=assigend}
+${vasigned}
+${vapre${case $PATH
+${var:-default}
+${vcho
+echo ${VAR}
+ech$lile; var:=assigend}
+${vasigned}
+${vapre${case $PATH
+${var:-default}
+${var:=assigned}
+${var%suffix}
+${arr[@]}
+ar:=assigned}
+${var%suffix}
+${arr[@]}

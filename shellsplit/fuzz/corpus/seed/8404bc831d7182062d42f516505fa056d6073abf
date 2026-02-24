@@ -1,0 +1,10 @@
+lw
+
+s¹¹¹¹¹¹¹¹¹¹ ${VAR}
+<< EOF
+£c4 <t xt
+cmd > oo ${VAR}a
+ho ${AR}
+<<¹¹¹¹¹¹ ${VAR}
+<< EOF
+£c4 <t << EOFmdEÝ 

@@ -1,0 +1,21 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+e|| cmd2
+cmd1 ; cmd2
+cmd1 | cmd1 ; cmd2
+cmd1 | cmd2 | cmd3
+a && b || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'EOle.txt
+cmd > output.txt
+cmd >> append.txt
+cmd 2> error.txt
+cmd > out.txt 2>&1
+if [ -f file ]; the
+while re

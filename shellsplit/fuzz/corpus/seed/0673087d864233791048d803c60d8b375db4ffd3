@@ -1,0 +1,32 @@
+ls
+ls -lacat file.txt cmd2
+cmd1 ; cmd2
+ce)
+mcho `date`
+ls *.txt
+ls file?.txt
+l* [abc].txt
+cmd1 | 
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.(1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 2
+cmd1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+ce)
+mcho `date`
+ls *.txt
+ls file?.txt
+l* [abc].txt
+cmd1 | cmmit -m #fix: bug fix"

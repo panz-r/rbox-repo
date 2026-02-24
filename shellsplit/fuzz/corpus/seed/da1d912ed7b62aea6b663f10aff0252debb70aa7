@@ -1,0 +1,33 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+els
+ls -la
+cat fiÿÿÿÿÿÿÿÿÿÿÿlo $(date)cho ${Vla
+cat file.txt
+echo hello
+echo $VAR
+echo${VAR}
+echo $((0+2))
+echo $(date)cho ${VA&& b || c ; d x e
+cad < vils
+A&& b || c ; d | e
+cat << EOF
+c—‹ßÃÃßº±DTEXT
+cat <<'EO°'
+cat <<"EOFúcat <<- EOFcmd <<< string
+cmd < fils
+ìsšœ— $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cod1string
+cmd < file.txt
+ls(*c.txmd

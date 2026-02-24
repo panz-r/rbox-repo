@@ -1,0 +1,22 @@
+ls
+ls le.xt
+echo hello
+echo $VAR
+echo ${VAR}
+echo  $line; done
+case $var i
+${var:=assigned}
+${var##pre${v x=5
+exportcase $PATH
+${var:-default}
+${var:=assigned}
+${var##pre}tri
+${var##prefix 
+${vaPGGGGGGGGGG${v x=5
+exportcase $PATH
+${var:-default}
+${var:=assigned}
+${var##pre}tri
+${var##prefix 
+${var%suffix}
+${arr[@]}

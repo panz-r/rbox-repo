@@ -1,0 +1,32 @@
+lslcmd <<< string
+cmd < fils
+A&& b || càË d | e
+cat << EOt <<'EOF'
+cat <<"EOF"
+úcat <<- EOFcmd <<< string
+cmd < fils
+lsšœ— $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls f || c ; d | e
+cat << EOF
+c—‹ßÃÃßº±DTEXT
+cat <<'EOF'
+c”t <<"EOF"
+úcat <<- EOFcmd <<< string
+cmd < fils
+lsšœ— $VAR
+echo ${VAR}
+echo $((0+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [abc].txt
+cmd1 | cmd2
+cmd1string
+cmd < file.txt
+ls(*c.txmd

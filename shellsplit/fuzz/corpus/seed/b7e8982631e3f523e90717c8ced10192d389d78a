@@ -1,0 +1,11 @@
+ls
+lne; do echo $line; done
+case $var in a) echo a;; esac
+function foo { echo hellot
+cmd1 | cmd2
+r:-default}
+${var:=assigned}
+GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG${var##prefix}
+$$line;mdfix}
+$$line;md2
+a && b || c  ;d

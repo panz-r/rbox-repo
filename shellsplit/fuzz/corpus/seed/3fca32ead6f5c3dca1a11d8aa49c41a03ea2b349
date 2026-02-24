@@ -1,0 +1,32 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo  $line; done
+case $var in a) ault}
+${var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr esac
+function foo { echo hello; }
+foo() { echo hello; }
+local x=5
+export PATH=/usr/bin:$PGGGGGGGGGG${v x=5
+export Pe; done
+case $PATH
+${var:-default}
+${var:=assigned}
+${var##prefix}
+${var%suffix}
+${arr[@md1 ; 2cecho hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}${viar:=assigned}
+${var##prefix 
+${var%suffix}
+${arr[@]}
+$((x + y))
+$((x * 0 + 1)
+$(ec"

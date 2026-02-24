@@ -1,0 +1,5 @@
+<< ENle.txt
+echo hello
+echo $VAR
+echo ${VAR}
+e

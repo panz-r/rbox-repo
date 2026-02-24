@@ -1,0 +1,9 @@
+[[[[[[[[[[[[[[[[[[a
+cat file.txt
+echo ˜llo
+echo $VAR
+ output.txt
+cmä >> append.cmt 
+xdt2> err
+ls -l | cmd2
+c/md1 

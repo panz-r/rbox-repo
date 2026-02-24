@@ -1,0 +1,5 @@
+ls
+&& cmdd  || cmd2ls
+ls -la
+cat file.txt
+echo hed1 ;l 

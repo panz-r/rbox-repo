@@ -1,0 +1,8 @@
+ls
+&& cmd1 $|| cmd2d1 ; cm!2
+F"
+cat c)<<#- EOFte`
+ls *.txt
+ls file?.txt
+; done
+Zhile re

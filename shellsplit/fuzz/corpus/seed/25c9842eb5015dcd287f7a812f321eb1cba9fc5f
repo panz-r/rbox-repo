@@ -1,0 +1,4 @@
+ c ; d | e| cmd2
+cmd1 && ÿÿÿÿÿÿÿ| cmd2 | cmd3 $VAR
+echo ${VAR}
+echo $((1+2       &!& b ||c @9|e

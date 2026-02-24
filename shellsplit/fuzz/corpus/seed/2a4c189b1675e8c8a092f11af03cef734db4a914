@@ -1,0 +1,18 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+eCCCCCCCCCCCC.txt
+cmd1 | cmd2
+cmd1 &6 cmd2
+cmd1 || cmd2
+cmd1 ; cmd2
+c && b || c ; d | e
+cat << EOF
+caATH
+${var:-default}
+$+var:=```````````````````````````````````````````````````````````````ls
+ls -l`a
+``cat f

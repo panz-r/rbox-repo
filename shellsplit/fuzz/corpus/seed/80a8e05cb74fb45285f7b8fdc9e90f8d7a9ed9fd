@@ -1,0 +1,12 @@
+| 		(*.tls * [a\]]*
+|?(*.tls * [a\]]*
+|?.t
+ls [abc].tx *.tx.tx *.tx.tltls *[a\]]*
+|?(*.tls * [a\]]*
+|?.t
+ls [abc].tx *.tx.tx *.tx.tltls * [a\]]*
+|?.txt
+lt
+ls *
+|t\]]*
+|*.tx.li

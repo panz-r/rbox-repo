@@ -1,0 +1,37 @@
+ c ; d | e| cmd2
+cmd1 && cmd2
+c1 | cmd2 | cmd3
+a       ho $VAR
+echo ${VAR}
+echls
+ls )la
+catello
+echo $VAR
+echo ${VAR}
+echo $((1+2))
+echo $(date)
+echo `d)
+echo `date`
+ls *.txt
+ls file?.txt
+ls [ab]tc.xt
+cmd1 | cmd2
+cmd1 && cmd2
+c1 | cmd2 | cmd3
+a &!& b || c ; d | e
+c c bbbbbbbbbbbbbbbbb@9|eat << EOF
+ file.txmd2
+c1 | cmd2 | cmdate`
+ls *.txt
+ls file?.txt
+ls [ab]tc.xt
+cmd1 | cmd2
+cmd1 && cmd2
+c1 | cmd2 | cmd3
+a &!& b || c ; d | e
+c c bbbbbbbbbbbbbbbbb@9|eat << EOF
+ file.txmd2
+c1 | cmd2 | cmd3
+a &!& b EOF
+cato
+ 

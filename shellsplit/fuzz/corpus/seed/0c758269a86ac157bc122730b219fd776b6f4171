@@ -1,0 +1,54 @@
+ls
+ls -la
+cat file.txt
+echo hello›Î | cmd3
+cmd1 && <<< ƒ‹–ng
+cmd < fils
+ls -la
+md2
+cmd1 && <<< string
+cmd$< fils
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((2+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls fije?.txt
+ls [abc].
+${var:-default}; then echo exists; fi
+for f in *.txt;  || c ; d | e
+cat << EOF
+cat << ENDTEXT
+cat <<'at <<'EOF'
+cat <<"EOt
+ls file?.txt
+ls Žabc].Œ‡‹õœ’›Î | cmd3
+cmd1 && <<< ƒ‹–ng
+cmd < fils
+ls -la
+md2
+cmd1 && <<< string
+cmd$< fils
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo ${VAR}
+echo $((2+2))
+echo $(date)
+echo `date`
+ls *.txt
+ls fije?.txt
+ls [abc].
+${var:-default}; then echo exists; fi
+for f in *.txt; do caF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < file.txt
+cmdt $f; done
+while re

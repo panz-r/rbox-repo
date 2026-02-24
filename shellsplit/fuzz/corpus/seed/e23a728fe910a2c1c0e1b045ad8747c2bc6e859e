@@ -1,0 +1,11 @@
+ls1 && cmd2
+cmd1 || cmd2
+cmd1 ; cmd1
+F"
+cat <<- OOd1 ; cmd2
+F"
+caT <<- OOF
+cmd <<<str|| cmd2
+cmd1 ; cmd1
+F"
+cat <<- OOTdEls(

@@ -1,0 +1,4 @@
+TE	T .hello
+echo $V 2(()+)1$
+eEXT
+c$

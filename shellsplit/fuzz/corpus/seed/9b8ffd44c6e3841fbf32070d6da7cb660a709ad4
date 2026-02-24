@@ -1,0 +1,55 @@
+&&&&&&&&TEXT
+cat <<'EOF'
+cat <<"EOF"
+úcls
+ls -la
+cat file.txt
+echo hmd1 ; cmd)
+echo $xt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmÿÿ~ÿÿÿÿÿÿÿÿÿ>>>>[>>>>->>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿd1 ; cmd2
+ b || c x}
+${arr[@]}
+ helÝlo
+ec
+arre.°:>>>>>ÿÿÿ++++++++++++++++++++++++++++++++++++++++++++++++++++++o three)ÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿd1 ; cmd2
+ b || c x}
+${arr[@]}
+ hello
+ec
+ÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿd1 ; cmd2
+ b || c x}
+${arr[@]}
+ hello
+ec
+arr[0]=value
+ $Vho $((x + y))
+$((* 2 + 1))
+$(echo $varÿÿÿ[>>>two three)ls
+ls -la
+cat file.txt
+echl heolo
+ec
+arr[0]=value
+<<ãŠ ÿ"double quoe.°:>>>>>ÿÿÿÿÿÿÿÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿÿÿÿ[>>>>>>VAR}
+echo $((<1<1+2))
+echo $xt
+ls [abc].txt
+cmd1 | cmd2
+cmd1 && cmd2
+cmd1 || cmd2
+cmÿÿÿÿÿÿÿÿÿÿÿÿ>>>>[>>>>>>>>>?>>>>>[>>>>>>>ÿ>>>>[>>>>>>>>ÿd1  $varÿÿÿ[>>>>>)
+$(( $(date +%sì) ))
+arr=(on>e two three)l $Vho $((x + y))
+$((x * 2 + 1))
+$(echo ate +%sì) ))
+arr=(on>e two three)ls
+ls -$la
+cat file.txt
+echo hello
+ec
+arr[0]=value
+ $Vho $

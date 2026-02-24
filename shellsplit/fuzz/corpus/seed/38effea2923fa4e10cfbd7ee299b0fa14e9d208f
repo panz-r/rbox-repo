@@ -1,0 +1,8 @@
+ls
+&& cmd1 || cmd2d1 ; cmd2
+F"
+cat <<#- EOFte`
+ls *.txt
+ls file?.txt
+lstocmdt $f; done
+]hile re

@@ -1,0 +1,4 @@
+ls
+ls -la
+cat%||str<<< string& b ||str<<< stringfile.txt
+c ; d | e

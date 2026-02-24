@@ -1,0 +1,15 @@
+lÿ <<a'
+cat <<*EOF"
+cat <<- EON
+cmd <<<F"
+cat <<- EOF
+cmd <<< zstringl
+cmt <<<<'E@'
+cat <<"EOF"
+cat <<- EON
+bmd <<<F"
+cat <<- EOF
+cmd <<< strinpl
+cmt << EáNDTEXT
+caÞ <<'E@F'
+cus

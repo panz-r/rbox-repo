@@ -1,0 +1,30 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+e2
+cmd1NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN || cmd4
+cmd1 ; cmd2
+cmd1 | cmd1 | cmd3
+a && b || c ; d | e
+cat << EOF
+caATH
+${var:-default}
+$+var:=assigned}
+${v:ar##prefix}
+${var%suffix}
+${arr[@]}
+$((x + y))2>&1
+if [ -f file ]; then echo exists; fi
+for f in *.txt; do caF'
+cat <<"EOF"
+c
+echo ` ]; then echo exists; fi
+for f in ßÒ*.txt; do caF'
+cat <<"EOF"
+cat <<- EOF
+cmd <<< string
+cmd < file.txt
+cmdt $f; done
+while re

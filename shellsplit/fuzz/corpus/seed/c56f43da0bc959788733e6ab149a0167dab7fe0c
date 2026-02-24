@@ -1,0 +1,6 @@
+ls
+ls -la9|atx<< EOF
+c|atx<< EOF
+cat << E
+echo $VAR
+eccmd eingn

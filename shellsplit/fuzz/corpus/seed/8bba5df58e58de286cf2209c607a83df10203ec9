@@ -1,0 +1,12 @@
+ls
+ls -la
+ca > outp"
+cat <<- EOF
+ccmd 4> error.txt
+cmd > 1 ; cmd2
+F"
+cat <<- EOF
+cmd <<< s echo exists; fitxt 2>&1
+if [ -f file ]; le.4xt
+cmdt $f; done
+while re

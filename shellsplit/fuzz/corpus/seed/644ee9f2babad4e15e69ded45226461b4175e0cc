@@ -1,0 +1,3 @@
+ls
+d 2>|errocmd >d2>|error.txt
+cmd >

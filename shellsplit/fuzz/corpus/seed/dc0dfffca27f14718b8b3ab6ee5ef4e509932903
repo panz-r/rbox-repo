@@ -1,0 +1,5 @@
+lo hello; }
+local x=5
+export PATH=/usr/bin:$PATH
+${var:-default}
+${var:

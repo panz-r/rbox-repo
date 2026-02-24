@@ -1,0 +1,9 @@
+[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["[[[[[[[[[[[[[[[[[[[[[a
+cat file.txt
+echo ˜llo
+echo $VAR
+ output.txt
+cmd >> append.txt
+cmd 2> err
+ls -l | cmd2
+cmd1 

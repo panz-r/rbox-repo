@@ -1,0 +1,16 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+echo $.txt
+cmd >> append.txt
+c$line; done
+case $var in a) echo a;; esac
+function foo { echo `e))
+arr=(one twlue
+"double quoted $VAR"
+'single quoted $VAR'
+echo "Hello World"
+echo 'No $error.txt
+c

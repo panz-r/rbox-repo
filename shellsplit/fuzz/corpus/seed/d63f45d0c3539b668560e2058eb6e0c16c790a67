@@ -1,0 +1,23 @@
+ls
+ls -la
+cat file.txt
+echo hello
+echo $VAR
+1 | cmd3
+a && b || c ; d | e
+cat << EOF
+caATH
+${var:-default}
+$en e coehxists; fi
+for f in *.txt; do caF'
+cat <<"EOF"
+c
+echo `date`
+ls *.txt
+ls fi'
+cat <<"EOF"
+cat <<- EIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIOF
+cmd <<< string
+cmd < file.txt
+cmdt $f; do.e
+while re
