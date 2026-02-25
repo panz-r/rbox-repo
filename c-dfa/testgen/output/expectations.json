@@ -1,0 +1,902 @@
+[
+  {
+    "id": 0,
+    "test_id": 0,
+    "pattern": "[network:test0] less -l (/u6qxyoql7c_/os44u/vo95cmd|((lower))+ )",
+    "category": "network",
+    "matching_input": "less -l /u6qxyoql7c_/os44u/vo95cmd",
+    "counter_inputs": ["less /u6qxyoql7c_/os44u/vo95cmd", "less --human /u6qxyoql7c_/os44u/vo95cmd", "less -l /u6qxyoql7c_/os44u/vo95cmd extra", "git -l /u6qxyoql7c_/os44u/vo95cmd"],
+    "complexity": "medium"
+  },
+  {
+    "id": 1,
+    "test_id": 1,
+    "pattern": "[build:test1] df (--interactive|((lower))+ ) file64",
+    "category": "build",
+    "matching_input": "df --interactive file64",
+    "counter_inputs": ["df file64", "df --all file64", "df --interactive file64 extra", "tr --interactive file64"],
+    "complexity": "medium"
+  },
+  {
+    "id": 2,
+    "test_id": 2,
+    "pattern": "[safe:test2] wc -n dirt",
+    "category": "safe",
+    "matching_input": "wc -n dirt",
+    "counter_inputs": ["wc dirt", "wc -y dirt", "wc -n dirt extra", "grep -n dirt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 3,
+    "test_id": 3,
+    "pattern": "[safe:test3] tail -x --force9",
+    "category": "safe",
+    "matching_input": "tail -x --force9",
+    "counter_inputs": ["tail --force9", "tail --numeric --force9", "tail -x --force9 extra", "awk -x --force9"],
+    "complexity": "medium"
+  },
+  {
+    "id": 4,
+    "test_id": 4,
+    "pattern": "[dangerous:test4] type -t /zghne2lxn/vbqy-_/yhyg",
+    "category": "dangerous",
+    "matching_input": "type -t /zghne2lxn/vbqy-_/yhyg",
+    "counter_inputs": ["type /zghne2lxn/vbqy-_/yhyg", "type --preserve /zghne2lxn/vbqy-_/yhyg", "type -t /zghne2lxn/vbqy-_/yhyg extra", "stat -t /zghne2lxn/vbqy-_/yhyg"],
+    "complexity": "medium"
+  },
+  {
+    "id": 5,
+    "test_id": 5,
+    "pattern": "[dangerous:test5] awk --human (-n318|((digit))+ )",
+    "category": "dangerous",
+    "matching_input": "awk --human -n318",
+    "counter_inputs": ["awk -n318", "awk -n -n318", "awk --human -n318 extra", "id --human -n318"],
+    "complexity": "medium"
+  },
+  {
+    "id": 6,
+    "test_id": 6,
+    "pattern": "[admin:test6] which (-a|((lower))+ ) (file84|((digit))+ )",
+    "category": "admin",
+    "matching_input": "which -a file84",
+    "counter_inputs": ["which file84", "which --numeric file84", "which -a file84 extra", "ps -a file84"],
+    "complexity": "medium"
+  },
+  {
+    "id": 7,
+    "test_id": 7,
+    "pattern": "[network:test7] basename -v pwd.txt",
+    "category": "network",
+    "matching_input": "basename -v pwd.txt",
+    "counter_inputs": ["basename pwd.txt", "basename --preserve pwd.txt", "basename -v pwd.txt extra", "df -v pwd.txt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 8,
+    "test_id": 8,
+    "pattern": "[dangerous:test8] df (-n|((alnum))+ ) /ci0vv6ktt8d9/d9kmaz6f",
+    "category": "dangerous",
+    "matching_input": "df -n /ci0vv6ktt8d9/d9kmaz6f",
+    "counter_inputs": ["df /ci0vv6ktt8d9/d9kmaz6f", "df --human /ci0vv6ktt8d9/d9kmaz6f", "df -n /ci0vv6ktt8d9/d9kmaz6f extra", "date -n /ci0vv6ktt8d9/d9kmaz6f"],
+    "complexity": "medium"
+  },
+  {
+    "id": 9,
+    "test_id": 9,
+    "pattern": "[caution:test9] uniq -r dirj",
+    "category": "caution",
+    "matching_input": "uniq -r dirj",
+    "counter_inputs": ["uniq dirj", "uniq -a dirj", "uniq -r dirj extra", "df -r dirj"],
+    "complexity": "medium"
+  },
+  {
+    "id": 10,
+    "test_id": 10,
+    "pattern": "[modifying:test10] file --preserve -n224",
+    "category": "modifying",
+    "matching_input": "file --preserve -n224",
+    "counter_inputs": ["file -n224", "file --quiet -n224", "file --preserve -n224 extra", "dirname --preserve -n224"],
+    "complexity": "medium"
+  },
+  {
+    "id": 11,
+    "test_id": 11,
+    "pattern": "[dangerous:test11] whereis --preserve --verbose",
+    "category": "dangerous",
+    "matching_input": "whereis --preserve --verbose",
+    "counter_inputs": ["whereis --verbose", "whereis --quiet --verbose", "whereis --preserve --verbose extra", "dirname --preserve --verbose"],
+    "complexity": "medium"
+  },
+  {
+    "id": 12,
+    "test_id": 12,
+    "pattern": "[admin:test12] stat (--quiet|((digit))+ ) --force",
+    "category": "admin",
+    "matching_input": "stat --quiet --force",
+    "counter_inputs": ["stat --force", "stat -x --force", "stat --quiet --force extra", "head --quiet --force"],
+    "complexity": "medium"
+  },
+  {
+    "id": 13,
+    "test_id": 13,
+    "pattern": "[modifying:test13] uniq --numeric --verbose",
+    "category": "modifying",
+    "matching_input": "uniq --numeric --verbose",
+    "counter_inputs": ["uniq --verbose", "uniq --long --verbose", "uniq --numeric --verbose extra", "tr --numeric --verbose"],
+    "complexity": "medium"
+  },
+  {
+    "id": 14,
+    "test_id": 14,
+    "pattern": "[admin:test14] dirname (--numeric|((digit))+ ) (--long|((digit))+ )",
+    "category": "admin",
+    "matching_input": "dirname --numeric --long",
+    "counter_inputs": ["dirname --long", "dirname --force --long", "dirname --numeric --long extra", "echo --numeric --long"],
+    "complexity": "medium"
+  },
+  {
+    "id": 15,
+    "test_id": 15,
+    "pattern": "[safe:test15] ps (-c|((digit))+ ) (/86bg/xge3664p/fpbc-0or/1b6n-a6|((lower))+ )",
+    "category": "safe",
+    "matching_input": "ps -c /86bg/xge3664p/fpbc-0or/1b6n-a6",
+    "counter_inputs": ["ps /86bg/xge3664p/fpbc-0or/1b6n-a6", "ps -r /86bg/xge3664p/fpbc-0or/1b6n-a6", "ps -c /86bg/xge3664p/fpbc-0or/1b6n-a6 extra", "git -c /86bg/xge3664p/fpbc-0or/1b6n-a6"],
+    "complexity": "medium"
+  },
+  {
+    "id": 16,
+    "test_id": 16,
+    "pattern": "[admin:test16] du -s -n1",
+    "category": "admin",
+    "matching_input": "du -s -n1",
+    "counter_inputs": ["du -n1", "du -a -n1", "du -s -n1 extra", "id -s -n1"],
+    "complexity": "medium"
+  },
+  {
+    "id": 17,
+    "test_id": 17,
+    "pattern": "[build:test17] tail -y -n165",
+    "category": "build",
+    "matching_input": "tail -y -n165",
+    "counter_inputs": ["tail -n165", "tail --all -n165", "tail -y -n165 extra", "more -y -n165"],
+    "complexity": "medium"
+  },
+  {
+    "id": 18,
+    "test_id": 18,
+    "pattern": "[admin:test18] echo --recursive -n731",
+    "category": "admin",
+    "matching_input": "echo --recursive -n731",
+    "counter_inputs": ["echo -n731", "echo --preserve -n731", "echo --recursive -n731 extra", "head --recursive -n731"],
+    "complexity": "medium"
+  },
+  {
+    "id": 19,
+    "test_id": 19,
+    "pattern": "[caution:test19] grep --human --long",
+    "category": "caution",
+    "matching_input": "grep --human --long",
+    "counter_inputs": ["grep --long", "grep -t --long", "grep --human --long extra", "file --human --long"],
+    "complexity": "medium"
+  },
+  {
+    "id": 20,
+    "test_id": 20,
+    "pattern": "[safe:test20] cat -x /gua6c2zsr/ux81-rirz",
+    "category": "safe",
+    "matching_input": "cat -x /gua6c2zsr/ux81-rirz",
+    "counter_inputs": ["cat /gua6c2zsr/ux81-rirz", "cat --interactive /gua6c2zsr/ux81-rirz", "cat -x /gua6c2zsr/ux81-rirz extra", "echo -x /gua6c2zsr/ux81-rirz"],
+    "complexity": "medium"
+  },
+  {
+    "id": 21,
+    "test_id": 21,
+    "pattern": "[caution:test21] whoami --preserve /q47hz/r0si3_i17jli",
+    "category": "caution",
+    "matching_input": "whoami --preserve /q47hz/r0si3_i17jli",
+    "counter_inputs": ["whoami /q47hz/r0si3_i17jli", "whoami --interactive /q47hz/r0si3_i17jli", "whoami --preserve /q47hz/r0si3_i17jli extra", "cut --preserve /q47hz/r0si3_i17jli"],
+    "complexity": "medium"
+  },
+  {
+    "id": 22,
+    "test_id": 22,
+    "pattern": "[admin:test22] grep (--all|((lower))+ ) -n2",
+    "category": "admin",
+    "matching_input": "grep --all -n2",
+    "counter_inputs": ["grep -n2", "grep --human -n2", "grep --all -n2 extra", "which --all -n2"],
+    "complexity": "medium"
+  },
+  {
+    "id": 23,
+    "test_id": 23,
+    "pattern": "[admin:test23] cut --quiet .cfg",
+    "category": "admin",
+    "matching_input": "cut --quiet .cfg",
+    "counter_inputs": ["cut .cfg", "cut -n .cfg", "cut --quiet .cfg extra", "sed --quiet .cfg"],
+    "complexity": "medium"
+  },
+  {
+    "id": 24,
+    "test_id": 24,
+    "pattern": "[admin:test24] readlink (-a|((alnum))+ ) -n747",
+    "category": "admin",
+    "matching_input": "readlink -a -n747",
+    "counter_inputs": ["readlink -n747", "readlink --recursive -n747", "readlink -a -n747 extra", "ps -a -n747"],
+    "complexity": "medium"
+  },
+  {
+    "id": 25,
+    "test_id": 25,
+    "pattern": "[admin:test25] tr -r /kjzdc",
+    "category": "admin",
+    "matching_input": "tr -r /kjzdc",
+    "counter_inputs": ["tr /kjzdc", "tr -a /kjzdc", "tr -r /kjzdc extra", "readlink -r /kjzdc"],
+    "complexity": "medium"
+  },
+  {
+    "id": 26,
+    "test_id": 26,
+    "pattern": "[build:test26] id (-y|((lower))+ ) --quiet",
+    "category": "build",
+    "matching_input": "id -y --quiet",
+    "counter_inputs": ["id --quiet", "id --long --quiet", "id -y --quiet extra", "basename -y --quiet"],
+    "complexity": "medium"
+  },
+  {
+    "id": 27,
+    "test_id": 27,
+    "pattern": "[modifying:test27] grep (--recursive|((digit))+ ) -n487",
+    "category": "modifying",
+    "matching_input": "grep --recursive -n487",
+    "counter_inputs": ["grep -n487", "grep --long -n487", "grep --recursive -n487 extra", "date --recursive -n487"],
+    "complexity": "medium"
+  },
+  {
+    "id": 28,
+    "test_id": 28,
+    "pattern": "[build:test28] whereis (-s|((alnum))+ ) /f3--s2sayko/fq5lhpt",
+    "category": "build",
+    "matching_input": "whereis -s /f3--s2sayko/fq5lhpt",
+    "counter_inputs": ["whereis /f3--s2sayko/fq5lhpt", "whereis -h /f3--s2sayko/fq5lhpt", "whereis -s /f3--s2sayko/fq5lhpt extra", "grep -s /f3--s2sayko/fq5lhpt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 29,
+    "test_id": 29,
+    "pattern": "[build:test29] split (--interactive|((alnum))+ ) uniq.txt",
+    "category": "build",
+    "matching_input": "split --interactive uniq.txt",
+    "counter_inputs": ["split uniq.txt", "split --recursive uniq.txt", "split --interactive uniq.txt extra", "grep --interactive uniq.txt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 30,
+    "test_id": 30,
+    "pattern": "[safe:test30] dirname (-h|((alnum))+ ) file78",
+    "category": "safe",
+    "matching_input": "dirname -h file78",
+    "counter_inputs": ["dirname file78", "dirname -c file78", "dirname -h file78 extra", "df -h file78"],
+    "complexity": "medium"
+  },
+  {
+    "id": 31,
+    "test_id": 31,
+    "pattern": "[safe:test31] file --human /1dkjew/sls/rrtzq/6kqo5gt3d",
+    "category": "safe",
+    "matching_input": "file --human /1dkjew/sls/rrtzq/6kqo5gt3d",
+    "counter_inputs": ["file /1dkjew/sls/rrtzq/6kqo5gt3d", "file -l /1dkjew/sls/rrtzq/6kqo5gt3d", "file --human /1dkjew/sls/rrtzq/6kqo5gt3d extra", "stat --human /1dkjew/sls/rrtzq/6kqo5gt3d"],
+    "complexity": "medium"
+  },
+  {
+    "id": 32,
+    "test_id": 32,
+    "pattern": "[build:test32] whereis -y --force",
+    "category": "build",
+    "matching_input": "whereis -y --force",
+    "counter_inputs": ["whereis --force", "whereis -t --force", "whereis -y --force extra", "type -y --force"],
+    "complexity": "medium"
+  },
+  {
+    "id": 33,
+    "test_id": 33,
+    "pattern": "[caution:test33] id -r -n800",
+    "category": "caution",
+    "matching_input": "id -r -n800",
+    "counter_inputs": ["id -n800", "id -y -n800", "id -r -n800 extra", "ls -r -n800"],
+    "complexity": "medium"
+  },
+  {
+    "id": 34,
+    "test_id": 34,
+    "pattern": "[container:test34] head -t /sb3qvtguf",
+    "category": "container",
+    "matching_input": "head -t /sb3qvtguf",
+    "counter_inputs": ["head /sb3qvtguf", "head --numeric /sb3qvtguf", "head -t /sb3qvtguf extra", "stat -t /sb3qvtguf"],
+    "complexity": "medium"
+  },
+  {
+    "id": 35,
+    "test_id": 35,
+    "pattern": "[caution:test35] tail (--recursive|((alnum))+ ) --force",
+    "category": "caution",
+    "matching_input": "tail --recursive --force",
+    "counter_inputs": ["tail --force", "tail -x --force", "tail --recursive --force extra", "type --recursive --force"],
+    "complexity": "medium"
+  },
+  {
+    "id": 36,
+    "test_id": 36,
+    "pattern": "[build:test36] date (--force|((alnum))+ ) (-n757|((alnum))+ )",
+    "category": "build",
+    "matching_input": "date --force -n757",
+    "counter_inputs": ["date -n757", "date -a -n757", "date --force -n757 extra", "more --force -n757"],
+    "complexity": "medium"
+  },
+  {
+    "id": 37,
+    "test_id": 37,
+    "pattern": "[safe:test37] which --recursive --quiet",
+    "category": "safe",
+    "matching_input": "which --recursive --quiet",
+    "counter_inputs": ["which --quiet", "which -l --quiet", "which --recursive --quiet extra", "dirname --recursive --quiet"],
+    "complexity": "medium"
+  },
+  {
+    "id": 38,
+    "test_id": 38,
+    "pattern": "[build:test38] which --long (-n634|((digit))+ )",
+    "category": "build",
+    "matching_input": "which --long -n634",
+    "counter_inputs": ["which -n634", "which -v -n634", "which --long -n634 extra", "dirname --long -n634"],
+    "complexity": "medium"
+  },
+  {
+    "id": 39,
+    "test_id": 39,
+    "pattern": "[dangerous:test39] echo -s -h9",
+    "category": "dangerous",
+    "matching_input": "echo -s -h9",
+    "counter_inputs": ["echo -h9", "echo -v -h9", "echo -s -h9 extra", "awk -s -h9"],
+    "complexity": "medium"
+  },
+  {
+    "id": 40,
+    "test_id": 40,
+    "pattern": "[safe:test40] tr -c /x9d/drcmdijx5bt/tqy",
+    "category": "safe",
+    "matching_input": "tr -c /x9d/drcmdijx5bt/tqy",
+    "counter_inputs": ["tr /x9d/drcmdijx5bt/tqy", "tr -l /x9d/drcmdijx5bt/tqy", "tr -c /x9d/drcmdijx5bt/tqy extra", "echo -c /x9d/drcmdijx5bt/tqy"],
+    "complexity": "medium"
+  },
+  {
+    "id": 41,
+    "test_id": 41,
+    "pattern": "[network:test41] echo -s (--force|((digit))+ )",
+    "category": "network",
+    "matching_input": "echo -s --force",
+    "counter_inputs": ["echo --force", "echo --preserve --force", "echo -s --force extra", "more -s --force"],
+    "complexity": "medium"
+  },
+  {
+    "id": 42,
+    "test_id": 42,
+    "pattern": "[container:test42] cat --interactive id.txt",
+    "category": "container",
+    "matching_input": "cat --interactive id.txt",
+    "counter_inputs": ["cat id.txt", "cat --verbose id.txt", "cat --interactive id.txt extra", "pwd --interactive id.txt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 43,
+    "test_id": 43,
+    "pattern": "[admin:test43] stat -x --long",
+    "category": "admin",
+    "matching_input": "stat -x --long",
+    "counter_inputs": ["stat --long", "stat -v --long", "stat -x --long extra", "sed -x --long"],
+    "complexity": "medium"
+  },
+  {
+    "id": 44,
+    "test_id": 44,
+    "pattern": "[modifying:test44] which (-n|((digit))+ ) (--quiet|((digit))+ )",
+    "category": "modifying",
+    "matching_input": "which -n --quiet",
+    "counter_inputs": ["which --quiet", "which -v --quiet", "which -n --quiet extra", "dirname -n --quiet"],
+    "complexity": "medium"
+  },
+  {
+    "id": 45,
+    "test_id": 45,
+    "pattern": "[safe:test45] whoami -c (/o_088le-jjie/_7in0oc|((digit))+ )",
+    "category": "safe",
+    "matching_input": "whoami -c /o_088le-jjie/_7in0oc",
+    "counter_inputs": ["whoami /o_088le-jjie/_7in0oc", "whoami --interactive /o_088le-jjie/_7in0oc", "whoami -c /o_088le-jjie/_7in0oc extra", "date -c /o_088le-jjie/_7in0oc"],
+    "complexity": "medium"
+  },
+  {
+    "id": 46,
+    "test_id": 46,
+    "pattern": "[modifying:test46] df (--verbose|((lower))+ ) --quiet",
+    "category": "modifying",
+    "matching_input": "df --verbose --quiet",
+    "counter_inputs": ["df --quiet", "df -t --quiet", "df --verbose --quiet extra", "head --verbose --quiet"],
+    "complexity": "medium"
+  },
+  {
+    "id": 47,
+    "test_id": 47,
+    "pattern": "[caution:test47] whoami (-t|((digit))+ ) (--all6|((alnum))+ )",
+    "category": "caution",
+    "matching_input": "whoami -t --all6",
+    "counter_inputs": ["whoami --all6", "whoami --force --all6", "whoami -t --all6 extra", "cut -t --all6"],
+    "complexity": "medium"
+  },
+  {
+    "id": 48,
+    "test_id": 48,
+    "pattern": "[admin:test48] du --long -n293",
+    "category": "admin",
+    "matching_input": "du --long -n293",
+    "counter_inputs": ["du -n293", "du --numeric -n293", "du --long -n293 extra", "awk --long -n293"],
+    "complexity": "medium"
+  },
+  {
+    "id": 49,
+    "test_id": 49,
+    "pattern": "[caution:test49] sort (-y|((alnum))+ ) /-kfwj8ip",
+    "category": "caution",
+    "matching_input": "sort -y /-kfwj8ip",
+    "counter_inputs": ["sort /-kfwj8ip", "sort --long /-kfwj8ip", "sort -y /-kfwj8ip extra", "tr -y /-kfwj8ip"],
+    "complexity": "medium"
+  },
+  {
+    "id": 50,
+    "test_id": 50,
+    "pattern": "[dangerous:test50] dirname -h -y8",
+    "category": "dangerous",
+    "matching_input": "dirname -h -y8",
+    "counter_inputs": ["dirname -y8", "dirname --recursive -y8", "dirname -h -y8 extra", "head -h -y8"],
+    "complexity": "medium"
+  },
+  {
+    "id": 51,
+    "test_id": 51,
+    "pattern": "[container:test51] cut (-a|((lower))+ ) (-n626|((alnum))+ )",
+    "category": "container",
+    "matching_input": "cut -a -n626",
+    "counter_inputs": ["cut -n626", "cut -c -n626", "cut -a -n626 extra", "tail -a -n626"],
+    "complexity": "medium"
+  },
+  {
+    "id": 52,
+    "test_id": 52,
+    "pattern": "[safe:test52] type (--interactive|((lower))+ ) -n531",
+    "category": "safe",
+    "matching_input": "type --interactive -n531",
+    "counter_inputs": ["type -n531", "type --long -n531", "type --interactive -n531 extra", "dirname --interactive -n531"],
+    "complexity": "medium"
+  },
+  {
+    "id": 53,
+    "test_id": 53,
+    "pattern": "[admin:test53] tail --force -n711",
+    "category": "admin",
+    "matching_input": "tail --force -n711",
+    "counter_inputs": ["tail -n711", "tail -t -n711", "tail --force -n711 extra", "git --force -n711"],
+    "complexity": "medium"
+  },
+  {
+    "id": 54,
+    "test_id": 54,
+    "pattern": "[safe:test54] tr --numeric --verbose",
+    "category": "safe",
+    "matching_input": "tr --numeric --verbose",
+    "counter_inputs": ["tr --verbose", "tr --interactive --verbose", "tr --numeric --verbose extra", "more --numeric --verbose"],
+    "complexity": "medium"
+  },
+  {
+    "id": 55,
+    "test_id": 55,
+    "pattern": "[container:test55] grep (--preserve|((digit))+ ) (.c|((lower))+ )",
+    "category": "container",
+    "matching_input": "grep --preserve .c",
+    "counter_inputs": ["grep .c", "grep -x .c", "grep --preserve .c extra", "less --preserve .c"],
+    "complexity": "medium"
+  },
+  {
+    "id": 56,
+    "test_id": 56,
+    "pattern": "[container:test56] git -l -n441",
+    "category": "container",
+    "matching_input": "git -l -n441",
+    "counter_inputs": ["git -n441", "git --quiet -n441", "git -l -n441 extra", "file -l -n441"],
+    "complexity": "medium"
+  },
+  {
+    "id": 57,
+    "test_id": 57,
+    "pattern": "[modifying:test57] git --interactive grep.txt",
+    "category": "modifying",
+    "matching_input": "git --interactive grep.txt",
+    "counter_inputs": ["git grep.txt", "git --verbose grep.txt", "git --interactive grep.txt extra", "uniq --interactive grep.txt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 58,
+    "test_id": 58,
+    "pattern": "[container:test58] type -c --long",
+    "category": "container",
+    "matching_input": "type -c --long",
+    "counter_inputs": ["type --long", "type --all --long", "type -c --long extra", "locate -c --long"],
+    "complexity": "medium"
+  },
+  {
+    "id": 59,
+    "test_id": 59,
+    "pattern": "[dangerous:test59] readlink -t (/k_b8ebegmoj/vl8gw7wqj8wg/zmqx|((alnum))+ )",
+    "category": "dangerous",
+    "matching_input": "readlink -t /k_b8ebegmoj/vl8gw7wqj8wg/zmqx",
+    "counter_inputs": ["readlink /k_b8ebegmoj/vl8gw7wqj8wg/zmqx", "readlink -l /k_b8ebegmoj/vl8gw7wqj8wg/zmqx", "readlink -t /k_b8ebegmoj/vl8gw7wqj8wg/zmqx extra", "sort -t /k_b8ebegmoj/vl8gw7wqj8wg/zmqx"],
+    "complexity": "medium"
+  },
+  {
+    "id": 60,
+    "test_id": 60,
+    "pattern": "[container:test60] cat -s (--long|((alnum))+ )",
+    "category": "container",
+    "matching_input": "cat -s --long",
+    "counter_inputs": ["cat --long", "cat -n --long", "cat -s --long extra", "whoami -s --long"],
+    "complexity": "medium"
+  },
+  {
+    "id": 61,
+    "test_id": 61,
+    "pattern": "[admin:test61] date -y (-x5|((lower))+ )",
+    "category": "admin",
+    "matching_input": "date -y -x5",
+    "counter_inputs": ["date -x5", "date --human -x5", "date -y -x5 extra", "sort -y -x5"],
+    "complexity": "medium"
+  },
+  {
+    "id": 62,
+    "test_id": 62,
+    "pattern": "[caution:test62] stat -c dirp",
+    "category": "caution",
+    "matching_input": "stat -c dirp",
+    "counter_inputs": ["stat dirp", "stat -s dirp", "stat -c dirp extra", "sed -c dirp"],
+    "complexity": "medium"
+  },
+  {
+    "id": 63,
+    "test_id": 63,
+    "pattern": "[admin:test63] echo (-x|((digit))+ ) --quiet",
+    "category": "admin",
+    "matching_input": "echo -x --quiet",
+    "counter_inputs": ["echo --quiet", "echo -s --quiet", "echo -x --quiet extra", "wc -x --quiet"],
+    "complexity": "medium"
+  },
+  {
+    "id": 64,
+    "test_id": 64,
+    "pattern": "[modifying:test64] ps --verbose /r19yz4/-v7_3/0kmd/3caj",
+    "category": "modifying",
+    "matching_input": "ps --verbose /r19yz4/-v7_3/0kmd/3caj",
+    "counter_inputs": ["ps /r19yz4/-v7_3/0kmd/3caj", "ps -h /r19yz4/-v7_3/0kmd/3caj", "ps --verbose /r19yz4/-v7_3/0kmd/3caj extra", "wc --verbose /r19yz4/-v7_3/0kmd/3caj"],
+    "complexity": "medium"
+  },
+  {
+    "id": 65,
+    "test_id": 65,
+    "pattern": "[build:test65] id --recursive /6b9w-7p3oif3/hy86addsx/ojdg-68c",
+    "category": "build",
+    "matching_input": "id --recursive /6b9w-7p3oif3/hy86addsx/ojdg-68c",
+    "counter_inputs": ["id /6b9w-7p3oif3/hy86addsx/ojdg-68c", "id -s /6b9w-7p3oif3/hy86addsx/ojdg-68c", "id --recursive /6b9w-7p3oif3/hy86addsx/ojdg-68c extra", "sed --recursive /6b9w-7p3oif3/hy86addsx/ojdg-68c"],
+    "complexity": "medium"
+  },
+  {
+    "id": 66,
+    "test_id": 66,
+    "pattern": "[dangerous:test66] awk --long pwd.txt",
+    "category": "dangerous",
+    "matching_input": "awk --long pwd.txt",
+    "counter_inputs": ["awk pwd.txt", "awk -x pwd.txt", "awk --long pwd.txt extra", "uniq --long pwd.txt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 67,
+    "test_id": 67,
+    "pattern": "[safe:test67] stat --all -a3",
+    "category": "safe",
+    "matching_input": "stat --all -a3",
+    "counter_inputs": ["stat -a3", "stat -x -a3", "stat --all -a3 extra", "sort --all -a3"],
+    "complexity": "medium"
+  },
+  {
+    "id": 68,
+    "test_id": 68,
+    "pattern": "[safe:test68] more --verbose /pkm1bv2peu/d0zyb_7dz",
+    "category": "safe",
+    "matching_input": "more --verbose /pkm1bv2peu/d0zyb_7dz",
+    "counter_inputs": ["more /pkm1bv2peu/d0zyb_7dz", "more --force /pkm1bv2peu/d0zyb_7dz", "more --verbose /pkm1bv2peu/d0zyb_7dz extra", "type --verbose /pkm1bv2peu/d0zyb_7dz"],
+    "complexity": "medium"
+  },
+  {
+    "id": 69,
+    "test_id": 69,
+    "pattern": "[network:test69] readlink --verbose /61oyildudk/adakf/tci",
+    "category": "network",
+    "matching_input": "readlink --verbose /61oyildudk/adakf/tci",
+    "counter_inputs": ["readlink /61oyildudk/adakf/tci", "readlink --force /61oyildudk/adakf/tci", "readlink --verbose /61oyildudk/adakf/tci extra", "sort --verbose /61oyildudk/adakf/tci"],
+    "complexity": "medium"
+  },
+  {
+    "id": 70,
+    "test_id": 70,
+    "pattern": "[network:test70] type --quiet (--quiet|((digit))+ )",
+    "category": "network",
+    "matching_input": "type --quiet --quiet",
+    "counter_inputs": ["type --quiet", "type -s --quiet", "type --quiet --quiet extra", "tail --quiet --quiet"],
+    "complexity": "medium"
+  },
+  {
+    "id": 71,
+    "test_id": 71,
+    "pattern": "[build:test71] uniq (-n|((lower))+ ) type.txt",
+    "category": "build",
+    "matching_input": "uniq -n type.txt",
+    "counter_inputs": ["uniq type.txt", "uniq -l type.txt", "uniq -n type.txt extra", "locate -n type.txt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 72,
+    "test_id": 72,
+    "pattern": "[caution:test72] basename --interactive --verbose",
+    "category": "caution",
+    "matching_input": "basename --interactive --verbose",
+    "counter_inputs": ["basename --verbose", "basename -h --verbose", "basename --interactive --verbose extra", "sed --interactive --verbose"],
+    "complexity": "medium"
+  },
+  {
+    "id": 73,
+    "test_id": 73,
+    "pattern": "[network:test73] pwd -l --long",
+    "category": "network",
+    "matching_input": "pwd -l --long",
+    "counter_inputs": ["pwd --long", "pwd -n --long", "pwd -l --long extra", "uniq -l --long"],
+    "complexity": "medium"
+  },
+  {
+    "id": 74,
+    "test_id": 74,
+    "pattern": "[safe:test74] split -r -n179",
+    "category": "safe",
+    "matching_input": "split -r -n179",
+    "counter_inputs": ["split -n179", "split --long -n179", "split -r -n179 extra", "less -r -n179"],
+    "complexity": "medium"
+  },
+  {
+    "id": 75,
+    "test_id": 75,
+    "pattern": "[admin:test75] locate --recursive /9pt9k17/oqa/j-m",
+    "category": "admin",
+    "matching_input": "locate --recursive /9pt9k17/oqa/j-m",
+    "counter_inputs": ["locate /9pt9k17/oqa/j-m", "locate --all /9pt9k17/oqa/j-m", "locate --recursive /9pt9k17/oqa/j-m extra", "more --recursive /9pt9k17/oqa/j-m"],
+    "complexity": "medium"
+  },
+  {
+    "id": 76,
+    "test_id": 76,
+    "pattern": "[dangerous:test76] stat --preserve dirr",
+    "category": "dangerous",
+    "matching_input": "stat --preserve dirr",
+    "counter_inputs": ["stat dirr", "stat --human dirr", "stat --preserve dirr extra", "grep --preserve dirr"],
+    "complexity": "medium"
+  },
+  {
+    "id": 77,
+    "test_id": 77,
+    "pattern": "[caution:test77] id (--human|((digit))+ ) find.txt",
+    "category": "caution",
+    "matching_input": "id --human find.txt",
+    "counter_inputs": ["id find.txt", "id --verbose find.txt", "id --human find.txt extra", "tr --human find.txt"],
+    "complexity": "medium"
+  },
+  {
+    "id": 78,
+    "test_id": 78,
+    "pattern": "[container:test78] wc -n( (dirs))?",
+    "category": "container",
+    "matching_input": "wc -n dirs",
+    "counter_inputs": ["wc dirs", "wc -h dirs", "wc -n dirs extra", "basename -n dirs"],
+    "complexity": "medium"
+  },
+  {
+    "id": 79,
+    "test_id": 79,
+    "pattern": "[modifying:test79] echo -h --quiet",
+    "category": "modifying",
+    "matching_input": "echo -h --quiet",
+    "counter_inputs": ["echo --quiet", "echo -n --quiet", "echo -h --quiet extra", "locate -h --quiet"],
+    "complexity": "medium"
+  },
+  {
+    "id": 80,
+    "test_id": 80,
+    "pattern": "[caution:test80] pwd --numeric -t9",
+    "category": "caution",
+    "matching_input": "pwd --numeric -t9",
+    "counter_inputs": ["pwd -t9", "pwd --human -t9", "pwd --numeric -t9 extra", "echo --numeric -t9"],
+    "complexity": "medium"
+  },
+  {
+    "id": 81,
+    "test_id": 81,
+    "pattern": "[safe:test81] cat -a (-n928|((lower))+ )",
+    "category": "safe",
+    "matching_input": "cat -a -n928",
+    "counter_inputs": ["cat -n928", "cat -x -n928", "cat -a -n928 extra", "file -a -n928"],
+    "complexity": "medium"
+  },
+  {
+    "id": 82,
+    "test_id": 82,
+    "pattern": "[network:test82] date --interactive (-n622|((alnum))+ )",
+    "category": "network",
+    "matching_input": "date --interactive -n622",
+    "counter_inputs": ["date -n622", "date -x -n622", "date --interactive -n622 extra", "pwd --interactive -n622"],
+    "complexity": "medium"
+  },
+  {
+    "id": 83,
+    "test_id": 83,
+    "pattern": "[safe:test83] ls --all -n727",
+    "category": "safe",
+    "matching_input": "ls --all -n727",
+    "counter_inputs": ["ls -n727", "ls --long -n727", "ls --all -n727 extra", "file --all -n727"],
+    "complexity": "medium"
+  },
+  {
+    "id": 84,
+    "test_id": 84,
+    "pattern": "[safe:test84] du --numeric --force6",
+    "category": "safe",
+    "matching_input": "du --numeric --force6",
+    "counter_inputs": ["du --force6", "du --recursive --force6", "du --numeric --force6 extra", "which --numeric --force6"],
+    "complexity": "medium"
+  },
+  {
+    "id": 85,
+    "test_id": 85,
+    "pattern": "[modifying:test85] less --all (--long|((alnum))+ )",
+    "category": "modifying",
+    "matching_input": "less --all --long",
+    "counter_inputs": ["less --long", "less -l --long", "less --all --long extra", "sed --all --long"],
+    "complexity": "medium"
+  },
+  {
+    "id": 86,
+    "test_id": 86,
+    "pattern": "[safe:test86] cut -s --quiet",
+    "category": "safe",
+    "matching_input": "cut -s --quiet",
+    "counter_inputs": ["cut --quiet", "cut -n --quiet", "cut -s --quiet extra", "whereis -s --quiet"],
+    "complexity": "medium"
+  },
+  {
+    "id": 87,
+    "test_id": 87,
+    "pattern": "[build:test87] tr (--interactive|((lower))+ ) --verbose",
+    "category": "build",
+    "matching_input": "tr --interactive --verbose",
+    "counter_inputs": ["tr --verbose", "tr --quiet --verbose", "tr --interactive --verbose extra", "basename --interactive --verbose"],
+    "complexity": "medium"
+  },
+  {
+    "id": 88,
+    "test_id": 88,
+    "pattern": "[caution:test88] file -r -n886",
+    "category": "caution",
+    "matching_input": "file -r -n886",
+    "counter_inputs": ["file -n886", "file -n -n886", "file -r -n886 extra", "whereis -r -n886"],
+    "complexity": "medium"
+  },
+  {
+    "id": 89,
+    "test_id": 89,
+    "pattern": "[caution:test89] df -x -n283",
+    "category": "caution",
+    "matching_input": "df -x -n283",
+    "counter_inputs": ["df -n283", "df --numeric -n283", "df -x -n283 extra", "tail -x -n283"],
+    "complexity": "medium"
+  },
+  {
+    "id": 90,
+    "test_id": 90,
+    "pattern": "[dangerous:test90] dirname (--preserve|((alnum))+ ) file54",
+    "category": "dangerous",
+    "matching_input": "dirname --preserve file54",
+    "counter_inputs": ["dirname file54", "dirname --all file54", "dirname --preserve file54 extra", "tail --preserve file54"],
+    "complexity": "medium"
+  },
+  {
+    "id": 91,
+    "test_id": 91,
+    "pattern": "[dangerous:test91] which --numeric -n190",
+    "category": "dangerous",
+    "matching_input": "which --numeric -n190",
+    "counter_inputs": ["which -n190", "which -s -n190", "which --numeric -n190 extra", "cut --numeric -n190"],
+    "complexity": "medium"
+  },
+  {
+    "id": 92,
+    "test_id": 92,
+    "pattern": "[build:test92] echo (-n|((alnum))+ ) (--verbose6|((lower))+ )",
+    "category": "build",
+    "matching_input": "echo -n --verbose6",
+    "counter_inputs": ["echo --verbose6", "echo --preserve --verbose6", "echo -n --verbose6 extra", "whoami -n --verbose6"],
+    "complexity": "medium"
+  },
+  {
+    "id": 93,
+    "test_id": 93,
+    "pattern": "[modifying:test93] awk -a --verbose",
+    "category": "modifying",
+    "matching_input": "awk -a --verbose",
+    "counter_inputs": ["awk --verbose", "awk -x --verbose", "awk -a --verbose extra", "sed -a --verbose"],
+    "complexity": "medium"
+  },
+  {
+    "id": 94,
+    "test_id": 94,
+    "pattern": "[network:test94] ls --quiet /nrikcv7h8/e9mzg1eg82/s-d/o61",
+    "category": "network",
+    "matching_input": "ls --quiet /nrikcv7h8/e9mzg1eg82/s-d/o61",
+    "counter_inputs": ["ls /nrikcv7h8/e9mzg1eg82/s-d/o61", "ls --all /nrikcv7h8/e9mzg1eg82/s-d/o61", "ls --quiet /nrikcv7h8/e9mzg1eg82/s-d/o61 extra", "split --quiet /nrikcv7h8/e9mzg1eg82/s-d/o61"],
+    "complexity": "medium"
+  },
+  {
+    "id": 95,
+    "test_id": 95,
+    "pattern": "[modifying:test95] basename --force (/x511jb_3|((digit))+ )",
+    "category": "modifying",
+    "matching_input": "basename --force /x511jb_3",
+    "counter_inputs": ["basename /x511jb_3", "basename --numeric /x511jb_3", "basename --force /x511jb_3 extra", "grep --force /x511jb_3"],
+    "complexity": "medium"
+  },
+  {
+    "id": 96,
+    "test_id": 96,
+    "pattern": "[safe:test96] tail --preserve /4tf6/ncj01",
+    "category": "safe",
+    "matching_input": "tail --preserve /4tf6/ncj01",
+    "counter_inputs": ["tail /4tf6/ncj01", "tail -c /4tf6/ncj01", "tail --preserve /4tf6/ncj01 extra", "basename --preserve /4tf6/ncj01"],
+    "complexity": "medium"
+  },
+  {
+    "id": 97,
+    "test_id": 97,
+    "pattern": "[admin:test97] uniq --preserve /gqnhszt26w/siex3esr6mf",
+    "category": "admin",
+    "matching_input": "uniq --preserve /gqnhszt26w/siex3esr6mf",
+    "counter_inputs": ["uniq /gqnhszt26w/siex3esr6mf", "uniq -s /gqnhszt26w/siex3esr6mf", "uniq --preserve /gqnhszt26w/siex3esr6mf extra", "dirname --preserve /gqnhszt26w/siex3esr6mf"],
+    "complexity": "medium"
+  },
+  {
+    "id": 98,
+    "test_id": 98,
+    "pattern": "[admin:test98] ls --interactive --verbose",
+    "category": "admin",
+    "matching_input": "ls --interactive --verbose",
+    "counter_inputs": ["ls --verbose", "ls --preserve --verbose", "ls --interactive --verbose extra", "id --interactive --verbose"],
+    "complexity": "medium"
+  },
+  {
+    "id": 99,
+    "test_id": 99,
+    "pattern": "[network:test99] ls --numeric( (/1vw90sn7x5))?",
+    "category": "network",
+    "matching_input": "ls --numeric /1vw90sn7x5",
+    "counter_inputs": ["ls /1vw90sn7x5", "ls -x /1vw90sn7x5", "ls --numeric /1vw90sn7x5 extra", "grep --numeric /1vw90sn7x5"],
+    "complexity": "medium"
+  }
+]
