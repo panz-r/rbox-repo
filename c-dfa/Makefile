@@ -184,6 +184,10 @@ clean:
 clean-all: clean
 	$(MAKE) -C $(CADICAL_DIR) clean 2>/dev/null || true
 
+# Generate compile_commands.json for LSP
+compile_commands.json:
+	bear -- make 2>/dev/null
+
 # Build tools with SAT support
 build-sat: $(TOOLS_DIR)/nfa2dfa_sat
 
@@ -251,7 +255,7 @@ fuzz-clean:
 
 fuzz-rebuild: clean-fuzz fuzz-build
 
-.PHONY: all clean clean-all test test-moore test-hopcroft test-brzozowski test-integrity build-sat test-sat test-sat-full
+.PHONY: all clean clean-all test test-moore test-hopcroft test-brzozowski test-integrity build-sat test-sat test-sat-full compile_commands.json
 .PHONY: fuzz fuzz-build fuzz-run-dfa fuzz-run-pattern fuzz-run fuzz-clean fuzz-rebuild
 
 # SAT encoding tests

@@ -92,6 +92,10 @@ minimize: dfa_eval_fuzzer
 clean:
 	rm -f $(FUZZERS) $(LIB_OBJS) $(PATTERN_OBJS)
 
+# Generate compile_commands.json for LSP
+compile_commands.json:
+	bear -- make all 2>/dev/null
+
 # Clear crash artifacts (useful after bug fixes)
 clean-crashes:
 	rm -rf crashes/*
