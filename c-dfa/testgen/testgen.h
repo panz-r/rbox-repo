@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <random>
 #include <memory>
 #include <functional>
@@ -59,12 +60,12 @@ public:
     
     std::string categoryToString(Category cat);
     std::map<std::string, std::string> generateFragments(Complexity complexity);
-    std::pair<std::vector<std::string>, std::vector<std::string>> generateSeeds(Complexity complexity);
+    std::pair<std::vector<std::string>, std::vector<std::string>> generateSeeds(Complexity complexity, std::set<std::string>& used_inputs);
     std::pair<std::vector<std::string>, std::vector<std::string>> generateInputs(Complexity complexity);
     std::string generateSimpleArg();
     std::string generateFlags(int count = 1);
     std::string generatePath();
-    TestCase generateTestCase(int test_id);
+    TestCase generateTestCase(int test_id, std::set<std::string>& used_inputs);
     std::string generatePattern(const std::vector<std::string>& matching_inputs, 
                                 const std::vector<std::string>& counter_inputs,
                                 const std::map<std::string, std::string>& fragments,

@@ -1,3 +1,0 @@
-# Failed test cases - patterns that don't match as expected
-# Format: [category:subcategory] pattern
-

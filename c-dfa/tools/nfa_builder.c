@@ -168,11 +168,6 @@ static StateSignature* signature_table[SIGNATURE_TABLE_SIZE] = {NULL};
 // CONSERVATIVE SHARING: Track states that should NOT be shared
 // States marked as "do not share" cannot be merged with other states during
 // NFA construction. This prevents acceptance category interference.
-// A state is marked "do not share" if it:
-//   - Might become accepting (has pending quantifier)
-//   - Is already accepting (has category_mask or is_eos_target)
-static bool state_do_not_share[MAX_STATES] = {false};
-
 // Category IDs
 enum {
     CAT_SAFE = 0,
@@ -276,9 +271,6 @@ static int last_element_sid = -1;
 // For + quantifier: tracks if we're inside a capture (capture ID to defer)
 static int8_t pending_capture_defer_id = -1;
 
-// For fragment chaining: tracks the fragment's entry point for alternation branches
-static int pending_frag_start = -1;
-
 // Reset pattern state - clears pending markers and capture stack for a new pattern
 // This prevents cross-pattern contamination when states are shared
 static void reset_nfa_builder_pattern_state(void) {
@@ -380,8 +372,6 @@ void nfa_init(void) {
         // Initialize capture markers
         nfa[i].capture_start_id = -1;
         nfa[i].capture_end_id = -1;
-        // Initialize "do not share" tracking for conservative state sharing
-        state_do_not_share[i] = false;
     }
     nfa_state_count = 1; // State 0 is initial state
     fragment_count = 0; // Reset fragments
@@ -1023,7 +1013,10 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
 // Parse fragment reference like ((SAFE::FILENAME)) or ((FILENAME))
 // The fragment value is treated as a pattern and parsed recursively
 // Returns FragmentResult containing loop entry, exit state, and metadata
-// REPLACES: previous approach that set pending_loop_* globals
+//
+// IMPORTANT: Fragments are fully inlined - each use creates completely independent
+// NFA states. This prevents any cross-pattern contamination through shared states.
+// This is the correct approach: fragments are just syntactic shorthand.
 static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int start_state) {
     FragmentResult result = {0};
     result.anchor_state = -1;
@@ -1086,96 +1079,39 @@ static FragmentResult parse_rdp_fragment(const char* pattern, int* pos, int star
 
     DEBUG_PRINT("parse_rdp_fragment: frag_name=\"%s\", frag_value=\"%s\"\n", frag_name, frag_value);
 
-    // Create a clean start state for the fragment
-    int frag_start = nfa_add_state_with_minimization(false);
-
     // Track if this is a single-char fragment
     bool is_single_char = (frag_value[0] != '\0' && frag_value[1] == '\0');
 
-    // Detect if fragment contains alternation (Bug 2.9)
-    // Must check for '|' anywhere in the value, not just at position 1
-    // For example: [fragment:a] a|b contains alternation, not just at start
-    bool has_alternation = false;
-    for (int i = 0; frag_value[i] != '\0'; i++) {
-        if (frag_value[i] == '|') {
-            has_alternation = true;
-            break;
-        }
-    }
+    // CRITICAL: Inline the fragment pattern directly at start_state
+    // Each use creates completely independent NFA states - no sharing possible
+    // This is the correct approach: fragments are syntactic shorthand, not shared references
 
-    // Add transition from start_state to frag_start using first char of fragment value
-    // For single-char fragments, use start_state directly as frag_start
-    // SKIP if alternation is present (Bug 2.9)
-    if (!has_alternation && frag_value[0] != '\0' && frag_value[1] != '\0') {
-        // Multi-char fragment: add transition from start_state to frag_start
-        int first_sid = find_symbol_id(frag_value[0]);
-        if (first_sid != -1) {
-            nfa_add_transition(start_state, frag_start, first_sid);
-        }
-    } else if (!has_alternation && frag_value[0] != '\0') {
-        // Single-char fragment: use start_state directly
-        frag_start = start_state;
-    } else {
-        // Alternation or complex fragment: use EPSILON to frag_start and parse all chars
-        int epsilon_sid = VSYM_EPS;
-        if (epsilon_sid != -1) {
-            nfa_add_transition(start_state, frag_start, epsilon_sid);
-        } else {
-            frag_start = start_state;
-        }
-    }
-
-    // Store frag_start in a global so alternation code can access it
-    // This allows branches to connect to the fragment continuation
-    pending_frag_start = frag_start;
-
-    // Parse the fragment value starting from frag_start
-    // For multi-char fragments (without alternation), skip first char since we handled it
-    // CRITICAL: Set parsing_fragment_value flag to prevent marking states as accepting
-    // Fragment values are sub-patterns, not complete patterns, so their end is NOT a pattern end.
     int frag_pos = 0;
     int frag_end;
     bool saved_parsing_fragment = parsing_fragment_value;
     parsing_fragment_value = true;
-    
-    if (!has_alternation && frag_value[0] != '\0' && frag_value[1] != '\0') {
-        frag_pos = 1;  // Skip first char
-        frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
-    } else {
-        frag_end = parse_rdp_alternation(frag_value, &frag_pos, frag_start);
-    }
-    
+
+    // Parse the fragment value directly at start_state - fully inlined
+    frag_end = parse_rdp_alternation(frag_value, &frag_pos, start_state);
+
     parsing_fragment_value = saved_parsing_fragment;
 
-    // For fragments used in sequence (start_state != 0 and has_alternation),
-    // we need to connect the fragment's exit to allow continuation to next fragment
-    // This is handled by the caller when it chains fragments
-
     // Populate FragmentResult
-    // For fragments with alternation, ALWAYS use frag_start as anchor
-    // This is critical for patterns like ((x|y|z))+ where we need to loop back to the fragment start
-    if (has_alternation) {
-        result.anchor_state = frag_start;  // Always use actual fragment start for alternation
-    } else {
-        result.anchor_state = start_state;
-    }
+    // The anchor is start_state since we inlined at that position
+    result.anchor_state = start_state;
+    result.exit_state = frag_end;
+
     if (is_single_char) {
         result.is_single_char = true;
         result.loop_char = frag_value[0];
-        result.loop_entry_state = frag_start;  // State BEFORE consuming char
+        result.loop_entry_state = start_state;
     } else {
         result.is_single_char = false;
         result.loop_char = '\0';
-        result.loop_entry_state = frag_start;  // State BEFORE consuming fragment
+        result.loop_entry_state = start_state;
         result.fragment_entry_state = start_state;
         result.loop_first_char = frag_value[0];
     }
-
-    result.exit_state = frag_end;
-
-    // Mark states as potentially accepting (for quantifier handling)
-    state_do_not_share[frag_start] = true;
-    state_do_not_share[frag_end] = true;
 
     *pos = j + 2;  // Skip past the fragment reference
 
@@ -1345,7 +1281,6 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                 }
 
                 int star_state = nfa_add_state_with_minimization(false);
-                state_do_not_share[star_state] = true;
                 // Zero or more: anchor --EPSILON--> star_state (zero chars)
                 nfa_add_transition(anchor, star_state, VSYM_EPS);
                 // One or more: anchor --ANY--> star_state (first char)
@@ -1426,7 +1361,6 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                 }
 
                 int star_state = nfa_add_state_with_minimization(false);
-                state_do_not_share[star_state] = true;
                 nfa_add_transition(anchor, star_state, any_sid);
                 nfa_add_transition(star_state, star_state, any_sid);
                 int finalized_star = nfa_finalize_state(star_state);
@@ -1456,11 +1390,9 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
 
                     // Create loop state for one-or-more spaces (implicit + quantifier)
                     int loop_state = nfa_add_state_with_minimization(false);
-                    state_do_not_share[loop_state] = true;
 
                     // Create exit state for when done consuming spaces
                     int exit_state = nfa_add_state_with_minimization(false);
-                    state_do_not_share[exit_state] = true;
 
                     // Loop: loop_state --space/tab--> loop_state
                     nfa_add_transition(loop_state, loop_state, space_sid);
@@ -1569,7 +1501,6 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 
             // Create exit state
             int exit_state = nfa_add_state_with_minimization(false);
-            state_do_not_share[exit_state] = true;
 
             // Loop back to the START of the element (anchor_state), not the end
             // This is critical for multi-character sequences like (AB)*
@@ -1601,7 +1532,6 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 
             // Create exit state
             int exit_state = nfa_add_state_with_minimization(false);
-            state_do_not_share[exit_state] = true;
 
             // Loop back to the START of the element (anchor_state), not the end
             // This is critical for multi-character sequences like (AB)+
@@ -1629,7 +1559,6 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 
             // Create exit state
             int exit_state = nfa_add_state_with_minimization(false);
-            state_do_not_share[exit_state] = true;
 
             // Skip to the START of the element (anchor_state), not the end
             // This is critical for multi-character sequences like (AB)?
@@ -2193,7 +2122,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
             for (int j = 0; j < MAX_TAGS; j++) nfa[accepting].tags[j] = NULL;
             for (int j = 0; j < MAX_SYMBOLS; j++) nfa[accepting].transitions[j] = -1;
             mta_init(&nfa[accepting].multi_targets);
-            state_do_not_share[accepting] = true;
             nfa_add_transition(eos_target_state, accepting, eos_sid);
         }
 
@@ -2202,7 +2130,6 @@ static void parse_pattern_full(const char* pattern, const char* category,
             nfa[eos_target_state].is_eos_target = true;
             nfa[eos_target_state].category_mask = cat_mask;  // Set category for end_state
             nfa[eos_target_state].pattern_id = (current_pattern_index >= 0) ? (uint16_t)(current_pattern_index + 1) : 0;
-            state_do_not_share[eos_target_state] = true;  // CONSERVATIVE: Don't share accepting states
         }
 
         nfa_add_tag(eos_target_state, category);
@@ -3109,7 +3036,8 @@ static bool validate_pattern_file(const char* spec_file) {
             }
 
             // Check for common issues
-            if (*pattern_start != '\0' && strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*?[]()-+.:\\", *pattern_start) == NULL) {
+            // Allow capture tags (<name>...</name>) as valid pattern start
+            if (*pattern_start != '\0' && strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*?[]()-+.:\\<", *pattern_start) == NULL) {
                 ERROR("Invalid pattern start at line %d: %s", line_num, line);
                 errors++;
             }

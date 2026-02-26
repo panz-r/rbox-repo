@@ -13,7 +13,6 @@ void printUsage(const char* prog) {
     std::cout << "  -s SEED       Random seed\n";
     std::cout << "  -c LEVEL      Complexity: simple, medium, complex, mixed (default: mixed)\n";
     std::cout << "  -r            Run tests through c-dfa\n";
-    std::cout << "  -i            Run tests individually (one DFA per pattern)\n";
     std::cout << "  -k            Keep generated files\n";
     std::cout << "  -h            Show this help\n";
 }
@@ -21,7 +20,6 @@ void printUsage(const char* prog) {
 int main(int argc, char* argv[]) {
     Options opts;
     bool run_tests = false;
-    bool run_individual = false;
     bool keep_files = false;
     std::string output_dir = "output";
     
@@ -41,8 +39,6 @@ int main(int argc, char* argv[]) {
             else if (c == "mixed") opts.complexity = Complexity::MEDIUM;
         } else if (strcmp(argv[i], "-r") == 0) {
             run_tests = true;
-        } else if (strcmp(argv[i], "-i") == 0) {
-            run_individual = true;
         } else if (strcmp(argv[i], "-k") == 0) {
             keep_files = true;
         } else if (strcmp(argv[i], "-h") == 0) {
@@ -93,13 +89,9 @@ int main(int argc, char* argv[]) {
         std::cout << "  Pattern file: " << pattern_file << "\n";
         
         if (run_tests) {
-            if (run_individual) {
-                gen.runTestsIndividual(pattern_file, expectations_file);
-            } else {
-                int result = gen.runTests(pattern_file, expectations_file);
-                if (result == 0) total_passed += tests.size();
-                else total_failed += tests.size();
-            }
+            int result = gen.runTests(pattern_file, expectations_file);
+            if (result == 0) total_passed += tests.size();
+            else total_failed += tests.size();
         }
         
         file_num++;

@@ -46,8 +46,19 @@ std::vector<TestCase> TestGenerator::generate() {
     // For combined testing, max 4 test cases (8 patterns: 4 matching + 4 counter)
     int max_tests = std::min(opts.num_tests, 4);
     tests.reserve(max_tests);
+    
+    // Track all inputs used so far to avoid collisions between test cases
+    std::set<std::string> all_used_inputs;
+    
     for (int i = 0; i < max_tests; i++) {
-        tests.push_back(generateTestCase(i));
+        tests.push_back(generateTestCase(i, all_used_inputs));
+        // Add this test case's inputs to the global set
+        for (const auto& inp : tests.back().matching_inputs) {
+            all_used_inputs.insert(inp);
+        }
+        for (const auto& inp : tests.back().counter_inputs) {
+            all_used_inputs.insert(inp);
+        }
     }
     generated_tests = tests;
     return tests;
@@ -55,7 +66,7 @@ std::vector<TestCase> TestGenerator::generate() {
 
 // Generate random seed strings for a test case
 std::pair<std::vector<std::string>, std::vector<std::string>> 
-TestGenerator::generateSeeds(Complexity complexity) {
+TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_inputs) {
     const std::string lowercase = "abcdefghijklmnopqrstuvwxyz";
     const std::string uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const std::string digits = "0123456789";
@@ -63,7 +74,7 @@ TestGenerator::generateSeeds(Complexity complexity) {
     
     std::vector<std::string> matching_seeds;
     std::vector<std::string> counter_seeds;
-    std::set<std::string> used;
+    std::set<std::string> used = used_inputs;  // Start with already-used inputs
     
     // Generate high-entropy random matching seeds (fixed 5)
     const int num_matching = 5;
@@ -826,9 +837,16 @@ PatternResult tryFragmentOnly(const std::vector<std::string>& matching,
             all_chars.insert(c);
         }
     }
+
+    // Exclude characters that appear in counter inputs to ensure separation
+    for (const auto& c : counters) {
+        for (char c2 : c) {
+            all_chars.erase(c2);
+        }
+    }
     
     if (all_chars.size() < 2) {
-        result.proof += "  FragmentOnly: not enough variation\n";
+        result.proof += "  FragmentOnly: not enough variation or overlaps with counter\n";
         return result;
     }
     
@@ -2075,11 +2093,23 @@ PatternResult tryFragmentChaining(const std::vector<std::string>& matching,
     }
     
     // Find two different common substrings we can use as fragments
+    // But exclude any substring that appears in counter inputs
     std::set<std::string> all_substrs;
     for (const auto& m : matching) {
         for (size_t len = 1; len <= m.size(); len++) {
             for (size_t pos = 0; pos + len <= m.size(); pos++) {
-                all_substrs.insert(m.substr(pos, len));
+                std::string substr = m.substr(pos, len);
+                // Skip if any counter input contains this substring
+                bool in_counter = false;
+                for (const auto& c : counters) {
+                    if (c.find(substr) != std::string::npos) {
+                        in_counter = true;
+                        break;
+                    }
+                }
+                if (!in_counter) {
+                    all_substrs.insert(substr);
+                }
             }
         }
     }
@@ -2729,7 +2759,7 @@ std::map<std::string, std::string> generateFragmentsForPattern(const std::string
     return fragments;
 }
 
-TestCase TestGenerator::generateTestCase(int test_id) {
+TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& used_inputs) {
     TestCase tc;
     tc.test_id = test_id;
     
@@ -2747,14 +2777,14 @@ TestCase TestGenerator::generateTestCase(int test_id) {
     tc.complexity = opts.complexity;
     tc.fragments.clear();
     
-    auto [matching_seeds, counter_seeds] = generateSeeds(tc.complexity);
+    auto [matching_seeds, counter_seeds] = generateSeeds(tc.complexity, used_inputs);
     
     tc.matching_inputs = matching_seeds;
     tc.counter_inputs = counter_seeds;
     
     PatternResult result = generateSeparatingPattern(tc.matching_inputs, tc.counter_inputs, 
                                                      tc.complexity, rng);
-    
+
     tc.pattern = result.pattern;
     tc.fragments = result.fragments;
     
@@ -2788,7 +2818,8 @@ std::string TestGenerator::categoryToString(Category cat) {
 
 std::pair<std::vector<std::string>, std::vector<std::string>> 
 TestGenerator::generateInputs(Complexity complexity) {
-    return generateSeeds(complexity);
+    std::set<std::string> empty_set;
+    return generateSeeds(complexity, empty_set);
 }
 
 std::map<std::string, std::string> TestGenerator::generateFragments(Complexity complexity) {
@@ -2905,10 +2936,8 @@ void TestGenerator::writePatternFile(const std::vector<TestCase>& tests, const s
     out << "# Patterns\n";
     for (const auto& tc : tests) {
         if (!tc.pattern.empty()) {
-            // Write matching pattern with its category
+            // Write pattern with its category
             out << "[" << categoryToString(tc.category) << ":test" << tc.test_id << "] " << tc.pattern << "\n";
-            // Write counter pattern with different category (to distinguish in combined DFA)
-            out << "[" << categoryToString(tc.counter_category) << ":counter" << tc.test_id << "] " << tc.pattern << "\n";
         }
     }
     
@@ -3022,11 +3051,13 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
             int matched_category = 0;
             if (fp) {
                 char buf[256];
+                int last_category = 0;
                 while (fgets(buf, sizeof(buf), fp)) {
                     if (strstr(buf, "matched=1")) matched = true;
                     char* cat_str = strstr(buf, "category=");
-                    if (cat_str) matched_category = atoi(cat_str + 9);
+                    if (cat_str) last_category = atoi(cat_str + 9);
                 }
+                matched_category = last_category;
                 pclose(fp);
             }
             if (!matched || matched_category != expected_match_category) {
@@ -3076,15 +3107,15 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
             FILE* cfp = popen(counter_cmd.c_str(), "r");
             if (cfp) {
                 char cbuf[256];
+                int last_counter_cat = 0;
                 while (fgets(cbuf, sizeof(cbuf), cfp)) {
                     if (strstr(cbuf, "matched=1")) {
-                        int counter_cat = 0;
                         char* cat_str = strstr(cbuf, "category=");
-                        if (cat_str) counter_cat = atoi(cat_str + 9);
-                        // Counter input should NOT match with the matching category
-                        if (counter_cat == expected_match_category) any_counter_matched = true;
+                        if (cat_str) last_counter_cat = atoi(cat_str + 9);
                     }
                 }
+                // Counter input should NOT match with the matching category
+                if (last_counter_cat == expected_match_category) any_counter_matched = true;
                 pclose(cfp);
             }
         }
