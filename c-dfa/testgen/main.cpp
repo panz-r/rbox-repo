@@ -8,11 +8,12 @@
 void printUsage(const char* prog) {
     std::cout << "Usage: " << prog << " [options]\n";
     std::cout << "\nOptions:\n";
-    std::cout << "  -n N          Number of tests (default: 100)\n";
+    std::cout << "  -n N          Number of tests (default: 100, max 4 for combined testing)\n";
     std::cout << "  -o DIR        Output directory (default: output)\n";
     std::cout << "  -s SEED       Random seed\n";
     std::cout << "  -c LEVEL      Complexity: simple, medium, complex, mixed (default: mixed)\n";
     std::cout << "  -r            Run tests through c-dfa\n";
+    std::cout << "  -i            Run tests individually (one DFA per pattern)\n";
     std::cout << "  -k            Keep generated files\n";
     std::cout << "  -h            Show this help\n";
 }
@@ -20,6 +21,7 @@ void printUsage(const char* prog) {
 int main(int argc, char* argv[]) {
     Options opts;
     bool run_tests = false;
+    bool run_individual = false;
     bool keep_files = false;
     std::string output_dir = "output";
     
@@ -36,9 +38,11 @@ int main(int argc, char* argv[]) {
             if (c == "simple") opts.complexity = Complexity::SIMPLE;
             else if (c == "medium") opts.complexity = Complexity::MEDIUM;
             else if (c == "complex") opts.complexity = Complexity::COMPLEX;
-            else if (c == "mixed") opts.complexity = Complexity::MEDIUM;  // Default to medium for mixed
+            else if (c == "mixed") opts.complexity = Complexity::MEDIUM;
         } else if (strcmp(argv[i], "-r") == 0) {
             run_tests = true;
+        } else if (strcmp(argv[i], "-i") == 0) {
+            run_individual = true;
         } else if (strcmp(argv[i], "-k") == 0) {
             keep_files = true;
         } else if (strcmp(argv[i], "-h") == 0) {
@@ -57,32 +61,54 @@ int main(int argc, char* argv[]) {
     // Create output directory
     mkdir(output_dir.c_str(), 0755);
     
-    // Generate test cases
-    TestGenerator gen(opts);
-    std::cout << "Generating " << opts.num_tests << " test cases...\n";
-    auto tests = gen.generate();
-    std::cout << "Generated " << tests.size() << " test cases\n\n";
+    // Calculate how many files we need (4 tests per file = 8 patterns max)
+    int tests_per_file = 4;
+    int num_files = (opts.num_tests + tests_per_file - 1) / tests_per_file;
     
-    // Write files
-    std::string pattern_file = output_dir + "/patterns.txt";
-    std::string expectations_file = output_dir + "/expectations.json";
+    std::cout << "Generating " << opts.num_tests << " test cases in " << num_files << " file(s)...\n\n";
     
-    gen.writePatternFile(tests, pattern_file);
-    gen.writeExpectations(tests, expectations_file);
+    int total_passed = 0;
+    int total_failed = 0;
+    int file_num = 0;
     
-    std::cout << "\nGenerated files:\n";
-    std::cout << "  Pattern file: " << pattern_file << "\n";
-    std::cout << "  Expectations: " << expectations_file << "\n";
+    for (int batch = 0; batch < opts.num_tests; batch += tests_per_file) {
+        // Adjust seed for each batch
+        opts.seed = opts.seed + batch;
+        
+        // Generate test cases for this batch (max 4)
+        TestGenerator gen(opts);
+        int num_in_batch = std::min(tests_per_file, opts.num_tests - batch);
+        auto tests = gen.generate();
+        
+        std::cout << "--- Batch " << (file_num + 1) << ": " << tests.size() << " test cases ---\n";
+        
+        // Write files with batch number
+        std::string batch_suffix = (num_files > 1) ? "_" + std::to_string(file_num) : "";
+        std::string pattern_file = output_dir + "/patterns" + batch_suffix + ".txt";
+        std::string expectations_file = output_dir + "/expectations" + batch_suffix + ".json";
+        
+        gen.writePatternFile(tests, pattern_file);
+        gen.writeExpectations(tests, expectations_file);
+        
+        std::cout << "  Pattern file: " << pattern_file << "\n";
+        
+        if (run_tests) {
+            if (run_individual) {
+                gen.runTestsIndividual(pattern_file, expectations_file);
+            } else {
+                int result = gen.runTests(pattern_file, expectations_file);
+                if (result == 0) total_passed += tests.size();
+                else total_failed += tests.size();
+            }
+        }
+        
+        file_num++;
+    }
     
-    if (run_tests) {
-        gen.runTests(pattern_file, expectations_file);
-    } else {
+    if (!run_tests) {
         std::cout << "\nSkipping test run (use -r to execute)\n";
-        std::cout << "\nTo test manually:\n";
-        std::cout << "  cd ..\n";
-        std::cout << "  ./tools/nfa_builder " << pattern_file << " test.nfa\n";
-        std::cout << "  ./tools/nfa2dfa_advanced test.nfa test.dfa\n";
-        std::cout << "  ./tools/dfa_eval_wrapper test.dfa '<input>'\n";
+    } else if (opts.num_tests > 4) {
+        std::cout << "\n=== TOTAL: " << total_passed << " passed, " << total_failed << " failed ===\n";
     }
     
     return 0;

@@ -27,13 +27,15 @@ enum class Complexity {
 };
 
 struct TestCase {
-    int test_id;  // Unique ID for this test case (for subcategory)
+    int test_id;
     std::string pattern;
-    Category category;
-    std::string matching_input;
-    std::vector<std::string> counter_inputs;
+    Category category;           // Category for matching inputs
+    Category counter_category;   // Category for counter inputs (different to distinguish)
+    std::vector<std::string> matching_inputs;  // ALL must match with category
+    std::vector<std::string> counter_inputs;   // NONE must match with category
     std::map<std::string, std::string> fragments;
     Complexity complexity;
+    std::string proof;  // Proof of correctness
 };
 
 struct Options {
@@ -55,27 +57,33 @@ public:
     int runTests(const std::string& pattern_file, const std::string& expectations_file);
     int runTestsIndividual(const std::string& pattern_file, const std::string& expectations_file);
     
-    // Public for testing
     std::string categoryToString(Category cat);
     std::map<std::string, std::string> generateFragments(Complexity complexity);
-    std::pair<std::string, std::vector<std::string>> generateInputs(Complexity complexity);
+    std::pair<std::vector<std::string>, std::vector<std::string>> generateSeeds(Complexity complexity);
+    std::pair<std::vector<std::string>, std::vector<std::string>> generateInputs(Complexity complexity);
     std::string generateSimpleArg();
     std::string generateFlags(int count = 1);
     std::string generatePath();
+    TestCase generateTestCase(int test_id);
+    std::string generatePattern(const std::vector<std::string>& matching_inputs, 
+                                const std::vector<std::string>& counter_inputs,
+                                const std::map<std::string, std::string>& fragments,
+                                Complexity complexity,
+                                std::string& proof_out);
     std::string transformPart(const std::string& part,
                               const std::map<std::string, std::string>& fragments,
                               Complexity complexity,
-                              bool allow_wildcard = true);
-    TestCase generateTestCase(int test_id);
-    std::string generatePattern(const std::string& matching_input, 
-                                const std::vector<std::string>& counter_inputs,
-                                const std::map<std::string, std::string>& fragments,
-                                Complexity complexity);
+                              bool allow_wildcard,
+                              const std::vector<std::string>& counter_inputs,
+                              const std::string& current_pattern,
+                              std::string& proof_out);
+    bool wouldPatternMatch(const std::string& input, const std::string& pattern);
 
 private:
     Options opts;
     std::mt19937 rng;
     std::vector<TestCase> generated_tests;
+    int global_failed_count = 0;  // Persist across batches for saving failed cases
     
     static const std::vector<std::string> COMMANDS;
     static const std::vector<std::string> FLAGS;
@@ -94,6 +102,9 @@ private:
     std::vector<std::string> generateCounterInputsSimple(const std::string& arg, const std::string& cmd);
     std::vector<std::string> generateCounterInputsMedium(const std::string& flags, const std::string& arg, const std::string& cmd);
     std::vector<std::string> generateCounterInputsComplex(const std::string& flags, const std::vector<std::string>& args, const std::string& cmd);
+    
+    bool wouldMatchWithoutOptional(const std::string& pattern_prefix, const std::string& counter_input);
+    bool wouldMatchWithAlternation(const std::string& pattern_prefix, const std::string& literal_part, const std::string& counter_input);
 };
 
 #endif // TESTGEN_H
