@@ -188,9 +188,9 @@ const dfa_t* dfa_get_current(void) { return current_dfa; }
 
 const char* dfa_category_string(dfa_command_category_t cat) {
     static const char* names[] = {"Unknown", "Read-only (Safe)", "Read-only (Caution)", 
-                                 "Modifying", "Dangerous", "Network", "Admin"};
+                                 "Modifying", "Dangerous", "Network", "Admin", "Build", "Container"};
     int idx = (int)cat;
-    return (idx >= 0 && idx <= 6) ? names[idx] : "Invalid";
+    return (idx >= 0 && idx <= 8) ? names[idx] : "Invalid";
 }
 
 /**

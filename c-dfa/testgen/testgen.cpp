@@ -2890,6 +2890,18 @@ void TestGenerator::writePatternFile(const std::vector<TestCase>& tests, const s
         out << "\n";
     }
     
+    // Write [CATEGORIES] section
+    out << "[CATEGORIES]\n";
+    out << "0: safe\n";
+    out << "1: caution\n";
+    out << "2: modifying\n";
+    out << "3: dangerous\n";
+    out << "4: network\n";
+    out << "5: admin\n";
+    out << "6: build\n";
+    out << "7: container\n";
+    out << "\n";
+    
     out << "# Patterns\n";
     for (const auto& tc : tests) {
         if (!tc.pattern.empty()) {

@@ -191,6 +191,12 @@ const char* category_names[CAT_COUNT] = {
     "network", "admin", "build", "container"
 };
 
+// Dynamic category names (loaded from [CATEGORIES] section)
+#define MAX_CATEGORY_NAME 64
+static char dynamic_category_names[CAT_COUNT][MAX_CATEGORY_NAME];
+static int dynamic_category_count = 0;
+static bool categories_defined = false;
+
 // Fragment storage for expansion
 #define MAX_FRAGMENTS 100
 #define MAX_FRAGMENT_NAME 64
@@ -889,15 +895,74 @@ static int parse_capture_end(const char* pattern, int* pos, int start_state) {
     return start_state;
 }
 
-// Parse category ID
-int parse_category(const char* name) {
+// Initialize default category names
+static void init_default_categories(void) {
+    if (categories_defined) return;
+    
+    // Copy default names to dynamic array
     for (int i = 0; i < CAT_COUNT; i++) {
-        if (strcmp(name, category_names[i]) == 0) {
+        strncpy(dynamic_category_names[i], category_names[i], MAX_CATEGORY_NAME - 1);
+        dynamic_category_names[i][MAX_CATEGORY_NAME - 1] = '\0';
+    }
+    dynamic_category_count = CAT_COUNT;
+    categories_defined = true;
+}
+
+// Parse category definition line (N: name format)
+static void parse_category_definition(const char* line) {
+    // Format: "0: safe" or "1:caution" etc.
+    if (line[0] < '0' || line[0] > '7') return;
+    if (line[1] != ':') return;
+    
+    int idx = line[0] - '0';
+    const char* name_start = line + 2;
+    while (*name_start == ' ' || *name_start == '\t') name_start++;
+    
+    if (*name_start == '\0' || *name_start == '\n' || *name_start == '#') return;
+    
+    // Extract name (until whitespace, newline, or end)
+    int name_len = 0;
+    const char* p = name_start;
+    while (*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '#' && name_len < MAX_CATEGORY_NAME - 1) {
+        dynamic_category_names[idx][name_len++] = *p;
+        p++;
+    }
+    dynamic_category_names[idx][name_len] = '\0';
+    
+    if (idx >= dynamic_category_count) {
+        dynamic_category_count = idx + 1;
+    }
+    
+    categories_defined = true;
+    
+    DEBUG_PRINT("Category %d: '%s'\n", idx, dynamic_category_names[idx]);
+}
+
+// Parse category ID - uses dynamic names if available
+int parse_category(const char* name) {
+    // Use dynamic names if categories were defined
+    const char* names_to_use[CAT_COUNT];
+    int count_to_use;
+    
+    if (categories_defined) {
+        for (int i = 0; i < dynamic_category_count && i < CAT_COUNT; i++) {
+            names_to_use[i] = dynamic_category_names[i];
+        }
+        count_to_use = dynamic_category_count;
+    } else {
+        for (int i = 0; i < CAT_COUNT; i++) {
+            names_to_use[i] = category_names[i];
+        }
+        count_to_use = CAT_COUNT;
+    }
+    
+    for (int i = 0; i < count_to_use; i++) {
+        if (strcmp(name, names_to_use[i]) == 0) {
             return i;
         }
     }
-    WARNING("Unknown category '%s', defaulting to safe", name);
-    return CAT_SAFE; // Default to safe
+    WARNING("Unknown category '%s', defaulting to category 0", name);
+    return 0; // Default to category 0
 }
 
 // ============================================================================
@@ -2279,6 +2344,17 @@ void parse_advanced_pattern(const char* line) {
         }
     }
 
+    // Check for [CATEGORIES] section
+    if (strcmp(line, "[CATEGORIES]") == 0) {
+        return; // Handled in read loop
+    }
+    
+    // Check for category definition line (N: name format)
+    if (line[0] >= '0' && line[0] <= '7' && line[1] == ':') {
+        parse_category_definition(line);
+        return;
+    }
+    
     // Check if this is a fragment or character set definition BEFORE category parsing
     // Syntax: [fragment:name] value
     //         [fragment:namespace:name] value
@@ -2580,8 +2656,10 @@ void read_advanced_spec_file(const char* filename) {
 
     char line[MAX_LINE_LENGTH];
     int line_num = 0;
+    bool in_categories_section = false;
 
     nfa_init();
+    init_default_categories();  // Initialize default categories before parsing
 
     current_input_file = filename;
 
@@ -2612,6 +2690,23 @@ void read_advanced_spec_file(const char* filename) {
 
         // Skip other comments
         if (line[0] == '#') {
+            continue;
+        }
+
+        // Check for [CATEGORIES] section
+        if (strcmp(p, "[CATEGORIES]") == 0) {
+            in_categories_section = true;
+            continue;
+        }
+
+        // Check for end of CATEGORIES section (another section starts)
+        if (in_categories_section && p[0] == '[' && strncmp(p, "[CATEGORIES]", 12) != 0) {
+            in_categories_section = false;
+        }
+
+        // Parse category definition in CATEGORIES section
+        if (in_categories_section && p[0] >= '0' && p[0] <= '7' && p[1] == ':') {
+            parse_category_definition(p);
             continue;
         }
 
@@ -2903,6 +2998,36 @@ static bool validate_pattern_file(const char* spec_file) {
         if (strncmp(line, "[characterset:", 15) == 0) {
             if (flag_verbose_validation) {
                 fprintf(stderr, "  Line %d: Character set definition\n", line_num);
+            }
+            continue;
+        }
+        
+        // Check for [CATEGORIES] section
+        if (strcmp(line, "[CATEGORIES]") == 0) {
+            if (flag_verbose_validation) {
+                fprintf(stderr, "  Line %d: Categories section\n", line_num);
+            }
+            continue;
+        }
+        
+        // Check for category definition line (N: name format in CATEGORIES section)
+        if (line[0] >= '0' && line[0] <= '7' && line[1] == ':') {
+            if (flag_verbose_validation) {
+                fprintf(stderr, "  Line %d: Category definition: %s\n", line_num, line);
+            }
+            // Parse: "0: safe" -> index 0, name "safe"
+            int idx = line[0] - '0';
+            const char* name_start = line + 2;
+            while (*name_start == ' ' || *name_start == '\t') name_start++;
+            if (*name_start != '\0') {
+                // Validate name doesn't have special chars
+                for (const char* p = name_start; *p && *p != ' ' && *p != '\t' && *p != '#'; p++) {
+                    if (!isalnum(*p) && *p != '_' && *p != '-') {
+                        ERROR("Invalid character in category name at line %d: %s", line_num, line);
+                        errors++;
+                        break;
+                    }
+                }
             }
             continue;
         }
