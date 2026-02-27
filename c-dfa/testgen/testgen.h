@@ -27,6 +27,29 @@ enum class Complexity {
     COMPLEX
 };
 
+enum class ExpectationType {
+    MATCH_EXACT,           // Input must match exactly with category
+    NO_MATCH,              // Input must NOT match the category
+    FRAGMENT_MATCH,        // Fragment reference must match fragment definition
+    QUANTIFIER_STAR_EMPTY, // * should match empty string
+    QUANTIFIER_PLUS_MINONE, // + should require at least one character
+    ALTERNATION_INDIVIDUAL, // Each alternative must match individually
+    CAPTURE_TAG_MATCH,     // Capture tags shouldn't change matching
+    PREFIX_MATCH,          // Input must have specific prefix
+    SUFFIX_MATCH,           // Input must have specific suffix
+    CHAR_CLASS_MATCH,      // Input must match character class
+    REPETITION_MIN_COUNT,  // Repetition must have minimum count
+    FRAGMENT_NESTED         // Nested fragment reference must resolve correctly
+};
+
+struct Expectation {
+    ExpectationType type;
+    std::string input;           // The input to test
+    std::string expected_match;  // "yes" or "no"
+    std::string description;     // Human-readable description
+    std::map<std::string, std::string> meta;  // Additional metadata
+};
+
 struct TestCase {
     int test_id;
     std::string pattern;
@@ -36,7 +59,8 @@ struct TestCase {
     std::vector<std::string> counter_inputs;   // NONE must match with category
     std::map<std::string, std::string> fragments;
     Complexity complexity;
-    std::string proof;  // Proof of correctness
+    std::string proof;           // Proof of correctness
+    std::vector<Expectation> expectations;  // Deep semantic expectations
 };
 
 struct Options {

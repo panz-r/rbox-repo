@@ -255,6 +255,7 @@ struct PatternResult {
     std::string pattern;
     std::map<std::string, std::string> fragments;  // fragment definitions
     std::string proof;
+    std::vector<Expectation> expectations;
 };
 
 // Try many different pattern strategies and return the first that works
@@ -3012,6 +3013,379 @@ PatternResult applyEdgeCases(const PatternResult& base,
     return result;
 }
 
+// ============================================================================
+// Expectation Generation - Deep Semantic Verification
+// ============================================================================
+
+std::string expectationTypeToString(ExpectationType type) {
+    switch (type) {
+        case ExpectationType::MATCH_EXACT: return "MATCH_EXACT";
+        case ExpectationType::NO_MATCH: return "NO_MATCH";
+        case ExpectationType::FRAGMENT_MATCH: return "FRAGMENT_MATCH";
+        case ExpectationType::QUANTIFIER_STAR_EMPTY: return "QUANTIFIER_STAR_EMPTY";
+        case ExpectationType::QUANTIFIER_PLUS_MINONE: return "QUANTIFIER_PLUS_MINONE";
+        case ExpectationType::ALTERNATION_INDIVIDUAL: return "ALTERNATION_INDIVIDUAL";
+        case ExpectationType::CAPTURE_TAG_MATCH: return "CAPTURE_TAG_MATCH";
+        case ExpectationType::PREFIX_MATCH: return "PREFIX_MATCH";
+        case ExpectationType::SUFFIX_MATCH: return "SUFFIX_MATCH";
+        case ExpectationType::CHAR_CLASS_MATCH: return "CHAR_CLASS_MATCH";
+        case ExpectationType::REPETITION_MIN_COUNT: return "REPETITION_MIN_COUNT";
+        case ExpectationType::FRAGMENT_NESTED: return "FRAGMENT_NESTED";
+        default: return "UNKNOWN";
+    }
+}
+
+bool hasFragment(const std::string& pattern) {
+    return pattern.find("((") != std::string::npos;
+}
+
+bool hasQuantifier(const std::string& pattern, char quant) {
+    size_t pos = pattern.find(quant);
+    while (pos != std::string::npos) {
+        if (pos == 0 || pattern[pos-1] != '\\') {
+            return true;
+        }
+        pos = pattern.find(quant, pos + 1);
+    }
+    return false;
+}
+
+bool hasStarQuantifier(const std::string& pattern) {
+    return hasQuantifier(pattern, '*');
+}
+
+bool hasPlusQuantifier(const std::string& pattern) {
+    return hasQuantifier(pattern, '+');
+}
+
+bool hasOptional(const std::string& pattern) {
+    return hasQuantifier(pattern, '?');
+}
+
+bool hasAlternation(const std::string& pattern) {
+    return pattern.find("|") != std::string::npos;
+}
+
+bool hasCaptureTags(const std::string& pattern) {
+    return pattern.find("<") != std::string::npos && pattern.find("</") != std::string::npos;
+}
+
+std::string extractAlternatives(const std::string& pattern) {
+    size_t start = pattern.find('(');
+    size_t end = pattern.rfind(')');
+    if (start == std::string::npos || end == std::string::npos || end <= start) {
+        return "";
+    }
+    return pattern.substr(start + 1, end - start - 1);
+}
+
+std::vector<std::string> splitAlternatives(const std::string& alternation) {
+    std::vector<std::string> result;
+    std::string current;
+    int depth = 0;
+    for (char c : alternation) {
+        if (c == '(') depth++;
+        else if (c == ')') depth--;
+        else if (c == '|' && depth == 0) {
+            if (!current.empty()) {
+                result.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+        current += c;
+    }
+    if (!current.empty()) {
+        result.push_back(current);
+    }
+    return result;
+}
+
+std::string extractCharClass(const std::string& pattern) {
+    size_t pos = pattern.find('[');
+    if (pos == std::string::npos) return "";
+    size_t end = pattern.find(']', pos);
+    if (end == std::string::npos) return "";
+    return pattern.substr(pos, end - pos + 1);
+}
+
+std::map<std::string, std::string> extractFragmentDefs(const std::string& pattern) {
+    std::map<std::string, std::string> frags;
+    size_t pos = 0;
+    while ((pos = pattern.find("((", pos)) != std::string::npos) {
+        size_t name_start = pos + 2;
+        size_t name_end = pattern.find("))", name_start);
+        if (name_end != std::string::npos) {
+            std::string name = pattern.substr(name_start, name_end - name_start);
+            size_t def_start = name_end + 2;
+            size_t def_end = pattern.find("))", def_start);
+            if (def_end != std::string::npos) {
+                std::string def = pattern.substr(def_start, def_end - def_start);
+                frags[name] = def;
+            }
+        }
+        pos++;
+    }
+    return frags;
+}
+
+std::vector<Expectation> generateFragmentExpectations(const std::string& pattern,
+                                                       const std::map<std::string, std::string>& fragment_defs,
+                                                       const std::vector<std::string>& matching,
+                                                       const std::vector<std::string>& counters) {
+    std::vector<Expectation> expectations;
+    
+    if (fragment_defs.empty()) return expectations;
+    
+    for (const auto& frag : fragment_defs) {
+        std::string frag_name = frag.first;
+        std::string frag_def = frag.second;
+        
+        Expectation exp;
+        exp.type = ExpectationType::FRAGMENT_MATCH;
+        exp.input = "[[FRAGMENT:" + frag_name + "]]";
+        exp.expected_match = "yes";
+        exp.description = "Fragment '" + frag_name + "' definition must match pattern reference";
+        exp.meta["fragment_name"] = frag_name;
+        exp.meta["fragment_definition"] = frag_def;
+        
+        std::string frag_ref = "((" + frag_name + "))";
+        if (pattern.find(frag_ref) != std::string::npos) {
+            exp.meta["pattern_has_reference"] = "yes";
+        }
+        
+        expectations.push_back(exp);
+        
+        if (frag_def.find("+") != std::string::npos) {
+            Expectation exp_plus;
+            exp_plus.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+            exp_plus.input = "[[FRAGMENT:" + frag_name + ":EMPTY]]";
+            exp_plus.expected_match = "no";
+            exp_plus.description = "Fragment '" + frag_name + "' with + quantifier must require at least one character";
+            exp_plus.meta["fragment_name"] = frag_name;
+            exp_plus.meta["quantifier"] = "+";
+            expectations.push_back(exp_plus);
+        }
+        
+        if (frag_def.find("*") != std::string::npos) {
+            Expectation exp_star;
+            exp_star.type = ExpectationType::QUANTIFIER_STAR_EMPTY;
+            exp_star.input = "[[FRAGMENT:" + frag_name + ":EMPTY]]";
+            exp_star.expected_match = "yes";
+            exp_star.description = "Fragment '" + frag_name + "' with * quantifier must match empty string";
+            exp_star.meta["fragment_name"] = frag_name;
+            exp_star.meta["quantifier"] = "*";
+            expectations.push_back(exp_star);
+        }
+    }
+    
+    return expectations;
+}
+
+std::vector<Expectation> generateQuantifierExpectations(const std::string& pattern,
+                                                         const std::vector<std::string>& matching,
+                                                         const std::vector<std::string>& counters) {
+    std::vector<Expectation> expectations;
+    
+    if (hasStarQuantifier(pattern)) {
+        Expectation exp;
+        exp.type = ExpectationType::QUANTIFIER_STAR_EMPTY;
+        exp.input = "";
+        exp.expected_match = "yes";
+        exp.description = "Pattern with * quantifier must match empty string";
+        exp.meta["quantifier"] = "*";
+        exp.meta["pattern"] = pattern;
+        expectations.push_back(exp);
+    }
+    
+    if (hasPlusQuantifier(pattern)) {
+        Expectation exp;
+        exp.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+        exp.input = "";
+        exp.expected_match = "no";
+        exp.description = "Pattern with + quantifier must NOT match empty string";
+        exp.meta["quantifier"] = "+";
+        exp.meta["pattern"] = pattern;
+        expectations.push_back(exp);
+        
+        // For plus quantifier, verify that at least one full matching input works
+        // (not just substrings - the full alternative must match)
+        if (!matching.empty()) {
+            std::string full_match = matching[0];
+            Expectation exp_full;
+            exp_full.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+            exp_full.input = full_match;
+            exp_full.expected_match = "yes";
+            exp_full.description = "Pattern with + quantifier must match full input";
+            exp_full.meta["quantifier"] = "+";
+            exp_full.meta["pattern"] = pattern;
+            expectations.push_back(exp_full);
+            
+            // Also test with two concatenated matching inputs
+            if (matching.size() >= 2) {
+                std::string double_match = full_match + matching[1];
+                Expectation exp_double;
+                exp_double.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+                exp_double.input = double_match;
+                exp_double.expected_match = "yes";
+                exp_double.description = "Pattern with + quantifier must match repeated inputs";
+                exp_double.meta["quantifier"] = "+";
+                exp_double.meta["pattern"] = pattern;
+                expectations.push_back(exp_double);
+            }
+        }
+    }
+    
+    return expectations;
+}
+
+std::vector<Expectation> generateAlternationExpectations(const std::string& pattern,
+                                                          const std::vector<std::string>& matching,
+                                                          const std::vector<std::string>& counters) {
+    std::vector<Expectation> expectations;
+    
+    if (!hasAlternation(pattern)) return expectations;
+    
+    std::string alt_str = extractAlternatives(pattern);
+    if (alt_str.empty()) return expectations;
+    
+    std::vector<std::string> alternatives = splitAlternatives(alt_str);
+    if (alternatives.size() < 2) return expectations;
+    
+    for (size_t i = 0; i < alternatives.size() && i < 5; i++) {
+        std::string alt = alternatives[i];
+        
+        bool is_matching_alt = false;
+        for (const auto& m : matching) {
+            if (m.find(alt) != std::string::npos || alt.find(m) != std::string::npos) {
+                is_matching_alt = true;
+                break;
+            }
+        }
+        
+        if (is_matching_alt) {
+            Expectation exp;
+            exp.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+            exp.input = alt;
+            exp.expected_match = "yes";
+            exp.description = "Alternative '" + alt + "' in alternation must match individually";
+            exp.meta["alternative"] = alt;
+            exp.meta["alternation"] = alt_str;
+            expectations.push_back(exp);
+        }
+    }
+    
+    return expectations;
+}
+
+std::vector<Expectation> generateCaptureTagExpectations(const std::string& pattern,
+                                                          const std::vector<std::string>& matching,
+                                                          const std::vector<std::string>& counters) {
+    std::vector<Expectation> expectations;
+    
+    if (!hasCaptureTags(pattern)) return expectations;
+    
+    size_t tag_start = pattern.find('<');
+    size_t tag_end = pattern.find('>');
+    if (tag_start == std::string::npos || tag_end == std::string::npos) return expectations;
+    
+    std::string capture_name = pattern.substr(tag_start + 1, tag_end - tag_start - 1);
+    
+    Expectation exp;
+    exp.type = ExpectationType::CAPTURE_TAG_MATCH;
+    exp.input = "[[CAPTURE_TEST]]";
+    exp.expected_match = "yes";
+    exp.description = "Capture tag '" + capture_name + "' should not change matching behavior";
+    exp.meta["capture_name"] = capture_name;
+    exp.meta["original_pattern"] = pattern;
+    
+    size_t close_start = pattern.find("</");
+    if (close_start != std::string::npos) {
+        size_t close_end = pattern.find(">", close_start);
+        if (close_end != std::string::npos) {
+            std::string close_name = pattern.substr(close_start + 2, close_end - close_start - 2);
+            exp.meta["close_tag"] = close_name;
+            if (close_name != capture_name) {
+                exp.description += " (MISMATCHED TAGS - this is a BUG in c-dfa if accepted)";
+            }
+        }
+    }
+    
+    expectations.push_back(exp);
+    
+    return expectations;
+}
+
+std::vector<Expectation> generateCharClassExpectations(const std::string& pattern,
+                                                        const std::vector<std::string>& matching,
+                                                        const std::vector<std::string>& counters) {
+    std::vector<Expectation> expectations;
+    
+    std::string char_class = extractCharClass(pattern);
+    if (char_class.empty()) return expectations;
+    
+    std::set<char> allowed_chars;
+    for (size_t i = 1; i < char_class.size() - 1; i++) {
+        if (char_class[i] != '|') {
+            allowed_chars.insert(char_class[i]);
+        }
+    }
+    
+    for (char c : allowed_chars) {
+        std::string single(1, c);
+        Expectation exp;
+        exp.type = ExpectationType::CHAR_CLASS_MATCH;
+        exp.input = single;
+        exp.expected_match = "yes";
+        exp.description = "Character '" + single + "' must match character class " + char_class;
+        exp.meta["char_class"] = char_class;
+        exp.meta["character"] = single;
+        expectations.push_back(exp);
+    }
+    
+    const std::string other_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    for (char c : other_chars) {
+        if (allowed_chars.find(c) == allowed_chars.end()) {
+            std::string single(1, c);
+            Expectation exp;
+            exp.type = ExpectationType::CHAR_CLASS_MATCH;
+            exp.input = single;
+            exp.expected_match = "no";
+            exp.description = "Character '" + single + "' must NOT match character class " + char_class;
+            exp.meta["char_class"] = char_class;
+            exp.meta["character"] = single;
+            expectations.push_back(exp);
+            break;
+        }
+    }
+    
+    return expectations;
+}
+
+std::vector<Expectation> generateAllExpectations(const std::string& pattern,
+                                                 const std::map<std::string, std::string>& fragment_defs,
+                                                 const std::vector<std::string>& matching,
+                                                 const std::vector<std::string>& counters) {
+    std::vector<Expectation> expectations;
+    
+    auto frag_exps = generateFragmentExpectations(pattern, fragment_defs, matching, counters);
+    expectations.insert(expectations.end(), frag_exps.begin(), frag_exps.end());
+    
+    auto quant_exps = generateQuantifierExpectations(pattern, matching, counters);
+    expectations.insert(expectations.end(), quant_exps.begin(), quant_exps.end());
+    
+    auto alt_exps = generateAlternationExpectations(pattern, matching, counters);
+    expectations.insert(expectations.end(), alt_exps.begin(), alt_exps.end());
+    
+    auto cap_exps = generateCaptureTagExpectations(pattern, matching, counters);
+    expectations.insert(expectations.end(), cap_exps.begin(), cap_exps.end());
+    
+    auto char_exps = generateCharClassExpectations(pattern, matching, counters);
+    expectations.insert(expectations.end(), char_exps.begin(), char_exps.end());
+    
+    return expectations;
+}
+
 // Main pattern generator - try all strategies
 PatternResult generateSeparatingPattern(const std::vector<std::string>& matching,
                                         const std::vector<std::string>& counters,
@@ -3131,6 +3505,10 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
 
     tc.pattern = result.pattern;
     tc.fragments = result.fragments;
+    
+    // Generate deep semantic expectations
+    tc.expectations = generateAllExpectations(tc.pattern, tc.fragments, 
+                                               tc.matching_inputs, tc.counter_inputs);
     
     if (tc.pattern.empty()) {
         result.proof += "\n[FAILED] Could not generate separating pattern\n";
@@ -3326,7 +3704,55 @@ void TestGenerator::writeExpectations(const std::vector<TestCase>& tests, const 
             case Complexity::MEDIUM: out << "medium"; break;
             case Complexity::COMPLEX: out << "complex"; break;
         }
-        out << "\"\n  }";
+        out << "\",\n";
+        out << "    \"fragments\": {";
+        bool first_frag = true;
+        for (const auto& f : tc.fragments) {
+            if (!first_frag) out << ", ";
+            out << "\"" << f.first << "\": \"" << f.second << "\"";
+            first_frag = false;
+        }
+        out << "},\n";
+        out << "    \"expectations\": [\n";
+        for (size_t e = 0; e < tc.expectations.size(); e++) {
+            const auto& exp = tc.expectations[e];
+            out << "      {\n";
+            out << "        \"type\": \"" << expectationTypeToString(exp.type) << "\",\n";
+            out << "        \"input\": \"";
+            for (size_t p = 0; p < exp.input.size(); p++) {
+                char c = exp.input[p];
+                if (c == '"') out << "\\\"";
+                else out << c;
+            }
+            out << "\",\n";
+            out << "        \"expected_match\": \"" << exp.expected_match << "\",\n";
+            out << "        \"description\": \"";
+            for (size_t p = 0; p < exp.description.size(); p++) {
+                char c = exp.description[p];
+                if (c == '"') out << "\\\"";
+                else out << c;
+            }
+            out << "\",\n";
+            out << "        \"meta\": {";
+            bool first_meta = true;
+            for (const auto& m : exp.meta) {
+                if (!first_meta) out << ", ";
+                out << "\"" << m.first << "\": \"";
+                for (size_t p = 0; p < m.second.size(); p++) {
+                    char c = m.second[p];
+                    if (c == '"') out << "\\\"";
+                    else out << c;
+                }
+                out << "\"";
+                first_meta = false;
+            }
+            out << "}\n";
+            out << "      }";
+            if (e < tc.expectations.size() - 1) out << ",";
+            out << "\n";
+        }
+        out << "    ]\n";
+        out << "  }";
         if (i < tests.size() - 1) out << ",";
         out << "\n";
     }
@@ -3465,7 +3891,115 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
         }
         
         if (!any_counter_matched) {
-            passed++;
+            // Verify deep semantic expectations
+            bool expectations_passed = true;
+            std::string expectation_fail_reason;
+            
+            for (const auto& exp : tc.expectations) {
+                std::string test_input = exp.input;
+                
+                if (exp.input.find("[[FRAGMENT:") != std::string::npos) {
+                    continue;
+                }
+                if (exp.input == "[[CAPTURE_TEST]]") {
+                    if (!tc.matching_inputs.empty()) {
+                        test_input = tc.matching_inputs[0];
+                    } else {
+                        continue;
+                    }
+                }
+                
+                std::string cmd = "cd " + abs_cwd + "/.. && ./tools/dfa_eval_wrapper " + dfa_file + " \"" + test_input + "\" 2>/dev/null";
+                FILE* efp = popen(cmd.c_str(), "r");
+                bool matched = false;
+                int matched_category = 0;
+                if (efp) {
+                    char ebuf[256];
+                    while (fgets(ebuf, sizeof(ebuf), efp)) {
+                        if (strstr(ebuf, "matched=1")) matched = true;
+                        char* cat_str = strstr(ebuf, "category=");
+                        if (cat_str) matched_category = atoi(cat_str + 9);
+                    }
+                    pclose(efp);
+                }
+                
+                bool expected_match = (exp.expected_match == "yes");
+                
+                // For quantifier expectations, check if it matches any valid category
+                // Not just the specific pattern's category (since other patterns may also match)
+                if (exp.type == ExpectationType::QUANTIFIER_STAR_EMPTY || 
+                    exp.type == ExpectationType::QUANTIFIER_PLUS_MINONE) {
+                    // For STAR_EMPTY: empty string should match if ANY * pattern exists
+                    // For PLUS_MINONE: empty should NOT match the + pattern
+                    if (exp.type == ExpectationType::QUANTIFIER_STAR_EMPTY) {
+                        // Empty string should match with SOME category (any * pattern)
+                        if (expected_match && !matched) {
+                            expectations_passed = false;
+                            expectation_fail_reason = "Expectation failed: type=" + expectationTypeToString(exp.type) + 
+                                ", input='" + test_input + "', expected=" + exp.expected_match + 
+                                ", got no match, desc=" + exp.description;
+                            break;
+                        }
+                    } else {
+                        // PLUS_MINONE: empty should NOT match with THIS pattern's category
+                        int exp_cat = static_cast<int>(tc.category);
+                        bool matched_this_category = matched && (matched_category == exp_cat);
+                        
+                        if (expected_match && !matched_this_category) {
+                            expectations_passed = false;
+                            expectation_fail_reason = "Expectation failed: type=" + expectationTypeToString(exp.type) + 
+                                ", input='" + test_input + "', expected=" + exp.expected_match + 
+                                ", got category=" + std::to_string(matched_category) + 
+                                ", desc=" + exp.description;
+                            break;
+                        } else if (!expected_match && matched_this_category) {
+                            expectations_passed = false;
+                            expectation_fail_reason = "Expectation failed: type=" + expectationTypeToString(exp.type) + 
+                                ", input='" + test_input + "', expected=" + exp.expected_match + 
+                                ", got category=" + std::to_string(matched_category) + 
+                                ", desc=" + exp.description;
+                            break;
+                        }
+                    }
+                } else {
+                    // Original logic for other expectation types
+                    if (matched != expected_match) {
+                        expectations_passed = false;
+                        expectation_fail_reason = "Expectation failed: type=" + expectationTypeToString(exp.type) + 
+                            ", input='" + test_input + "', expected=" + exp.expected_match + 
+                            ", got=" + (matched ? "yes" : "no") + ", desc=" + exp.description;
+                        break;
+                    }
+                }
+            }
+            
+            if (!expectations_passed) {
+                std::cout << "   FAIL #" << i << ": " << expectation_fail_reason << "\n";
+                failed++;
+                global_failed_count++;
+                
+                std::string fail_file = output_dir + "/failed_case_" + std::to_string(global_failed_count) + ".json";
+                std::ofstream ff(fail_file);
+                ff << "{\n";
+                ff << "  \"batch_file\": \"" << pattern_file << "\",\n";
+                ff << "  \"test_id\": " << tc.test_id << ",\n";
+                ff << "  \"pattern\": \"" << tc.pattern << "\",\n";
+                ff << "  \"category\": \"" << categoryToString(tc.category) << "\",\n";
+                ff << "  \"error\": \"" << expectation_fail_reason << "\",\n";
+                ff << "  \"expectations\": [\n";
+                for (size_t e = 0; e < tc.expectations.size(); e++) {
+                    const auto& exp = tc.expectations[e];
+                    ff << "    {\"type\": \"" << expectationTypeToString(exp.type) << "\", ";
+                    ff << "\"input\": \"" << exp.input << "\", ";
+                    ff << "\"expected\": \"" << exp.expected_match << "\"}\n";
+                }
+                ff << "  ]\n";
+                ff << "}\n";
+                ff.close();
+                std::cout << "   Saved: " << fail_file << "\n";
+            } else {
+                passed++;
+            }
         } else {
             std::cout << "   FAIL #" << i << ": counter input matched with matching category\n";
             failed++;

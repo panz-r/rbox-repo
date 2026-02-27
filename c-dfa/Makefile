@@ -229,10 +229,33 @@ test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity
 	@make test-hopcroft 2>&1 | tail -3
 	@echo ""
 	@make test-stress 2>&1 | tail -3
-	@echo ""
 	@make test-integrity 2>&1 | tail -5
+	@make test-patterns 2>&1 | tail -5
 	@echo ""
 	@echo "================================================="
+
+# Pattern regression tests
+test-patterns: $(TOOLS)
+	@echo ""
+	@echo "================================================="
+	@echo "PATTERN REGRESSION TESTS"
+	@echo "================================================="
+	@echo ""
+	@echo "Testing + quantifier empty string bug..."
+	@./tools/nfa_builder patterns/quantifiers/test_plus_empty_string_bug.txt /tmp/test_plus_bug.nfa 2>/dev/null
+	@./tools/nfa2dfa_advanced /tmp/test_plus_bug.nfa /tmp/test_plus_bug.dfa 2>&1 | grep -v "MINIMIZE" || true
+	@echo "  Testing empty string:"
+	@# Empty string should match category 1 (safe, the * pattern) but NOT category 6 (build, the + pattern)
+	@# Category 1 = safe (bit 0) = 0x01
+	@# Category 6 = build (bit 6) = 0x40
+	@(echo "" | ./tools/dfa_eval_wrapper /tmp/test_plus_bug.dfa "" 2>&1 | grep -q "category=1" && echo "    [PASS] Empty string matches * pattern (category 1)" || echo "    [FAIL] Empty string does not match * pattern")
+	@(echo "" | ./tools/dfa_eval_wrapper /tmp/test_plus_bug.dfa "" 2>&1 | grep -q "category=6" && echo "    [FAIL] Empty string incorrectly matches + pattern (category 6) - BUG!" || echo "    [PASS] Empty string does NOT match + pattern (category 6)")
+	@echo "  Testing valid inputs:"
+	@(./tools/dfa_eval_wrapper /tmp/test_plus_bug.dfa "W0GK" 2>&1 | grep -q "matched=1" && echo "    [PASS] Valid input matches + pattern" || echo "    [FAIL] Valid input does not match + pattern")
+	@(./tools/dfa_eval_wrapper /tmp/test_plus_bug.dfa "mBJV9" 2>&1 | grep -q "matched=1" && echo "    [PASS] Valid input matches * pattern" || echo "    [FAIL] Valid input does not match * pattern")
+	@rm -f /tmp/test_plus_bug.nfa /tmp/test_plus_bug.dfa
+	@echo ""
+	@echo "All pattern tests completed."
 
 # Fuzzing targets
 fuzz: fuzz-build

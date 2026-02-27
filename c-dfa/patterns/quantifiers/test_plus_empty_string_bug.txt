@@ -1,0 +1,76 @@
+# ============================================================================
+# Test Case: + Quantifier Incorrectly Matching Empty String in Combined DFAs
+# ============================================================================
+#
+# BUG: When multiple patterns are combined into a single DFA, the + quantifier
+# (one or more) incorrectly matches empty strings, even though it should require
+# at least one character.
+#
+# This test case exposes a bug where a pattern with + quantifier incorrectly
+# matches the empty string when combined with other patterns in a single DFA.
+#
+# Expected behavior:
+# - (pattern)+ should NOT match empty string
+# - (pattern)* SHOULD match empty string
+#
+# The bug manifests when combining patterns - the epsilon closure from the *
+# pattern incorrectly influences the + pattern.
+#
+# ============================================================================
+
+# Category definitions
+[CATEGORIES]
+0: safe
+1: caution
+2: modifying
+3: dangerous
+4: network
+5: admin
+6: build
+7: container
+
+# ============================================================================
+# Test Patterns
+# ============================================================================
+
+# Pattern 0: Star quantifier - SHOULD match empty string
+# Category: safe (bit 0)
+[safe:test0] (mBJV9|uYDGTK1GwTDVMLpu|vFa1PFEk|xrVLyv4MAK6eK|CE76IwTdxf)*
+
+# Pattern 1: No quantifier - alternation only
+# Category: caution (bit 1)  
+[caution:test1] (KZcpdEyw9|lW3txcFOt8a|7n2TBaRLITa8|NHyLAbWrs|C4fpJIcCV|RzJ|XaFQ8ztHq|AX1kbvo2xI|FUP62U|Cz|QZjGM|Ws2XSU|fuYxvyzP|MPeL4F|XjBUdeD)
+
+# Pattern 2: Star quantifier with capture tags
+# Category: modifying (bit 2)
+[modifying:test2] <val51>(bGiNKnnRrbx|AlJph6NM2xCOR|uBAicj6wqJFQS83OzcEBjU|VU6hTcZ9CvzT4H9e|u702pO)*</val51>
+
+# Pattern 3: PLUS quantifier - MUST NOT match empty string (THE BUG)
+# Category: build (bit 6)
+[build:test3] (W0GK|J62inHeeWGGasN|xW3ZFb7|yaGZN|WymL028m5jNcaeFefCwY2zjX|KG0W|NsaGGWeeHni26J|7bFZ3Wx|NZGay|Xjz2YwCfeFeacNj5m820LmyW)+
+
+# ============================================================================
+# Test Inputs
+# ============================================================================
+#
+# Test test0 (star - should match empty):
+#   "" -> SHOULD MATCH (category: safe)
+#   "mBJV9" -> SHOULD MATCH (category: safe)
+#   "vFa1PFEk" -> SHOULD MATCH (category: safe)
+#
+# Test test1 (no quantifier):
+#   "KZcpdEyw9" -> SHOULD MATCH (category: caution)
+#   "RzJ" -> SHOULD MATCH (category: caution)
+#
+# Test test2 (star with capture - should match empty):
+#   "" -> SHOULD MATCH (category: modifying)
+#   "bGiNKnnRrbx" -> SHOULD MATCH (category: modifying)
+#
+# Test test3 (PLUS - MUST NOT match empty):
+#   "" -> MUST NOT MATCH (BUG: currently matches as category 6!)
+#   "W0GK" -> SHOULD MATCH (category: build)
+#   "xW3ZFb7" -> SHOULD MATCH (category: build)
+#   "KG0W" -> SHOULD MATCH (category: build)
+#   "NZGayXjz2YwCfeFeacNj5m820LmyW" -> SHOULD MATCH (category: build)
+#
+# ============================================================================

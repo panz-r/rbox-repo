@@ -644,9 +644,11 @@ void nfa_to_dfa(void) {
         }
     }
     DEBUG_PRINT("before collect_fork_categories, im=0x%02x\n", im);
-    // QUANTIFIER FIX: Also collect categories from ALL reachable fork states
-    // This ensures patterns with shared prefixes but different categories are all considered
-    uint8_t fork_cats = collect_fork_categories(temp, tc, is_initial_state);
+    // QUANTIFIER FIX: Do NOT collect fork categories for initial state
+    // The initial state should NOT get categories from is_eos_target states
+    // because patterns with + quantifier should NOT match empty strings
+    // This was incorrectly re-adding categories that were excluded at line 597
+    uint8_t fork_cats = collect_fork_categories(temp, tc, false);
     DEBUG_PRINT("after collect_fork_categories, fork_cats=0x%02x\n", fork_cats);
     im |= fork_cats;
     DEBUG_PRINT("before dfa_add_state\n");
