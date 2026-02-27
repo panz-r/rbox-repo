@@ -81,15 +81,19 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
     
     while ((int)matching_seeds.size() < num_matching) {
         std::string s;
-        int len;
+        int min_len;
         
         if (complexity == Complexity::SIMPLE) {
-            len = 2 + std::uniform_int_distribution<int>(0, 3)(rng);  // 2-5 chars
+            min_len = 2;
         } else if (complexity == Complexity::MEDIUM) {
-            len = 3 + std::uniform_int_distribution<int>(0, 5)(rng);  // 3-8 chars
+            min_len = 3;
         } else {
-            len = 4 + std::uniform_int_distribution<int>(0, 8)(rng);  // 4-12 chars
+            min_len = 6;
         }
+        
+        // Each string gets its own random length: min_len to min_len*8
+        int max_mult = 8;
+        int len = min_len + std::uniform_int_distribution<int>(0, min_len * max_mult - min_len)(rng);
         
         for (int j = 0; j < len; j++) {
             s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
@@ -110,9 +114,9 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
         if (complexity == Complexity::SIMPLE) {
             len = 2 + std::uniform_int_distribution<int>(0, 4)(rng);
         } else if (complexity == Complexity::MEDIUM) {
-            len = 3 + std::uniform_int_distribution<int>(0, 6)(rng);
+            len = 3 + std::uniform_int_distribution<int>(0, 8)(rng);  // 3-11 chars
         } else {
-            len = 4 + std::uniform_int_distribution<int>(0, 10)(rng);
+            len = 5 + std::uniform_int_distribution<int>(0, 15)(rng);  // 5-20 chars (longer)
         }
         
         for (int j = 0; j < len; j++) {
@@ -2272,6 +2276,340 @@ PatternResult tryDeepNesting(const std::vector<std::string>& matching,
     return result;
 }
 
+// Strategy: Multi-fragment combination - two fragments used together
+// Pattern: ((frag1))+((frag2))+ - tests fragment isolation when combined
+PatternResult tryMultiFragmentCombo(const std::vector<std::string>& matching,
+                                   const std::vector<std::string>& counters,
+                                   std::mt19937& rng) {
+    PatternResult result;
+    
+    if (matching.size() < 4) {
+        result.proof += "  MultiFrag: requires 4+ matching\n";
+        return result;
+    }
+    
+    // Split matching into two groups for two fragments
+    std::vector<std::string> group1(matching.begin(), matching.begin() + matching.size()/2);
+    std::vector<std::string> group2(matching.begin() + matching.size()/2, matching.end());
+    
+    if (group1.size() < 2 || group2.size() < 2) {
+        result.proof += "  MultiFrag: groups too small\n";
+        return result;
+    }
+    
+    // Create first fragment from group1 chars
+    std::set<char> chars1;
+    for (const auto& m : group1) {
+        for (char c : m) chars1.insert(c);
+    }
+    // Exclude counter chars
+    for (const auto& c : counters) {
+        for (char c2 : c) chars1.erase(c2);
+    }
+    if (chars1.size() < 2) {
+        result.proof += "  MultiFrag: not enough chars for frag1\n";
+        return result;
+    }
+    
+    std::string frag1_def;
+    for (char c : chars1) {
+        if (!frag1_def.empty()) frag1_def += "|";
+        frag1_def += c;
+    }
+    std::string frag1_name = "mf1";
+    result.fragments[frag1_name] = frag1_def;
+    
+    // Create second fragment from group2 chars (exclusive from group1)
+    std::set<char> chars2;
+    for (const auto& m : group2) {
+        for (char c : m) chars2.insert(c);
+    }
+    for (const auto& c : counters) {
+        for (char c2 : c) chars2.erase(c2);
+    }
+    // Remove chars from group1 to ensure exclusivity
+    for (char c : chars1) chars2.erase(c);
+    if (chars2.size() < 2) {
+        result.proof += "  MultiFrag: not enough exclusive chars for frag2\n";
+        return result;
+    }
+    
+    std::string frag2_def;
+    for (char c : chars2) {
+        if (!frag2_def.empty()) frag2_def += "|";
+        frag2_def += c;
+    }
+    std::string frag2_name = "mf2";
+    result.fragments[frag2_name] = frag2_def;
+    
+    // Pattern: ((mf1))+((mf2))+ - SEQUENTIAL: group1 uses frag1, group2 uses frag2
+    result.pattern = "((" + frag1_name + "))+(((" + frag2_name + "))+";
+    
+    // Verify: group1 strings should ONLY have chars from frag1, group2 ONLY from frag2
+    bool all_match = true;
+    // Check group1 strings
+    for (const auto& m : group1) {
+        for (char c : m) {
+            if (!chars1.count(c)) { all_match = false; break; }
+        }
+        if (!all_match) break;
+    }
+    // Check group2 strings
+    for (const auto& m : group2) {
+        for (char c : m) {
+            if (!chars2.count(c)) { all_match = false; break; }
+        }
+        if (!all_match) break;
+    }
+    
+    if (!all_match) {
+        result.proof += "  MultiFrag: matching strings don't fit sequential pattern\n";
+        result.pattern = "";
+        return result;
+    }
+    
+    // Check counters: ensure no counter has both fragment chars
+    bool any_counter_match = false;
+    for (const auto& c : counters) {
+        bool has_frag1 = false, has_frag2 = false;
+        for (char c2 : c) {
+            if (chars1.count(c2)) has_frag1 = true;
+            if (chars2.count(c2)) has_frag2 = true;
+        }
+        if (has_frag1 && has_frag2) {
+            any_counter_match = true;
+            break;
+        }
+    }
+    
+    if (any_counter_match) {
+        result.proof += "  MultiFrag: counters would match\n";
+        result.pattern = "";
+        return result;
+    }
+    
+    result.proof += "  MultiFrag: " + result.pattern + "\n";
+    result.proof += "    frag1: " + frag1_name + "=" + frag1_def + "\n";
+    result.proof += "    frag2: " + frag2_name + "=" + frag2_def + "\n";
+    return result;
+}
+
+// Strategy: Nested alternation - alternation within alternation
+PatternResult tryNestedAlternation(const std::vector<std::string>& matching,
+                                   const std::vector<std::string>& counters,
+                                   std::mt19937& rng) {
+    PatternResult result;
+    
+    if (matching.size() < 4) {
+        result.proof += "  NestedAlt: requires 4+ matching\n";
+        return result;
+    }
+    
+    // Create pattern: (a|b|c) with each alternative being a full matching string
+    // The "nested" part is just using + quantifier
+    
+    // Build simple alternation from matching strings
+    std::string pattern = "(";
+    for (size_t i = 0; i < matching.size(); i++) {
+        if (i > 0) pattern += "|";
+        pattern += matching[i];
+    }
+    pattern += ")+";
+    
+    result.pattern = pattern;
+    result.proof += "  NestedAlt: " + result.pattern + "\n";
+    return result;
+}
+
+// Strategy: Complex quantifier stack - (a*)+, (a+)*, (a?)+
+PatternResult tryQuantifierStack(const std::vector<std::string>& matching,
+                                  const std::vector<std::string>& counters,
+                                  std::mt19937& rng) {
+    PatternResult result;
+    
+    if (matching.empty()) {
+        result.proof += "  QuantStack: requires matching\n";
+        return result;
+    }
+    
+    // Use first matching string as base
+    std::string base = matching[0];
+    if (base.empty()) {
+        result.proof += "  QuantStack: empty base\n";
+        return result;
+    }
+    
+    // Try different quantifier stacks
+    std::vector<std::string> stacks = {
+        "(" + base + "*)+",   // Zero or more, one or more times
+        "(" + base + "+)*",   // One or more, zero or more times  
+        "(" + base + "?)+",   // Optional, one or more times
+    };
+    
+    std::shuffle(stacks.begin(), stacks.end(), rng);
+    
+    for (const auto& pattern : stacks) {
+        bool all_match = true;
+        for (const auto& m : matching) {
+            // Check if m fits the pattern (starts with base, then any repetitions)
+            if (m.find(base) != 0) {
+                all_match = false;
+                break;
+            }
+        }
+        
+        if (all_match) {
+            result.pattern = pattern;
+            result.proof += "  QuantStack: " + result.pattern + "\n";
+            return result;
+        }
+    }
+    
+    result.proof += "  QuantStack: no valid stack\n";
+    return result;
+}
+
+// Strategy: Long literal alternation - 10-20 alternatives with long strings
+PatternResult tryLongAlternation(const std::vector<std::string>& matching,
+                               const std::vector<std::string>& counters,
+                               std::mt19937& rng) {
+    PatternResult result;
+    
+    if (matching.size() < 2) {
+        result.proof += "  LongAlt: requires 2+ matching\n";
+        return result;
+    }
+    
+    // Use matching strings as base, add many variations
+    std::vector<std::string> alts = matching;
+    
+    // Add variations of matching strings
+    for (const auto& m : matching) {
+        if (alts.size() >= 20) break;
+        if (m.size() < 2) continue;
+        
+        // Add prefix/suffix variations
+        for (int i = 0; i < 2 && alts.size() < 20; i++) {
+            std::string var = m;
+            // Reverse
+            std::reverse(var.begin(), var.end());
+            if (var != m && std::find(alts.begin(), alts.end(), var) == alts.end()) {
+                alts.push_back(var);
+            }
+        }
+    }
+    
+    if (alts.size() < 3) {
+        result.proof += "  LongAlt: not enough alternatives\n";
+        return result;
+    }
+    
+    // Build pattern
+    std::string pattern = "(";
+    for (size_t i = 0; i < alts.size(); i++) {
+        if (i > 0) pattern += "|";
+        pattern += alts[i];
+    }
+    pattern += ")";
+    
+    // Randomly add quantifier
+    if (std::uniform_int_distribution<int>(0, 1)(rng) == 0) {
+        pattern += "+";
+    }
+    
+    result.pattern = pattern;
+    result.proof += "  LongAlt: " + result.pattern + "\n";
+    return result;
+}
+
+// Strategy: Alternation with prefix/suffix - simplified with proper verification
+PatternResult tryAltWithAffix(const std::vector<std::string>& matching,
+                             const std::vector<std::string>& counters,
+                             std::mt19937& rng) {
+    PatternResult result;
+    
+    if (matching.size() < 2) {
+        result.proof += "  AltAffix: requires 2+ matching\n";
+        return result;
+    }
+    
+    // Simple approach: use matching strings as alternatives
+    std::string pattern = "(";
+    for (size_t i = 0; i < matching.size(); i++) {
+        if (i > 0) pattern += "|";
+        pattern += matching[i];
+    }
+    pattern += ")+";
+    
+    // Verify all matching inputs are alternatives
+    bool all_match = true;
+    for (const auto& m : matching) {
+        bool found = false;
+        for (const auto& alt : matching) {
+            if (m == alt) { found = true; break; }
+        }
+        if (!found) { all_match = false; break; }
+    }
+    
+    if (!all_match) {
+        result.proof += "  AltAffix: verification failed\n";
+        return result;
+    }
+    
+    result.pattern = pattern;
+    result.proof += "  AltAffix: " + result.pattern + "\n";
+    return result;
+}
+
+// Strategy: Triple quantifier nesting
+PatternResult tryTripleQuant(const std::vector<std::string>& matching,
+                            const std::vector<std::string>& counters,
+                            std::mt19937& rng) {
+    PatternResult result;
+    
+    if (matching.empty()) {
+        result.proof += "  TripleQ: requires matching\n";
+        return result;
+    }
+    
+    std::string base = matching[0];
+    if (base.empty()) {
+        result.proof += "  TripleQ: empty base\n";
+        return result;
+    }
+    
+    // Try: ((base)?)+
+    std::string pattern = "((" + base + ")?)+";
+    
+    // Verify: all matching should have base as prefix
+    bool all_match = true;
+    for (const auto& m : matching) {
+        if (m.find(base) != 0) {
+            all_match = false;
+            break;
+        }
+    }
+    
+    if (!all_match) {
+        // Try simpler: (base)+
+        pattern = "(" + base + ")+";
+        for (const auto& m : matching) {
+            if (m != base) {
+                all_match = false;
+                break;
+            }
+        }
+        if (!all_match) {
+            result.proof += "  TripleQ: no match\n";
+            return result;
+        }
+    }
+    
+    result.pattern = pattern;
+    result.proof += "  TripleQ: " + result.pattern + "\n";
+    return result;
+}
+
 // Strategy: Complex alternation - longer alternations with 8-15 alternatives
 PatternResult tryComplexAlternation(const std::vector<std::string>& matching,
                                     const std::vector<std::string>& counters,
@@ -2553,41 +2891,41 @@ PatternResult applyEdgeCases(const PatternResult& base,
     
     if (result.pattern.empty()) return result;
     
-    // 5% chance: Try optional quantifier (only if alternation)
+    // 8% chance: Try optional quantifier (only if alternation)
     if (result.pattern.find("|") != std::string::npos && 
-        std::uniform_int_distribution<int>(0, 99)(rng) < 5) {
+        std::uniform_int_distribution<int>(0, 99)(rng) < 8) {
         PatternResult opt = tryOptionalQuantifier(matching, counters, rng);
         if (!opt.pattern.empty()) {
             result = opt;
-            result.proof += "    [Edge case: Optional with 5% probability]\n";
+            result.proof += "    [Edge case: Optional with 8% probability]\n";
             return result;
         }
     }
     
-    // 3% chance: Try empty alternative
+    // 6% chance: Try empty alternative
     if (result.pattern.find("|") != std::string::npos &&
-        std::uniform_int_distribution<int>(0, 99)(rng) < 3) {
+        std::uniform_int_distribution<int>(0, 99)(rng) < 6) {
         PatternResult empty = tryEmptyAlternative(matching, counters, rng);
         if (!empty.pattern.empty()) {
             result = empty;
-            result.proof += "    [Edge case: Empty alternative with 3% probability]\n";
+            result.proof += "    [Edge case: Empty alternative with 6% probability]\n";
             return result;
         }
     }
     
-    // 4% chance: Try nested group
-    if (std::uniform_int_distribution<int>(0, 99)(rng) < 4) {
+    // 6% chance: Try nested group
+    if (std::uniform_int_distribution<int>(0, 99)(rng) < 6) {
         PatternResult nested = tryNestedGroup(matching, counters, rng, result.pattern);
         if (!nested.pattern.empty()) {
             result = nested;
             result.fragments = nested.fragments;
-            result.proof += "    [Edge case: Nested group with 4% probability]\n";
+            result.proof += "    [Edge case: Nested group with 6% probability]\n";
             return result;
         }
     }
     
-    // 5% chance: Try multi-char fragment
-    if (std::uniform_int_distribution<int>(0, 99)(rng) < 5) {
+    // 8% chance: Try multi-char fragment
+    if (std::uniform_int_distribution<int>(0, 99)(rng) < 8) {
         PatternResult multi = tryMultiCharFragment(matching, counters, rng);
         if (!multi.pattern.empty()) {
             result = multi;
@@ -2599,41 +2937,41 @@ PatternResult applyEdgeCases(const PatternResult& base,
         }
     }
     
-    // 7% chance: Try star quantifier (zero or more)
-    if (std::uniform_int_distribution<int>(0, 99)(rng) < 7) {
+    // 10% chance: Try star quantifier (zero or more)
+    if (std::uniform_int_distribution<int>(0, 99)(rng) < 10) {
         PatternResult star = tryStarQuantifier(matching, counters, rng);
         if (!star.pattern.empty()) {
             result = star;
             for (const auto& f : star.fragments) {
                 result.fragments[f.first] = f.second;
             }
-            result.proof += "    [Edge case: Star quantifier with 7% probability]\n";
+            result.proof += "    [Edge case: Star quantifier with 10% probability]\n";
             return result;
         }
     }
     
-    // 4% chance: Try char class plus
-    if (std::uniform_int_distribution<int>(0, 99)(rng) < 4) {
+    // 6% chance: Try char class plus
+    if (std::uniform_int_distribution<int>(0, 99)(rng) < 6) {
         PatternResult cc = tryCharClassPlus(matching, counters, rng);
         if (!cc.pattern.empty()) {
             result = cc;
-            result.proof += "    [Edge case: Char class plus with 4% probability]\n";
+            result.proof += "    [Edge case: Char class plus with 6% probability]\n";
             return result;
         }
     }
     
-    // 3% chance: Try mixed quantifiers
-    if (std::uniform_int_distribution<int>(0, 99)(rng) < 3) {
+    // 5% chance: Try mixed quantifiers
+    if (std::uniform_int_distribution<int>(0, 99)(rng) < 5) {
         PatternResult mixed = tryMixedQuantifiers(matching, counters, rng);
         if (!mixed.pattern.empty()) {
             result = mixed;
-            result.proof += "    [Edge case: Mixed quantifiers with 3% probability]\n";
+            result.proof += "    [Edge case: Mixed quantifiers with 5% probability]\n";
             return result;
         }
     }
     
-    // 5% chance: Try fragment chaining
-    if (std::uniform_int_distribution<int>(0, 99)(rng) < 5) {
+    // 8% chance: Try fragment chaining
+    if (std::uniform_int_distribution<int>(0, 99)(rng) < 8) {
         PatternResult chain = tryFragmentChaining(matching, counters, rng);
         if (!chain.pattern.empty()) {
             result = chain;
@@ -2646,27 +2984,27 @@ PatternResult applyEdgeCases(const PatternResult& base,
     }
     
     // 2% chance: Try capture tags
-    if (std::uniform_int_distribution<int>(0, 99)(rng) < 2) {
+    if (std::uniform_int_distribution<int>(0, 99)(rng) < 6) {
         PatternResult cap = tryCaptureTags(matching, counters, rng);
         if (!cap.pattern.empty()) {
             result = cap;
             for (const auto& f : cap.fragments) {
                 result.fragments[f.first] = f.second;
             }
-            result.proof += "    [Edge case: Capture tags with 2% probability]\n";
+            result.proof += "    [Edge case: Capture tags with 6% probability]\n";
             return result;
         }
     }
     
-    // 3% chance: Try single-char shorthand fragment
-    if (std::uniform_int_distribution<int>(0, 99)(rng) < 3) {
+    // 5% chance: Try single-char shorthand fragment
+    if (std::uniform_int_distribution<int>(0, 99)(rng) < 5) {
         PatternResult single = trySingleCharFragment(matching, counters, rng);
         if (!single.pattern.empty()) {
             result = single;
             for (const auto& f : single.fragments) {
                 result.fragments[f.first] = f.second;
             }
-            result.proof += "    [Edge case: Single-char fragment with 3% probability]\n";
+            result.proof += "    [Edge case: Single-char fragment with 5% probability]\n";
             return result;
         }
     }
@@ -2724,6 +3062,12 @@ PatternResult generateSeparatingPattern(const std::vector<std::string>& matching
     strategies.push_back(tryOptionalSequence);
     strategies.push_back(tryNestedQuantifiers);
     strategies.push_back(tryCharClassSequence);
+    strategies.push_back(tryMultiFragmentCombo);
+    strategies.push_back(tryNestedAlternation);
+    strategies.push_back(tryQuantifierStack);
+    strategies.push_back(tryLongAlternation);
+    strategies.push_back(tryAltWithAffix);
+    strategies.push_back(tryTripleQuant);
     
     // Shuffle
     std::shuffle(strategies.begin(), strategies.end(), rng);
