@@ -56,8 +56,9 @@ TEST(generateSeeds_simple) {
     Options opts;
     opts.seed = 42;
     TestGenerator gen(opts);
+    std::set<std::string> used;
     
-    auto result = gen.generateSeeds(Complexity::SIMPLE);
+    auto result = gen.generateSeeds(Complexity::SIMPLE, used);
     std::vector<std::string>& matching = result.first;
     std::vector<std::string>& counters = result.second;
     
@@ -74,8 +75,9 @@ TEST(generateSeeds_medium) {
     Options opts;
     opts.seed = 42;
     TestGenerator gen(opts);
+    std::set<std::string> used;
     
-    auto result = gen.generateSeeds(Complexity::MEDIUM);
+    auto result = gen.generateSeeds(Complexity::MEDIUM, used);
     std::vector<std::string>& matching = result.first;
     std::vector<std::string>& counters = result.second;
     
@@ -87,8 +89,9 @@ TEST(generateSeeds_complex) {
     Options opts;
     opts.seed = 42;
     TestGenerator gen(opts);
+    std::set<std::string> used;
     
-    auto result = gen.generateSeeds(Complexity::COMPLEX);
+    auto result = gen.generateSeeds(Complexity::COMPLEX, used);
     std::vector<std::string>& matching = result.first;
     std::vector<std::string>& counters = result.second;
     
@@ -139,8 +142,9 @@ TEST(seedsDifferentFromCounters) {
     Options opts;
     opts.seed = 42;
     TestGenerator gen(opts);
+    std::set<std::string> used;
     
-    auto result = gen.generateSeeds(Complexity::MEDIUM);
+    auto result = gen.generateSeeds(Complexity::MEDIUM, used);
     std::vector<std::string>& matching = result.first;
     std::vector<std::string>& counters = result.second;
     
@@ -188,8 +192,9 @@ TEST(generateTestCase_structure) {
     opts.seed = 42;
     opts.complexity = Complexity::MEDIUM;
     TestGenerator gen(opts);
+    std::set<std::string> used_inputs;
     
-    TestCase tc = gen.generateTestCase(0);
+    TestCase tc = gen.generateTestCase(0, used_inputs);
     
     ASSERT_TRUE(tc.test_id == 0);
     ASSERT_TRUE(!tc.matching_inputs.empty());
@@ -205,12 +210,14 @@ TEST(generate_multiple_seeds_different) {
     Options opts1;
     opts1.seed = 42;
     TestGenerator gen1(opts1);
-    auto r1 = gen1.generateSeeds(Complexity::SIMPLE);
+    std::set<std::string> used1;
+    auto r1 = gen1.generateSeeds(Complexity::SIMPLE, used1);
     
     Options opts2;
     opts2.seed = 123;
     TestGenerator gen2(opts2);
-    auto r2 = gen2.generateSeeds(Complexity::SIMPLE);
+    std::set<std::string> used2;
+    auto r2 = gen2.generateSeeds(Complexity::SIMPLE, used2);
     
     ASSERT_TRUE(r1.first != r2.first || r1.second != r2.second);
 }
@@ -219,12 +226,14 @@ TEST(generate_same_seed_same) {
     Options opts1;
     opts1.seed = 42;
     TestGenerator gen1(opts1);
-    auto r1 = gen1.generateSeeds(Complexity::SIMPLE);
+    std::set<std::string> used1;
+    auto r1 = gen1.generateSeeds(Complexity::SIMPLE, used1);
     
     Options opts2;
     opts2.seed = 42;
     TestGenerator gen2(opts2);
-    auto r2 = gen2.generateSeeds(Complexity::SIMPLE);
+    std::set<std::string> used2;
+    auto r2 = gen2.generateSeeds(Complexity::SIMPLE, used2);
     
     ASSERT_EQ(r1.first.size(), r2.first.size());
     ASSERT_EQ(r1.second.size(), r2.second.size());
@@ -235,9 +244,10 @@ TEST(matchingInputsNotModified) {
     opts.seed = 42;
     opts.complexity = Complexity::MEDIUM;
     TestGenerator gen(opts);
+    std::set<std::string> used_inputs;
     
     // Generate a test case
-    TestCase tc = gen.generateTestCase(0);
+    TestCase tc = gen.generateTestCase(0, used_inputs);
     
     // Verify matching_inputs exist and are valid strings
     ASSERT_TRUE(tc.matching_inputs.size() >= 2);

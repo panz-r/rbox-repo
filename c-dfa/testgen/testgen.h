@@ -9,6 +9,57 @@
 #include <memory>
 #include <functional>
 
+// ============================================================================
+// Pattern AST - Represents patterns as an Abstract Syntax Tree
+// ============================================================================
+
+enum class PatternType {
+    LITERAL,           // Plain string: "abc"
+    OPTIONAL,          // Optional: (abc)?
+    PLUS_QUANTIFIER,   // One or more: (abc)+
+    STAR_QUANTIFIER,   // Zero or more: (abc)*
+    ALTERNATION,       // OR: (a|b|c)
+    FRAGMENT_REF,      // Fragment reference: ((name))+
+    SEQUENCE           // Sequence: abcdef
+};
+
+struct PatternNode {
+    PatternType type = PatternType::LITERAL;
+    std::string value;                              // For literals
+    std::string fragment_name;                      // For fragments
+    std::vector<std::shared_ptr<PatternNode>> children;  // For sequences/alternations
+    std::shared_ptr<PatternNode> quantified;         // For quantifiers (+, *, ?)
+    std::vector<std::string> matched_seeds;         // Seeds this node matches
+    std::string capture_tag;                        // If set, wrap with <tag>...</tag>
+    std::string capture_begin_only;                 // Unmatched <tag>
+    std::string capture_end_only;                   // Unmatched </tag>
+    
+    static std::shared_ptr<PatternNode> createLiteral(const std::string& val, const std::vector<std::string>& seeds = {});
+    static std::shared_ptr<PatternNode> createFragment(const std::string& name, const std::vector<std::string>& seeds = {});
+    static std::shared_ptr<PatternNode> createSequence(const std::vector<std::shared_ptr<PatternNode>>& kids, const std::vector<std::string>& seeds = {});
+    static std::shared_ptr<PatternNode> createAlternation(const std::vector<std::shared_ptr<PatternNode>>& alts, const std::vector<std::string>& seeds = {});
+    static std::shared_ptr<PatternNode> createQuantified(std::shared_ptr<PatternNode> child, PatternType quant_type, const std::vector<std::string>& seeds = {});
+};
+
+// Serialize PatternNode to string with capture tags
+std::string serializePattern(std::shared_ptr<PatternNode> node);
+
+// Parse pattern string to AST
+std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern);
+
+// Add capture tags to AST nodes
+void addCaptureTags(std::shared_ptr<PatternNode> node, std::mt19937& rng);
+
+// Pattern rewriting that keeps matching set constant but complicates expression
+void rewritePattern(std::shared_ptr<PatternNode> node, std::mt19937& rng);
+
+// Collect all seeds that should be captured
+std::vector<std::string> collectCaptureSeeds(std::shared_ptr<PatternNode> node);
+
+// ============================================================================
+// Test Generator Types
+// ============================================================================
+
 enum class Category {
     UNKNOWN = 0,
     SAFE = 1,
@@ -81,6 +132,7 @@ public:
     void writeExpectations(const std::vector<TestCase>& tests, const std::string& filename);
     int runTests(const std::string& pattern_file, const std::string& expectations_file);
     int runTestsIndividual(const std::string& pattern_file, const std::string& expectations_file);
+    void setTestsPerBatch(int count) { tests_per_batch_override = count; }
     
     std::string categoryToString(Category cat);
     std::map<std::string, std::string> generateFragments(Complexity complexity);
@@ -109,6 +161,7 @@ private:
     std::mt19937 rng;
     std::vector<TestCase> generated_tests;
     int global_failed_count = 0;  // Persist across batches for saving failed cases
+    int tests_per_batch_override = 0;  // Override for tests per batch
     
     static const std::vector<std::string> COMMANDS;
     static const std::vector<std::string> FLAGS;

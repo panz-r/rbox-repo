@@ -12,19 +12,429 @@
 #include <sys/stat.h>
 
 // ============================================================================
-// Pattern Building Blocks (elementary units of c-dfa patterns)
+// Pattern AST Implementation
 // ============================================================================
 
-enum class PatternType {
-    LITERAL,           // Plain string: "abc"
-    OPTIONAL,          // Optional: (abc)?
-    PLUS_QUANTIFIER,   // One or more: (abc)+
-    STAR_QUANTIFIER,   // Zero or more: (abc)*
-    ALTERNATION,       // OR: (a|b|c)
-    FRAGMENT_PLUS,     // Fragment with plus: ((digit))+
-    FRAGMENT_STAR,     // Fragment with star: ((digit))*
-    SEQUENCE           // Sequence: abcdef
-};
+std::shared_ptr<PatternNode> PatternNode::createLiteral(const std::string& val, const std::vector<std::string>& seeds) {
+    auto node = std::make_shared<PatternNode>();
+    node->type = PatternType::LITERAL;
+    node->value = val;
+    node->matched_seeds = seeds;
+    return node;
+}
+
+std::shared_ptr<PatternNode> PatternNode::createFragment(const std::string& name, const std::vector<std::string>& seeds) {
+    auto node = std::make_shared<PatternNode>();
+    node->type = PatternType::FRAGMENT_REF;
+    node->fragment_name = name;
+    node->matched_seeds = seeds;
+    return node;
+}
+
+std::shared_ptr<PatternNode> PatternNode::createSequence(const std::vector<std::shared_ptr<PatternNode>>& kids, const std::vector<std::string>& seeds) {
+    auto node = std::make_shared<PatternNode>();
+    node->type = PatternType::SEQUENCE;
+    node->children = kids;
+    node->matched_seeds = seeds;
+    return node;
+}
+
+std::shared_ptr<PatternNode> PatternNode::createAlternation(const std::vector<std::shared_ptr<PatternNode>>& alts, const std::vector<std::string>& seeds) {
+    auto node = std::make_shared<PatternNode>();
+    node->type = PatternType::ALTERNATION;
+    node->children = alts;
+    node->matched_seeds = seeds;
+    return node;
+}
+
+std::shared_ptr<PatternNode> PatternNode::createQuantified(std::shared_ptr<PatternNode> child, PatternType quant_type, const std::vector<std::string>& seeds) {
+    auto node = std::make_shared<PatternNode>();
+    node->type = quant_type;
+    node->quantified = child;
+    node->matched_seeds = seeds;
+    return node;
+}
+
+// Serialize PatternNode to string with capture tags
+std::string serializePattern(std::shared_ptr<PatternNode> node) {
+    if (!node) return "";
+    
+    std::string capture_prefix = node->capture_tag.empty() ? "" : "<" + node->capture_tag + ">";
+    std::string capture_suffix = node->capture_tag.empty() ? "" : "</" + node->capture_tag + ">";
+    std::string begin_only = node->capture_begin_only.empty() ? "" : "<" + node->capture_begin_only + ">";
+    std::string end_only = node->capture_end_only.empty() ? "" : "</" + node->capture_end_only + ">";
+    
+    switch (node->type) {
+        case PatternType::LITERAL:
+            if (!node->fragment_name.empty()) {
+                return begin_only + capture_prefix + "((" + node->fragment_name + "))+" + capture_suffix + end_only;
+            }
+            return begin_only + capture_prefix + node->value + capture_suffix + end_only;
+            
+        case PatternType::OPTIONAL:
+            if (node->quantified) {
+                return "(" + serializePattern(node->quantified) + ")?";
+            }
+            return "(.)?";
+            
+        case PatternType::PLUS_QUANTIFIER:
+            if (node->quantified) {
+                return begin_only + capture_prefix + "(" + serializePattern(node->quantified) + ")+" + capture_suffix + end_only;
+            }
+            return "(.)+";
+            
+        case PatternType::STAR_QUANTIFIER:
+            if (node->quantified) {
+                return begin_only + capture_prefix + "(" + serializePattern(node->quantified) + ")*" + capture_suffix + end_only;
+            }
+            return "(.)*";
+            
+        case PatternType::ALTERNATION: {
+            // If there's a quantifier set on an ALTERNATION node, handle it
+            if (node->quantified) {
+                // Serialize the quantified content
+                std::string inner = "(";
+                for (size_t i = 0; i < node->children.size(); i++) {
+                    if (i > 0) inner += "|";
+                    inner += serializePattern(node->children[i]);
+                }
+                inner += ")";
+                
+                // Determine quantifier from the original node's type field
+                // Note: The type might have been changed to quantifier type, so check that too
+                PatternType actual_type = node->type;
+                
+                if (actual_type == PatternType::PLUS_QUANTIFIER) {
+                    return begin_only + capture_prefix + inner + "+" + capture_suffix + end_only;
+                } else if (actual_type == PatternType::STAR_QUANTIFIER) {
+                    return begin_only + capture_prefix + inner + "*" + capture_suffix + end_only;
+                } else if (actual_type == PatternType::OPTIONAL) {
+                    return begin_only + capture_prefix + inner + "?" + capture_suffix + end_only;
+                }
+                // Fall through to normal alternation
+            }
+            
+            // Normal alternation serialization (no quantifier)
+            std::string result = "(";
+            for (size_t i = 0; i < node->children.size(); i++) {
+                if (i > 0) result += "|";
+                result += serializePattern(node->children[i]);
+            }
+            result += ")";
+            return result;
+        }
+        
+        case PatternType::SEQUENCE: {
+            std::string result;
+            for (const auto& child : node->children) {
+                result += serializePattern(child);
+            }
+            return result;
+        }
+        
+        case PatternType::FRAGMENT_REF:
+            return "((" + node->fragment_name + "))+";
+            
+        default:
+            return node->value;
+    }
+}
+
+// Parse pattern string to AST (simple parser for basic patterns)
+std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
+    if (pattern.empty()) return nullptr;
+    
+    // Handle alternation with quantifier: (a|b|c)+
+    // The quantifier is AFTER the closing paren, not inside
+    if (pattern.size() >= 3 && pattern[0] == '(') {
+        size_t close_paren = pattern.find(')');
+        if (close_paren != std::string::npos) {
+            std::string inner = pattern.substr(1, close_paren - 1);
+            std::vector<std::shared_ptr<PatternNode>> alts;
+            
+            // Check if inner contains |
+            if (inner.find('|') != std::string::npos) {
+                size_t start = 0;
+                for (size_t i = 0; i <= inner.size(); i++) {
+                    if (i == inner.size() || inner[i] == '|') {
+                        std::string alt = inner.substr(start, i - start);
+                        if (!alt.empty()) {
+                            alts.push_back(PatternNode::createLiteral(alt, {}));
+                        }
+                        start = i + 1;
+                    }
+                }
+                
+                if (alts.size() >= 2) {
+                    // Check what comes after the closing paren
+                    std::string after = pattern.substr(close_paren + 1);
+                    std::shared_ptr<PatternNode> alt_node = PatternNode::createAlternation(alts, {});
+                    
+                    if (after == "+") {
+                        alt_node->type = PatternType::PLUS_QUANTIFIER;
+                        alt_node->quantified = PatternNode::createAlternation(alts, {});
+                    } else if (after == "*") {
+                        alt_node->type = PatternType::STAR_QUANTIFIER;
+                        alt_node->quantified = PatternNode::createAlternation(alts, {});
+                    } else if (after == "?") {
+                        alt_node->type = PatternType::OPTIONAL;
+                        alt_node->quantified = PatternNode::createAlternation(alts, {});
+                    }
+                    // If nothing after, it's just a grouped alternation, return as-is
+                    return alt_node;
+                }
+            }
+        }
+    }
+    
+    // Handle simple pattern without alternation: (xxx)+
+    if (pattern.size() >= 4 && pattern[0] == '(') {
+        size_t close_paren = pattern.find(')');
+        if (close_paren != std::string::npos) {
+            std::string inner = pattern.substr(1, close_paren - 1);
+            std::string after = pattern.substr(close_paren + 1);
+            
+            // No alternation, just a literal with quantifier
+            if (!inner.empty() && (after == "+" || after == "*" || after == "?")) {
+                std::shared_ptr<PatternNode> node = PatternNode::createLiteral(inner, {});
+                if (after == "+") {
+                    node->type = PatternType::PLUS_QUANTIFIER;
+                    node->quantified = PatternNode::createLiteral(inner, {});
+                } else if (after == "*") {
+                    node->type = PatternType::STAR_QUANTIFIER;
+                    node->quantified = PatternNode::createLiteral(inner, {});
+                } else if (after == "?") {
+                    node->type = PatternType::OPTIONAL;
+                    node->quantified = PatternNode::createLiteral(inner, {});
+                }
+                return node;
+            }
+        }
+    }
+    
+    // Simple literal
+    return PatternNode::createLiteral(pattern, {});
+}
+
+// Add capture tags to AST nodes
+void addCaptureTags(std::shared_ptr<PatternNode> node, std::mt19937& rng) {
+    if (!node) return;
+    
+    std::vector<std::string> all_seeds = node->matched_seeds;
+    
+    std::function<void(std::shared_ptr<PatternNode>)> collect = [&](std::shared_ptr<PatternNode> n) {
+        if (!n) return;
+        for (const auto& s : n->matched_seeds) {
+            all_seeds.push_back(s);
+        }
+        if (n->quantified) collect(n->quantified);
+        for (const auto& c : n->children) collect(c);
+    };
+    collect(node);
+    
+    std::sort(all_seeds.begin(), all_seeds.end());
+    all_seeds.erase(std::unique(all_seeds.begin(), all_seeds.end()), all_seeds.end());
+    
+    if (all_seeds.empty()) return;
+    
+    // Strategy 1: Capture entire alternation
+    if (node->type == PatternType::ALTERNATION && node->children.size() >= 2) {
+        bool all_single = true;
+        for (const auto& child : node->children) {
+            if (child->matched_seeds.size() != 1) {
+                all_single = false; break;
+            }
+        }
+        if (all_single) {
+            node->capture_tag = "c" + std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
+            return;
+        }
+    }
+    
+    // Strategy 2: Capture entire quantified node
+    if ((node->type == PatternType::PLUS_QUANTIFIER || 
+         node->type == PatternType::STAR_QUANTIFIER ||
+         node->type == PatternType::OPTIONAL) && 
+        node->quantified && 
+        !node->quantified->matched_seeds.empty()) {
+        node->capture_tag = "c" + std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
+        return;
+    }
+    
+    // Recurse
+    for (auto& child : node->children) {
+        addCaptureTags(child, rng);
+    }
+    if (node->quantified) {
+        addCaptureTags(node->quantified, rng);
+    }
+}
+
+// Collect all seeds from captured nodes
+std::vector<std::string> collectCaptureSeeds(std::shared_ptr<PatternNode> node) {
+    std::vector<std::string> seeds;
+    if (!node) return seeds;
+    
+    if (!node->capture_tag.empty()) {
+        seeds.insert(seeds.end(), node->matched_seeds.begin(), node->matched_seeds.end());
+    }
+    
+    for (const auto& c : node->children) {
+        auto child_seeds = collectCaptureSeeds(c);
+        seeds.insert(seeds.end(), child_seeds.begin(), child_seeds.end());
+    }
+    if (node->quantified) {
+        auto quant_seeds = collectCaptureSeeds(node->quantified);
+        seeds.insert(seeds.end(), quant_seeds.begin(), quant_seeds.end());
+    }
+    
+    std::sort(seeds.begin(), seeds.end());
+    seeds.erase(std::unique(seeds.begin(), seeds.end()), seeds.end());
+    return seeds;
+}
+
+// ============================================================================
+// Pattern Rewriting - Keeps matching set constant, complicates expression
+// ============================================================================
+
+void rewritePattern(std::shared_ptr<PatternNode> node, std::mt19937& rng) {
+    if (!node) return;
+    
+    // Much lower probability to avoid creating invalid patterns
+    std::uniform_int_distribution<int> apply_dist(0, 99);
+    std::uniform_int_distribution<int> char_dist(0, 61);
+    
+    // Collect all seed values
+    std::set<std::string> all_seeds;
+    std::function<void(std::shared_ptr<PatternNode>)> collect = [&](std::shared_ptr<PatternNode> n) {
+        if (!n) return;
+        for (const auto& s : n->matched_seeds) {
+            all_seeds.insert(s);
+        }
+        if (n->quantified) collect(n->quantified);
+        for (const auto& c : n->children) collect(c);
+    };
+    collect(node);
+    
+    // Strategy 1: Reorder alternation alternatives (very rare)
+    if (node->type == PatternType::ALTERNATION && node->children.size() > 1) {
+        if (apply_dist(rng) < 2) {  // 2% chance
+            std::shuffle(node->children.begin(), node->children.end(), rng);
+        }
+    }
+    
+    // Strategy 2: Add random non-matching alternatives (very rare)
+    if (node->type == PatternType::ALTERNATION && !all_seeds.empty() && apply_dist(rng) < 2) {
+        int num_new = 1;
+        for (int i = 0; i < num_new; i++) {
+            int len = std::uniform_int_distribution<int>(3, 6)(rng);
+            static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            std::string new_alt;
+            for (int j = 0; j < len; j++) {
+                new_alt += charset[char_dist(rng)];
+            }
+            if (all_seeds.find(new_alt) == all_seeds.end()) {
+                node->children.push_back(PatternNode::createLiteral(new_alt, {}));
+            }
+        }
+    }
+    
+    // Strategy 3: Add empty alternative - DISABLED (creates invalid patterns)
+    // if (node->type == PatternType::ALTERNATION && !all_seeds.empty() && apply_dist(rng) == 0) {
+    //     bool has_empty = false;
+    //     for (const auto& child : node->children) {
+    //         if (child->type == PatternType::LITERAL && child->value.empty()) {
+    //             has_empty = true; break;
+    //         }
+    //     }
+    //     if (!has_empty) {
+    //         node->children.push_back(PatternNode::createLiteral("", {}));
+    //     }
+    // }
+    
+    // Strategy 4: Duplicate alternatives (very rare)
+    if (node->type == PatternType::ALTERNATION && node->children.size() >= 2 && apply_dist(rng) < 2) {
+        size_t idx = std::uniform_int_distribution<int>(0, node->children.size() - 1)(rng);
+        auto& child = node->children[idx];
+        if (child->type == PatternType::LITERAL && !child->value.empty() && child->fragment_name.empty()) {
+            node->children.push_back(PatternNode::createLiteral(child->value, {}));
+        }
+    }
+    
+    // Strategy 5: Wrap literal in parens - DISABLED (causes nesting issues)
+    // if (node->type == PatternType::LITERAL && !node->value.empty() && node->fragment_name.empty()) {
+    //     if (apply_dist(rng) == 0) {
+    //         node->type = PatternType::ALTERNATION;
+    //         node->children.push_back(PatternNode::createLiteral(node->value, node->matched_seeds));
+    //         node->value.clear();
+    //     }
+    // }
+    
+    // Strategy 6: Unmatched capture begin tag - DISABLED (creates invalid patterns)
+    // if (node->capture_tag.empty() && node->capture_begin_only.empty() && node->capture_end_only.empty()) {
+    //     if (apply_dist(rng) == 0 && std::uniform_int_distribution<int>(0, 9)(rng) == 0) {
+    //         node->capture_begin_only = "u" + std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
+    //     }
+    // }
+    
+    // Strategy 7: Unmatched capture end tag - DISABLED (creates invalid patterns)
+    // if (node->capture_tag.empty() && node->capture_begin_only.empty() && node->capture_end_only.empty()) {
+    //     if (apply_dist(rng) == 0 && std::uniform_int_distribution<int>(0, 9)(rng) == 0) {
+    //         node->capture_end_only = "u" + std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
+    //     }
+    // }
+    
+    // Strategy 8: Quantifier manipulation - DISABLED (changes matching semantics)
+    // if (node->quantified) {
+    //     if (apply_dist(rng) == 0) {
+    //         ...
+    //     }
+    // }
+    
+    // Strategy 9: Case variation - DISABLED (changes matching semantics)
+    // if (node->type == PatternType::LITERAL && !node->value.empty() && node->fragment_name.empty()) {
+    //     ...
+    // }
+    
+    // Strategy 10: Character class conversion - DISABLED (changes matching semantics)
+    // if (node->type == PatternType::LITERAL && node->value.size() == 1 && node->fragment_name.empty()) {
+    //     ...
+    // }
+    
+    // Strategy 11: Split literal into prefix alternation - DISABLED (changes matching semantics)
+    // if (node->type == PatternType::LITERAL && node->value.size() >= 3 && node->fragment_name.empty()) {
+    //     ...
+    // }
+    
+    // Strategy 12: Interleave wildcard between characters - DISABLED (changes matching semantics)
+    // if (node->type == PatternType::LITERAL && node->value.size() >= 2 && node->fragment_name.empty()) {
+    //     ...
+    // }
+    
+    // Strategy 13: Wrap in nested capture group - DISABLED (creates invalid patterns)
+    // if (node->type == PatternType::LITERAL && !node->value.empty() && node->capture_tag.empty() && node->fragment_name.empty()) {
+    //     if (apply_dist(rng) < 3) {  // 3% chance
+    //         node->capture_tag = "c" + std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
+    //     }
+    // }
+    
+    // Strategy 14: Add optional suffix - DISABLED (changes matching semantics)
+    // if (node->type == PatternType::LITERAL && !node->value.empty() && node->fragment_name.empty()) {
+    //     ...
+    // }
+    
+    // Recurse
+    if (node->quantified) {
+        rewritePattern(node->quantified, rng);
+    }
+    for (auto& child : node->children) {
+        rewritePattern(child, rng);
+    }
+}
+
+// ============================================================================
+// Pattern Building Blocks (elementary units of c-dfa patterns)
+// ============================================================================
 
 struct PatternComponent {
     PatternType type;
@@ -256,6 +666,7 @@ struct PatternResult {
     std::map<std::string, std::string> fragments;  // fragment definitions
     std::string proof;
     std::vector<Expectation> expectations;
+    std::shared_ptr<PatternNode> ast;  // AST with matched_seeds
 };
 
 // Try many different pattern strategies and return the first that works
@@ -362,6 +773,7 @@ PatternResult tryLiteral(const std::vector<std::string>& matching,
     }
     
     result.pattern = lit;
+    result.ast = PatternNode::createLiteral(lit, matching);
     result.proof += "  Literal: '" + lit + "'\n";
     result.proof += "    MATCHES: '" + lit + "'\n";
     result.proof += "    VERIFIED: no counter matches literal\n";
@@ -373,13 +785,6 @@ PatternResult tryAlternation(const std::vector<std::string>& matching,
                             const std::vector<std::string>& counters,
                             std::mt19937& rng) {
     PatternResult result;
-    
-    std::string pattern = "(";
-    for (size_t i = 0; i < matching.size(); i++) {
-        if (i > 0) pattern += "|";
-        pattern += matching[i];
-    }
-    pattern += ")";
     
     // Verify all matching match
     for (const auto& m : matching) {
@@ -408,20 +813,32 @@ PatternResult tryAlternation(const std::vector<std::string>& matching,
         return result;
     }
     
+    // Build AST with matched_seeds
+    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+    for (const auto& m : matching) {
+        alt_nodes.push_back(PatternNode::createLiteral(m, {m}));
+    }
+    
     // ALWAYS apply a quantifier to make it interesting
     std::uniform_int_distribution<int> qdist(0, 2);
     int qtype = qdist(rng);
     
+    std::shared_ptr<PatternNode> alt_node = PatternNode::createAlternation(alt_nodes, matching);
+    
     if (qtype == 0) {
-        pattern += "+";  // One or more
+        alt_node->type = PatternType::PLUS_QUANTIFIER;
+        alt_node->quantified = PatternNode::createAlternation(alt_nodes, matching);
     } else if (qtype == 1) {
-        pattern += "*";  // Zero or more
+        alt_node->type = PatternType::STAR_QUANTIFIER;
+        alt_node->quantified = PatternNode::createAlternation(alt_nodes, matching);
     } else {
-        pattern += "?";  // Zero or one
+        alt_node->type = PatternType::OPTIONAL;
+        alt_node->quantified = PatternNode::createAlternation(alt_nodes, matching);
     }
     
-    result.pattern = pattern;
-    result.proof += "  Alternation: " + pattern + "\n";
+    result.ast = alt_node;
+    result.pattern = serializePattern(alt_node);
+    result.proof += "  Alternation: " + result.pattern + "\n";
     result.proof += "    MATCHES all " + std::to_string(matching.size()) + " matching inputs\n";
     result.proof += "    VERIFIED: no counter inputs match\n";
     return result;
@@ -1216,26 +1633,25 @@ PatternResult tryMultiCharFragment(const std::vector<std::string>& matching,
     std::string pattern = "((" + frag_name + "))+";
     
     // Verify all matching can be generated by repeating the substring
+    // IMPORTANT: Must check patternMatchesPlus, not just find!
+    // A substring might appear in each input but NOT as a full repetition
     bool all_match = true;
     for (const auto& m : matching) {
+        // Use patternMatchesPlus to verify the input IS a repetition of common_substr
+        // NOT just that it contains common_substr somewhere
         if (!patternMatchesPlus(common_substr, m)) {
-            // Maybe it's used somewhere in the string, not as full repetition
-            if (m.find(common_substr) == std::string::npos) {
-                all_match = false;
-                break;
-            }
+            all_match = false;
+            break;
         }
     }
     
     if (all_match) {
-        // Check counters
+        // Check counters - use patternMatchesPlus for consistency
         bool any_match = false;
         for (const auto& c : counters) {
-            if (c.find(common_substr) != std::string::npos) {
-                if (patternMatchesPlus(common_substr, c)) {
-                    any_match = true;
-                    break;
-                }
+            if (patternMatchesPlus(common_substr, c)) {
+                any_match = true;
+                break;
             }
         }
         
@@ -1243,7 +1659,7 @@ PatternResult tryMultiCharFragment(const std::vector<std::string>& matching,
             result.pattern = pattern;
             result.proof += "  MultiFrag: " + result.pattern + "\n";
             result.proof += "    Fragment: " + frag_name + " = " + common_substr + "\n";
-            result.proof += "    MATCHES: strings containing " + common_substr + "\n";
+            result.proof += "    MATCHES: strings that are repetitions of " + common_substr + "\n";
             result.proof += "    VERIFIED: counters don't match\n";
             return result;
         }
@@ -3503,8 +3919,61 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     PatternResult result = generateSeparatingPattern(tc.matching_inputs, tc.counter_inputs, 
                                                      tc.complexity, rng);
 
+    // Now apply rewrite (only safe strategies that don't change semantics)
+    if (result.ast) {
+        rewritePattern(result.ast, rng);  // Safe rewrite strategies enabled
+        // addCaptureTags(result.ast, rng);  // Disabled - creates invalid patterns
+        result.pattern = serializePattern(result.ast);
+    }
+    
     tc.pattern = result.pattern;
     tc.fragments = result.fragments;
+    
+    // Validate pattern matches at least one matching input
+    // If not, regenerate using a simpler approach
+    if (!tc.pattern.empty() && !tc.matching_inputs.empty()) {
+        bool any_matches = false;
+        
+        // Simple validation: check if any matching input is a substring of the pattern
+        // or if the pattern is an alternation that contains the input
+        for (const auto& m : tc.matching_inputs) {
+            // Check 1: Is the matching input literally in the pattern?
+            if (tc.pattern.find(m) != std::string::npos) {
+                any_matches = true;
+                break;
+            }
+            
+            // Check 2: For alternation patterns, check if input is one of the alternatives
+            if (tc.pattern.find("|") != std::string::npos) {
+                std::string alt_pattern = tc.pattern;
+                // Remove quantifiers
+                size_t pos;
+                while ((pos = alt_pattern.find("+")) != std::string::npos) alt_pattern.erase(pos, 1);
+                while ((pos = alt_pattern.find("*")) != std::string::npos) alt_pattern.erase(pos, 1);
+                while ((pos = alt_pattern.find("?")) != std::string::npos) alt_pattern.erase(pos, 1);
+                while ((pos = alt_pattern.find("(")) != std::string::npos) alt_pattern.erase(pos, 1);
+                while ((pos = alt_pattern.find(")")) != std::string::npos) alt_pattern.erase(pos, 1);
+                
+                if (alt_pattern.find(m) != std::string::npos) {
+                    any_matches = true;
+                    break;
+                }
+            }
+        }
+        
+        if (!any_matches) {
+            // Pattern doesn't match any matching inputs - this is a bug!
+            // Fall back to alternation of matching inputs
+            tc.pattern = "(";
+            for (size_t i = 0; i < tc.matching_inputs.size(); i++) {
+                if (i > 0) tc.pattern += "|";
+                tc.pattern += tc.matching_inputs[i];
+            }
+            tc.pattern += ")";
+            tc.fragments.clear();  // Clear invalid fragments
+            tc.proof += "\n[WARNING] Pattern validation failed - falling back to alternation\n";
+        }
+    }
     
     // Generate deep semantic expectations
     tc.expectations = generateAllExpectations(tc.pattern, tc.fragments, 

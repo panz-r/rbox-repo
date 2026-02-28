@@ -57,8 +57,8 @@ int main(int argc, char* argv[]) {
     // Create output directory
     mkdir(output_dir.c_str(), 0755);
     
-    // Calculate how many files we need (4 tests per file = 8 patterns max)
-    int tests_per_file = 4;
+    // Calculate how many files we need (8 tests per file for more complex combined DFAs)
+    int tests_per_file = 8;
     int num_files = (opts.num_tests + tests_per_file - 1) / tests_per_file;
     
     std::cout << "Generating " << opts.num_tests << " test cases in " << num_files << " file(s)...\n\n";
@@ -71,9 +71,10 @@ int main(int argc, char* argv[]) {
         // Adjust seed for each batch
         opts.seed = opts.seed + batch;
         
-        // Generate test cases for this batch (max 4)
+        // Generate test cases for this batch (max 8 for more complex combined DFAs)
         TestGenerator gen(opts);
         int num_in_batch = std::min(tests_per_file, opts.num_tests - batch);
+        gen.setTestsPerBatch(tests_per_file);
         auto tests = gen.generate();
         
         std::cout << "--- Batch " << (file_num + 1) << ": " << tests.size() << " test cases ---\n";
