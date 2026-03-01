@@ -25,8 +25,8 @@ int main(int argc, char* argv[]) {
     
     // Parse arguments
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
-            opts.num_tests = std::stoi(argv[++i]);
+        if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--num-tests") == 0) {
+            if (i + 1 < argc) opts.num_tests = std::stoi(argv[++i]);
         } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output_dir = argv[++i];
         } else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
@@ -57,8 +57,8 @@ int main(int argc, char* argv[]) {
     // Create output directory
     mkdir(output_dir.c_str(), 0755);
     
-    // Calculate how many files we need (8 tests per file for more complex combined DFAs)
-    int tests_per_file = 8;
+    // Calculate how many files we need (4 tests per file, limited by capture tags)
+    int tests_per_file = 4;
     int num_files = (opts.num_tests + tests_per_file - 1) / tests_per_file;
     
     std::cout << "Generating " << opts.num_tests << " test cases in " << num_files << " file(s)...\n\n";
@@ -67,13 +67,13 @@ int main(int argc, char* argv[]) {
     int total_failed = 0;
     int file_num = 0;
     
-    for (int batch = 0; batch < opts.num_tests; batch += tests_per_file) {
+    for (int file_num = 0; file_num < num_files; file_num++) {
         // Adjust seed for each batch
-        opts.seed = opts.seed + batch;
+        opts.seed = opts.seed + file_num * tests_per_file;
         
         // Generate test cases for this batch (max 8 for more complex combined DFAs)
         TestGenerator gen(opts);
-        int num_in_batch = std::min(tests_per_file, opts.num_tests - batch);
+        int num_in_batch = std::min(tests_per_file, opts.num_tests - file_num * tests_per_file);
         gen.setTestsPerBatch(tests_per_file);
         auto tests = gen.generate();
         
@@ -94,13 +94,11 @@ int main(int argc, char* argv[]) {
             if (result == 0) total_passed += tests.size();
             else total_failed += tests.size();
         }
-        
-        file_num++;
     }
     
     if (!run_tests) {
         std::cout << "\nSkipping test run (use -r to execute)\n";
-    } else if (opts.num_tests > 4) {
+    } else {
         std::cout << "\n=== TOTAL: " << total_passed << " passed, " << total_failed << " failed ===\n";
     }
     

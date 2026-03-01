@@ -160,6 +160,329 @@ std::shared_ptr<PatternNode> createSequenceNode(const std::vector<std::shared_pt
     return PatternNode::createSequence(nodes, seeds);
 }
 
+// ============================================================================
+// Edge-Case Coordinated Seed+Pattern Generation
+// ============================================================================
+
+// Random string generator for edge cases
+std::string randomAlphaEdge(int len, std::mt19937& rng) {
+    static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    std::uniform_int_distribution<int> dist(0, sizeof(charset) - 2);
+    std::string result;
+    for (int i = 0; i < len; i++) {
+        result += charset[dist(rng)];
+    }
+    return result;
+}
+
+// Edge Case 1: RANGE_BOUNDARY - Consecutive chars at boundaries
+EdgeCaseResult createRangeBoundaryEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::RANGE_BOUNDARY;
+    
+    // Choose a consecutive range: lowercase, uppercase, or digits
+    std::uniform_int_distribution<int> range_dist(0, 2);
+    int range_type = range_dist(rng);
+    
+    std::string range_name;
+    std::vector<char> chars;
+    
+    if (range_type == 0) {
+        // lowercase a-z
+        range_name = "lower";
+        for (char c = 'a'; c <= 'z'; c++) chars.push_back(c);
+    } else if (range_type == 1) {
+        // uppercase A-Z
+        range_name = "upper";
+        for (char c = 'A'; c <= 'Z'; c++) chars.push_back(c);
+    } else {
+        // digits 0-9
+        range_name = "digit";
+        for (char c = '0'; c <= '9'; c++) chars.push_back(c);
+    }
+    
+    // Create fragment definition with some chars from range
+    std::string frag_def;
+    std::vector<std::string> frag_chars;
+    std::uniform_int_distribution<int> char_idx(0, (int)chars.size() - 1);
+    
+    // Pick 5-10 characters from the range
+    int num_chars = 5 + std::uniform_int_distribution<int>(0, 5)(rng);
+    std::set<char> selected;
+    for (int i = 0; i < num_chars; i++) {
+        selected.insert(chars[char_idx(rng)]);
+    }
+    for (char c : selected) {
+        std::string s(1, c);
+        frag_def += s + "|";
+        frag_chars.push_back(s);
+    }
+    if (!frag_def.empty()) frag_def.pop_back(); // remove trailing |
+    
+    // Create fragment reference
+    std::string frag_name = "range_" + range_name;
+    
+    // Build AST: ((range_lower))+
+    auto frag_node = PatternNode::createFragment(frag_name, frag_chars);
+    frag_node->type = PatternType::PLUS_QUANTIFIER;
+    frag_node->quantified = PatternNode::createFragment(frag_name, frag_chars);
+    result.initial_ast = frag_node;
+    
+    // Add fragment definition
+    result.fragments[frag_name] = frag_def;
+    
+    result.proof = "EDGE_CASE: RANGE_BOUNDARY\n";
+    result.proof += "  Fragment: " + frag_name + " = " + frag_def + "\n";
+    result.proof += "  Pattern: ((" + frag_name + "))+\n";
+    
+    // Matching seeds: use the SELECTED chars (those in the fragment), not the full range
+    // The selected set contains exactly the chars that are in frag_def
+    for (char c : selected) {
+        result.matching_seeds.push_back(std::string(1, c));
+    }
+    // Add some repetitions using selected chars
+    std::vector<char> selected_vec(selected.begin(), selected.end());
+    if (selected_vec.size() >= 2) {
+        result.matching_seeds.push_back(std::string(1, selected_vec.front()) + std::string(1, selected_vec.front()));
+        result.matching_seeds.push_back(std::string(1, selected_vec.back()) + std::string(1, selected_vec.back()));
+    }
+    
+    // Counter seeds: characters NOT in the range
+    static const char non_range[] = "!@#$%^&*()[]{}|;':\",./<>?";
+    std::uniform_int_distribution<int> non_dist(0, sizeof(non_range) - 2);
+    for (int i = 0; i < 10; i++) {
+        std::string s(1, non_range[non_dist(rng)]);
+        result.counter_seeds.push_back(s);
+    }
+    
+    result.proof += "  Matching: ";
+    for (auto& s : result.matching_seeds) result.proof += s + " ";
+    result.proof += "\n  Counters: ";
+    for (auto& s : result.counter_seeds) result.proof += s + " ";
+    result.proof += "\n  Rationale: Tests range boundaries - matching uses edge chars from range, counters use non-range chars\n";
+    
+    return result;
+}
+
+// Edge Case 2: PARTIAL_MATCH_FAIL - Prefix matches, then fails
+EdgeCaseResult createPartialMatchEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::PARTIAL_MATCH_FAIL;
+    
+    // Create a 2-3 char prefix
+    std::string prefix = randomAlphaEdge(2, rng);
+    
+    // Create pattern: (prefix)+
+    auto node = PatternNode::createLiteral(prefix, {prefix});
+    node->type = PatternType::PLUS_QUANTIFIER;
+    node->quantified = PatternNode::createLiteral(prefix, {prefix});
+    result.initial_ast = node;
+    
+    // Matching seeds: exact repetitions of prefix
+    result.matching_seeds.push_back(prefix);
+    result.matching_seeds.push_back(prefix + prefix);
+    result.matching_seeds.push_back(prefix + prefix + prefix);
+    
+    // Counter seeds: prefix + unexpected character
+    static const char extras[] = "xyzXYZ012!@#%^&*()";
+    std::uniform_int_distribution<int> extra_dist(0, sizeof(extras) - 2);
+    for (int i = 0; i < 8; i++) {
+        result.counter_seeds.push_back(prefix + extras[extra_dist(rng)]);
+    }
+    
+    result.proof = "EDGE_CASE: PARTIAL_MATCH_FAIL\n";
+    result.proof += "  Pattern: (" + prefix + ")+\n";
+    result.proof += "  Matching: ";
+    for (auto& s : result.matching_seeds) result.proof += s + " ";
+    result.proof += "\n  Counters: ";
+    for (auto& s : result.counter_seeds) result.proof += s + " ";
+    result.proof += "\n  Rationale: Counters share prefix with pattern but have unexpected continuation\n";
+    
+    return result;
+}
+
+// Edge Case 3: QUANTIFIER_EDGE - Empty, single, multiple
+EdgeCaseResult createQuantifierEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::QUANTIFIER_EDGE;
+    
+    // Choose quantifier type
+    std::uniform_int_distribution<int> qtype(0, 2);
+    int qt = qtype(rng);
+    
+    std::string base = randomAlphaEdge(1, rng); // single char
+    
+    PatternType quant_type;
+    std::string quant_str;
+    if (qt == 0) {
+        quant_type = PatternType::PLUS_QUANTIFIER;
+        quant_str = "+";
+    } else if (qt == 1) {
+        quant_type = PatternType::STAR_QUANTIFIER;
+        quant_str = "*";
+    } else {
+        quant_type = PatternType::OPTIONAL;
+        quant_str = "?";
+    }
+    
+    // Create pattern
+    auto node = PatternNode::createLiteral(base, {base});
+    node->type = quant_type;
+    node->quantified = PatternNode::createLiteral(base, {base});
+    result.initial_ast = node;
+    
+    // Matching seeds based on quantifier
+    if (qt == 0) {
+        // + : one or more - need at least one
+        result.matching_seeds.push_back(base);
+        result.matching_seeds.push_back(base + base);
+        result.matching_seeds.push_back(base + base + base);
+    } else if (qt == 1) {
+        // * : zero or more - empty allowed
+        result.matching_seeds.push_back("");
+        result.matching_seeds.push_back(base);
+        result.matching_seeds.push_back(base + base + base);
+    } else {
+        // ? : zero or one
+        result.matching_seeds.push_back("");
+        result.matching_seeds.push_back(base);
+    }
+    
+    // Counter seeds: different character
+    std::string diff(1, base[0] + 1); // different char
+    if (diff[0] > 'z') diff[0] = 'a';
+    result.counter_seeds.push_back(diff);
+    result.counter_seeds.push_back(diff + diff);
+    
+    result.proof = "EDGE_CASE: QUANTIFIER_EDGE\n";
+    result.proof += "  Pattern: (" + base + ")" + quant_str + "\n";
+    result.proof += "  Matching: ";
+    for (auto& s : result.matching_seeds) result.proof += (s.empty() ? "<empty>, " : s + ", ");
+    result.proof += "\n  Counters: ";
+    for (auto& s : result.counter_seeds) result.proof += s + " ";
+    result.proof += "\n  Rationale: Tests quantifier " + quant_str + " edge cases (empty, single, multiple)\n";
+    
+    return result;
+}
+
+// Edge Case 4: ALTERNATION_EDGE - Some alternatives match, some don't
+EdgeCaseResult createAlternationEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::ALTERNATION_EDGE;
+    
+    // Create 3-5 alternatives
+    int num_alts = 3 + std::uniform_int_distribution<int>(0, 2)(rng);
+    std::vector<std::string> alts;
+    std::set<char> used_chars;
+    
+    for (int i = 0; i < num_alts; i++) {
+        std::string alt;
+        do {
+            alt = randomAlphaEdge(1 + std::uniform_int_distribution<int>(0, 1)(rng), rng);
+        } while (used_chars.count(alt[0]));
+        used_chars.insert(alt[0]);
+        alts.push_back(alt);
+    }
+    
+    // Build AST: (alt1|alt2|alt3)+
+    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+    for (auto& alt : alts) {
+        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+    }
+    auto node = PatternNode::createAlternation(alt_nodes, alts);
+    node->type = PatternType::PLUS_QUANTIFIER;
+    node->quantified = PatternNode::createAlternation(alt_nodes, alts);
+    result.initial_ast = node;
+    
+    // Matching: each alternative individually and combined
+    for (auto& alt : alts) {
+        result.matching_seeds.push_back(alt);
+    }
+    // Combination
+    result.matching_seeds.push_back(alts[0] + alts[1]);
+    
+    // Counter seeds: character NOT in alternatives
+    char counter_char = '!';
+    while (used_chars.count(counter_char)) counter_char++;
+    result.counter_seeds.push_back(std::string(1, counter_char));
+    result.counter_seeds.push_back(std::string(1, counter_char) + std::string(1, counter_char));
+    // Also: wrong combination
+    result.counter_seeds.push_back(alts[0] + counter_char);
+    
+    result.proof = "EDGE_CASE: ALTERNATION_EDGE\n";
+    result.proof += "  Pattern: (";
+    for (size_t i = 0; i < alts.size(); i++) {
+        if (i > 0) result.proof += "|";
+        result.proof += alts[i];
+    }
+    result.proof += ")+\n";
+    result.proof += "  Matching: ";
+    for (auto& s : result.matching_seeds) result.proof += s + " ";
+    result.proof += "\n  Counters: ";
+    for (auto& s : result.counter_seeds) result.proof += s + " ";
+    result.proof += "\n  Rationale: Tests alternation - some alts match, counters fail at different points\n";
+    
+    return result;
+}
+
+// Edge Case 5: NESTED_QUANTIFIER - ((ab)+)*
+EdgeCaseResult createNestedQuantifierEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::NESTED_QUANTIFIER;
+    
+    // Create inner pattern
+    std::string inner = randomAlphaEdge(2, rng);
+    
+    // Build AST: ((inner)+
+    auto inner_node = PatternNode::createLiteral(inner, {inner});
+    inner_node->type = PatternType::PLUS_QUANTIFIER;
+    inner_node->quantified = PatternNode::createLiteral(inner, {inner});
+    
+    // Outer: *
+    auto node = PatternNode::createQuantified(inner_node, PatternType::STAR_QUANTIFIER, {inner});
+    result.initial_ast = node;
+    
+    // Matching: inner repeated
+    result.matching_seeds.push_back(inner);
+    result.matching_seeds.push_back(inner + inner);
+    result.matching_seeds.push_back(inner + inner + inner);
+    
+    // Counter: inner + unexpected (partial match that fails)
+    static const char extras[] = "xyzXYZ012!@#";
+    std::uniform_int_distribution<int> extra_dist(0, sizeof(extras) - 2);
+    for (int i = 0; i < 6; i++) {
+        result.counter_seeds.push_back(inner + extras[extra_dist(rng)]);
+    }
+    
+    result.proof = "EDGE_CASE: NESTED_QUANTIFIER\n";
+    result.proof += "  Pattern: ((" + inner + ")+)*\n";
+    result.proof += "  Matching: ";
+    for (auto& s : result.matching_seeds) result.proof += s + " ";
+    result.proof += "\n  Counters: ";
+    for (auto& s : result.counter_seeds) result.proof += s + " ";
+    result.proof += "\n  Rationale: Tests nested quantifiers - inner + should match, partial should fail\n";
+    
+    return result;
+}
+
+// Main edge case dispatcher
+EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
+    switch (type) {
+        case EdgeCaseType::RANGE_BOUNDARY:
+            return createRangeBoundaryEdge(rng);
+        case EdgeCaseType::PARTIAL_MATCH_FAIL:
+            return createPartialMatchEdge(rng);
+        case EdgeCaseType::QUANTIFIER_EDGE:
+            return createQuantifierEdge(rng);
+        case EdgeCaseType::ALTERNATION_EDGE:
+            return createAlternationEdge(rng);
+        case EdgeCaseType::NESTED_QUANTIFIER:
+            return createNestedQuantifierEdge(rng);
+        default:
+            return createPartialMatchEdge(rng);
+    }
+}
+
 // Serialize PatternNode to string with capture tags
 std::string serializePattern(std::shared_ptr<PatternNode> node) {
     if (!node) return "";
@@ -4308,13 +4631,53 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     tc.complexity = opts.complexity;
     tc.fragments.clear();
     
-    auto [matching_seeds, counter_seeds] = generateSeeds(tc.complexity, used_inputs);
+    // 5% chance to use edge-case coordinated seeding
+    bool use_edge_case = (std::uniform_int_distribution<int>(0, 99)(rng) < 5);
+    std::shared_ptr<PatternNode> edge_ast = nullptr;
+    EdgeCaseResult edge;  // Declare outside to use in fragment handling
     
-    tc.matching_inputs = matching_seeds;
-    tc.counter_inputs = counter_seeds;
+    if (use_edge_case) {
+        // Randomly select an edge case type (skip NESTED_QUANTIFIER for now - creates conflicting expectations)
+        std::uniform_int_distribution<int> edge_type_dist(0, 3);
+        EdgeCaseType edge_types[] = {
+            EdgeCaseType::RANGE_BOUNDARY,
+            EdgeCaseType::PARTIAL_MATCH_FAIL,
+            EdgeCaseType::QUANTIFIER_EDGE,
+            EdgeCaseType::ALTERNATION_EDGE
+        };
+        EdgeCaseType selected_type = edge_types[edge_type_dist(rng)];
+        
+        edge = generateEdgeCase(selected_type, rng);
+        
+        // Use edge-case seeds
+        tc.matching_inputs = edge.matching_seeds;
+        tc.counter_inputs = edge.counter_seeds;
+        edge_ast = edge.initial_ast;
+        
+        tc.proof += "\n=== EDGE CASE GENERATION ===\n";
+        tc.proof += edge.proof;
+        tc.proof += "\n";
+    } else {
+        // Normal random seeding
+        auto [matching_seeds, counter_seeds] = generateSeeds(tc.complexity, used_inputs);
+        tc.matching_inputs = matching_seeds;
+        tc.counter_inputs = counter_seeds;
+    }
     
-    PatternResult result = generateSeparatingPattern(tc.matching_inputs, tc.counter_inputs, 
+    PatternResult result;
+    
+    std::map<std::string, std::string> edge_fragments;
+    if (use_edge_case && edge_ast) {
+        // Use edge-case AST directly
+        result.ast = edge_ast;
+        // Add fragment definitions from edge case
+        for (const auto& frag : edge.fragments) {
+            result.fragments[frag.first] = frag.second;
+        }
+    } else {
+        result = generateSeparatingPattern(tc.matching_inputs, tc.counter_inputs, 
                                                      tc.complexity, rng);
+    }
 
     // Now apply rewrite and capture tags
     if (result.ast) {
@@ -4509,7 +4872,7 @@ void TestGenerator::writePatternFile(const std::vector<TestCase>& tests, const s
         out << "\n";
     }
     
-    // Write [CATEGORIES] section
+    // Write [CATEGORIES] section (0-indexed)
     out << "[CATEGORIES]\n";
     out << "0: safe\n";
     out << "1: caution\n";
@@ -4957,7 +5320,7 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
         if (result != 0) { failed++; continue; }
         
         bool all_matched = true;
-        int expected_category = static_cast<int>(tc.category);
+        int expected_category = static_cast<int>(tc.category) - 1;  // dfa_eval returns 1-indexed
         for (const auto& match_in : tc.matching_inputs) {
             std::string eval_cmd = "cd " + abs_cwd + "/.. && ./tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\" 2>/dev/null";
             FILE* fp = popen(eval_cmd.c_str(), "r");
@@ -4968,7 +5331,7 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
                 while (fgets(buf, sizeof(buf), fp)) {
                     if (strstr(buf, "matched=1")) matched = true;
                     char* cat_str = strstr(buf, "category=");
-                    if (cat_str) matched_category = atoi(cat_str + 9);
+                    if (cat_str) matched_category = atoi(cat_str + 9) - 1;  // Convert to 0-indexed
                 }
                 pclose(fp);
             }
@@ -4985,7 +5348,7 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
                     if (strstr(cbuf, "matched=1")) {
                         int counter_cat = 0;
                         char* cat_str = strstr(cbuf, "category=");
-                        if (cat_str) counter_cat = atoi(cat_str + 9);
+                        if (cat_str) counter_cat = atoi(cat_str + 9) - 1;  // Convert to 0-indexed
                         if (counter_cat == expected_category) any_counter_matched = true;
                     }
                 }

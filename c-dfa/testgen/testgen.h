@@ -57,6 +57,30 @@ void rewritePattern(std::shared_ptr<PatternNode> node, std::mt19937& rng);
 std::vector<std::string> collectCaptureSeeds(std::shared_ptr<PatternNode> node);
 
 // ============================================================================
+// Edge-Case Seeding Types - Coordinated seeds + pattern for bug detection
+// ============================================================================
+
+enum class EdgeCaseType {
+    RANGE_BOUNDARY,      // Consecutive chars at boundaries (a-z, 0-9)
+    PARTIAL_MATCH_FAIL,  // Prefix matches, then fails (ab matches, abx fails)
+    QUANTIFIER_EDGE,    // Empty, single, multiple repetitions
+    ALTERNATION_EDGE,   // Some alternatives match, some don't
+    NESTED_QUANTIFIER   // Nested quantifiers ((ab)+)*
+};
+
+struct EdgeCaseResult {
+    std::vector<std::string> matching_seeds;
+    std::vector<std::string> counter_seeds;
+    std::shared_ptr<PatternNode> initial_ast;
+    std::string proof;
+    EdgeCaseType type;
+    std::map<std::string, std::string> fragments;  // fragment definitions
+};
+
+// Generate edge-case coordinated seeds + pattern
+EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng);
+
+// ============================================================================
 // Test Generator Types
 // ============================================================================
 

@@ -353,8 +353,6 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
 #if DFA_EVAL_DEBUG
             fprintf(stderr, "EVAL DEBUG: No transition for '%c' at pos %zu - current state flags=0x%04X, accept=%u, eos=%u\n",
                     (c >= 32 && c < 127) ? c : '.', pos, curr->flags, curr->accepting_pattern_id, curr->eos_target);
-            // BUG FIX: If there's no transition, we should NOT match, regardless of whether current state is accepting
-            // The input has a character that doesn't match any transition, so it's not a match
             fprintf(stderr, "EVAL DEBUG: No transition - returning false (no match)\n");
 #endif
             return false;

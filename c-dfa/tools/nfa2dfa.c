@@ -344,7 +344,6 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
     
     // Check if there are any fork states in the NFA (is_eos_target with category)
     // A fork state is a state that can match empty (is_eos_target) and has a category
-    // Note: We used to check pattern_id == 0, but that's wrong - fork states can now have pattern_id
     bool has_fork = false;
     for (int i = 0; i < nfa_state_count; i++) {
         if (nfa[i].is_eos_target && nfa[i].category_mask != 0) {
