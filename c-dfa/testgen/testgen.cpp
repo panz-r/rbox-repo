@@ -55,6 +55,111 @@ std::shared_ptr<PatternNode> PatternNode::createQuantified(std::shared_ptr<Patte
     return node;
 }
 
+// Helper: Create pattern like (a|b|c)+
+std::shared_ptr<PatternNode> createAlternationPlus(const std::vector<std::string>& alts, const std::vector<std::string>& seeds) {
+    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+    for (const auto& alt : alts) {
+        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+    }
+    auto alt_node = PatternNode::createAlternation(alt_nodes, seeds);
+    alt_node->type = PatternType::PLUS_QUANTIFIER;
+    alt_node->quantified = PatternNode::createAlternation(alt_nodes, seeds);
+    return alt_node;
+}
+
+// Helper: Create pattern like (a|b|c)*
+std::shared_ptr<PatternNode> createAlternationStar(const std::vector<std::string>& alts, const std::vector<std::string>& seeds) {
+    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+    for (const auto& alt : alts) {
+        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+    }
+    auto alt_node = PatternNode::createAlternation(alt_nodes, seeds);
+    alt_node->type = PatternType::STAR_QUANTIFIER;
+    alt_node->quantified = PatternNode::createAlternation(alt_nodes, seeds);
+    return alt_node;
+}
+
+// Helper: Create pattern like (a|b|c)?
+std::shared_ptr<PatternNode> createAlternationOptional(const std::vector<std::string>& alts, const std::vector<std::string>& seeds) {
+    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+    for (const auto& alt : alts) {
+        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+    }
+    auto alt_node = PatternNode::createAlternation(alt_nodes, seeds);
+    alt_node->type = PatternType::OPTIONAL;
+    alt_node->quantified = PatternNode::createAlternation(alt_nodes, seeds);
+    return alt_node;
+}
+
+// Helper: Create pattern like (literal)+
+std::shared_ptr<PatternNode> createLiteralPlus(const std::string& literal, const std::vector<std::string>& seeds) {
+    auto lit_node = PatternNode::createLiteral(literal, seeds);
+    lit_node->type = PatternType::PLUS_QUANTIFIER;
+    lit_node->quantified = PatternNode::createLiteral(literal, seeds);
+    return lit_node;
+}
+
+// Helper: Create pattern like (literal)*
+std::shared_ptr<PatternNode> createLiteralStar(const std::string& literal, const std::vector<std::string>& seeds) {
+    auto lit_node = PatternNode::createLiteral(literal, seeds);
+    lit_node->type = PatternType::STAR_QUANTIFIER;
+    lit_node->quantified = PatternNode::createLiteral(literal, seeds);
+    return lit_node;
+}
+
+// Helper: Create pattern like (literal)?
+std::shared_ptr<PatternNode> createLiteralOptional(const std::string& literal, const std::vector<std::string>& seeds) {
+    auto lit_node = PatternNode::createLiteral(literal, seeds);
+    lit_node->type = PatternType::OPTIONAL;
+    lit_node->quantified = PatternNode::createLiteral(literal, seeds);
+    return lit_node;
+}
+
+// Helper: Create fragment reference like ((frag))+ 
+std::shared_ptr<PatternNode> createFragmentPlus(const std::string& frag_name, const std::vector<std::string>& seeds) {
+    auto frag_node = PatternNode::createFragment(frag_name, seeds);
+    frag_node->type = PatternType::PLUS_QUANTIFIER;
+    frag_node->quantified = PatternNode::createFragment(frag_name, seeds);
+    return frag_node;
+}
+
+// Helper: Create fragment reference like ((frag))*
+std::shared_ptr<PatternNode> createFragmentStar(const std::string& frag_name, const std::vector<std::string>& seeds) {
+    auto frag_node = PatternNode::createFragment(frag_name, seeds);
+    frag_node->type = PatternType::STAR_QUANTIFIER;
+    frag_node->quantified = PatternNode::createFragment(frag_name, seeds);
+    return frag_node;
+}
+
+// Helper: Wrap an AST node with capture tags
+std::shared_ptr<PatternNode> wrapWithCaptureTags(std::shared_ptr<PatternNode> node, const std::string& tag_name) {
+    if (!node) return nullptr;
+    node->capture_tag = tag_name;
+    return node;
+}
+
+// Helper: Create char class literal like [abc]
+std::shared_ptr<PatternNode> createCharClass(const std::string& chars, const std::vector<std::string>& seeds) {
+    auto node = std::make_shared<PatternNode>();
+    node->type = PatternType::LITERAL;
+    node->value = "[" + chars + "]";
+    node->matched_seeds = seeds;
+    return node;
+}
+
+// Helper: Create char class with plus quantifier like [abc]+
+std::shared_ptr<PatternNode> createCharClassPlus(const std::string& chars, const std::vector<std::string>& seeds) {
+    auto char_node = createCharClass(chars, seeds);
+    char_node->type = PatternType::PLUS_QUANTIFIER;
+    char_node->quantified = createCharClass(chars, seeds);
+    return char_node;
+}
+
+// Helper: Create sequence of nodes
+std::shared_ptr<PatternNode> createSequenceNode(const std::vector<std::shared_ptr<PatternNode>>& nodes, const std::vector<std::string>& seeds) {
+    return PatternNode::createSequence(nodes, seeds);
+}
+
 // Serialize PatternNode to string with capture tags
 std::string serializePattern(std::shared_ptr<PatternNode> node) {
     if (!node) return "";
@@ -885,9 +990,19 @@ PatternResult tryRepetition(const std::vector<std::string>& matching,
             std::map<std::string, std::string> frags;
             std::string frag_pattern = extractFragment(unit, frags, rng);
             result.fragments.insert(frags.begin(), frags.end());
+            
+            // Extract fragment name from pattern like "((name))+"
+            size_t start = frag_pattern.find("((");
+            size_t end = frag_pattern.find("))+");
+            if (start != std::string::npos && end != std::string::npos && start + 2 < end) {
+                std::string frag_name = frag_pattern.substr(start + 2, end - start - 2);
+                result.ast = createFragmentPlus(frag_name, matching);
+            }
             result.pattern = frag_pattern;
         } else {
-            result.pattern = "(" + unit + ")+";
+            // Use AST helper
+            result.ast = createLiteralPlus(unit, matching);
+            result.pattern = serializePattern(result.ast);
         }
         
         result.proof += "  Repetition: " + result.pattern + "\n";
@@ -989,8 +1104,31 @@ PatternResult tryPrefixPlusFragment(const std::vector<std::string>& matching,
                 std::map<std::string, std::string> frags;
                 std::string frag_pattern = extractFragment(char_class, frags, rng);
                 result.fragments.insert(frags.begin(), frags.end());
+                
+                // Extract fragment name and create AST
+                size_t start = frag_pattern.find("((");
+                size_t end = frag_pattern.find("))+");
+                if (start != std::string::npos && end != std::string::npos && start + 2 < end) {
+                    std::string frag_name = frag_pattern.substr(start + 2, end - start - 2);
+                    auto frag_node = createFragmentPlus(frag_name, matching);
+                    if (!prefix.empty()) {
+                        // Create sequence: prefix + fragment+
+                        auto prefix_node = PatternNode::createLiteral(prefix, {});
+                        result.ast = PatternNode::createSequence({prefix_node, frag_node}, matching);
+                    } else {
+                        result.ast = frag_node;
+                    }
+                }
                 result.pattern = prefix + frag_pattern;
             } else {
+                // Create AST for char class pattern
+                auto char_node = createCharClassPlus(char_class, matching);
+                if (!prefix.empty()) {
+                    auto prefix_node = PatternNode::createLiteral(prefix, {});
+                    result.ast = PatternNode::createSequence({prefix_node, char_node}, matching);
+                } else {
+                    result.ast = char_node;
+                }
                 result.pattern = pattern;
             }
             result.proof += "  Prefix+: " + result.pattern + "\n";
@@ -1105,6 +1243,29 @@ PatternResult trySuffixPlusFragment(const std::vector<std::string>& matching,
         }
         
         if (!any_match) {
+            // Create AST for suffix+ pattern
+            auto char_node = createCharClassPlus(char_class, matching);
+            auto suffix_node = PatternNode::createLiteral(suffix, {});
+            
+            if (match_chars.size() >= 2 && std::uniform_int_distribution<int>(0, 1)(rng) == 1) {
+                // Try with fragment
+                std::map<std::string, std::string> frags;
+                std::string frag_pattern = extractFragment(char_class, frags, rng);
+                result.fragments.insert(frags.begin(), frags.end());
+                
+                size_t start = frag_pattern.find("((");
+                size_t end = frag_pattern.find("))+");
+                if (start != std::string::npos && end != std::string::npos && start + 2 < end) {
+                    std::string frag_name = frag_pattern.substr(start + 2, end - start - 2);
+                    auto frag_node = createFragmentPlus(frag_name, matching);
+                    result.ast = PatternNode::createSequence({frag_node, suffix_node}, matching);
+                }
+                result.pattern = frag_pattern + suffix;
+            } else {
+                result.ast = PatternNode::createSequence({char_node, suffix_node}, matching);
+                result.pattern = "(" + char_class + ")+" + suffix;
+            }
+            
             result.proof += "  Suffix+: " + result.pattern + "\n";
             result.proof += "    Suffix: '" + suffix + "'\n";
             result.proof += "    Char class: (" + char_class + ")+\n";
@@ -1351,6 +1512,17 @@ PatternResult tryFragmentOnly(const std::vector<std::string>& matching,
         return result;
     }
     
+    // Build AST for fragment pattern
+    if (!result.pattern.empty()) {
+        // Extract fragment name from pattern like "((name))+"
+        size_t start = result.pattern.find("((");
+        size_t end = result.pattern.find("))+");
+        if (start != std::string::npos && end != std::string::npos && start + 2 < end) {
+            std::string frag_name = result.pattern.substr(start + 2, end - start - 2);
+            result.ast = createFragmentPlus(frag_name, matching);
+        }
+    }
+    
     result.proof += "  FragmentOnly: " + result.pattern + "\n";
     result.proof += "    Char class contains " + std::to_string(all_chars.size()) + " unique chars\n";
     if (!prefix.empty()) {
@@ -1427,6 +1599,22 @@ PatternResult tryOptionalQuantifier(const std::vector<std::string>& matching,
             result.pattern = "(" + opt_part + ")?";
             if (!rest.empty()) result.pattern += rest;
             
+            // Create AST
+            auto opt_node = PatternNode::createLiteral(opt_part, {opt_part});
+            opt_node->type = PatternType::OPTIONAL;
+            opt_node->quantified = PatternNode::createLiteral(opt_part, {opt_part});
+            
+            if (!rest.empty()) {
+                auto rest_node = PatternNode::createLiteral(rest, {rest});
+                result.ast = PatternNode::createSequence({opt_node, rest_node}, matching);
+            } else {
+                result.ast = opt_node;
+            }
+            
+            if (result.ast) {
+                result.pattern = serializePattern(result.ast);
+            }
+            
             result.proof += "  Optional: " + result.pattern + "\n";
             result.proof += "    Makes '" + opt_part + "' optional before '" + rest + "'\n";
             result.proof += "    MATCHES: '" + prefix + "' and '" + rest + "'\n";
@@ -1498,6 +1686,15 @@ PatternResult tryEmptyAlternative(const std::vector<std::string>& matching,
         
         if (!any_match) {
             result.pattern = pattern;
+            
+            // Create AST with empty alternative
+            std::vector<std::shared_ptr<PatternNode>> nodes;
+            for (const auto& alt : matching) {
+                nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+            }
+            nodes.push_back(PatternNode::createLiteral("", {}));  // empty alternative
+            result.ast = PatternNode::createAlternation(nodes, matching);
+            
             result.proof += "  EmptyAlt: " + result.pattern + "\n";
             result.proof += "    Added empty alternative |\n";
             result.proof += "    MATCHES: " + std::to_string(matching.size()) + " inputs\n";
@@ -1572,6 +1769,11 @@ PatternResult tryNestedGroup(const std::vector<std::string>& matching,
         }
         
         if (!any_match) {
+            result.pattern = "((" + base_pattern + "))";
+            
+            // For nested groups, we keep the same AST but wrap it
+            // Just use the base pattern as-is since nesting doesn't change semantics
+            
             result.proof += "  Nested: " + result.pattern + "\n";
             result.proof += "    Wrapped base pattern in extra parentheses\n";
             result.proof += "    VERIFIED: same matching as base, counters excluded\n";
@@ -1657,6 +1859,10 @@ PatternResult tryMultiCharFragment(const std::vector<std::string>& matching,
         
         if (!any_match) {
             result.pattern = pattern;
+            
+            // Create AST
+            result.ast = createFragmentPlus(frag_name, matching);
+            
             result.proof += "  MultiFrag: " + result.pattern + "\n";
             result.proof += "    Fragment: " + frag_name + " = " + common_substr + "\n";
             result.proof += "    MATCHES: strings that are repetitions of " + common_substr + "\n";
@@ -1825,8 +2031,23 @@ PatternResult tryAlternationWithQuantifier(const std::vector<std::string>& match
         if (any_match) continue;
         
         // Decide on quantifier randomly
-        if (std::uniform_int_distribution<int>(0, 1)(rng) == 0) {
+        bool use_star = std::uniform_int_distribution<int>(0, 1)(rng) == 0;
+        if (use_star) {
             pattern = pattern.substr(0, pattern.size() - 1) + ")*";
+        }
+        
+        // Create AST
+        if (use_star) {
+            std::vector<std::shared_ptr<PatternNode>> nodes;
+            for (const auto& alt : alts) {
+                nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+            }
+            auto alt_node = PatternNode::createAlternation(nodes, matching);
+            alt_node->type = PatternType::STAR_QUANTIFIER;
+            alt_node->quantified = PatternNode::createAlternation(nodes, matching);
+            result.ast = alt_node;
+        } else {
+            result.ast = createAlternationPlus(alts, matching);
         }
         
         result.pattern = pattern;
@@ -1902,11 +2123,18 @@ PatternResult trySequenceWithQuantifier(const std::vector<std::string>& matching
         std::uniform_int_distribution<int> qdist(0, 2);
         int qtype = qdist(rng);
         
+        // Create AST based on quantifier type
         if (qtype == 0) {
+            result.ast = createLiteralPlus(unit, matching);
             result.pattern = "(" + unit + ")+";
         } else if (qtype == 1) {
+            result.ast = createLiteralStar(unit, matching);
             result.pattern = "(" + unit + ")*";
         } else {
+            auto lit_node = PatternNode::createLiteral(unit, matching);
+            lit_node->type = PatternType::OPTIONAL;
+            lit_node->quantified = PatternNode::createLiteral(unit, matching);
+            result.ast = lit_node;
             result.pattern = "(" + unit + ")";
         }
         
@@ -1986,6 +2214,13 @@ PatternResult tryOptionalSequence(const std::vector<std::string>& matching,
             
             if (!any_match) {
                 result.pattern = pattern;
+                
+                // Create AST for optional sequence
+                auto full_node = PatternNode::createLiteral(opt_part + rest, {opt_part + rest});
+                full_node->type = PatternType::OPTIONAL;
+                full_node->quantified = PatternNode::createLiteral(opt_part + rest, {opt_part + rest});
+                result.ast = full_node;
+                
                 result.proof += "  OptSeq: " + result.pattern + "\n";
                 result.proof += "    Optional: '" + opt_part + rest + "'\n";
                 result.proof += "    MATCHES: with/without the optional part\n";
@@ -2089,7 +2324,38 @@ PatternResult tryNestedQuantifiers(const std::vector<std::string>& matching,
     }
     
     if (!any_match) {
-        result.pattern = outer_pattern;
+        // Build AST based on nest_type
+        auto base_node = PatternNode::createLiteral(base_unit, matching);
+        
+        switch (nest_type) {
+            case 0: { // ((unit)+)*
+                auto inner_node = createLiteralPlus(base_unit, matching);
+                inner_node->type = PatternType::PLUS_QUANTIFIER;
+                result.ast = PatternNode::createQuantified(inner_node, PatternType::STAR_QUANTIFIER, matching);
+                break;
+            }
+            case 1: { // ((unit)*)+
+                auto inner_node = createLiteralStar(base_unit, matching);
+                result.ast = PatternNode::createQuantified(inner_node, PatternType::PLUS_QUANTIFIER, matching);
+                break;
+            }
+            case 2: { // ((unit)+)?
+                auto inner_node = createLiteralPlus(base_unit, matching);
+                result.ast = PatternNode::createQuantified(inner_node, PatternType::OPTIONAL, matching);
+                break;
+            }
+            default: { // ((unit)*)?
+                auto inner_node = createLiteralStar(base_unit, matching);
+                result.ast = PatternNode::createQuantified(inner_node, PatternType::OPTIONAL, matching);
+                break;
+            }
+        }
+        
+        if (result.ast) {
+            result.pattern = serializePattern(result.ast);
+        } else {
+            result.pattern = outer_pattern;
+        }
         result.proof += "  NestedQuant: " + result.pattern + "\n";
         result.proof += "    Inner: " + inner_pattern + "\n";
         result.proof += "    Outer: " + outer_pattern + "\n";
@@ -2196,7 +2462,12 @@ PatternResult tryCharClassSequence(const std::vector<std::string>& matching,
         return result;
     }
     
+    // Create AST
+    auto prefix_node = PatternNode::createLiteral(prefix, {});
+    auto char_node = createCharClassPlus(char_class, matching);
+    result.ast = PatternNode::createSequence({prefix_node, char_node}, matching);
     result.pattern = pattern;
+    
     result.proof += "  CharClassSeq: " + result.pattern + "\n";
     result.proof += "    Prefix: '" + prefix + "'\n";
     result.proof += "    Char class: (" + char_class + ")+\n";
@@ -2250,7 +2521,16 @@ PatternResult tryStarQuantifier(const std::vector<std::string>& matching,
             std::string frag_pattern = extractFragment(unit, frags, rng);
             result.fragments.insert(frags.begin(), frags.end());
             result.pattern = "(" + frag_pattern + ")*";
+            
+            // Extract fragment name and create AST
+            size_t start = frag_pattern.find("((");
+            size_t end = frag_pattern.find("))+");
+            if (start != std::string::npos && end != std::string::npos && start + 2 < end) {
+                std::string frag_name = frag_pattern.substr(start + 2, end - start - 2);
+                result.ast = createFragmentStar(frag_name, matching);
+            }
         } else {
+            result.ast = createLiteralStar(unit, matching);
             result.pattern = "(" + unit + ")*";
         }
         
@@ -2355,7 +2635,12 @@ PatternResult tryCharClassPlus(const std::vector<std::string>& matching,
         return result;
     }
     
+    // Create AST
+    auto prefix_node = PatternNode::createLiteral(prefix, {});
+    auto char_node = createCharClassPlus(char_class, matching);
+    result.ast = PatternNode::createSequence({prefix_node, char_node}, matching);
     result.pattern = pattern;
+    
     result.proof += "  CharClassPlus: " + result.pattern + "\n";
     result.proof += "    Prefix: '" + prefix + "'\n";
     result.proof += "    Char class: (" + char_class + ")+\n";
@@ -2432,6 +2717,14 @@ PatternResult tryMixedQuantifiers(const std::vector<std::string>& matching,
             
             if (!any_counter) {
                 result.pattern = pattern1;
+                
+                // Create AST: part1 + (part2)?
+                auto part1_node = PatternNode::createLiteral(part1, {});
+                auto part2_node = PatternNode::createLiteral(part2, {part2});
+                part2_node->type = PatternType::OPTIONAL;
+                part2_node->quantified = PatternNode::createLiteral(part2, {part2});
+                result.ast = PatternNode::createSequence({part1_node, part2_node}, matching);
+                
                 result.proof += "  MixedQuant: " + result.pattern + "\n";
                 result.proof += "    Part1: '" + part1 + "', Part2: '" + part2 + "' optional\n";
                 result.proof += "    VERIFIED: no counter matches\n";
@@ -2490,6 +2783,14 @@ PatternResult tryMixedQuantifiers(const std::vector<std::string>& matching,
             
             if (!any_counter) {
                 result.pattern = pattern2;
+                
+                // Create AST: (part1)* + part2
+                auto part1_node = PatternNode::createLiteral(part1, {});
+                part1_node->type = PatternType::STAR_QUANTIFIER;
+                part1_node->quantified = PatternNode::createLiteral(part1, {});
+                auto part2_node = PatternNode::createLiteral(part2, {});
+                result.ast = PatternNode::createSequence({part1_node, part2_node}, matching);
+                
                 result.proof += "  MixedQuant: " + result.pattern + "\n";
                 result.proof += "    Part1: '" + part1 + "'*, Part2: '" + part2 + "'\n";
                 result.proof += "    VERIFIED: no counter matches\n";
@@ -2619,6 +2920,12 @@ PatternResult tryFragmentChaining(const std::vector<std::string>& matching,
             
             if (!any_match) {
                 result.pattern = pattern;
+                
+                // Create AST: ((frag1))+((frag2))+
+                auto frag1_node = createFragmentPlus(name1, matching);
+                auto frag2_node = createFragmentPlus(name2, matching);
+                result.ast = PatternNode::createSequence({frag1_node, frag2_node}, matching);
+                
                 result.proof += "  FragChain: " + result.pattern + "\n";
                 result.proof += "    Frag1: " + name1 + "=" + frag1 + "\n";
                 result.proof += "    Frag2: " + name2 + "=" + frag2 + "\n";
@@ -2683,6 +2990,13 @@ PatternResult tryDeepNesting(const std::vector<std::string>& matching,
     if (all_match) {
         result.pattern = grouped;
         result.fragments = base.fragments;
+        
+        // Create AST - wrap base.ast in a grouping (no quantifier)
+        if (base.ast) {
+            // For grouping, we just serialize the child directly
+            result.ast = base.ast;
+        }
+        
         result.proof += "  DeepNest: " + result.pattern + "\n";
         result.proof += "    Single grouping (safe - not fragment reference)\n";
         result.proof += "    VERIFIED: same matching as base\n";
@@ -2805,6 +3119,11 @@ PatternResult tryMultiFragmentCombo(const std::vector<std::string>& matching,
         return result;
     }
     
+    // Create AST
+    auto frag1_node = createFragmentPlus(frag1_name, group1);
+    auto frag2_node = createFragmentPlus(frag2_name, group2);
+    result.ast = PatternNode::createSequence({frag1_node, frag2_node}, matching);
+    
     result.proof += "  MultiFrag: " + result.pattern + "\n";
     result.proof += "    frag1: " + frag1_name + "=" + frag1_def + "\n";
     result.proof += "    frag2: " + frag2_name + "=" + frag2_def + "\n";
@@ -2833,7 +3152,10 @@ PatternResult tryNestedAlternation(const std::vector<std::string>& matching,
     }
     pattern += ")+";
     
+    // Create AST
+    result.ast = createAlternationPlus(matching, matching);
     result.pattern = pattern;
+    
     result.proof += "  NestedAlt: " + result.pattern + "\n";
     return result;
 }
@@ -2876,6 +3198,25 @@ PatternResult tryQuantifierStack(const std::vector<std::string>& matching,
         }
         
         if (all_match) {
+            // Create AST for quantifier stack
+            auto base_node = PatternNode::createLiteral(base, matching);
+            if (pattern.find("*)+") != std::string::npos) {
+                // (base*)*
+                base_node->type = PatternType::STAR_QUANTIFIER;
+                base_node->quantified = PatternNode::createLiteral(base, matching);
+                result.ast = PatternNode::createQuantified(base_node, PatternType::PLUS_QUANTIFIER, matching);
+            } else if (pattern.find("+)*") != std::string::npos) {
+                // (base+)*
+                base_node->type = PatternType::PLUS_QUANTIFIER;
+                base_node->quantified = PatternNode::createLiteral(base, matching);
+                result.ast = PatternNode::createQuantified(base_node, PatternType::STAR_QUANTIFIER, matching);
+            } else {
+                // (base?)*
+                base_node->type = PatternType::OPTIONAL;
+                base_node->quantified = PatternNode::createLiteral(base, matching);
+                result.ast = PatternNode::createQuantified(base_node, PatternType::PLUS_QUANTIFIER, matching);
+            }
+            
             result.pattern = pattern;
             result.proof += "  QuantStack: " + result.pattern + "\n";
             return result;
@@ -2930,8 +3271,20 @@ PatternResult tryLongAlternation(const std::vector<std::string>& matching,
     pattern += ")";
     
     // Randomly add quantifier
-    if (std::uniform_int_distribution<int>(0, 1)(rng) == 0) {
+    bool use_plus = std::uniform_int_distribution<int>(0, 1)(rng) == 0;
+    if (use_plus) {
         pattern += "+";
+    }
+    
+    // Create AST
+    if (use_plus) {
+        result.ast = createAlternationPlus(alts, matching);
+    } else {
+        std::vector<std::shared_ptr<PatternNode>> nodes;
+        for (const auto& alt : alts) {
+            nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+        }
+        result.ast = PatternNode::createAlternation(nodes, matching);
     }
     
     result.pattern = pattern;
@@ -2972,6 +3325,9 @@ PatternResult tryAltWithAffix(const std::vector<std::string>& matching,
         result.proof += "  AltAffix: verification failed\n";
         return result;
     }
+    
+    // Create AST
+    result.ast = createAlternationPlus(matching, matching);
     
     result.pattern = pattern;
     result.proof += "  AltAffix: " + result.pattern + "\n";
@@ -3023,6 +3379,17 @@ PatternResult tryTripleQuant(const std::vector<std::string>& matching,
     }
     
     result.pattern = pattern;
+    
+    // Create AST for triple quantifier
+    if (pattern.find("?") != std::string::npos) {
+        // ((base)?)+
+        auto inner_node = createLiteralOptional(base, matching);
+        result.ast = createLiteralPlus("(" + base + ")?", matching);
+    } else {
+        // (base)+
+        result.ast = createLiteralPlus(base, matching);
+    }
+    
     result.proof += "  TripleQ: " + result.pattern + "\n";
     return result;
 }
@@ -3119,6 +3486,19 @@ PatternResult tryComplexAlternation(const std::vector<std::string>& matching,
     }
     
     result.pattern = pattern;
+    
+    // Create AST
+    result.ast = PatternNode::createAlternation(
+        [&alts]() {
+            std::vector<std::shared_ptr<PatternNode>> nodes;
+            for (const auto& alt : alts) {
+                nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+            }
+            return nodes;
+        }(),
+        matching
+    );
+    
     result.proof += "  ComplexAlt: " + result.pattern + "\n";
     result.proof += "    Alternatives: " + std::to_string(alts.size()) + "\n";
     result.proof += "    MATCHES: " + std::to_string(matching.size()) + " original inputs\n";
@@ -3141,7 +3521,7 @@ PatternResult tryCaptureTags(const std::vector<std::string>& matching,
         return result;
     }
     
-    // First try to get any valid pattern
+    // First try to get any valid pattern (with AST)
     PatternResult base = tryAlternation(matching, counters, rng);
     if (base.pattern.empty()) {
         base = tryPrefixPlusFragment(matching, counters, rng);
@@ -3159,26 +3539,34 @@ PatternResult tryCaptureTags(const std::vector<std::string>& matching,
     std::string cap_name = cap_names[std::uniform_int_distribution<int>(0, 7)(rng)];
     cap_name += std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
     
-    // Wrap pattern in capture tags
-    result.pattern = "<" + cap_name + ">" + base.pattern + "</" + cap_name + ">";
+    // Use AST if available, otherwise wrap string
+    if (base.ast) {
+        result.ast = wrapWithCaptureTags(base.ast, cap_name);
+        result.pattern = serializePattern(result.ast);
+    } else {
+        // Fallback to string manipulation
+        result.pattern = "<" + cap_name + ">" + base.pattern + "</" + cap_name + ">";
+    }
     result.fragments = base.fragments;
     
     // Verify - capture tags shouldn't change matching behavior
+    // Use base.ast's pattern for verification since result may have been modified
+    std::string verify_pattern = base.ast ? serializePattern(base.ast) : base.pattern;
     bool all_match = true;
     for (const auto& m : matching) {
         bool matches = false;
         // Check if base pattern matches
-        if (base.pattern.find("|") != std::string::npos) {
+        if (verify_pattern.find("|") != std::string::npos) {
             // Alternation - check if m is one of the options
             for (const auto& alt : matching) {
                 if (m == alt) { matches = true; break; }
             }
-        } else if (base.pattern.find("((") != std::string::npos) {
+        } else if (verify_pattern.find("((") != std::string::npos) {
             // Fragment - check if m fits the fragment pattern
             matches = true; // Base already verified
         } else {
             // Literal
-            matches = (base.pattern == m);
+            matches = (verify_pattern == m);
         }
         if (!matches) { all_match = false; break; }
     }
@@ -3288,6 +3676,15 @@ PatternResult trySingleCharFragment(const std::vector<std::string>& matching,
     
     // Use the fragment pattern
     result.pattern = frag_pattern;
+    
+    // Create AST - extract fragment name from pattern like "((name))+"
+    size_t start = frag_pattern.find("((");
+    size_t end = frag_pattern.find("))+");
+    if (start != std::string::npos && end != std::string::npos && start + 2 < end) {
+        std::string frag_name = frag_pattern.substr(start + 2, end - start - 2);
+        result.ast = createFragmentPlus(frag_name, matching);
+    }
+    
     result.proof += "  SingleCharFrag: " + result.pattern + "\n";
     result.proof += "    Single char: '" + char_str + "'\n";
     result.proof += "    MATCHES: strings containing '" + char_str + "'\n";
@@ -3919,10 +4316,10 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     PatternResult result = generateSeparatingPattern(tc.matching_inputs, tc.counter_inputs, 
                                                      tc.complexity, rng);
 
-    // Now apply rewrite (only safe strategies that don't change semantics)
+    // Now apply rewrite and capture tags
     if (result.ast) {
         rewritePattern(result.ast, rng);  // Safe rewrite strategies enabled
-        // addCaptureTags(result.ast, rng);  // Disabled - creates invalid patterns
+        addCaptureTags(result.ast, rng);   // Enable capture tags
         result.pattern = serializePattern(result.ast);
     }
     
