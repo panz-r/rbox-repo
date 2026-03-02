@@ -419,7 +419,10 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         result->final_state = (uint32_t)((const char*)curr - raw_base);
         EVAL_DEBUG_PRINT("RESULT: matched=%d, len=%zu, cat=0x%02X, final_state=%u\n",
                          result->matched, pos, mask, result->final_state);
-        for (int i = 0; i < 8; i++) if (mask & (1 << i)) { result->category = (dfa_command_category_t)(i + 1); break; }
+        for (int i = 0; i < 8; i++) if (mask & (1 << i)) { 
+            result->category = (dfa_command_category_t)(i + 1); 
+            break; 
+        }
         
         if (current_dfa->version >= 6 && winning_pattern_id != 0 && winning_pattern_id != UINT16_MAX) {
             capture_range_t capture_stack[MAX_CAPTURE_STACK];

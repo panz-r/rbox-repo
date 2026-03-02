@@ -5138,11 +5138,24 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
             bool matched = false;
             int category_mask = 0;
             
-            // Parse stdout for matched and category_mask
+            // Parse stdout for matched, category, and category_mask
             size_t match_pos = res.stdout.find("matched=1");
             if (match_pos != std::string::npos) {
                 matched = true;
             }
+            
+            // Parse reported category (1-indexed: 1=SAFE, 2=CAUTION, etc.)
+            int reported_category = 0;
+            size_t cat_pos = res.stdout.find("category=");
+            if (cat_pos != std::string::npos) {
+                std::string cat_str = res.stdout.substr(cat_pos + 9);
+                size_t end_pos = cat_str.find(' ');
+                if (end_pos == std::string::npos) end_pos = cat_str.find('(');
+                if (end_pos != std::string::npos) cat_str = cat_str.substr(0, end_pos);
+                reported_category = atoi(cat_str.c_str());
+            }
+            
+            // Parse category_mask
             size_t mask_pos = res.stdout.find("category_mask=0x");
             if (mask_pos != std::string::npos) {
                 std::string mask_str = res.stdout.substr(mask_pos + 16);  // "category_mask=0x" is 16 chars
@@ -5153,13 +5166,54 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
                 }
                 category_mask = (int)strtol(mask_str.c_str(), nullptr, 16);
             }
+            
             int category_bit = (1 << expected_match_category);
-            bool category_matches = (matched && (category_mask & category_bit));
-            if (!matched || !category_matches) {
+            bool mask_has_expected = (category_mask & category_bit);
+            bool category_matches = (reported_category == (expected_match_category + 1));
+            
+            // Check consistency between category and category_mask
+            bool consistent = true;
+            if (matched && reported_category > 0) {
+                // Category value should correspond to a bit in the mask
+                if (reported_category >= 1 && reported_category <= 8) {
+                    int expected_bit = reported_category - 1;
+                    if ((category_mask & (1 << expected_bit)) == 0) {
+                        consistent = false;
+                    }
+                } else {
+                    consistent = false;  // Invalid category value
+                }
+            }
+            
+            // FAIL on ANY inconsistency: mask has expected but category doesn't match
+            if (!matched || !mask_has_expected) {
                 all_matched = false;
                 char mask_hex[16];
                 snprintf(mask_hex, sizeof(mask_hex), "0x%02x", category_mask);
-                match_fail_reason = "matched=" + std::to_string(matched) + ", category_mask=" + std::string(mask_hex);
+                match_fail_reason = "matched=" + std::to_string(matched) + 
+                    ", category=" + std::to_string(reported_category) + 
+                    ", category_mask=" + std::string(mask_hex);
+                break;
+            }
+            
+            // Check for inconsistency: mask has expected bit but category doesn't match
+            if (!category_matches) {
+                all_matched = false;
+                char mask_hex[16];
+                snprintf(mask_hex, sizeof(mask_hex), "0x%02x", category_mask);
+                match_fail_reason = "INCONSISTENCY: category=" + std::to_string(reported_category) + 
+                    " but mask has bit for " + std::to_string(expected_match_category + 1) +
+                    " (mask=" + std::string(mask_hex) + ")";
+                break;
+            }
+            
+            // Also fail if category and mask are inconsistent
+            if (!consistent) {
+                all_matched = false;
+                char mask_hex[16];
+                snprintf(mask_hex, sizeof(mask_hex), "0x%02x", category_mask);
+                match_fail_reason = "INCONSISTENCY: category=" + std::to_string(reported_category) + 
+                    " but mask=0x" + std::string(mask_hex);
                 break;
             }
         }
@@ -5235,7 +5289,8 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
                 last_counter_cat = atoi(cat_str.c_str());
             }
             // Counter input should NOT match with the matching category
-            if (last_counter_cat == expected_match_category) any_counter_matched = true;
+            // Note: last_counter_cat is 1-indexed (from DFA), expected_match_category is 0-indexed
+            if (last_counter_cat == expected_match_category + 1) any_counter_matched = true;
         }
         
         if (!any_counter_matched) {
@@ -5310,7 +5365,8 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
                         }
                     } else {
                         // PLUS_MINONE: empty should NOT match with THIS pattern's category
-                        int exp_cat = static_cast<int>(tc.category) - 1;
+                        // Note: matched_category is 1-indexed from DFA, tc.category is also 1-indexed
+                        int exp_cat = static_cast<int>(tc.category);
                         bool matched_this_category = matched && (matched_category == exp_cat);
                         
                         if (expected_match && !matched_this_category) {
@@ -5465,7 +5521,7 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
         }
         
         bool all_matched = true;
-        int expected_category = static_cast<int>(tc.category) - 1 - 1;  // dfa_eval returns 1-indexed
+        int expected_category_0idx = static_cast<int>(tc.category) - 1;  // Convert 1-indexed to 0-indexed
         for (const auto& match_in : tc.matching_inputs) {
             CommandResult res = runCommand("../tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\"");
             
@@ -5479,11 +5535,14 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
             
             bool matched = false;
             int matched_category = 0;
+            int category_mask = 0;
             
             // Parse stdout
             if (res.stdout.find("matched=1") != std::string::npos) {
                 matched = true;
             }
+            
+            // Parse reported category (1-indexed from DFA)
             size_t cat_pos = res.stdout.find("category=");
             if (cat_pos != std::string::npos) {
                 std::string cat_str = res.stdout.substr(cat_pos + 9);
@@ -5492,9 +5551,47 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
                 if (end_pos != std::string::npos) {
                     cat_str = cat_str.substr(0, end_pos);
                 }
-                matched_category = atoi(cat_str.c_str()) - 1;  // Convert to 0-indexed
+                matched_category = atoi(cat_str.c_str());
             }
-            if (!matched || matched_category != expected_category) { all_matched = false; break; }
+            
+            // Parse category_mask
+            size_t mask_pos = res.stdout.find("category_mask=0x");
+            if (mask_pos != std::string::npos) {
+                std::string mask_str = res.stdout.substr(mask_pos + 16);
+                size_t end_pos = mask_str.find(' ');
+                if (end_pos != std::string::npos) mask_str = mask_str.substr(0, end_pos);
+                category_mask = (int)strtol(mask_str.c_str(), nullptr, 16);
+            }
+            
+            // Dual-verification: check both mask and category consistency
+            int category_bit = (1 << expected_category_0idx);
+            bool mask_has_expected = (category_mask & category_bit);
+            bool category_matches = (matched_category == static_cast<int>(tc.category));
+            
+            // Check consistency
+            bool consistent = true;
+            if (matched && matched_category > 0) {
+                if (matched_category >= 1 && matched_category <= 8) {
+                    int expected_bit = matched_category - 1;
+                    if ((category_mask & (1 << expected_bit)) == 0) {
+                        consistent = false;
+                    }
+                } else {
+                    consistent = false;
+                }
+            }
+            
+            if (!matched || !mask_has_expected) {
+                std::cout << "   FAIL #" << i << ": matched=" << matched << ", category=" << matched_category << ", category_mask=0x" << std::hex << category_mask << std::dec << "\n";
+                all_matched = false;
+                break;
+            }
+            
+            if (!category_matches || !consistent) {
+                std::cout << "   FAIL #" << i << ": INCONSISTENCY - category=" << matched_category << " but expected " << static_cast<int>(tc.category) << " (mask=0x" << std::hex << category_mask << std::dec << ")\n";
+                all_matched = false;
+                break;
+            }
         }
         
         bool any_counter_matched = false;
@@ -5518,7 +5615,7 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
                     cat_str = cat_str.substr(0, end_pos);
                 }
                 counter_cat = atoi(cat_str.c_str()) - 1;  // Convert to 0-indexed
-                if (counter_cat == expected_category) any_counter_matched = true;
+                if (counter_cat == expected_category_0idx) any_counter_matched = true;
             }
         }
         
