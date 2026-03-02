@@ -4690,16 +4690,35 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     TestCase tc;
     tc.test_id = test_id;
     
-    // Assign unique categories based on test_id (8 categories available)
-    // Pattern 0: safe + dangerous (1 + 4 = 5)
-    // Pattern 1: caution + network (2 + 5 = 7)
-    // Pattern 2: modifying + admin (3 + 6 = 9)
-    // Pattern 3: build + container (7 + 8 = 15)
-    static Category matching_cats[] = {Category::SAFE, Category::CAUTION, Category::MODIFYING, Category::BUILD};
-    static Category counter_cats[] = {Category::DANGEROUS, Category::NETWORK, Category::ADMIN, Category::CONTAINER};
+    // Assign random categories ensuring uniqueness within the batch
+    // Use randomCategory() to test all 8 categories, not just a hardcoded subset
+    // Must avoid: 
+    // 1. Duplicate matching categories within the same batch
+    // 2. Counter category matching any category already used in the batch
     
-    tc.category = matching_cats[test_id % 4];
-    tc.counter_category = counter_cats[test_id % 4];
+    static std::set<Category> batch_used_matching;
+    static std::set<Category> batch_used_counter;
+    
+    // First test in batch? Clear the tracking sets
+    if (test_id == 0) {
+        batch_used_matching.clear();
+        batch_used_counter.clear();
+    }
+    
+    // Select a unique matching category not used in this batch
+    do {
+        tc.category = randomCategory();
+    } while (batch_used_matching.count(tc.category) > 0);
+    batch_used_matching.insert(tc.category);
+    
+    // Select a counter category not equal to any matching category in this batch
+    // and not already used as a counter category
+    do {
+        tc.counter_category = randomCategory();
+    } while (tc.counter_category == tc.category || 
+             batch_used_matching.count(tc.counter_category) > 0 ||
+             batch_used_counter.count(tc.counter_category) > 0);
+    batch_used_counter.insert(tc.counter_category);
     
     tc.complexity = opts.complexity;
     tc.fragments.clear();
