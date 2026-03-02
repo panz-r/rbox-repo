@@ -128,12 +128,34 @@ int main(int argc, char* argv[]) {
         }
 
         // Output result for debugging (to stdout, so it can be captured if needed)
-        printf("matched=%d category=%d (%s) category_mask=0x%02x captures=%d\n",
+        printf("matched=%d category=%d (%s) category_mask=0x%02x captures=%d",
                result.matched,
                result.category,
                dfa_category_string(result.category),
                result.category_mask,
                result.capture_count);
+        
+        // Output capture details if present
+        for (int i = 0; i < result.capture_count; i++) {
+            size_t start = result.captures[i].start;
+            size_t end = result.captures[i].end;
+            // Extract captured substring if valid
+            if (start < strlen(command) && end <= strlen(command) && start < end) {
+                size_t cap_len = end - start;
+                char* captured = malloc(cap_len + 1);
+                if (captured) {
+                    strncpy(captured, command + start, cap_len);
+                    captured[cap_len] = '\0';
+                    printf(" capture[%d]=%zu-%zu=%s", i, start, end, captured);
+                    free(captured);
+                } else {
+                    printf(" capture[%d]=%zu-%zu=?", i, start, end);
+                }
+            } else {
+                printf(" capture[%d]=%zu-%zu=?", i, start, end);
+            }
+        }
+        printf("\n");
     } else {
         // No match - this is valid, just report it
         printf("matched=0 category=0 (Unknown)\n");
