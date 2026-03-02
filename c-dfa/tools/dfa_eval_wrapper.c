@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Category should be valid
+        // Category should be valid (fixed: now checks up to CONTAINER)
         if (exit_code == 0 && (result.category < DFA_CMD_UNKNOWN || result.category > DFA_CMD_CONTAINER)) {
             fprintf(stderr, "ERROR: invalid category: %d\n", result.category);
             exit_code = 1;

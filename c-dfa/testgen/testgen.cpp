@@ -10,6 +10,79 @@
 #include <unordered_set>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+
+// ============================================================================
+// Command Execution Helper - Captures stdout, stderr, and exit code
+// ============================================================================
+
+struct CommandResult {
+    std::string stdout;
+    std::string stderr;
+    int exit_code;
+};
+
+CommandResult runCommand(const std::string& cmd) {
+    CommandResult result;
+    result.exit_code = 0;
+    
+    int pipe_stdout[2], pipe_stderr[2];
+    if (pipe(pipe_stdout) == -1 || pipe(pipe_stderr) == -1) {
+        result.exit_code = -1;
+        return result;
+    }
+    
+    pid_t pid = fork();
+    if (pid == -1) {
+        result.exit_code = -1;
+        return result;
+    }
+    
+    if (pid == 0) {
+        // Child process
+        close(pipe_stdout[0]);
+        close(pipe_stderr[0]);
+        dup2(pipe_stdout[1], STDOUT_FILENO);
+        dup2(pipe_stderr[1], STDERR_FILENO);
+        close(pipe_stdout[1]);
+        close(pipe_stderr[1]);
+        
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+        _exit(127);
+    }
+    
+    // Parent process
+    close(pipe_stdout[1]);
+    close(pipe_stderr[1]);
+    
+    char buf[256];
+    ssize_t n;
+    
+    // Read stdout
+    while ((n = read(pipe_stdout[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        result.stdout += buf;
+    }
+    close(pipe_stdout[0]);
+    
+    // Read stderr
+    while ((n = read(pipe_stderr[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        result.stderr += buf;
+    }
+    close(pipe_stderr[0]);
+    
+    // Wait for child
+    int status;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status)) {
+        result.exit_code = WEXITSTATUS(status);
+    } else {
+        result.exit_code = -1;
+    }
+    
+    return result;
+}
 
 // ============================================================================
 // Pattern AST Implementation
@@ -5043,48 +5116,60 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
         
         // Check: matching inputs MUST match with the MATCHING category
         bool all_matched = true;
+        std::string match_fail_reason;
         for (const auto& match_in : tc.matching_inputs) {
-            std::string cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\" 2>/dev/null";
-            FILE* fp = popen(cmd.c_str(), "r");
+            std::string cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\"";
+            CommandResult res = runCommand(cmd);
+            
+            // Check for errors (ignore LOADING DFA debug messages)
+            std::string error_stderr;
+            for (char& c : res.stderr) {
+                if (c != '\n' && c != '\r') error_stderr += c;
+            }
+            // Filter out known debug messages
+            bool is_debug_only = (res.stderr.find("LOADING DFA:") != std::string::npos);
+            
+            if (!is_debug_only && !error_stderr.empty()) {
+                all_matched = false;
+                match_fail_reason = "stderr not empty: " + res.stderr;
+                break;
+            }
+            
             bool matched = false;
             int category_mask = 0;
-            if (fp) {
-                char buf[256];
-                while (fgets(buf, sizeof(buf), fp)) {
-                    if (strstr(buf, "matched=1")) matched = true;
-                    char* mask_str = strstr(buf, "category_mask=0x");
-                    if (mask_str) {
-                        char* after = mask_str + 15;
-                        char* end = strchr(after, ' ');
-                        char saved = 0;
-                        if (end) { saved = *end; *end = '\0'; }
-                        category_mask = (int)strtol(after, NULL, 16);
-                        if (end) *end = saved;
-                    }
+            
+            // Parse stdout for matched and category_mask
+            size_t match_pos = res.stdout.find("matched=1");
+            if (match_pos != std::string::npos) {
+                matched = true;
+            }
+            size_t mask_pos = res.stdout.find("category_mask=0x");
+            if (mask_pos != std::string::npos) {
+                std::string mask_str = res.stdout.substr(mask_pos + 16);  // "category_mask=0x" is 16 chars
+                // Extract hex value up to space or end
+                size_t end_pos = mask_str.find(' ');
+                if (end_pos != std::string::npos) {
+                    mask_str = mask_str.substr(0, end_pos);
                 }
-                pclose(fp);
+                category_mask = (int)strtol(mask_str.c_str(), nullptr, 16);
             }
             int category_bit = (1 << expected_match_category);
             bool category_matches = (matched && (category_mask & category_bit));
             if (!matched || !category_matches) {
                 all_matched = false;
-                break;
-            }
-        }
-                }
-                // Check if expected category bit is set
-                int category_bit = (1 << expected_match_category);
-                bool category_matches = (matched && (category_mask & category_bit));
-                pclose(fp);
-            }
-            if (!matched || matched_category != expected_match_category) {
-                all_matched = false;
+                char mask_hex[16];
+                snprintf(mask_hex, sizeof(mask_hex), "0x%02x", category_mask);
+                match_fail_reason = "matched=" + std::to_string(matched) + ", category_mask=" + std::string(mask_hex);
                 break;
             }
         }
         
         if (!all_matched) { 
-            std::cout << "   FAIL #" << i << ": matching inputs didn't match with correct category\n";
+            std::cout << "   FAIL #" << i << ": matching inputs didn't match with correct category";
+            if (!match_fail_reason.empty()) {
+                std::cout << " (" << match_fail_reason << ")";
+            }
+            std::cout << "\n";
             failed++;
             global_failed_count++;
             
@@ -5119,22 +5204,38 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
         // Check: counter inputs must NOT match with the matching category
         // (they may match with the counter category, which is fine)
         bool any_counter_matched = false;
+        std::string counter_fail_reason;
         for (const auto& counter : tc.counter_inputs) {
-            std::string counter_cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\" 2>/dev/null";
-            FILE* cfp = popen(counter_cmd.c_str(), "r");
-            if (cfp) {
-                char cbuf[256];
-                int last_counter_cat = 0;
-                while (fgets(cbuf, sizeof(cbuf), cfp)) {
-                    if (strstr(cbuf, "matched=1")) {
-                        char* cat_str = strstr(cbuf, "category=");
-                        if (cat_str) last_counter_cat = atoi(cat_str + 9);
-                    }
-                }
-                // Counter input should NOT match with the matching category
-                if (last_counter_cat == expected_match_category) any_counter_matched = true;
-                pclose(cfp);
+            std::string counter_cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\"";
+            CommandResult res = runCommand(counter_cmd);
+            
+            // Check for errors (ignore LOADING DFA debug messages)
+            bool is_debug_only = (res.stderr.find("LOADING DFA:") != std::string::npos);
+            if (res.exit_code != 0) {
+                any_counter_matched = true;  // Treat as failure
+                counter_fail_reason = "exit_code=" + std::to_string(res.exit_code);
+                break;
             }
+            if (!is_debug_only && !res.stderr.empty()) {
+                any_counter_matched = true;  // Treat as failure
+                counter_fail_reason = "stderr: " + res.stderr;
+                break;
+            }
+            
+            int last_counter_cat = 0;
+            size_t cat_pos = res.stdout.find("category=");
+            if (cat_pos != std::string::npos) {
+                std::string cat_str = res.stdout.substr(cat_pos + 9);
+                // Extract number up to space or parenthesis
+                size_t end_pos = cat_str.find(' ');
+                if (end_pos == std::string::npos) end_pos = cat_str.find('(');
+                if (end_pos != std::string::npos) {
+                    cat_str = cat_str.substr(0, end_pos);
+                }
+                last_counter_cat = atoi(cat_str.c_str());
+            }
+            // Counter input should NOT match with the matching category
+            if (last_counter_cat == expected_match_category) any_counter_matched = true;
         }
         
         if (!any_counter_matched) {
@@ -5156,18 +5257,38 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
                     }
                 }
                 
-                std::string cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + test_input + "\" 2>/dev/null";
-                FILE* efp = popen(cmd.c_str(), "r");
+                std::string cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + test_input + "\"";
+                CommandResult res = runCommand(cmd);
+                
+                // Check for errors (ignore LOADING DFA debug messages)
+                bool is_debug_only = (res.stderr.find("LOADING DFA:") != std::string::npos);
+                if (res.exit_code != 0) {
+                    expectations_passed = false;
+                    expectation_fail_reason = "exit_code=" + std::to_string(res.exit_code) + ", stderr=" + res.stderr;
+                    break;
+                }
+                if (!is_debug_only && !res.stderr.empty()) {
+                    expectations_passed = false;
+                    expectation_fail_reason = "stderr not empty: " + res.stderr;
+                    break;
+                }
+                
                 bool matched = false;
                 int matched_category = 0;
-                if (efp) {
-                    char ebuf[256];
-                    while (fgets(ebuf, sizeof(ebuf), efp)) {
-                        if (strstr(ebuf, "matched=1")) matched = true;
-                        char* cat_str = strstr(ebuf, "category=");
-                        if (cat_str) matched_category = atoi(cat_str + 9);
+                
+                // Parse stdout
+                if (res.stdout.find("matched=1") != std::string::npos) {
+                    matched = true;
+                }
+                size_t cat_pos = res.stdout.find("category=");
+                if (cat_pos != std::string::npos) {
+                    std::string cat_str = res.stdout.substr(cat_pos + 9);
+                    size_t end_pos = cat_str.find(' ');
+                    if (end_pos == std::string::npos) end_pos = cat_str.find('(');
+                    if (end_pos != std::string::npos) {
+                        cat_str = cat_str.substr(0, end_pos);
                     }
-                    pclose(efp);
+                    matched_category = atoi(cat_str.c_str());
                 }
                 
                 bool expected_match = (exp.expected_match == "yes");
@@ -5329,48 +5450,75 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
         std::string nfa_file = output_dir + "/temp.nfa";
         std::string dfa_file = output_dir + "/temp.dfa";
         
-        std::string nfa_cmd = "../tools/nfa_builder " + temp_pattern + " " + nfa_file + " 2>/dev/null";
-        int result = system(nfa_cmd.c_str());
-        if (result != 0) { failed++; continue; }
+        CommandResult nfa_res = runCommand("../tools/nfa_builder " + temp_pattern + " " + nfa_file);
+        if (nfa_res.exit_code != 0 || !nfa_res.stderr.empty()) { 
+            std::cout << "   FAIL #" << i << ": nfa_builder failed (exit=" << nfa_res.exit_code << ")\n";
+            failed++; 
+            continue; 
+        }
         
-        std::string dfa_cmd = "../tools/nfa2dfa_advanced " + nfa_file + " " + dfa_file + " 2>/dev/null";
-        result = system(dfa_cmd.c_str());
-        if (result != 0) { failed++; continue; }
+        CommandResult dfa_res = runCommand("../tools/nfa2dfa_advanced " + nfa_file + " " + dfa_file);
+        if (dfa_res.exit_code != 0 || !dfa_res.stderr.empty()) { 
+            std::cout << "   FAIL #" << i << ": nfa2dfa_advanced failed (exit=" << dfa_res.exit_code << ")\n";
+            failed++; 
+            continue; 
+        }
         
         bool all_matched = true;
         int expected_category = static_cast<int>(tc.category) - 1 - 1;  // dfa_eval returns 1-indexed
         for (const auto& match_in : tc.matching_inputs) {
-            std::string eval_cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\" 2>/dev/null";
-            FILE* fp = popen(eval_cmd.c_str(), "r");
+            CommandResult res = runCommand("../tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\"");
+            
+            // Check for errors (ignore LOADING DFA debug messages)
+            bool is_debug_only = (res.stderr.find("LOADING DFA:") != std::string::npos);
+            if (res.exit_code != 0 || (!is_debug_only && !res.stderr.empty())) {
+                std::cout << "   FAIL #" << i << ": dfa_eval_wrapper error (exit=" << res.exit_code << ", stderr=" << res.stderr << ")\n";
+                all_matched = false;
+                break;
+            }
+            
             bool matched = false;
             int matched_category = 0;
-            if (fp) {
-                char buf[256];
-                while (fgets(buf, sizeof(buf), fp)) {
-                    if (strstr(buf, "matched=1")) matched = true;
-                    char* cat_str = strstr(buf, "category=");
-                    if (cat_str) matched_category = atoi(cat_str + 9) - 1;  // Convert to 0-indexed
+            
+            // Parse stdout
+            if (res.stdout.find("matched=1") != std::string::npos) {
+                matched = true;
+            }
+            size_t cat_pos = res.stdout.find("category=");
+            if (cat_pos != std::string::npos) {
+                std::string cat_str = res.stdout.substr(cat_pos + 9);
+                size_t end_pos = cat_str.find(' ');
+                if (end_pos == std::string::npos) end_pos = cat_str.find('(');
+                if (end_pos != std::string::npos) {
+                    cat_str = cat_str.substr(0, end_pos);
                 }
-                pclose(fp);
+                matched_category = atoi(cat_str.c_str()) - 1;  // Convert to 0-indexed
             }
             if (!matched || matched_category != expected_category) { all_matched = false; break; }
         }
         
         bool any_counter_matched = false;
         for (const auto& counter : tc.counter_inputs) {
-            std::string counter_cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\" 2>/dev/null";
-            FILE* cfp = popen(counter_cmd.c_str(), "r");
-            if (cfp) {
-                char cbuf[256];
-                while (fgets(cbuf, sizeof(cbuf), cfp)) {
-                    if (strstr(cbuf, "matched=1")) {
-                        int counter_cat = 0;
-                        char* cat_str = strstr(cbuf, "category=");
-                        if (cat_str) counter_cat = atoi(cat_str + 9) - 1;  // Convert to 0-indexed
-                        if (counter_cat == expected_category) any_counter_matched = true;
-                    }
+            CommandResult res = runCommand("../tools/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\"");
+            
+            // Check for errors (ignore LOADING DFA debug messages)
+            bool is_debug_only = (res.stderr.find("LOADING DFA:") != std::string::npos);
+            if (res.exit_code != 0 || (!is_debug_only && !res.stderr.empty())) {
+                any_counter_matched = true;  // Treat error as failure
+                break;
+            }
+            
+            int counter_cat = 0;
+            size_t ccat_pos = res.stdout.find("category=");
+            if (ccat_pos != std::string::npos) {
+                std::string cat_str = res.stdout.substr(ccat_pos + 9);
+                size_t end_pos = cat_str.find(' ');
+                if (end_pos == std::string::npos) end_pos = cat_str.find('(');
+                if (end_pos != std::string::npos) {
+                    cat_str = cat_str.substr(0, end_pos);
                 }
-                pclose(cfp);
+                counter_cat = atoi(cat_str.c_str()) - 1;  // Convert to 0-indexed
+                if (counter_cat == expected_category) any_counter_matched = true;
             }
         }
         
