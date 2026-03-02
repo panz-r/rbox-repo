@@ -5006,7 +5006,7 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
     
     std::cout << "1. Building NFA...\n";
     std::string nfa_file = output_dir + "/test.nfa";
-    int result = system(("cd " + abs_cwd + "/.. && ./tools/nfa_builder " + abs_pattern + " " + nfa_file + " 2>&1").c_str());
+    int result = system(("../tools/nfa_builder " + abs_pattern + " " + nfa_file + " 2>&1").c_str());
     if (result != 0) {
         std::cerr << "NFA builder failed!\n";
         return 1;
@@ -5015,7 +5015,7 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
     
     std::cout << "2. Building DFA...\n";
     std::string dfa_file = output_dir + "/test.dfa";
-    result = system(("cd " + abs_cwd + "/.. && ./tools/nfa2dfa_advanced " + nfa_file + " " + dfa_file + " 2>&1").c_str());
+    result = system(("../tools/nfa2dfa_advanced " + nfa_file + " " + dfa_file + " 2>&1").c_str());
     if (result != 0) {
         std::cerr << "DFA builder failed!\n";
         return 1;
@@ -5038,25 +5038,43 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
             continue;
         }
         
-        int expected_match_category = static_cast<int>(tc.category);
-        int expected_counter_category = static_cast<int>(tc.counter_category);
+        int expected_match_category = static_cast<int>(tc.category) - 1;
+        int expected_counter_category = static_cast<int>(tc.counter_category) - 1;
         
         // Check: matching inputs MUST match with the MATCHING category
         bool all_matched = true;
         for (const auto& match_in : tc.matching_inputs) {
-            std::string cmd = "cd " + abs_cwd + "/.. && ./tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\" 2>/dev/null";
+            std::string cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\" 2>/dev/null";
             FILE* fp = popen(cmd.c_str(), "r");
             bool matched = false;
-            int matched_category = 0;
+            int category_mask = 0;
             if (fp) {
                 char buf[256];
-                int last_category = 0;
                 while (fgets(buf, sizeof(buf), fp)) {
                     if (strstr(buf, "matched=1")) matched = true;
-                    char* cat_str = strstr(buf, "category=");
-                    if (cat_str) last_category = atoi(cat_str + 9);
+                    char* mask_str = strstr(buf, "category_mask=0x");
+                    if (mask_str) {
+                        char* after = mask_str + 15;
+                        char* end = strchr(after, ' ');
+                        char saved = 0;
+                        if (end) { saved = *end; *end = '\0'; }
+                        category_mask = (int)strtol(after, NULL, 16);
+                        if (end) *end = saved;
+                    }
                 }
-                matched_category = last_category;
+                pclose(fp);
+            }
+            int category_bit = (1 << expected_match_category);
+            bool category_matches = (matched && (category_mask & category_bit));
+            if (!matched || !category_matches) {
+                all_matched = false;
+                break;
+            }
+        }
+                }
+                // Check if expected category bit is set
+                int category_bit = (1 << expected_match_category);
+                bool category_matches = (matched && (category_mask & category_bit));
                 pclose(fp);
             }
             if (!matched || matched_category != expected_match_category) {
@@ -5102,7 +5120,7 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
         // (they may match with the counter category, which is fine)
         bool any_counter_matched = false;
         for (const auto& counter : tc.counter_inputs) {
-            std::string counter_cmd = "cd " + abs_cwd + "/.. && ./tools/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\" 2>/dev/null";
+            std::string counter_cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\" 2>/dev/null";
             FILE* cfp = popen(counter_cmd.c_str(), "r");
             if (cfp) {
                 char cbuf[256];
@@ -5138,7 +5156,7 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
                     }
                 }
                 
-                std::string cmd = "cd " + abs_cwd + "/.. && ./tools/dfa_eval_wrapper " + dfa_file + " \"" + test_input + "\" 2>/dev/null";
+                std::string cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + test_input + "\" 2>/dev/null";
                 FILE* efp = popen(cmd.c_str(), "r");
                 bool matched = false;
                 int matched_category = 0;
@@ -5171,7 +5189,7 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
                         }
                     } else {
                         // PLUS_MINONE: empty should NOT match with THIS pattern's category
-                        int exp_cat = static_cast<int>(tc.category);
+                        int exp_cat = static_cast<int>(tc.category) - 1;
                         bool matched_this_category = matched && (matched_category == exp_cat);
                         
                         if (expected_match && !matched_this_category) {
@@ -5311,18 +5329,18 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
         std::string nfa_file = output_dir + "/temp.nfa";
         std::string dfa_file = output_dir + "/temp.dfa";
         
-        std::string nfa_cmd = "cd " + abs_cwd + "/.. && ./tools/nfa_builder " + temp_pattern + " " + nfa_file + " 2>/dev/null";
+        std::string nfa_cmd = "../tools/nfa_builder " + temp_pattern + " " + nfa_file + " 2>/dev/null";
         int result = system(nfa_cmd.c_str());
         if (result != 0) { failed++; continue; }
         
-        std::string dfa_cmd = "cd " + abs_cwd + "/.. && ./tools/nfa2dfa_advanced " + nfa_file + " " + dfa_file + " 2>/dev/null";
+        std::string dfa_cmd = "../tools/nfa2dfa_advanced " + nfa_file + " " + dfa_file + " 2>/dev/null";
         result = system(dfa_cmd.c_str());
         if (result != 0) { failed++; continue; }
         
         bool all_matched = true;
-        int expected_category = static_cast<int>(tc.category) - 1;  // dfa_eval returns 1-indexed
+        int expected_category = static_cast<int>(tc.category) - 1 - 1;  // dfa_eval returns 1-indexed
         for (const auto& match_in : tc.matching_inputs) {
-            std::string eval_cmd = "cd " + abs_cwd + "/.. && ./tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\" 2>/dev/null";
+            std::string eval_cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\" 2>/dev/null";
             FILE* fp = popen(eval_cmd.c_str(), "r");
             bool matched = false;
             int matched_category = 0;
@@ -5340,7 +5358,7 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
         
         bool any_counter_matched = false;
         for (const auto& counter : tc.counter_inputs) {
-            std::string counter_cmd = "cd " + abs_cwd + "/.. && ./tools/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\" 2>/dev/null";
+            std::string counter_cmd = "../tools/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\" 2>/dev/null";
             FILE* cfp = popen(counter_cmd.c_str(), "r");
             if (cfp) {
                 char cbuf[256];

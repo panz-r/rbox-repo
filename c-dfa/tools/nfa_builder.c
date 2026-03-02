@@ -951,8 +951,9 @@ int parse_category(const char* name) {
             return i;
         }
     }
-    WARNING("Unknown category '%s', defaulting to category 0", name);
-    return 0; // Default to category 0
+    // No default - require explicit category definition
+    ERROR("Unknown category '%s'. Please define all categories in [CATEGORIES] section.", name);
+    return -1;
 }
 
 // ============================================================================

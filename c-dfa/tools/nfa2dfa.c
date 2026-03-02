@@ -590,6 +590,11 @@ void nfa_to_dfa(void) {
         // CRITICAL: For initial DFA state, don't use is_eos_target for acceptance
         // This prevents patterns like (a)+ from incorrectly accepting empty when
         // combined with patterns like (x)* in the same NFA
+        // BUT include is_eos_target states that have pattern_id set (like (E)? which should match empty)
+        
+        // CRITICAL: For initial DFA state, don't use is_eos_target for acceptance
+        // This prevents patterns like (a)+ from incorrectly accepting empty when
+        // combined with patterns like (x)* in the same NFA
         
         // Category from states that are either accepting (pattern_id) or EOS targets
         // BUT for initial state, exclude EOS-only states

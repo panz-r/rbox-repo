@@ -122,16 +122,17 @@ int main(int argc, char* argv[]) {
         }
 
         // Category should be valid
-        if (exit_code == 0 && (result.category < DFA_CMD_UNKNOWN || result.category > DFA_CMD_ADMIN)) {
+        if (exit_code == 0 && (result.category < DFA_CMD_UNKNOWN || result.category > DFA_CMD_CONTAINER)) {
             fprintf(stderr, "ERROR: invalid category: %d\n", result.category);
             exit_code = 1;
         }
 
         // Output result for debugging (to stdout, so it can be captured if needed)
-        printf("matched=%d category=%d (%s) captures=%d\n",
+        printf("matched=%d category=%d (%s) category_mask=0x%02x captures=%d\n",
                result.matched,
                result.category,
                dfa_category_string(result.category),
+               result.category_mask,
                result.capture_count);
     } else {
         // No match - this is valid, just report it

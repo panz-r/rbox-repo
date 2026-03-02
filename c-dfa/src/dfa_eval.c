@@ -234,16 +234,18 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         const dfa_state_t* initial = (const dfa_state_t*)(raw_base + current_dfa->initial_state);
         uint8_t initial_cat = (uint8_t)DFA_GET_CATEGORY_MASK(initial->flags);
         
-        const dfa_state_t* curr = initial;
-        uint8_t eos_cat = 0;
+        // For empty string matching:
+        // Use UNION of both paths:
+        // 1. initial_cat - patterns that inherently accept at start (like .*)
+        // 2. eos_target - patterns with explicit EOS transitions (like (X)?)
+        uint8_t m = initial_cat;
+        
         if (initial->eos_target != 0 && initial->eos_target < current_dfa_size) {
-            curr = (const dfa_state_t*)(raw_base + initial->eos_target);
-            eos_cat = (uint8_t)DFA_GET_CATEGORY_MASK(curr->flags);
+            const dfa_state_t* eos_state = (const dfa_state_t*)(raw_base + initial->eos_target);
+            uint8_t eos_cat = (uint8_t)DFA_GET_CATEGORY_MASK(eos_state->flags);
+            m |= eos_cat;  // UNION - both can match
         }
-        // Use category from initial state if available, otherwise use eos_target state's category
-        // This fixes the issue where eos_target points to a fork state that doesn't have category
-        // but the initial state has the correct category in its flags
-        uint8_t m = initial_cat ? initial_cat : eos_cat;
+        
         if (m != 0) {
             result->matched = true;
             result->matched_length = 0;
