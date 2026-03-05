@@ -29,16 +29,28 @@ struct PatternNode {
     std::string fragment_name;                      // For fragments
     std::vector<std::shared_ptr<PatternNode>> children;  // For sequences/alternations
     std::shared_ptr<PatternNode> quantified;         // For quantifiers (+, *, ?)
-    std::vector<std::string> matched_seeds;         // Seeds this node matches
+    std::vector<std::string> matched_seeds;         // Seeds this node MUST match (constraints)
+    std::vector<std::string> counter_seeds;         // Seeds this node MUST NOT match (constraints)
     std::string capture_tag;                        // If set, wrap with <tag>...</tag>
     std::string capture_begin_only;                 // Unmatched <tag>
     std::string capture_end_only;                   // Unmatched </tag>
     
-    static std::shared_ptr<PatternNode> createLiteral(const std::string& val, const std::vector<std::string>& seeds = {});
-    static std::shared_ptr<PatternNode> createFragment(const std::string& name, const std::vector<std::string>& seeds = {});
-    static std::shared_ptr<PatternNode> createSequence(const std::vector<std::shared_ptr<PatternNode>>& kids, const std::vector<std::string>& seeds = {});
-    static std::shared_ptr<PatternNode> createAlternation(const std::vector<std::shared_ptr<PatternNode>>& alts, const std::vector<std::string>& seeds = {});
-    static std::shared_ptr<PatternNode> createQuantified(std::shared_ptr<PatternNode> child, PatternType quant_type, const std::vector<std::string>& seeds = {});
+    static std::shared_ptr<PatternNode> createLiteral(const std::string& val, 
+        const std::vector<std::string>& seeds = {},
+        const std::vector<std::string>& counters = {});
+    static std::shared_ptr<PatternNode> createFragment(const std::string& name, 
+        const std::vector<std::string>& seeds = {},
+        const std::vector<std::string>& counters = {});
+    static std::shared_ptr<PatternNode> createSequence(const std::vector<std::shared_ptr<PatternNode>>& kids, 
+        const std::vector<std::string>& seeds = {},
+        const std::vector<std::string>& counters = {});
+    static std::shared_ptr<PatternNode> createAlternation(const std::vector<std::shared_ptr<PatternNode>>& alts, 
+        const std::vector<std::string>& seeds = {},
+        const std::vector<std::string>& counters = {});
+    static std::shared_ptr<PatternNode> createQuantified(std::shared_ptr<PatternNode> child, 
+        PatternType quant_type, 
+        const std::vector<std::string>& seeds = {},
+        const std::vector<std::string>& counters = {});
 };
 
 // Serialize PatternNode to string with capture tags

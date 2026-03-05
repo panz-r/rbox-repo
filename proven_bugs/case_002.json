@@ -1,0 +1,10 @@
+{
+  "batch_file": "output/patterns_20.txt",
+  "test_id": 3,
+  "pattern": "[caution:test3] (t(o(9Cto9|tototo)|sgspssp)|uEdUAhRZ)",
+  "category": "caution",
+  "counter_category": "dangerous",
+  "matching_inputs": ["to9to9", "tsgspssp", "totototo", "to9Cto9", "uEdUAhRZ"],
+  "counter_inputs": ["0VyfhuIvi", "iiqGQQYpu", "2D9v", "V2Dg", "nmmR6MYT", "uQ9nqFEMV", "cbg7C", "mophatic", "w7xb9kdp", "oJwQx", "vrils", "fevhj", "hpdslvxrgc", "djwr", "fIrQv", "mmerrx", "ecmizuvfc", "uEeU", "Xrjulw", "fqxwoulwvd", "fSEm", "fisii", "hanum", "hQ8u2", "jEK9JeZoL"],
+  "error": "matching inputs did not match with correct category"
+}

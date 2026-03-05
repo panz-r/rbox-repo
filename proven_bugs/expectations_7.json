@@ -1,0 +1,135 @@
+[
+  {
+    "id": 0,
+    "test_id": 0,
+    "pattern": "[dangerous:test0] Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)",
+    "category": "dangerous",
+    "counter_category": "admin",
+    "matching_inputs": ["ZZZZZZZZZ", "ZB33xx33x", "ZB3kZB", "ZB3kZB3kZB", "ZBGG"],
+    "counter_inputs": ["obqibtwvws", "vzrkm", "bmpbloglo", "jZZZZ", "jmwjnzr", "dS4a63Zn", "qvuxc", "qghmlj", "bfaemks", "ZB33xxF", "fmccaof", "obzmmh", "abzphs", "havvddjcv", "oE6xg", "dfkrl", "mlrsf", "lB", "2B3kZB3", "ZBRkZ", "epRH", "xywesb", "deovidosul", "ddgngyva", "ijgy"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {ZZZZZZZZZ, ZB33xx33x, ZB3kZB, ...} (matching inputs)\n    Let C = {obqibtwvws, vzrkm, bmpbloglo, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (ZZZZZZZZZ|ZB33xx33x|ZB3kZB|ZB3kZB3kZB|ZBGG)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (ZZZZZZZZZ|ZB33xx33x|ZB3kZB|ZB3kZB3kZB|ZBGG)\n    After:  Z(B(3(3xx33x|kZB(3kZB)?)|GG)|ZZZZZZZZ)\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 4/5 inputs do NOT match:\n      - 'ZB33xx33x' does NOT match pattern\n      - 'ZB3kZB' does NOT match pattern\n      - 'ZB3kZB3kZB' does NOT match pattern\n      - 'ZBGG' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n  [Fragment extraction]\n    Pattern: Z(B(3(3xx33x|kZB(3kZB)?)|GG)|ZZZZZZZZ) -> Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)\n    Fragments extracted:\n      frag595 = 3xx33x\n",
+    "complexity": "medium",
+    "fragments": {"frag595": "3xx33x"},
+    "expectations": [
+      {
+        "type": "MATCH_EXACT",
+        "input": "ZB3kZB",
+        "expected_match": "yes",
+        "description": "Input 'ZB3kZB' must match optional pattern at depth 8",
+        "meta": {"optional_depth": "8"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "ZB3kZB3kZB",
+        "expected_match": "yes",
+        "description": "Input 'ZB3kZB3kZB' must match optional pattern at depth 8",
+        "meta": {"optional_depth": "8"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "ZZZZZZZZZ",
+        "expected_match": "yes",
+        "description": "Input 'ZZZZZZZZZ' must match pattern 'Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)'",
+        "meta": {"pattern": "Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "ZB33xx33x",
+        "expected_match": "yes",
+        "description": "Input 'ZB33xx33x' must match pattern 'Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)'",
+        "meta": {"pattern": "Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "ZB3kZB",
+        "expected_match": "yes",
+        "description": "Input 'ZB3kZB' must match pattern 'Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)'",
+        "meta": {"pattern": "Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "ZB3kZB3kZB",
+        "expected_match": "yes",
+        "description": "Input 'ZB3kZB3kZB' must match pattern 'Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)'",
+        "meta": {"pattern": "Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "ZBGG",
+        "expected_match": "yes",
+        "description": "Input 'ZBGG' must match pattern 'Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)'",
+        "meta": {"pattern": "Z(B(3(((frag595))+|kZB(3kZB)?)|GG)|ZZZZZZZZ)"}
+      },
+      {
+        "type": "FRAGMENT_MATCH",
+        "input": "[[FRAGMENT:frag595]]",
+        "expected_match": "yes",
+        "description": "Fragment 'frag595' definition",
+        "meta": {"fragment_definition": "3xx33x", "fragment_name": "frag595"}
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "test_id": 1,
+    "pattern": "[caution:test1] ",
+    "category": "caution",
+    "counter_category": "build",
+    "matching_inputs": ["F", "h0", "N1"],
+    "counter_inputs": ["!", "!!", "F!"],
+    "proof": "\n[FAILED] Could not generate separating pattern\n",
+    "complexity": "medium",
+    "fragments": {},
+    "expectations": [
+    ]
+  },
+  {
+    "id": 2,
+    "test_id": 2,
+    "pattern": "[safe:test2] (cT(Ijd4dd4d|d(A|cT))|l(IpBpx|8ShJMU))",
+    "category": "safe",
+    "counter_category": "container",
+    "matching_inputs": ["cTdA", "cTIjd4dd4d", "cTdcT", "lIpBpx", "l8ShJMU"],
+    "counter_inputs": ["UL67Z", "cTU", "nqyU0d5D", "ziylbnsum", "e8S", "cTIMd4", "auqjbsyo", "iTIj", "kiosjnwagc", "cB", "jzak", "BTdc", "HsffbwHvb", "vnqjq", "gshosys", "TfZ7H9U", "Ygvl", "mraF2k", "lsS", "Zc0bqrc", "lsouf", "vwblfg", "hftficbvc", "Iw0sx", "skpK2R1HjJ"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {cTdA, lIpBpx, cTIjd4dd4d, ...} (matching inputs)\n    Let C = {UL67Z, cTU, nqyU0d5D, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (cTdA|lIpBpx|cTIjd4dd4d|l8ShJMU|cTdcT)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (cTdA|lIpBpx|cTIjd4dd4d|l8ShJMU|cTdcT)\n    After:  (cT(Ijd4dd4d|d(A|cT))|l(IpBpx|8ShJMU))\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 4/5 inputs do NOT match:\n      - 'cTdA' does NOT match pattern\n      - 'cTdcT' does NOT match pattern\n      - 'lIpBpx' does NOT match pattern\n      - 'l8ShJMU' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n",
+    "complexity": "medium",
+    "fragments": {},
+    "expectations": [
+    ]
+  },
+  {
+    "id": 3,
+    "test_id": 3,
+    "pattern": "[container:test3] (3(33(33)*|5K(3|h35(Kh)?))|xw0umkS)",
+    "category": "container",
+    "counter_category": "network",
+    "matching_inputs": ["35Kh35Kh", "35K3", "35Kh35", "33333", "xw0umkS"],
+    "counter_inputs": ["gnfxavtiib", "31", "zvqi", "6wseLUZdQ", "YaySLTG1ok", "wyJE", "pyjwvsb", "ldin", "KBRsdu9zdz", "Lhl31Mv5", "3Ghrd43DuC", "kvvbmxnb", "qwsia", "c740Qv", "cqgnoivypu", "ohedj", "JzYycgLI", "Z5K", "p3ER27UCs", "ojtz", "Vh38i0TvH", "rE7Mny8", "6SLtX1ZC", "3o", "akIACJJyE"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {35Kh35Kh, 35K3, 35Kh35, ...} (matching inputs)\n    Let C = {gnfxavtiib, 31, zvqi, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (35Kh35Kh|35K3|35Kh35|33333|xw0umkS)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (35Kh35Kh|35K3|35Kh35|33333|xw0umkS)\n    After:  (3(3333|5K(3|h35(Kh)?))|xw0umkS)\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 4/5 inputs do NOT match:\n      - '35Kh35Kh' does NOT match pattern\n      - '35K3' does NOT match pattern\n      - '35Kh35' does NOT match pattern\n      - 'xw0umkS' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n  [Star insertion]\n    Pattern: (3(3333|5K(3|h35(Kh)?))|xw0umkS) -> (3(33(33)*|5K(3|h35(Kh)?))|xw0umkS)\n      [Star insertion at root[0][1][0]]\n        Original literal: '3333'\n        Rewritten to: '33(33)*'\n        Local constraint: must-not-match any counter that equals '33'\n        Safety: PASS (checked 25 counters)\n",
+    "complexity": "medium",
+    "fragments": {},
+    "expectations": [
+      {
+        "type": "MATCH_EXACT",
+        "input": "35Kh35Kh",
+        "expected_match": "yes",
+        "description": "Input '35Kh35Kh' must match optional pattern at depth 8",
+        "meta": {"optional_depth": "8"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "35Kh35",
+        "expected_match": "yes",
+        "description": "Input '35Kh35' must match optional pattern at depth 8",
+        "meta": {"optional_depth": "8"}
+      },
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "xw0umkS",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'xw0umkS'",
+        "meta": {"alternative_value": "xw0umkS", "full_input": "xw0umkS"}
+      }
+    ]
+  }
+]

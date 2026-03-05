@@ -1,0 +1,170 @@
+[
+  {
+    "id": 0,
+    "test_id": 0,
+    "pattern": "[dangerous:test0] (6wjJMxA|M(MMMMMMMM|11f5p5q)|T9c0|qw(3J)*)",
+    "category": "dangerous",
+    "counter_category": "safe",
+    "matching_inputs": ["6wjJMxA", "MMMMMMMMM", "M11f5p5q", "T9c0", "qw3J"],
+    "counter_inputs": ["ihpsiaifwi", "ctjjrob", "Rw75U", "MM0", "Y26Wb4M8ra", "mozv", "swemnarq", "mcjynxhi", "nelrrvzuc", "astcwcat", "hgpc", "xrxig", "lA2xY", "jxkI837W", "fzmesim", "T3", "4wjJ", "aKyWtcM", "tbvrzn", "n9", "Mo", "xiwsofwiv", "DtoQ", "qK3", "pimfsstmtr"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {T9c0, MMMMMMMMM, 6wjJMxA, ...} (matching inputs)\n    Let C = {ihpsiaifwi, ctjjrob, Rw75U, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (T9c0|MMMMMMMMM|6wjJMxA|M11f5p5q|qw3J)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (T9c0|MMMMMMMMM|6wjJMxA|M11f5p5q|qw3J)\n    After:  (6wjJMxA|M(MMMMMMMM|11f5p5q)|T9c0|qw3J)\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 5/5 inputs do NOT match:\n      - '6wjJMxA' does NOT match pattern\n      - 'MMMMMMMMM' does NOT match pattern\n      - 'M11f5p5q' does NOT match pattern\n      - 'T9c0' does NOT match pattern\n      - 'qw3J' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n  [Star insertion]\n    Pattern: (6wjJMxA|M(MMMMMMMM|11f5p5q)|T9c0|qw3J) -> (6wjJMxA|M(MMMMMMMM|11f5p5q)|T9c0|qw(3J)*)\n      [Star insertion at root[3]]\n        Original literal: 'qw3J'\n        Rewritten to: 'qw(3J)*'\n        Local constraint: must-not-match any counter that equals 'qw'\n        Safety: PASS (checked 25 counters)\n",
+    "complexity": "medium",
+    "fragments": {},
+    "expectations": [
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "6wjJMxA",
+        "expected_match": "yes",
+        "description": "Alternative must match input '6wjJMxA'",
+        "meta": {"alternative_value": "6wjJMxA", "full_input": "6wjJMxA"}
+      },
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "T9c0",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'T9c0'",
+        "meta": {"alternative_value": "T9c0", "full_input": "T9c0"}
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "test_id": 1,
+    "pattern": "[network:test1] (EMUqZz6c|((frag687))+|dELldEL(l)?|p8(BR)*)",
+    "category": "network",
+    "counter_category": "caution",
+    "matching_inputs": ["EMUqZz6c", "a2jJyfh2", "dELldEL", "dELldELl", "p8BR"],
+    "counter_inputs": ["8iI9sK", "vtMVo", "7mg9hBZoJ", "TazbyX5", "jiskq", "nmkhchzgn", "EMxq", "88", "GEKXdLoBvU", "CTXX9WaL1J", "ionxfal", "veiqunyjig", "L72Z", "EMUqZr", "8xJUqee", "imtpsbrwxq", "djxbmaalj", "yrzxmhg", "nquze", "a2jJys", "jv3AmZ4", "dT", "odlzztpynb", "zblgggk", "dELj"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {EMUqZz6c, a2jJyfh2, dELldEL, ...} (matching inputs)\n    Let C = {8iI9sK, vtMVo, 7mg9hBZoJ, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (EMUqZz6c|a2jJyfh2|dELldEL|dELldELl|p8BR)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (EMUqZz6c|a2jJyfh2|dELldEL|dELldELl|p8BR)\n    After:  (EMUqZz6c|a2jJyfh2|dELldEL(l)?|p8BR)\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 5/5 inputs do NOT match:\n      - 'EMUqZz6c' does NOT match pattern\n      - 'a2jJyfh2' does NOT match pattern\n      - 'dELldEL' does NOT match pattern\n      - 'dELldELl' does NOT match pattern\n      - 'p8BR' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n  [Fragment extraction]\n    Pattern: (EMUqZz6c|a2jJyfh2|dELldEL(l)?|p8BR) -> (EMUqZz6c|((frag687))+|dELldEL(l)?|p8BR)\n    Fragments extracted:\n      frag687 = a2jJyfh2\n  [Star insertion]\n    Pattern: (EMUqZz6c|((frag687))+|dELldEL(l)?|p8BR) -> (EMUqZz6c|((frag687))+|dELldEL(l)?|p8(BR)*)\n      [Star insertion at root[3]]\n        Original literal: 'p8BR'\n        Rewritten to: 'p8(BR)*'\n        Local constraint: must-not-match any counter that equals 'p8'\n        Safety: PASS (checked 25 counters)\n",
+    "complexity": "medium",
+    "fragments": {"frag687": "a2jJyfh2"},
+    "expectations": [
+      {
+        "type": "MATCH_EXACT",
+        "input": "dELldEL",
+        "expected_match": "yes",
+        "description": "Input 'dELldEL' must match optional pattern at depth 3",
+        "meta": {"optional_depth": "3"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "dELldELl",
+        "expected_match": "yes",
+        "description": "Input 'dELldELl' must match optional pattern at depth 3",
+        "meta": {"optional_depth": "3"}
+      },
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "EMUqZz6c",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'EMUqZz6c'",
+        "meta": {"alternative_value": "EMUqZz6c", "full_input": "EMUqZz6c"}
+      },
+      {
+        "type": "FRAGMENT_MATCH",
+        "input": "[[FRAGMENT:frag687]]",
+        "expected_match": "yes",
+        "description": "Fragment 'frag687' definition",
+        "meta": {"fragment_definition": "a2jJyfh2", "fragment_name": "frag687"}
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "test_id": 2,
+    "pattern": "[container:test2] (k(kkkkkkk|w(2D|kw))|oug6MUh|sYqW(Qs)*)",
+    "category": "container",
+    "counter_category": "build",
+    "matching_inputs": ["kkkkkkkk", "kw2D", "kwkw", "oug6MUh", "sYqWQs"],
+    "counter_inputs": ["e1h7m3nH", "dnuag", "sDqW", "kG", "1rBS00", "x7eiBbKy", "ss6Q5wje9", "se", "sgThzm2d", "vHJ2fEAmS", "ougeMU", "38Krg", "LgDixkj84U", "kdgk", "fETdGY", "TGRRbRw", "Jwk", "sYqeQ", "V14Zk", "jHjLhQ", "xnH29ZXFm", "keied", "oug69U", "9w", "dyjdxaync"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {kkkkkkkk, sYqWQs, kw2D, ...} (matching inputs)\n    Let C = {e1h7m3nH, dnuag, sDqW, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (kkkkkkkk|sYqWQs|kw2D|oug6MUh|kwkw)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (kkkkkkkk|sYqWQs|kw2D|oug6MUh|kwkw)\n    After:  (k(kkkkkkk|w(2D|kw))|oug6MUh|sYqWQs)\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 4/5 inputs do NOT match:\n      - 'kw2D' does NOT match pattern\n      - 'kwkw' does NOT match pattern\n      - 'oug6MUh' does NOT match pattern\n      - 'sYqWQs' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n  [Star insertion]\n    Pattern: (k(kkkkkkk|w(2D|kw))|oug6MUh|sYqWQs) -> (k(kkkkkkk|w(2D|kw))|oug6MUh|sYqW(Qs)*)\n      [Star insertion at root[2]]\n        Original literal: 'sYqWQs'\n        Rewritten to: 'sYqW(Qs)*'\n        Local constraint: must-not-match any counter that equals 'sYqW'\n        Safety: PASS (checked 25 counters)\n",
+    "complexity": "medium",
+    "fragments": {},
+    "expectations": [
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "oug6MUh",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'oug6MUh'",
+        "meta": {"alternative_value": "oug6MUh", "full_input": "oug6MUh"}
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "test_id": 3,
+    "pattern": "[build:test3] kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))",
+    "category": "build",
+    "counter_category": "modifying",
+    "matching_inputs": ["kqy6kqy", "kqy6kqy6", "kqkqkqk", "kqkqkqkqkq", "kqykqyk"],
+    "counter_inputs": ["mjolzcd", "lqy", "hyqor", "oIyj1V", "WU4mf", "sysfkonmbd", "mtdkdcyxlh", "fqkq", "qfomggnq", "jwqtjnbio", "4kvc", "67gnr", "kHykq", "HgeQWQGr", "htmqwy", "bciuetdg", "Fs1YRkW", "bxlk", "vb00tXtUJ", "1vfi", "EcuFXRK", "YifcxkKKHd", "ejddlg", "jkkrdz", "gLzsJca6"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {kqy6kqy, kqy6kqy6, kqkqkqk, ...} (matching inputs)\n    Let C = {mjolzcd, lqy, hyqor, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (kqy6kqy|kqy6kqy6|kqkqkqk|kqkqkqkqkq|kqykqyk)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (kqy6kqy|kqy6kqy6|kqkqkqk|kqkqkqkqkq|kqykqyk)\n    After:  kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 5/5 inputs do NOT match:\n      - 'kqy6kqy' does NOT match pattern\n      - 'kqy6kqy6' does NOT match pattern\n      - 'kqkqkqk' does NOT match pattern\n      - 'kqkqkqkqkq' does NOT match pattern\n      - 'kqykqyk' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n",
+    "complexity": "medium",
+    "fragments": {},
+    "expectations": [
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqkqkqk",
+        "expected_match": "yes",
+        "description": "Input 'kqkqkqk' must match optional pattern at depth 4",
+        "meta": {"optional_depth": "4"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqkqkqkqkq",
+        "expected_match": "yes",
+        "description": "Input 'kqkqkqkqkq' must match optional pattern at depth 4",
+        "meta": {"optional_depth": "4"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqy6kqy",
+        "expected_match": "yes",
+        "description": "Input 'kqy6kqy' must match optional pattern at depth 6",
+        "meta": {"optional_depth": "6"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqy6kqy6",
+        "expected_match": "yes",
+        "description": "Input 'kqy6kqy6' must match optional pattern at depth 6",
+        "meta": {"optional_depth": "6"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqy6kqy",
+        "expected_match": "yes",
+        "description": "Input 'kqy6kqy' must match pattern 'kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))'",
+        "meta": {"pattern": "kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqy6kqy6",
+        "expected_match": "yes",
+        "description": "Input 'kqy6kqy6' must match pattern 'kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))'",
+        "meta": {"pattern": "kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqkqkqk",
+        "expected_match": "yes",
+        "description": "Input 'kqkqkqk' must match pattern 'kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))'",
+        "meta": {"pattern": "kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqkqkqkqkq",
+        "expected_match": "yes",
+        "description": "Input 'kqkqkqkqkq' must match pattern 'kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))'",
+        "meta": {"pattern": "kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "kqykqyk",
+        "expected_match": "yes",
+        "description": "Input 'kqykqyk' must match pattern 'kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))'",
+        "meta": {"pattern": "kq(kqkqk(qkq)?|y(6kqy(6)?|kqyk))"}
+      }
+    ]
+  }
+]

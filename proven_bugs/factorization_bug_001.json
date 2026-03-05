@@ -1,0 +1,30 @@
+[
+  {
+    "id": 0,
+    "test_id": 0,
+    "pattern": "[modifying:test0] (9YTat7pygE|E(7777|Amommmmmm|g((sub236))+))",
+    "category": "modifying",
+    "counter_category": "dangerous",
+    "matching_inputs": ["9YTat7pygE", "EAmommmmmm", "EgEgEgEgEg", "EgfgBB", "E7777"],
+    "counter_inputs": ["EgEgtgEgE", "jfiqe", "Qq3A", "G85uw", "ttahhgwk", "aotccxewt", "ultdd", "U57Mmo9", "EAmxmm", "xqecg", "HA6deT00ot", "EUmom", "EQEgEgEg", "QJH3J", "7cZA", "MFVCL", "IeG3Acy1", "qkdw", "rjmvtzgyci", "777", "begdjqf", "9bT", "JgEgEg", "yqnh", "yaidos"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {EAmommmmmm, EgEgEgEgEg, EgfgBB, ...} (matching inputs)\n    Let C = {EgEgtgEgE, jfiqe, Qq3A, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (EAmommmmmm|EgEgEgEgEg|EgfgBB|9YTat7pygE|E7777)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (EAmommmmmm|EgEgEgEgEg|EgfgBB|9YTat7pygE|E7777)\n    After:  (9YTat7pygE|E(7777|Amommmmmm|g(EgEgEgEg|fgBB)))\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 5/5 inputs do NOT match:\n      - '9YTat7pygE' does NOT match pattern\n      - 'EAmommmmmm' does NOT match pattern\n      - 'EgEgEgEgEg' does NOT match pattern\n      - 'EgfgBB' does NOT match pattern\n      - 'E7777' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n  [Fragment extraction]\n    Pattern: (9YTat7pygE|E(7777|Amommmmmm|g(EgEgEgEg|fgBB))) -> (9YTat7pygE|E(7777|Amommmmmm|g((sub236))+))\n    Fragments extracted:\n      sub236 = (EgEgEgEg|fgBB)\n",
+    "complexity": "medium",
+    "fragments": {"sub236": "(EgEgEgEg|fgBB)"},
+    "expectations": [
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "9YTat7pygE",
+        "expected_match": "yes",
+        "description": "Alternative must match input '9YTat7pygE'",
+        "meta": {"alternative_value": "9YTat7pygE", "full_input": "9YTat7pygE"}
+      },
+      {
+        "type": "FRAGMENT_MATCH",
+        "input": "[[FRAGMENT:sub236]]",
+        "expected_match": "yes",
+        "description": "Fragment 'sub236' definition",
+        "meta": {"fragment_definition": "(EgEgEgEg|fgBB)", "fragment_name": "sub236"}
+      }
+    ]
+  }
+]

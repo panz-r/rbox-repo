@@ -1,0 +1,177 @@
+[
+  {
+    "id": 0,
+    "test_id": 0,
+    "pattern": "[build:test0] (((sub117))+|b0trw8B4)",
+    "category": "build",
+    "counter_category": "admin",
+    "matching_inputs": ["MMMM", "MJMJMJMJM", "MMMMM", "MJJuJJJJJ", "b0trw8B4"],
+    "counter_inputs": ["juLeDpxohG", "udgyzvup", "yYdjYmKguL", "MKM", "vpgwwqg", "JVG6u7UTi", "w4Zm", "Vv8mGpEj6E", "E5dq7", "aGHB", "3kvbD", "rtju", "a0biB", "MJ0JMJ", "uMM", "IJJuJJJJ", "16nLJ4Rdj", "iaxlhdx", "dquobimg", "xzxgcnyi", "8RkK15a1Za", "pYVY03R5cQ", "MJxJ", "h4QTqswMQ", "hhenquqf"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {MMMM, MJMJMJMJM, MMMMM, ...} (matching inputs)\n    Let C = {juLeDpxohG, udgyzvup, yYdjYmKguL, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (MMMM|MJMJMJMJM|MMMMM|MJJuJJJJJ|b0trw8B4)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (MMMM|MJMJMJMJM|MMMMM|MJJuJJJJJ|b0trw8B4)\n    After:  (M(J(MJMJMJM|JuJJJJJ)|MMM(M)?)|b0trw8B4)\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 5/5 inputs do NOT match:\n      - 'MMMM' does NOT match pattern\n      - 'MJMJMJMJM' does NOT match pattern\n      - 'MMMMM' does NOT match pattern\n      - 'MJJuJJJJJ' does NOT match pattern\n      - 'b0trw8B4' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n  [Fragment extraction]\n    Pattern: (M(J(MJMJMJM|JuJJJJJ)|MMM(M)?)|b0trw8B4) -> (((sub117))+|b0trw8B4)\n    Fragments extracted:\n      sub117 = M(J(MJMJMJM|JuJJJJJ)|MMM(M)?)\n",
+    "complexity": "medium",
+    "fragments": {"sub117": "M(J(MJMJMJM|JuJJJJJ)|MMM(M)?)"},
+    "expectations": [
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "b0trw8B4",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'b0trw8B4'",
+        "meta": {"alternative_value": "b0trw8B4", "full_input": "b0trw8B4"}
+      },
+      {
+        "type": "FRAGMENT_MATCH",
+        "input": "[[FRAGMENT:sub117]]",
+        "expected_match": "yes",
+        "description": "Fragment 'sub117' definition",
+        "meta": {"fragment_definition": "M(J(MJMJMJM|JuJJJJJ)|MMM(M)?)", "fragment_name": "sub117"}
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "test_id": 1,
+    "pattern": "[admin:test1] l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))",
+    "category": "admin",
+    "counter_category": "network",
+    "matching_inputs": ["llllllllll", "lw6lw6lw", "lw6xx", "lw6lw6lw6", "lwlwlwlw"],
+    "counter_inputs": ["XMVf9Te", "Fc9c0Wh", "lcl", "yGryFi", "mDzyDz0", "Qv0o204dc", "Vwq4", "lyll", "olcaya", "YlTZDAYFTm", "vtjllmy", "T0YuB", "qacggeloap", "lwxlw", "72Qod", "jlhe", "egvcs", "lllll0", "bllllllll", "bTQQ", "hlojbcmvee", "dw6", "mw6l", "y1wgGuR", "Jw"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {llllllllll, lw6lw6lw, lw6xx, ...} (matching inputs)\n    Let C = {XMVf9Te, Fc9c0Wh, lcl, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (llllllllll|lw6lw6lw|lw6xx|lw6lw6lw6|lwlwlwlw)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (llllllllll|lw6lw6lw|lw6xx|lw6lw6lw6|lwlwlwlw)\n    After:  l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 4/5 inputs do NOT match:\n      - 'lw6lw6lw' does NOT match pattern\n      - 'lw6xx' does NOT match pattern\n      - 'lw6lw6lw6' does NOT match pattern\n      - 'lwlwlwlw' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n",
+    "complexity": "medium",
+    "fragments": {},
+    "expectations": [
+      {
+        "type": "MATCH_EXACT",
+        "input": "lw6lw6lw",
+        "expected_match": "yes",
+        "description": "Input 'lw6lw6lw' must match optional pattern at depth 8",
+        "meta": {"optional_depth": "8"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "lw6lw6lw6",
+        "expected_match": "yes",
+        "description": "Input 'lw6lw6lw6' must match optional pattern at depth 8",
+        "meta": {"optional_depth": "8"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "llllllllll",
+        "expected_match": "yes",
+        "description": "Input 'llllllllll' must match pattern 'l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))'",
+        "meta": {"pattern": "l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "lw6lw6lw",
+        "expected_match": "yes",
+        "description": "Input 'lw6lw6lw' must match pattern 'l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))'",
+        "meta": {"pattern": "l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "lw6xx",
+        "expected_match": "yes",
+        "description": "Input 'lw6xx' must match pattern 'l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))'",
+        "meta": {"pattern": "l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "lw6lw6lw6",
+        "expected_match": "yes",
+        "description": "Input 'lw6lw6lw6' must match pattern 'l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))'",
+        "meta": {"pattern": "l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "lwlwlwlw",
+        "expected_match": "yes",
+        "description": "Input 'lwlwlwlw' must match pattern 'l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))'",
+        "meta": {"pattern": "l(lllllllll|w(6(lw6lw(6)?|xx)|lwlwlw))"}
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "test_id": 2,
+    "pattern": "[network:test2] (6(BSBBBBB|ha76(ha76)?)|DEDXTRUc39|ekTyn)",
+    "category": "network",
+    "counter_category": "modifying",
+    "matching_inputs": ["6ha76", "6ha76ha76", "6BSBBBBB", "DEDXTRUc39", "ekTyn"],
+    "counter_inputs": ["TzCDU", "id4i93f", "hphokjzpg", "2RxzB", "08Td8isV", "hh", "qoKmw9", "6BSBBB9", "nwbo", "Zj0JonUD", "gmmmy", "znWyjYBL", "ueCKJ", "dha7", "6bS", "tgksp", "zoqnbxado", "fesyzy", "8b2MBBKC", "rwzmltjdb", "ekny", "dfz4wUeD9", "enT", "bIq4wA", "xxDpvT"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {6ha76, DEDXTRUc39, 6ha76ha76, ...} (matching inputs)\n    Let C = {TzCDU, id4i93f, hphokjzpg, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (6ha76|DEDXTRUc39|6ha76ha76|ekTyn|6BSBBBBB)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (6ha76|DEDXTRUc39|6ha76ha76|ekTyn|6BSBBBBB)\n    After:  (6(BSBBBBB|ha76(ha76)?)|DEDXTRUc39|ekTyn)\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 4/5 inputs do NOT match:\n      - '6ha76' does NOT match pattern\n      - '6ha76ha76' does NOT match pattern\n      - 'DEDXTRUc39' does NOT match pattern\n      - 'ekTyn' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n",
+    "complexity": "medium",
+    "fragments": {},
+    "expectations": [
+      {
+        "type": "MATCH_EXACT",
+        "input": "6ha76",
+        "expected_match": "yes",
+        "description": "Input '6ha76' must match optional pattern at depth 5",
+        "meta": {"optional_depth": "5"}
+      },
+      {
+        "type": "MATCH_EXACT",
+        "input": "6ha76ha76",
+        "expected_match": "yes",
+        "description": "Input '6ha76ha76' must match optional pattern at depth 5",
+        "meta": {"optional_depth": "5"}
+      },
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "DEDXTRUc39",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'DEDXTRUc39'",
+        "meta": {"alternative_value": "DEDXTRUc39", "full_input": "DEDXTRUc39"}
+      },
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "ekTyn",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'ekTyn'",
+        "meta": {"alternative_value": "ekTyn", "full_input": "ekTyn"}
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "test_id": 3,
+    "pattern": "[dangerous:test3] (C((sub341))+|YJz7kYnipZ|kYfAHTwnf|rdRT)",
+    "category": "dangerous",
+    "counter_category": "caution",
+    "matching_inputs": ["CXv6WE6", "CIokII", "YJz7kYnipZ", "kYfAHTwnf", "rdRT"],
+    "counter_inputs": ["I5d9o61a0", "kT", "voxse", "kybjz", "qcbzgw", "C4v", "sGlK", "swakzmtxa", "Gil2Z44RvS", "cayzwk", "qgmazv", "X6DmjCT8U", "nwfviq", "oxydwfpqn", "mptrcktjo", "Co", "quficr", "apbkdqj", "Y7G6ryw", "smmx", "ndzqo", "debspwxspb", "JB6iHKTa", "nwspkrrzyi", "2dR"],
+    "proof": "INDUCTIVE BUILD:\n  Strategy: Constraint-propagating prefix building\n  Initial Specification:\n    Let M = {kYfAHTwnf, YJz7kYnipZ, CXv6WE6, ...} (matching inputs)\n    Let C = {I5d9o61a0, kT, voxse, ...} (25 counter inputs)\n  Constraint: ∀m∈M: pattern matches m; ∀c∈C: pattern does NOT match c\nAlternation of 5 remainders\n  Matching seeds tracked: 5\n  Counter seeds tracked: 25\n  [Pre-transformation]\n    Pattern: (kYfAHTwnf|YJz7kYnipZ|CXv6WE6|rdRT|CIokII)\n    Constraint: must-match(5), must-not-match(25)\n  [Factorization]\n    Before: (kYfAHTwnf|YJz7kYnipZ|CXv6WE6|rdRT|CIokII)\n    After:  (C(Xv6WE6|IokII)|YJz7kYnipZ|kYfAHTwnf|rdRT)\n    Constraint: must-match(5), must-not-match(25)\n    VERIFICATION FAILED: 3/5 inputs do NOT match:\n      - 'YJz7kYnipZ' does NOT match pattern\n      - 'kYfAHTwnf' does NOT match pattern\n      - 'rdRT' does NOT match pattern\n    BUG: Factorization produced non-matching pattern!\n  [Fragment extraction]\n    Pattern: (C(Xv6WE6|IokII)|YJz7kYnipZ|kYfAHTwnf|rdRT) -> (C((sub341))+|YJz7kYnipZ|kYfAHTwnf|rdRT)\n    Fragments extracted:\n      sub341 = (Xv6WE6|IokII)\n",
+    "complexity": "medium",
+    "fragments": {"sub341": "(Xv6WE6|IokII)"},
+    "expectations": [
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "YJz7kYnipZ",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'YJz7kYnipZ'",
+        "meta": {"alternative_value": "YJz7kYnipZ", "full_input": "YJz7kYnipZ"}
+      },
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "kYfAHTwnf",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'kYfAHTwnf'",
+        "meta": {"alternative_value": "kYfAHTwnf", "full_input": "kYfAHTwnf"}
+      },
+      {
+        "type": "ALTERNATION_INDIVIDUAL",
+        "input": "rdRT",
+        "expected_match": "yes",
+        "description": "Alternative must match input 'rdRT'",
+        "meta": {"alternative_value": "rdRT", "full_input": "rdRT"}
+      },
+      {
+        "type": "FRAGMENT_MATCH",
+        "input": "[[FRAGMENT:sub341]]",
+        "expected_match": "yes",
+        "description": "Fragment 'sub341' definition",
+        "meta": {"fragment_definition": "(Xv6WE6|IokII)", "fragment_name": "sub341"}
+      }
+    ]
+  }
+]
