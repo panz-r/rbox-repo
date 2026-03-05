@@ -150,6 +150,29 @@ struct TestCase {
     std::vector<Expectation> expectations;  // Deep semantic expectations
 };
 
+// ============================================================================
+// Factorization Derivation Step - Records how an input maps through factoring
+// ============================================================================
+
+struct FactorizationStep {
+    std::string input;              // Original input
+    std::string alternative;        // Which alternative it came from
+    std::string prefix;             // Extracted prefix
+    std::string remainder;          // Remainder after prefix
+    std::string target_alternative; // Which alternative in factored pattern
+    bool valid;                     // Does it match?
+    std::string reason;             // Why valid/invalid
+};
+
+struct FactorizationProof {
+    std::string before;           // Pattern before factoring
+    std::string after;            // Pattern after factoring
+    std::string common_prefix;    // Common prefix found (if any)
+    std::vector<FactorizationStep> steps;  // Per-input derivations
+    std::vector<std::string> failed_inputs;  // Inputs that don't match
+    bool valid;                   // Is the factorization valid overall?
+};
+
 struct Options {
     int num_tests = 100;
     std::string output_dir = "testgen/output";

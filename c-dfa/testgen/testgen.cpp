@@ -1624,7 +1624,10 @@ bool patternMatchesCharClass(const std::string& char_class, const std::string& s
 
 // Forward declaration for PatternFactorization namespace
 namespace PatternFactorization {
-    std::shared_ptr<PatternNode> applyFactorization(std::shared_ptr<PatternNode> root, std::mt19937& rng);
+    std::shared_ptr<PatternNode> applyFactorization(
+        std::shared_ptr<PatternNode> root, 
+        std::mt19937& rng,
+        FactorizationProof* proof_out = nullptr);
     std::shared_ptr<PatternNode> applyRandomStars(std::shared_ptr<PatternNode> root, std::mt19937& rng);
     std::pair<std::shared_ptr<PatternNode>, std::map<std::string, std::string>> applyComplexRewrites(
         std::shared_ptr<PatternNode> root, std::mt19937& rng, std::string& proof_out);
@@ -1634,7 +1637,11 @@ namespace PatternFactorization {
         std::shared_ptr<PatternNode> after,
         const std::string& context);
     
-    // All internal functions are defined in the namespace, no forward declarations needed
+    // Internal factorization with proof generation
+    std::shared_ptr<PatternNode> factorPattern(
+        std::shared_ptr<PatternNode> node, 
+        int depth,
+        FactorizationProof* proof_out = nullptr);
 }
 
 namespace InductiveBuilder {
@@ -2045,12 +2052,27 @@ std::map<std::string, std::vector<std::string>> groupBySuffix(
 
 // Recursively factor an alternation node
 // Returns the factored node (may be same as input if no factoring possible)
-std::shared_ptr<PatternNode> factorAlternation(std::shared_ptr<PatternNode> node, int depth) {
+std::shared_ptr<PatternNode> factorAlternation(
+    std::shared_ptr<PatternNode> node, 
+    int depth,
+    FactorizationProof* proof_out) {
     if (!node || depth > 10) return node;
     
     // Only process alternations
     if (node->type != PatternType::ALTERNATION || node->children.size() < 2) {
         return node;
+    }
+    
+    // DEBUG: Check if this alternation contains wzwz
+    bool has_wzwz = false;
+    for (const auto& child : node->children) {
+        if (child->type == PatternType::LITERAL && child->value == "wzwz") {
+            has_wzwz = true;
+            break;
+        }
+    }
+    if (has_wzwz && proof_out) {
+        proof_out->valid = false;  // Mark for debugging
     }
     
     // Get all literal alternatives
@@ -2094,12 +2116,43 @@ std::shared_ptr<PatternNode> factorAlternation(std::shared_ptr<PatternNode> node
             std::vector<std::string> group_seeds;
             for (const auto& alt : group_alts) {
                 // Find the index of this alternative in the original list
+                bool found = false;
                 for (size_t i = 0; i < alternatives.size(); i++) {
                     if (alternatives[i] == alt) {
                         group_seeds.push_back(node->matched_seeds[i]);
+                        found = true;
                         break;
                     }
                 }
+                if (!found) {
+                    // CRITICAL: Alternative not found in original list!
+                    // This should never happen - indicates a bug
+                    if (proof_out) {
+                        proof_out->valid = false;
+                    }
+                }
+            }
+            
+            // DEBUG: Check if we have matching seeds for all alternatives
+            if (proof_out && group_seeds.size() != group_alts.size()) {
+                proof_out->valid = false;  // Mismatch - some alternatives lost their seeds
+            }
+            
+            // DEBUG: Check for specific case
+            if (proof_out && prefix == "wz") {
+                // Detailed debug for wz group
+                std::string debug_info = "WZ_GROUP: alts=[";
+                for (size_t i = 0; i < group_alts.size(); i++) {
+                    if (i > 0) debug_info += ",";
+                    debug_info += group_alts[i];
+                }
+                debug_info += "] seeds=[";
+                for (size_t i = 0; i < group_seeds.size(); i++) {
+                    if (i > 0) debug_info += ",";
+                    debug_info += group_seeds[i];
+                }
+                debug_info += "]";
+                proof_out->before = debug_info;
             }
             
             if (group_alts.size() == 1) {
@@ -2108,6 +2161,15 @@ std::shared_ptr<PatternNode> factorAlternation(std::shared_ptr<PatternNode> node
                 new_children.push_back(lit);
                 new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
             } else {
+                // DEBUG: Trace group processing for wz group
+                if (proof_out && prefix == "wz") {
+                    proof_out->valid = false;  // Mark for debugging
+                    // Log detailed info about this group
+                    // Add debug info to proof
+                    if (proof_out->steps.empty()) {
+                        proof_out->before = "GROUP_WZ_DEBUG:";
+                    }
+                }
                 // Multiple alternatives share a prefix - create inner alternation with factored prefix
                 // Structure: prefix + (remainder1 | remainder2 | ...)
                 // CRITICAL: Check if any input equals the prefix exactly (would have empty remainder)
@@ -2131,6 +2193,48 @@ std::shared_ptr<PatternNode> factorAlternation(std::shared_ptr<PatternNode> node
                         inner_children.push_back(lit);
                         inner_seeds.push_back(group_seeds[i]);
                     }
+                }
+                
+                // VALIDATION: Check if remainders share common structure
+                // If not, don't create nested pattern - keep as separate literals
+                std::vector<std::string> remainders;
+                for (size_t i = 0; i < group_alts.size(); i++) {
+                    std::string rem = group_alts[i].substr(prefix.size());
+                    if (!rem.empty()) {
+                        remainders.push_back(rem);
+                    }
+                }
+                
+                std::string remainder_common = findCommonPrefix(remainders);
+                bool remainders_compatible = !remainders.empty() && 
+                    (remainders.size() == 1 || !remainder_common.empty());
+                
+                // Also check: all remainders must be valid (non-empty or explicitly empty)
+                bool all_remainders_valid = (remainders.size() + (has_empty_remainder ? 1 : 0)) == group_alts.size();
+                
+                // DEBUG: Trace wz group specifically
+                if (proof_out && prefix == "wz") {
+                    std::string debug = "WZ_VALIDATION: remainders=[";
+                    for (size_t i = 0; i < remainders.size(); i++) {
+                        if (i > 0) debug += ",";
+                        debug += remainders[i];
+                    }
+                    debug += "] common=" + remainder_common + " compatible=" + 
+                             (remainders_compatible ? "true" : "false") + " valid=" +
+                             (all_remainders_valid ? "true" : "false");
+                    proof_out->before = debug;
+                }
+                
+                if (!remainders_compatible || !all_remainders_valid) {
+                    // Remainders don't share structure - don't factor this group
+                    // Keep as separate literal alternatives
+                    for (size_t i = 0; i < group_alts.size(); i++) {
+                        auto lit = PatternNode::createLiteral(
+                            group_alts[i], {group_seeds[i]}, all_counter_seeds);
+                        new_children.push_back(lit);
+                        new_seeds.push_back(group_seeds[i]);
+                    }
+                    continue;  // Skip to next group
                 }
                 
                 // Create inner alternation
@@ -2160,20 +2264,71 @@ std::shared_ptr<PatternNode> factorAlternation(std::shared_ptr<PatternNode> node
                         }
                     }
                 } else if (!has_empty_remainder) {
-                    // All have non-empty remainders - use original factoring
-                    inner_alt = factorAlternation(inner_alt, depth + 1);
+                    // All have non-empty remainders
+                    // CRITICAL: Validate that all inputs will match the factored pattern
+                    // before creating the sequence structure
                     
-                    std::vector<std::shared_ptr<PatternNode>> seq_kids;
-                    seq_kids.push_back(PatternNode::createLiteral(prefix, group_seeds, all_counter_seeds));
-                    seq_kids.push_back(inner_alt);
-                    auto seq = PatternNode::createSequence(seq_kids, group_seeds, all_counter_seeds);
+                    // Build the would-be factored pattern string for validation
+                    std::string inner_pattern;
+                    for (size_t i = 0; i < inner_children.size(); i++) {
+                        if (i > 0) inner_pattern += "|";
+                        inner_pattern += inner_children[i]->value;
+                    }
+                    std::string factored_pattern = prefix + "(" + inner_pattern + ")";
                     
-                    new_children.push_back(seq);
-                    new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
+                    // Check each input against the factored pattern
+                    // Simple check: input should equal prefix + one of the remainders
+                    bool all_inputs_match = true;
+                    std::vector<std::string> failed_inputs;
+                    
+                    for (size_t i = 0; i < group_alts.size(); i++) {
+                        const std::string& input = group_alts[i];
+                        std::string remainder = input.substr(prefix.size());
+                        
+                        // Check if remainder exactly matches any inner child value
+                        bool remainder_matches = false;
+                        for (const auto& child : inner_children) {
+                            if (remainder == child->value) {
+                                remainder_matches = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!remainder_matches) {
+                            all_inputs_match = false;
+                            failed_inputs.push_back(input);
+                        }
+                    }
+                    
+                    if (!all_inputs_match) {
+                        // Validation failed - don't create this factored structure
+                        // Instead, keep alternatives as separate literals
+                        if (proof_out) {
+                            proof_out->valid = false;
+                        }
+                        
+                        for (size_t i = 0; i < group_alts.size(); i++) {
+                            auto lit = PatternNode::createLiteral(
+                                group_alts[i], {group_seeds[i]}, all_counter_seeds);
+                            new_children.push_back(lit);
+                            new_seeds.push_back(group_seeds[i]);
+                        }
+                    } else {
+                        // Validation passed - create the factored structure
+                        inner_alt = factorAlternation(inner_alt, depth + 1, proof_out);
+                        
+                        std::vector<std::shared_ptr<PatternNode>> seq_kids;
+                        seq_kids.push_back(PatternNode::createLiteral(prefix, group_seeds, all_counter_seeds));
+                        seq_kids.push_back(inner_alt);
+                        auto seq = PatternNode::createSequence(seq_kids, group_seeds, all_counter_seeds);
+                        
+                        new_children.push_back(seq);
+                        new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
+                    }
                 } else {
                     // Multiple alternatives with mixed empty/non-empty remainders
                     // Keep as alternation with prefix + (rem|ε|rem2|ε|...)
-                    inner_alt = factorAlternation(inner_alt, depth + 1);
+                    inner_alt = factorAlternation(inner_alt, depth + 1, proof_out);
                     
                     std::vector<std::shared_ptr<PatternNode>> seq_kids;
                     seq_kids.push_back(PatternNode::createLiteral(prefix, group_seeds, all_counter_seeds));
@@ -2184,6 +2339,45 @@ std::shared_ptr<PatternNode> factorAlternation(std::shared_ptr<PatternNode> node
                     new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
                 }
             }
+        }
+        
+        // DEBUG: Check if we lost any alternatives
+        if (proof_out && new_children.size() < alternatives.size()) {
+            proof_out->valid = false;  // Lost alternatives!
+            // Build debug info with detailed SEQ contents
+            std::string debug = "LOST:" + std::to_string(new_children.size()) + "vs" + 
+                               std::to_string(alternatives.size()) + " [";
+            for (size_t i = 0; i < alternatives.size(); i++) {
+                if (i > 0) debug += ",";
+                debug += alternatives[i];
+            }
+            debug += "]->[";
+            for (size_t i = 0; i < new_children.size(); i++) {
+                if (i > 0) debug += ",";
+                if (new_children[i]->type == PatternType::LITERAL) {
+                    debug += new_children[i]->value;
+                } else if (new_children[i]->type == PatternType::SEQUENCE) {
+                    debug += "SEQ{";
+                    // Show what's in the sequence
+                    for (size_t j = 0; j < new_children[i]->children.size(); j++) {
+                        if (j > 0) debug += ",";
+                        if (new_children[i]->children[j]->type == PatternType::LITERAL) {
+                            debug += new_children[i]->children[j]->value;
+                        } else if (new_children[i]->children[j]->type == PatternType::ALTERNATION) {
+                            debug += "ALT(" + std::to_string(new_children[i]->children[j]->children.size()) + ")";
+                        } else if (new_children[i]->children[j]->type == PatternType::OPTIONAL) {
+                            debug += "OPT";
+                        } else {
+                            debug += "?";
+                        }
+                    }
+                    debug += "}";
+                } else {
+                    debug += "OTHER";
+                }
+            }
+            debug += "]";
+            proof_out->after = debug;
         }
         
         // Create new alternation with factored children
@@ -2251,7 +2445,7 @@ std::shared_ptr<PatternNode> factorAlternation(std::shared_ptr<PatternNode> node
         auto inner_alt = PatternNode::createAlternation(inner_children, inner_seeds, all_counter_seeds);
         inner_alt->matched_seeds = inner_seeds;
         inner_alt->counter_seeds = all_counter_seeds;
-        inner_alt = factorAlternation(inner_alt, depth + 1);
+        inner_alt = factorAlternation(inner_alt, depth + 1, proof_out);
         
         std::vector<std::shared_ptr<PatternNode>> seq_kids;
         seq_kids.push_back(PatternNode::createLiteral(common, inner_seeds, all_counter_seeds));
@@ -2271,7 +2465,7 @@ std::shared_ptr<PatternNode> factorAlternation(std::shared_ptr<PatternNode> node
     auto inner_alt = PatternNode::createAlternation(inner_children, inner_seeds, all_counter_seeds);
     inner_alt->matched_seeds = inner_seeds;
     inner_alt->counter_seeds = all_counter_seeds;
-    inner_alt = factorAlternation(inner_alt, depth + 1);
+    inner_alt = factorAlternation(inner_alt, depth + 1, proof_out);
     
     // The sequence tracks inputs
     std::vector<std::shared_ptr<PatternNode>> seq_kids;
@@ -2347,7 +2541,7 @@ std::shared_ptr<PatternNode> factorSuffixes(std::shared_ptr<PatternNode> node, i
     inner_alt->matched_seeds = non_empty_seeds;
     
     // Recursively factor the inner alternation
-    inner_alt = factorAlternation(inner_alt, depth + 1);
+    inner_alt = factorAlternation(inner_alt, depth + 1, nullptr);
     
     // The sequence tracks full inputs (from non_empty_seeds)
     std::vector<std::shared_ptr<PatternNode>> seq_kids;
@@ -2359,7 +2553,10 @@ std::shared_ptr<PatternNode> factorSuffixes(std::shared_ptr<PatternNode> node, i
 }
 
 // Recursively factor all alternations in an AST
-std::shared_ptr<PatternNode> factorPattern(std::shared_ptr<PatternNode> node, int depth) {
+std::shared_ptr<PatternNode> factorPattern(
+    std::shared_ptr<PatternNode> node, 
+    int depth,
+    FactorizationProof* proof_out) {
     if (!node || depth > 10) return node;
     
     switch (node->type) {
@@ -2369,20 +2566,20 @@ std::shared_ptr<PatternNode> factorPattern(std::shared_ptr<PatternNode> node, in
             
         case PatternType::ALTERNATION:
             // Apply prefix factorization first
-            node = factorAlternation(node, depth);
+            node = factorAlternation(node, depth, proof_out);
             // Then apply suffix factorization if still an alternation
             if (node->type == PatternType::ALTERNATION) {
                 node = factorSuffixes(node, depth);
             }
             // Recursively factor children
             for (auto& child : node->children) {
-                child = factorPattern(child, depth + 1);
+                child = factorPattern(child, depth + 1, proof_out);
             }
             return node;
             
         case PatternType::SEQUENCE:
             for (auto& child : node->children) {
-                child = factorPattern(child, depth + 1);
+                child = factorPattern(child, depth + 1, proof_out);
             }
             return node;
             
@@ -2390,7 +2587,7 @@ std::shared_ptr<PatternNode> factorPattern(std::shared_ptr<PatternNode> node, in
         case PatternType::STAR_QUANTIFIER:
         case PatternType::OPTIONAL:
             if (node->quantified) {
-                node->quantified = factorPattern(node->quantified, depth + 1);
+                node->quantified = factorPattern(node->quantified, depth + 1, proof_out);
             }
             return node;
             
@@ -2817,12 +3014,17 @@ void applyConstraintSubdivisionRecursive(std::shared_ptr<PatternNode> node, std:
 }
 
 // Apply factorization to a PatternNode
-std::shared_ptr<PatternNode> applyFactorization(std::shared_ptr<PatternNode> root, std::mt19937& rng) {
+// If proof pointer is provided, fills in detailed factorization steps
+std::shared_ptr<PatternNode> applyFactorization(
+    std::shared_ptr<PatternNode> root, 
+    std::mt19937& rng,
+    FactorizationProof* proof_out) {
+    
     // First apply constraint subdivision to distribute counter constraints
     applyConstraintSubdivisionRecursive(root, rng);
     
     // Then apply prefix/suffix factorization
-    auto result = factorPattern(root, 0);
+    auto result = factorPattern(root, 0, proof_out);
     
     // Then apply quantifier detection
     result = applyQuantifierDetection(result, 0);
@@ -2942,10 +3144,7 @@ std::shared_ptr<PatternNode> introduceCharClass(
                 
                 // Only create class if range is small and meaningful
                 if (max_char - min_char <= 5 && max_char != min_char) {
-                    // Create fragment name
-                    std::string frag_name = "class" + std::to_string(rng() % 100);
-                    
-                    // Build alternation for the class: (a|b|c...)
+                    // Create candidate char class
                     std::string class_def = "(";
                     for (char c = min_char; c <= max_char; c++) {
                         if (c > min_char) class_def += "|";
@@ -2953,17 +3152,45 @@ std::shared_ptr<PatternNode> introduceCharClass(
                     }
                     class_def += ")";
                     
-                    // Register fragment definition
+                    // CRITICAL: Validate that no counter input matches the char class pattern
+                    // The char class (a|b|c)+ with + quantifier matches ANY length >= 1
+                    // where ALL characters are in the class. This is MUCH broader than a literal.
+                    bool would_match_counters = false;
+                    std::vector<std::string> violating_counters;
+                    
+                    for (const auto& counter : node->counter_seeds) {
+                        // Check if counter would match (char_class)+
+                        // Counter matches if: length >= 1 AND all chars in [min_char, max_char]
+                        if (counter.length() >= 1) {
+                            bool all_chars_in_class = true;
+                            for (char c : counter) {
+                                if (c < min_char || c > max_char) {
+                                    all_chars_in_class = false;
+                                    break;
+                                }
+                            }
+                            if (all_chars_in_class) {
+                                would_match_counters = true;
+                                violating_counters.push_back(counter);
+                            }
+                        }
+                    }
+                    
+                    if (would_match_counters) {
+                        // Char class (with + quantifier) would match counter inputs - DON'T introduce it
+                        return node;
+                    }
+                    
+                    // Validation passed - create the fragment
+                    std::string frag_name = "class" + std::to_string(rng() % 100);
                     fragment_defs[frag_name] = class_def;
                     
                     // Create fragment reference - it already has + quantifier in serialization!
-                    // serializePattern produces: ((frag_name))+
                     auto frag_node = PatternNode::createFragment(
                         frag_name, node->matched_seeds, node->counter_seeds);
                     frag_node->matched_seeds = node->matched_seeds;
                     frag_node->counter_seeds = node->counter_seeds;
                     
-                    // DON'T wrap in another quantifier - fragment refs are already quantified!
                     return frag_node;
                 }
             }
@@ -7547,37 +7774,93 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
         result.proof += "    Pattern: " + before + "\n";
         result.proof += "    Constraint: must-match(" + std::to_string(before_match) + "), must-not-match(" + std::to_string(before_counters) + ")\n";
         
-        result.ast = PatternFactorization::applyFactorization(result.ast, rng);
+        // Apply factorization with detailed proof generation
+        FactorizationProof factor_proof;
+        factor_proof.before = before;
+        
+        result.ast = PatternFactorization::applyFactorization(result.ast, rng, &factor_proof);
         std::string after_factor = serializePattern(result.ast);
         int after_match = result.ast ? result.ast->matched_seeds.size() : 0;
         int after_counters = result.ast ? result.ast->counter_seeds.size() : 0;
+        
         if (before != after_factor) {
             result.proof += "  [Factorization]\n";
             result.proof += "    Before: " + before + "\n";
             result.proof += "    After:  " + after_factor + "\n";
             result.proof += "    Constraint: must-match(" + std::to_string(after_match) + "), must-not-match(" + std::to_string(after_counters) + ")\n";
             
-            // CRITICAL: Verify that all matching inputs actually match the factorized pattern
-            std::vector<std::string> verified_matches;
-            std::vector<std::string> failed_matches;
+            // DEBUG: Add any debug info from factorization
+            if (!factor_proof.before.empty() && factor_proof.before.substr(0, 3) == "WZ_") {
+                result.proof += "    DEBUG: " + factor_proof.before + "\n";
+            }
+            if (!factor_proof.after.empty() && factor_proof.after.substr(0, 5) == "LOST:") {
+                result.proof += "    DEBUG: " + factor_proof.after + "\n";
+            }
+            
+            // Generate detailed per-input derivation proof
+            result.proof += "\n    DERIVATION (per input):\n";
+            
+            // Parse the before pattern to understand structure
+            std::vector<std::string> before_alts;
+            std::string before_clean = before;
+            if (before_clean.size() >= 2 && before_clean.front() == '(' && before_clean.back() == ')') {
+                before_clean = before_clean.substr(1, before_clean.size() - 2);
+            }
+            
+            // Split by | at depth 0
+            size_t start = 0;
+            int depth = 0;
+            for (size_t i = 0; i < before_clean.size(); i++) {
+                if (before_clean[i] == '(') depth++;
+                else if (before_clean[i] == ')') depth--;
+                else if (before_clean[i] == '|' && depth == 0) {
+                    before_alts.push_back(before_clean.substr(start, i - start));
+                    start = i + 1;
+                }
+            }
+            before_alts.push_back(before_clean.substr(start));
+            
+            // For each matching input, trace how it maps through factorization
+            int valid_count = 0;
+            int invalid_count = 0;
+            
             for (const auto& input : result.ast->matched_seeds) {
-                if (wouldInputMatchPattern(input, after_factor)) {
-                    verified_matches.push_back(input);
+                // Find which original alternative this input came from
+                std::string original_alt;
+                for (const auto& alt : before_alts) {
+                    if (input == alt) {
+                        original_alt = alt;
+                        break;
+                    }
+                }
+                
+                if (original_alt.empty()) {
+                    result.proof += "      ? '" + input + "': Cannot trace to original alternative\n";
+                    invalid_count++;
+                    continue;
+                }
+                
+                // Use recursive matching function that handles nested patterns
+                bool found_match = wouldInputMatchPattern(input, after_factor);
+                
+                if (found_match) {
+                    result.proof += "      ✓ '" + input + "': matches pattern\n";
+                    valid_count++;
                 } else {
-                    failed_matches.push_back(input);
+                    result.proof += "      ✗ '" + input + "': does NOT match pattern\n";
+                    result.proof += "        Original: '" + original_alt + "'\n";
+                    invalid_count++;
                 }
             }
             
-            if (!failed_matches.empty()) {
-                result.proof += "    VERIFICATION FAILED: " + std::to_string(failed_matches.size()) + "/" + 
-                             std::to_string(after_match) + " inputs do NOT match:\n";
-                for (const auto& failed : failed_matches) {
-                    result.proof += "      - '" + failed + "' does NOT match pattern\n";
-                }
-                result.proof += "    BUG: Factorization produced non-matching pattern!\n";
+            result.proof += "\n    VALIDATION: " + std::to_string(valid_count) + "/" + 
+                          std::to_string(after_match) + " inputs valid\n";
+            
+            if (invalid_count > 0) {
+                result.proof += "    STATUS: FACTORIZATION BUG DETECTED - " + 
+                              std::to_string(invalid_count) + " input(s) don't match factored pattern\n";
             } else {
-                result.proof += "    VERIFICATION: All " + std::to_string(verified_matches.size()) + 
-                             " inputs confirmed matching\n";
+                result.proof += "    STATUS: All inputs verified to match\n";
             }
         }
         
