@@ -1,19 +1,16 @@
 package main
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/panz/openroutertest/internal/access"
 	"github.com/panz/openroutertest/internal/config"
+	"github.com/panz/openroutertest/internal/protocol"
 	"github.com/panz/openroutertest/internal/readonlybox"
 )
 
@@ -559,21 +556,12 @@ func handlePtrace() {
 
 /* Server client for --run validation */
 
-const (
-	SocketPath          = "/tmp/readonlybox.sock"
-	ROBO_MAGIC          = 0x524F424F
-	ROBO_VERSION        = 4
-	ROBO_MSG_REQ        = 1
-	ROBO_DECISION_ALLOW = 2
-	ROBO_DECISION_DENY  = 3
-)
-
 type serverClient struct {
-	conn net.Conn
+	conn *protocol.Client
 }
 
 func newServerClient() (*serverClient, error) {
-	conn, err := net.DialTimeout("unix", SocketPath, 2*time.Second)
+	conn, err := protocol.Dial(protocol.DefaultSocketPath, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -587,21 +575,15 @@ func (c *serverClient) close() {
 }
 
 func (c *serverClient) requestDecision(command string, args []string) (bool, string, error) {
-	/* Build request packet */
-	var buf bytes.Buffer
-
-	/* Get caller info and cwd from environment (set by LD_PRELOAD client) */
 	caller := os.Getenv("READONLYBOX_CALLER")
 	syscall := os.Getenv("READONLYBOX_SYSCALL")
 	cwd := os.Getenv("READONLYBOX_CWD")
 
-	/* Build full command with args for server */
 	fullCommand := command
 	if len(args) > 0 {
 		fullCommand = command + " " + strings.Join(args, " ")
 	}
 
-	/* Build augmented command with caller info for server-side parsing */
 	augmentedCmd := fullCommand
 	if caller != "" && syscall != "" {
 		augmentedCmd = fmt.Sprintf("[%s:%s] %s", caller, syscall, fullCommand)
@@ -609,120 +591,13 @@ func (c *serverClient) requestDecision(command string, args []string) (bool, str
 		augmentedCmd = fmt.Sprintf("[%s] %s", caller, fullCommand)
 	}
 
-	/* Header: magic(4) + version(4) + clientUUID(16) + requestUUID(16) + serverUUID(16) + id(4) + argc(4) + envc(4) + checksum(4) = 72 bytes */
-	/* Generate client UUID (static for this process) */
-	clientUUID := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10}
-
-	/* Generate request UUID (based on time) */
-	now := time.Now().UnixNano()
-	requestUUID := []byte{
-		byte(now), byte(now >> 8), byte(now >> 16), byte(now >> 24),
-		byte(now >> 32), byte(now >> 40), byte(now >> 48), byte(now >> 56),
-		0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-	}
-
-	/* Write header (without checksum first) */
-	binary.Write(&buf, binary.LittleEndian, uint32(ROBO_MAGIC))
-	binary.Write(&buf, binary.LittleEndian, uint32(ROBO_VERSION))
-	buf.Write(clientUUID)
-	buf.Write(requestUUID)
-	buf.Write(make([]byte, 16)) /* serverUUID (filled by server) */
-	binary.Write(&buf, binary.LittleEndian, uint32(ROBO_MSG_REQ))
-	binary.Write(&buf, binary.LittleEndian, uint32(0)) /* argc = 0, args included in augmentedCmd */
-
-	/* Send Cwd as environment variable (count: 1 if cwd provided, 0 otherwise) */
-	envc := 0
-	if cwd != "" {
-		envc = 1
-	}
-	binary.Write(&buf, binary.LittleEndian, uint32(envc))
-	binary.Write(&buf, binary.LittleEndian, uint32(0)) /* header checksum placeholder (at offset 68) */
-
-	/* Write augmented command (with caller info and full args) */
-	buf.WriteString(augmentedCmd)
-	buf.WriteByte(0)
-
-	/* Write CWD environment variable if provided - immediately after command null */
-	if cwd != "" {
-		buf.WriteString("READONLYBOX_CWD=" + cwd)
-		buf.WriteByte(0)
-	}
-
-	/* Calculate header checksum (over first 68 bytes, excluding header checksum at 68-71) */
-	packetBytes := buf.Bytes()
-	headerChecksum := calculateChecksum(packetBytes[:68])
-	binary.LittleEndian.PutUint32(packetBytes[68:], headerChecksum)
-
-	/* Send request */
-	c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_, err := c.conn.Write(packetBytes)
+	resp, err := c.conn.SendRequest(augmentedCmd, nil, cwd)
 	if err != nil {
 		return false, "", err
 	}
 
-	/* Read response */
-	c.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-
-	/* Read response header: magic(4) + serverID(16) + id(4) + decision(1) + reasonLen(4) */
-	var magic uint32
-	var serverID [16]byte
-	var id uint32
-	var decision uint8
-	var reasonLen uint32
-
-	/* Read first 4 bytes to check magic */
-	headerBytes := make([]byte, 29)
-	n, err := c.conn.Read(headerBytes)
-	if err != nil {
-		return false, "", fmt.Errorf("failed to read response header: %v", err)
+	if resp.Decision == protocol.ROBO_DECISION_ALLOW {
+		return true, resp.Reason, nil
 	}
-	if n < 4 {
-		return false, "", fmt.Errorf("short read on magic: got %d bytes, first 4 bytes: %x", n, headerBytes[:min(n, 4)])
-	}
-
-	/* Parse header */
-	magic = uint32(headerBytes[0]) | uint32(headerBytes[1])<<8 | uint32(headerBytes[2])<<16 | uint32(headerBytes[3])<<24
-	if n > 4 {
-		copy(serverID[:], headerBytes[4:20])
-		id = uint32(headerBytes[20]) | uint32(headerBytes[21])<<8 | uint32(headerBytes[22])<<16 | uint32(headerBytes[23])<<24
-		decision = headerBytes[24]
-		reasonLen = uint32(headerBytes[25]) | uint32(headerBytes[26])<<8 | uint32(headerBytes[27])<<16 | uint32(headerBytes[28])<<24
-	}
-
-	if magic != ROBO_MAGIC {
-		return false, "", fmt.Errorf("invalid response magic")
-	}
-
-	/* Read reason (includes null terminator) */
-	reason := make([]byte, reasonLen)
-	reasonRead, err := c.conn.Read(reason)
-	if err != nil {
-		return false, "", err
-	}
-	if reasonRead != int(reasonLen) {
-		return false, "", fmt.Errorf("short read on reason: got %d, want %d", reasonRead, reasonLen)
-	}
-
-	/* Remove null terminator */
-	if reasonRead > 0 && reason[reasonRead-1] == 0 {
-		reason = reason[:reasonRead-1]
-	}
-
-	_ = id /* unused but kept for protocol compatibility */
-	_ = serverID
-
-	if decision == ROBO_DECISION_ALLOW {
-		return true, string(reason), nil
-	}
-	return false, string(reason), nil
-}
-
-/* calculateChecksum - simple checksum over packet data */
-func calculateChecksum(data []byte) uint32 {
-	/* Simple sum of all bytes as a placeholder for CRC32 */
-	var sum uint32
-	for _, b := range data {
-		sum += uint32(b)
-	}
-	return sum
+	return false, resp.Reason, nil
 }

@@ -252,7 +252,7 @@ typedef struct {
 
 // ============================================================================
 // NFA BUILDER STATE DOCUMENTATION
-// 
+//
 // The following global variables hold the NFA builder state. For a production-
 // quality refactor, these should be encapsulated in a context structure.
 // Current design: CLI tool that runs once and exits - globals are acceptable.
@@ -368,7 +368,7 @@ void nfa_init(void) {
         mta_free(&nfa[i].multi_targets);
         mta_init(&nfa[i].multi_targets);
         nfa[i].transition_count = 0;
-        
+
         // Initialize capture markers
         nfa[i].capture_start_id = -1;
         nfa[i].capture_end_id = -1;
@@ -466,7 +466,7 @@ int nfa_add_state_with_category(uint8_t category_mask) {
         ERROR("  Pattern may be too complex or cause exponential state growth");
         return -1; // Return invalid state to signal error
     }
-    
+
     int new_state = nfa_state_count;
     nfa[new_state].category_mask = category_mask;
     // Only set pattern_id for accepting states (category_mask != 0)
@@ -492,17 +492,6 @@ int nfa_add_state_with_minimization(bool accepting) {
     return nfa_add_state_with_category(accepting ? CAT_MASK_SAFE : 0);
 }
 
-// Safe wrapper that returns start_state on allocation failure
-// Use this in parsing functions where allocation failure should abort the pattern
-static int nfa_add_state_safe(bool accepting, int start_state) {
-    int state = nfa_add_state_with_category(accepting ? CAT_MASK_SAFE : 0);
-    if (state < 0) {
-        ERROR("Failed to allocate NFA state - pattern too complex");
-        return start_state; // Return current state to avoid crash
-    }
-    return state;
-}
-
 // Finalize state after all transitions have been added
 // Enables state minimization for non-tagged states to allow prefix sharing
 int nfa_finalize_state(int state) {
@@ -513,7 +502,7 @@ int nfa_finalize_state(int state) {
     // All sharing/minimization will happen at the end after all patterns are built
     // This prevents interference between patterns with different acceptance categories
     // The DFA conversion process will handle proper state minimization
-    
+
     // Still add to signature table for potential future optimization
     add_state_to_signature_table(state, signature);
 
@@ -689,18 +678,18 @@ static int get_capture_id(const char* name) {
             return capture_map[i].id;
         }
     }
-    
+
     // Register new capture
     if (capture_count >= MAX_CAPTURES) {
         ERROR("Maximum captures (%d) reached", MAX_CAPTURES);
         return -1;
     }
-    
+
     strncpy(capture_map[capture_count].name, name, MAX_CAPTURE_NAME - 1);
     capture_map[capture_count].name[MAX_CAPTURE_NAME - 1] = '\0';
     capture_map[capture_count].id = capture_count;
     capture_map[capture_count].used = true;
-    
+
     return capture_count++;
 }
 
@@ -719,26 +708,26 @@ static bool is_capture_end(const char* pattern, int pos, char* cap_name) {
     if (pattern[pos] != '<' || pattern[pos + 1] != '/') {
         return false;
     }
-    
+
     // Find the closing >
     int j = pos + 2;
     while (pattern[j] != '\0' && pattern[j] != '>') {
         j++;
     }
-    
+
     if (pattern[j] != '>') {
         return false;
     }
-    
+
     // Extract capture name
     int name_len = j - (pos + 2);
     if (name_len >= MAX_CAPTURE_NAME) {
         return false;
     }
-    
+
     strncpy(cap_name, &pattern[pos + 2], name_len);
     cap_name[name_len] = '\0';
-    
+
     return true;
 }
 
@@ -747,31 +736,31 @@ static bool is_capture_start(const char* pattern, int pos, char* cap_name) {
     if (pattern[pos] != '<') {
         return false;
     }
-    
+
     // Skip </ which is end tag
     if (pattern[pos + 1] == '/') {
         return false;
     }
-    
+
     // Find the closing >
     int j = pos + 1;
     while (pattern[j] != '\0' && pattern[j] != '>') {
         j++;
     }
-    
+
     if (pattern[j] != '>') {
         return false;
     }
-    
+
     // Extract capture name
     int name_len = j - (pos + 1);
     if (name_len >= MAX_CAPTURE_NAME) {
         return false;
     }
-    
+
     strncpy(cap_name, &pattern[pos + 1], name_len);
     cap_name[name_len] = '\0';
-    
+
     return true;
 }
 
@@ -888,7 +877,7 @@ static int parse_capture_end(const char* pattern, int* pos, int start_state) {
 // Initialize default category names
 static void init_default_categories(void) {
     if (categories_defined) return;
-    
+
     // Copy default names to dynamic array
     for (int i = 0; i < CAT_COUNT; i++) {
         strncpy(dynamic_category_names[i], category_names[i], MAX_CATEGORY_NAME - 1);
@@ -903,13 +892,13 @@ static void parse_category_definition(const char* line) {
     // Format: "0: safe" or "1:caution" etc.
     if (line[0] < '0' || line[0] > '7') return;
     if (line[1] != ':') return;
-    
+
     int idx = line[0] - '0';
     const char* name_start = line + 2;
     while (*name_start == ' ' || *name_start == '\t') name_start++;
-    
+
     if (*name_start == '\0' || *name_start == '\n' || *name_start == '#') return;
-    
+
     // Extract name (until whitespace, newline, or end)
     int name_len = 0;
     const char* p = name_start;
@@ -918,13 +907,13 @@ static void parse_category_definition(const char* line) {
         p++;
     }
     dynamic_category_names[idx][name_len] = '\0';
-    
+
     if (idx >= dynamic_category_count) {
         dynamic_category_count = idx + 1;
     }
-    
+
     categories_defined = true;
-    
+
     DEBUG_PRINT("Category %d: '%s'\n", idx, dynamic_category_names[idx]);
 }
 
@@ -933,7 +922,7 @@ int parse_category(const char* name) {
     // Use dynamic names if categories were defined
     const char* names_to_use[CAT_COUNT];
     int count_to_use;
-    
+
     if (categories_defined) {
         for (int i = 0; i < dynamic_category_count && i < CAT_COUNT; i++) {
             names_to_use[i] = dynamic_category_names[i];
@@ -945,7 +934,7 @@ int parse_category(const char* name) {
         }
         count_to_use = CAT_COUNT;
     }
-    
+
     for (int i = 0; i < count_to_use; i++) {
         if (strcmp(name, names_to_use[i]) == 0) {
             return i;
@@ -1127,7 +1116,7 @@ static int parse_rdp_class(const char* pattern, int* pos, int start_state) {
     ERROR("Character class syntax [abc] is not supported");
     ERROR("  Use (a|b|c) for alternatives, escape '\\[' for literal bracket");
     ERROR("  Pattern: %s", pattern);
-    
+
     // Return error code instead of exiting - caller should handle gracefully
     return -1;
 }
@@ -1139,7 +1128,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
         ERROR("Unexpected end of pattern at position %d", *pos);
         return -1;
     }
-    
+
     char c = pattern[*pos];
     DEBUG_PRINT("parse_rdp_element: ENTER pos=%d, start_state=%d, c='%c' (0x%02x)\n", *pos, start_state, c, (unsigned char)c);
 
@@ -1165,7 +1154,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
             // Escaped character
             if (pattern[*pos + 1] != '\0') {
                 char ec = pattern[*pos + 1];
-                
+
                 // Check for hex escape \xHH
                 if (ec == 'x' && pattern[*pos + 2] != '\0' && pattern[*pos + 3] != '\0') {
                     // Parse hex escape \xHH
@@ -1184,7 +1173,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                             int new_state = nfa_add_state_with_minimization(false);
                             nfa_add_transition(anchor, new_state, sid);
                             int finalized_state = nfa_finalize_state(new_state);
-                            
+
                             memset(&current_fragment, 0, sizeof(current_fragment));
                             current_fragment.anchor_state = anchor;
                             current_fragment.is_single_char = true;
@@ -1197,7 +1186,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                         }
                     }
                 }
-                
+
                 int sid = find_symbol_id(ec);
                 if (sid != -1) {
                     // Ensure dedicated anchor state
@@ -1210,7 +1199,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                     int new_state = nfa_add_state_with_minimization(false);
                     nfa_add_transition(anchor, new_state, sid);
                     int finalized_state = nfa_finalize_state(new_state);
-                    
+
                     memset(&current_fragment, 0, sizeof(current_fragment));
                     current_fragment.anchor_state = anchor;
                     current_fragment.is_single_char = true;
@@ -1244,7 +1233,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                     int new_state = nfa_add_state_with_minimization(false);
                     nfa_add_transition(anchor, new_state, sid);
                     int finalized_state = nfa_finalize_state(new_state);
-                    
+
                     memset(&current_fragment, 0, sizeof(current_fragment));
                     current_fragment.anchor_state = anchor;
                     current_fragment.is_single_char = true;
@@ -1289,13 +1278,13 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                 // Loop: star_state --ANY--> star_state (additional chars)
                 nfa_add_transition(star_state, star_state, any_sid);
                 int finalized_star = nfa_finalize_state(star_state);
-                
+
                 // Set current_fragment
                 memset(&current_fragment, 0, sizeof(current_fragment));
                 current_fragment.anchor_state = anchor;
                 current_fragment.is_single_char = false;
                 current_fragment.exit_state = finalized_star;
-                
+
                 *pos += 3; // Consume (*)
                 return finalized_star;
             }
@@ -1317,15 +1306,15 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                         // Only treat as fragment if it exists
                         if (find_fragment(frag_name) != NULL) {
                             FragmentResult frag_result = parse_rdp_fragment(pattern, pos, start_state);
-                            
+
                             // Store in current_fragment for quantifier handler
                             current_fragment = frag_result;
-                            
+
                             // For fragments in sequence like ((frag1))((frag2)):
                             // Connect from previous fragment's EXIT to this fragment's anchor
                             // This allows continuation after completing the first fragment
                             static int prev_frag_exit = -1;
-                            
+
                             if (prev_frag_exit >= 0) {
                                 int epsilon_sid = VSYM_EPS;
                                 if (epsilon_sid != -1) {
@@ -1335,10 +1324,10 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                                     nfa_add_transition(prev_frag_exit, frag_result.anchor_state, epsilon_sid);
                                 }
                             }
-                            
+
                             // Store this fragment's exit for the next fragment
                             prev_frag_exit = frag_result.exit_state;
-                            
+
                             // For element parsing, return the exit state
                             return frag_result.exit_state;
                         }
@@ -1366,13 +1355,13 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
                 nfa_add_transition(star_state, star_state, any_sid);
                 int finalized_star = nfa_finalize_state(star_state);
                 (*pos)++;
-                
+
                 // Set current_fragment
                 memset(&current_fragment, 0, sizeof(current_fragment));
                 current_fragment.anchor_state = anchor;
                 current_fragment.is_single_char = false;
                 current_fragment.exit_state = finalized_star;
-                
+
                 return finalized_star;
             }
             if (c == ' ' || c == '\t') {
@@ -1516,14 +1505,14 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
                 // Loop back: exit_state_of_element --EPS--> element_entry
                 int loop_target = element_entry;
                 nfa_add_transition(current_fragment.exit_state, loop_target, epsilon_sid);
-                
+
                 // Connection to quantifier exit: exit_state_of_element --EPS--> exit_state
                 nfa_add_transition(current_fragment.exit_state, exit_state, epsilon_sid);
             }
 
             nfa_finalize_state(exit_state);
             current = exit_state;
-            
+
             // Update current_fragment for potential subsequent quantifiers
             current_fragment.anchor_state = skip_origin;
             current_fragment.exit_state = exit_state;
@@ -1577,7 +1566,7 @@ static int parse_rdp_postfix(const char* pattern, int* pos, int start_state) {
 
             nfa_finalize_state(exit_state);
             current = exit_state;
-            
+
             // Update current_fragment
             current_fragment.anchor_state = skip_origin;
             current_fragment.exit_state = exit_state;
@@ -1667,7 +1656,7 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
         bool has_empty_alternative = false;
         while (pattern[*pos] == '|') {
             (*pos)++; // Skip |
-            
+
             // FIX: Check for empty alternative - nothing after | before ) or end
             if (pattern[*pos] == ')' || pattern[*pos] == '\0') {
                 // Empty alternative - connect anchor to merge for empty match
@@ -1677,13 +1666,13 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
                 has_empty_alternative = true;
                 continue;
             }
-            
+
             int branch_end = parse_rdp_sequence(pattern, pos, anchor_state);
 
             if (epsilon_sid != -1) {
                 nfa_add_transition(branch_end, merge_state, epsilon_sid);
             }
-            
+
             // Track the last branch end for continuation
             last_branch_end = branch_end;
         }
@@ -1711,10 +1700,10 @@ static int parse_rdp_alternation(const char* pattern, int* pos, int start_state)
             // First, skip past any ) to find what really follows the group
             int check_pos = *pos;
             while (pattern[check_pos] == ')') check_pos++;
-            
+
             char next_char = pattern[check_pos];
             bool end_of_pattern = (next_char == '\0');
-            
+
             if (has_empty_alternative || end_of_pattern) {
                 nfa[merge_state].category_mask = current_pattern_cat_mask;
                 nfa[merge_state].is_eos_target = true;
@@ -1809,7 +1798,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
     if (pattern == NULL || pattern[0] == '\0') {
         return;  // Skip empty patterns gracefully
     }
-    
+
     // Clear per-pattern globals to avoid stale values between patterns
     last_element_sid = -1;
     pending_capture_defer_id = -1;
@@ -1825,7 +1814,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
     // Validate first character access
     unsigned char first_byte = (unsigned char)pattern[0];
     int first_char_sid = find_symbol_id(first_byte);
-    
+
     // Bounds check: ensure symbol ID is valid before using as array index
     if (first_char_sid < 0 || first_char_sid >= MAX_SYMBOLS) {
         first_char_sid = -1;
@@ -1835,7 +1824,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
 
     // DEBUG: Check if there's a shared prefix
     if (nfa_state_count > 1 && pattern[0] != '\0' && first_char_sid != -1) {
-        DEBUG_PRINT("  Checking prefix: pattern[0]='%c', sid=%d, nfa[0].transitions[%d]=%d\n", 
+        DEBUG_PRINT("  Checking prefix: pattern[0]='%c', sid=%d, nfa[0].transitions[%d]=%d\n",
                    pattern[0], first_char_sid, first_char_sid, nfa[0].transitions[first_char_sid]);
     }
 
@@ -1884,14 +1873,14 @@ static void parse_pattern_full(const char* pattern, const char* category,
 
             // Relaxed prefix sharing: Allow sharing states from different patterns
             // provided they are intermediate states.
-            
+
             for (int t = 0; t < target_count; t++) {
                 int curr_state = targets[t];
                 int curr_pos = 1;
 
                 while (curr_pos < (int)strlen(pattern)) {
                     int c = pattern[curr_pos];
-                    
+
                     // Only share safe literals to avoid breaking complex syntax (groups, classes, wildcards)
                     // and to allow quantifiers to work correctly
                     // Exclude '<' and '>' for capture groups
@@ -1994,7 +1983,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
     int parse_pos = 0;
     int end_state;
     DEBUG_PRINT("parse_pattern_full: remaining='%s', pattern_start_pos=%d\n", remaining, pattern_start_pos);
-    
+
     // ROOT BRANCHING: If start_state is 0, we must avoid EPSILON if possible
     // to prevent pattern interference.
     if (remaining[0] != '\0') {
@@ -2006,7 +1995,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
             // creating accepting paths from the initial state.
             int real_start = nfa_add_state_with_minimization(false);
             nfa_add_transition(0, real_start, VSYM_EPS);
-            
+
             // Check if remaining contains alternation - if so, use parse_rdp_alternation
             // to handle cases like (abc)| at root level
             bool has_alternation = false;
@@ -2016,7 +2005,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
                     break;
                 }
             }
-            
+
             if (has_alternation) {
                 end_state = parse_rdp_alternation(remaining, &parse_pos, real_start);
             } else {
@@ -2067,7 +2056,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
                 if (has_outgoing) break;
             }
         }
-        
+
         // PHASE 2 FIX: Also check EPSILON transitions, excluding self-loops
         if (!has_outgoing && mta_is_multi(&nfa[end_state].multi_targets, VSYM_EPS)) {
             int eps_cnt = 0;
@@ -2086,7 +2075,7 @@ static void parse_pattern_full(const char* pattern, const char* category,
         }
         DEBUG_PRINT("finalize: end_state=%d, has_outgoing=%d, is_eos_target before=%d, cat_mask=0x%02x\n",
                 end_state, has_outgoing, nfa[end_state].is_eos_target, nfa[end_state].category_mask);
-        
+
         // Debug: print EPSILON transitions from end_state
         int eps_sid = VSYM_EPS;
         if (eps_sid != -1 && mta_is_multi(&nfa[end_state].multi_targets, eps_sid)) {
@@ -2147,7 +2136,7 @@ static bool validate_pattern_input(const char* line, size_t len) {
     if (line == NULL || len == 0) {
         return false;
     }
-    
+
     // Check for null bytes in input
     for (size_t i = 0; i < len; i++) {
         if (line[i] == '\0') {
@@ -2155,7 +2144,7 @@ static bool validate_pattern_input(const char* line, size_t len) {
             return false;
         }
     }
-    
+
     // Check for invalid bytes (0xFF and other high bytes that indicate binary/encoding issues)
     for (size_t i = 0; i < len; i++) {
         unsigned char c = (unsigned char)line[i];
@@ -2167,7 +2156,7 @@ static bool validate_pattern_input(const char* line, size_t len) {
             return false;
         }
     }
-    
+
     // Check for standalone special characters that crash the parser
     // These need to be in proper context to be valid
     if (len == 1) {
@@ -2177,7 +2166,7 @@ static bool validate_pattern_input(const char* line, size_t len) {
             return false;
         }
     }
-    
+
     // Check for unbalanced brackets - common crash cause
     int bracket_depth = 0;
     int paren_depth = 0;
@@ -2186,36 +2175,36 @@ static bool validate_pattern_input(const char* line, size_t len) {
         if (line[i] == ']') bracket_depth--;
         if (line[i] == '(') paren_depth++;
         if (line[i] == ')') paren_depth--;
-        
+
         // If brackets go negative, we have closing without opening
         if (bracket_depth < 0 || paren_depth < 0) {
             break;  // Will be caught as malformed
         }
     }
-    
+
     // Check for unclosed brackets at end of pattern
     if (bracket_depth > 0) {
         ERROR("Unclosed '[' in pattern - not supported");
         return false;
     }
-    
+
     // Check for negative bracket depth (']' without '[')
     if (bracket_depth < 0) {
         ERROR("Unmatched ']' in pattern");
         return false;
     }
-    
+
     // Check for unbalanced parentheses
     if (paren_depth > 0) {
         ERROR("Unclosed '(' in pattern");
         return false;
     }
-    
+
     if (paren_depth < 0) {
         ERROR("Unmatched ')' in pattern");
         return false;
     }
-    
+
     return true;
 }
 
@@ -2257,7 +2246,7 @@ void parse_advanced_pattern(const char* line) {
     // Also check for patterns that start with annotations like :one :cat :ops
     if (*line != '[' && *line != '#') {
         // Check for old-style annotations at start of line
-        if (*line == ':' || 
+        if (*line == ':' ||
             (line[0] == 'a' && line[1] == '(') ||
             (strstr(line, " :one") != NULL) ||
             (strstr(line, " :cat") != NULL) ||
@@ -2276,13 +2265,13 @@ void parse_advanced_pattern(const char* line) {
     if (strcmp(line, "[CATEGORIES]") == 0) {
         return; // Handled in read loop
     }
-    
+
     // Check for category definition line (N: name format)
     if (line[0] >= '0' && line[0] <= '7' && line[1] == ':') {
         parse_category_definition(line);
         return;
     }
-    
+
     // Check if this is a fragment or character set definition BEFORE category parsing
     // Syntax: [fragment:name] value
     //         [fragment:namespace:name] value
@@ -2291,7 +2280,7 @@ void parse_advanced_pattern(const char* line) {
     if (strncmp(line, "[fragment:", 10) == 0 || strncmp(line, "[characterset:", 14) == 0) {
         // Determine prefix length
         int prefix_len = (line[1] == 'f') ? 10 : 14;  // "[fragment:" or "[characterset:"
-        
+
         // Extract fragment name (between [fragment: or [characterset: and ])
         const char* name_start = line + prefix_len;
         const char* name_end = strchr(name_start, ']');
@@ -2321,7 +2310,7 @@ void parse_advanced_pattern(const char* line) {
                 } else {
                      DEBUG_PRINT("Fragment '%s' already has ::, skipping normalization\n", fragments[fragment_count].name);
                 }
-                
+
                 // Validate: Check for empty fragment value
                 const char* value_start = name_end + 1;
                 while (*value_start == ' ' || *value_start == '\t') value_start++;
@@ -2331,7 +2320,7 @@ void parse_advanced_pattern(const char* line) {
                     has_fragment_error = true;
                     return;
                 }
-                
+
                 // Validate: Check for duplicate fragment name
                 for (int i = 0; i < fragment_count; i++) {
                     if (strcmp(fragments[i].name, fragments[fragment_count].name) == 0) {
@@ -2340,7 +2329,7 @@ void parse_advanced_pattern(const char* line) {
                         return;
                     }
                 }
-                
+
                 // Store fragment value
                 strncpy(fragments[fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
                 fragments[fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
@@ -2390,7 +2379,7 @@ void parse_advanced_pattern(const char* line) {
         char* eq = strchr(line, '=');
         char* name_start = (char*)line;
         char* name_end = eq;
-        
+
         // Check if it looks like a scoped name (contains ::)
         if (strstr(name_start, "::") != NULL && fragment_count < MAX_FRAGMENTS) {
             // name_end points to '=', so name_len includes trailing space if present
@@ -2684,10 +2673,10 @@ void write_nfa_file(const char* filename) {
         fprintf(file, "  EosTarget: %s\n", nfa[i].is_eos_target ? "yes" : "no");
         // Debug: print states with non-zero pattern_id
         if (nfa[i].pattern_id != 0 && nfa[i].category_mask != 0) {
-            DEBUG_PRINT("State %d has pattern_id=%d, category=0x%02x\n", 
+            DEBUG_PRINT("State %d has pattern_id=%d, category=0x%02x\n",
                     i, nfa[i].pattern_id, nfa[i].category_mask);
         }
-        
+
         // Write capture markers (Phase 2: with names for metadata table)
         if (nfa[i].capture_start_id >= 0) {
             const char* cap_name = get_capture_name(nfa[i].capture_start_id);
@@ -2811,11 +2800,11 @@ static void parse_arguments(int argc, char* argv[],
     flag_verbose_validation = false;
     flag_verbose_nfa = false;
     external_alphabet_file = NULL;
-    
+
     // Skip program name
     argc--;
     argv++;
-    
+
     // Parse arguments
     while (argc > 0) {
         if (strcmp(argv[0], "--validate-only") == 0) {
@@ -2846,14 +2835,14 @@ static void parse_arguments(int argc, char* argv[],
         argc--;
         argv++;
     }
-    
+
     // Check for spec_file
     if (argc < 1) {
         ERROR("No spec file provided");
         print_usage("nfa_builder");
         exit(EXIT_FAILURE);
     }
-    
+
     *spec_file = argv[0];
     *output_file = argc > 1 ? argv[1] : "readonlybox.nfa";
 }
@@ -2863,29 +2852,29 @@ static bool validate_pattern_file(const char* spec_file) {
         fprintf(stderr, "\n=== Validation Phase ===\n");
         fprintf(stderr, "Validating: %s\n", spec_file);
     }
-    
+
     FILE* file = fopen(spec_file, "r");
     if (!file) {
         ERROR("Cannot open spec file '%s'", spec_file);
         return false;
     }
-    
+
     char line[MAX_LINE_LENGTH];
     int line_num = 0;
     int errors = 0;
     int patterns_seen = 0;
-    
+
     while (fgets(line, sizeof(line), file)) {
         line_num++;
-        
+
         // Skip empty lines and comments
         if (line[0] == '\0' || line[0] == '\n' || line[0] == '\r' || line[0] == '#') {
             continue;
         }
-        
+
         // Remove trailing newline
         line[strcspn(line, "\r\n")] = 0;
-        
+
         // Check for fragment definition [fragment:name] value
         if (strncmp(line, "[fragment:", 10) == 0) {
             char* name_start = line + 10;
@@ -2895,7 +2884,7 @@ static bool validate_pattern_file(const char* spec_file) {
                 errors++;
                 continue;
             }
-            
+
             // Extract fragment name
             size_t name_len = bracket - name_start;
             char frag_name[64];
@@ -2906,7 +2895,7 @@ static bool validate_pattern_file(const char* spec_file) {
             }
             strncpy(frag_name, name_start, name_len);
             frag_name[name_len] = '\0';
-            
+
             // Check for empty value
             const char* value_start = bracket + 1;
             while (*value_start == ' ' || *value_start == '\t') value_start++;
@@ -2915,13 +2904,13 @@ static bool validate_pattern_file(const char* spec_file) {
                 errors++;
                 continue;
             }
-            
+
             if (flag_verbose_validation) {
                 fprintf(stderr, "  Line %d: Fragment '%s' = '%s'\n", line_num, frag_name, value_start);
             }
             continue;
         }
-        
+
         // Check for character set definition [characterset:name] value
         if (strncmp(line, "[characterset:", 15) == 0) {
             if (flag_verbose_validation) {
@@ -2929,7 +2918,7 @@ static bool validate_pattern_file(const char* spec_file) {
             }
             continue;
         }
-        
+
         // Check for [CATEGORIES] section
         if (strcmp(line, "[CATEGORIES]") == 0) {
             if (flag_verbose_validation) {
@@ -2937,14 +2926,13 @@ static bool validate_pattern_file(const char* spec_file) {
             }
             continue;
         }
-        
+
         // Check for category definition line (N: name format in CATEGORIES section)
         if (line[0] >= '0' && line[0] <= '7' && line[1] == ':') {
             if (flag_verbose_validation) {
                 fprintf(stderr, "  Line %d: Category definition: %s\n", line_num, line);
             }
             // Parse: "0: safe" -> index 0, name "safe"
-            int idx = line[0] - '0';
             const char* name_start = line + 2;
             while (*name_start == ' ' || *name_start == '\t') name_start++;
             if (*name_start != '\0') {
@@ -2959,7 +2947,7 @@ static bool validate_pattern_file(const char* spec_file) {
             }
             continue;
         }
-        
+
         // Check for ACCEPTANCE_MAPPING directive
         if (strncmp(line, "ACCEPTANCE_MAPPING", 18) == 0) {
             if (flag_verbose_validation) {
@@ -3046,39 +3034,39 @@ static bool validate_pattern_file(const char* spec_file) {
             patterns_seen++;
             continue;
         }
-        
+
         // Skip lines without category brackets (empty or other)
     }
-    
+
     fclose(file);
-    
+
     if (flag_verbose_validation) {
         fprintf(stderr, "  Total patterns found: %d\n", patterns_seen);
         fprintf(stderr, "  Validation errors: %d\n", errors);
     }
-    
+
     if (errors > 0) {
         fprintf(stderr, "\nValidation FAILED: %d error(s) found\n", errors);
         return false;
     }
-    
+
     if (patterns_seen == 0) {
         fprintf(stderr, "\nWarning: No patterns found in spec file\n");
     }
-    
+
     if (flag_verbose_validation) {
         fprintf(stderr, "\nValidation PASSED: No errors found\n");
     }
-    
+
     return true;
 }
 
 static bool construct_alphabet_from_patterns(const char* spec_file) {
-    (void)spec_file; 
-    
+    (void)spec_file;
+
     // Reset alphabet
     built_alphabet_size = 0;
-    
+
     // 1. Literal Bytes (0-255)
     for (int i = 0; i < 256; i++) {
         built_alphabet[i].start_char = i;
@@ -3087,7 +3075,7 @@ static bool construct_alphabet_from_patterns(const char* spec_file) {
         built_alphabet[i].is_special = false;
         built_alphabet_size++;
     }
-    
+
     // 2. Virtual Symbols (256+)
     // ANY
     built_alphabet[VSYM_ANY].start_char = 0;
@@ -3123,23 +3111,23 @@ static bool construct_alphabet_from_patterns(const char* spec_file) {
     built_alphabet[VSYM_TAB].symbol_id = VSYM_TAB;
     built_alphabet[VSYM_TAB].is_special = true;
     built_alphabet_size++;
-    
+
     if (flag_verbose_alphabet) {
         fprintf(stderr, "  Literal symbols: 256\n");
         fprintf(stderr, "  Virtual symbols: %d\n", built_alphabet_size - 256);
         fprintf(stderr, "  Total alphabet size: %d\n", built_alphabet_size);
     }
-    
+
     // Copy to global alphabet
     for (int i = 0; i < built_alphabet_size && i < MAX_SYMBOLS; i++) {
         alphabet[i] = built_alphabet[i];
     }
     alphabet_size = built_alphabet_size;
-    
+
     if (flag_verbose_alphabet) {
         fprintf(stderr, "\nAlphabet constructed successfully\n");
     }
-    
+
     return true;
 }
 
@@ -3188,18 +3176,18 @@ int main(int argc, char* argv[]) {
         pattern_order_options_t order_opts = pattern_order_default_options();
         order_opts.verbose = flag_verbose;
         int reordered = pattern_order_optimize(patterns, pattern_count, &order_opts);
-        
+
         // Check for validation errors (fragment references)
         if (reordered < 0) {
             fprintf(stderr, "Pattern validation failed (see errors above)\n");
             pattern_order_free(patterns, pattern_count);
             return 1;
         }
-        
+
         if (flag_verbose && reordered > 0) {
             VERBOSE_PRINT("Pattern ordering: reordered %d/%d patterns\n", reordered, pattern_count);
         }
-        
+
         // Update pattern_count to reflect removed duplicates
         pattern_order_stats_t stats;
         pattern_order_get_stats(&stats);
@@ -3232,7 +3220,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    VERBOSE_PRINT("Read %d patterns from %s (%d duplicates removed)\n", 
+    VERBOSE_PRINT("Read %d patterns from %s (%d duplicates removed)\n",
                   patterns_added, spec_file, pattern_count - patterns_added);
 
     write_nfa_file(output_file);

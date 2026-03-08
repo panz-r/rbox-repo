@@ -965,53 +965,27 @@ static void augment_command_with_app(char *cmd_str, size_t max_len, const char *
     }
 }
 
-/* Wrapper around c-dfa shell tokenizer - extracts individual commands */
+/* Wrapper around shellsplit fast parser - extracts individual commands */
 static int extract_commands_from_shell(const char* cmd, char commands[][256], int max_commands) {
-    shell_command_t* shell_cmds = NULL;
-    size_t cmd_count = 0;
-
-    if (!shell_tokenize_commands(cmd, &shell_cmds, &cmd_count)) {
+    shell_parse_result_t result = {0};
+    
+    shell_error_t err = shell_parse_fast(cmd, strlen(cmd), NULL, &result);
+    if (err != SHELL_OK && err != SHELL_ETRUNC) {
         return 0;
     }
 
-    int result = 0;
-    for (size_t i = 0; i < cmd_count && result < max_commands; i++) {
-        shell_command_t* sc = &shell_cmds[i];
-        /* Extract command by concatenating tokens up to first pipe/semicolon */
-        char buf[256] = "";
-        size_t buf_len = 0;
-
-        for (size_t j = 0; j < sc->token_count && buf_len < sizeof(buf) - 1; j++) {
-            shell_token_t* tok = &sc->tokens[j];
-            /* Skip operator tokens */
-            if (tok->type == TOKEN_PIPE || tok->type == TOKEN_SEMICOLON ||
-                tok->type == TOKEN_AND || tok->type == TOKEN_OR ||
-                tok->type == TOKEN_REDIRECT_IN || tok->type == TOKEN_REDIRECT_OUT ||
-                tok->type == TOKEN_REDIRECT_APPEND) {
-                break;
-            }
-            /* Add space between arguments */
-            if (buf_len > 0 && buf_len < sizeof(buf) - 1) {
-                buf[buf_len++] = ' ';
-            }
-            /* Copy token */
-            size_t tok_len = tok->length;
-            if (buf_len + tok_len >= sizeof(buf)) {
-                tok_len = sizeof(buf) - buf_len - 1;
-            }
-            memcpy(buf + buf_len, tok->start, tok_len);
-            buf_len += tok_len;
-        }
-
-        if (buf_len > 0) {
-            strncpy(commands[result], buf, 255);
-            commands[result][255] = '\0';
-            result++;
+    int result_count = 0;
+    for (uint32_t i = 0; i < result.count && result_count < max_commands; i++) {
+        char buf[256];
+        size_t copied = shell_copy_subcommand(cmd, &result.cmds[i], buf, sizeof(buf));
+        if (copied > 0) {
+            strncpy(commands[result_count], buf, 255);
+            commands[result_count][255] = '\0';
+            result_count++;
         }
     }
 
-    shell_free_commands(shell_cmds, cmd_count);
-    return result;
+    return result_count;
 }
 
 /* Fast path check - handles shell constructs (pipes, semicolons, etc.) */

@@ -1,3 +1,6 @@
+# KiloCode telemetry-id
+telemetry-id
+
 # Binaries (in root)
 dfa_test
 
@@ -26,6 +29,7 @@ fuzz_nfa.pid
 # NOTE: Do NOT ignore crashes/ or corpus/interesting/ - they contain valuable test data
 
 # Build test artifacts
+output/*
 build_test/*
 src/dfa_test
 src/test_single

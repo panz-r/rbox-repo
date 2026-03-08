@@ -2214,7 +2214,17 @@ std::shared_ptr<PatternNode> factorAlternation(
                 
                 // DEBUG: Trace wz group specifically
                 if (proof_out && prefix == "wz") {
-                    std::string debug = "WZ_VALIDATION: remainders=[";
+                    std::string debug = "WZ_GROUP:[";
+                    for (size_t i = 0; i < group_alts.size(); i++) {
+                        if (i > 0) debug += ",";
+                        debug += group_alts[i];
+                    }
+                    debug += "] seeds=[";
+                    for (size_t i = 0; i < group_seeds.size(); i++) {
+                        if (i > 0) debug += ",";
+                        debug += group_seeds[i];
+                    }
+                    debug += "] remainders=[";
                     for (size_t i = 0; i < remainders.size(); i++) {
                         if (i > 0) debug += ",";
                         debug += remainders[i];
@@ -2315,7 +2325,7 @@ std::shared_ptr<PatternNode> factorAlternation(
                         }
                     } else {
                         // Validation passed - create the factored structure
-                        inner_alt = factorAlternation(inner_alt, depth + 1, proof_out);
+                        // NOTE: No recursive call - each factorization must do full verification
                         
                         std::vector<std::shared_ptr<PatternNode>> seq_kids;
                         seq_kids.push_back(PatternNode::createLiteral(prefix, group_seeds, all_counter_seeds));
@@ -2328,7 +2338,7 @@ std::shared_ptr<PatternNode> factorAlternation(
                 } else {
                     // Multiple alternatives with mixed empty/non-empty remainders
                     // Keep as alternation with prefix + (rem|ε|rem2|ε|...)
-                    inner_alt = factorAlternation(inner_alt, depth + 1, proof_out);
+                    // NOTE: No recursive call - each factorization must do full verification
                     
                     std::vector<std::shared_ptr<PatternNode>> seq_kids;
                     seq_kids.push_back(PatternNode::createLiteral(prefix, group_seeds, all_counter_seeds));
@@ -2364,7 +2374,17 @@ std::shared_ptr<PatternNode> factorAlternation(
                         if (new_children[i]->children[j]->type == PatternType::LITERAL) {
                             debug += new_children[i]->children[j]->value;
                         } else if (new_children[i]->children[j]->type == PatternType::ALTERNATION) {
-                            debug += "ALT(" + std::to_string(new_children[i]->children[j]->children.size()) + ")";
+                            debug += "ALT(" + std::to_string(new_children[i]->children[j]->children.size()) + ")[";
+                            // Show alternation children
+                            for (size_t k = 0; k < new_children[i]->children[j]->children.size(); k++) {
+                                if (k > 0) debug += ",";
+                                if (new_children[i]->children[j]->children[k]->type == PatternType::LITERAL) {
+                                    debug += new_children[i]->children[j]->children[k]->value;
+                                } else {
+                                    debug += "?";
+                                }
+                            }
+                            debug += "]";
                         } else if (new_children[i]->children[j]->type == PatternType::OPTIONAL) {
                             debug += "OPT";
                         } else {
@@ -2445,7 +2465,7 @@ std::shared_ptr<PatternNode> factorAlternation(
         auto inner_alt = PatternNode::createAlternation(inner_children, inner_seeds, all_counter_seeds);
         inner_alt->matched_seeds = inner_seeds;
         inner_alt->counter_seeds = all_counter_seeds;
-        inner_alt = factorAlternation(inner_alt, depth + 1, proof_out);
+        // NOTE: No recursive call - each factorization must do full verification
         
         std::vector<std::shared_ptr<PatternNode>> seq_kids;
         seq_kids.push_back(PatternNode::createLiteral(common, inner_seeds, all_counter_seeds));
@@ -2465,7 +2485,7 @@ std::shared_ptr<PatternNode> factorAlternation(
     auto inner_alt = PatternNode::createAlternation(inner_children, inner_seeds, all_counter_seeds);
     inner_alt->matched_seeds = inner_seeds;
     inner_alt->counter_seeds = all_counter_seeds;
-    inner_alt = factorAlternation(inner_alt, depth + 1, proof_out);
+    // NOTE: No recursive call - each factorization must do full verification
     
     // The sequence tracks inputs
     std::vector<std::shared_ptr<PatternNode>> seq_kids;
@@ -2540,8 +2560,7 @@ std::shared_ptr<PatternNode> factorSuffixes(std::shared_ptr<PatternNode> node, i
     auto inner_alt = PatternNode::createAlternation(inner_children, non_empty_seeds);
     inner_alt->matched_seeds = non_empty_seeds;
     
-    // Recursively factor the inner alternation
-    inner_alt = factorAlternation(inner_alt, depth + 1, nullptr);
+    // NOTE: No recursive call - each factorization must do full verification
     
     // The sequence tracks full inputs (from non_empty_seeds)
     std::vector<std::shared_ptr<PatternNode>> seq_kids;
