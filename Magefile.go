@@ -73,7 +73,10 @@ func Build() error {
 	if err := BuildServer(); err != nil {
 		return err
 	}
-	return BuildClient()
+	if err := BuildClient(); err != nil {
+		return err
+	}
+	return BuildPtrace()
 }
 
 // BuildClient builds the LD_PRELOAD client library
@@ -173,8 +176,8 @@ func BuildClient() error {
 
 	// Step 3: Convert DFA binary to C array
 	fmt.Println("Generating C array from DFA...")
-	convCmd := exec.Command(dfa2cArray, dfaFile, dfaCArray, "readonlybox_dfa")
-	convCmd.Dir = cdfaDir
+	convCmd := exec.Command(dfa2cArray, dfaFile, dfaCArray, "readonlybox_dfa_data")
+	convCmd.Dir = clientDir
 	convCmd.Stdout = os.Stdout
 	convCmd.Stderr = os.Stderr
 	if err := convCmd.Run(); err != nil {
@@ -207,6 +210,61 @@ func BuildClient() error {
 	buildClient.Stderr = os.Stderr
 	if err := buildClient.Run(); err != nil {
 		return fmt.Errorf("failed to build client: %w", err)
+	}
+
+	fmt.Println("Build complete!")
+	return nil
+}
+
+// BuildPtrace builds the ptrace-based client
+func BuildPtrace() error {
+	fmt.Println("Building readonlybox-ptrace...")
+
+	wd, _ := os.Getwd()
+	ptraceDir := filepath.Join(wd, "cmd/readonlybox-ptrace")
+	binDir := filepath.Join(wd, "bin")
+	clientDir := filepath.Join(wd, "internal/client")
+
+	// Ensure bin directory exists
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return fmt.Errorf("failed to create bin directory: %w", err)
+	}
+
+	// First, ensure DFA data is generated (copy from client)
+	dfaDataSrc := filepath.Join(clientDir, "readonlybox_dfa.c")
+	dfaDataDst := filepath.Join(ptraceDir, "readonlybox_dfa_data.c")
+	if err := copyFile(dfaDataSrc, dfaDataDst); err != nil {
+		return fmt.Errorf("failed to copy DFA data: %w", err)
+	}
+
+	// Clean ptrace build to remove old object files with ASAN
+	fmt.Println("Cleaning ptrace build...")
+	cleanCmd := exec.Command("make", "clean")
+	cleanCmd.Dir = ptraceDir
+	cleanCmd.Stdout = os.Stdout
+	cleanCmd.Stderr = os.Stderr
+	cleanCmd.Run()
+
+	// Build ptrace client using its Makefile
+	fmt.Println("Building ptrace client...")
+	buildCmd := exec.Command("make")
+	buildCmd.Dir = ptraceDir
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		return fmt.Errorf("failed to build ptrace client: %w", err)
+	}
+
+	// Copy binary to bin directory
+	srcBinary := filepath.Join(ptraceDir, "readonlybox-ptrace")
+	dstBinary := filepath.Join(binDir, "readonlybox-ptrace")
+	if err := copyFile(srcBinary, dstBinary); err != nil {
+		return fmt.Errorf("failed to copy ptrace binary: %w", err)
+	}
+
+	// Make executable
+	if err := os.Chmod(dstBinary, 0755); err != nil {
+		return fmt.Errorf("failed to set permissions: %w", err)
 	}
 
 	fmt.Println("Build complete!")

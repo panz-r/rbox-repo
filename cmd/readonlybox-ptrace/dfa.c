@@ -3,14 +3,14 @@
 #include <string.h>
 #include <pthread.h>
 
-extern unsigned char readonlybox_dfa_data[];
-extern size_t readonlybox_dfa_size;
+extern const unsigned char readonlybox_dfa_data[];
+extern const size_t readonlybox_dfa_data_size;
 
 static pthread_once_t dfa_init_once = PTHREAD_ONCE_INIT;
 static bool g_dfa_initialized = false;
 
 static void dfa_init_once_wrapper(void) {
-    if (!dfa_init(readonlybox_dfa_data, readonlybox_dfa_size)) {
+    if (!dfa_init(readonlybox_dfa_data, readonlybox_dfa_data_size)) {
         fprintf(stderr, "DFA initialization failed\n");
         return;
     }
