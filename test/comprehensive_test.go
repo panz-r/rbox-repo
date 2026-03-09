@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -168,6 +169,9 @@ func TestReadOnlyBoxCommands(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
+			// Set socket to non-existent path to avoid connecting to user's server
+			testSocket := "/tmp/readonlybox-test-" + strconv.Itoa(os.Getpid()) + ".sock"
+			cmd.Env = append(os.Environ(), "READONLYBOX_SOCKET="+testSocket)
 
 			err := cmd.Run()
 

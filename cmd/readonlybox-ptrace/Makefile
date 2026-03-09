@@ -1,7 +1,7 @@
 # Makefile for readonlybox-ptrace
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../../c-dfa/include -I../../internal/client
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include
 LDFLAGS = -lpthread -lm
 
 # Source files
@@ -12,7 +12,8 @@ SRCS = main.c \
        dfa.c \
        readonlybox_dfa_data.c \
        ../../c-dfa/src/dfa_eval.c \
-       ../../c-dfa/src/dfa_loader.c
+       ../../c-dfa/src/dfa_loader.c \
+       ../../shellsplit/src/env_screener.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)

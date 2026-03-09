@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -50,12 +51,17 @@ func TestReadonlyboxGitIntegration(t *testing.T) {
 
 	readonlyboxPath := getReadonlyboxPath()
 
+	// Use a test-specific socket to avoid conflicts with any running server
+	testSocket := "/tmp/readonlybox-test-" + strconv.Itoa(os.Getpid()) + ".sock"
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(readonlyboxPath, tt.args...)
 			cmd.Dir = ".."
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
+			// Set socket to non-existent path to avoid connecting to user's server
+			cmd.Env = append(os.Environ(), "READONLYBOX_SOCKET="+testSocket)
 
 			err := cmd.Run()
 

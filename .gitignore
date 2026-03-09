@@ -13,3 +13,5 @@ c-dfa/test_dfa_simple
 *.dfa
 *.nfa
 plans/
+# exececutables
+cmd/readonlybox-ptrace/readonlybox-ptrace

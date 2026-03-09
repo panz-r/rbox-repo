@@ -561,7 +561,12 @@ type serverClient struct {
 }
 
 func newServerClient() (*serverClient, error) {
-	conn, err := protocol.Dial(protocol.DefaultSocketPath, 0)
+	// Check for socket path in environment variable first
+	socketPath := os.Getenv("READONLYBOX_SOCKET")
+	if socketPath == "" {
+		socketPath = protocol.DefaultSocketPath
+	}
+	conn, err := protocol.Dial(socketPath, 0)
 	if err != nil {
 		return nil, err
 	}

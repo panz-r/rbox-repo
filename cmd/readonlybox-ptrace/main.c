@@ -20,10 +20,12 @@
 #include <pwd.h>
 #include <grp.h>
 #include <limits.h>
+#include <math.h>
 
 #include "syscall_handler.h"
 #include "validation.h"
 #include "protocol.h"
+#include "env_screener.h"
 
 #ifdef DEBUG
 #define DEBUG_PRINT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
@@ -35,12 +37,21 @@ static const char *g_progname = "readonlybox-ptrace";
 static uid_t g_original_uid = 0;
 static gid_t g_original_gid = 0;
 static char g_original_cwd[4096] = ".";
+static bool g_keep_env = false;
+static char **g_extra_env = NULL;
+static int g_extra_env_count = 0;
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: %s wrap <command> [args...]\n", g_progname);
     fprintf(stderr, "       %s <command> [args...]\n", g_progname);
     fprintf(stderr, "\n");
     fprintf(stderr, "Run a command with ptrace-based command interception.\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  --keep-env          Pass through original environment (don't reset)\n");
+    fprintf(stderr, "  --env VAR=value     Set environment variable for command\n");
+    fprintf(stderr, "  -h, --help         Show this help\n");
+    fprintf(stderr, "  -v, --version      Show version\n");
 }
 
 static bool have_ptrace_capability(void) {
@@ -75,33 +86,128 @@ static void drop_privileges(void) {
         perror("chdir");
     }
 
-    if (geteuid() == 0 && g_original_uid != 0) {
-        struct passwd *pw = getpwuid(g_original_uid);
-        gid_t gid = pw ? pw->pw_gid : g_original_gid;
-        const char *username = pw ? pw->pw_name : "nobody";
-        const char *home = pw ? pw->pw_dir : "/";
-        const char *shell = pw ? pw->pw_shell : "/bin/sh";
+    if (!g_keep_env) {
+        if (geteuid() == 0 && g_original_uid != 0) {
+            struct passwd *pw = getpwuid(g_original_uid);
+            gid_t gid = pw ? pw->pw_gid : g_original_gid;
+            const char *username = pw ? pw->pw_name : "nobody";
+            const char *home = pw ? pw->pw_dir : "/";
+            const char *shell = pw ? pw->pw_shell : "/bin/sh";
 
-        if (initgroups(username, gid) < 0) {
-            perror("initgroups");
+            if (initgroups(username, gid) < 0) {
+                perror("initgroups");
+            }
+            if (setgid(gid) < 0) {
+                perror("setgid");
+            }
+            if (setuid(g_original_uid) < 0) {
+                perror("setuid");
+            }
+            if (geteuid() != g_original_uid) {
+                fprintf(stderr, "ERROR: Failed to drop privileges\n");
+                _exit(1);
+            }
+            setenv("HOME", home, 1);
+            setenv("USER", username, 1);
+            setenv("LOGNAME", username, 1);
+            setenv("SHELL", shell, 1);
+            unsetenv("PKEXEC_UID");
+            unsetenv("PKEXEC_AGENT");
         }
-        if (setgid(gid) < 0) {
-            perror("setgid");
-        }
-        if (setuid(g_original_uid) < 0) {
-            perror("setuid");
-        }
-        if (geteuid() != g_original_uid) {
-            fprintf(stderr, "ERROR: Failed to drop privileges\n");
-            _exit(1);
-        }
-        setenv("HOME", home, 1);
-        setenv("USER", username, 1);
-        setenv("LOGNAME", username, 1);
-        setenv("SHELL", shell, 1);
-        unsetenv("PKEXEC_UID");
-        unsetenv("PKEXEC_AGENT");
     }
+
+    /* Apply extra environment variables */
+    for (int i = 0; i < g_extra_env_count; i++) {
+        char *eq = strchr(g_extra_env[i], '=');
+        if (eq) {
+            *eq = '\0';
+            setenv(g_extra_env[i], eq + 1, 1);
+            *eq = '=';
+        } else {
+            unsetenv(g_extra_env[i]);
+        }
+    }
+}
+
+/* Helper to extract name from environ entry */
+static void extract_env_name(const char *entry, char *name, size_t name_size) {
+    const char *eq = strchr(entry, '=');
+    if (eq) {
+        size_t len = eq - entry;
+        if (len >= name_size) len = name_size - 1;
+        strncpy(name, entry, len);
+        name[len] = '\0';
+    } else {
+        name[0] = '\0';
+    }
+}
+
+/* Helper to extract value from environ entry */
+static const char *extract_env_value(const char *entry) {
+    const char *eq = strchr(entry, '=');
+    return eq ? eq + 1 : "";
+}
+
+/* Screen environment using shellsplit module - ptrace client handles prompting */
+static void screen_environment(void) {
+    int indices[32];
+    int flagged_count;
+    
+    env_screener_status_t status = env_screener_scan(
+        indices,
+        32,
+        &flagged_count,
+        5.0,   // entropy_threshold
+        24     // min_length
+    );
+    
+    if (status == ENV_SCREENER_BUFFER_TOO_SMALL) {
+        /* Allocate larger buffer if needed - shouldn't happen often */
+        int *larger = malloc(flagged_count * sizeof(int));
+        if (larger) {
+            env_screener_scan(larger, flagged_count, &flagged_count, 5.0, 24);
+            free(larger);
+        }
+    }
+    
+    if (status != ENV_SCREENER_OK || flagged_count == 0) {
+        return;
+    }
+    
+    /* Prompt user for each flagged variable */
+    for (int i = 0; i < flagged_count; i++) {
+        extern char **environ;
+        char *entry = environ[indices[i]];
+        
+        char name[256];
+        const char *value = extract_env_value(entry);
+        extract_env_name(entry, name, sizeof(name));
+        
+        double entropy = env_screener_calculate_entropy(value);
+        bool is_secret_pattern = env_screener_is_secret_pattern(name);
+        
+        if (is_secret_pattern) {
+            fprintf(stderr, "\n⚠️  Potential secret detected:\n");
+            fprintf(stderr, "   %s=*** (length: %zu)\n", name, strlen(value));
+        } else {
+            fprintf(stderr, "\n⚠️  High-entropy variable detected:\n");
+            fprintf(stderr, "   %s=*** (entropy: %.2f, length: %zu)\n", 
+                    name, entropy, strlen(value));
+            fprintf(stderr, "   This looks like a random string (API key, token, etc.)\n");
+        }
+        
+        fprintf(stderr, "   Pass this variable to the command? [y/N]: ");
+        
+        char response[8];
+        if (fgets(response, sizeof(response), stdin)) {
+            if (response[0] != 'y' && response[0] != 'Y') {
+                unsetenv(name);
+                fprintf(stderr, "   → Blocked: %s\n", name);
+            }
+        }
+    }
+    
+    fprintf(stderr, "\n✓ Environment screened\n");
 }
 
 static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
@@ -374,10 +480,12 @@ int main(int argc, char *argv[]) {
         {"uid", required_argument, 0, 'u'},
         {"cwd", required_argument, 0, 'c'},
         {"cmd", required_argument, 0, 'm'},
+        {"keep-env", no_argument, 0, 'k'},
+        {"env", required_argument, 0, 'e'},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "+hvu:c:m:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "+hvu:c:m:ke:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_usage();
@@ -393,6 +501,13 @@ int main(int argc, char *argv[]) {
                 break;
             case 'm':
                 provided_cmd_path = optarg;
+                break;
+            case 'k':
+                g_keep_env = true;
+                break;
+            case 'e':
+                g_extra_env = realloc(g_extra_env, (g_extra_env_count + 1) * sizeof(char *));
+                g_extra_env[g_extra_env_count++] = strdup(optarg);
                 break;
             default:
                 print_usage();
@@ -424,6 +539,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* Screen environment for potential secrets before launching (unless --keep-env) */
+    if (!g_keep_env) {
+        screen_environment();
+    }
+
     if (provided_uid == 0 && !have_ptrace_capability()) {
         fprintf(stderr, "%s: Requesting elevated privileges...\n", g_progname);
         int ret = relaunch_with_pkexec(argc, argv, cmd_path);
@@ -442,6 +562,11 @@ int main(int argc, char *argv[]) {
         validation_shutdown();
         free(cmd_path);
         return 1;
+    }
+
+    /* Screen environment for potential secrets before launching */
+    if (!g_keep_env) {
+        screen_environment();
     }
 
     pid_t child = fork();
