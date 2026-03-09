@@ -40,6 +40,10 @@ func main() {
 			handleRun()
 			return
 		}
+		if os.Args[1] == "--judge" {
+			handleJudge()
+			return
+		}
 		/* Handle --caller with format "appname:syscall"
 		 * Format: readonlybox --caller <appname:syscall> --cwd <path> --run <path> <args...>
 		 * Args: [0]=readonlybox, [1]=--caller, [2]=<info>, [3]=--cwd, [4]=<cwd>, [5]=--run, [6]=<path>, [7...]=args
@@ -97,6 +101,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  --configure-access <config-file>  Configure access control\n")
 		fmt.Fprintf(os.Stderr, "  --show-access                    Show current access configuration\n")
 		fmt.Fprintf(os.Stderr, "  --run <path> <args...>           Run validated command (internal use)\n")
+		fmt.Fprintf(os.Stderr, "  --judge <command> <args...>      Ask server for decision without executing\n")
 		os.Exit(1)
 	}
 
@@ -177,6 +182,43 @@ func handleRun() {
 
 	/* Server allowed - execute the command */
 	executeCommand(originalPath, argsForServer)
+}
+
+/* --judge handler: asks server for decision without executing the command
+ * Usage: readonlybox --judge <command> [args...]
+ * Output: ALLOW <reason> or DENY <reason> to stderr
+ * Exit code: 0 for ALLOW, 9 for DENY, 1 for error
+ */
+func handleJudge() {
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "readonlybox: --judge requires at least the command argument\n")
+		os.Exit(1)
+	}
+
+	command := os.Args[2]
+	argsForServer := os.Args[3:]
+
+	/* Ask server for decision */
+	client, err := newServerClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "readonlybox: server not available\n")
+		os.Exit(1)
+	}
+	defer client.close()
+
+	allowed, reason, err := client.requestDecision(command, argsForServer)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "readonlybox: server error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if allowed {
+		fmt.Fprintf(os.Stderr, "ALLOW %s\n", reason)
+		os.Exit(0)  // Success
+	} else {
+		fmt.Fprintf(os.Stderr, "DENY %s\n", reason)
+		os.Exit(9)  // Denied
+	}
 }
 
 /* handleRunLocal - fallback when server is unavailable */

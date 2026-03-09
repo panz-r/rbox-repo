@@ -44,7 +44,7 @@ char *memory_read_string(pid_t pid, unsigned long addr) {
         }
 
         /* Copy bytes from the word */
-        for (int i = 0; i < sizeof(long); i++) {
+        for (size_t i = 0; i < sizeof(long); i++) {
             char c = (word >> (i * 8)) & 0xFF;
             buffer[offset + i] = c;
             if (c == '\0') {

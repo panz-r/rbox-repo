@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <time.h>
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
@@ -21,9 +23,34 @@
 #include "validation.h"
 #include "protocol.h"
 
+/* Forward declaration for judge execution */
+extern int run_judge(const char *command);
+
 /* Debug output macro - only enabled when DEBUG is defined */
 #ifdef DEBUG
-#define DEBUG_PRINT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+static FILE *g_debug_file = NULL;
+
+static void debug_init(void) {
+    g_debug_file = fopen("/tmp/readonlybox-ptrace.log", "a");
+    if (!g_debug_file) {
+        g_debug_file = stderr;
+    }
+}
+
+static void debug_close(void) {
+    if (g_debug_file && g_debug_file != stderr) {
+        fclose(g_debug_file);
+    }
+}
+
+#define DEBUG_PRINT(fmt, ...) do { \
+        if (!g_debug_file) debug_init(); \
+        time_t now = time(NULL); \
+        struct tm *tm = localtime(&now); \
+        fprintf(g_debug_file, "[%02d:%02d:%02d] ", tm->tm_hour, tm->tm_min, tm->tm_sec); \
+        fprintf(g_debug_file, fmt, ##__VA_ARGS__); \
+        fflush(g_debug_file); \
+    } while(0)
 #else
 #define DEBUG_PRINT(fmt, ...) ((void)0)
 #endif
@@ -111,9 +138,10 @@ void syscall_remove_process_state(pid_t pid) {
     }
 }
 
-/* Check if syscall is execve */
+/* Check if syscall is execve or execveat */
 int syscall_is_execve(USER_REGS *regs) {
-    return REG_SYSCALL(regs) == SYSCALL_EXECVE;
+    long sysnum = REG_SYSCALL(regs);
+    return (sysnum == SYSCALL_EXECVE || sysnum == SYSCALL_EXECVEAT);
 }
 
 /* Check if syscall is fork/clone/vfork */
@@ -148,161 +176,6 @@ static const char *get_basename(const char *path) {
     if (!path) return "unknown";
     const char *base = strrchr(path, '/');
     return base ? base + 1 : path;
-}
-
-/* Get path to readonlybox binary relative to our executable location */
-static const char *get_readonlybox_path(void) {
-    static char path_buf[PATH_MAX];
-    
-    /* First try production path */
-    if (access("/usr/local/bin/readonlybox", X_OK) == 0) {
-        return "/usr/local/bin/readonlybox";
-    }
-    
-    /* Try to find relative to our executable location */
-    /* /proc/self/exe gives us the path to this binary */
-    char self_path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
-    if (len > 0) {
-        self_path[len] = '\0';
-        /* Get directory of our executable */
-        char *dir = dirname(self_path);
-        /* Try ../../bin/readonlybox (from cmd/readonlybox-ptrace/) */
-        snprintf(path_buf, sizeof(path_buf), "%s/../../bin/readonlybox", dir);
-        if (access(path_buf, X_OK) == 0) {
-            return path_buf;
-        }
-    }
-    
-    /* Fall back to PATH lookup */
-    return "readonlybox";
-}
-
-/* Redirect execve to readonlybox --run */
-static int redirect_to_readonlybox(pid_t pid, USER_REGS *regs,
-                                   const char *pathname,
-                                   char **argv, char **envp) {
-    MemoryContext mem_ctx;
-
-    /* Initialize memory context */
-    if (memory_init(&mem_ctx, pid, REG_SP(regs)) < 0) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to init memory context\n");
-        return -1;
-    }
-
-    /* Find readonlybox binary */
-    const char *readonlybox_path = get_readonlybox_path();
-
-    /* Get current working directory */
-    char cwd[512] = {0};
-    char cwd_link[64];
-    snprintf(cwd_link, sizeof(cwd_link), "/proc/%d/cwd", pid);
-    ssize_t cwd_len = readlink(cwd_link, cwd, sizeof(cwd) - 1);
-    if (cwd_len > 0) {
-        cwd[cwd_len] = '\0';
-    } else {
-        /* Use empty string if we can't read target's CWD - don't use tracer's CWD */
-        cwd[0] = '\0';
-    }
-
-    /* Get caller name (our own process name) */
-    char caller[256] = {0};
-    char exe_link[64];
-    snprintf(exe_link, sizeof(exe_link), "/proc/%d/exe", pid);
-    char exe_path[512];
-    ssize_t exe_len = readlink(exe_link, exe_path, sizeof(exe_path) - 1);
-    if (exe_len > 0) {
-        exe_path[exe_len] = '\0';
-        strncpy(caller, get_basename(exe_path), sizeof(caller) - 1);
-    }
-
-    /* Count original arguments */
-    int orig_argc = 0;
-    while (argv && argv[orig_argc]) orig_argc++;
-
-    /* Build new argv for readonlybox --run */
-    /* Format: readonlybox --caller <app:execve> --cwd <path> --run <orig-path> <orig-args...> */
-    int new_argc = 6 + orig_argc;  /* readonlybox + 5 flags + orig args */
-    unsigned long *argv_ptrs = calloc(new_argc + 1, sizeof(unsigned long));
-    if (!argv_ptrs) return -1;
-
-    /* Build caller info */
-    char caller_info[320];
-    if (caller[0]) {
-        snprintf(caller_info, sizeof(caller_info), "%s:execve", caller);
-    } else {
-        strcpy(caller_info, "unknown:execve");
-    }
-
-    /* Write strings to traced process memory */
-    int idx = 0;
-    argv_ptrs[idx++] = memory_write_string(&mem_ctx, readonlybox_path);
-    argv_ptrs[idx++] = memory_write_string(&mem_ctx, "--caller");
-    argv_ptrs[idx++] = memory_write_string(&mem_ctx, caller_info);
-    argv_ptrs[idx++] = memory_write_string(&mem_ctx, "--cwd");
-    argv_ptrs[idx++] = memory_write_string(&mem_ctx, cwd);
-    argv_ptrs[idx++] = memory_write_string(&mem_ctx, "--run");
-    argv_ptrs[idx++] = memory_write_string(&mem_ctx, pathname);
-
-    /* Copy original arguments (skip argv[0] since we use pathname) */
-    for (int i = 1; i < orig_argc && idx < new_argc; i++) {
-        argv_ptrs[idx++] = memory_write_string(&mem_ctx, argv[i]);
-    }
-
-    /* Write argv array */
-    unsigned long new_argv = memory_write_pointer_array(&mem_ctx, argv_ptrs, idx);
-    free(argv_ptrs);
-
-    if (!new_argv) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to write argv\n");
-        return -1;
-    }
-
-    /* Count environment variables */
-    int envc = 0;
-    while (envp && envp[envc]) envc++;
-
-    /* Copy environment and add READONLYBOX_CWD */
-    unsigned long *env_ptrs = calloc(envc + 2, sizeof(unsigned long));
-    if (!env_ptrs) return -1;
-
-    for (int i = 0; i < envc; i++) {
-        env_ptrs[i] = memory_write_string(&mem_ctx, envp[i]);
-    }
-
-    /* Add READONLYBOX_CWD */
-    char cwd_env[1024];
-    snprintf(cwd_env, sizeof(cwd_env), "READONLYBOX_CWD=%s", cwd);
-    env_ptrs[envc] = memory_write_string(&mem_ctx, cwd_env);
-
-    /* Write envp array */
-    unsigned long new_envp = memory_write_pointer_array(&mem_ctx, env_ptrs, envc + 1);
-    free(env_ptrs);
-
-    if (!new_envp) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to write envp\n");
-        return -1;
-    }
-
-    /* Write readonlybox path */
-    unsigned long new_path = memory_write_string(&mem_ctx, readonlybox_path);
-    if (!new_path) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to write path\n");
-        return -1;
-    }
-
-    /* Update registers */
-    REG_ARG1(regs) = new_path;
-    REG_ARG2(regs) = new_argv;
-    REG_ARG3(regs) = new_envp;
-
-    /* Apply changes */
-    if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
-        perror("ptrace(SETREGS)");
-        return -1;
-    }
-
-    return 0;
 }
 
 /* Block execve by replacing it with a shell command that prints permission denied */
@@ -343,10 +216,23 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
         return -1;
     }
 
-    /* Update registers to exec /bin/sh */
-    REG_ARG1(regs) = sh_addr;
-    REG_ARG2(regs) = new_argv;
-    REG_ARG3(regs) = 0;  /* envp = NULL (inherit from parent) */
+    /* Update registers to exec /bin/sh 
+     * Note: execveat has different argument order:
+     *   execve(path, argv, envp) -> rdi, rsi, rdx
+     *   execveat(dirfd, path, argv, envp, flags) -> rdi, rsi, rdx, r10
+     */
+    if (REG_SYSCALL(regs) == SYSCALL_EXECVEAT) {
+        /* For execveat: set dirfd = AT_FDCWD */
+        REG_ARG1(regs) = -100;  /* AT_FDCWD */
+        REG_ARG2(regs) = sh_addr;
+        REG_ARG3(regs) = new_argv;
+        REG_ARG4(regs) = 0;  /* envp = NULL */
+    } else {
+        /* For execve: standard arguments */
+        REG_ARG1(regs) = sh_addr;
+        REG_ARG2(regs) = new_argv;
+        REG_ARG3(regs) = 0;  /* envp = NULL */
+    }
 
     /* Apply changes */
     if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
@@ -371,38 +257,55 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
     /* Only check redirected flag for execve syscalls */
     if (syscall_is_execve(regs)) {
-        DEBUG_PRINT("HANDLER: pid=%d execve detected, initial=%d, detached=%d, redirected=%d\n", 
-                    pid, state->initial_execve, state->detached, state->redirected);
+        DEBUG_PRINT("HANDLER: pid=%d execve detected, initial=%d, detached=%d, redirected=%d, post_redirect=%d\n", 
+                    pid, state->initial_execve, state->detached, state->redirected, state->post_redirect_exec);
+        
         /* Check if this process was already redirected to readonlybox */
         if (state->redirected) {
-            /* Only allow ONE execve after redirection (readonlybox execing the actual command) */
+            /* Check if we've already allowed the post-redirect execve.
+             * If yes, this is a subsequent exec (like npm→tsx) - check what is being execed.
+             * If no, this is the approved command (readonlybox→npm) - allow without request. */
             if (state->post_redirect_exec) {
-                /* This shouldn't happen - block it */
-                DEBUG_PRINT("HANDLER: pid=%d blocking unexpected second execve after redirect\n", pid);
-                if (block_execve(pid, regs) < 0) {
-                    kill(pid, SIGKILL);
-                }
+                /* This process already executed the approved command.
+                 * Allow subsequent execs to proceed but they should go through validation
+                 * since they're new commands (e.g., npm→tsx). */
+                DEBUG_PRINT("HANDLER: pid=%d allowing execve after approved command to be validated\n", pid);
+                /* Fall through to validation logic */
+            } else {
+                /* This is readonlybox execving the approved command - allow without request */
+                DEBUG_PRINT("HANDLER: pid=%d allowing post-redirect execve (readonlybox running command), continuing to trace\n", pid);
+                state->post_redirect_exec = 1;
+                state->in_execve = 1;  /* Mark that we're in an execve so exit handler knows */
+                state->validated = 1;
+                /* Continue tracing - don't detach */
                 return 0;
             }
-            DEBUG_PRINT("HANDLER: pid=%d allowing post-redirect execve (readonlybox running command), detaching immediately\n", pid);
-            state->post_redirect_exec = 1;
-            state->in_execve = 1;  /* Mark that we're in an execve so exit handler knows */
-            /* Detach immediately - don't wait for exit handler to avoid blocking bash */
-            state->detached = 1;
-            /* Just detach - PTRACE_DETACH automatically continues the process */
-            if (ptrace(PTRACE_DETACH, pid, 0, 0) < 0) {
-                perror("ptrace(DETACH)");
-            }
-            /* Clean up process state to prevent PID reuse issues */
-            syscall_remove_process_state(pid);
-            return 0;
         }
+        
+        /* New execve that needs validation - reset validated flag */
+        state->validated = 0;
         state->in_execve = 1;
 
-        /* Read execve arguments */
-        unsigned long pathname_addr = REG_ARG1(regs);
-        unsigned long argv_addr = REG_ARG2(regs);
-        unsigned long envp_addr = REG_ARG3(regs);
+        /* Read execve/execveat arguments */
+        /* Note: execveat has different argument order than execve:
+         *   execve(pathname, argv, envp)
+         *   execveat(dirfd, pathname, argv, envp, flags)
+         */
+        unsigned long pathname_addr;
+        unsigned long argv_addr;
+        unsigned long envp_addr;
+        
+        if (REG_SYSCALL(regs) == SYSCALL_EXECVEAT) {
+            /* execveat: dirfd is in arg1, pathname in arg2 */
+            pathname_addr = REG_ARG2(regs);
+            argv_addr = REG_ARG3(regs);
+            envp_addr = REG_ARG4(regs);
+        } else {
+            /* execve: all arguments in standard positions */
+            pathname_addr = REG_ARG1(regs);
+            argv_addr = REG_ARG2(regs);
+            envp_addr = REG_ARG3(regs);
+        }
 
         /* Save original arguments */
         free(state->execve_pathname);
@@ -450,40 +353,54 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 (dfa_result == VALIDATION_DENY ? "DENY" : "ASK"));
 
         if (dfa_result == VALIDATION_ALLOW) {
-            /* Fast allow - let it proceed and DETACH from this child process */
-            /* We don't need to trace child processes of bash, only the main process */
-            DEBUG_PRINT("DFA: Fast-allowing command '%s'\n", command);
-            state->detached = 1;
-            if (ptrace(PTRACE_DETACH, pid, 0, 0) < 0) {
-                perror("ptrace(DETACH)");
-            }
-            /* Clean up process state to prevent PID reuse issues */
-            syscall_remove_process_state(pid);
+            /* Fast allow - mark as validated but continue tracing for future execves */
+            DEBUG_PRINT("DFA: Fast-allowing command '%s', continuing to trace\n", command);
+            state->validated = 1;
+            /* Continue tracing - don't detach */
             return 0;
         }
 
-        /* DFA didn't allow - need to redirect to readonlybox --run for validation */
+        /* DFA didn't allow - need to ask server for decision */
+        DEBUG_PRINT("HANDLER: pid=%d DFA result=%d, asking server for decision on '%s'\n", 
+                    pid, dfa_result, command);
 
-        /* Redirect to readonlybox --run */
-        if (redirect_to_readonlybox(pid, regs, state->execve_pathname,
-                                    state->execve_argv, state->execve_envp) < 0) {
-            /* Block the command if we can't redirect */
+        /* Build caller info for the request */
+        char caller_info[256 + 8] = {0};  /* basename + ":execve" - safe */
+        char exe_link[64];
+        snprintf(exe_link, sizeof(exe_link), "/proc/%d/exe", pid);
+        char exe_path[PATH_MAX];
+        ssize_t exe_len = readlink(exe_link, exe_path, sizeof(exe_path) - 1);
+        if (exe_len > 0) {
+            exe_path[exe_len] = '\0';
+            const char *base = get_basename(exe_path);
+            /* Safely copy basename, truncating if needed but preserving null terminator */
+            size_t base_len = strlen(base);
+            if (base_len > 255) base_len = 255;
+            memcpy(caller_info, base, base_len);
+            memcpy(caller_info + base_len, ":execve", 8);
+        } else {
+            strcpy(caller_info, "unknown:execve");
+        }
+
+        /* Ask server for decision via readonlybox --judge
+         * This reuses all the server communication code from the main binary */
+        int decision = run_judge(command);
+
+        DEBUG_PRINT("JUDGE: pid=%d command='%s' decision=%d\n", pid, command, decision);
+
+        if (decision != 0) {
+            /* Server denied (exit 9) or error - block the command */
+            DEBUG_PRINT("HANDLER: pid=%d server denied command '%s', blocking\n", pid, command);
             if (block_execve(pid, regs) < 0) {
                 kill(pid, SIGKILL);
             }
             return 0;
         }
 
-        /* After redirect, the execve will call readonlybox.
-         * We detach immediately - no need to trace our own binary.
-         * readonlybox will handle server communication and exec the actual command.
-         */
-        DEBUG_PRINT("HANDLER: pid=%d redirected to readonlybox, detaching immediately\n", pid);
-        state->detached = 1;
-        if (ptrace(PTRACE_DETACH, pid, 0, 0) < 0) {
-            perror("ptrace(DETACH)");
-        }
-        syscall_remove_process_state(pid);
+        /* Server allowed - let the execve proceed */
+        DEBUG_PRINT("HANDLER: pid=%d server allowed command '%s', continuing to trace\n", pid, command);
+        state->validated = 1;
+        return 0;
     }
 
     return 0;
@@ -491,6 +408,8 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
 /* Handle syscall exit (after execution) */
 int syscall_handle_exit(pid_t pid, USER_REGS *regs, ProcessState *state) {
+    (void)pid;  /* Currently unused but may be needed for future logging */
+    
     if (!state) return 0;
 
     if (state->in_execve && syscall_is_execve(regs)) {

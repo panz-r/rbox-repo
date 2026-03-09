@@ -63,6 +63,7 @@ typedef struct {
     int post_redirect_exec; /* Already allowed post-redirect execve */
     int initial_execve;     /* This is the initial execve (first one) */
     int detached;           /* Process has been detached */
+    int validated;          /* This execve has been validated (reset at each execve entry) */
     char *execve_pathname;  /* Saved pathname for execve */
     char **execve_argv;     /* Saved argv for execve */
     char **execve_envp;     /* Saved envp for execve */

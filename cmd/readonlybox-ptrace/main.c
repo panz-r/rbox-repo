@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
@@ -21,14 +22,41 @@
 #include <grp.h>
 #include <limits.h>
 #include <math.h>
+#include <libgen.h>
 
 #include "syscall_handler.h"
 #include "validation.h"
 #include "protocol.h"
 #include "env_screener.h"
 
+/* Forward declarations for judge execution */
+static const char *get_readonlybox_path(void);
+int run_judge(const char *command);
+
 #ifdef DEBUG
-#define DEBUG_PRINT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
+static FILE *g_debug_file = NULL;
+
+static void debug_init(void) {
+    g_debug_file = fopen("/tmp/readonlybox-ptrace.log", "a");
+    if (!g_debug_file) {
+        g_debug_file = stderr;
+    }
+}
+
+static void debug_close(void) {
+    if (g_debug_file && g_debug_file != stderr) {
+        fclose(g_debug_file);
+    }
+}
+
+#define DEBUG_PRINT(fmt, ...) do { \
+        if (!g_debug_file) debug_init(); \
+        time_t now = time(NULL); \
+        struct tm *tm = localtime(&now); \
+        fprintf(g_debug_file, "[%02d:%02d:%02d] ", tm->tm_hour, tm->tm_min, tm->tm_sec); \
+        fprintf(g_debug_file, fmt, ##__VA_ARGS__); \
+        fflush(g_debug_file); \
+    } while(0)
 #else
 #define DEBUG_PRINT(fmt, ...) ((void)0)
 #endif
@@ -43,15 +71,22 @@ static int g_extra_env_count = 0;
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: %s wrap <command> [args...]\n", g_progname);
-    fprintf(stderr, "       %s <command> [args...]\n", g_progname);
+    fprintf(stderr, "       %s [options] -- <command> [args...]\n", g_progname);
+    fprintf(stderr, "       %s -p <pid> [options] -- <command> [args...]\n", g_progname);
     fprintf(stderr, "\n");
     fprintf(stderr, "Run a command with ptrace-based command interception.\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  --keep-env          Pass through original environment (don't reset)\n");
-    fprintf(stderr, "  --env VAR=value     Set environment variable for command\n");
-    fprintf(stderr, "  -h, --help         Show this help\n");
-    fprintf(stderr, "  -v, --version      Show version\n");
+    fprintf(stderr, "  -p, --attach <pid>   Attach to a running process\n");
+    fprintf(stderr, "  -u, --uid <uid>      Run command as specified user\n");
+    fprintf(stderr, "  -c, --cwd <path>     Set working directory\n");
+    fprintf(stderr, "  -m, --cmd <path>     Command path (for pkexec)\n");
+    fprintf(stderr, "  --keep-env           Pass through original environment (don't reset)\n");
+    fprintf(stderr, "  --env VAR=value      Set environment variable for command\n");
+    fprintf(stderr, "  -h, --help           Show this help\n");
+    fprintf(stderr, "  -v, --version        Show version\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "The -- separator is optional and separates options from the command.\n");
 }
 
 static bool have_ptrace_capability(void) {
@@ -370,14 +405,14 @@ static int trace_process(pid_t initial_pid) {
                 continue;
             }
 
-            /* Check if parent is readonlybox - if so, don't trace its children.
+            /* Check if parent is readonlybox binary - if so, detach its child.
              * 
              * Why: When a command is redirected to readonlybox for validation,
              * readonlybox contacts the server and gets approval. Then readonlybox
-             * forks a child process to execute the actual command. Without this
-             * check, we would trace that child and send a duplicate request to
-             * the server. By detaching children of readonlybox, we avoid this
-             * duplicate request while still allowing the command to execute.
+             * forks a child process to execute the actual command. We don't want
+             * to trace that child because:
+             * 1. It was already validated when we redirected to readonlybox
+             * 2. We don't want to intercept readonlybox's internal operations
              */
             char parent_exe[256];
             char parent_link[64];
@@ -391,16 +426,14 @@ static int trace_process(pid_t initial_pid) {
                 }
             }
             
-            ProcessState *parent_state = syscall_get_process_state(pid);
-            if (parent_state && parent_state->detached) {
-                DEBUG_PRINT("PARENT: pid=%d fork/clone, parent detached - detaching child\n", pid);
-                ptrace(PTRACE_DETACH, (pid_t)child_pid, 0, 0);
-            } else if (parent_is_readonlybox) {
-                DEBUG_PRINT("PARENT: pid=%d is readonlybox, detaching child %d\n", pid, (int)child_pid);
+            /* Detach only if parent is readonlybox binary - all other processes
+             * should continue to be traced so their execves get validated */
+            if (parent_is_readonlybox) {
+                DEBUG_PRINT("PARENT: pid=%d is readonlybox binary, detaching child %d\n", pid, (int)child_pid);
                 ptrace(PTRACE_DETACH, (pid_t)child_pid, 0, 0);
             } else {
-                DEBUG_PRINT("PARENT: pid=%d fork/clone, resuming child %d\n", pid, (int)child_pid);
-                /* Set options on child for grandchildren tracing */
+                DEBUG_PRINT("PARENT: pid=%d (%s) fork/clone, resuming child %d\n", pid, parent_exe, (int)child_pid);
+                /* Set options on child for tracing */
                 if (ptrace(PTRACE_SETOPTIONS, (pid_t)child_pid, 0,
                            PTRACE_O_TRACESYSGOOD |
                            PTRACE_O_TRACEEXEC |
@@ -471,6 +504,7 @@ int main(int argc, char *argv[]) {
     uid_t provided_uid = 0;
     const char *provided_cwd = NULL;
     char *provided_cmd_path = NULL;
+    pid_t attach_pid = 0;  /* PID to attach to (0 = spawn new process) */
 
     g_progname = argv[0];
 
@@ -480,12 +514,15 @@ int main(int argc, char *argv[]) {
         {"uid", required_argument, 0, 'u'},
         {"cwd", required_argument, 0, 'c'},
         {"cmd", required_argument, 0, 'm'},
+        {"attach", required_argument, 0, 'p'},
         {"keep-env", no_argument, 0, 'k'},
         {"env", required_argument, 0, 'e'},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "+hvu:c:m:ke:", long_options, NULL)) != -1) {
+    /* Parse options until we see -- or a non-option argument */
+    /* Use + to stop at first non-option (for -- separator support) */
+    while ((opt = getopt_long(argc, argv, "+hvu:c:m:p:ke:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_usage();
@@ -502,6 +539,13 @@ int main(int argc, char *argv[]) {
             case 'm':
                 provided_cmd_path = optarg;
                 break;
+            case 'p':
+                attach_pid = atoi(optarg);
+                if (attach_pid <= 0) {
+                    fprintf(stderr, "%s: Invalid PID: %s\n", g_progname, optarg);
+                    return 1;
+                }
+                break;
             case 'k':
                 g_keep_env = true;
                 break;
@@ -517,26 +561,44 @@ int main(int argc, char *argv[]) {
 
     save_original_user(provided_uid, provided_cwd);
 
+    /* If attaching to a process, no command should be provided */
     int cmd_start = optind;
-    if (cmd_start < argc && strcmp(argv[cmd_start], "wrap") == 0) {
-        cmd_start++;
-    }
-
-    if (cmd_start >= argc) {
-        print_usage();
-        return 1;
-    }
-
-    char *cmd_path = NULL;
-    if (provided_cmd_path) {
-        cmd_path = strdup(provided_cmd_path);
+    if (attach_pid > 0) {
+        /* Skip "wrap" keyword if present */
+        if (cmd_start < argc && strcmp(argv[cmd_start], "wrap") == 0) {
+            cmd_start++;
+        }
+        if (cmd_start < argc) {
+            fprintf(stderr, "%s: Error: Cannot specify both -p/--attach and a command\n", g_progname);
+            print_usage();
+            return 1;
+        }
+        /* No command provided - this is fine for attach mode, continue without error */
     } else {
-        cmd_path = resolve_command_path(argv[cmd_start]);
+        if (cmd_start < argc && strcmp(argv[cmd_start], "wrap") == 0) {
+            cmd_start++;
+        }
+
+        if (cmd_start >= argc) {
+            print_usage();
+            return 1;
+        }
     }
 
-    if (!cmd_path) {
-        fprintf(stderr, "%s: Command not found: %s\n", g_progname, argv[cmd_start]);
-        return 1;
+    /* Initialize cmd_path only for spawn mode */
+    char *cmd_path = NULL;
+    if (attach_pid == 0) {
+        /* Spawn mode - resolve command path */
+        if (provided_cmd_path) {
+            cmd_path = strdup(provided_cmd_path);
+        } else {
+            cmd_path = resolve_command_path(argv[cmd_start]);
+        }
+
+        if (!cmd_path) {
+            fprintf(stderr, "%s: Command not found: %s\n", g_progname, argv[cmd_start]);
+            return 1;
+        }
     }
 
     /* Screen environment for potential secrets before launching (unless --keep-env) */
@@ -544,7 +606,7 @@ int main(int argc, char *argv[]) {
         screen_environment();
     }
 
-    if (provided_uid == 0 && !have_ptrace_capability()) {
+    if (attach_pid == 0 && provided_uid == 0 && !have_ptrace_capability()) {
         fprintf(stderr, "%s: Requesting elevated privileges...\n", g_progname);
         int ret = relaunch_with_pkexec(argc, argv, cmd_path);
         free(cmd_path);
@@ -564,11 +626,78 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Screen environment for potential secrets before launching */
-    if (!g_keep_env) {
-        screen_environment();
+    /* Check if we're attaching to a running process or spawning new */
+    if (attach_pid > 0) {
+        /* Attach to existing process */
+        fprintf(stderr, "%s: Attaching to process %d\n", g_progname, attach_pid);
+        
+        /* Send PTRACE_ATTACH to the target process */
+        if (ptrace(PTRACE_ATTACH, attach_pid, NULL, NULL) < 0) {
+            perror("ptrace(ATTACH)");
+            syscall_handler_cleanup();
+            validation_shutdown();
+            free(cmd_path);
+            return 1;
+        }
+        
+        /* Wait for the process to stop */
+        int status;
+        if (waitpid(attach_pid, &status, 0) < 0) {
+            perror("waitpid");
+            syscall_handler_cleanup();
+            validation_shutdown();
+            free(cmd_path);
+            return 1;
+        }
+        
+        if (!WIFSTOPPED(status)) {
+            fprintf(stderr, "%s: Process %d did not stop as expected\n", g_progname, attach_pid);
+            syscall_handler_cleanup();
+            validation_shutdown();
+            free(cmd_path);
+            return 1;
+        }
+        
+        /* Set trace options on the attached process */
+        if (ptrace(PTRACE_SETOPTIONS, attach_pid, 0,
+                   PTRACE_O_TRACESYSGOOD |
+                   PTRACE_O_TRACEEXEC |
+                   PTRACE_O_TRACECLONE |
+                   PTRACE_O_TRACEFORK |
+                   PTRACE_O_TRACEVFORK) < 0) {
+            perror("ptrace(SETOPTIONS)");
+            syscall_handler_cleanup();
+            validation_shutdown();
+            free(cmd_path);
+            return 1;
+        }
+        
+        /* Resume the process - it will be traced and we'll intercept its execves */
+        if (ptrace(PTRACE_CONT, attach_pid, NULL, NULL) < 0) {
+            perror("ptrace(CONT)");
+            syscall_handler_cleanup();
+            validation_shutdown();
+            free(cmd_path);
+            return 1;
+        }
+        
+        /* For attached processes, we DON'T set as main process.
+         * This ensures the first execve from the attached process
+         * goes through validation (not automatically allowed).
+         * This is the expected behavior for Option A/D.
+         */
+        /* Note: We skip syscall_set_main_process(attach_pid) intentionally */
+        
+        int exit_code = trace_process(attach_pid);
+
+        free(cmd_path);
+        syscall_handler_cleanup();
+        validation_shutdown();
+
+        return exit_code;
     }
 
+    /* Original spawn logic */
     pid_t child = fork();
     if (child < 0) {
         perror("fork");
@@ -601,4 +730,94 @@ int main(int argc, char *argv[]) {
     validation_shutdown();
 
     return exit_code;
+}
+
+/* Run readonlybox --judge to get server decision
+ * Returns: 0 = ALLOW, 9 = DENY, -1 = error
+ */
+int run_judge(const char *command) {
+    int pipefd[2];
+    pid_t pid;
+    char buffer[1024];
+    ssize_t bytes_read;
+
+    /* Create pipe for reading output */
+    if (pipe(pipefd) < 0) {
+        return -1;
+    }
+
+    pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+
+    if (pid == 0) {
+        /* Child: exec readonlybox --judge */
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        close(pipefd[1]);
+
+        /* Find readonlybox binary */
+        const char *readonlybox_path = get_readonlybox_path();
+        
+        execl(readonlybox_path, "readonlybox", "--judge", command, NULL);
+        _exit(1);
+    }
+
+    /* Parent: read output */
+    close(pipefd[1]);
+    
+    bytes_read = read(pipefd[0], buffer, sizeof(buffer) - 1);
+    close(pipefd[0]);
+    
+    if (bytes_read <= 0) {
+        waitpid(pid, NULL, 0);
+        return -1;
+    }
+
+    buffer[bytes_read] = '\0';
+    
+    /* Wait for child to finish */
+    int status;
+    waitpid(pid, &status, 0);
+
+    /* Parse output: "ALLOW ..." or "DENY ..." */
+    if (strncmp(buffer, "ALLOW", 5) == 0) {
+        DEBUG_PRINT("JUDGE: ALLOW for '%s'\n", command);
+        return 0;  /* Allowed */
+    } else if (strncmp(buffer, "DENY", 4) == 0) {
+        DEBUG_PRINT("JUDGE: DENY for '%s'\n", command);
+        return 9;  /* Denied */
+    }
+
+    DEBUG_PRINT("JUDGE: Unknown response for '%s': %s\n", command, buffer);
+    return -1;  /* Error */
+}
+
+/* Get path to readonlybox binary */
+static const char *get_readonlybox_path(void) {
+    static char path_buf[PATH_MAX];
+    
+    /* First try production path */
+    if (access("/usr/local/bin/readonlybox", X_OK) == 0) {
+        return "/usr/local/bin/readonlybox";
+    }
+    
+    /* Try to find relative to our executable location */
+    char self_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+    if (len > 0) {
+        self_path[len] = '\0';
+        char *dir = dirname(self_path);
+        snprintf(path_buf, sizeof(path_buf), "%s/../../bin/readonlybox", dir);
+        if (access(path_buf, X_OK) == 0) {
+            return path_buf;
+        }
+    }
+    
+    /* Fall back to PATH lookup */
+    return "readonlybox";
 }

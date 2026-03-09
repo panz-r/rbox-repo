@@ -122,7 +122,8 @@ TEST(syscall_is_execve_execveat) {
 #endif
 
     int result = syscall_is_execve(&regs);
-    ASSERT_EQ(result, 0);  /* execveat is not execve */
+    /* execveat IS now detected as execve-like (returns 1) */
+    ASSERT_EQ(result, 1);  
 }
 
 /*

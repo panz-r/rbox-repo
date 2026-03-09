@@ -15,3 +15,4 @@ c-dfa/test_dfa_simple
 plans/
 # exececutables
 cmd/readonlybox-ptrace/readonlybox-ptrace
+cmd/readonlybox-ptrace/tests/test_runner
