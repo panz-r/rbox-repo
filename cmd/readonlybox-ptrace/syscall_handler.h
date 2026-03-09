@@ -7,6 +7,33 @@
 
 #include <sys/types.h>
 #include <sys/user.h>
+#include <time.h>
+
+/* Shell tokenizer for parsing commands into subcommands */
+#include "shell_tokenizer.h"
+
+/* Allowance tracking for validated commands
+ * When a command is allowed, child processes can inherit the permission
+ * to run subcommands without requiring new server requests.
+ * Each allowance:
+ * - Is tied to a parent PID that was allowed
+ * - Tracks specific subcommands (e.g., "ps", "grep") extracted from the full command
+ * - Each subcommand can be used once
+ * - Expires after 10 minutes (auto-decay)
+ */
+#define MAX_ALLOWANCES 256
+#define ALLOWANCE_TIMEOUT_SECONDS 600  /* 10 minutes */
+
+typedef struct {
+    pid_t parent_pid;           /* PID of the parent that was allowed */
+    char *subcommands[SHELL_MAX_SUBCOMMANDS]; /* The subcommands that are allowed */
+    int subcommand_count;
+    time_t timestamp;          /* When the allowance was granted */
+    int used_mask[(SHELL_MAX_SUBCOMMANDS + 31) / 32]; /* Bitmap of used subcommands */
+} Allowance;
+
+/* Global allowance table */
+extern Allowance g_allowances[MAX_ALLOWANCES];
 
 /* Architecture-specific syscall numbers */
 #ifdef __x86_64__
@@ -63,10 +90,11 @@ typedef struct {
     int post_redirect_exec; /* Already allowed post-redirect execve */
     int initial_execve;     /* This is the initial execve (first one) */
     int detached;           /* Process has been detached */
-    int validated;          /* This execve has been validated (reset at each execve entry) */
+    int validated;          /* This execve has been validated */
     char *execve_pathname;  /* Saved pathname for execve */
     char **execve_argv;     /* Saved argv for execve */
     char **execve_envp;     /* Saved envp for execve */
+    char *last_validated_cmd; /* Last command that was validated for this process */
 } ProcessState;
 
 /* Set the main process PID */

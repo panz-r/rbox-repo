@@ -14,7 +14,8 @@ SRCS = main.c \
        ../../c-dfa/src/dfa_eval.c \
        ../../c-dfa/src/dfa_loader.c \
        ../../shellsplit/src/env_screener.c \
-       ../../shellsplit/src/relative_permutation_entropy.c
+       ../../shellsplit/src/relative_permutation_entropy.c \
+       ../../shellsplit/src/shell_tokenizer.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)
@@ -40,7 +41,7 @@ clean:
 	rm -f $(TARGET) $(OBJS) *.o
 
 # Debug build
-debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I. -I../../c-dfa/include -I../../internal/client -DDEBUG
+debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -DDEBUG
 debug: $(TARGET)
 
 # Test targets - delegate to tests subdirectory

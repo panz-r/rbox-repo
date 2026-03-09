@@ -31,7 +31,7 @@
 
 /* Forward declarations for judge execution */
 static const char *get_readonlybox_path(void);
-int run_judge(const char *command);
+int run_judge(const char *command, const char *caller_info);
 
 #ifdef DEBUG
 static FILE *g_debug_file = NULL;
@@ -735,7 +735,7 @@ int main(int argc, char *argv[]) {
 /* Run readonlybox --judge to get server decision
  * Returns: 0 = ALLOW, 9 = DENY, -1 = error
  */
-int run_judge(const char *command) {
+int run_judge(const char *command, const char *caller_info) {
     int pipefd[2];
     pid_t pid;
     char buffer[1024];
@@ -754,11 +754,19 @@ int run_judge(const char *command) {
     }
 
     if (pid == 0) {
+        /* Child: detach from tracer before exec to avoid re-intercepting */
+        ptrace(PTRACE_DETACH, 0, NULL, 0);
+        
         /* Child: exec readonlybox --judge */
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
         close(pipefd[1]);
+
+        /* Set caller info as environment variable for the server request */
+        if (caller_info) {
+            setenv("READONLYBOX_CALLER", caller_info, 1);
+        }
 
         /* Find readonlybox binary */
         const char *readonlybox_path = get_readonlybox_path();

@@ -24,7 +24,7 @@
 #include "protocol.h"
 
 /* Forward declaration for judge execution */
-extern int run_judge(const char *command);
+extern int run_judge(const char *command, const char *caller_info);
 
 /* Debug output macro - only enabled when DEBUG is defined */
 #ifdef DEBUG
@@ -54,6 +54,130 @@ static void debug_close(void) {
 #else
 #define DEBUG_PRINT(fmt, ...) ((void)0)
 #endif
+
+/* Allowance table for tracking validated commands */
+Allowance g_allowances[MAX_ALLOWANCES];
+
+/* Extract first word (command name) from a subcommand range */
+static void extract_command_name(const char *cmd, shell_range_t range, char *buf, size_t buf_size) {
+    if (range.start + range.len > strlen(cmd)) {
+        buf[0] = '\0';
+        return;
+    }
+    
+    /* Copy the full subcommand (everything between separators) */
+    size_t len = range.len;
+    if (len >= buf_size) len = buf_size - 1;
+    memcpy(buf, cmd + range.start, len);
+    buf[len] = '\0';
+    
+    /* Trim trailing whitespace */
+    while (len > 0 && (buf[len-1] == ' ' || buf[len-1] == '\t' || buf[len-1] == '\n' || buf[len-1] == '\r')) {
+        buf[--len] = '\0';
+    }
+}
+
+/* Check if a parent PID has a valid allowance for a specific subcommand */
+static int check_allowance(pid_t parent_pid, const char *subcommand) {
+    time_t now = time(NULL);
+    
+    for (int i = 0; i < MAX_ALLOWANCES; i++) {
+        if (g_allowances[i].parent_pid == 0) {
+            continue;  /* Empty slot */
+        }
+        
+        /* Check timeout - discard allowances older than 10 minutes */
+        if (now - g_allowances[i].timestamp > ALLOWANCE_TIMEOUT_SECONDS) {
+            DEBUG_PRINT("ALLOWANCE: expired allowance for parent %d\n", parent_pid);
+            for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
+                free(g_allowances[i].subcommands[j]);
+            }
+            g_allowances[i].subcommand_count = 0;
+            g_allowances[i].parent_pid = 0;
+            continue;
+        }
+        
+        /* Check if this allowance matches the parent */
+        if (g_allowances[i].parent_pid == parent_pid) {
+            /* Look for matching subcommand */
+            for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
+                int word_idx = j / 32;
+                int bit_idx = j % 32;
+                
+                /* Already used? */
+                if (g_allowances[i].used_mask[word_idx] & (1 << bit_idx)) {
+                    continue;
+                }
+                
+                /* Check if subcommand matches */
+                if (g_allowances[i].subcommands[j] && 
+                    strcmp(g_allowances[i].subcommands[j], subcommand) == 0) {
+                    
+                    /* Mark as used */
+                    g_allowances[i].used_mask[word_idx] |= (1 << bit_idx);
+                    
+                    DEBUG_PRINT("ALLOWANCE: using allowance for parent %d, subcommand '%s'\n", 
+                               parent_pid, subcommand);
+                    return 1;  /* Allow */
+                }
+            }
+        }
+    }
+    
+    return 0;  /* No valid allowance */
+}
+
+/* Grant allowances to a parent PID based on the full command */
+static void grant_allowance(pid_t parent_pid, const char *full_command) {
+    shell_parse_result_t result;
+    shell_error_t err;
+    
+    /* Try to parse with fast tokenizer */
+    err = shell_parse_fast(full_command, strlen(full_command), 
+                          &SHELL_LIMITS_DEFAULT, &result);
+    
+    if (err != SHELL_OK && err != SHELL_ETRUNC) {
+        /* Parse failed - no allowances */
+        DEBUG_PRINT("ALLOWANCE: shell_parse_fast failed for '%s', no allowances\n", full_command);
+        return;
+    }
+    
+    DEBUG_PRINT("ALLOWANCE: parsed '%s' into %d subcommands\n", full_command, result.count);
+    
+    /* Find empty slot */
+    int slot = -1;
+    for (int i = 0; i < MAX_ALLOWANCES; i++) {
+        if (g_allowances[i].parent_pid == 0 && g_allowances[i].subcommand_count == 0) {
+            slot = i;
+            break;
+        }
+    }
+    
+    if (slot < 0) {
+        /* No empty slot - use first one and replace */
+        slot = 0;
+        for (int j = 0; j < g_allowances[0].subcommand_count; j++) {
+            free(g_allowances[0].subcommands[j]);
+        }
+    }
+    
+    /* Store allowances for each subcommand */
+    g_allowances[slot].parent_pid = parent_pid;
+    g_allowances[slot].timestamp = time(NULL);
+    g_allowances[slot].subcommand_count = 0;
+    memset(g_allowances[slot].used_mask, 0, sizeof(g_allowances[slot].used_mask));
+    
+    for (uint32_t i = 0; i < result.count && i < SHELL_MAX_SUBCOMMANDS; i++) {
+        char cmd_name[256];
+        extract_command_name(full_command, result.cmds[i], cmd_name, sizeof(cmd_name));
+        
+        if (cmd_name[0] != '\0') {
+            g_allowances[slot].subcommands[i] = strdup(cmd_name);
+            g_allowances[slot].subcommand_count++;
+            DEBUG_PRINT("ALLOWANCE: granted subcommand '%s' to parent %d\n", cmd_name, parent_pid);
+        }
+    }
+}
 
 /* Process state table (simple hash map).
  * 
@@ -92,6 +216,7 @@ void syscall_handler_cleanup(void) {
             free(g_process_table[i]->execve_pathname);
             memory_free_string_array(g_process_table[i]->execve_argv);
             memory_free_string_array(g_process_table[i]->execve_envp);
+            free(g_process_table[i]->last_validated_cmd);
             free(g_process_table[i]);
             g_process_table[i] = NULL;
         }
@@ -131,6 +256,7 @@ void syscall_remove_process_state(pid_t pid) {
             free(g_process_table[probe]->execve_pathname);
             memory_free_string_array(g_process_table[probe]->execve_argv);
             memory_free_string_array(g_process_table[probe]->execve_envp);
+            free(g_process_table[probe]->last_validated_cmd);
             free(g_process_table[probe]);
             g_process_table[probe] = NULL;
             return;
@@ -343,6 +469,41 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             state->initial_execve = 1;
         }
 
+        /* Check if this is the same command we just validated for this process.
+         * This prevents duplicate requests when a process retries exec while we're waiting. */
+        if (state->last_validated_cmd && strcmp(state->last_validated_cmd, command) == 0) {
+            DEBUG_PRINT("HANDLER: pid=%d command '%s' already validated, allowing\n", pid, command);
+            state->validated = 1;
+            return 0;
+        }
+
+        /* Get parent PID to check for allowances */
+        char proc_status[64];
+        snprintf(proc_status, sizeof(proc_status), "/proc/%d/status", pid);
+        FILE *status_file = fopen(proc_status, "r");
+        pid_t parent_pid = 0;
+        if (status_file) {
+            char line[256];
+            while (fgets(line, sizeof(line), status_file)) {
+                if (strncmp(line, "PPid:", 5) == 0) {
+                    sscanf(line + 5, "%d", &parent_pid);
+                    break;
+                }
+            }
+            fclose(status_file);
+        }
+
+        /* Check if parent has an allowance for this subcommand */
+        if (parent_pid > 0) {
+            /* Pass the full command - the allowance check will match against stored subcommands */
+            if (check_allowance(parent_pid, command)) {
+                DEBUG_PRINT("HANDLER: pid=%d has allowance from parent %d for '%s', allowing\n", 
+                           pid, parent_pid, command);
+                state->validated = 1;
+                return 0;
+            }
+        }
+
         /* For subsequent execves (commands run by bash), validate with server */
         /* Check DFA fast-path */
         int dfa_result = validation_check_dfa(command);
@@ -384,7 +545,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
         /* Ask server for decision via readonlybox --judge
          * This reuses all the server communication code from the main binary */
-        int decision = run_judge(command);
+        int decision = run_judge(command, caller_info);
 
         DEBUG_PRINT("JUDGE: pid=%d command='%s' decision=%d\n", pid, command, decision);
 
@@ -400,6 +561,14 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         /* Server allowed - let the execve proceed */
         DEBUG_PRINT("HANDLER: pid=%d server allowed command '%s', continuing to trace\n", pid, command);
         state->validated = 1;
+        
+        /* Grant allowances to this process for subcommands of the allowed command.
+         * Child processes will be able to exec subcommands without new server requests. */
+        grant_allowance(pid, command);
+        
+        /* Track this validated command to prevent duplicates on retry */
+        free(state->last_validated_cmd);
+        state->last_validated_cmd = strdup(command);
         return 0;
     }
 
