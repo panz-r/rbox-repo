@@ -76,7 +76,29 @@ func Build() error {
 	if err := BuildClient(); err != nil {
 		return err
 	}
-	return BuildPtrace()
+	if err := BuildPtrace(); err != nil {
+		return err
+	}
+	return BuildProtocol()
+}
+
+// BuildProtocol builds the rbox-protocol library
+func BuildProtocol() error {
+	fmt.Println("Building rbox-protocol library...")
+
+	wd, _ := os.Getwd()
+	protocolDir := filepath.Join(wd, "rbox-protocol")
+
+	// Build library and tests via its Makefile
+	cmd := exec.Command("make", "all")
+	cmd.Dir = protocolDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to build rbox-protocol: %w", err)
+	}
+
+	return nil
 }
 
 // BuildClient builds the LD_PRELOAD client library
@@ -476,6 +498,16 @@ func DfaTest() error {
 	shellsplitCmd.Stderr = os.Stderr
 	if err := shellsplitCmd.Run(); err != nil {
 		fmt.Printf("shellsplit tests failed: %v\n", err)
+	}
+
+	// Run rbox-protocol tests via its Makefile
+	fmt.Println("\n=== Running rbox-protocol tests ===")
+	protocolCmd := exec.Command("make", "test")
+	protocolCmd.Dir = filepath.Join(wd, "rbox-protocol")
+	protocolCmd.Stdout = os.Stdout
+	protocolCmd.Stderr = os.Stderr
+	if err := protocolCmd.Run(); err != nil {
+		fmt.Printf("rbox-protocol tests failed: %v\n", err)
 	}
 
 	fmt.Println("\nDFA and tokenizer tests complete!")

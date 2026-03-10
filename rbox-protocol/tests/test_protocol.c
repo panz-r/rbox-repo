@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include "rbox_protocol.h"
 
@@ -62,6 +63,7 @@ void test_strerror(void) {
     assert(strcmp(rbox_strerror(RBOX_ERR_TRUNCATED), "Truncated data") == 0);
     assert(strcmp(rbox_strerror(RBOX_ERR_IO), "I/O error") == 0);
     assert(strcmp(rbox_strerror(RBOX_ERR_MEMORY), "Memory allocation failed") == 0);
+    assert(strcmp(rbox_strerror(RBOX_ERR_MISMATCH), "Request/response ID mismatch") == 0);
     
     printf("test_strerror: PASSED\n\n");
 }
@@ -86,12 +88,50 @@ void test_checksum(void) {
     printf("test_checksum: PASSED\n\n");
 }
 
+/* Test session state machine */
+void test_session(void) {
+    printf("Testing session interface...\n");
+    
+    /* Create session with no retry */
+    rbox_session_t *session = rbox_session_new("/nonexistent.sock", 0, 0);
+    assert(session != NULL);
+    short events;
+    assert(rbox_session_pollfd(session, &events) == -1);
+    assert(rbox_session_state(session) == RBOX_SESSION_DISCONNECTED);
+    printf("  ✓ Session created in DISCONNECTED state\n");
+    
+    /* Try to send without connecting - should fail */
+    rbox_error_t err = rbox_session_send_request(session, "ls", 0, NULL);
+    assert(err == RBOX_ERR_INVALID);
+    printf("  ✓ Send request without connection returns INVALID\n");
+    
+    /* Try to connect to nonexistent socket */
+    err = rbox_session_connect(session);
+    assert(err == RBOX_ERR_IO);
+    assert(rbox_session_state(session) == RBOX_SESSION_FAILED);
+    printf("  ✓ Connect to nonexistent socket returns FAILED\n");
+    
+    /* Free session */
+    rbox_session_free(session);
+    printf("  ✓ Session freed\n");
+    
+    /* Create session with retry */
+    session = rbox_session_new("/nonexistent.sock", 10, 3);
+    assert(session != NULL);
+    assert(rbox_session_state(session) == RBOX_SESSION_DISCONNECTED);
+    printf("  ✓ Session with retry created\n");
+    
+    rbox_session_free(session);
+    printf("test_session: PASSED\n\n");
+}
+
 int main(void) {
     printf("=== rbox-protocol unit tests ===\n\n");
     
     test_header_validate();
     test_strerror();
     test_checksum();
+    test_session();
     
     printf("=== All tests PASSED ===\n");
     return 0;

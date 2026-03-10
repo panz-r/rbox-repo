@@ -56,6 +56,7 @@ static void *server_robust(void *arg) {
             n = rbox_read(rbox_client_fd(cl), hdr, 88);
         }
         
+        /* Only process if we got exactly 88 bytes */
         if (n == 88) {
             /* Validate chunk_len before reading body */
             uint32_t clen = *(uint32_t *)(hdr + 72);
@@ -73,9 +74,15 @@ static void *server_robust(void *arg) {
                 return NULL;
             }
             
-            rbox_response_t resp = { .decision = RBOX_DECISION_ALLOW };
-            snprintf(resp.reason, sizeof(resp.reason), "ok");
-            rbox_response_send(cl, &resp);
+            /* Only send response if we got valid header */
+            uint32_t magic = *(uint32_t *)hdr;
+            if (magic == RBOX_MAGIC) {
+                /* Echo back the request_id from the client */
+                rbox_response_t resp = { .decision = RBOX_DECISION_ALLOW };
+                memcpy(resp.request_id, hdr + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
+                snprintf(resp.reason, sizeof(resp.reason), "ok");
+                rbox_response_send(cl, &resp);
+            }
         }
         rbox_client_close(cl);
     }
@@ -105,6 +112,7 @@ static void *server_deny(void *arg) {
                     }
                 }
                 rbox_response_t resp = { .decision = RBOX_DECISION_DENY };
+                memcpy(resp.request_id, hdr + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
                 snprintf(resp.reason, sizeof(resp.reason), "denied");
                 rbox_response_send(cl, &resp);
             }
@@ -139,6 +147,7 @@ static void *server_delayed(void *arg) {
                 /* Delay before response */
                 usleep(200000);
                 rbox_response_t resp = { .decision = RBOX_DECISION_ALLOW };
+                memcpy(resp.request_id, hdr + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
                 snprintf(resp.reason, sizeof(resp.reason), "ok");
                 rbox_response_send(cl, &resp);
             }
@@ -183,60 +192,48 @@ static void *server_drops_response(void *arg) {
  * Helper functions
  * ============================================================================ */
 
-/* Request with retry connect (exponential backoff) - defined first */
-static int do_request_retry(const char *path, const char *cmd, int argc, const char **args, 
-                            uint8_t *decision, char *errmsg, size_t errlen,
-                            uint32_t base_delay_ms, uint32_t max_retries) {
-    rbox_client_t *cl = rbox_client_connect_retry(path, base_delay_ms, max_retries);
-    if (!cl) {
-        if (errmsg && errlen > 0) snprintf(errmsg, errlen, "connect failed");
+/* ============================================================================
+ * Helper functions - now using public blocking interface
+ * ============================================================================ */
+
+/* Simple request using public blocking interface */
+static int do_request(const char *path, const char *cmd, int argc, const char **args, 
+                      uint8_t *decision, char *errmsg, size_t errlen) {
+    rbox_response_t response;
+    rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, &response, 0, 0);
+    
+    if (err != RBOX_OK) {
+        if (errmsg && errlen > 0) {
+            snprintf(errmsg, errlen, "%s", rbox_strerror(err));
+        }
         return -1;
     }
     
-    char pkt[4096];
-    size_t plen;
-    if (rbox_build_request(pkt, &plen, cmd, argc, args) != RBOX_OK) {
-        rbox_client_close(cl);
-        if (errmsg && errlen > 0) snprintf(errmsg, errlen, "build request failed");
-        return -1;
+    if (decision) {
+        *decision = response.decision;
     }
-    
-    ssize_t sent = write(rbox_client_fd(cl), pkt, plen);
-    if (sent != (ssize_t)plen) {
-        rbox_client_close(cl);
-        if (errmsg && errlen > 0) snprintf(errmsg, errlen, "send failed");
-        return -1;
-    }
-    
-    /* Read response with timeout */
-    struct pollfd pfd = { .fd = rbox_client_fd(cl), .events = POLLIN };
-    if (poll(&pfd, 1, 2000) <= 0) {  /* 2 second timeout for response */
-        rbox_client_close(cl);
-        if (errmsg && errlen > 0) snprintf(errmsg, errlen, "response timeout");
-        return -1;
-    }
-    
-    char resp[256];
-    ssize_t n = read(rbox_client_fd(cl), resp, sizeof(resp));
-    rbox_client_close(cl);
-    
-    if (n <= 0) {
-        if (errmsg && errlen > 0) snprintf(errmsg, errlen, "read failed: %zd", n);
-        return -1;
-    }
-    
-    if (rbox_parse_response(resp, n, decision) != RBOX_OK) {
-        if (errmsg && errlen > 0) snprintf(errmsg, errlen, "parse response failed");
-        return -1;
-    }
-    
     return 0;
 }
 
-/* Simple request without retry (uses do_request_retry internally) */
-static int do_request(const char *path, const char *cmd, int argc, const char **args, 
-                      uint8_t *decision, char *errmsg, size_t errlen) {
-    return do_request_retry(path, cmd, argc, args, decision, errmsg, errlen, 0, 0);
+/* Request with retry using public blocking interface */
+static int do_request_retry(const char *path, const char *cmd, int argc, const char **args, 
+                            uint8_t *decision, char *errmsg, size_t errlen,
+                            uint32_t base_delay_ms, uint32_t max_retries) {
+    rbox_response_t response;
+    rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, &response, 
+                                             base_delay_ms, max_retries);
+    
+    if (err != RBOX_OK) {
+        if (errmsg && errlen > 0) {
+            snprintf(errmsg, errlen, "%s", rbox_strerror(err));
+        }
+        return -1;
+    }
+    
+    if (decision) {
+        *decision = response.decision;
+    }
+    return 0;
 }
 
 /* ============================================================================

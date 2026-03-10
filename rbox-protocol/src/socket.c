@@ -342,25 +342,29 @@ ssize_t rbox_read(int fd, void *buf, size_t len) {
             return -1;
         }
 
-        /* Check for errors */
+        /* Check for errors - but allow reading if data is available */
         if (pfd.revents & (POLLERR | POLLHUP)) {
-            errno = ECONNRESET;
-            return -1;
+            /* If POLLIN is set, there's data to read - don't treat as error yet */
+            if (!(pfd.revents & POLLIN)) {
+                errno = ECONNRESET;
+                return -1;
+            }
         }
 
         /* Read */
         ssize_t n = read(fd, ptr + total_read, len - total_read);
         if (n < 0) {
             if (errno == EINTR) continue;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;  /* Shouldn't happen after poll */
+            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            /* If we have data and get error, return what we have */
+            if (total_read > 0) {
+                break;
+            }
             return -1;
         }
         if (n == 0) {
-            /* Peer closed */
-            if (total_read == 0) {
-                return 0;  /* No data read */
-            }
-            break;  /* Return partial data */
+            /* Peer closed - return what we have */
+            break;
         }
         
         total_read += n;
@@ -486,8 +490,9 @@ int rbox_pollin(int fd, int timeout_ms) {
     if (ret < 0) return -1;
     if (ret == 0) return 0;
     
-    if (pfd.revents & (POLLERR | POLLHUP)) return -1;
+    /* Allow reading if POLLIN is set, even with POLLHUP/POLLERR */
     if (pfd.revents & POLLIN) return 1;
+    if (pfd.revents & (POLLERR | POLLHUP)) return -1;
     
     return 0;
 }
@@ -504,8 +509,9 @@ int rbox_pollout(int fd, int timeout_ms) {
     if (ret < 0) return -1;
     if (ret == 0) return 0;
     
-    if (pfd.revents & (POLLERR | POLLHUP)) return -1;
+    /* Allow writing if POLLOUT is set, even with POLLHUP/POLLERR */
     if (pfd.revents & POLLOUT) return 1;
+    if (pfd.revents & (POLLERR | POLLHUP)) return -1;
     
     return 0;
 }

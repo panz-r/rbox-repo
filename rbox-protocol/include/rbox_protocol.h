@@ -32,6 +32,7 @@ typedef enum {
     RBOX_ERR_TRUNCATED = -5,  /* Truncated data */
     RBOX_ERR_IO        = -6,  /* Socket I/O error */
     RBOX_ERR_MEMORY    = -7,  /* Memory allocation failed */
+    RBOX_ERR_MISMATCH  = -8,  /* Request/response ID mismatch (stale response) */
 } rbox_error_t;
 
 /* ============================================================
@@ -54,9 +55,10 @@ typedef struct {
 
 /* Response structure */
 typedef struct {
-    uint8_t decision;   /* ALLOW/DENY/ERROR */
-    char     reason[256];  /* Reason string */
-    uint32_t duration;    /* Duration in seconds (0 = once) */
+    uint8_t decision;       /* ALLOW/DENY/ERROR */
+    char     reason[256];   /* Reason string */
+    uint32_t duration;       /* Duration in seconds (0 = once) */
+    uint8_t request_id[16]; /* Server should echo back client's request_id */
 } rbox_response_t;
 
 /* ============================================================
@@ -84,6 +86,39 @@ int rbox_client_is_closed(const rbox_client_t *client);
 
 /* Get last error code */
 int rbox_client_error(const rbox_client_t *client);
+
+/* Send request and receive validated response
+ * 
+ * This is the main client workflow function. It:
+ * 1. Generates a unique request_id
+ * 2. Builds and sends the request packet
+ * 3. Reads and validates the response:
+ *    - Validates magic, version, checksum
+ *    - Matches request_id to detect stale responses
+ * 4. Returns validated decision in response
+ * 
+ * If validation fails, returns error so caller can retry.
+ * 
+ * Parameters:
+ *   - client: connected client handle
+ *   - command: command to execute
+ *   - argc: number of arguments
+ *   - argv: argument array
+ *   - response: output response (only valid if return is RBOX_OK)
+ * 
+ * Returns:
+ *   RBOX_OK: response is valid, decision in response->decision
+ *   RBOX_ERR_INVALID: invalid parameters
+ *   RBOX_ERR_IO: socket I/O error (may retry)
+ *   RBOX_ERR_TRUNCATED: truncated response (may retry)
+ *   RBOX_ERR_MAGIC: invalid magic in response (don't retry)
+ *   RBOX_ERR_VERSION: invalid version in response (don't retry)
+ *   RBOX_ERR_CHECKSUM: checksum mismatch (may retry - corrupted)
+ *   RBOX_ERR_MISMATCH: request_id mismatch (may retry - stale response)
+ */
+rbox_error_t rbox_client_send_request(rbox_client_t *client,
+    const char *command, int argc, const char **argv,
+    rbox_response_t *response);
 
 /* ============================================================
  * SERVER HANDLE  
@@ -191,6 +226,168 @@ uint32_t rbox_calculate_checksum(const void *data, size_t len);
 
 /* Initialize library (call once at startup) */
 void rbox_init(void);
+
+/* ============================================================
+ * BLOCKING CLIENT INTERFACE (All-in-One)
+ * ============================================================ */
+
+/* Send request with full retry loop - blocks until valid response
+ * 
+ * This is the simple blocking interface that:
+ * - Connects to server (with retry/backoff)
+ * - Sends request
+ * - Reads response
+ * - Validates response (magic, version, request_id match)
+ * - Retries on transient errors
+ * - Returns only when valid decision received
+ * 
+ * Parameters:
+ *   - socket_path: path to server socket
+ *   - command: command to execute
+ *   - argc: argument count
+ *   - argv: argument array
+ *   - out_response: caller's pre-allocated response buffer
+ *                    On RBOX_OK, contains validated decision and reason
+ *   - base_delay_ms: base delay for retry backoff (0 = no retry)
+ *   - max_retries: max connection attempts (0 = unlimited)
+ * 
+ * Returns:
+ *   RBOX_OK: valid decision in out_response->decision
+ *   RBOX_ERR_*: error (out_response not valid)
+ */
+rbox_error_t rbox_blocking_request(const char *socket_path,
+    const char *command, int argc, const char **argv,
+    rbox_response_t *out_response,
+    uint32_t base_delay_ms, uint32_t max_retries);
+
+/* ============================================================
+ * NON-BLOCKING SESSION INTERFACE (For clients with own poll loop)
+ * ============================================================ */
+
+/* Session state machine */
+typedef enum {
+    RBOX_SESSION_DISCONNECTED = 0,  /* Not connected */
+    RBOX_SESSION_CONNECTING,         /* Attempting to connect */
+    RBOX_SESSION_CONNECTED,         /* Connected, idle */
+    RBOX_SESSION_SENDING,           /* Sending request */
+    RBOX_SESSION_WAITING,           /* Waiting for response */
+    RBOX_SESSION_RESPONSE_READY,     /* Response ready to read */
+    RBOX_SESSION_FAILED,            /* Error occurred */
+} rbox_session_state_t;
+
+/* Session object - client manages */
+typedef struct rbox_session rbox_session_t;
+
+/* Create new session
+ * Parameters:
+ *   - socket_path: path to server socket
+ *   - base_delay_ms: base delay for connection retry (0 = fail immediately)
+ *   - max_retries: max connection attempts (0 = unlimited)
+ * 
+ * Returns: session object or NULL on error */
+rbox_session_t *rbox_session_new(const char *socket_path, 
+    uint32_t base_delay_ms, uint32_t max_retries);
+
+/* Free session
+ * 
+ * IMPORTANT: Read the response BEFORE freeing - see rbox_session_response().
+ * This function disconnects automatically and frees all resources.
+ * After calling, the session pointer is invalid. */
+void rbox_session_free(rbox_session_t *session);
+
+/* Get file descriptor for poll() and required events
+ * 
+ * Parameters:
+ *   - session: the session
+ *   - out_events: pointer to store required poll events (can be NULL)
+ * 
+ * Returns: fd to poll on, or -1 if not connected/idle
+ * 
+ * The client should poll on the returned fd with the events:
+ *   - POLLOUT: when connecting or sending
+ *   - POLLIN: when waiting for response
+ * 
+ * Example usage:
+ *   short events;
+ *   int fd = rbox_session_pollfd(session, &events);
+ *   if (fd >= 0) {
+ *       struct pollfd pfd = { .fd = fd, .events = events };
+ *       poll(&pfd, 1, timeout);
+ *       rbox_session_heartbeat(session, pfd.revents);
+ *   }
+ */
+int rbox_session_pollfd(const rbox_session_t *session, short *out_events);
+
+/* Get current session state */
+rbox_session_state_t rbox_session_state(const rbox_session_t *session);
+
+/* Get last error code (valid when state is FAILED) */
+rbox_error_t rbox_session_error(const rbox_session_t *session);
+
+/* Start a new request
+ * 
+ * Call this when session is in CONNECTED state to initiate a request.
+ * After calling, poll for POLLOUT, then call rbox_session_heartbeat().
+ * 
+ * Returns:
+ *   RBOX_OK: request sent, state -> WAITING
+ *   RBOX_ERR_INVALID: wrong state or null params
+ *   RBOX_ERR_IO: send failed (state -> FAILED) */
+rbox_error_t rbox_session_send_request(rbox_session_t *session,
+    const char *command, int argc, const char **argv);
+
+/* Session heartbeat - call when fd is ready
+ * 
+ * Call this when poll() indicates the fd is ready:
+ * - POLLOUT: socket ready for writing (connect or send)
+ * - POLLIN: data available to read
+ * 
+ * This function advances the state machine and returns the new state.
+ * 
+ * Returns: current state after processing */
+rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short events);
+
+/* Get response (valid when state is RESPONSE_READY)
+ * 
+ * The response is validated (magic, version, request_id match).
+ * 
+ * IMPORTANT: Call this BEFORE disconnecting or freeing the session.
+ * The response is only accessible while in RESPONSE_READY state.
+ * After calling this, you must call rbox_session_reset() to start a new request,
+ * or call rbox_session_free() to clean up.
+ * 
+ * Returns: pointer to response, or NULL if not in RESPONSE_READY state
+ * 
+ * NOTE: The returned pointer points to memory owned by the session object.
+ * Do not free this pointer - it will be freed when rbox_session_free() is called. */
+const rbox_response_t *rbox_session_response(const rbox_session_t *session);
+
+/* Reset session to connected state for next request
+ * 
+ * Call this after reading the response to start a new request.
+ * This must be called before sending another request.
+ * 
+ * State transitions: RESPONSE_READY -> CONNECTED */
+void rbox_session_reset(rbox_session_t *session);
+
+/* Force disconnect
+ * 
+ * Closes connection and resets to DISCONNECTED state.
+ * Note: Response must be read BEFORE calling this - see rbox_session_response().
+ * 
+ * After disconnecting, you can call rbox_session_connect() to reconnect,
+ * or call rbox_session_free() to clean up. */
+void rbox_session_disconnect(rbox_session_t *session);
+
+/* Attempt to connect (for non-blocking start)
+ * 
+ * Call this to initiate connection. Then poll for POLLOUT
+ * and call heartbeat().
+ * 
+ * Returns:
+ *   RBOX_OK: connection in progress, state -> CONNECTING
+ *   RBOX_ERR_IO: failed to start connect */
+rbox_error_t rbox_session_connect(rbox_session_t *session);
 
 /* Build request packet (v5 protocol)
  * Returns packet length in *out_len

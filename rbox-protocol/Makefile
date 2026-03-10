@@ -31,7 +31,7 @@ TEST_INTEG_BIN = test_integration
 
 .PHONY: all clean test test-unit test-full test-integration test-fuzz test-fuzz-1h test-fuzz-4h
 
-all: $(LIB)
+all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN)
 
 $(LIB): $(OBJS)
 	ar rcs $@ $^

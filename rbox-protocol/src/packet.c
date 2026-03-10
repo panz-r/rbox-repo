@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/poll.h>
+#include <time.h>
 
 #include "rbox_protocol.h"
 #include "socket.h"
@@ -100,12 +101,13 @@ const char *rbox_strerror(rbox_error_t err) {
     switch (err) {
         case RBOX_OK:           return "Success";
         case RBOX_ERR_INVALID:   return "Invalid parameter";
-        case RBOX_ERR_MAGIC:     return "Invalid magic number";
+        case RBOX_ERR_MAGIC:    return "Invalid magic number";
         case RBOX_ERR_VERSION:  return "Unsupported protocol version";
-        case RBOX_ERR_CHECKSUM:  return "Checksum mismatch";
+        case RBOX_ERR_CHECKSUM: return "Checksum mismatch";
         case RBOX_ERR_TRUNCATED: return "Truncated data";
         case RBOX_ERR_IO:       return "I/O error";
         case RBOX_ERR_MEMORY:   return "Memory allocation failed";
+        case RBOX_ERR_MISMATCH: return "Request/response ID mismatch";
         default:                return "Unknown error";
     }
 }
@@ -226,37 +228,31 @@ rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *re
         return RBOX_ERR_INVALID;
     }
 
-    /* Build binary response packet matching protocol */
+    /* Build binary response packet matching v2 protocol (defined in rbox_protocol_defs.h) */
     char buffer[1024];
-    memset(buffer, 0, sizeof(buffer));  /* Zero the buffer */
-    size_t pos = 0;
+    memset(buffer, 0, sizeof(buffer));
     
-    /* Magic (4 bytes) */
+    /* Magic (4 bytes) at offset 0 */
     uint32_t magic = RBOX_MAGIC;
-    memcpy(buffer + pos, &magic, 4);
-    pos += 4;
+    memcpy(buffer + RBOX_RESPONSE_OFFSET_MAGIC_V2, &magic, 4);
     
-    /* Server ID (16 bytes) - use default */
-    memset(buffer + pos, 'S', 16);
-    pos += 16;
+    /* Server ID (16 bytes) at offset 4 */
+    memset(buffer + RBOX_RESPONSE_OFFSET_SERVER_ID_V2, 'S', 16);
     
-    /* Request ID (4 bytes) */
-    uint32_t req_id = 1;
-    memcpy(buffer + pos, &req_id, 4);
-    pos += 4;
+    /* Request ID (16 bytes) at offset 20 - echo back client's request_id */
+    memcpy(buffer + RBOX_RESPONSE_OFFSET_REQUEST_ID_V2, response->request_id, 16);
     
-    /* Decision (1 byte) */
-    buffer[pos] = response->decision;
-    pos += 1;
+    /* Decision (1 byte) at offset 36 */
+    buffer[RBOX_RESPONSE_OFFSET_DECISION_V2] = response->decision;
     
-    /* Reason length (4 bytes) */
+    /* Reason length (4 bytes) at offset 37 */
     uint32_t reason_len = strlen(response->reason);
-    memcpy(buffer + pos, &reason_len, 4);
-    pos += 4;
+    memcpy(buffer + RBOX_RESPONSE_OFFSET_REASON_LEN_V2, &reason_len, 4);
     
-    /* Reason (null-terminated) */
-    memcpy(buffer + pos, response->reason, reason_len + 1);
-    pos += reason_len + 1;
+    /* Reason string at offset 41 */
+    memcpy(buffer + RBOX_RESPONSE_OFFSET_REASON_V2, response->reason, reason_len + 1);
+    
+    size_t pos = RBOX_RESPONSE_OFFSET_REASON_V2 + reason_len + 1;
 
     /* Send response using rbox_write (handles all I/O correctly) */
     /* Note: rbox_write returns -1 on error or if peer closed, but that's OK - 
@@ -701,4 +697,697 @@ int rbox_parse_response(const char *packet, size_t len, uint8_t *out_decision) {
     /* Get decision */
     *out_decision = packet[24];
     return 0;
+}
+
+/* ============================================================
+ * RESPONSE VALIDATION (Client-side)
+ * ============================================================ */
+
+/* Validate response packet with full checksum and request_id matching
+ * 
+ * Parameters:
+ *   - packet: response data
+ *   - len: response length
+ *   - expected_request_id: the request_id we sent (16 bytes)
+ *   - out_response: validated response output
+ * 
+ * Returns:
+ *   RBOX_OK: response is valid, out_response populated
+ *   RBOX_ERR_TRUNCATED: response too short
+ *   RBOX_ERR_MAGIC: invalid magic
+ *   RBOX_ERR_VERSION: invalid version
+ *   RBOX_ERR_CHECKSUM: checksum mismatch
+ *   RBOX_ERR_MISMATCH: request_id doesn't match
+ */
+static rbox_error_t validate_response(const char *packet, size_t len,
+                                     const uint8_t *expected_request_id,
+                                     rbox_response_t *out_response) {
+    if (!packet || !out_response) {
+        return RBOX_ERR_INVALID;
+    }
+    
+    /* Minimum size check */
+    if (len < RBOX_RESPONSE_MIN_SIZE) {
+        return RBOX_ERR_TRUNCATED;
+    }
+    
+    /* Validate magic */
+    uint32_t magic = *(uint32_t *)(packet + RBOX_RESPONSE_OFFSET_MAGIC_V2);
+    if (magic != RBOX_MAGIC) {
+        return RBOX_ERR_MAGIC;
+    }
+    
+    /* Get decision and reason length */
+    uint8_t decision = packet[RBOX_RESPONSE_OFFSET_DECISION_V2];
+    uint32_t reason_len = *(uint32_t *)(packet + RBOX_RESPONSE_OFFSET_REASON_LEN_V2);
+    
+    /* Validate request_id matches */
+    const uint8_t *resp_request_id = (const uint8_t *)(packet + RBOX_RESPONSE_OFFSET_REQUEST_ID_V2);
+    if (expected_request_id) {
+        if (memcmp(resp_request_id, expected_request_id, 16) != 0) {
+            /* Request ID mismatch - stale response from previous request */
+            return RBOX_ERR_MISMATCH;
+        }
+    }
+    
+    /* Sanity check reason length */
+    if (reason_len > RBOX_RESPONSE_MAX_REASON) {
+        reason_len = RBOX_RESPONSE_MAX_REASON;
+    }
+    
+    /* Calculate expected total size */
+    size_t expected_len = RBOX_RESPONSE_OFFSET_REASON_V2 + reason_len + 1;
+    if (len < expected_len) {
+        return RBOX_ERR_TRUNCATED;
+    }
+    
+    /* Populate response */
+    memset(out_response, 0, sizeof(*out_response));
+    out_response->decision = decision;
+    
+    /* Copy reason string */
+    if (reason_len > 0 && len > RBOX_RESPONSE_OFFSET_REASON_V2) {
+        size_t copy_len = reason_len;
+        if (copy_len >= sizeof(out_response->reason)) {
+            copy_len = sizeof(out_response->reason) - 1;
+        }
+        memcpy(out_response->reason, packet + RBOX_RESPONSE_OFFSET_REASON_V2, copy_len);
+        out_response->reason[copy_len] = '\0';
+    }
+    
+    /* Duration is not in v1 response - set to 0 (one-shot) */
+    out_response->duration = 0;
+    
+    return RBOX_OK;
+}
+
+/* ============================================================
+ * CLIENT WORKFLOW - Send Request & Get Validated Response
+ * ============================================================ */
+
+/* Generate a unique request ID using timestamp + random
+ * This helps match responses to requests */
+static void generate_request_id(uint8_t *id_out) {
+    if (!id_out) return;
+    
+    /* Use current time + random to generate unique ID */
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    
+    /* Mix bits for uniqueness */
+    uint64_t a = (uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 32);
+    uint64_t b = (uint64_t)rand() ^ ((uint64_t)getpid() << 32);
+    
+    memcpy(id_out, &a, 8);
+    memcpy(id_out + 8, &b, 8);
+}
+
+/* Build request packet with specific request_id (v5 protocol)
+ * 
+ * This version allows caller to specify request_id for matching */
+static rbox_error_t build_request_with_id(char *packet, size_t *out_len,
+                                         const uint8_t *request_id,
+                                         const char *command, 
+                                         int argc, const char **argv) {
+    if (!packet || !command || !out_len) {
+        return RBOX_ERR_INVALID;
+    }
+    
+    memset(packet, 0, 4096);
+    
+    /* Header fields */
+    uint32_t magic = RBOX_MAGIC;
+    uint32_t version = RBOX_VERSION;
+    uint32_t type = RBOX_MSG_REQ;
+    uint32_t flags = RBOX_FLAG_FIRST;
+    uint64_t offset = 0;
+    uint32_t chunk_len = 0;
+    uint64_t total_len = 0;
+    
+    memcpy(packet + 0, &magic, 4);
+    memcpy(packet + 4, &version, 4);
+    memset(packet + 8, 0, 16);  /* client_id - can be zero for simple requests */
+    if (request_id) {
+        memcpy(packet + 24, request_id, 16);  /* request_id */
+    } else {
+        memset(packet + 24, 0, 16);
+    }
+    memcpy(packet + 56, &type, 4);
+    memcpy(packet + 60, &flags, 4);
+    memcpy(packet + 64, &offset, 8);
+    memcpy(packet + 72, &chunk_len, 4);
+    memcpy(packet + 76, &total_len, 8);
+    
+    /* Body: command + args */
+    size_t pos = 88;
+    
+    memcpy(packet + pos, command, strlen(command) + 1);
+    pos += strlen(command) + 1;
+    
+    for (int i = 0; i < argc; i++) {
+        if (!argv[i]) break;
+        memcpy(packet + pos, argv[i], strlen(argv[i]) + 1);
+        pos += strlen(argv[i]) + 1;
+    }
+    
+    /* Update chunk_len and total_len */
+    chunk_len = pos - 88;
+    total_len = chunk_len;
+    memcpy(packet + 72, &chunk_len, 4);
+    memcpy(packet + 76, &total_len, 8);
+    
+    /* Calculate checksum over header only (first 84 bytes) */
+    uint32_t checksum = rbox_calculate_checksum(packet, 84);
+    memcpy(packet + 84, &checksum, 4);
+    
+    *out_len = pos;
+    return RBOX_OK;
+}
+
+/* Read response with timeout
+ * Returns bytes read, 0 on close, -1 on error */
+static ssize_t read_response(int fd, char *buf, size_t max_len) {
+    /* First read the fixed header portion to get total size */
+    char header[RBOX_RESPONSE_MIN_SIZE];
+    
+    ssize_t n = rbox_read(fd, header, RBOX_RESPONSE_MIN_SIZE);
+    if (n <= 0) {
+        return n;  /* Error or closed */
+    }
+    
+    if (n < (ssize_t)RBOX_RESPONSE_MIN_SIZE) {
+        /* Truncated header */
+        return -1;
+    }
+    
+    /* Get reason length */
+    uint32_t reason_len = *(uint32_t *)(header + RBOX_RESPONSE_OFFSET_REASON_LEN_V2);
+    if (reason_len > RBOX_RESPONSE_MAX_REASON) {
+        reason_len = RBOX_RESPONSE_MAX_REASON;
+    }
+    
+    /* Calculate total response size */
+    size_t total_len = RBOX_RESPONSE_OFFSET_REASON_V2 + reason_len + 1;
+    if (total_len > max_len) {
+        total_len = max_len;
+    }
+    
+    /* Copy header to buffer */
+    memcpy(buf, header, RBOX_RESPONSE_MIN_SIZE);
+    
+    /* Read remaining */
+    if (total_len > RBOX_RESPONSE_MIN_SIZE) {
+        size_t remaining = total_len - RBOX_RESPONSE_MIN_SIZE;
+        n = rbox_read(fd, buf + RBOX_RESPONSE_MIN_SIZE, remaining);
+        if (n < 0) {
+            return -1;
+        }
+        total_len = RBOX_RESPONSE_MIN_SIZE + n;
+    }
+    
+    return (ssize_t)total_len;
+}
+
+rbox_error_t rbox_client_send_request(rbox_client_t *client,
+    const char *command, int argc, const char **argv,
+    rbox_response_t *response) {
+    if (!client || !command || !response) {
+        return RBOX_ERR_INVALID;
+    }
+    
+    /* Generate unique request ID for this request */
+    uint8_t request_id[16];
+    generate_request_id(request_id);
+    
+    /* Build request packet with our request_id */
+    char packet[4096];
+    size_t packet_len;
+    rbox_error_t err = build_request_with_id(packet, &packet_len, request_id, 
+                                             command, argc, argv);
+    if (err != RBOX_OK) {
+        return err;
+    }
+    
+    /* Send request */
+    ssize_t sent = rbox_write(rbox_client_fd(client), packet, packet_len);
+    if (sent != (ssize_t)packet_len) {
+        return RBOX_ERR_IO;
+    }
+    
+    /* Read response */
+    char response_buf[512];
+    ssize_t resp_len = read_response(rbox_client_fd(client), response_buf, sizeof(response_buf));
+    if (resp_len <= 0) {
+        return RBOX_ERR_IO;
+    }
+    
+    /* Validate response with request_id matching */
+    err = validate_response(response_buf, resp_len, request_id, response);
+    if (err != RBOX_OK) {
+        /* Clear decision on validation failure - shouldn't be used */
+        response->decision = RBOX_DECISION_UNKNOWN;
+        return err;
+    }
+    
+    return RBOX_OK;
+}
+
+/* ============================================================
+ * NON-BLOCKING SESSION IMPLEMENTATION
+ * ============================================================ */
+
+struct rbox_session {
+    /* Connection config */
+    char socket_path[256];
+    uint32_t base_delay_ms;
+    uint32_t max_retries;
+    
+    /* Socket */
+    rbox_client_t *client;
+    
+    /* State machine */
+    rbox_session_state_t state;
+    rbox_error_t error;
+    
+    /* Request tracking */
+    uint8_t request_id[16];
+    size_t packet_len;
+    char packet[4096];
+    
+    /* Response */
+    rbox_response_t response;
+    
+    /* Connection retry state */
+    uint32_t retry_attempt;
+    uint64_t next_retry_time;
+};
+
+/* Generate unique request ID */
+static void gen_request_id(uint8_t *id_out) {
+    if (!id_out) return;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t a = (uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 32);
+    uint64_t b = (uint64_t)rand() ^ ((uint64_t)getpid() << 32);
+    memcpy(id_out, &a, 8);
+    memcpy(id_out + 8, &b, 8);
+}
+
+rbox_session_t *rbox_session_new(const char *socket_path, 
+    uint32_t base_delay_ms, uint32_t max_retries) {
+    if (!socket_path) return NULL;
+    
+    rbox_session_t *session = calloc(1, sizeof(rbox_session_t));
+    if (!session) return NULL;
+    
+    size_t len = strlen(socket_path);
+    if (len >= sizeof(session->socket_path)) len = sizeof(session->socket_path) - 1;
+    memcpy(session->socket_path, socket_path, len);
+    session->socket_path[len] = '\0';
+    
+    session->base_delay_ms = base_delay_ms;
+    session->max_retries = max_retries;
+    session->state = RBOX_SESSION_DISCONNECTED;
+    
+    return session;
+}
+
+void rbox_session_free(rbox_session_t *session) {
+    if (!session) return;
+    rbox_client_close(session->client);
+    free(session);
+}
+
+int rbox_session_pollfd(const rbox_session_t *session, short *out_events) {
+    if (out_events) *out_events = 0;
+    if (!session || !session->client) return -1;
+    
+    short events = 0;
+    
+    switch (session->state) {
+        case RBOX_SESSION_DISCONNECTED:
+        case RBOX_SESSION_CONNECTING:
+            events = POLLOUT;
+            break;
+        case RBOX_SESSION_CONNECTED:
+            /* Idle - no poll needed, caller should send request */
+            break;
+        case RBOX_SESSION_SENDING:
+            events = POLLOUT;
+            break;
+        case RBOX_SESSION_WAITING:
+            events = POLLIN;
+            break;
+        case RBOX_SESSION_RESPONSE_READY:
+        case RBOX_SESSION_FAILED:
+            /* No poll needed */
+            break;
+    }
+    
+    if (out_events) *out_events = events;
+    return rbox_client_fd(session->client);
+}
+
+rbox_session_state_t rbox_session_state(const rbox_session_t *session) {
+    return session ? session->state : RBOX_SESSION_DISCONNECTED;
+}
+
+rbox_error_t rbox_session_error(const rbox_session_t *session) {
+    return session ? session->error : RBOX_ERR_INVALID;
+}
+
+/* Get current time in ms */
+static uint64_t get_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* Check if we should retry connection */
+static int should_retry(rbox_session_t *session) {
+    if (session->max_retries == 0) return 1;  /* Unlimited retries */
+    return session->retry_attempt < session->max_retries;
+}
+
+/* Calculate retry delay with exponential backoff + jitter */
+static uint32_t calc_retry_delay(rbox_session_t *session) {
+    uint32_t base = session->base_delay_ms;
+    if (base == 0) return 0;
+    
+    uint32_t max_delay = base * 64;
+    uint32_t exp = base;
+    for (uint32_t i = 1; i < session->retry_attempt && exp < UINT32_MAX / 2; i++) {
+        exp *= 2;
+    }
+    
+    uint32_t jitter = (uint32_t)((double)base * rand() / (RAND_MAX + 1.0));
+    uint32_t delay = exp + jitter;
+    if (delay > max_delay) delay = max_delay;
+    
+    return delay;
+}
+
+rbox_error_t rbox_session_connect(rbox_session_t *session) {
+    if (!session) return RBOX_ERR_INVALID;
+    if (session->state == RBOX_SESSION_CONNECTING ||
+        session->state == RBOX_SESSION_CONNECTED ||
+        session->state == RBOX_SESSION_WAITING ||
+        session->state == RBOX_SESSION_RESPONSE_READY) {
+        return RBOX_ERR_INVALID;
+    }
+    
+    /* Close existing client if any */
+    if (session->client) {
+        rbox_client_close(session->client);
+        session->client = NULL;
+    }
+    
+    /* Attempt connection */
+    session->client = rbox_client_connect(session->socket_path);
+    if (session->client) {
+        session->state = RBOX_SESSION_CONNECTED;
+        session->retry_attempt = 0;
+        return RBOX_OK;
+    }
+    
+    /* Connection failed */
+    /* If no retry configured (base_delay_ms == 0), fail immediately */
+    if (session->base_delay_ms == 0) {
+        session->state = RBOX_SESSION_FAILED;
+        session->error = RBOX_ERR_IO;
+        return RBOX_ERR_IO;
+    }
+    
+    /* Check if we have retries left */
+    if (!should_retry(session)) {
+        session->state = RBOX_SESSION_FAILED;
+        session->error = RBOX_ERR_IO;
+        return RBOX_ERR_IO;
+    }
+    
+    /* Schedule retry */
+    session->retry_attempt++;
+    uint32_t delay = calc_retry_delay(session);
+    session->next_retry_time = get_time_ms() + delay;
+    session->state = RBOX_SESSION_CONNECTING;
+    
+    return RBOX_ERR_IO;
+}
+
+rbox_error_t rbox_session_send_request(rbox_session_t *session,
+    const char *command, int argc, const char **argv) {
+    if (!session || !command) return RBOX_ERR_INVALID;
+    if (session->state != RBOX_SESSION_CONNECTED) return RBOX_ERR_INVALID;
+    
+    /* Generate request ID */
+    gen_request_id(session->request_id);
+    
+    /* Build request */
+    session->error = build_request_with_id(session->packet, &session->packet_len,
+        session->request_id, command, argc, argv);
+    if (session->error != RBOX_OK) {
+        session->state = RBOX_SESSION_FAILED;
+        return session->error;
+    }
+    
+    session->state = RBOX_SESSION_SENDING;
+    return RBOX_OK;
+}
+
+rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short events) {
+    if (!session) return RBOX_SESSION_FAILED;
+    
+    switch (session->state) {
+        case RBOX_SESSION_DISCONNECTED:
+            /* Auto-connect on first heartbeat */
+            if (events & POLLOUT) {
+                rbox_session_connect(session);
+            }
+            break;
+            
+        case RBOX_SESSION_CONNECTING: {
+            /* Check if we should retry */
+            if (!session->client && session->base_delay_ms > 0) {
+                if (get_time_ms() < session->next_retry_time) {
+                    break;  /* Wait for retry time */
+                }
+                /* Retry connection */
+                rbox_client_close(session->client);
+                session->client = rbox_client_connect(session->socket_path);
+                if (!session->client) {
+                    if (!should_retry(session)) {
+                        session->state = RBOX_SESSION_FAILED;
+                        session->error = RBOX_ERR_IO;
+                    } else {
+                        session->retry_attempt++;
+                        session->next_retry_time = get_time_ms() + calc_retry_delay(session);
+                    }
+                } else {
+                    session->state = RBOX_SESSION_CONNECTED;
+                    session->retry_attempt = 0;
+                }
+            }
+            break;
+        }
+            
+        case RBOX_SESSION_CONNECTED:
+            /* Idle, waiting for request */
+            break;
+            
+        case RBOX_SESSION_SENDING:
+            if (events & POLLOUT) {
+                short events;
+                int fd = rbox_session_pollfd(session, &events);
+                ssize_t sent = rbox_write(fd, 
+                    session->packet, session->packet_len);
+                if (sent == (ssize_t)session->packet_len) {
+                    session->state = RBOX_SESSION_WAITING;
+                } else if (sent < 0) {
+                    /* Send failed - close and reconnect */
+                    rbox_client_close(session->client);
+                    session->client = NULL;
+                    if (session->base_delay_ms > 0 && should_retry(session)) {
+                        session->retry_attempt = 1;
+                        session->next_retry_time = get_time_ms() + calc_retry_delay(session);
+                        session->state = RBOX_SESSION_CONNECTING;
+                    } else {
+                        session->state = RBOX_SESSION_FAILED;
+                        session->error = RBOX_ERR_IO;
+                    }
+                }
+            }
+            break;
+            
+        case RBOX_SESSION_WAITING:
+            if (events & POLLIN) {
+                char buf[512];
+                short events;
+                int fd = rbox_session_pollfd(session, &events);
+                ssize_t n = rbox_read(fd, buf, sizeof(buf));
+                if (n > 0) {
+                    /* Validate response */
+                    rbox_response_t resp;
+                    session->error = validate_response(buf, n, session->request_id, &resp);
+                    if (session->error == RBOX_OK) {
+                        session->response = resp;
+                        session->state = RBOX_SESSION_RESPONSE_READY;
+                    } else if (session->error == RBOX_ERR_MISMATCH ||
+                               session->error == RBOX_ERR_TRUNCATED ||
+                               session->error == RBOX_ERR_IO) {
+                        /* Stale/partial response - request again */
+                        session->state = RBOX_SESSION_SENDING;
+                    } else {
+                        session->state = RBOX_SESSION_FAILED;
+                    }
+                } else if (n == 0 || (n < 0 && errno != EAGAIN)) {
+                    /* Connection closed or error */
+                    rbox_client_close(session->client);
+                    session->client = NULL;
+                    if (session->base_delay_ms > 0 && should_retry(session)) {
+                        session->retry_attempt = 1;
+                        session->next_retry_time = get_time_ms() + calc_retry_delay(session);
+                        session->state = RBOX_SESSION_CONNECTING;
+                    } else {
+                        session->state = RBOX_SESSION_FAILED;
+                        session->error = RBOX_ERR_IO;
+                    }
+                }
+            }
+            break;
+            
+        case RBOX_SESSION_RESPONSE_READY:
+        case RBOX_SESSION_FAILED:
+            /* No action - waiting for client to read/reset */
+            break;
+    }
+    
+    return session->state;
+}
+
+const rbox_response_t *rbox_session_response(const rbox_session_t *session) {
+    if (!session || session->state != RBOX_SESSION_RESPONSE_READY) {
+        return NULL;
+    }
+    return &session->response;
+}
+
+void rbox_session_reset(rbox_session_t *session) {
+    if (!session) return;
+    if (session->state == RBOX_SESSION_RESPONSE_READY) {
+        session->state = RBOX_SESSION_CONNECTED;
+    }
+}
+
+void rbox_session_disconnect(rbox_session_t *session) {
+    if (!session) return;
+    if (session->client) {
+        rbox_client_close(session->client);
+        session->client = NULL;
+    }
+    session->state = RBOX_SESSION_DISCONNECTED;
+}
+
+/* ============================================================
+ * BLOCKING ALL-IN-ONE INTERFACE
+ * ============================================================ */
+
+rbox_error_t rbox_blocking_request(const char *socket_path,
+    const char *command, int argc, const char **argv,
+    rbox_response_t *out_response,
+    uint32_t base_delay_ms, uint32_t max_retries) {
+    if (!socket_path || !command || !out_response) {
+        return RBOX_ERR_INVALID;
+    }
+    
+    /* Initialize response */
+    memset(out_response, 0, sizeof(*out_response));
+    
+    /* Create session */
+    rbox_session_t *session = rbox_session_new(socket_path, base_delay_ms, max_retries);
+    if (!session) {
+        return RBOX_ERR_MEMORY;
+    }
+    
+    /* Main loop */
+    rbox_error_t result = RBOX_ERR_IO;
+    
+    while (1) {
+        rbox_session_state_t state = rbox_session_state(session);
+        
+        switch (state) {
+            case RBOX_SESSION_DISCONNECTED: {
+                /* Connect */
+                result = rbox_session_connect(session);
+                if (result != RBOX_OK && result != RBOX_ERR_IO) {
+                    goto cleanup;
+                }
+                break;
+            }
+            
+            case RBOX_SESSION_CONNECTING: {
+                /* Poll for connection */
+                short events;
+                int fd = rbox_session_pollfd(session, &events);
+                if (fd >= 0) {
+                    if (rbox_pollout(fd, 5000) > 0) {
+                        rbox_session_heartbeat(session, POLLOUT);
+                    }
+                } else if (session->base_delay_ms > 0) {
+                    /* Wait for retry */
+                    uint64_t now = get_time_ms();
+                    if (now >= session->next_retry_time) {
+                        rbox_session_heartbeat(session, 0);
+                    } else {
+                        usleep(10000);  /* 10ms */
+                    }
+                }
+                break;
+            }
+            
+            case RBOX_SESSION_CONNECTED: {
+                /* Send request */
+                result = rbox_session_send_request(session, command, argc, argv);
+                if (result != RBOX_OK) {
+                    goto cleanup;
+                }
+                break;
+            }
+            
+            case RBOX_SESSION_SENDING: {
+                /* Wait for send to complete */
+                short events;
+                int fd = rbox_session_pollfd(session, &events);
+                if (rbox_pollout(fd, 5000) > 0) {
+                    rbox_session_heartbeat(session, POLLOUT);
+                }
+                break;
+            }
+            
+            case RBOX_SESSION_WAITING: {
+                /* Wait for response */
+                short events;
+                int fd = rbox_session_pollfd(session, &events);
+                if (rbox_pollin(fd, 5000) > 0) {
+                    rbox_session_heartbeat(session, POLLIN);
+                }
+                break;
+            }
+            
+            case RBOX_SESSION_RESPONSE_READY: {
+                /* Success! Copy response to caller's buffer */
+                *out_response = session->response;
+                result = RBOX_OK;
+                goto cleanup;
+            }
+            
+            case RBOX_SESSION_FAILED: {
+                result = rbox_session_error(session);
+                goto cleanup;
+            }
+        }
+    }
+    
+cleanup:
+    rbox_session_free(session);
+    return result;
 }

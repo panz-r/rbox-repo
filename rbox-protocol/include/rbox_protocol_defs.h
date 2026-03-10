@@ -146,8 +146,32 @@
 #define RBOX_RESPONSE_OFFSET_SERVER_ID    4
 #define RBOX_RESPONSE_OFFSET_REQUEST_ID  20
 #define RBOX_RESPONSE_OFFSET_DECISION    24
-#define RBOX_RESPONSE_OFFSET_REASON_LEN  25
+#define RBOX_RESPONSE_OFFSET_REASON_LEN 25
 #define RBOX_RESPONSE_OFFSET_REASON      29
+
+/* Response packet (sent by server)
+ * 
+ * Offset  Size  Field
+ * ------  ----  -----
+ *   0      4    magic
+ *   4     16    server_id
+ *  20     16    request_id (MUST match client's request_id)
+ *  36      1    decision (ALLOW/DENY/ERROR)
+ *  37      4    reason_len
+ *  41     n    reason (null-terminated string)
+ *  --     --
+ *  41+          (minimum size)
+ */
+
+#define RBOX_RESPONSE_OFFSET_MAGIC_V2    0
+#define RBOX_RESPONSE_OFFSET_SERVER_ID_V2 4
+#define RBOX_RESPONSE_OFFSET_REQUEST_ID_V2 20
+#define RBOX_RESPONSE_OFFSET_DECISION_V2 36
+#define RBOX_RESPONSE_OFFSET_REASON_LEN_V2 37
+#define RBOX_RESPONSE_OFFSET_REASON_V2    41
+
+#define RBOX_RESPONSE_MIN_SIZE          41
+#define RBOX_RESPONSE_MAX_REASON         256
 
 #define RBOX_RESPONSE_HEADER_SIZE        29
 
