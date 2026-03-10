@@ -1,0 +1,24 @@
+# Build artifacts
+*.o
+*.a
+
+# Test binaries
+test_protocol
+test_integration
+test_protocol_full
+
+# Fuzzer
+fuzz/*.o
+fuzz/protocol_fuzzer
+fuzz/protocol_fuzzer_asan
+fuzz/fuzz-*.log
+fuzz/crashes/
+fuzz/corpus/interesting/
+fuzz/corpus/minimized/
+fuzz/libfuzz.a
+fuzz/test_link
+fuzz/test_link.cpp
+
+# Backup files
+*~
+*.swp

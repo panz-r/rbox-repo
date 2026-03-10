@@ -1,0 +1,13 @@
+# Fuzzer binaries
+protocol_fuzzer
+protocol_fuzzer_asan
+
+# Crash artifacts
+crashes/*
+
+# Build artifacts
+*.o
+*.a
+
+# Minimized corpus
+corpus/minimized
