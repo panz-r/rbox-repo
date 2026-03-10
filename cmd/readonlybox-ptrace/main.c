@@ -158,14 +158,14 @@ static void screen_environment(void) {
         32,
         &flagged_count,
         5.0,   // entropy_threshold
-        24     // min_length
+        12     // min_length
     );
     
     if (status == ENV_SCREENER_BUFFER_TOO_SMALL) {
         /* Allocate larger buffer if needed - shouldn't happen often */
         int *larger = malloc(flagged_count * sizeof(int));
         if (larger) {
-            env_screener_scan(larger, flagged_count, &flagged_count, 5.0, 24);
+            env_screener_scan(larger, flagged_count, &flagged_count, 5.0, 12);
             free(larger);
         }
     }
@@ -183,7 +183,7 @@ static void screen_environment(void) {
         const char *value = extract_env_value(entry);
         extract_env_name(entry, name, sizeof(name));
         
-        double entropy = env_screener_calculate_entropy(value);
+        double score = env_screener_combined_score(value);
         bool is_secret_pattern = env_screener_is_secret_pattern(name);
         
         if (is_secret_pattern) {
@@ -191,8 +191,8 @@ static void screen_environment(void) {
             fprintf(stderr, "   %s=*** (length: %zu)\n", name, strlen(value));
         } else {
             fprintf(stderr, "\n⚠️  High-entropy variable detected:\n");
-            fprintf(stderr, "   %s=*** (entropy: %.2f, length: %zu)\n", 
-                    name, entropy, strlen(value));
+            fprintf(stderr, "   %s=*** (combined score: %.2f, length: %zu)\n", 
+                    name, score, strlen(value));
             fprintf(stderr, "   This looks like a random string (API key, token, etc.)\n");
         }
         
