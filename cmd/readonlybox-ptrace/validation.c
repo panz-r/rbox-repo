@@ -56,10 +56,6 @@ int validation_check_dfa(const char *command) {
     uint8_t category_mask = 0;
     int matched = dfa_get_category_mask(command, &category_mask);
 
-    fprintf(stderr, "DEBUG validation: cmd='%s' matched=%d category_mask=0x%02x\n", 
-            command, matched, category_mask);
-    fflush(stderr);
-
     if (!matched) {
         /* No DFA match - need to ask server */
         return VALIDATION_ASK;
