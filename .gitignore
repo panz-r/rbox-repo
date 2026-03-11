@@ -17,3 +17,4 @@ plans/
 cmd/readonlybox-ptrace/readonlybox-ptrace
 cmd/readonlybox-ptrace/tests/test_runner
 cmd/readonlybox-ptrace/compile_commands.json
+cmd/readonlybox-ptrace/.cache/

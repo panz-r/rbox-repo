@@ -39,7 +39,7 @@ int dfa_should_allow(const char* cmd) {
     }
 
     dfa_result_t result;
-    if (dfa_evaluate(cmd, 0, &result)) {
+    if (dfa_evaluate(cmd, strlen(cmd), &result)) {
         return (result.category_mask & CAT_MASK_AUTOALLOW) && result.matched;
     }
     return 0;
@@ -62,7 +62,7 @@ int dfa_get_category_mask(const char* cmd, uint8_t* out_mask) {
     fprintf(stderr, "DEBUG dfa_get_category_mask: calling dfa_evaluate for '%s'\n", cmd);
     
     dfa_result_t result;
-    if (dfa_evaluate(cmd, 0, &result)) {
+    if (dfa_evaluate(cmd, strlen(cmd), &result)) {
         fprintf(stderr, "DEBUG dfa_evaluate: cmd='%s' matched=%d category_mask=0x%02x\n", 
                 cmd, result.matched, result.category_mask);
         *out_mask = result.category_mask;
