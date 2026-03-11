@@ -1,7 +1,7 @@
 # Makefile for readonlybox-ptrace
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -DRELATIVE_ENTROPY_NO_MAIN
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -DRELATIVE_ENTROPY_NO_MAIN -DDEBUG
 LDFLAGS = -lpthread -lm
 
 # Source files
@@ -23,9 +23,13 @@ OBJS = $(SRCS:.c=.o)
 # Target binary
 TARGET = readonlybox-ptrace
 
-.PHONY: all clean test test-e2e test-memory test-syscall test-validation test-integration test-verbose list debug coverage cppcheck valgrind
+.PHONY: all clean test test-e2e test-memory test-syscall test-validation test-integration test-verbose list debug coverage cppcheck valgrind compile_commands
 
 all: $(TARGET)
+
+# Generate compile_commands.json using bear
+compile_commands:
+	bear -- $(MAKE) clean all 2>/dev/null || true
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)

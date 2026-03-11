@@ -550,8 +550,22 @@ int pattern_order_read_file(const char* filename, pattern_entry_t** patterns_out
             line[--len] = '\0';
         }
         
-        // Skip empty lines and comments
-        if (len == 0 || line[0] == '#') continue;
+        // Skip empty lines
+        if (len == 0) continue;
+        
+        // Check for directive lines (no leading #)
+        const char* trimmed = line;
+        while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+        
+        // Skip pure comment lines (lines starting with #)
+        if (trimmed[0] == '#') {
+            continue;
+        }
+        
+        // Skip section header lines (lines that are just [SECTION_NAME])
+        if (trimmed[0] == '[' && strchr(trimmed, ']') == trimmed + strlen(trimmed) - 1) {
+            // It's a section header like [fragment:...] - let it through
+        }
         
         // Grow array if needed
         if (count >= capacity) {

@@ -1974,9 +1974,11 @@ static void parse_pattern_full(const char* pattern, const char* category,
         }
     }
 
-    // CRITICAL FIX: Determine acceptance category BEFORE pattern parsing
-    // so that quantifier handlers can access current_pattern_cat_mask
+    // Determine acceptance category - must be defined in ACCEPTANCE_MAPPING
     int acceptance_cat = lookup_acceptance_category(category, subcategory, operations);
+    if (acceptance_cat < 0) {
+        ERROR("Category '%s' used in pattern but not defined in ACCEPTANCE_MAPPING", category);
+    }
     uint8_t cat_mask = (1 << acceptance_cat);  // Convert 0-7 to bit mask 0x01, 0x02, etc.
     current_pattern_cat_mask = cat_mask;  // Store for use by quantifier handlers
 
@@ -2208,6 +2210,9 @@ static bool validate_pattern_input(const char* line, size_t len) {
     return true;
 }
 
+// Forward declarations
+static void parse_acceptance_mapping(const char* line);
+
 // Parse advanced pattern
 void parse_advanced_pattern(const char* line) {
     // Format: [category:subcategory:operations] pattern -> action
@@ -2219,8 +2224,15 @@ void parse_advanced_pattern(const char* line) {
         return;
     }
 
-    // Skip ACCEPTANCE_MAPPING directive lines
+    // Parse ACCEPTANCE_MAPPING directive lines
     if (strncmp(line, "ACCEPTANCE_MAPPING", 18) == 0) {
+        parse_acceptance_mapping(line);
+        return;
+    }
+
+    // Parse CATEGORIES directive lines
+    if (strncmp(line, "CATEGORIES", 10) == 0) {
+        // Categories are handled elsewhere, skip
         return;
     }
 
@@ -2548,19 +2560,22 @@ static void parse_acceptance_mapping(const char* line) {
 }
 
 // Look up acceptance category for a given category:subcategory:operations
+// Returns -1 if no mapping found (caller should report syntax error)
 static int lookup_acceptance_category(const char* category, const char* subcategory, const char* operations) {
     for (int i = 0; i < category_mapping_count; i++) {
         category_mapping_t* mapping = &category_mappings[i];
         // Match category (required)
         if (strcmp(mapping->category, category) != 0) continue;
-        // Match subcategory: if pattern has non-empty subcategory, mapping must match
-        if (subcategory[0] != '\0' && strcmp(mapping->subcategory, subcategory) != 0) continue;
-        // Match operations: if pattern has non-empty operations, mapping must match
-        if (operations[0] != '\0' && strcmp(mapping->operations, operations) != 0) continue;
+        // Match subcategory: if mapping has non-empty subcategory, it must match
+        // Empty in mapping means wildcard (match anything)
+        if (mapping->subcategory[0] != '\0' && strcmp(mapping->subcategory, subcategory) != 0) continue;
+        // Match operations: if mapping has non-empty operations, it must match
+        // Empty in mapping means wildcard (match anything)
+        if (mapping->operations[0] != '\0' && strcmp(mapping->operations, operations) != 0) continue;
         return mapping->acceptance_category;
     }
-    // No explicit mapping found - fall back to category name
-    return parse_category(category);
+    // No mapping found - return -1 to signal error
+    return -1;
 }
 
 // Read advanced command specification file

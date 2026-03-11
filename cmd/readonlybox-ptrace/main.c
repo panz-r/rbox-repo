@@ -738,7 +738,7 @@ int main(int argc, char *argv[]) {
 int run_judge(const char *command, const char *caller_info) {
     int pipefd[2];
     pid_t pid;
-    char buffer[1024];
+    char buffer[4096];
     ssize_t bytes_read;
 
     /* Create pipe for reading output */
@@ -772,27 +772,47 @@ int run_judge(const char *command, const char *caller_info) {
         const char *readonlybox_path = get_readonlybox_path();
         
         execl(readonlybox_path, "readonlybox", "--judge", command, NULL);
+        /* If we get here, execl failed */
         _exit(1);
     }
 
     /* Parent: read output */
-    close(pipefd[1]);
+    /* Wait for child to finish first - this ensures all data is written */
+    int status;
+    waitpid(pid, &status, 0);
     
+    /* Now read the output from the closed pipe */
     bytes_read = read(pipefd[0], buffer, sizeof(buffer) - 1);
     close(pipefd[0]);
+    close(pipefd[1]);
     
     if (bytes_read <= 0) {
-        waitpid(pid, NULL, 0);
         return -1;
     }
 
     buffer[bytes_read] = '\0';
     
-    /* Wait for child to finish */
-    int status;
-    waitpid(pid, &status, 0);
-
-    /* Parse output: "ALLOW ..." or "DENY ..." */
+    /* Check if child exited normally or was killed by signal */
+    int exit_code;
+    if (WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        exit_code = -WTERMSIG(status);  /* Treat signal as error */
+    } else {
+        exit_code = -1;
+    }
+    
+    /* Parse output: check exit code first, then look for ALLOW/DENY in output */
+    /* Exit codes: 0 = ALLOW, 9 = DENY, 1 = error */
+    if (exit_code == 0) {
+        DEBUG_PRINT("JUDGE: ALLOW for '%s'\n", command);
+        return 0;  /* Allowed */
+    } else if (exit_code == 9) {
+        DEBUG_PRINT("JUDGE: DENY for '%s'\n", command);
+        return 9;  /* Denied */
+    }
+    
+    /* Fallback: check output string */
     if (strncmp(buffer, "ALLOW", 5) == 0) {
         DEBUG_PRINT("JUDGE: ALLOW for '%s'\n", command);
         return 0;  /* Allowed */
@@ -820,10 +840,28 @@ static const char *get_readonlybox_path(void) {
     if (len > 0) {
         self_path[len] = '\0';
         char *dir = dirname(self_path);
+        
+        /* Try relative to executable: ../../bin/readonlybox */
         snprintf(path_buf, sizeof(path_buf), "%s/../../bin/readonlybox", dir);
         if (access(path_buf, X_OK) == 0) {
             return path_buf;
         }
+        
+        /* Try relative to executable: ../bin/readonlybox */
+        snprintf(path_buf, sizeof(path_buf), "%s/../bin/readonlybox", dir);
+        if (access(path_buf, X_OK) == 0) {
+            return path_buf;
+        }
+    }
+    
+    /* Try current working directory */
+    if (access("./bin/readonlybox", X_OK) == 0) {
+        return "./bin/readonlybox";
+    }
+    
+    /* Try absolute path */
+    if (access("/w/rbox-copy/bin/readonlybox", X_OK) == 0) {
+        return "/w/rbox-copy/bin/readonlybox";
     }
     
     /* Fall back to PATH lookup */

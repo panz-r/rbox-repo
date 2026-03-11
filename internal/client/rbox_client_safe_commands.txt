@@ -12,7 +12,46 @@
 # This identifier is included in the NFA and DFA files to ensure matching.
 # It must be a double-quoted string without internal double quotes.
 #
-IDENTIFIER "ReadOnlyBox Client Safe Commands v1.0"
+IDENTIFIER "ReadOnlyBox Client Safe Commands v1.1"
+
+# ============================================================================
+# CATEGORIES
+# ============================================================================
+#
+# Define custom category names for bit positions 0-7.
+# Format: N: name (where N is 0-7)
+#
+# These map to the ACCEPTANCE_MAPPING bit positions:
+#   0: autoallow  - Auto-allow (execute without server query)
+#   1: autodeny   - Auto-deny (block without server query)
+#   2: alwaysask - Always ask (query server)
+
+0: autoallow
+1: autodeny
+2: alwaysask
+
+# ============================================================================
+# ACCEPTANCE MAPPINGS
+# ============================================================================
+#
+# Maps category to bit positions (0-7) in the DFA category mask.
+# Bit 0 (0x01) = autoallow - client will auto-execute without server query
+# Bit 1 (0x02) = alwaysask - always query server (not yet used)
+#
+# Format: ACCEPTANCE_MAPPING [category:subcategory:ops] -> N
+
+# Auto-allow: all patterns with category "autoallow" get bit 0
+# Use wildcard mappings to match any subcategory/operations
+ACCEPTANCE_MAPPING [autoallow:*:*] -> 0
+ACCEPTANCE_MAPPING [autoallow::] -> 0
+
+# Auto-deny: for dangerous commands that should always be blocked
+ACCEPTANCE_MAPPING [autodeny:*:*] -> 1
+ACCEPTANCE_MAPPING [autodeny::] -> 1
+
+# Always-ask: for future use - always queries server
+ACCEPTANCE_MAPPING [alwaysask:*:*] -> 2
+ACCEPTANCE_MAPPING [alwaysask::] -> 2
 
 # ============================================================================
 # LINE FORMAT
@@ -80,224 +119,231 @@ IDENTIFIER "ReadOnlyBox Client Safe Commands v1.0"
 # ============================================================================
 
 # Git read-only commands
-[safe:readonly:git] git status
-[safe:readonly:git] git status -s
-[safe:readonly:git] git status --short
-[safe:readonly:git] git log
-[safe:readonly:git] git log -n ((safe::digit))+
-[safe:readonly:git] git log --oneline
-[safe:readonly:git] git log --oneline -n ((safe::digit))+
-[safe:readonly:git] git log --graph
-[safe:readonly:git] git log --graph -n ((safe::digit))+
-[safe:readonly:git] git log --decorate
-[safe:readonly:git] git log --decorate -n ((safe::digit))+
-[safe:readonly:git] git log --oneline --graph
-[safe:readonly:git] git log --oneline --decorate
-[safe:readonly:git] git log --oneline --graph --decorate
-[safe:readonly:git] git log *
-[safe:readonly:git] git tag -l
-[safe:readonly:git] git tag --list
-[safe:readonly:git] git config --list
-[safe:readonly:git] git config --get
-[safe:readonly:git] git rev-parse
-[safe:readonly:git] git rev-parse --short HEAD
-[safe:readonly:git] git show
-[safe:readonly:git] git show HEAD
-[safe:readonly:git] git diff
-[safe:readonly:git] git diff HEAD
-[safe:readonly:git] git diff --cached
-[safe:readonly:git] git diff --staged
-[safe:readonly:git] git ls-files
-[safe:readonly:git] git ls-tree
-[safe:readonly:git] git ls-remote
-[safe:readonly:git] git remote -v
-[safe:readonly:git] git remote get-url origin
-[safe:readonly:git] git worktree list
-[safe:readonly:git] git branch -a
-[safe:readonly:git] git branch -r
-[safe:readonly:git] git branch
-[safe:readonly:git] git blame
-[safe:readonly:git] git show-ref
-[safe:readonly:git] git reflog
-[safe:readonly:git] git stash list
-[safe:readonly:git] git fsck --read-only
-[safe:readonly:git] git verify-pack
-[safe:readonly:git] git count-objects
+[autoallow:readonly:git] git status
+[autoallow:readonly:git] git status -s
+[autoallow:readonly:git] git status --short
+[autoallow:readonly:git] git log
+[autoallow:readonly:git] git log -n ((safe::digit))+
+[autoallow:readonly:git] git log --oneline
+[autoallow:readonly:git] git log --oneline -n ((safe::digit))+
+[autoallow:readonly:git] git log --graph
+[autoallow:readonly:git] git log --graph -n ((safe::digit))+
+[autoallow:readonly:git] git log --decorate
+[autoallow:readonly:git] git log --decorate -n ((safe::digit))+
+[autoallow:readonly:git] git log --oneline --graph
+[autoallow:readonly:git] git log --oneline --decorate
+[autoallow:readonly:git] git log --oneline --graph --decorate
+[autoallow:readonly:git] git log *
+[autoallow:readonly:git] git tag -l
+[autoallow:readonly:git] git tag --list
+[autoallow:readonly:git] git config --list
+[autoallow:readonly:git] git config --get
+[autoallow:readonly:git] git rev-parse
+[autoallow:readonly:git] git rev-parse --short HEAD
+[autoallow:readonly:git] git show
+[autoallow:readonly:git] git show HEAD
+[autoallow:readonly:git] git diff
+[autoallow:readonly:git] git diff HEAD
+[autoallow:readonly:git] git diff --cached
+[autoallow:readonly:git] git diff --staged
+[autoallow:readonly:git] git ls-files
+[autoallow:readonly:git] git ls-tree
+[autoallow:readonly:git] git ls-remote
+[autoallow:readonly:git] git remote -v
+[autoallow:readonly:git] git remote get-url origin
+[autoallow:readonly:git] git worktree list
+[autoallow:readonly:git] git branch -a
+[autoallow:readonly:git] git branch -r
+[autoallow:readonly:git] git branch
+[autoallow:readonly:git] git blame
+[autoallow:readonly:git] git show-ref
+[autoallow:readonly:git] git reflog
+[autoallow:readonly:git] git stash list
+[autoallow:readonly:git] git fsck --read-only
+[autoallow:readonly:git] git verify-pack
+[autoallow:readonly:git] git count-objects
 
 # File system read-only commands
-[safe:readonly:file] ls
-[safe:readonly:file] ls *
-[safe:readonly:file] ls -la
-[safe:readonly:file] ls -l
-[safe:readonly:file] ls -a
-[safe:readonly:file] ls -R
-[safe:readonly:file] ls -r
-[safe:readonly:file] ls -t
-[safe:readonly:file] ls -S
-[safe:readonly:file] ls -ltr
-[safe:readonly:file] ls --color-auto
-[safe:readonly:file] ls --color=auto
-[safe:readonly:file] cat
-[safe:readonly:file] cat *
-[safe:readonly:file] cat test.txt
-[safe:readonly:file] cat ((safe::filename))
-[safe:readonly:file] head
-[safe:readonly:file] head -n ((safe::digit))
-[safe:readonly:file] head -n ((safe::digit)) *
-[safe:readonly:file] head -n ((safe::digit))+ file.txt
-[safe:readonly:file] tail
-[safe:readonly:file] tail -n ((safe::digit))
-[safe:readonly:file] tail -n ((safe::digit)) *
-[safe:readonly:file] tail -n ((safe::digit))+ file.txt
-[safe:readonly:file] more
-[safe:readonly:file] less
-[safe:readonly:file] md5sum
-[safe:readonly:file] sha256sum
-[safe:readonly:file] sha1sum
+[autoallow:readonly:file] ls
+[autoallow:readonly:file] ls *
+[autoallow:readonly:file] ls -la
+[autoallow:readonly:file] ls -l
+[autoallow:readonly:file] ls -a
+[autoallow:readonly:file] ls -R
+[autoallow:readonly:file] ls -r
+[autoallow:readonly:file] ls -t
+[autoallow:readonly:file] ls -S
+[autoallow:readonly:file] ls -ltr
+[autoallow:readonly:file] ls --color-auto
+[autoallow:readonly:file] ls --color=auto
+[autoallow:readonly:file] cat
+[autoallow:readonly:file] cat *
+[autoallow:readonly:file] cat test.txt
+[autoallow:readonly:file] cat ((safe::filename))
+[autoallow:readonly:file] head
+[autoallow:readonly:file] head -n ((safe::digit))
+[autoallow:readonly:file] head -n ((safe::digit)) *
+[autoallow:readonly:file] head -n ((safe::digit))+ file.txt
+[autoallow:readonly:file] tail
+[autoallow:readonly:file] tail -n ((safe::digit))
+[autoallow:readonly:file] tail -n ((safe::digit)) *
+[autoallow:readonly:file] tail -n ((safe::digit))+ file.txt
+[autoallow:readonly:file] more
+[autoallow:readonly:file] less
+[autoallow:readonly:file] md5sum
+[autoallow:readonly:file] sha256sum
+[autoallow:readonly:file] sha1sum
+[autoallow:readonly:file] basename
+[autoallow:readonly:file] basename ((safe::filename))+
+[autoallow:readonly:file] dirname
+[autoallow:readonly:file] dirname ((safe::filename))+
+[autoallow:readonly:file] dircolors
+[autoallow:readonly:file] dircolors -b
+[autoallow:readonly:file] lesspipe
 
 # Text processing commands
-[safe:processing:text] grep
-[safe:processing:text] grep *
-[safe:processing:text] grep -r
-[safe:processing:text] grep -R
-[safe:processing:text] egrep
-[safe:processing:text] fgrep
-[safe:processing:text] find
-[safe:processing:text] find *
-[safe:processing:text] xargs
-[safe:processing:text] sort
-[safe:processing:text] sort *
-[safe:processing:text] uniq
-[safe:processing:text] uniq *
-[safe:processing:text] wc
-[safe:processing:text] wc -l
-[safe:processing:text] wc -w
-[safe:processing:text] wc -c
-[safe:processing:text] cut
-[safe:processing:text] cut -d
-[safe:processing:text] tr
-[safe:processing:text] tee
+[autoallow:processing:text] grep
+[autoallow:processing:text] grep *
+[autoallow:processing:text] grep -r
+[autoallow:processing:text] grep -R
+[autoallow:processing:text] egrep
+[autoallow:processing:text] fgrep
+[autoallow:processing:text] find
+[autoallow:processing:text] find *
+[autoallow:processing:text] xargs
+[autoallow:processing:text] sort
+[autoallow:processing:text] sort *
+[autoallow:processing:text] uniq
+[autoallow:processing:text] uniq *
+[autoallow:processing:text] wc
+[autoallow:processing:text] wc -l
+[autoallow:processing:text] wc -w
+[autoallow:processing:text] wc -c
+[autoallow:processing:text] cut
+[autoallow:processing:text] cut -d
+[autoallow:processing:text] tr
+[autoallow:processing:text] tee
 
 # System information commands
-[safe:system:info] ps
-[safe:system:info] ps aux
-[safe:system:info] ps -ef
-[safe:system:info] ps -aux
-[safe:system:info] top
-[safe:system:info] top -b -n 1
-[safe:system:info] df
-[safe:system:info] df -h
-[safe:system:info] du
-[safe:system:info] du -h
-[safe:system:info] du -sh
-[safe:system:info] free
-[safe:system:info] free -m
-[safe:system:info] free -g
-[safe:system:info] uptime
-[safe:system:info] hostname
-[safe:system:info] uname
-[safe:system:info] uname -a
-[safe:system:info] id
-[safe:system:info] whoami
-[safe:system:info] who
-[safe:system:info] w
-[safe:system:info] last
-[safe:system:info] last -n
-[safe:system:info] printenv
-[safe:system:info] env
+[autoallow:system:info] ps
+[autoallow:system:info] ps aux
+[autoallow:system:info] ps -ef
+[autoallow:system:info] ps -aux
+[autoallow:system:info] top
+[autoallow:system:info] top -b -n 1
+[autoallow:system:info] df
+[autoallow:system:info] df -h
+[autoallow:system:info] du
+[autoallow:system:info] du -h
+[autoallow:system:info] du -sh
+[autoallow:system:info] free
+[autoallow:system:info] free -m
+[autoallow:system:info] free -g
+[autoallow:system:info] uptime
+[autoallow:system:info] hostname
+[autoallow:system:info] uname
+[autoallow:system:info] uname -a
+[autoallow:system:info] id
+[autoallow:system:info] whoami
+[autoallow:system:info] who
+[autoallow:system:info] w
+[autoallow:system:info] last
+[autoallow:system:info] last -n
+[autoallow:system:info] printenv
+[autoallow:system:info] env
 
 # Time/date commands
-[safe:time] date
-[safe:time] date -u
-[safe:time] cal
-[safe:time] cal -y
-[safe:time] ntpdate -q
+[autoallow:time] date
+[autoallow:time] date -u
+[autoallow:time] cal
+[autoallow:time] cal -y
+[autoallow:time] ntpdate -q
 
 # Network read-only commands
-[safe:network:readonly] ping -c
-[safe:network:readonly] ping -c ((safe::digit))+ 
-[safe:network:readonly] ping6 -c
-[safe:network:readonly] curl -I
-[safe:network:readonly] curl --head
-[safe:network:readonly] curl -s
-[safe:network:readonly] curl -S
-[safe:network:readonly] wget --spider
-[safe:network:readonly] wget -q
-[safe:network:readonly] wget -O
-[safe:network:readonly] nslookup
-[safe:network:readonly] dig
-[safe:network:readonly] host
-[safe:network:readonly] traceroute
-[safe:network:readonly] tracepath
-[safe:network:readonly] netstat
-[safe:network:readonly] netstat -tuln
-[safe:network:readonly] ss
-[safe:network:readonly] ss -tuln
+[autoallow:network:readonly] ping -c
+[autoallow:network:readonly] ping -c ((safe::digit))+
+[autoallow:network:readonly] ping6 -c
+[autoallow:network:readonly] curl -I
+[autoallow:network:readonly] curl --head
+[autoallow:network:readonly] curl -s
+[autoallow:network:readonly] curl -S
+[autoallow:network:readonly] wget --spider
+[autoallow:network:readonly] wget -q
+[autoallow:network:readonly] wget -O
+[autoallow:network:readonly] nslookup
+[autoallow:network:readonly] dig
+[autoallow:network:readonly] host
+[autoallow:network:readonly] traceroute
+[autoallow:network:readonly] tracepath
+[autoallow:network:readonly] netstat
+[autoallow:network:readonly] netstat -tuln
+[autoallow:network:readonly] ss
+[autoallow:network:readonly] ss -tuln
 
 # Process information
-[safe:process] lsof
-[safe:process] lsof -i
-[safe:process] strace -c
-[safe:process] strace -f
-[safe:process] strace -e trace=read
+[autoallow:process] lsof
+[autoallow:process] lsof -i
+[autoallow:process] strace -c
+[autoallow:process] strace -f
+[autoallow:process] strace -e trace=read
 
 # Build tools (read-only operations)
-[safe:build:readonly] make -n
-[safe:build:readonly] make -q
-[safe:build:readonly] make -t
-[safe:build:readonly] make -p
-[safe:build:readonly] cmake --build . --target help
-[safe:build:readonly] cmake -L
-[safe:build:readonly] cmake -N
+[autoallow:build:readonly] make -n
+[autoallow:build:readonly] make -q
+[autoallow:build:readonly] make -t
+[autoallow:build:readonly] make -p
+[autoallow:build:readonly] cmake --build . --target help
+[autoallow:build:readonly] cmake -L
+[autoallow:build:readonly] cmake -N
 
 # Archive operations (read-only)
-[safe:archive:readonly] tar -t
-[safe:archive:readonly] tar --list
-[safe:archive:readonly] tar -tzf
-[safe:archive:readonly] tar -tjzf
-[safe:archive:readonly] tar -tJf
-[safe:archive:readonly] unzip -l
-[safe:archive:readonly] zip -sf
+[autoallow:archive:readonly] tar -t
+[autoallow:archive:readonly] tar --list
+[autoallow:archive:readonly] tar -tzf
+[autoallow:archive:readonly] tar -tjzf
+[autoallow:archive:readonly] tar -tJf
+[autoallow:archive:readonly] unzip -l
+[autoallow:archive:readonly] zip -sf
 
 # File analysis
-[safe:analysis] file
-[safe:analysis] stat
-[safe:analysis] stat *
-[safe:analysis] readlink
-[safe:analysis] readlink -f
-[safe:analysis] which
-[safe:analysis] type
-[safe:analysis] whereis
+[autoallow:analysis] file
+[autoallow:analysis] stat
+[autoallow:analysis] stat *
+[autoallow:analysis] readlink
+[autoallow:analysis] readlink -f
+[autoallow:analysis] which
+[autoallow:analysis] type
+[autoallow:analysis] whereis
 
 # Version information
-[safe:version] git --version
-[safe:version] ls --version
-[safe:version] cat --version
-[safe:version] grep --version
-[safe:version] sed --version
-[safe:version] awk --version
-[safe:version] find --version
-[safe:version] python --version
-[safe:version] python3 --version
-[safe:version] node --version
-[safe:version] go version
+[autoallow:version] git --version
+[autoallow:version] ls --version
+[autoallow:version] cat --version
+[autoallow:version] grep --version
+[autoallow:version] sed --version
+[autoallow:version] awk --version
+[autoallow:version] find --version
+[autoallow:version] python --version
+[autoallow:version] python3 --version
+[autoallow:version] node --version
+[autoallow:version] go version
 
 # Help commands
-[safe:help] man
-[safe:help] man *
-[safe:help] help
-[safe:help] --help
-[safe:help] -h
+[autoallow:help] man
+[autoallow:help] man *
+[autoallow:help] help
+[autoallow:help] --help
+[autoallow:help] -h
 
 # Misc safe commands
-[safe:misc] echo
-[safe:misc] true
-[safe:misc] false
-[safe:misc] test
-[safe:misc] yes
-[safe:misc] base64 --decode
-[safe:misc] base64 -d
-[safe:misc] od
-[safe:misc] od -c
-[safe:misc] od -x
-[safe:misc] strings
+[autoallow:misc] echo
+[autoallow:misc] true
+[autoallow:misc] false
+[autoallow:misc] test
+[autoallow:misc] yes
+[autoallow:misc] base64 --decode
+[autoallow:misc] base64 -d
+[autoallow:misc] od
+[autoallow:misc] od -c
+[autoallow:misc] od -x
+[autoallow:misc] strings

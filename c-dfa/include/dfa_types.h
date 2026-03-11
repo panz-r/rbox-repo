@@ -171,6 +171,13 @@ typedef struct {
 #define CAT_MASK_CONTAINER  0x80
 
 /**
+ * ReadOnlyBox Client category constants
+ */
+#define CAT_MASK_AUTOALLOW  0x01  // Auto-allow: execute without server query
+#define CAT_MASK_AUTODENY  0x02  // Auto-deny: block without server query
+#define CAT_MASK_ALWAYSASK 0x04  // Always ask: query server even if autoallow matches
+
+/**
  * Command categories
  */
 typedef enum {
