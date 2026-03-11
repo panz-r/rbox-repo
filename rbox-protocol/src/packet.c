@@ -12,7 +12,12 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/poll.h>
+#include <sys/epoll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <time.h>
+#include <pthread.h>
+#include <signal.h>
 
 #include "rbox_protocol.h"
 #include "socket.h"
@@ -1390,4 +1395,445 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
 cleanup:
     rbox_session_free(session);
     return result;
+}
+
+/* ============================================================
+ * BLOCKING SERVER IMPLEMENTATION (epoll-based)
+ * ============================================================ */
+
+/* Server request handle */
+struct rbox_server_request {
+    int fd;                         /* Client socket fd */
+    uint8_t client_id[16];          /* Client identifier */
+    uint8_t request_id[16];         /* Request identifier */
+    
+    /* Request data (owned by request, freed on decide) */
+    char *command_data;
+    size_t command_len;
+    rbox_parse_result_t parse;
+    
+    /* Queue link */
+    struct rbox_server_request *next;
+};
+
+/* Server handle */
+struct rbox_server_handle {
+    char socket_path[256];
+    int listen_fd;
+    int epoll_fd;
+    
+    /* Background thread */
+    pthread_t thread;
+    volatile int running;          /* Flag to signal shutdown */
+    
+    /* Request queue (mutex protected) */
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    rbox_server_request_t *request_queue;  /* Queue head */
+    rbox_server_request_t *request_tail;   /* Queue tail */
+    int request_count;             /* Number of pending requests */
+};
+
+/* Free server request */
+static void server_request_free(rbox_server_request_t *req) {
+    if (!req) return;
+    if (req->fd >= 0) {
+        close(req->fd);
+    }
+    free(req->command_data);
+    free(req);
+}
+
+/* Read header from client */
+static int server_read_header(int fd, uint8_t *client_id, uint8_t *request_id, uint32_t *chunk_len) {
+    char header[88];
+    ssize_t n = rbox_read(fd, header, 88);
+    if (n != 88) {
+        return -1;
+    }
+    
+    /* Validate magic and version */
+    uint32_t magic = *(uint32_t *)header;
+    uint32_t version = *(uint32_t *)(header + 4);
+    if (magic != RBOX_MAGIC || version != RBOX_VERSION) {
+        return -1;
+    }
+    
+    /* Get client_id and request_id */
+    memcpy(client_id, header + 8, 16);
+    memcpy(request_id, header + 24, 16);
+    
+    /* Get chunk_len */
+    *chunk_len = *(uint32_t *)(header + 72);
+    if (*chunk_len > 1024 * 1024) { /* 1MB max */
+        return -1;
+    }
+    
+    return 0;
+}
+
+/* Read request body */
+static char *read_body(int fd, uint32_t chunk_len) {
+    if (chunk_len == 0) {
+        char *empty = malloc(1);
+        if (empty) empty[0] = '\0';
+        return empty;
+    }
+    
+    char *data = malloc(chunk_len + 1);
+    if (!data) return NULL;
+    
+    ssize_t n = rbox_read(fd, data, chunk_len);
+    if (n != (ssize_t)chunk_len) {
+        free(data);
+        return NULL;
+    }
+    
+    data[chunk_len] = '\0';
+    return data;
+}
+
+/* Build response packet */
+static char *build_response(uint8_t *client_id, uint8_t *request_id, 
+                           uint8_t decision, const char *reason, uint32_t duration,
+                           size_t *out_len) {
+    size_t reason_len = reason ? strlen(reason) : 0;
+    size_t total_len = 88 + reason_len;
+    
+    char *pkt = malloc(total_len);
+    if (!pkt) return NULL;
+    
+    /* Header */
+    *(uint32_t *)(pkt + 0) = RBOX_MAGIC;
+    *(uint32_t *)(pkt + 4) = RBOX_VERSION;
+    memcpy(pkt + 8, client_id, 16);
+    memcpy(pkt + 24, request_id, 16);
+    *(uint32_t *)(pkt + 40) = 0;  /* flags = 0 (response) */
+    *(uint32_t *)(pkt + 44) = 0;  /* offset = 0 */
+    *(uint32_t *)(pkt + 48) = 0;  /* reserved */
+    *(uint64_t *)(pkt + 56) = duration;  /* duration */
+    *(uint32_t *)(pkt + 64) = decision;  /* decision */
+    *(uint32_t *)(pkt + 68) = 0;  /* reserved */
+    *(uint32_t *)(pkt + 72) = reason_len;  /* chunk_len */
+    *(uint32_t *)(pkt + 76) = reason_len;  /* total_len */
+    *(uint32_t *)(pkt + 80) = 0;  /* checksum (0 = none) */
+    *(uint32_t *)(pkt + 84) = 0;  /* reserved */
+    
+    /* Body */
+    if (reason_len > 0) {
+        memcpy(pkt + 88, reason, reason_len);
+    }
+    
+    *out_len = total_len;
+    return pkt;
+}
+
+/* Remove from epoll */
+static int epoll_del(int epoll_fd, int fd) {
+    struct epoll_event ev = {0};
+    return epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &ev);
+}
+
+/* Background server thread */
+static void *server_thread_func(void *arg) {
+    rbox_server_handle_t *server = arg;
+    struct epoll_event events[64];
+    
+    /* Create epoll instance */
+    server->epoll_fd = epoll_create1(0);
+    if (server->epoll_fd < 0) {
+        return NULL;
+    }
+    
+    /* Add listen socket to epoll - use fd as key */
+    struct epoll_event lev = {
+        .events = EPOLLIN,
+        .data.fd = server->listen_fd
+    };
+    if (epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, server->listen_fd, &lev) < 0) {
+        close(server->epoll_fd);
+        return NULL;
+    }
+    
+    while (server->running) {
+        int n = epoll_wait(server->epoll_fd, events, 64, 100); /* 100ms timeout */
+        
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        
+        if (n == 0) {
+            /* Timeout - just continue */
+            continue;
+        }
+        
+        for (int i = 0; i < n; i++) {
+            struct epoll_event *ev = &events[i];
+            
+            /* Listen socket - accept new connection */
+            if (ev->data.fd == server->listen_fd) {
+                struct sockaddr_un addr;
+                socklen_t addrlen = sizeof(addr);
+                int cl_fd = accept(server->listen_fd, (struct sockaddr *)&addr, &addrlen);
+                if (cl_fd >= 0) {
+                    /* Add to epoll for reading - use fd as key */
+                    struct epoll_event cev = {
+                        .events = EPOLLIN,
+                        .data.fd = cl_fd
+                    };
+                    epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, cl_fd, &cev);
+                }
+                continue;
+            }
+            
+            /* Client socket event */
+            int cl_fd = ev->data.fd;
+            
+            if (cl_fd < 0) {
+                continue;
+            }
+            
+            if (ev->events & (EPOLLERR | EPOLLHUP)) {
+                /* Error or hangup - close */
+                epoll_del(server->epoll_fd, cl_fd);
+                close(cl_fd);
+                continue;
+            }
+            
+            if (ev->events & EPOLLIN) {
+                /* Try to read request */
+                uint8_t client_id[16], request_id[16];
+                uint32_t chunk_len;
+                
+                if (server_read_header(cl_fd, client_id, request_id, &chunk_len) == 0) {
+                    char *cmd_data = read_body(cl_fd, chunk_len);
+                    if (cmd_data) {
+                        /* Create request handle */
+                        rbox_server_request_t *req = calloc(1, sizeof(*req));
+                        if (req) {
+                            req->fd = cl_fd;
+                            memcpy(req->client_id, client_id, 16);
+                            memcpy(req->request_id, request_id, 16);
+                            req->command_data = cmd_data;
+                            req->command_len = chunk_len;
+                            
+                            /* Parse command */
+                            rbox_command_parse(cmd_data, chunk_len, &req->parse);
+                            
+                            /* Add to queue and signal */
+                            pthread_mutex_lock(&server->mutex);
+                            req->next = NULL;
+                            if (server->request_tail) {
+                                server->request_tail->next = req;
+                                server->request_tail = req;
+                            } else {
+                                server->request_queue = req;
+                                server->request_tail = req;
+                            }
+                            server->request_count++;
+                            pthread_cond_signal(&server->cond);
+                            pthread_mutex_unlock(&server->mutex);
+                            
+                            /* Remove from epoll - caller now owns fd */
+                            epoll_del(server->epoll_fd, cl_fd);
+                            
+                            /* Continue to next event */
+                            continue;
+                        }
+                        free(cmd_data);
+                    }
+                }
+                
+                /* Read failed - close connection */
+                epoll_del(server->epoll_fd, cl_fd);
+                close(cl_fd);
+            }
+        }
+    }
+    
+    /* Cleanup */
+    close(server->epoll_fd);
+    
+    return NULL;
+}
+
+/* Start background thread */
+rbox_error_t rbox_server_start(rbox_server_handle_t *server) {
+    if (!server) return RBOX_ERR_INVALID;
+    
+    server->running = 1;
+    server->request_queue = NULL;
+    server->request_tail = NULL;
+    server->request_count = 0;
+    
+    if (pthread_create(&server->thread, NULL, server_thread_func, server) != 0) {
+        server->running = 0;
+        return RBOX_ERR_IO;
+    }
+    
+    return RBOX_OK;
+}
+
+/* Block until request is ready */
+rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server) {
+    if (!server) return NULL;
+    
+    pthread_mutex_lock(&server->mutex);
+    
+    while (server->running && server->request_count == 0) {
+        pthread_cond_wait(&server->cond, &server->mutex);
+    }
+    
+    if (!server->running) {
+        pthread_mutex_unlock(&server->mutex);
+        return NULL;
+    }
+    
+    /* Pop request from queue */
+    rbox_server_request_t *req = server->request_queue;
+    server->request_queue = req->next;
+    if (server->request_queue == NULL) {
+        server->request_tail = NULL;
+    }
+    req->next = NULL;
+    server->request_count--;
+    
+    pthread_mutex_unlock(&server->mutex);
+    
+    return req;
+}
+
+/* Get command from request */
+const char *rbox_server_request_command(const rbox_server_request_t *req) {
+    if (!req) return NULL;
+    return req->command_data;
+}
+
+/* Get argument by index */
+const char *rbox_server_request_arg(const rbox_server_request_t *req, int index) {
+    uint32_t len;
+    if (!req || index < 0 || (uint32_t)index >= req->parse.count) {
+        return NULL;
+    }
+    return rbox_get_subcommand(req->command_data, &req->parse.subcommands[index], &len);
+}
+
+/* Get argument count */
+int rbox_server_request_argc(const rbox_server_request_t *req) {
+    if (!req) return 0;
+    return (int)req->parse.count;
+}
+
+/* Get parse result */
+const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t *req) {
+    if (!req) return NULL;
+    return &req->parse;
+}
+
+/* Send decision to client */
+rbox_error_t rbox_server_decide(rbox_server_request_t *req, uint8_t decision, const char *reason, uint32_t duration) {
+    if (!req) return RBOX_ERR_INVALID;
+    
+    /* Build response */
+    size_t resp_len;
+    char *resp = build_response(req->client_id, req->request_id, decision, reason, duration, &resp_len);
+    if (!resp) {
+        return RBOX_ERR_MEMORY;
+    }
+    
+    /* Send response */
+    ssize_t written = rbox_write(req->fd, resp, resp_len);
+    free(resp);
+    
+    if (written != (ssize_t)resp_len) {
+        return RBOX_ERR_IO;
+    }
+    
+    /* Close connection */
+    close(req->fd);
+    req->fd = -1;
+    
+    /* Free request */
+    server_request_free(req);
+    
+    return RBOX_OK;
+}
+
+/* Signal shutdown */
+void rbox_server_stop(rbox_server_handle_t *server) {
+    if (!server) return;
+    
+    server->running = 0;
+    
+    /* Wake up any waiting thread */
+    pthread_mutex_lock(&server->mutex);
+    pthread_cond_signal(&server->cond);
+    pthread_mutex_unlock(&server->mutex);
+    
+    /* Wait for thread to exit */
+    if (server->thread) {
+        pthread_join(server->thread, NULL);
+    }
+}
+
+/* Create blocking server handle */
+rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
+    if (!socket_path) return NULL;
+    
+    rbox_server_handle_t *srv = calloc(1, sizeof(*srv));
+    if (!srv) return NULL;
+    
+    strncpy(srv->socket_path, socket_path, sizeof(srv->socket_path) - 1);
+    
+    /* Create Unix domain socket */
+    srv->listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (srv->listen_fd < 0) {
+        free(srv);
+        return NULL;
+    }
+    
+    /* Remove old socket file */
+    unlink(socket_path);
+    
+    /* Bind */
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+    if (bind(srv->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(srv->listen_fd);
+        free(srv);
+        return NULL;
+    }
+    
+    /* Initialize mutex/cond */
+    pthread_mutex_init(&srv->mutex, NULL);
+    pthread_cond_init(&srv->cond, NULL);
+    
+    return srv;
+}
+
+/* Start listening */
+rbox_error_t rbox_server_handle_listen(rbox_server_handle_t *server) {
+    if (!server) return RBOX_ERR_INVALID;
+    
+    if (listen(server->listen_fd, 10) < 0) {
+        return RBOX_ERR_IO;
+    }
+    
+    return RBOX_OK;
+}
+
+/* Free blocking server */
+void rbox_server_handle_free(rbox_server_handle_t *server) {
+    if (!server) return;
+    
+    if (server->listen_fd >= 0) {
+        close(server->listen_fd);
+        unlink(server->socket_path);
+    }
+    
+    pthread_mutex_destroy(&server->mutex);
+    pthread_cond_destroy(&server->cond);
+    
+    free(server);
 }

@@ -53,6 +53,10 @@ typedef struct {
     int              envp_len;  /* Number of env vars */
 } rbox_request_t;
 
+/* Forward declarations for types defined later */
+struct rbox_parse_result;
+typedef struct rbox_parse_result rbox_parse_result_t;
+
 /* Response structure */
 typedef struct {
     uint8_t decision;       /* ALLOW/DENY/ERROR */
@@ -132,13 +136,99 @@ rbox_server_t *rbox_server_new(const char *socket_path);
 /* Start listening */
 rbox_error_t rbox_server_listen(rbox_server_t *server);
 
-/* Accept incoming connection */
-rbox_client_t *rbox_server_accept(rbox_server_t *server);
-
 /* Get server listen file descriptor */
 int rbox_server_fd(const rbox_server_t *server);
 
+/* Accept incoming connection (for non-blocking use) */
+rbox_client_t *rbox_server_accept(rbox_server_t *server);
+
 /* Free server */
+void rbox_server_free(rbox_server_t *server);
+
+/* ============================================================
+ * BLOCKING SERVER INTERFACE (Thread with epoll internally)
+ * ============================================================ */
+
+/* 
+ * Blocking server - uses epoll internally to handle many connections
+ * Ideal for Go cgo integration
+ * 
+ * Usage:
+ *   1. rbox_server_new() - create server
+ *   2. rbox_server_listen() - start listening  
+ *   3. rbox_server_start() - spawn background thread with epoll
+ *   4. rbox_server_get_request() - block until request ready (returns handle)
+ *   5. Process request using rbox_server_request_* functions
+ *   6. rbox_server_decide() - send response
+ *   7. Repeat from step 4
+ *   8. rbox_server_stop() - signal shutdown
+ *   9. rbox_server_free() - cleanup
+ */
+
+/* Opaque server handle for blocking server */
+typedef struct rbox_server_handle rbox_server_handle_t;
+
+/* Opaque request handle - returned when request is ready */
+typedef struct rbox_server_request rbox_server_request_t;
+
+/* Create blocking server socket */
+rbox_server_handle_t *rbox_server_handle_new(const char *socket_path);
+
+/* Start listening */
+rbox_error_t rbox_server_handle_listen(rbox_server_handle_t *server);
+
+/* Free blocking server */
+void rbox_server_handle_free(rbox_server_handle_t *server);
+
+/* Start background thread with epoll
+ * After calling, background thread accepts connections
+ * Returns immediately (non-blocking)
+ */
+rbox_error_t rbox_server_start(rbox_server_handle_t *server);
+
+/* 
+ * Block until a request is ready
+ * 
+ * Returns request handle when request is fully read and parsed.
+ * Zero-copy access to request data and shell parse result.
+ * 
+ * Call rbox_server_decide() to send response.
+ * Then call rbox_server_get_request() again for next request.
+ * 
+ * Returns: request handle, or NULL on error / shutdown
+ */
+rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server);
+
+/* Get command from request (zero-copy) */
+const char *rbox_server_request_command(const rbox_server_request_t *req);
+
+/* Get argument by index */
+const char *rbox_server_request_arg(const rbox_server_request_t *req, int index);
+
+/* Get argument count */
+int rbox_server_request_argc(const rbox_server_request_t *req);
+
+/* Get shell parse result from request */
+const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t *req);
+
+/* 
+ * Send decision to client and free request buffers
+ * 
+ * Must be called after get_request() to send the decision back
+ * and release the request buffers
+ */
+rbox_error_t rbox_server_decide(rbox_server_request_t *req, 
+    uint8_t decision, const char *reason, uint32_t duration);
+
+/* 
+ * Signal shutdown and wait for background thread to exit
+ * After calling stop, get_request() will return NULL
+ * 
+ * Note: Caller should have no active requests when calling stop
+ */
+void rbox_server_stop(rbox_server_handle_t *server);
+
+/* Free server - must be called after stop() */
 void rbox_server_free(rbox_server_t *server);
 
 /* ============================================================
@@ -446,7 +536,7 @@ typedef struct {
 } rbox_subcommand_t;
 
 /* Parse result */
-typedef struct {
+typedef struct rbox_parse_result {
     rbox_subcommand_t subcommands[RBOX_MAX_SUBCOMMANDS];
     uint32_t count;           /* Number of subcommands */
     uint32_t has_variables;   /* Contains variables like $VAR */

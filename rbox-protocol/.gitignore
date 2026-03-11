@@ -6,6 +6,7 @@
 test_protocol
 test_integration
 test_protocol_full
+test_blocking_server
 
 # Fuzzer
 fuzz/*.o
