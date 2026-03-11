@@ -192,7 +192,7 @@ static void screen_environment(void) {
         indices,
         32,
         &flagged_count,
-        5.0,   // entropy_threshold
+        0.7,   // posterior_threshold (Bayesian inference) - 0.7 for high confidence
         12     // min_length
     );
     
@@ -200,7 +200,7 @@ static void screen_environment(void) {
         /* Allocate larger buffer if needed - shouldn't happen often */
         int *larger = malloc(flagged_count * sizeof(int));
         if (larger) {
-            env_screener_scan(larger, flagged_count, &flagged_count, 5.0, 12);
+            env_screener_scan(larger, flagged_count, &flagged_count, 0.7, 12);
             free(larger);
         }
     }
@@ -208,6 +208,10 @@ static void screen_environment(void) {
     if (status != ENV_SCREENER_OK || flagged_count == 0) {
         return;
     }
+    
+    /* Collect blocked variable names to remove after prompting */
+    char *blocked[32];
+    int blocked_count = 0;
     
     /* Prompt user for each flagged variable */
     for (int i = 0; i < flagged_count; i++) {
@@ -218,17 +222,14 @@ static void screen_environment(void) {
         const char *value = extract_env_value(entry);
         extract_env_name(entry, name, sizeof(name));
         
-        double score = env_screener_combined_score(value);
-        bool is_secret_pattern = env_screener_is_secret_pattern(name);
+        double score = env_screener_combined_score_name(name, value);
         
-        if (is_secret_pattern) {
-            fprintf(stderr, "\n⚠️  Potential secret detected:\n");
-            fprintf(stderr, "   %s=*** (length: %zu)\n", name, strlen(value));
+        if (score > 0.8) {
+            fprintf(stderr, "\n⚠️  High-confidence secret detected:\n");
+            fprintf(stderr, "   %s=*** (score: %.2f)\n", name, score);
         } else {
-            fprintf(stderr, "\n⚠️  High-entropy variable detected:\n");
-            fprintf(stderr, "   %s=*** (combined score: %.2f, length: %zu)\n", 
-                    name, score, strlen(value));
-            fprintf(stderr, "   This looks like a random string (API key, token, etc.)\n");
+            fprintf(stderr, "\n⚠️  Potential secret detected:\n");
+            fprintf(stderr, "   %s=*** (score: %.2f)\n", name, score);
         }
         
         fprintf(stderr, "   Pass this variable to the command? [y/N]: ");
@@ -236,10 +237,17 @@ static void screen_environment(void) {
         char response[8];
         if (fgets(response, sizeof(response), stdin)) {
             if (response[0] != 'y' && response[0] != 'Y') {
-                unsetenv(name);
-                fprintf(stderr, "   → Blocked: %s\n", name);
+                /* Store name to remove after loop */
+                blocked[blocked_count++] = strdup(name);
             }
         }
+    }
+    
+    /* Remove all blocked variables in one pass */
+    for (int j = 0; j < blocked_count; j++) {
+        unsetenv(blocked[j]);
+        fprintf(stderr, "   → Blocked: %s\n", blocked[j]);
+        free(blocked[j]);
     }
     
     fprintf(stderr, "\n✓ Environment screened\n");
@@ -252,7 +260,15 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
         strcpy(cwd, ".");
     }
 
-    char **new_argv = malloc((argc + 9) * sizeof(char *));
+    /* Count environment variables to pass */
+    int env_count = 0;
+    for (char **e = environ; *e; e++) {
+        env_count++;
+    }
+    
+    /* Allocate argv: pkexec + args + env vars + NULL */
+    /* Estimate: 10 pkexec args + argc + env_count + 1 */
+    char **new_argv = malloc((argc + env_count + 20) * sizeof(char *));
     if (!new_argv) {
         perror("malloc");
         return 1;
@@ -289,6 +305,40 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
     }
     idx++;
 
+    for (char **e = environ; *e; e++) {
+        /* Check for valid UTF-8 */
+        int valid_utf8 = 1;
+        for (char *p = *e; *p; p++) {
+            if ((*p & 0x80) == 0) {
+                /* ASCII - ok */
+            } else if ((*p & 0xE0) == 0xC0) {
+                /* 2-byte sequence */
+                if ((p[1] & 0xC0) != 0x80) { valid_utf8 = 0; break; }
+                p++;
+            } else if ((*p & 0xF0) == 0xE0) {
+                /* 3-byte sequence */
+                if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80) { valid_utf8 = 0; break; }
+                p += 2;
+            } else if ((*p & 0xF8) == 0xF0) {
+                /* 4-byte sequence */
+                if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80 || (p[3] & 0xC0) != 0x80) { valid_utf8 = 0; break; }
+                p += 3;
+            } else {
+                valid_utf8 = 0; break;
+            }
+        }
+        
+        if (!valid_utf8) {
+            fprintf(stderr, "DEBUG: Skipping non-UTF8 env var: %.50s...\n", *e);
+            continue;
+        }
+        
+        /* Use --env=VAR format instead of --env VAR */
+        char env_arg[8192];
+        snprintf(env_arg, sizeof(env_arg), "--env=%s", *e);
+        new_argv[idx++] = strdup(env_arg);
+    }
+
     for (int i = 1; i < argc; i++) {
         new_argv[idx++] = argv[i];
     }
@@ -297,9 +347,7 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
     execvp("pkexec", new_argv);
 
     fprintf(stderr, "\n%s: Failed to get elevated privileges via pkexec.\n", g_progname);
-    free(new_argv[4]);
-    free(new_argv[6]);
-    free(new_argv[8]);
+    /* Cleanup on error - would need to free all strdup'd env vars */
     free(new_argv);
     return 1;
 }
