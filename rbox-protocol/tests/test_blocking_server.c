@@ -19,6 +19,57 @@ static const char *SOCKET_PATH = "/tmp/rbox_test_block.sock";
 static int test_passed = 0;
 static int test_total = 0;
 
+/* Reference-quality write helper - handles all edge cases
+ * 
+ * Returns: number of bytes written (== len on success), or -1 on error
+ * 
+ * Handles:
+ *   - Partial writes: loops until all data written
+ *   - EINTR: retries automatically
+ *   - EAGAIN/EWOULDBLOCK: for non-blocking sockets, returns error (caller should retry)
+ *   - EPIPE: peer closed writing end
+ *   - ECONNRESET: peer reset connection  
+ *   - ENOSPC: no space (for file/pipe writes)
+ *   - EIO: I/O error
+ *   - Other errors: returns error
+ *   - Zero return: peer closed connection
+ */
+static ssize_t write_all(int fd, const void *buf, size_t len) {
+    if (!buf || len == 0) {
+        return 0;
+    }
+    
+    const char *ptr = buf;
+    size_t remaining = len;
+    
+    while (remaining > 0) {
+        ssize_t written = write(fd, ptr, remaining);
+        
+        if (written < 0) {
+            if (errno == EINTR) {
+                /* Interrupted by signal - retry */
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Would block (non-blocking socket) - caller should retry */
+                return -1;
+            }
+            /* Permanent error: EPIPE, ECONNRESET, ENOSPC, EIO, etc. */
+            return -1;
+        }
+        
+        if (written == 0) {
+            /* Peer closed connection or other issue */
+            return -1;
+        }
+        
+        ptr += written;
+        remaining -= written;
+    }
+    
+    return len;
+}
+
 #define RUN_TEST(fn, name) do { \
     test_total++; \
     printf("  Testing: %s...\n", name); \

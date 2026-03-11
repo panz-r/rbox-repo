@@ -20,6 +20,57 @@
 static int pass_count = 0;
 static int test_count = 0;
 
+/* Reference-quality write helper - handles all edge cases
+ * 
+ * Returns: number of bytes written (== len on success), or -1 on error
+ * 
+ * Handles:
+ *   - Partial writes: loops until all data written
+ *   - EINTR: retries automatically
+ *   - EAGAIN/EWOULDBLOCK: for non-blocking sockets, returns error (caller should retry)
+ *   - EPIPE: peer closed writing end
+ *   - ECONNRESET: peer reset connection  
+ *   - ENOSPC: no space (for file/pipe writes)
+ *   - EIO: I/O error
+ *   - Other errors: returns error
+ *   - Zero return: peer closed connection
+ */
+static ssize_t write_all(int fd, const void *buf, size_t len) {
+    if (!buf || len == 0) {
+        return 0;
+    }
+    
+    const char *ptr = buf;
+    size_t remaining = len;
+    
+    while (remaining > 0) {
+        ssize_t written = write(fd, ptr, remaining);
+        
+        if (written < 0) {
+            if (errno == EINTR) {
+                /* Interrupted by signal - retry */
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Would block (non-blocking socket) - caller should retry */
+                return -1;
+            }
+            /* Permanent error: EPIPE, ECONNRESET, ENOSPC, EIO, etc. */
+            return -1;
+        }
+        
+        if (written == 0) {
+            /* Peer closed connection or other issue */
+            return -1;
+        }
+        
+        ptr += written;
+        remaining -= written;
+    }
+    
+    return len;
+}
+
 #define RUN_TEST(fn, name) do { \
     test_count++; \
     printf("  Testing: %s...\n", name); \
@@ -269,7 +320,7 @@ static int test_hickup_bad_packet(void) {
     
     rbox_client_t *cl = rbox_client_connect(path);
     if (cl) { 
-        write(rbox_client_fd(cl), "GARBAGE", 7); 
+        write_all(rbox_client_fd(cl), "GARBAGE", 7); 
         rbox_client_close(cl); 
     }
     pthread_join(tid, NULL);
@@ -303,7 +354,7 @@ static int test_hickup_bad_magic(void) {
         char pkt[88];
         memset(pkt, 0xFF, 88);
         *(uint32_t *)(pkt + 72) = 0;  /* chunk_len = 0 */
-        write(rbox_client_fd(cl), pkt, 88);
+        write_all(rbox_client_fd(cl), pkt, 88);
         rbox_client_close(cl);
     }
     pthread_join(tid, NULL);
@@ -340,7 +391,7 @@ static int test_hickup_bad_version(void) {
         *(uint32_t *)(pkt + 4) = 999;  /* Bad version */
         *(uint32_t *)(pkt + 84) = 0;
         *(uint32_t *)(pkt + 84) = rbox_calculate_checksum(pkt, 84);
-        write(rbox_client_fd(cl), pkt, plen);
+        write_all(rbox_client_fd(cl), pkt, plen);
         rbox_client_close(cl);
     }
     pthread_join(tid, NULL);
@@ -372,7 +423,7 @@ static int test_hickup_truncated_header(void) {
     if (cl) {
         char pkt[10];
         memset(pkt, 'A', 10);
-        write(rbox_client_fd(cl), pkt, 10);
+        write_all(rbox_client_fd(cl), pkt, 10);
         rbox_client_close(cl);
     }
     pthread_join(tid, NULL);
@@ -407,7 +458,7 @@ static int test_hickup_truncated_body(void) {
         const char *args[] = {"-la"};
         rbox_build_request(pkt, &plen, "ls", 1, args);
         /* Send only partial body */
-        write(rbox_client_fd(cl), pkt, plen - 5);
+        write_all(rbox_client_fd(cl), pkt, plen - 5);
         rbox_client_close(cl);
     }
     pthread_join(tid, NULL);
@@ -460,7 +511,7 @@ static int test_hickup_dropped_response(void) {
         size_t plen;
         const char *args[] = {"-la"};
         rbox_build_request(pkt, &plen, "ls", 1, args);
-        write(rbox_client_fd(cl), pkt, plen);
+        write_all(rbox_client_fd(cl), pkt, plen);
         /* Don't wait for response, just close */
         rbox_client_close(cl);
     }
@@ -510,7 +561,7 @@ static int test_retry_until_success(void) {
         size_t plen;
         const char *args[] = {"-la"};
         rbox_build_request(pkt, &plen, "ls", 1, args);
-        write(rbox_client_fd(cl), pkt, plen);
+        write_all(rbox_client_fd(cl), pkt, plen);
         rbox_client_close(cl);
     }
     pthread_join(tid, NULL);
