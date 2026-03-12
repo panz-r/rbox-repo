@@ -1269,16 +1269,8 @@ func detectCommandIntent(analysis PipelineAnalysis) string {
 func generatePipelineOutput(analysis PipelineAnalysis) []string {
 	var lines []string
 
-	// Build the display command (without caller prefix)
-	displayCmd := analysis.Original
-	if strings.HasPrefix(displayCmd, "[") {
-		endBracket := strings.Index(displayCmd, "]")
-		if endBracket > 0 {
-			rest := displayCmd[endBracket+1:]
-			displayCmd = strings.TrimPrefix(rest, " ")
-		}
-	}
-	lines = append(lines, fmt.Sprintf("$ %s", displayCmd))
+	// Build the display command
+	lines = append(lines, fmt.Sprintf("$ %s", analysis.Original))
 
 	for i, stage := range analysis.Stages {
 		if i == len(analysis.Stages)-1 {
@@ -1349,16 +1341,8 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 	sb.WriteString(detailsFocus.Render("  Details:"))
 	sb.WriteString("\n")
 
-	// Show Command line (with caller prefix) - first line after Details
-	// Strip [caller:syscall] prefix for display
-	cmdDisplay := cmd.Command
-	if strings.HasPrefix(cmdDisplay, "[") {
-		endBracket := strings.Index(cmdDisplay, "]")
-		if endBracket > 0 {
-			cmdDisplay = strings.TrimPrefix(cmdDisplay[endBracket+1:], " ")
-		}
-	}
-	sb.WriteString(detailsFocus.Render(fmt.Sprintf("  Command: %s", cmdDisplay)))
+	// Show Command line
+	sb.WriteString(detailsFocus.Render(fmt.Sprintf("  Command: %s", cmd.Command)))
 	sb.WriteString("\n")
 
 	// Show Cwd (from client request)

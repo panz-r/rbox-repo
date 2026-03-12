@@ -213,6 +213,10 @@ typedef struct __attribute__((packed)) {
     uint64_t offset;
     uint32_t chunk_len;
     uint64_t total_len;
+    uint32_t cmd_hash;
+    uint8_t  caller_syscall_size;  /* bits 0-3: caller_len, bits 4-7: syscall_len */
+    uint8_t  caller[15];           /* caller name, truncated to 15 chars */
+    uint8_t  syscall[15];          /* syscall name, truncated to 15 chars */
     uint32_t checksum;
 } rbox_header_t;
 

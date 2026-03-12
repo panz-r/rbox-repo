@@ -105,12 +105,12 @@ rbox_error_t rbox_header_validate(const rbox_header_t *header) {
     }
 
     /* Verify checksum - make a copy to not modify original
-     * IMPORTANT: Calculate over bytes 0-83 only (exclude checksum field at offset 84)
-     * For v5 protocol: header is 88 bytes, checksum at offset 84 */
+     * IMPORTANT: Calculate over bytes 0-(checksum_offset-1), exclude checksum field itself
+     * For v7 protocol: header is 123 bytes, checksum at offset 119 */
     rbox_header_t temp;
     memcpy(&temp, header, sizeof(temp));
     temp.checksum = 0;
-    uint32_t calc_checksum = rbox_calculate_checksum(&temp, 84);
+    uint32_t calc_checksum = rbox_calculate_checksum(&temp, RBOX_HEADER_OFFSET_CHECKSUM);
     
     /* Debug: print what's being compared */
     /* printf("DEBUG: stored=0x%08x calc=0x%08x\n", header->checksum, calc_checksum); */
@@ -1439,11 +1439,10 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
         return RBOX_ERR_INVALID;
     }
     
-    //fprintf(stderr, "DEBUG C: rbox_blocking_request called: command='%s', argc=%d\n", command, argc);
+    
     for (int i = 0; i < argc; i++) {
-        //fprintf(stderr, "DEBUG C: argv[%d]='%s'\n", i, argv[i] ? argv[i] : "(null)");
+        
     }
-    fflush(stderr);
     
     /* Initialize response */
     memset(out_response, 0, sizeof(*out_response));
@@ -1599,6 +1598,7 @@ typedef struct rbox_server_send_entry {
     char *data;                    /* Response packet data */
     size_t len;                    /* Response length */
     struct rbox_server_send_entry *next;
+    rbox_server_request_t *request;  /* Associated request to free after send */
 } rbox_server_send_entry_t;
 
 /* Forward declaration */
@@ -1642,8 +1642,8 @@ struct rbox_server_handle {
     int decision_count;
 };
 
-/* Queue a response for sending via send queue */
-static void send_queue_add(rbox_server_handle_t *server, int fd, char *data, size_t len) {
+/* Queue a response for sending via epoll (non-blocking) */
+static void send_queue_add(rbox_server_handle_t *server, int fd, char *data, size_t len, rbox_server_request_t *req) {
     rbox_server_send_entry_t *entry = calloc(1, sizeof(*entry));
     if (!entry) {
         free(data);
@@ -1652,6 +1652,7 @@ static void send_queue_add(rbox_server_handle_t *server, int fd, char *data, siz
     entry->fd = fd;
     entry->data = data;
     entry->len = len;
+    entry->request = req;  /* Store request pointer for later cleanup */
     
     pthread_mutex_lock(&server->send_mutex);
     entry->next = NULL;
@@ -1665,13 +1666,13 @@ static void send_queue_add(rbox_server_handle_t *server, int fd, char *data, siz
     server->send_count++;
     pthread_mutex_unlock(&server->send_mutex);
     
-    /* Add socket to epoll for output - need both EPOLLIN (for new requests) and EPOLLOUT (for sending response) */
+    /* Add socket to epoll for EPOLLOUT - response will be sent when ready */
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
-    ev.events = EPOLLIN | EPOLLOUT;
+    ev.events = EPOLLIN | EPOLLOUT;  /* Keep EPOLLIN for new requests, add EPOLLOUT for response */
     ev.data.fd = fd;
     
-    /* Try MOD first, if that fails try ADD */
+    /* Try MOD first (fd already in epoll from accept), if fails try ADD */
     if (epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, fd, &ev) < 0) {
         epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
     }
@@ -1696,15 +1697,20 @@ static int response_cache_lookup(rbox_server_handle_t *server,
             continue;
         }
         
-        /* Check request_id match OR cmd_hash + cmd_hash2 match for same command */
+        /* Check for match */
         int match = 0;
+        
+        /* Always check request_id match first - valid for all decisions */
         if (memcmp(server->response_cache[i].request_id, request_id, 16) == 0) {
             /* Exact request ID match */
             match = 1;
-        } else if (server->response_cache[i].cmd_hash == cmd_hash && 
-                   server->response_cache[i].cmd_hash2 == cmd_hash2) {
-            /* Same command (by hash) - for time-limited decisions */
-            match = 1;
+        } else if (server->response_cache[i].expires_at > 0 && now < server->response_cache[i].expires_at) {
+            /* Only check cmd_hash match for valid time-limited decisions (expires_at > 0 AND not expired) */
+            if (server->response_cache[i].cmd_hash == cmd_hash && 
+                server->response_cache[i].cmd_hash2 == cmd_hash2) {
+                /* Same command (by hash) - for time-limited decisions */
+                match = 1;
+            }
         }
         
         if (match) {
@@ -1885,6 +1891,7 @@ static void *server_thread_func(void *arg) {
     rbox_server_handle_t *server = arg;
     struct epoll_event events[64];
     
+    
     /* Create epoll instance */
     server->epoll_fd = epoll_create1(0);
     if (server->epoll_fd < 0) {
@@ -1914,8 +1921,6 @@ static void *server_thread_func(void *arg) {
         /* First, check for pending decisions */
         pthread_mutex_lock(&server->decision_mutex);
         while (server->decision_queue && server->decision_queue->ready) {
-            //////fprintf(stderr, "DEBUG C: processing decision from queue\n");
-            fflush(stderr);
             rbox_server_decision_t *dec = server->decision_queue;
             server->decision_queue = (void*)dec->next;
             if (!server->decision_queue) {
@@ -1940,22 +1945,14 @@ static void *server_thread_func(void *arg) {
                 response_cache_insert(server, req->client_id, req->request_id, cmd_hash, cmd_hash2,
                                       dec->decision, dec->reason, dec->duration);
                 
-                /* Then build and send response directly */
+                /* Build response and queue for non-blocking send via epoll */
                 char *resp = build_response(req->client_id, req->request_id, cmd_hash, dec->decision, dec->reason, dec->duration, &resp_len);
-                ////fprintf(stderr, "DEBUG C: build_response returned %p, len=%zu\n", (void*)resp, resp_len);
                 if (resp) {
-                    /* Send response directly - socket should be ready */
-                    ////fprintf(stderr, "DEBUG C: about to write %zu bytes to fd %d\n", resp_len, req->fd);
-                    ssize_t sent = rbox_write(req->fd, resp, resp_len);
-                    ////fprintf(stderr, "DEBUG C: wrote %zd bytes\n", sent);
-                    free(resp);
-                } else {
-                    ////fprintf(stderr, "DEBUG C: build_response returned NULL!\n");
+                    /* Queue for send via central epoll loop - NOT a blocking write */
+                    send_queue_add(server, req->fd, resp, resp_len, req);
+                    /* Don't close fd or free req yet - epoll will handle send then cleanup */
                 }
-                /* Close and cleanup */
-                epoll_del(server->epoll_fd, req->fd);
-                close(req->fd);
-                server_request_free(req);
+                /* Request will be freed after send completes (in EPOLLOUT handler) */
             }
             free(dec);
             pthread_mutex_lock(&server->decision_mutex);
@@ -1963,9 +1960,7 @@ static void *server_thread_func(void *arg) {
         pthread_mutex_unlock(&server->decision_mutex);
         
         /* Process epoll events */
-        ////////fprintf(stderr, "DEBUG: calling epoll_wait\n");
         int n = epoll_wait(server->epoll_fd, events, 64, 100); /* 100ms timeout */
-        ////////fprintf(stderr, "DEBUG: epoll_wait returned n=%d\n", n);
         
         if (n < 0) {
             if (errno == EINTR) continue;
@@ -1977,21 +1972,16 @@ static void *server_thread_func(void *arg) {
             continue;
         }
         
-        //////fprintf(stderr, "DEBUG: got %d events\n", n);
-        fflush(stderr);
         
         for (int i = 0; i < n; i++) {
             struct epoll_event *ev = &events[i];
             
             /* Listen socket - accept new connection */
             if (ev->data.fd == server->listen_fd) {
-                //////fprintf(stderr, "DEBUG: accept() called\n");
-                fflush(stderr);
                 struct sockaddr_un addr;
                 socklen_t addrlen = sizeof(addr);
                 int cl_fd = accept(server->listen_fd, (struct sockaddr *)&addr, &addrlen);
                 if (cl_fd >= 0) {
-                    //////fprintf(stderr, "DEBUG: accepted fd=%d\n", cl_fd);
                     /* Add to epoll for reading - use fd as key */
                     struct epoll_event cev = {
                         .events = EPOLLIN,
@@ -2040,12 +2030,19 @@ static void *server_thread_func(void *arg) {
                         server->send_count--;
                         pthread_mutex_unlock(&server->send_mutex);
                         
-                        /* Remove from epoll and try to send */
-                        epoll_del(server->epoll_fd, cl_fd);
-                        ssize_t sent = rbox_write(entry->fd, entry->data, entry->len);
-                        (void)sent;
-                        close(entry->fd);
+                        /* Send response (non-blocking, socket ready for write) */
+                        ssize_t sent = write(entry->fd, entry->data, entry->len);
+                        
+                        /* Always close fd and free response data */
+                        if (entry->fd >= 0) {
+                            close(entry->fd);
+                        }
                         free(entry->data);
+                        
+                        /* Free associated request */
+                        if (entry->request) {
+                            server_request_free(entry->request);
+                        }
                         free(entry);
                         break;
                     }
@@ -2059,6 +2056,7 @@ static void *server_thread_func(void *arg) {
             }
             
             if (ev->events & EPOLLIN) {
+                
                 /* Try to read request */
                 uint8_t client_id[16], request_id[16];
                 uint32_t cmd_hash, chunk_len;
@@ -2067,12 +2065,8 @@ static void *server_thread_func(void *arg) {
                 
                 int hdr_result = server_read_header(cl_fd, client_id, request_id, &cmd_hash, 
                     caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len);
-                //////fprintf(stderr, "DEBUG: server_read_header returned %d\n", hdr_result);
-                fflush(stderr);
                 
                 if (hdr_result == 0) {
-                    //////fprintf(stderr, "DEBUG: header OK, chunk_len=%u\n", chunk_len);
-                    fflush(stderr);
                     
                     /* Read the body first so we can compute cmd_hash2 for cache lookup */
                     char *cmd_data = read_body(cl_fd, chunk_len);
@@ -2088,23 +2082,20 @@ static void *server_thread_func(void *arg) {
                     char cached_reason[256];
                     uint32_t cached_duration;
                     if (response_cache_lookup(server, request_id, cmd_hash, cmd_hash2, &cached_decision, cached_reason, &cached_duration)) {
-                        // Send cached response directly
+                        /* Send cached response via send queue for non-blocking send */
                         size_t resp_len;
                         char *resp = build_response(client_id, request_id, cmd_hash, cached_decision, cached_reason, cached_duration, &resp_len);
                         if (resp) {
-                            ssize_t sent = rbox_write(cl_fd, resp, resp_len);
-                            (void)sent;
-                            free(resp);
+                            /* Queue for send via central epoll loop - NOT a blocking write */
+                            send_queue_add(server, cl_fd, resp, resp_len, NULL);
+                            /* Don't close fd yet - epoll will handle send then close */
                         }
                         free(cmd_data);
-                        epoll_del(server->epoll_fd, cl_fd);
-                        close(cl_fd);
+                        /* Request handled via send queue - continue to next event */
                         continue;
                     }
                     
                     if (cmd_data) {
-                        //////fprintf(stderr, "DEBUG: cmd_data='%s'\n", cmd_data);
-                        fflush(stderr);
                         
                         /* Create request handle */
                         rbox_server_request_t *req = calloc(1, sizeof(*req));
@@ -2252,8 +2243,6 @@ const char *rbox_server_request_syscall(const rbox_server_request_t *req) {
 rbox_error_t rbox_server_decide(rbox_server_request_t *req, uint8_t decision, const char *reason, uint32_t duration) {
     if (!req) return RBOX_ERR_INVALID;
     
-    //////fprintf(stderr, "DEBUG C: rbox_server_decide called\n");
-    fflush(stderr);
     
     /* Get server handle from request */
     rbox_server_handle_t *server = req->server;

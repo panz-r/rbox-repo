@@ -161,9 +161,7 @@ func main() {
 
 	// Process requests in a loop
 	for {
-	//fmt.Fprintf(os.Stderr, "DEBUG GO: About to call GetRequest\n")
 		req := server.GetRequest()
-		//fmt.Fprintf(os.Stderr, "DEBUG GO: GetRequest returned %v\n", req)
 		if req == nil {
 			// Server stopped
 			break
@@ -190,7 +188,6 @@ func main() {
 		}
 		
 		argc := req.GetArgc()
-		//fmt.Fprintf(os.Stderr, "DEBUG GO: GetArgc returned %d\n", argc)
 
 		args := make([]string, argc)
 		for i := 0; i < argc; i++ {
@@ -200,21 +197,18 @@ func main() {
 		// Log request if verbose
 		if *verbose || *veryVerbose {
 			fmt.Printf("Request: %s%s", cmd, callerInfo)
-			for _, arg := range args {
+			// Skip args[0] since it's the command itself (shellsplit includes command as first arg)
+			for _, arg := range args[1:] {
 				fmt.Printf(" %s", arg)
 			}
 			fmt.Println()
 		}
 
 		// Make decision
-		//fmt.Fprintf(os.Stderr, "DEBUG GO: About to makeDecision\n")
 		decision, reason := makeDecision(cmd, args)
-		//fmt.Fprintf(os.Stderr, "DEBUG GO: decision=%d, reason='%s'\n", decision, reason)
 
 		// Send decision
-		//fmt.Fprintf(os.Stderr, "DEBUG GO: About to call Decide\n")
 		if err := req.Decide(decision, reason, 0); err != nil {
-			//fmt.Fprintf(os.Stderr, "DEBUG GO: Decide returned error: %v\n", err)
 			if gLogger != nil {
 				gLogger.Log(1, "Error sending decision: %v", err)
 			}
@@ -243,16 +237,6 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 		return DecisionDeny, "empty command"
 	}
 
-	// Strip caller prefix if present: [caller] command or [caller:syscall] command
-	// We need to extract just the actual command for decision making
-	actualCmd := cmd
-	if strings.HasPrefix(cmd, "[") {
-		// Find the closing bracket
-		if idx := strings.Index(cmd, "]"); idx > 0 {
-			actualCmd = strings.TrimSpace(cmd[idx+1:])
-		}
-	}
-
 	// Check for dangerous patterns in arguments
 	for _, arg := range args {
 		if arg == "/etc/passwd" || arg == "/etc/shadow" || arg == "/etc/group" {
@@ -261,7 +245,7 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 	}
 
 	// Convert to lowercase for matching
-	cmdLower := strings.ToLower(actualCmd)
+	cmdLower := strings.ToLower(cmd)
 
 	// Read-only commands that are always allowed
 	readOnlyCmds := map[string]bool{

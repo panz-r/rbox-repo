@@ -198,10 +198,8 @@ func handleJudge() {
 		os.Exit(1)
 	}
 
-	//fmt.Printf("DEBUG: os.Args=%v\n", os.Args)
 	command := os.Args[2]
 	argsForServer := os.Args[3:]
-	//fmt.Printf("DEBUG handleJudge: command='%s', argsForServer=%v\n", command, argsForServer)
 
 	/* Check local DFA first for fast-path */
 	if allowed, reason := CheckDFALocal(command, argsForServer); allowed {

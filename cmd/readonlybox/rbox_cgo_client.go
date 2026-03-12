@@ -52,16 +52,13 @@ func BlockingRequest(socketPath, command, caller, syscall string, args []string,
 	// Build argv for C
 	var cArgv **C.char = nil
 	if len(args) > 0 {
-		//fmt.Printf("DEBUG Go: Building argv with len=%d\n", len(args))
 		argv := make([]*C.char, len(args))
 		for i, arg := range args {
-			//fmt.Printf("DEBUG Go: argv[%d] = '%s'\n", i, arg)
 			argv[i] = C.CString(arg)
 			defer C.free(unsafe.Pointer(argv[i]))
 		}
 		cArgv = &argv[0]
 	} else {
-		//fmt.Printf("DEBUG Go: No args (len=0)\n")
 	}
 
 	// Convert command

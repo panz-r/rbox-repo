@@ -83,7 +83,7 @@ static ssize_t write_all(int fd, const void *buf, size_t len) {
     fflush(stdout); \
 } while(0)
 
-/* Build request packet */
+/* Build request packet (v7 format) */
 static void build_request(char *pkt, const char *cmd) {
     uint32_t cmd_len = cmd ? strlen(cmd) : 0;
     memset(pkt, 0, RBOX_HEADER_SIZE + cmd_len);
@@ -99,8 +99,21 @@ static void build_request(char *pkt, const char *cmd) {
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID + 8) = rand_id ^ 0xABCDEF;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID + 12) = rand_id ^ 0xFEDCBA;
     
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_TYPE) = 1;  /* RBOX_MSG_REQ */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_FLAGS) = 1;  /* RBOX_FLAG_FIRST */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_OFFSET) = 0;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = cmd_len;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_TOTAL_LEN) = cmd_len;
+    *(uint64_t *)(pkt + RBOX_HEADER_OFFSET_TOTAL_LEN) = cmd_len;
+    
+    /* v7: Set cmd_hash to 0 (not used by test) */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CMD_HASH) = 0;
+    
+    /* v7: Set caller_syscall_size to 0 (no caller/syscall) */
+    *(uint8_t *)(pkt + RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE) = 0;
+    
+    /* v7: Calculate checksum over header (up to checksum field at offset 119) */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = 0;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = rbox_calculate_checksum(pkt, RBOX_HEADER_OFFSET_CHECKSUM);
     
     if (cmd_len > 0) {
         memcpy(pkt + RBOX_HEADER_SIZE, cmd, cmd_len);
@@ -131,11 +144,11 @@ static void *client_send_thread(void *arg) {
     char pkt[1024];
     build_request(pkt, cmd);
     uint32_t cmd_len = cmd ? strlen(cmd) : 0;
-    write(fd, pkt, RBOX_HEADER_SIZE + cmd_len);
+    ssize_t written = write(fd, pkt, RBOX_HEADER_SIZE + cmd_len);
     
     /* Read response */
     char resp[256];
-    read(fd, resp, sizeof(resp));
+    ssize_t n = read(fd, resp, sizeof(resp));
     close(fd);
     
     return NULL;
@@ -453,11 +466,17 @@ static int test_concurrent_clients(void) {
     rbox_server_handle_listen(srv);
     rbox_server_start(srv);
     
+    /* Use different commands to avoid response cache hits */
+    const char *commands[] = {"ls", "pwd", "cat"};
+    
     /* Process 3 clients sequentially */
     for (int i = 0; i < 3; i++) {
-        /* Start a client in background */
+        /* Start a client in background with different command */
         pthread_t cl;
-        pthread_create(&cl, NULL, client_send_thread, (void *)"ls");
+        pthread_create(&cl, NULL, client_send_thread, (void *)commands[i]);
+        
+        /* Wait a bit for client to connect and send */
+        usleep(200000);
         
         /* Wait for request */
         rbox_server_request_t *req = rbox_server_get_request(srv);

@@ -23,9 +23,9 @@ void test_header_validate(void) {
     header.flags = RBOX_FLAG_FIRST;
     header.chunk_len = 100;
     header.total_len = 100;
-    /* Calculate checksum over 88 bytes (v6 protocol, excluding checksum field at offset 88) */
+    /* Calculate checksum over header (v7 protocol, excluding checksum field at offset 119) */
     header.checksum = 0;
-    header.checksum = rbox_calculate_checksum(&header, 88);
+    header.checksum = rbox_calculate_checksum(&header, RBOX_HEADER_OFFSET_CHECKSUM);
     
     assert(rbox_header_validate(&header) == RBOX_OK);
     printf("  ✓ Valid header passes\n");
@@ -44,7 +44,7 @@ void test_header_validate(void) {
     header.chunk_len = 100;
     header.total_len = 100;
     header.checksum = 0;
-    header.checksum = rbox_calculate_checksum(&header, 88);
+    header.checksum = rbox_calculate_checksum(&header, RBOX_HEADER_OFFSET_CHECKSUM);
     assert(rbox_header_validate(&header) == RBOX_ERR_VERSION);
     printf("  ✓ Invalid version detected\n");
     
