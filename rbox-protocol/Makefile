@@ -21,6 +21,10 @@ OBJS = $(SRCS:.c=.o)
 # Static library
 LIB = librbox_protocol.a
 
+# Shared library (for Go cgo)
+SHLIB = librbox_protocol.so
+SHLIB_LDFLAGS = -shared -fPIC -lpthread -lm
+
 # Tests
 TEST_BASIC_SRC = tests/test_protocol.c
 TEST_BASIC_BIN = test_protocol
@@ -37,6 +41,13 @@ all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN)
 
 $(LIB): $(OBJS)
 	ar rcs $@ $^
+
+# Build shared library for Go cgo
+$(SHLIB): $(OBJS) $(SHELLSPLIT_OBJ)
+	$(CC) $(SHLIB_LDFLAGS) -o $@ $(OBJS) $(SHELLSPLIT_OBJ)
+
+# Build both static and shared
+build-all: $(LIB) $(SHLIB)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<

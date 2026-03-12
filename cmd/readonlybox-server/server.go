@@ -1,187 +1,20 @@
+//go:build cgo
+// +build cgo
+
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/binary"
 	"flag"
 	"fmt"
-	"io"
-	"math/rand"
-	"net"
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
-	"time"
 )
 
-var (
-	socketPath  = flag.String("socket", SocketPath, "Unix socket path")
-	verbose     = flag.Bool("v", false, "Verbose: show all commands")
-	veryVerbose = flag.Bool("vv", false, "Very verbose: show all commands and logs")
-	quiet       = flag.Bool("q", false, "Quiet: only show blocked commands (default)")
-	logFile     = flag.String("log", "", "Log file path (empty=disabled)")
-	logLevel    = flag.Int("log-level", 0, "Log level: 0=off, 1=errors, 2=info, 3=debug")
-	port        = flag.Int("p", 0, "Also listen on TCP port (0=disabled)")
-	tui         = flag.Bool("tui", false, "Run in TUI mode")
-	debugTUI    = flag.Bool("debug-tui", false, "Debug mode: simulate TUI decisions (auto-allow after 500ms)")
-	autoDeny    = flag.Bool("auto-deny", false, "Auto-deny unknown commands (for testing)")
-	debugMode   = flag.Bool("debug", false, "Debug mode: print protocol traces to stderr")
-)
-
-const SocketPath = "/tmp/readonlybox.sock"
-const ServerVersion = "1.0.0"
-const ProtocolVersion uint32 = 4 /* Protocol version - matches client */
-
-// UUID for identifying this server instance
-var ServerUUID [16]byte
-
-// RequestCache stores responses for duplicate request detection
-// Key: clientUUID + requestUUID (32 bytes), Value: response data
-type RequestCache struct {
-	mu        sync.RWMutex
-	responses map[string]CachedResponse
-}
-
-type CachedResponse struct {
-	Decision uint8
-	Reason   string
-	ServerID [16]byte
-	Expiry   time.Time
-}
-
-func init() {
-	// Generate server UUID from random bytes and timestamp
-	rand.Seed(time.Now().UnixNano())
-	b := make([]byte, 16)
-	for i := range b {
-		b[i] = byte(rand.Intn(256))
-	}
-	// Mix in timestamp for uniqueness
-	ts := time.Now().UnixNano()
-	for i := 0; i < 8 && i < len(b); i++ {
-		b[i] ^= byte((ts >> (i * 8)) & 0xFF)
-	}
-	copy(ServerUUID[:], b)
-	gLogger.Log(2, "Server UUID: %x", ServerUUID)
-}
-
-func NewRequestCache() *RequestCache {
-	return &RequestCache{
-		responses: make(map[string]CachedResponse),
-	}
-}
-
-func (c *RequestCache) Get(clientID, requestID [16]byte, serverID [16]byte) (uint8, string, bool) {
-	key := string(clientID[:]) + string(requestID[:])
-
-	c.mu.RLock()
-	resp, ok := c.responses[key]
-	c.mu.RUnlock()
-
-	if !ok {
-		return 0, "", false
-	}
-
-	// Check if server restarted (server ID mismatch)
-	if resp.ServerID != serverID {
-		c.mu.Lock()
-		delete(c.responses, key)
-		c.mu.Unlock()
-		return 0, "", false
-	}
-
-	// Check expiry (1 hour)
-	if time.Now().After(resp.Expiry) {
-		c.mu.Lock()
-		delete(c.responses, key)
-		c.mu.Unlock()
-		return 0, "", false
-	}
-
-	return resp.Decision, resp.Reason, true
-}
-
-func (c *RequestCache) Set(clientID, requestID, serverID [16]byte, decision uint8, reason string) {
-	key := string(clientID[:]) + string(requestID[:])
-
-	c.mu.Lock()
-	c.responses[key] = CachedResponse{
-		Decision: decision,
-		Reason:   reason,
-		ServerID: serverID,
-		Expiry:   time.Now().Add(1 * time.Hour),
-	}
-	c.mu.Unlock()
-}
-
-const (
-	ROBO_MAGIC            = 0x524F424F
-	ROBO_MSG_LOG          = 0 /* Log message from client */
-	ROBO_MSG_REQ          = 1 /* Command request from client */
-	ROBO_DECISION_UNKNOWN = 0
-	ROBO_DECISION_ALLOW   = 2
-	ROBO_DECISION_DENY    = 3
-	ROBO_DECISION_ERROR   = 4
-)
-
-// CRC32 lookup table for validating packet integrity
-var crc32Table [256]uint32
-
-func init() {
-	// Generate CRC32 table (polynomial 0xEDB88320)
-	for i := 0; i < 256; i++ {
-		crc := uint32(i)
-		for j := 0; j < 8; j++ {
-			if crc&1 == 1 {
-				crc = (crc >> 1) ^ 0xEDB88320
-			} else {
-				crc >>= 1
-			}
-		}
-		crc32Table[i] = crc
-	}
-}
-
-// Calculate simple checksum (matches client calculateChecksum)
-func calculateChecksum(data []byte) uint32 {
-	var sum uint32
-	for _, b := range data {
-		sum += uint32(b)
-	}
-	return sum
-}
-
-// Calculate CRC32 checksum
-func calculateCRC32(data []byte) uint32 {
-	crc := uint32(0xFFFFFFFF)
-	for _, b := range data {
-		crc = (crc >> 8) ^ crc32Table[(crc^uint32(b))&0xFF]
-	}
-	return crc ^ 0xFFFFFFFF
-}
-
-// Validate packet checksum - returns true if valid
-func validatePacketChecksum(packet []byte, expectedChecksum uint32) bool {
-	// Calculate checksum over entire packet (excluding checksum field at offset 68)
-	// Temporarily zero out checksum field for calculation
-	original := make([]byte, 4)
-	copy(original, packet[68:72])
-	for i := 68; i < 72; i++ {
-		packet[i] = 0
-	}
-	calcChecksum := calculateCRC32(packet)
-	// Restore checksum field
-	copy(packet[68:72], original)
-
-	return calcChecksum == expectedChecksum
-}
-
+// Logger for server output
 type Logger struct {
 	file     *os.File
-	mu       sync.Mutex
 	logLevel int
 }
 
@@ -200,275 +33,53 @@ func (l *Logger) Log(level int, format string, args ...interface{}) {
 	if l == nil || l.file == nil || level > l.logLevel {
 		return
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	msg := fmt.Sprintf("[%s] %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
-	l.file.WriteString(msg)
-	l.file.Sync()
+	fmt.Fprintf(l.file, format+"\n", args...)
 }
 
 func (l *Logger) Close() {
-	if l != nil && l.file != nil {
+	if l != nil && l.file != nil && l.file != os.Stderr && l.file != os.Stdout {
 		l.file.Close()
 	}
 }
 
 var gLogger *Logger
 
-type Request struct {
-	ID   uint32
-	Cmd  string
-	Args []string
-	Env  []string
-	Cwd  string
-}
-
-type Response struct {
-	ID       uint32
-	Decision uint8
-	Reason   string
-}
-
-type Server struct {
-	listener     net.Listener
-	connections  map[string]*Connection
-	mu           sync.RWMutex
-	shutdown     chan struct{}
-	onConnect    func()
-	onDisconnect func()
-	onCommand    func(requestID int, decision string, cmd string, args []string, reason string, cwd string)
-	onLog        func(log string)
-	onRequest    func(requestID int, clientID string, cmd string, args []string, cwd string)
-	onDecision   func(requestID int, allowed bool, reason string)
-}
-
-type Connection struct {
-	conn     net.Conn
-	lastSeen time.Time
-}
-
-type RequestStatus int
-
-const (
-	RequestPending RequestStatus = iota
-	RequestAllowed
-	RequestDenied
+var (
+	socketPath  = flag.String("socket", SocketPath, "Unix socket path")
+	verbose     = flag.Bool("v", false, "Verbose: show all commands")
+	veryVerbose = flag.Bool("vv", false, "Very verbose: show all commands and logs")
+	quiet       = flag.Bool("q", false, "Quiet: only show blocked commands (default)")
+	logFile     = flag.String("log", "", "Log file path (empty=disabled)")
+	logLevel    = flag.Int("log-level", 0, "Log level: 0=off, 1=errors, 2=info, 3=debug")
+	tui         = flag.Bool("tui", false, "Run in TUI mode")
+	autoDeny    = flag.Bool("auto-deny", false, "Auto-deny unknown commands (for testing)")
 )
 
-type PendingRequest struct {
-	ID           int
-	ClientID     string
-	Command      string
-	Args         []string
-	Env          []string
-	Cwd          string
-	Timestamp    time.Time
-	Status       RequestStatus
-	Reason       string
-	DecisionCond *sync.Cond // Changed from polling to proper sync
-}
+const SocketPath = "/tmp/readonlybox.sock"
+const ServerVersion = "1.0.0"
 
-const MaxLogEntries = 100
-const MaxRequestsPerClient = 50
+func main() {
+	flag.Parse()
 
-type LogBuffer struct {
-	entries []string
-	mu      sync.Mutex
-}
-
-func NewLogBuffer() *LogBuffer {
-	return &LogBuffer{
-		entries: make([]string, 0, MaxLogEntries),
-	}
-}
-
-func (b *LogBuffer) Add(log string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.entries = append(b.entries, log)
-	if len(b.entries) > MaxLogEntries {
-		b.entries = b.entries[len(b.entries)-MaxLogEntries:]
-	}
-}
-
-func (b *LogBuffer) GetAll() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	result := make([]string, len(b.entries))
-	copy(result, b.entries)
-	return result
-}
-
-type RequestQueue struct {
-	requests     map[string][]*PendingRequest
-	nextID       int
-	mu           sync.Mutex
-	pendingCount int
-}
-
-func NewRequestQueue() *RequestQueue {
-	return &RequestQueue{
-		requests: make(map[string][]*PendingRequest),
-		nextID:   1,
-	}
-}
-
-func (q *RequestQueue) Add(clientID, cmd string, args, env []string, cwd string) *PendingRequest {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	req := &PendingRequest{
-		ID:           q.nextID,
-		ClientID:     clientID,
-		Command:      cmd,
-		Args:         args,
-		Env:          env,
-		Cwd:          cwd,
-		Timestamp:    time.Now(),
-		Status:       RequestPending,
-		DecisionCond: sync.NewCond(&q.mu),
-	}
-	q.nextID++
-
-	q.requests[clientID] = append(q.requests[clientID], req)
-	q.pendingCount++
-
-	// Limit per client
-	if len(q.requests[clientID]) > MaxRequestsPerClient {
-		q.requests[clientID] = q.requests[clientID][len(q.requests[clientID])-MaxRequestsPerClient:]
+	gLogger = NewLogger(*logFile, *logLevel)
+	if gLogger != nil {
+		defer gLogger.Close()
+		gLogger.Log(2, "Server starting v%s", ServerVersion)
 	}
 
-	return req
-}
-
-func (q *RequestQueue) GetAll() []*PendingRequest {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	var all []*PendingRequest
-	for _, clientReqs := range q.requests {
-		for _, req := range clientReqs {
-			all = append(all, req)
-		}
+	if *tui {
+		RunTUIMode()
+		return
 	}
-	return all
-}
 
-func (q *RequestQueue) GetByClient(clientID string) []*PendingRequest {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.requests[clientID]
-}
-
-func (q *RequestQueue) GetRequest(id int) *PendingRequest {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	for _, clientReqs := range q.requests {
-		for _, req := range clientReqs {
-			if req.ID == id {
-				return req
-			}
-		}
-	}
-	return nil
-}
-
-func (q *RequestQueue) GetClients() []string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	clients := make([]string, 0, len(q.requests))
-	for clientID := range q.requests {
-		clients = append(clients, clientID)
-	}
-	return clients
-}
-
-func (q *RequestQueue) SetDecision(id int, status RequestStatus, reason string) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	gLogger.Log(3, "SETDECISION: id=%d status=%d reason=%s", id, status, reason)
-
-	for _, clientReqs := range q.requests {
-		for _, req := range clientReqs {
-			if req.ID == id {
-				if req.Status == RequestPending {
-					req.Status = status
-					req.Reason = reason
-					q.pendingCount--
-					// Wake up any goroutines waiting on this request
-					gLogger.Log(3, "SETDECISION: broadcasting for request #%d", id)
-					req.DecisionCond.Broadcast()
-				} else {
-					gLogger.Log(3, "SETDECISION: request #%d was not pending (status=%d), skipping", id, req.Status)
-				}
-				return
-			}
-		}
-	}
-	gLogger.Log(3, "SETDECISION: request #%d not found", id)
-}
-
-func SetRequestDecision(requestID int, allowed bool, reason string) {
-	var status RequestStatus
-	if allowed {
-		status = RequestAllowed
-	} else {
-		status = RequestDenied
-	}
-	GlobalRequestQueue.SetDecision(requestID, status, reason)
-}
-
-func (q *RequestQueue) PendingCount() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.pendingCount
-}
-
-func NewServer() *Server {
-	return &Server{
-		connections: make(map[string]*Connection),
-		shutdown:    make(chan struct{}),
-	}
-}
-
-var GlobalLogBuffer = NewLogBuffer()
-var GlobalRequestQueue = NewRequestQueue()
-var GlobalRequestCache = NewRequestCache()
-
-func (s *Server) Start() error {
-	// Clean up old socket
-	os.Remove(*socketPath)
-
-	// Create Unix socket
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{
-		Name: *socketPath,
-		Net:  "unix",
-	})
+	server, err := NewRBoxServer(*socketPath)
 	if err != nil {
-		return fmt.Errorf("failed to create socket: %v", err)
-	}
-	listener.SetUnlinkOnClose(true)
-	os.Chmod(*socketPath, 0666)
-
-	s.listener = listener
-
-	// Accept Unix socket connections in a goroutine
-	go s.acceptUnix(listener)
-
-	// Also listen on TCP if requested
-	if *port > 0 {
-		tcpListener, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
-		if err != nil {
-			listener.Close()
-			return fmt.Errorf("failed to create TCP listener: %v", err)
-		}
-		go s.acceptTCP(tcpListener)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	fmt.Printf("readonlybox-server v1.0 - listening on %s\n", *socketPath)
+	os.Chmod(*socketPath, 0666)
 
 	mode := "blocking"
 	if *quiet || (!*verbose && !*veryVerbose) {
@@ -480,813 +91,136 @@ func (s *Server) Start() error {
 	}
 	fmt.Printf("Mode: %s\n\n", mode)
 
-	return nil
-}
+	// Setup signal handler
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	
+	go func() {
+		<-sigChan
+		server.Free()
+	}()
 
-func (s *Server) acceptTCP(l net.Listener) {
+	// Process requests in a loop
 	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return
+		req := server.GetRequest()
+		if req == nil {
+			// Server stopped
+			break
 		}
-		go s.handleConnection(conn)
-	}
-}
 
-func (s *Server) acceptUnix(l *net.UnixListener) {
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return
+		cmd := req.GetCommand()
+		argc := req.GetArgc()
+
+		args := make([]string, argc)
+		for i := 0; i < argc; i++ {
+			args[i] = req.GetArg(i)
 		}
-		go s.handleConnection(conn)
-	}
-}
 
-func (s *Server) Stop() {
-	if s.listener != nil {
-		s.listener.Close()
-	}
-	close(s.shutdown)
-}
-
-func (s *Server) HandleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	remoteAddr := conn.RemoteAddr().String()
-	s.mu.Lock()
-	s.connections[remoteAddr] = &Connection{conn: conn, lastSeen: time.Now()}
-	s.mu.Unlock()
-
-	if s.onConnect != nil {
-		s.onConnect()
-	}
-
-	reader := bufio.NewReader(conn)
-
-	for {
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-
-		// Read raw bytes first for debugging (Protocol v4 = 72 byte header with checksum)
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		rawHeader := make([]byte, 72)
-		n, err := io.ReadFull(reader, rawHeader)
-		if err != nil {
-			if *debugMode {
-				fmt.Fprintf(os.Stderr, "DEBUG: ReadFull failed: n=%d, err=%v\n", n, err)
-				fmt.Fprintf(os.Stderr, "DEBUG: Raw bytes (%d): ", n)
-				for i := 0; i < n && i < 16; i++ {
-					fmt.Fprintf(os.Stderr, "%02x ", rawHeader[i])
-				}
-				fmt.Fprintf(os.Stderr, "\n")
+		// Log request if verbose
+		if *verbose || *veryVerbose {
+			fmt.Printf("Request: %s", cmd)
+			for _, arg := range args {
+				fmt.Printf(" %s", arg)
 			}
-			s.mu.Lock()
-			delete(s.connections, remoteAddr)
-			s.mu.Unlock()
-			return
+			fmt.Println()
 		}
-
-		if *debugMode {
-			fmt.Fprintf(os.Stderr, "DEBUG: ReadFull success, got 72 bytes: %02x%02x%02x%02x%02x%02x%02x%02x\n",
-				rawHeader[0], rawHeader[1], rawHeader[2], rawHeader[3],
-				rawHeader[4], rawHeader[5], rawHeader[6], rawHeader[7])
-		}
-
-		// Parse header from raw bytes (Protocol v4 with checksum)
-		var hdr struct {
-			Magic     uint32
-			Version   uint32
-			ClientID  [16]byte
-			RequestID [16]byte
-			ServerID  [16]byte
-			ID        uint32
-			Argc      uint32
-			Envc      uint32
-			Checksum  uint32
-		}
-		hdr.Magic = uint32(rawHeader[0]) | uint32(rawHeader[1])<<8 | uint32(rawHeader[2])<<16 | uint32(rawHeader[3])<<24
-		hdr.Version = uint32(rawHeader[4]) | uint32(rawHeader[5])<<8 | uint32(rawHeader[6])<<16 | uint32(rawHeader[7])<<24
-		copy(hdr.ClientID[:], rawHeader[8:24])
-		copy(hdr.RequestID[:], rawHeader[24:40])
-		copy(hdr.ServerID[:], rawHeader[40:56])
-		hdr.ID = uint32(rawHeader[56]) | uint32(rawHeader[57])<<8 | uint32(rawHeader[58])<<16 | uint32(rawHeader[59])<<24
-		hdr.Argc = uint32(rawHeader[60]) | uint32(rawHeader[61])<<8 | uint32(rawHeader[62])<<16 | uint32(rawHeader[63])<<24
-		hdr.Envc = uint32(rawHeader[64]) | uint32(rawHeader[65])<<8 | uint32(rawHeader[66])<<16 | uint32(rawHeader[67])<<24
-		hdr.Checksum = uint32(rawHeader[68]) | uint32(rawHeader[69])<<8 | uint32(rawHeader[70])<<16 | uint32(rawHeader[71])<<24
-
-		if *debugMode {
-			fmt.Fprintf(os.Stderr, "DEBUG HDR: magic=0x%08x version=%d id=%d argc=%d checksum=%08x\n",
-				hdr.Magic, hdr.Version, hdr.ID, hdr.Argc, hdr.Checksum)
-		}
-		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				s.mu.Lock()
-				delete(s.connections, remoteAddr)
-				s.mu.Unlock()
-				return
-			}
-			// Connection closed or error
-			s.mu.Lock()
-			delete(s.connections, remoteAddr)
-			s.mu.Unlock()
-			return
-		}
-
-		if hdr.Magic == 0 {
-			// Connection was closed (EOF received as zeros)
-			s.mu.Lock()
-			delete(s.connections, remoteAddr)
-			s.mu.Unlock()
-			return
-		}
-
-		if hdr.Magic != ROBO_MAGIC {
-			// Invalid magic - possible old client
-			s.mu.Lock()
-			delete(s.connections, remoteAddr)
-			s.mu.Unlock()
-			return
-		}
-
-		// Check protocol version
-		if hdr.Version != ProtocolVersion {
-			fmt.Fprintf(os.Stderr, "ERROR: Client protocol version %d != server protocol version %d\n", hdr.Version, ProtocolVersion)
-			fmt.Fprintf(os.Stderr, "Please rebuild readonlybox-client to match server version %s\n", ServerVersion)
-			s.mu.Lock()
-			delete(s.connections, remoteAddr)
-			s.mu.Unlock()
-			return
-		}
-
-		s.mu.Lock()
-		if c, ok := s.connections[remoteAddr]; ok {
-			c.lastSeen = time.Now()
-		}
-		s.mu.Unlock()
-
-		/* Handle LOG message (ID=0) vs REQUEST message (ID>=1) */
-		if hdr.ID == ROBO_MSG_LOG {
-			/* LOG message: read cmd, skip args section (ends with null), read log from first env */
-			_, err := reader.ReadString(0) /* skip cmd */
-			if err != nil {
-				return
-			}
-			/* skip arguments */
-			for i := uint32(0); i < hdr.Argc; i++ {
-				_, err := reader.ReadString(0)
-				if err != nil {
-					return
-				}
-			}
-			/* skip args section null terminator */
-			_, err = reader.ReadString(0)
-			if err != nil {
-				return
-			}
-			/* read log message from first env var */
-			var logMsg string
-			if hdr.Envc > 0 {
-				logMsg, err = reader.ReadString(0)
-				if err != nil {
-					return
-				}
-				logMsg = strings.TrimSuffix(logMsg, "\x00")
-			}
-			/* store log message in buffer, notify TUI, and print if very verbose */
-			GlobalLogBuffer.Add(logMsg)
-			if *veryVerbose {
-				fmt.Printf("LOG: %s\n", logMsg)
-			}
-			if s.onLog != nil {
-				s.onLog(logMsg)
-			}
-			/* skip remaining env vars */
-			for i := uint32(1); i < hdr.Envc; i++ {
-				_, err := reader.ReadString(0)
-				if err != nil {
-					return
-				}
-			}
-			/* Don't send response - client is fire-and-forget for logs */
-			continue
-		}
-
-		/* REQUEST message: read cmd, args, env and process normally */
-
-		// Read command name
-		cmd, err := reader.ReadString(0)
-		if err != nil {
-			if *debugMode {
-				fmt.Fprintf(os.Stderr, "[DEBUG] Error reading cmd: %v\n", err)
-			}
-			return
-		}
-		cmd = strings.TrimSuffix(cmd, "\x00")
-		if *debugMode {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Read cmd: %s\n", cmd)
-		}
-
-		// Read arguments
-		var args []string
-		for i := uint32(0); i < hdr.Argc; i++ {
-			arg, err := reader.ReadString(0)
-			if err != nil {
-				if *debugMode {
-					fmt.Fprintf(os.Stderr, "[DEBUG] Error reading arg %d: %v\n", i, err)
-				}
-				return
-			}
-			args = append(args, strings.TrimSuffix(arg, "\x00"))
-		}
-		if *debugMode {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Read %d args\n", len(args))
-		}
-
-		// Read environment
-		var env []string
-		for i := uint32(0); i < hdr.Envc; i++ {
-			envVar, err := reader.ReadString(0)
-			if err != nil {
-				if *debugMode {
-					fmt.Fprintf(os.Stderr, "[DEBUG] Error reading env %d: %v\n", i, err)
-				}
-				return
-			}
-			env = append(env, strings.TrimSuffix(envVar, "\x00"))
-		}
-		if *debugMode {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Read %d env vars (envc=%d)\n", len(env), hdr.Envc)
-		}
-
-		// Extract Cwd from READONLYBOX_CWD env var (sent by client via readonlybox)
-		cwd := ""
-		if *debugMode {
-			fmt.Fprintf(os.Stderr, "[DEBUG] Looking for READONLYBOX_CWD in %d env vars\n", len(env))
-		}
-		for _, e := range env {
-			if strings.HasPrefix(e, "READONLYBOX_CWD=") {
-				cwd = strings.TrimPrefix(e, "READONLYBOX_CWD=")
-				if *debugMode {
-					fmt.Fprintf(os.Stderr, "[DEBUG] Found CWD: %s\n", cwd)
-				}
-				break
-			}
-		}
-
-		// Check request cache first (for retries after server restart)
-		cachedDecision, cachedReason, found := GlobalRequestCache.Get(hdr.ClientID, hdr.RequestID, hdr.ServerID)
-		if found {
-			gLogger.Log(3, "CACHE HIT: client=%s request=%x decision=%d reason=%s",
-				remoteAddr, hdr.RequestID[:4], cachedDecision, cachedReason)
-
-			// Send cached response
-			response := struct {
-				Magic     uint32
-				ServerID  [16]byte
-				ID        uint32
-				Decision  uint8
-				ReasonLen uint32
-			}{
-				Magic:     ROBO_MAGIC,
-				ServerID:  ServerUUID,
-				ID:        hdr.ID,
-				Decision:  cachedDecision,
-				ReasonLen: uint32(len(cachedReason) + 1),
-			}
-
-			var buf bytes.Buffer
-			binary.Write(&buf, binary.LittleEndian, &response)
-			buf.WriteString(cachedReason)
-			buf.WriteByte(0)
-
-			if _, err := conn.Write(buf.Bytes()); err != nil {
-				s.mu.Lock()
-				delete(s.connections, remoteAddr)
-				s.mu.Unlock()
-				return
-			}
-			continue
-		}
-
-		// Check temporary allowances first (for duration-based decisions)
-		var allowanceDecision uint8
-		var allowanceReason string
-		var useAllowance bool
-		if GlobalAllowanceStore != nil {
-			if allowed, reason, found := GlobalAllowanceStore.CheckAllowance(cmd, args); found {
-				gLogger.Log(2, "ALLOWANCE HIT: %s %v -> %s (%s)", cmd, args, allowed, reason)
-				if allowed {
-					allowanceDecision = ROBO_DECISION_ALLOW
-				} else {
-					allowanceDecision = ROBO_DECISION_DENY
-				}
-				allowanceReason = reason + " (cached)"
-				useAllowance = true
-			}
-		}
-
-		// Add to request queue and notify TUI
-		pendingReq := GlobalRequestQueue.Add(remoteAddr, cmd, args, env, cwd)
-		if s.onRequest != nil {
-			if *debugMode {
-				fmt.Fprintf(os.Stderr, "[DEBUG] Sending onCommand callback for request #%d\n", pendingReq.ID)
-			}
-			s.onRequest(pendingReq.ID, remoteAddr, cmd, args, cwd)
-			if *debugMode {
-				fmt.Fprintf(os.Stderr, "[DEBUG] onCommand callback done for request #%d\n", pendingReq.ID)
-			}
-		}
-		gLogger.Log(3, "REQUEST #%d: client=%s cmd=%s args=%v", pendingReq.ID, remoteAddr, cmd, args)
 
 		// Make decision
 		decision, reason := makeDecision(cmd, args)
 
-		// Use cached allowance if available (overrides makeDecision)
-		if useAllowance {
-			decision = allowanceDecision
-			reason = allowanceReason
-			// Don't add to queue - respond directly
-			goto skipQueueAndRespond
-		}
-
-		gLogger.Log(3, "DECISION #%d: initial decision=%d reason=%s", pendingReq.ID, decision, reason)
-
-		// Auto-deny for testing
-		if *autoDeny && decision == ROBO_DECISION_ALLOW && reason == "unknown command" {
-			decision = ROBO_DECISION_DENY
-			reason = "auto-deny for testing"
-			pendingReq.Status = RequestDenied
-			pendingReq.Reason = reason
-			gLogger.Log(3, "DECISION #%d: auto-deny applied", pendingReq.ID)
-		}
-
-		// In TUI mode or debug mode, unknown commands wait for user decision
-		if (*tui || *debugTUI) && decision == ROBO_DECISION_ALLOW && reason == "unknown command" {
-			if *debugMode {
-				fmt.Fprintf(os.Stderr, "[DEBUG] Unknown command '%s', waiting for TUI decision (request #%d)...\n", cmd, pendingReq.ID)
+		// Send decision
+		if err := req.Decide(decision, reason, 0); err != nil {
+			if gLogger != nil {
+				gLogger.Log(1, "Error sending decision: %v", err)
 			}
+		}
 
-			if *debugTUI {
-				// In debug mode, wait with timeout using proper sync
-				type waitResult struct {
-					status RequestStatus
-					reason string
-				}
-				resultCh := make(chan waitResult, 1)
-				go func() {
-					pendingReq.DecisionCond.L.Lock()
-					for pendingReq.Status == RequestPending {
-						pendingReq.DecisionCond.Wait()
-					}
-					pendingReq.DecisionCond.L.Unlock()
-					resultCh <- waitResult{status: pendingReq.Status, reason: pendingReq.Reason}
-				}()
-				select {
-				case result := <-resultCh:
-					if result.status == RequestAllowed {
-						if *debugMode {
-							fmt.Fprintf(os.Stderr, "[DEBUG] TUI allowed request #%d\n", pendingReq.ID)
-						}
-						decision = ROBO_DECISION_ALLOW
-						reason = result.reason
-					} else if result.status == RequestDenied {
-						if *debugMode {
-							fmt.Fprintf(os.Stderr, "[DEBUG] TUI denied request #%d\n", pendingReq.ID)
-						}
-						decision = ROBO_DECISION_DENY
-						reason = result.reason
-					}
-				case <-time.After(30 * time.Second):
-					if *debugMode {
-						fmt.Fprintf(os.Stderr, "[DEBUG] Debug mode: auto-allowing request #%d\n", pendingReq.ID)
-					}
-					decision = ROBO_DECISION_ALLOW
-					reason = "debug auto-allow"
-				}
+		// Log decision
+		if *verbose || *veryVerbose {
+			if decision == DecisionDeny {
+				fmt.Printf("DENY: %s (%s)\n", cmd, reason)
 			} else {
-				// In real TUI mode, wait indefinitely for user decision using proper sync
-				pendingReq.DecisionCond.L.Lock()
-				for pendingReq.Status == RequestPending {
-					gLogger.Log(3, "WAIT #%d: waiting for TUI decision...", pendingReq.ID)
-					pendingReq.DecisionCond.Wait()
-				}
-				pendingReq.DecisionCond.L.Unlock()
-				gLogger.Log(3, "WAIT #%d: TUI responded with status=%d", pendingReq.ID, pendingReq.Status)
-				if pendingReq.Status == RequestAllowed {
-					decision = ROBO_DECISION_ALLOW
-					reason = pendingReq.Reason
-				} else if pendingReq.Status == RequestDenied {
-					decision = ROBO_DECISION_DENY
-					reason = pendingReq.Reason
-				}
-				gLogger.Log(3, "DECISION #%d: TUI final decision=%d reason=%s", pendingReq.ID, decision, reason)
+				fmt.Printf("ALLOW: %s\n", cmd)
 			}
 		}
+	}
 
-		// Cache the response for potential retries
-		GlobalRequestCache.Set(hdr.ClientID, hdr.RequestID, ServerUUID, decision, reason)
-		gLogger.Log(3, "CACHE SET: client=%s request=%x server=%x decision=%d",
-			remoteAddr, hdr.RequestID[:4], ServerUUID[:4], decision)
-
-		// Notify TUI if callback is set
-		if s.onCommand != nil {
-			var decisionStr string
-			switch decision {
-			case ROBO_DECISION_ALLOW:
-				decisionStr = "ALLOW"
-			case ROBO_DECISION_DENY:
-				decisionStr = "DENY"
-			default:
-				decisionStr = "UNKNOWN"
-			}
-			if *debugMode {
-				fmt.Fprintf(os.Stderr, "[DEBUG] Sending onCommand callback for request #%d\n", pendingReq.ID)
-			}
-			s.onCommand(pendingReq.ID, decisionStr, cmd, args, reason, cwd)
-			if *debugMode {
-				fmt.Fprintf(os.Stderr, "[DEBUG] onCommand callback done for request #%d\n", pendingReq.ID)
-			}
-		}
-
-	skipQueueAndRespond:
-
-		// For DENY responses, strip the duration reason - client only needs generic message
-		sendReason := reason
-		if decision == ROBO_DECISION_DENY {
-			// Strip duration suffixes like "once", "15m", "1h", "4h", "session", "always", "pattern"
-			switch reason {
-			case "once", "15m", "1h", "4h", "session", "always", "pattern":
-				sendReason = "unsafe command"
-			}
-		}
-
-		// Log based on mode
-		if *veryVerbose || *verbose || decision == ROBO_DECISION_DENY {
-			if decision == ROBO_DECISION_DENY {
-				fmt.Printf("DENY: %s %v - %s\n", cmd, args, reason)
-			} else if *veryVerbose || *verbose {
-				fmt.Printf("ALLOW: %s %v - %s\n", cmd, args, reason)
-			}
-		}
-
-		// Send response with ServerUUID for client caching
-		response := struct {
-			Magic     uint32
-			ServerID  [16]byte
-			ID        uint32
-			Decision  uint8
-			ReasonLen uint32
-		}{
-			Magic:     ROBO_MAGIC,
-			ServerID:  ServerUUID,
-			ID:        hdr.ID,
-			Decision:  decision,
-			ReasonLen: uint32(len(sendReason) + 1),
-		}
-
-		var buf bytes.Buffer
-		binary.Write(&buf, binary.LittleEndian, &response)
-		buf.WriteString(sendReason)
-		buf.WriteByte(0)
-
-		if _, err := conn.Write(buf.Bytes()); err != nil {
-			s.mu.Lock()
-			delete(s.connections, remoteAddr)
-			s.mu.Unlock()
-			return
-		}
-		gLogger.Log(3, "RESPONSE #%d: sent decision=%d reason=%s to %s", pendingReq.ID, decision, reason, remoteAddr)
+	fmt.Println("\nShutting down...")
+	if gLogger != nil {
+		gLogger.Log(2, "Server stopped")
 	}
 }
 
-func (s *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
-	// Wrapper to match interface
-	s.HandleConnection(conn)
-}
-
+// makeDecision determines if a command should be allowed or denied
 func makeDecision(cmd string, args []string) (uint8, string) {
-	// Strip syscall prefix if present (e.g., "execve:rm" -> "rm")
-	actualCmd := cmd
-	if idx := strings.LastIndex(cmd, ":"); idx >= 0 && idx < len(cmd)-1 {
-		actualCmd = cmd[idx+1:]
+	// Empty command
+	if cmd == "" {
+		return DecisionDeny, "empty command"
 	}
 
-	cmdLower := strings.ToLower(actualCmd)
+	// Check for dangerous patterns in arguments
+	for _, arg := range args {
+		if arg == "/etc/passwd" || arg == "/etc/shadow" || arg == "/etc/group" {
+			return DecisionDeny, "tries to modify system file"
+		}
+	}
 
-	// Read-only commands - always safe
+	// Convert to lowercase for matching
+	cmdLower := strings.ToLower(cmd)
+
+	// Read-only commands that are always allowed
 	readOnlyCmds := map[string]bool{
-		"ls": true, "cat": true, "head": true, "tail": true, "wc": true,
-		"uniq": true, "sort": true, "grep": true, "echo": true, "date": true,
-		"pwd": true, "hostname": true, "uname": true, "whoami": true, "id": true,
-		"who": true, "last": true, "printenv": true, "sleep": true, "expr": true,
-		"timeout": true, "true": true, "false": true, "null": true,
-		"basename": true, "dirname": true, "readlink": true, "uptime": true,
-		"which": true, "test": true, "[": true, "stat": true, "file": true,
+		"ls": true, "pwd": true, "cd": true, "echo": true, "cat": true,
+		"head": true, "tail": true, "less": true, "more": true, "grep": true,
 		"find": true, "xargs": true, "tr": true, "cut": true, "join": true,
 		"paste": true, "comm": true, "diff": true, "nl": true, "od": true,
 		"base64": true, "strings": true,
 	}
 
 	if readOnlyCmds[cmdLower] {
-		return ROBO_DECISION_ALLOW, "read-only command"
+		return DecisionAllow, "read-only command"
 	}
 
-	// Block dangerous commands - CRITICAL risk
+	// Block dangerous commands
 	dangerousCmds := map[string]bool{
 		"rm": true, "mv": true, "cp": true, "mkdir": true, "rmdir": true,
 		"ln": true, "chmod": true, "chown": true, "touch": true, "dd": true,
 	}
 
 	if dangerousCmds[cmdLower] {
-		return ROBO_DECISION_DENY, "dangerous command"
+		return DecisionDeny, "dangerous command"
 	}
 
-	// Check for write operations - HIGH risk
-	for _, arg := range args {
-		if arg == ">" || arg == ">>" || arg == "2>" || arg == "&>" {
-			return ROBO_DECISION_DENY, "write operation detected"
-		}
+	// Auto-deny unknown commands if flag is set
+	if *autoDeny {
+		return DecisionDeny, "unknown command"
 	}
 
-	// Unknown command - MEDIUM risk (requires user decision in TUI mode)
-	return ROBO_DECISION_ALLOW, "unknown command"
+	// Default: allow unknown commands (they'll fail at execution if unsafe)
+	return DecisionAllow, "unknown command"
 }
 
-// Risk level constants
-type RiskLevel int
+// SetDecisionWithAllowance is used by the TUI
+var pendingRequests = make(map[int]*RBoxRequest)
 
-const (
-	RiskLow RiskLevel = iota
-	RiskMedium
-	RiskHigh
-	RiskCritical
-)
-
-func (r RiskLevel) String() string {
-	switch r {
-	case RiskLow:
-		return "LOW"
-	case RiskMedium:
-		return "MEDIUM"
-	case RiskHigh:
-		return "HIGH"
-	case RiskCritical:
-		return "CRITICAL"
-	default:
-		return "UNKNOWN"
-	}
+// StoreRequest stores a request for later decision
+func StoreRequest(id int, req *RBoxRequest) {
+	pendingRequests[id] = req
 }
 
-func (r RiskLevel) Color() string {
-	switch r {
-	case RiskLow:
-		return "#50FA7B" // Green
-	case RiskMedium:
-		return "#FFB86C" // Orange
-	case RiskHigh:
-		return "#FF5555" // Red
-	case RiskCritical:
-		return "#FF0000" // Bright red
-	default:
-		return "#6272A4" // Gray
+// MakeDecision sends a decision for a pending request
+func MakeDecision(id int, allowed bool, reason string) error {
+	req, ok := pendingRequests[id]
+	if !ok {
+		return fmt.Errorf("request not found")
 	}
-}
-
-// Assess risk level of a command
-func assessRisk(cmd string, args []string) RiskLevel {
-	cmdLower := strings.ToLower(cmd)
-
-	// Critical risk: destructive commands
-	dangerousCmds := map[string]bool{
-		"rm": true, "mv": true, "cp": true, "mkdir": true, "rmdir": true,
-		"ln": true, "chmod": true, "chown": true, "touch": true, "dd": true,
+	
+	decision := DecisionAllow
+	if !allowed {
+		decision = DecisionDeny
 	}
-	if dangerousCmds[cmdLower] {
-		return RiskCritical
-	}
-
-	// High risk: write operations
-	for _, arg := range args {
-		if arg == ">" || arg == ">>" || arg == "2>" || arg == "&>" {
-			return RiskHigh
-		}
-	}
-
-	// Medium risk: unknown commands (could be anything)
-	readOnlyCmds := map[string]bool{
-		"ls": true, "cat": true, "head": true, "tail": true, "wc": true,
-		"uniq": true, "sort": true, "grep": true, "echo": true, "date": true,
-		"pwd": true, "hostname": true, "uname": true, "whoami": true, "id": true,
-		"who": true, "last": true, "printenv": true, "sleep": true, "expr": true,
-		"timeout": true, "true": true, "false": true, "null": true,
-		"basename": true, "dirname": true, "readlink": true, "uptime": true,
-		"which": true, "test": true, "[": true, "stat": true, "file": true,
-		"find": true, "xargs": true, "tr": true, "cut": true, "join": true,
-		"paste": true, "comm": true, "diff": true, "nl": true, "od": true,
-		"base64": true, "strings": true,
-	}
-	if !readOnlyCmds[cmdLower] {
-		return RiskMedium
-	}
-
-	// Low risk: known read-only commands
-	return RiskLow
-}
-
-func main() {
-	flag.Parse()
-
-	// Initialize verbose logger
-	gLogger = NewLogger(*logFile, *logLevel)
-	if gLogger != nil {
-		defer gLogger.Close()
-		gLogger.Log(2, "Server starting v%s, protocol v%d", ServerVersion, ProtocolVersion)
-	}
-
-	if *tui {
-		RunTUIMode()
-		return
-	}
-
-	server := NewServer()
-	if err := server.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Handle signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	select {
-	case <-sigChan:
-	case <-server.shutdown:
-	}
-
-	fmt.Println("\nShutting down...")
-	server.Stop()
-	gLogger.Log(2, "Server stopped")
-}
-
-// TemporaryAllowance stores commands that have been allowed for a duration
-type TemporaryAllowance struct {
-	Command   string
-	Decision  uint8
-	Reason    string
-	ExpiresAt time.Time
-}
-
-type AllowanceStore struct {
-	mu            sync.RWMutex
-	allowances    map[string]TemporaryAllowance
-	cleanupTicker *time.Ticker
-	stopCleanup   chan struct{}
-}
-
-var GlobalAllowanceStore *AllowanceStore
-
-func init() {
-	GlobalAllowanceStore = NewAllowanceStore()
-}
-
-func NewAllowanceStore() *AllowanceStore {
-	store := &AllowanceStore{
-		allowances:  make(map[string]TemporaryAllowance),
-		stopCleanup: make(chan struct{}),
-	}
-	store.cleanupTicker = time.NewTicker(1 * time.Minute)
-	go store.cleanupExpired()
-	return store
-}
-
-func (s *AllowanceStore) cleanupExpired() {
-	for {
-		select {
-		case <-s.cleanupTicker.C:
-			s.mu.Lock()
-			now := time.Now()
-			for cmd, allowance := range s.allowances {
-				if now.After(allowance.ExpiresAt) {
-					delete(s.allowances, cmd)
-					gLogger.Log(2, "ALLOWANCE EXPIRED: %s", cmd)
-				}
-			}
-			s.mu.Unlock()
-		case <-s.stopCleanup:
-			s.cleanupTicker.Stop()
-			return
-		}
-	}
-}
-
-func (s *AllowanceStore) Stop() {
-	close(s.stopCleanup)
-}
-
-func (s *AllowanceStore) AddAllowance(cmd string, args []string, decision uint8, reason string, duration time.Duration) {
-	fullCmd := s.buildCommandKey(cmd, args)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.allowances[fullCmd] = TemporaryAllowance{
-		Command:   fullCmd,
-		Decision:  decision,
-		Reason:    reason,
-		ExpiresAt: time.Now().Add(duration),
-	}
-
-	var decisionStr string
-	if decision == ROBO_DECISION_ALLOW {
-		decisionStr = "ALLOW"
-	} else {
-		decisionStr = "DENY"
-	}
-	gLogger.Log(2, "ALLOWANCE ADDED: %s -> %s (%s) expires at %s",
-		fullCmd, decisionStr, reason,
-		s.allowances[fullCmd].ExpiresAt.Format("15:04:05"))
-}
-
-func (s *AllowanceStore) CheckAllowance(cmd string, args []string) (bool, string, bool) {
-	fullCmd := s.buildCommandKey(cmd, args)
-
-	s.mu.RLock()
-	allowance, found := s.allowances[fullCmd]
-	s.mu.RUnlock()
-
-	if !found {
-		return false, "", false
-	}
-
-	if time.Now().After(allowance.ExpiresAt) {
-		s.mu.Lock()
-		delete(s.allowances, fullCmd)
-		s.mu.Unlock()
-		return false, "", false
-	}
-
-	return allowance.Decision == ROBO_DECISION_ALLOW, allowance.Reason, true
-}
-
-func (s *AllowanceStore) GetAllAllowances() []TemporaryAllowance {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	allowances := make([]TemporaryAllowance, 0, len(s.allowances))
-	for _, a := range s.allowances {
-		if time.Now().Before(a.ExpiresAt) {
-			allowances = append(allowances, a)
-		}
-	}
-	return allowances
-}
-
-func (s *AllowanceStore) buildCommandKey(cmd string, args []string) string {
-	if len(args) == 0 {
-		return strings.ToLower(cmd)
-	}
-	return strings.ToLower(cmd) + " " + strings.Join(args, " ")
-}
-
-func GetAllowanceDuration(reason string) time.Duration {
-	switch reason {
-	case "15m":
-		return 15 * time.Minute
-	case "1h":
-		return 1 * time.Hour
-	case "4h":
-		return 4 * time.Hour
-	case "session":
-		return 24 * time.Hour
-	case "always":
-		return 365 * 24 * time.Hour
-	default:
-		return 0
-	}
-}
-
-func SetDecisionWithAllowance(requestID int, allowed bool, reason string) {
-	var status RequestStatus
-	if allowed {
-		status = RequestAllowed
-	} else {
-		status = RequestDenied
-	}
-
-	GlobalRequestQueue.SetDecision(requestID, status, reason)
-
-	duration := GetAllowanceDuration(reason)
-	if duration > 0 {
-		req := GlobalRequestQueue.GetRequest(requestID)
-		if req != nil {
-			var decision uint8
-			if allowed {
-				decision = ROBO_DECISION_ALLOW
-			} else {
-				decision = ROBO_DECISION_DENY
-			}
-			GlobalAllowanceStore.AddAllowance(req.Command, req.Args, decision, reason, duration)
-		}
-	}
+	
+	err := req.Decide(decision, reason, 0)
+	delete(pendingRequests, id)
+	return err
 }

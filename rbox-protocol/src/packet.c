@@ -15,6 +15,7 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/eventfd.h>
 #include <time.h>
 #include <pthread.h>
 #include <signal.h>
@@ -731,23 +732,66 @@ static rbox_error_t validate_response(const char *packet, size_t len,
         return RBOX_ERR_INVALID;
     }
     
-    /* Minimum size check */
-    if (len < RBOX_RESPONSE_MIN_SIZE) {
-        return RBOX_ERR_TRUNCATED;
-    }
-    
-    /* Validate magic */
-    uint32_t magic = *(uint32_t *)(packet + RBOX_RESPONSE_OFFSET_MAGIC_V2);
+    /* Validate magic first */
+    uint32_t magic = *(uint32_t *)packet;
     if (magic != RBOX_MAGIC) {
         return RBOX_ERR_MAGIC;
     }
     
-    /* Get decision and reason length */
-    uint8_t decision = packet[RBOX_RESPONSE_OFFSET_DECISION_V2];
-    uint32_t reason_len = *(uint32_t *)(packet + RBOX_RESPONSE_OFFSET_REASON_LEN_V2);
+    /* Check for v5 format: version at offset 4 should be 5 */
+    /* v2 format: no version field, offset 4 is server_id[0] */
+    uint32_t version = *(uint32_t *)(packet + 4);
+    uint8_t decision;
+    uint32_t reason_len;
+    size_t reason_offset;
+    size_t request_id_offset;
+    
+    if (version == RBOX_VERSION) {
+        /* v5 format */
+        if (len < RBOX_HEADER_SIZE) {
+            return RBOX_ERR_TRUNCATED;
+        }
+        
+        decision = packet[64];  /* decision is at offset 64 in v5 response */
+        reason_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
+        reason_offset = RBOX_HEADER_SIZE;
+        request_id_offset = RBOX_HEADER_OFFSET_REQUEST_ID;
+        
+        /* Validate reason length */
+        if (reason_len > RBOX_RESPONSE_MAX_REASON) {
+            reason_len = RBOX_RESPONSE_MAX_REASON;
+        }
+        
+        /* Calculate expected total size */
+        size_t expected_len = RBOX_HEADER_SIZE + reason_len;
+        if (len < expected_len) {
+            return RBOX_ERR_TRUNCATED;
+        }
+    } else {
+        /* v2 format (legacy) */
+        if (len < RBOX_RESPONSE_MIN_SIZE) {
+            return RBOX_ERR_TRUNCATED;
+        }
+        
+        decision = packet[RBOX_RESPONSE_OFFSET_DECISION_V2];
+        reason_len = *(uint32_t *)(packet + RBOX_RESPONSE_OFFSET_REASON_LEN_V2);
+        reason_offset = RBOX_RESPONSE_OFFSET_REASON_V2;
+        request_id_offset = RBOX_RESPONSE_OFFSET_REQUEST_ID_V2;
+        
+        /* Validate reason length */
+        if (reason_len > RBOX_RESPONSE_MAX_REASON) {
+            reason_len = RBOX_RESPONSE_MAX_REASON;
+        }
+        
+        /* Calculate expected total size */
+        size_t expected_len = reason_offset + reason_len + 1;
+        if (len < expected_len) {
+            return RBOX_ERR_TRUNCATED;
+        }
+    }
     
     /* Validate request_id matches */
-    const uint8_t *resp_request_id = (const uint8_t *)(packet + RBOX_RESPONSE_OFFSET_REQUEST_ID_V2);
+    const uint8_t *resp_request_id = (const uint8_t *)(packet + request_id_offset);
     if (expected_request_id) {
         if (memcmp(resp_request_id, expected_request_id, 16) != 0) {
             /* Request ID mismatch - stale response from previous request */
@@ -755,29 +799,20 @@ static rbox_error_t validate_response(const char *packet, size_t len,
         }
     }
     
-    /* Sanity check reason length */
-    if (reason_len > RBOX_RESPONSE_MAX_REASON) {
-        reason_len = RBOX_RESPONSE_MAX_REASON;
-    }
-    
-    /* Calculate expected total size */
-    size_t expected_len = RBOX_RESPONSE_OFFSET_REASON_V2 + reason_len + 1;
-    if (len < expected_len) {
-        return RBOX_ERR_TRUNCATED;
-    }
-    
     /* Populate response */
     memset(out_response, 0, sizeof(*out_response));
     out_response->decision = decision;
     
     /* Copy reason string */
-    if (reason_len > 0 && len > RBOX_RESPONSE_OFFSET_REASON_V2) {
+    if (reason_len > 0 && len > reason_offset) {
         size_t copy_len = reason_len;
         if (copy_len >= sizeof(out_response->reason)) {
             copy_len = sizeof(out_response->reason) - 1;
         }
-        memcpy(out_response->reason, packet + RBOX_RESPONSE_OFFSET_REASON_V2, copy_len);
+        memcpy(out_response->reason, packet + reason_offset, copy_len);
         out_response->reason[copy_len] = '\0';
+    } else {
+        out_response->reason[0] = '\0';
     }
     
     /* Duration is not in v1 response - set to 0 (one-shot) */
@@ -869,45 +904,52 @@ static rbox_error_t build_request_with_id(char *packet, size_t *out_len,
     return RBOX_OK;
 }
 
-/* Read response with timeout
+/* Read response with timeout (v5 format)
  * Returns bytes read, 0 on close, -1 on error */
 static ssize_t read_response(int fd, char *buf, size_t max_len) {
-    /* First read the fixed header portion to get total size */
-    char header[RBOX_RESPONSE_MIN_SIZE];
+    /* First read the v5 header */
+    char header[RBOX_HEADER_SIZE];
     
-    ssize_t n = rbox_read(fd, header, RBOX_RESPONSE_MIN_SIZE);
+    ssize_t n = rbox_read(fd, header, RBOX_HEADER_SIZE);
     if (n <= 0) {
         return n;  /* Error or closed */
     }
     
-    if (n < (ssize_t)RBOX_RESPONSE_MIN_SIZE) {
+    if (n < (ssize_t)RBOX_HEADER_SIZE) {
         /* Truncated header */
         return -1;
     }
     
-    /* Get reason length */
-    uint32_t reason_len = *(uint32_t *)(header + RBOX_RESPONSE_OFFSET_REASON_LEN_V2);
+    /* Validate magic and version */
+    uint32_t magic = *(uint32_t *)header;
+    uint32_t version = *(uint32_t *)(header + 4);
+    if (magic != RBOX_MAGIC || version != RBOX_VERSION) {
+        return -1;  /* Invalid format */
+    }
+    
+    /* Get reason length from chunk_len field */
+    uint32_t reason_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
     if (reason_len > RBOX_RESPONSE_MAX_REASON) {
         reason_len = RBOX_RESPONSE_MAX_REASON;
     }
     
     /* Calculate total response size */
-    size_t total_len = RBOX_RESPONSE_OFFSET_REASON_V2 + reason_len + 1;
+    size_t total_len = RBOX_HEADER_SIZE + reason_len;
     if (total_len > max_len) {
         total_len = max_len;
     }
     
     /* Copy header to buffer */
-    memcpy(buf, header, RBOX_RESPONSE_MIN_SIZE);
+    memcpy(buf, header, RBOX_HEADER_SIZE);
     
     /* Read remaining */
-    if (total_len > RBOX_RESPONSE_MIN_SIZE) {
-        size_t remaining = total_len - RBOX_RESPONSE_MIN_SIZE;
-        n = rbox_read(fd, buf + RBOX_RESPONSE_MIN_SIZE, remaining);
+    if (total_len > RBOX_HEADER_SIZE) {
+        size_t remaining = total_len - RBOX_HEADER_SIZE;
+        n = rbox_read(fd, buf + RBOX_HEADER_SIZE, remaining);
         if (n < 0) {
             return -1;
         }
-        total_len = RBOX_RESPONSE_MIN_SIZE + n;
+        total_len = RBOX_HEADER_SIZE + n;
     }
     
     return (ssize_t)total_len;
@@ -1406,6 +1448,7 @@ struct rbox_server_request {
     int fd;                         /* Client socket fd */
     uint8_t client_id[16];          /* Client identifier */
     uint8_t request_id[16];         /* Request identifier */
+    rbox_server_handle_t *server;   /* Back-pointer to server */
     
     /* Request data (owned by request, freed on decide) */
     char *command_data;
@@ -1416,6 +1459,16 @@ struct rbox_server_request {
     struct rbox_server_request *next;
 };
 
+/* Decision queue for thread-safe decision passing */
+typedef struct rbox_server_decision {
+    rbox_server_request_t *request;
+    uint8_t decision;
+    char reason[256];
+    uint32_t duration;
+    int ready;  /* 1 if decision is ready */
+    struct rbox_server_decision *next;
+} rbox_server_decision_t;
+
 /* Server handle */
 struct rbox_server_handle {
     char socket_path[256];
@@ -1425,6 +1478,7 @@ struct rbox_server_handle {
     /* Background thread */
     pthread_t thread;
     volatile int running;          /* Flag to signal shutdown */
+    int wake_fd;                   /* eventfd to wake epoll thread */
     
     /* Request queue (mutex protected) */
     pthread_mutex_t mutex;
@@ -1432,6 +1486,13 @@ struct rbox_server_handle {
     rbox_server_request_t *request_queue;  /* Queue head */
     rbox_server_request_t *request_tail;   /* Queue tail */
     int request_count;             /* Number of pending requests */
+    
+    /* Decision queue (mutex protected) */
+    pthread_mutex_t decision_mutex;
+    pthread_cond_t decision_cond;
+    rbox_server_decision_t *decision_queue;  /* Queue head */
+    rbox_server_decision_t *decision_tail;  /* Queue tail */
+    int decision_count;
 };
 
 /* Free server request */
@@ -1555,7 +1616,45 @@ static void *server_thread_func(void *arg) {
         return NULL;
     }
     
+    /* Add wake eventfd to epoll */
+    if (server->wake_fd >= 0) {
+        struct epoll_event wev = {
+            .events = EPOLLIN,
+            .data.fd = server->wake_fd
+        };
+        epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, server->wake_fd, &wev);
+    }
+    
     while (server->running) {
+        /* First, check for pending decisions */
+        pthread_mutex_lock(&server->decision_mutex);
+        while (server->decision_queue && server->decision_queue->ready) {
+            rbox_server_decision_t *dec = server->decision_queue;
+            server->decision_queue = (void*)dec->next;
+            if (!server->decision_queue) {
+                server->decision_tail = NULL;
+            }
+            server->decision_count--;
+            pthread_mutex_unlock(&server->decision_mutex);
+            
+            /* Actually send the decision (now on epoll thread) */
+            rbox_server_request_t *req = dec->request;
+            if (req) {
+                size_t resp_len;
+                char *resp = build_response(req->client_id, req->request_id, dec->decision, dec->reason, dec->duration, &resp_len);
+                if (resp) {
+                    rbox_write(req->fd, resp, resp_len);
+                    free(resp);
+                }
+                close(req->fd);
+                server_request_free(req);
+            }
+            free(dec);
+            pthread_mutex_lock(&server->decision_mutex);
+        }
+        pthread_mutex_unlock(&server->decision_mutex);
+        
+        /* Then process epoll events */
         int n = epoll_wait(server->epoll_fd, events, 64, 100); /* 100ms timeout */
         
         if (n < 0) {
@@ -1587,6 +1686,14 @@ static void *server_thread_func(void *arg) {
                 continue;
             }
             
+            /* Check for wake event */
+            if (server->wake_fd >= 0 && ev->data.fd == server->wake_fd) {
+                /* Drain the eventfd */
+                uint64_t val;
+                read(server->wake_fd, &val, sizeof(val));
+                continue;
+            }
+            
             /* Client socket event */
             int cl_fd = ev->data.fd;
             
@@ -1615,6 +1722,7 @@ static void *server_thread_func(void *arg) {
                             req->fd = cl_fd;
                             memcpy(req->client_id, client_id, 16);
                             memcpy(req->request_id, request_id, 16);
+                            req->server = server;
                             req->command_data = cmd_data;
                             req->command_len = chunk_len;
                             
@@ -1731,31 +1839,41 @@ const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t
     return &req->parse;
 }
 
-/* Send decision to client */
+/* Queue decision to be sent by background thread (thread-safe) */
 rbox_error_t rbox_server_decide(rbox_server_request_t *req, uint8_t decision, const char *reason, uint32_t duration) {
     if (!req) return RBOX_ERR_INVALID;
     
-    /* Build response */
-    size_t resp_len;
-    char *resp = build_response(req->client_id, req->request_id, decision, reason, duration, &resp_len);
-    if (!resp) {
-        return RBOX_ERR_MEMORY;
+    /* Get server handle from request */
+    rbox_server_handle_t *server = req->server;
+    if (!server) return RBOX_ERR_INVALID;
+    
+    /* Allocate decision struct */
+    rbox_server_decision_t *dec = calloc(1, sizeof(*dec));
+    if (!dec) return RBOX_ERR_MEMORY;
+    
+    dec->request = req;
+    dec->decision = decision;
+    strncpy(dec->reason, reason ? reason : "", sizeof(dec->reason) - 1);
+    dec->duration = duration;
+    dec->ready = 1;
+    
+    /* Queue decision (thread-safe) */
+    pthread_mutex_lock(&server->decision_mutex);
+    if (server->decision_tail) {
+        server->decision_tail->next = (void*)dec;
+    } else {
+        server->decision_queue = dec;
     }
+    server->decision_tail = dec;
+    server->decision_count++;
+    pthread_cond_signal(&server->decision_cond);
+    pthread_mutex_unlock(&server->decision_mutex);
     
-    /* Send response */
-    ssize_t written = rbox_write(req->fd, resp, resp_len);
-    free(resp);
-    
-    if (written != (ssize_t)resp_len) {
-        return RBOX_ERR_IO;
+    /* Wake up epoll thread via eventfd */
+    if (server->wake_fd >= 0) {
+        uint64_t val = 1;
+        write(server->wake_fd, &val, sizeof(val));
     }
-    
-    /* Close connection */
-    close(req->fd);
-    req->fd = -1;
-    
-    /* Free request */
-    server_request_free(req);
     
     return RBOX_OK;
 }
@@ -1808,6 +1926,14 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     /* Initialize mutex/cond */
     pthread_mutex_init(&srv->mutex, NULL);
     pthread_cond_init(&srv->cond, NULL);
+    pthread_mutex_init(&srv->decision_mutex, NULL);
+    pthread_cond_init(&srv->decision_cond, NULL);
+    
+    /* Create eventfd for waking epoll thread */
+    srv->wake_fd = eventfd(0, EFD_NONBLOCK);
+    if (srv->wake_fd < 0) {
+        srv->wake_fd = -1;
+    }
     
     return srv;
 }

@@ -172,18 +172,22 @@ typedef struct rbox_server_handle rbox_server_handle_t;
 typedef struct rbox_server_request rbox_server_request_t;
 
 /* Create blocking server socket */
+//export rbox_server_handle_new
 rbox_server_handle_t *rbox_server_handle_new(const char *socket_path);
 
 /* Start listening */
+//export rbox_server_handle_listen
 rbox_error_t rbox_server_handle_listen(rbox_server_handle_t *server);
 
 /* Free blocking server */
+//export rbox_server_handle_free
 void rbox_server_handle_free(rbox_server_handle_t *server);
 
 /* Start background thread with epoll
  * After calling, background thread accepts connections
  * Returns immediately (non-blocking)
  */
+//export rbox_server_start
 rbox_error_t rbox_server_start(rbox_server_handle_t *server);
 
 /* 
@@ -197,18 +201,23 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server);
  * 
  * Returns: request handle, or NULL on error / shutdown
  */
+//export rbox_server_get_request
 rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server);
 
 /* Get command from request (zero-copy) */
+//export rbox_server_request_command
 const char *rbox_server_request_command(const rbox_server_request_t *req);
 
 /* Get argument by index */
+//export rbox_server_request_arg
 const char *rbox_server_request_arg(const rbox_server_request_t *req, int index);
 
 /* Get argument count */
+//export rbox_server_request_argc
 int rbox_server_request_argc(const rbox_server_request_t *req);
 
 /* Get shell parse result from request */
+//export rbox_server_request_parse
 const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t *req);
 
 /* 
@@ -217,6 +226,7 @@ const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t
  * Must be called after get_request() to send the decision back
  * and release the request buffers
  */
+//export rbox_server_decide
 rbox_error_t rbox_server_decide(rbox_server_request_t *req, 
     uint8_t decision, const char *reason, uint32_t duration);
 
@@ -226,6 +236,7 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
  * 
  * Note: Caller should have no active requests when calling stop
  */
+//export rbox_server_stop
 void rbox_server_stop(rbox_server_handle_t *server);
 
 /* Free server - must be called after stop() */
@@ -306,6 +317,7 @@ rbox_error_t rbox_server_stream_complete(rbox_stream_t *stream,
  * ============================================================ */
 
 /* Get error string */
+//export rbox_strerror
 const char *rbox_strerror(rbox_error_t err);
 
 /* Validate packet header */

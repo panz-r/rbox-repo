@@ -758,7 +758,7 @@ func (m *Model) executeDecision() {
 	baseCmd := extractBaseName(m.expandedCmd.Command)
 	fmt.Printf("Executing: %s %s for %s %s\n", decision, reason, baseCmd, m.expandedCmd.Args)
 
-	SetDecisionWithAllowance(m.expandedCmd.RequestID, allow, reason)
+	MakeDecision(m.expandedCmd.RequestID, allow, reason)
 
 	// Log decision to user_log.xml if marked
 	if m.logDecision {
@@ -1543,57 +1543,71 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 }
 
 func RunTUIMode() {
-	model := NewModel()
-
-	server := NewServer()
-	server.onConnect = func() {
-		select {
-		case model.eventChan <- Event{Type: EventConnect}:
-		default:
-		}
-	}
-	server.onCommand = func(requestID int, decision, cmd string, args []string, reason, cwd string) {
-		argsStr := strings.Join(args, " ")
-		select {
-		case model.eventChan <- Event{Type: EventCommand, RequestID: requestID, Decision: decision, Command: cmd, Args: argsStr, Reason: reason, Cwd: cwd}:
-		default:
-		}
-	}
-	server.onLog = func(log string) {
-		select {
-		case model.eventChan <- Event{Type: EventLog, Log: log}:
-		default:
-		}
-	}
-	server.onRequest = func(requestID int, clientID string, cmd string, args []string, cwd string) {
-		argsStr := strings.Join(args, " ")
-		select {
-		case model.eventChan <- Event{Type: EventRequest, RequestID: requestID, ClientID: clientID, Command: cmd, Args: argsStr, Cwd: cwd}:
-		default:
-		}
-	}
-
-	if err := server.Start(); err != nil {
+	// Start the C library server
+	server, err := NewRBoxServer(SocketPath)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-
+	
+	fmt.Printf("readonlybox-server v%s - TUI mode\n", ServerVersion)
+	fmt.Println("Listening on:", SocketPath)
+	os.Chmod(SocketPath, 0666)
+	
+	// Create model
+	model := NewModel()
+	
+	// Start TUI
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
-
+	
+	// Goroutine: forward events to TUI
 	go func() {
 		for event := range model.eventChan {
 			p.Send(event)
 		}
 	}()
-
+	
+	// Goroutine: handle requests and send events to TUI
+	go func() {
+		requestID := 0
+		for {
+			req := server.GetRequest()
+			if req == nil {
+				// Server stopped
+				close(model.eventChan)
+				break
+			}
+			
+			requestID++
+			
+			cmd := req.GetCommand()
+			argc := req.GetArgc()
+			args := make([]string, argc)
+			for i := 0; i < argc; i++ {
+				args[i] = req.GetArg(i)
+			}
+			argsStr := strings.Join(args, " ")
+			
+			// Store request for later decision
+			StoreRequest(requestID, req)
+			
+			// Send request event to TUI
+			select {
+			case model.eventChan <- Event{Type: EventRequest, RequestID: requestID, Command: cmd, Args: argsStr}:
+			default:
+			}
+		}
+	}()
+	
+	// Run TUI (blocks until exit)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
-
+	
 	fmt.Println("\nShutting down...")
-	server.Stop()
+	server.Free()
 }

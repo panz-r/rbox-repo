@@ -10,7 +10,6 @@ import (
 
 	"github.com/panz/openroutertest/internal/access"
 	"github.com/panz/openroutertest/internal/config"
-	"github.com/panz/openroutertest/internal/protocol"
 	"github.com/panz/openroutertest/internal/readonlybox"
 )
 
@@ -188,6 +187,8 @@ func handleRun() {
  * Usage: readonlybox --judge <command> [args...]
  * Output: ALLOW <reason> or DENY <reason> to stderr
  * Exit code: 0 for ALLOW, 9 for DENY, 1 for error
+ * 
+ * First checks local DFA for fast-path approval, then falls back to server
  */
 func handleJudge() {
 	if len(os.Args) < 3 {
@@ -197,6 +198,12 @@ func handleJudge() {
 
 	command := os.Args[2]
 	argsForServer := os.Args[3:]
+
+	/* Check local DFA first for fast-path */
+	if allowed, reason := CheckDFALocal(command, argsForServer); allowed {
+		fmt.Fprintf(os.Stderr, "ALLOW %s\n", reason)
+		os.Exit(0)
+	}
 
 	/* Ask server for decision */
 	client, err := newServerClient()
@@ -599,16 +606,16 @@ func handlePtrace() {
 /* Server client for --run validation */
 
 type serverClient struct {
-	conn *protocol.Client
+	conn *RBoxClient
 }
 
 func newServerClient() (*serverClient, error) {
 	// Check for socket path in environment variable first
 	socketPath := os.Getenv("READONLYBOX_SOCKET")
 	if socketPath == "" {
-		socketPath = protocol.DefaultSocketPath
+		socketPath = DefaultSocketPath
 	}
-	conn, err := protocol.Dial(socketPath, 0)
+	conn, err := NewRBoxClient(socketPath)
 	if err != nil {
 		return nil, err
 	}
@@ -618,33 +625,20 @@ func newServerClient() (*serverClient, error) {
 func (c *serverClient) close() {
 	if c.conn != nil {
 		c.conn.Close()
+		c.conn = nil
 	}
 }
 
 func (c *serverClient) requestDecision(command string, args []string) (bool, string, error) {
-	caller := os.Getenv("READONLYBOX_CALLER")
-	syscall := os.Getenv("READONLYBOX_SYSCALL")
-	cwd := os.Getenv("READONLYBOX_CWD")
-
-	fullCommand := command
-	if len(args) > 0 {
-		fullCommand = command + " " + strings.Join(args, " ")
-	}
-
-	augmentedCmd := fullCommand
-	if caller != "" && syscall != "" {
-		augmentedCmd = fmt.Sprintf("[%s:%s] %s", caller, syscall, fullCommand)
-	} else if caller != "" {
-		augmentedCmd = fmt.Sprintf("[%s] %s", caller, fullCommand)
-	}
-
-	resp, err := c.conn.SendRequest(augmentedCmd, nil, cwd)
+	// Send the command and args directly to the server
+	// The server handles security decisions based on the command
+	decision, reason, err := c.conn.SendRequest(command, args)
 	if err != nil {
 		return false, "", err
 	}
 
-	if resp.Decision == protocol.ROBO_DECISION_ALLOW {
-		return true, resp.Reason, nil
+	if decision == DecisionAllow {
+		return true, reason, nil
 	}
-	return false, resp.Reason, nil
+	return false, reason, nil
 }
