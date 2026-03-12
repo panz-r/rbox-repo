@@ -1,3 +1,14 @@
+[CATEGORIES]
+0: safe
+1: caution
+2: modifying
+3: dangerous
+4: network
+5: admin
+6: build
+7: container
+
+
 # Isolated patterns for EXPANDED QUANTIFIER EDGE CASES tests
 # These patterns must NOT include (a)? or (a)* which match empty string
 # because the tests expect "a+ should NOT match empty"

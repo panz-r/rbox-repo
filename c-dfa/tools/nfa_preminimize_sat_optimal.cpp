@@ -34,12 +34,13 @@ extern "C" {
 }
 
 #ifdef USE_CADICAL
+#include <functional>
 #include "cadical.hpp"
 #endif
 
 // Configuration
-#define MAX_CANDIDATES 200        // Maximum merge candidates for SAT
-#define MAX_SAT_TIME_MS 5000      // Timeout for SAT solver
+#define MAX_CANDIDATES 500        // Maximum merge candidates for SAT
+#define MAX_SAT_TIME_MS 10000     // Timeout for SAT solver
 
 // Verbose output
 static bool sat_opt_verbose = false;
@@ -215,47 +216,22 @@ static uint64_t compute_category_signature(const nfa_state_t* state) {
 
 /**
  * Check if two merge candidates conflict.
- * Two candidates conflict if:
- * 1. They share a state (that state can only merge once)
- * 2. OR merging one would invalidate the other's preconditions
+ *
+ * Two candidates conflict if they share ANY state.
+ * (a1, b1) and (a2, b2) conflict when {a1, b1} ∩ {a2, b2} ≠ ∅.
+ * A state can only participate in one merge (it either survives
+ * as the representative, or gets marked dead).
  */
 static bool candidates_conflict(
     const merge_candidate_t& c1,
     const merge_candidate_t& c2
 ) {
-    // Extract states involved
     int a1 = c1.state1, b1 = c1.state2;
     int a2 = c2.state1, b2 = c2.state2;
-    
-    // Check for overlapping states - a state can only be merged ONCE
-    // If state X appears in both candidates, they conflict
-    bool overlap = (a1 == a2 || a1 == b2 || b1 == a2 || b1 == b2);
-    
-    if (!overlap) {
-        // No overlap - check if merges would create inconsistent transitions
-        // This happens if merging (a1, b1) would change transitions that (a2, b2) depends on
-        
-        // For now, we conservatively allow non-overlapping merges
-        // A more sophisticated analysis could check for indirect conflicts
-        return false;
-    }
-    
-    // Overlapping states - this is a CONFLICT
-    // A state can only be merged once, so if it appears in two different
-    // merge candidates, we must choose one
-    
-    // Case 1: Same pair - no conflict (same merge)
-    if (a1 == a2 && b1 == b2) return false;
-    
-    // Case 2: Three or four different states involved
-    // This is a conflict - we must choose which merge to apply
-    // The SAT solver will find the optimal set
-    
-    // For three-state case: (a1, b1) and (a1, b2)
-    // State a1 can only merge with ONE of b1 or b2
-    // This is a HARD CONFLICT
-    
-    return true;
+
+    if (a1 == a2 && b1 == b2) return false;  // Same pair
+
+    return (a1 == a2 || a1 == b2 || b1 == a2 || b1 == b2);
 }
 
 /**
@@ -266,7 +242,7 @@ static std::map<int, std::set<int>> build_conflict_graph(
     const std::vector<merge_candidate_t>& candidates
 ) {
     std::map<int, std::set<int>> conflicts;
-    
+
     for (size_t i = 0; i < candidates.size(); i++) {
         for (size_t j = i + 1; j < candidates.size(); j++) {
             if (candidates_conflict(candidates[i], candidates[j])) {
@@ -275,7 +251,7 @@ static std::map<int, std::set<int>> build_conflict_graph(
             }
         }
     }
-    
+
     return conflicts;
 }
 
@@ -340,6 +316,297 @@ static std::set<int> solve_optimal_merges_greedy(
     VERBOSE_PRINT("Greedy selection selected %zu merges\n", result.size());
     
     return result;
+}
+
+// ============================================================================
+// TOTALIZER ENCODING FOR CARDINALITY CONSTRAINTS
+// ============================================================================
+
+/**
+ * Totalizer tree node. Represents a binary tree over the n input variables.
+ * Leaves are the inputs; internal nodes represent merged sub-counts.
+ *
+ * For each internal node u with children L, R and subtree size s_u:
+ *   bits[u][k] = true iff at least (k+1) of the subtree inputs are selected,
+ *                for k in [0, s_u-1].
+ *
+ * The single forward encoding rule (per k, a, b with a+b = k):
+ *   ¬bits[L][a] ∨ ¬bits[R][b] ∨ bits[u][k]
+ *
+ * This is the Bailleux-Boufkhad totalizer (2006): O(n log n) aux vars and
+ * O(n log n) clauses. For n=200: ~1,200 aux vars, ~3,000 aux clauses.
+ */
+struct TotNode {
+    bool is_leaf;
+    int input_idx;                        // Only for leaves: candidate index
+    int left;                             // Left child node index (-1 for leaves)
+    int right;                            // Right child node index (-1 for leaves)
+    int subtree_size;                     // Number of leaves in subtree
+    std::vector<int> bits;                // bits[k] = literal for "count >= k+1"
+    // bits[0] is implicit true, stored as 0 (unused slot for convenience)
+};
+
+/**
+ * Build a balanced binary totalizer tree over n input variables.
+ *
+ * Tree structure: 2n-1 total nodes. Leaves 0..n-1, internals n..2n-2.
+ * Root is at index 2n-2. Built bottom-up layer by layer.
+ *
+ * @param n       Number of input variables
+ * @param cand_var  Maps candidate index → SAT literal
+ * @param next_var  Running counter for fresh aux variable allocation (modified)
+ * @return        Vector of all tree nodes
+ */
+static std::vector<TotNode> build_totalizer_tree(
+    int n,
+    std::function<int(int)> cand_var,
+    int& next_var
+) {
+    int total_nodes = 2 * n - 1;
+    std::vector<TotNode> tree(total_nodes);
+
+    // Initialize leaves (indices 0 .. n-1)
+    for (int i = 0; i < n; i++) {
+        tree[i].is_leaf = true;
+        tree[i].input_idx = i;
+        tree[i].left = -1;
+        tree[i].right = -1;
+        tree[i].subtree_size = 1;
+        // bits[0] is implicit (always true). bits[1] = literal x_i.
+        tree[i].bits.resize(2, 0);
+        tree[i].bits[1] = cand_var(i);
+    }
+
+    // Build internal nodes bottom-up by levels
+    // Level 0: leaves are at node indices 0..n-1, count = n
+    // Each level halves the count, pairing adjacent nodes
+    std::vector<int> current_level(2 * n);
+    int current_count = 0;
+    for (int i = 0; i < n; i++) current_level[current_count++] = i;
+
+    int next_node = n;  // next free node index
+
+    while (current_count > 1) {
+        int next_count = 0;
+        std::vector<int> next_level(2 * n);
+
+        for (int i = 0; i + 1 < current_count; i += 2) {
+            int left_idx = current_level[i];
+            int right_idx = current_level[i + 1];
+            int u = next_node++;
+
+            tree[u].is_leaf = false;
+            tree[u].left = left_idx;
+            tree[u].right = right_idx;
+            tree[u].subtree_size = tree[left_idx].subtree_size + tree[right_idx].subtree_size;
+
+            // Allocate auxiliary variables for bits[1 .. subtree_size-1]
+            // bits[0] is implicit true (stored as 0)
+            tree[u].bits.resize(tree[u].subtree_size, 0);
+            for (int k = 1; k < tree[u].subtree_size; k++) {
+                tree[u].bits[k] = next_var++;
+            }
+
+            next_level[next_count++] = u;
+        }
+
+        // If odd count, carry last node to next level
+        if (current_count % 2 == 1) {
+            next_level[next_count++] = current_level[current_count - 1];
+        }
+
+        for (int i = 0; i < next_count; i++) current_level[i] = next_level[i];
+        current_count = next_count;
+    }
+
+    return tree;
+}
+
+/**
+ * Add the totalizer clauses for node u.
+ *
+ * Two sets of clauses per internal node (Bailleux-Boufkhad 2006):
+ *
+ * 1. Merging (forward):  ¬L[a] ∨ ¬R[b] ∨ U[k]    for each k = a+b
+ *    "If left has ≥a+1 and right has ≥b+1, then U has ≥k+1"
+ *
+ * 2. Decomposition (backward):
+ *    a) ¬U[k] ∨ L[k]     "If U has ≥k+1, left has ≥k+1"
+ *    b) ¬U[k] ∨ R[k]     "If U has ≥k+1, right has ≥k+1"
+ *    Only emitted for k values each child actually supports (k < subtree_size).
+ *
+ * bits[][0] is implicit true, so those terms are omitted from clauses.
+ */
+static void add_totalizer_clauses(CaDiCaL::Solver& solver, const std::vector<TotNode>& tree, int u) {
+    const TotNode& node = tree[u];
+    if (node.is_leaf) return;
+
+    const TotNode& L = tree[node.left];
+    const TotNode& R = tree[node.right];
+
+    // Merging clauses
+    for (int k = 1; k < node.subtree_size; k++) {
+        int a_lo = std::max(0, k - (R.subtree_size - 1));
+        int a_hi = std::min(k, L.subtree_size - 1);
+
+        for (int a = a_lo; a <= a_hi; a++) {
+            int b = k - a;
+
+            int terms[3];
+            int nt = 0;
+            if (a > 0) terms[nt++] = -L.bits[a];
+            if (b > 0) terms[nt++] = -R.bits[b];
+            terms[nt++] = node.bits[k];
+
+            for (int t = 0; t < nt; t++) solver.add(terms[t]);
+            solver.add(0);
+        }
+    }
+
+    // Decomposition clauses: U[k] → L[k]  and  U[k] → R[k]
+    for (int k = 1; k < node.subtree_size; k++) {
+        // ¬U[k] ∨ L[k]   (only if left subtree can represent count k+1)
+        if (k < L.subtree_size) {
+            solver.add(-node.bits[k]);
+            solver.add(L.bits[k]);
+            solver.add(0);
+        }
+
+        // ¬U[k] ∨ R[k]   (only if right subtree can represent count k+1)
+        if (k < R.subtree_size) {
+            solver.add(-node.bits[k]);
+            solver.add(R.bits[k]);
+            solver.add(0);
+        }
+    }
+}
+
+// ============================================================================
+// BOUNDED SAT MAXIMUM INDEPENDENT SET SOLVER
+// ============================================================================
+
+/**
+ * Bounded MaxIS SAT solver using totalizer cardinality encoding.
+ *
+ * Finds the maximum independent set in the conflict graph via iterative
+ * cardinality-bounded SAT with a single solver instance and incremental
+ * tightening.
+ *
+ * Bounded complexity for n ≤ MAX_CANDIDATES (200):
+ *   Totalizer structure:  O(n log n) aux vars  ≈ 1,200
+ *   Totalizer clauses:    O(n log n) aux cls   ≈ 3,000
+ *   Conflict clauses:     O(m) edges           ≤ 19,900
+ *   Card-tightening:      1 blocking clause per iteration
+ *   Iterations:           typically 1–5
+ *
+ * @param candidates  Merge candidates
+ * @param conflicts   Conflict graph (candidate index → set of conflicting indices)
+ * @return            Set of selected candidate indices (optimal or best found)
+ */
+static std::set<int> solve_optimal_merges_sat(
+    const std::vector<merge_candidate_t>& candidates,
+    const std::map<int, std::set<int>>& conflicts
+) {
+    int n = (int)candidates.size();
+    if (n == 0) return {};
+
+    // Greedy lower bound
+    std::set<int> greedy_result = solve_optimal_merges_greedy(candidates, conflicts);
+    int greedy_size = (int)greedy_result.size();
+
+    if (greedy_size == n) return greedy_result;
+    if (greedy_size == 0) return greedy_result;
+
+    // Count conflict edges for verbose
+    int total_conflicts = 0;
+    for (const auto& entry : conflicts) {
+        total_conflicts += (int)entry.second.size();
+    }
+    total_conflicts /= 2;
+
+    VERBOSE_PRINT("Bounded SAT MaxIS (totalizer): %d candidates, %d conflict edges, greedy lower bound = %d\n",
+                  n, total_conflicts, greedy_size);
+
+    // --- Build ONE solver instance ---
+    CaDiCaL::Solver solver;
+    solver.set("quiet", 1);
+
+    // Candidate variables: x_i → variable i+1 (1-indexed)
+    auto cand_var = [](int i) -> int { return i + 1; };
+    int next_var = n + 1;  // first aux variable after candidates
+
+    // Build totalizer tree (computes all aux variable IDs)
+    std::vector<TotNode> tree = build_totalizer_tree(n, cand_var, next_var);
+
+    // Pre-declare all variables before adding clauses
+    // CaDiCaL in factorcheck mode requires explicit variable declaration
+    solver.resize(next_var);
+
+    // Add totalizer clauses
+    for (int u = n; u < (int)tree.size(); u++) {
+        add_totalizer_clauses(solver, tree, u);
+    }
+
+    int root = (int)tree.size() - 1;
+
+    // Conflict clauses: for each edge (i,j), (¬x_i ∨ ¬x_j)
+    for (const auto& entry : conflicts) {
+        int i = entry.first;
+        for (int j : entry.second) {
+            if (j > i) {
+                solver.add(-cand_var(i));
+                solver.add(-cand_var(j));
+                solver.add(0);
+            }
+        }
+    }
+
+    std::set<int> best_result = greedy_result;
+    int best_size = greedy_size;
+
+    // --- Find maximum via iterative assumption-based solve ---
+    //
+    // Totalizer root bits[j] means "count >= j+1".
+    // For each target t from greedy_size+1 to n:
+    //   Assume root.bits[t] (force count >= t+1)
+    //   Solve — SAT means a model of size t+1 exists
+    //   Record the model and try t+1
+    //   UNSAT means no model of size t+1 exists → current best is optimal
+    //
+    // Assumptions are lightweight (incremental, no clause modification).
+    for (int t = greedy_size; t < n; t++) {
+        // Ask: can we find an independent set of size >= t+1?
+        solver.assume(tree[root].bits[t]);
+
+        int res = solver.solve();
+
+        if (res != 10) {
+            VERBOSE_PRINT("  UNSAT at count >= %d (optimal size = %d)\n", t + 1, best_size);
+            break;
+        }
+
+        std::set<int> selected;
+        for (int i = 0; i < n; i++) {
+            if (solver.val(cand_var(i)) > 0) {
+                selected.insert(i);
+            }
+        }
+
+        best_result = selected;
+        best_size = (int)selected.size();
+
+        VERBOSE_PRINT("  SAT at count >= %d (found %d merges)\n", t + 1, best_size);
+    }
+
+    if (best_size > greedy_size) {
+        VERBOSE_PRINT("  SAT improved: %d → %d merges\n", greedy_size, best_size);
+    } else {
+        VERBOSE_PRINT("  Greedy was optimal (%d merges)\n", greedy_size);
+    }
+
+    VERBOSE_PRINT("Bounded SAT result: %d merges (greedy was %d)\n", best_size, greedy_size);
+
+    return best_result;
 }
 
 #endif // USE_CADICAL
@@ -454,11 +721,18 @@ static int apply_selected_merges(
 // MAIN ENTRY POINT
 // ============================================================================
 
-// Forward declaration
+// Forward declarations
 static std::set<int> solve_optimal_merges_greedy(
     const std::vector<merge_candidate_t>& candidates,
     const std::map<int, std::set<int>>& conflicts
 );
+
+#ifdef USE_CADICAL
+static std::set<int> solve_optimal_merges_sat(
+    const std::vector<merge_candidate_t>& candidates,
+    const std::map<int, std::set<int>>& conflicts
+);
+#endif
 
 /**
  * Collect candidates within a state range [start_state, end_state).
@@ -691,8 +965,12 @@ static int process_window(
         return apply_selected_merges(nfa, state_count, dead_states, candidates, all);
     }
     
-    // Solve with greedy selection
+    // Solve with bounded SAT (falls back to greedy if CaDiCaL unavailable)
+#ifdef USE_CADICAL
+    std::set<int> selected = solve_optimal_merges_sat(candidates, conflicts);
+#else
     std::set<int> selected = solve_optimal_merges_greedy(candidates, conflicts);
+#endif
     
     if (selected.empty()) return 0;
     

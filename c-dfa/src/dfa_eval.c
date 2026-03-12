@@ -240,7 +240,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
         // 2. eos_target - patterns with explicit EOS transitions (like (X)?)
         uint8_t m = initial_cat;
         
-        if (initial->eos_target != 0 && initial->eos_target < current_dfa_size) {
+        if (initial->eos_target != 0 && initial->eos_target + sizeof(dfa_state_t) <= current_dfa_size) {
             const dfa_state_t* eos_state = (const dfa_state_t*)(raw_base + initial->eos_target);
             uint8_t eos_cat = (uint8_t)DFA_GET_CATEGORY_MASK(eos_state->flags);
             m |= eos_cat;  // UNION - both can match
@@ -381,7 +381,7 @@ bool dfa_evaluate_with_limit(const char* input, size_t length, dfa_result_t* res
             curr->flags, source_category, source_accepting, source_eos_target);
 #endif
     
-    if (curr->eos_target != 0 && curr->eos_target < current_dfa_size) {
+    if (curr->eos_target != 0 && curr->eos_target + sizeof(dfa_state_t) <= current_dfa_size) {
         const dfa_state_t* eos = (const dfa_state_t*)(raw_base + curr->eos_target);
         curr = eos;
 #if DFA_EVAL_DEBUG

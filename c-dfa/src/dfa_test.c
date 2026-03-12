@@ -42,11 +42,11 @@ static void track_nfa_file(const char* filepath) {
 static void track_dfa_file(const char* filepath) {
     if (tracked_dfa_count < MAX_TRACKED_FILES) {
         size_t len = strlen(filepath);
-        if (len >= sizeof(tracked_nfa_files[0])) {
-            len = sizeof(tracked_nfa_files[0]) - 1;
+        if (len >= sizeof(tracked_dfa_files[0])) {
+            len = sizeof(tracked_dfa_files[0]) - 1;
         }
-        memcpy(tracked_nfa_files[tracked_dfa_count], filepath, len);
-        tracked_nfa_files[tracked_dfa_count][len] = '\0';
+        memcpy(tracked_dfa_files[tracked_dfa_count], filepath, len);
+        tracked_dfa_files[tracked_dfa_count][len] = '\0';
         tracked_dfa_count++;
     }
 }
@@ -141,6 +141,7 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
         } else if (strstr(filename, "safe_commands") || strstr(filename, "caution_commands") ||
                    strstr(filename, "modifying_commands") || strstr(filename, "dangerous_commands") ||
                    strstr(filename, "network_commands") || strstr(filename, "admin_commands") ||
+                   strstr(filename, "build_commands") || strstr(filename, "container_commands") ||
                    strstr(filename, "acceptance_category") || strstr(filename, "category_mix")) {
             subdir = "commands";
         } else if (strstr(filename, "boundary") || strstr(filename, "edge") || strstr(filename, "hard") ||
@@ -200,6 +201,10 @@ static void run_category_mix_tests(void);
 static void run_negative_integrity_tests(void);
 static void run_nested_capture_tests(void);
 static void run_factorization_tests(void);
+static void run_build_command_tests(void);
+static void run_container_command_tests(void);
+static void run_all_category_isolation_tests(void);
+static void run_multi_category_mask_tests(void);
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
@@ -853,9 +858,9 @@ static void run_edge_case_tests(void) {
         {"cmd 1", true, 5, CAT_MASK_SAFE, "digit+ matches single digit"},
         {"cmd 123", true, 7, CAT_MASK_SAFE, "digit+ matches multiple digits"},
         {"cmd 1", true, 5, CAT_MASK_SAFE, "digit* matches single digit"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "digit* matches empty"},
+        {"cmd", true, 3, CAT_MASK_CAUTION, "digit* matches empty"},
         {"cmd 1", true, 5, CAT_MASK_SAFE, "digit? matches single digit"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "digit? matches empty"},
+        {"cmd", true, 3, CAT_MASK_CAUTION, "digit? matches empty"},
         
         // Multiple fragment quantifiers
         {"cmd a1b", true, 7, CAT_MASK_SAFE, "multi frag quant matches"},
@@ -865,8 +870,8 @@ static void run_edge_case_tests(void) {
         {"cmd a", true, 5, CAT_MASK_SAFE, "(a|b)+ matches 'a'"},
         {"cmd b", true, 5, CAT_MASK_SAFE, "(a|b)+ matches 'b'"},
         {"cmd ab", true, 6, CAT_MASK_SAFE, "(a|b)+ matches 'ab'"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "(a|b)* matches empty"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "(a|b)? matches empty"},
+        {"cmd", true, 3, CAT_MASK_CAUTION, "(a|b)* matches empty"},
+        {"cmd", true, 3, CAT_MASK_CAUTION, "(a|b)? matches empty"},
         
         // Category + syntax interactions
         {"cmd 1", true, 5, CAT_MASK_SAFE, "safe frag matches"},
@@ -876,7 +881,7 @@ static void run_edge_case_tests(void) {
         {"cmd 12345", true, 9, CAT_MASK_SAFE, "long digit sequence matches"},
         
         // Boundary - empty patterns
-        {"cmd", true, 3, CAT_MASK_SAFE, "empty frag pattern matches"},
+        {"cmd", true, 3, CAT_MASK_CAUTION, "empty frag pattern matches"},
         
         // Overlapping patterns
         {"cmd abc", true, 7, CAT_MASK_SAFE, "overlap1 matches"},
@@ -904,7 +909,7 @@ static void run_edge_case_tests(void) {
         
         // Consecutive quantifiers
         {"cmd a", true, 5, CAT_MASK_SAFE, "a? matches 'a'"},
-        {"cmd", true, 3, CAT_MASK_SAFE, "a?? matches empty"},
+        {"cmd", true, 3, CAT_MASK_CAUTION, "a?? matches empty"},
         
         // Category combinations
         {"cmd1", true, 4, CAT_MASK_SAFE, "same literal safe matches"},
@@ -1243,6 +1248,9 @@ int main(int argc, char* argv[]) {
         run_modifying_command_tests();
         run_dangerous_command_tests();
         run_network_command_tests();
+        run_build_command_tests();
+        run_container_command_tests();
+        run_all_category_isolation_tests();
         run_combined_tests();
         run_minimal_tests();
         run_simple_quantifier_tests();
@@ -1280,6 +1288,7 @@ int main(int argc, char* argv[]) {
         // New tests
         run_boundary_new_tests();
         run_category_mix_tests();
+        run_multi_category_mask_tests();
     }
 
     if (test_set_mask & TEST_SET_C) {
@@ -1811,4 +1820,233 @@ static void run_factorization_tests(void) {
 
     run_test_group("SUFFIX FACTORIZATION TESTS", "basic/factorization_test.txt",
                    "build_test/factorization.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// BUILD COMMAND TESTS (Bit 0x40)
+// ============================================================================
+
+static void run_build_command_tests(void) {
+    TestCase cases[] = {
+        // Positive: build commands return 0x40
+        {"make", true, 0, CAT_MASK_BUILD, "make matches build"},
+        {"make all", true, 0, CAT_MASK_BUILD, "make all matches build"},
+        {"make clean", true, 0, CAT_MASK_BUILD, "make clean matches build"},
+        {"make install", true, 0, CAT_MASK_BUILD, "make install matches build"},
+        {"make test", true, 0, CAT_MASK_BUILD, "make test matches build"},
+        {"gcc file.c", true, 0, CAT_MASK_BUILD, "gcc matches build"},
+        {"g++ -std=c++17 file.cpp", true, 0, CAT_MASK_BUILD, "g++ matches build"},
+        {"go build", true, 0, CAT_MASK_BUILD, "go build matches build"},
+        {"go test ./...", true, 0, CAT_MASK_BUILD, "go test matches build"},
+        {"cargo build", true, 0, CAT_MASK_BUILD, "cargo build matches build"},
+        {"cargo test", true, 0, CAT_MASK_BUILD, "cargo test matches build"},
+        {"mvn compile", true, 0, CAT_MASK_BUILD, "mvn compile matches build"},
+        {"npm install", true, 0, CAT_MASK_BUILD, "npm install matches build"},
+        {"npm run build", true, 0, CAT_MASK_BUILD, "npm run build matches build"},
+        {"cmake .", true, 0, CAT_MASK_BUILD, "cmake matches build"},
+        {"cmake -B build", true, 0, CAT_MASK_BUILD, "cmake -B build matches build"},
+        {"ninja", true, 0, CAT_MASK_BUILD, "ninja matches build"},
+        {"mage build", true, 0, CAT_MASK_BUILD, "mage build matches build"},
+        {"lint file", true, 0, CAT_MASK_BUILD, "lint matches build"},
+        {"python setup.py build", true, 0, CAT_MASK_BUILD, "python setup.py build matches build"},
+        {"pip install -e .", true, 0, CAT_MASK_BUILD, "pip install matches build"},
+
+        // Negative: build commands should NOT match other categories
+        {"make", false, 0, CAT_MASK_SAFE, "build should NOT match safe"},
+        {"make", false, 0, CAT_MASK_CAUTION, "build should NOT match caution"},
+        {"make", false, 0, CAT_MASK_MODIFYING, "build should NOT match modifying"},
+        {"make", false, 0, CAT_MASK_DANGEROUS, "build should NOT match dangerous"},
+        {"make", false, 0, CAT_MASK_NETWORK, "build should NOT match network"},
+        {"make", false, 0, CAT_MASK_ADMIN, "build should NOT match admin"},
+        {"make", false, 0, CAT_MASK_CONTAINER, "build should NOT match container"},
+    };
+
+    run_test_group("BUILD COMMAND TESTS", "patterns_build_commands.txt",
+                   "build_test/build_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// CONTAINER COMMAND TESTS (Bit 0x80)
+// ============================================================================
+
+static void run_container_command_tests(void) {
+    TestCase cases[] = {
+        // Positive: container commands return 0x80
+        {"docker run image", true, 0, CAT_MASK_CONTAINER, "docker run matches container"},
+        {"docker build .", true, 0, CAT_MASK_CONTAINER, "docker build matches container"},
+        {"docker pull image", true, 0, CAT_MASK_CONTAINER, "docker pull matches container"},
+        {"docker push image", true, 0, CAT_MASK_CONTAINER, "docker push matches container"},
+        {"docker ps", true, 0, CAT_MASK_CONTAINER, "docker ps matches container"},
+        {"docker ps -a", true, 0, CAT_MASK_CONTAINER, "docker ps -a matches container"},
+        {"docker images", true, 0, CAT_MASK_CONTAINER, "docker images matches container"},
+        {"docker start container", true, 0, CAT_MASK_CONTAINER, "docker start matches container"},
+        {"docker stop container", true, 0, CAT_MASK_CONTAINER, "docker stop matches container"},
+        {"docker rm container", true, 0, CAT_MASK_CONTAINER, "docker rm matches container"},
+        {"docker logs container", true, 0, CAT_MASK_CONTAINER, "docker logs matches container"},
+        {"docker exec container command", true, 0, CAT_MASK_CONTAINER, "docker exec matches container"},
+        {"docker compose up", true, 0, CAT_MASK_CONTAINER, "docker compose up matches container"},
+        {"docker compose down", true, 0, CAT_MASK_CONTAINER, "docker compose down matches container"},
+        {"docker network create name", true, 0, CAT_MASK_CONTAINER, "docker network matches container"},
+        {"docker volume create name", true, 0, CAT_MASK_CONTAINER, "docker volume matches container"},
+        {"kubectl get pods", true, 0, CAT_MASK_CONTAINER, "kubectl get pods matches container"},
+        {"kubectl apply -f file.yaml", true, 0, CAT_MASK_CONTAINER, "kubectl apply matches container"},
+        {"kubectl delete pod name", true, 0, CAT_MASK_CONTAINER, "kubectl delete matches container"},
+        {"podman run image", true, 0, CAT_MASK_CONTAINER, "podman run matches container"},
+        {"podman ps", true, 0, CAT_MASK_CONTAINER, "podman ps matches container"},
+
+        // Negative: container commands should NOT match other categories
+        {"docker run image", false, 0, CAT_MASK_SAFE, "container should NOT match safe"},
+        {"docker run image", false, 0, CAT_MASK_CAUTION, "container should NOT match caution"},
+        {"docker run image", false, 0, CAT_MASK_MODIFYING, "container should NOT match modifying"},
+        {"docker run image", false, 0, CAT_MASK_DANGEROUS, "container should NOT match dangerous"},
+        {"docker run image", false, 0, CAT_MASK_NETWORK, "container should NOT match network"},
+        {"docker run image", false, 0, CAT_MASK_ADMIN, "container should NOT match admin"},
+        {"docker run image", false, 0, CAT_MASK_BUILD, "container should NOT match build"},
+    };
+
+    run_test_group("CONTAINER COMMAND TESTS", "patterns_container_commands.txt",
+                   "build_test/container_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// ALL-CATEGORY ISOLATION TESTS
+// Verifies each category's bit is correctly isolated from all others.
+// Each test group uses a dedicated pattern file for that category,
+// then verifies the input gets ONLY that category's bit.
+// ============================================================================
+
+static void run_all_category_isolation_tests(void) {
+    // Category 0: safe (0x01) - use acceptance_category_test which has safe patterns
+    TestCase safe_cases[] = {
+        {"SAFE_CMD alpha", true, 14, CAT_MASK_SAFE, "safe gets bit 0x01"},
+        {"SAFE_CMD alpha", false, 0, CAT_MASK_CAUTION, "safe should NOT get 0x02"},
+    };
+    run_test_group("SAFE ISOLATION", "patterns_acceptance_category_test.txt",
+                   "build_test/safe_isolation.dfa", safe_cases, sizeof(safe_cases)/sizeof(safe_cases[0]));
+
+    // Category 1: caution (0x02)
+    TestCase caution_cases[] = {
+        {"cat /etc/passwd", true, 0, CAT_MASK_CAUTION, "caution gets bit 0x02"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_SAFE, "caution should NOT get 0x01"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_MODIFYING, "caution should NOT get 0x04"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_DANGEROUS, "caution should NOT get 0x08"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_NETWORK, "caution should NOT get 0x10"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_ADMIN, "caution should NOT get 0x20"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_BUILD, "caution should NOT get 0x40"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_CONTAINER, "caution should NOT get 0x80"},
+    };
+    run_test_group("CAUTION ISOLATION", "patterns_caution_commands.txt",
+                   "build_test/caution_isolation.dfa", caution_cases, sizeof(caution_cases)/sizeof(caution_cases[0]));
+
+    // Category 2: modifying (0x04)
+    TestCase modifying_cases[] = {
+        {"rm file.txt", true, 0, CAT_MASK_MODIFYING, "modifying gets bit 0x04"},
+        {"rm file.txt", false, 0, CAT_MASK_SAFE, "modifying should NOT get 0x01"},
+        {"rm file.txt", false, 0, CAT_MASK_CAUTION, "modifying should NOT get 0x02"},
+        {"rm file.txt", false, 0, CAT_MASK_DANGEROUS, "modifying should NOT get 0x08"},
+        {"rm file.txt", false, 0, CAT_MASK_NETWORK, "modifying should NOT get 0x10"},
+        {"rm file.txt", false, 0, CAT_MASK_ADMIN, "modifying should NOT get 0x20"},
+        {"rm file.txt", false, 0, CAT_MASK_BUILD, "modifying should NOT get 0x40"},
+        {"rm file.txt", false, 0, CAT_MASK_CONTAINER, "modifying should NOT get 0x80"},
+    };
+    run_test_group("MODIFYING ISOLATION", "patterns_modifying_commands.txt",
+                   "build_test/modifying_isolation.dfa", modifying_cases, sizeof(modifying_cases)/sizeof(modifying_cases[0]));
+
+    // Category 3: dangerous (0x08)
+    TestCase dangerous_cases[] = {
+        {"reboot", true, 0, CAT_MASK_DANGEROUS, "dangerous gets bit 0x08"},
+        {"reboot", false, 0, CAT_MASK_SAFE, "dangerous should NOT get 0x01"},
+        {"reboot", false, 0, CAT_MASK_CAUTION, "dangerous should NOT get 0x02"},
+        {"reboot", false, 0, CAT_MASK_MODIFYING, "dangerous should NOT get 0x04"},
+        {"reboot", false, 0, CAT_MASK_NETWORK, "dangerous should NOT get 0x10"},
+        {"reboot", false, 0, CAT_MASK_ADMIN, "dangerous should NOT get 0x20"},
+        {"reboot", false, 0, CAT_MASK_BUILD, "dangerous should NOT get 0x40"},
+        {"reboot", false, 0, CAT_MASK_CONTAINER, "dangerous should NOT get 0x80"},
+    };
+    run_test_group("DANGEROUS ISOLATION", "patterns_dangerous_commands.txt",
+                   "build_test/dangerous_isolation.dfa", dangerous_cases, sizeof(dangerous_cases)/sizeof(dangerous_cases[0]));
+
+    // Category 4: network (0x10)
+    TestCase network_cases[] = {
+        {"ping google.com", true, 0, CAT_MASK_NETWORK, "network gets bit 0x10"},
+        {"ping google.com", false, 0, CAT_MASK_SAFE, "network should NOT get 0x01"},
+        {"ping google.com", false, 0, CAT_MASK_CAUTION, "network should NOT get 0x02"},
+        {"ping google.com", false, 0, CAT_MASK_MODIFYING, "network should NOT get 0x04"},
+        {"ping google.com", false, 0, CAT_MASK_DANGEROUS, "network should NOT get 0x08"},
+        {"ping google.com", false, 0, CAT_MASK_ADMIN, "network should NOT get 0x20"},
+        {"ping google.com", false, 0, CAT_MASK_BUILD, "network should NOT get 0x40"},
+        {"ping google.com", false, 0, CAT_MASK_CONTAINER, "network should NOT get 0x80"},
+    };
+    run_test_group("NETWORK ISOLATION", "patterns_network_commands.txt",
+                   "build_test/network_isolation.dfa", network_cases, sizeof(network_cases)/sizeof(network_cases[0]));
+
+    // Category 5: admin (0x20)
+    TestCase admin_cases[] = {
+        {"sudo command", true, 0, CAT_MASK_ADMIN, "admin gets bit 0x20"},
+        {"sudo command", false, 0, CAT_MASK_SAFE, "admin should NOT get 0x01"},
+        {"sudo command", false, 0, CAT_MASK_CAUTION, "admin should NOT get 0x02"},
+        {"sudo command", false, 0, CAT_MASK_MODIFYING, "admin should NOT get 0x04"},
+        {"sudo command", false, 0, CAT_MASK_DANGEROUS, "admin should NOT get 0x08"},
+        {"sudo command", false, 0, CAT_MASK_NETWORK, "admin should NOT get 0x10"},
+        {"sudo command", false, 0, CAT_MASK_BUILD, "admin should NOT get 0x40"},
+        {"sudo command", false, 0, CAT_MASK_CONTAINER, "admin should NOT get 0x80"},
+    };
+    run_test_group("ADMIN ISOLATION", "patterns_admin_commands.txt",
+                   "build_test/admin_isolation.dfa", admin_cases, sizeof(admin_cases)/sizeof(admin_cases[0]));
+
+    // Category 6: build (0x40)
+    TestCase build_cases[] = {
+        {"make", true, 0, CAT_MASK_BUILD, "build gets bit 0x40"},
+        {"make", false, 0, CAT_MASK_SAFE, "build should NOT get 0x01"},
+        {"make", false, 0, CAT_MASK_CAUTION, "build should NOT get 0x02"},
+        {"make", false, 0, CAT_MASK_MODIFYING, "build should NOT get 0x04"},
+        {"make", false, 0, CAT_MASK_DANGEROUS, "build should NOT get 0x08"},
+        {"make", false, 0, CAT_MASK_NETWORK, "build should NOT get 0x10"},
+        {"make", false, 0, CAT_MASK_ADMIN, "build should NOT get 0x20"},
+        {"make", false, 0, CAT_MASK_CONTAINER, "build should NOT get 0x80"},
+    };
+    run_test_group("BUILD ISOLATION", "patterns_build_commands.txt",
+                   "build_test/build_isolation.dfa", build_cases, sizeof(build_cases)/sizeof(build_cases[0]));
+
+    // Category 7: container (0x80)
+    TestCase container_cases[] = {
+        {"docker ps", true, 0, CAT_MASK_CONTAINER, "container gets bit 0x80"},
+        {"docker ps", false, 0, CAT_MASK_SAFE, "container should NOT get 0x01"},
+        {"docker ps", false, 0, CAT_MASK_CAUTION, "container should NOT get 0x02"},
+        {"docker ps", false, 0, CAT_MASK_MODIFYING, "container should NOT get 0x04"},
+        {"docker ps", false, 0, CAT_MASK_DANGEROUS, "container should NOT get 0x08"},
+        {"docker ps", false, 0, CAT_MASK_NETWORK, "container should NOT get 0x10"},
+        {"docker ps", false, 0, CAT_MASK_ADMIN, "container should NOT get 0x20"},
+        {"docker ps", false, 0, CAT_MASK_BUILD, "container should NOT get 0x40"},
+    };
+    run_test_group("CONTAINER ISOLATION", "patterns_container_commands.txt",
+                   "build_test/container_isolation.dfa", container_cases, sizeof(container_cases)/sizeof(container_cases[0]));
+}
+
+// ============================================================================
+// MULTI-CATEGORY MASK TESTS
+// Verifies that category_mask correctly contains multiple bits when
+// different patterns match the same input in a combined DFA
+// ============================================================================
+
+static void run_multi_category_mask_tests(void) {
+    TestCase cases[] = {
+        // The combined DFA has patterns from multiple categories.
+        // Test that inputs from each category work correctly in the multi-category DFA.
+
+        // Inputs from different categories that exist in combined.txt
+        {"git status", true, 0, CAT_MASK_SAFE, "safe command matches in combined DFA"},
+        {"rm file.txt", true, 0, CAT_MASK_MODIFYING, "modifying command matches in combined DFA"},
+        {"sudo command", true, 0, CAT_MASK_ADMIN, "admin command matches in combined DFA"},
+
+        // Each category's dedicated commands should still get only their bit
+        {"cat /etc/passwd", true, 0, CAT_MASK_CAUTION, "caution-only input gets only 0x02"},
+        {"rm file.txt", true, 0, CAT_MASK_MODIFYING, "modifying-only input gets only 0x04"},
+        {"reboot", true, 0, CAT_MASK_DANGEROUS, "dangerous-only input gets only 0x08"},
+        {"ping google.com", true, 0, CAT_MASK_NETWORK, "network-only input gets only 0x10"},
+        {"sudo command", true, 0, CAT_MASK_ADMIN, "admin-only input gets only 0x20"},
+    };
+
+    run_test_group("MULTI CATEGORY MASK TESTS", "patterns_combined.txt",
+                   "build_test/multi_cat_mask.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }

@@ -20,38 +20,16 @@ IDENTIFIER "ReadOnlyBox Client Safe Commands v1.1"
 #
 # Define custom category names for bit positions 0-7.
 # Format: N: name (where N is 0-7)
-#
+# Maps category to bit positions (0-7) in the DFA category mask.
 # These map to the ACCEPTANCE_MAPPING bit positions:
 #   0: autoallow  - Auto-allow (execute without server query)
 #   1: autodeny   - Auto-deny (block without server query)
 #   2: alwaysask - Always ask (query server)
 
+[CATEGORIES]
 0: autoallow
 1: autodeny
 2: alwaysask
-
-# ============================================================================
-# ACCEPTANCE MAPPINGS
-# ============================================================================
-#
-# Maps category to bit positions (0-7) in the DFA category mask.
-# Bit 0 (0x01) = autoallow - client will auto-execute without server query
-# Bit 1 (0x02) = alwaysask - always query server (not yet used)
-#
-# Format: ACCEPTANCE_MAPPING [category:subcategory:ops] -> N
-
-# Auto-allow: all patterns with category "autoallow" get bit 0
-# Use wildcard mappings to match any subcategory/operations
-ACCEPTANCE_MAPPING [autoallow:*:*] -> 0
-ACCEPTANCE_MAPPING [autoallow::] -> 0
-
-# Auto-deny: for dangerous commands that should always be blocked
-ACCEPTANCE_MAPPING [autodeny:*:*] -> 1
-ACCEPTANCE_MAPPING [autodeny::] -> 1
-
-# Always-ask: for future use - always queries server
-ACCEPTANCE_MAPPING [alwaysask:*:*] -> 2
-ACCEPTANCE_MAPPING [alwaysask::] -> 2
 
 # ============================================================================
 # LINE FORMAT

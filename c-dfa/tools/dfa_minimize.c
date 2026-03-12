@@ -62,9 +62,9 @@ typedef struct {
     int total_edges;
 } inverse_graph_t;
 
-// Partition structure
+// Partition structure - dynamically allocated states
 typedef struct {
-    int states[MAX_STATES];
+    int* states;    // Dynamically allocated (one pool shared across partitions)
     int count;
 } partition_t;
 
@@ -86,6 +86,17 @@ static int compare_sort_entries(const void* a, const void* b) {
     const sort_entry_t* sb = (const sort_entry_t*)b;
     if (sa->p_id != sb->p_id) return sa->p_id - sb->p_id;
     return sa->state_id - sb->state_id;
+}
+
+// Free minimizer state and its dynamically allocated partition pools
+static void free_minimizer(minimizer_state_t* ms) {
+    if (ms) {
+        // Free each partition's states array
+        for (int i = 0; i < ms->partition_count; i++) {
+            free(ms->partitions[i].states);
+        }
+        free(ms);
+    }
 }
 
 // ============================================================================
@@ -306,18 +317,14 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
 }
 
 static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t* dfa, int state_count) {
-    // For delayed-output Mealy machine minimization:
-    // Start with coarse partitions based on acceptance status, category, AND reachable accepting patterns.
-    // This prevents states that can reach different patterns from being merged incorrectly.
-    // Hopcroft's refinement will split partitions based on transition structure.
     for (int i = 0; i < MAX_STATES; i++) ms->partition_map[i] = -1;
+    // Each partition gets its own malloc'd array. Total memory across all
+    // partitions is O(state_count) since each state belongs to exactly one partition.
     int group_count = 0;
     for (int s = 0; s < state_count; s++) {
         bool found = false;
         for (int g = 0; g < group_count; g++) {
             int rep = ms->partitions[g].states[0];
-            // Check flags (acceptance status and category) AND reachable accepting patterns
-            // This prevents incorrect merging of states from different patterns
             if (dfa[s].flags == dfa[rep].flags && 
                 dfa[s].reachable_accepting_patterns == dfa[rep].reachable_accepting_patterns) {
                 ms->partitions[g].states[ms->partitions[g].count++] = s;
@@ -326,6 +333,11 @@ static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t
             }
         }
         if (!found) {
+            // Allocate array for this partition (will hold at most state_count entries)
+            ms->partitions[group_count].states = alloc_or_abort(
+                malloc(state_count * sizeof(int)),
+                "Failed to allocate partition states"
+            );
             ms->partitions[group_count].states[0] = s;
             ms->partitions[group_count].count = 1;
             ms->partition_map[s] = group_count;
@@ -405,7 +417,6 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
     VERBOSE_PRINT("Initial partitions: %d (from %d states)\n", ms->partition_count, state_count);
     inverse_graph_t inv;
     if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
-    if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
     int head = 0, tail = 0;
     int worklist[MAX_STATES * 4];
     bool in_worklist[MAX_STATES] = {false};
@@ -439,7 +450,12 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
                 while (ge < count && sort_buf[ge].p_id == P) ge++;
                 int group_size = ge - gs;
                 if (group_size < ms->partitions[P].count) {
-                    int NewP = ms->partition_count++; ms->partitions[NewP].count = 0;
+                    int NewP = ms->partition_count++;
+                    ms->partitions[NewP].count = 0;
+                    ms->partitions[NewP].states = alloc_or_abort(
+                        malloc(ms->partitions[P].count * sizeof(int)),
+                        "Failed to allocate split partition"
+                    );
                     for (int i = 0; i < group_size; i++) { int s = sort_buf[gs + i].state_id; ms->partition_map[s] = NewP; ms->partitions[NewP].states[ms->partitions[NewP].count++] = s; }
                     int kept = 0;
                     for (int i = 0; i < ms->partitions[P].count; i++) { int s = ms->partitions[P].states[i]; if (ms->partition_map[s] == P) ms->partitions[P].states[kept++] = s; }
@@ -457,7 +473,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
 
     int new_count = build_minimized_dfa(dfa, ms, state_count);
     VERBOSE_PRINT("Minimized to %d states (from %d)\n", new_count, state_count);
-    free(ms); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
+    free_minimizer(ms); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
     
     // Apply cache-optimized layout
     layout_options_t layout_opts = get_default_layout_options();
@@ -497,7 +513,14 @@ int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
             }
             if (subgroup_count > 1) {
                 changed = true; int new_p_ids[MAX_STATES]; new_p_ids[0] = p;
-                for (int sg = 1; sg < subgroup_count; sg++) { new_p_ids[sg] = ms->partition_count++; ms->partitions[new_p_ids[sg]].count = 0; }
+                for (int sg = 1; sg < subgroup_count; sg++) { 
+                    new_p_ids[sg] = ms->partition_count++; 
+                    ms->partitions[new_p_ids[sg]].count = 0; 
+                    ms->partitions[new_p_ids[sg]].states = alloc_or_abort(
+                        malloc(ms->partitions[p].count * sizeof(int)),
+                        "Failed to allocate Moore split partition"
+                    );
+                }
                 int kept[MAX_STATES], kept_count = 0;
                 for (int i = 0; i < ms->partitions[p].count; i++) {
                     int s = ms->partitions[p].states[i]; int dest = new_p_ids[state_to_sg[i]];
@@ -510,7 +533,7 @@ int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
         if (!changed) break;
     }
     int new_count = build_minimized_dfa(dfa, ms, state_count);
-    free(ms); return new_count;
+    free_minimizer(ms); return new_count;
 }
 
 // ============================================================================

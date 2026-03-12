@@ -1,0 +1,128 @@
+[CATEGORIES]
+0: safe
+1: caution
+2: modifying
+3: dangerous
+4: network
+5: admin
+6: build
+7: container
+
+
+# Build Commands - Compilation, build systems, and package management
+
+# Make operations
+[build:make:compile] make
+[build:make:compile] make all
+[build:make:compile] make clean
+[build:make:compile] make install
+[build:make:compile] make test
+[build:make:compile] make -j4
+[build:make:compile] make -f Makefile
+[build:make:compile] mage build
+[build:make:compile] mage test
+[build:make:compile] mage clean
+
+# C/C++ compilation
+[build:cc:compile] gcc file.c
+[build:cc:compile] gcc -o output file.c
+[build:cc:compile] gcc -Wall -Wextra file.c
+[build:cc:compile] g\+\+ file.cpp
+[build:cc:compile] g\+\+ -o output file.cpp
+[build:cc:compile] g\+\+ -std=c\+\+17 file.cpp
+[build:cc:compile] clang file.c
+[build:cc:compile] clang\+\+ file.cpp
+[build:cc:compile] cc file.c
+[build:cc:compile] c\+\+ file.cpp
+
+# Build systems
+[build:cmake:configure] cmake .
+[build:cmake:configure] cmake ..
+[build:cmake:configure] cmake -B build
+[build:cmake:configure] cmake --build build
+[build:cmake:configure] cmake --build build --target install
+[build:cmake:configure] cmake --build build --target test
+[build:cmake:configure] meson setup build
+[build:cmake:configure] ninja
+[build:cmake:configure] ninja -C build
+[build:cmake:configure] bazel build target
+[build:cmake:configure] bazel test target
+[build:cmake:configure] buck build target
+[build:cmake:configure] buck2 build target
+
+# Go build
+[build:go:compile] go build
+[build:go:compile] go build ./...
+[build:go:compile] go install
+[build:go:compile] go test
+[build:go:compile] go test ./...
+[build:go:compile] go run file.go
+[build:go:compile] go mod tidy
+[build:go:compile] go mod download
+[build:go:compile] go generate
+[build:go:compile] go vet
+
+# Rust build
+[build:rust:compile] cargo build
+[build:go:compile] cargo build --release
+[build:rust:compile] cargo test
+[build:rust:compile] cargo run
+[build:rust:compile] cargo check
+[build:rust:compile] cargo clippy
+[build:rust:compile] cargo fmt
+[build:rust:compile] cargo clean
+[build:rust:compile] rustc file.rs
+[build:rust:compile] rustc -o output file.rs
+
+# Java build
+[build:java:compile] javac file.java
+[build:java:compile] javac -d build file.java
+[build:java:compile] java -jar app.jar
+[build:java:compile] mvn compile
+[build:java:compile] mvn test
+[build:java:compile] mvn package
+[build:java:compile] mvn install
+[build:java:compile] gradle build
+[build:java:compile] gradle test
+[build:java:compile] gradle assemble
+[build:java:compile] gradle check
+
+# Node.js / JavaScript build
+[build:node:compile] npm install
+[build:node:compile] npm run build
+[build:node:compile] npm test
+[build:node:compile] npm run compile
+[build:node:compile] yarn install
+[build:node:compile] yarn build
+[build:node:compile] yarn test
+[build:node:compile] pnpm install
+[build:node:compile] pnpm build
+[build:node:compile] tsc
+[build:node:compile] tsc --noEmit
+
+# Python build / packaging
+[build:python:package] python setup.py build
+[build:python:package] python setup.py install
+[build:python:package] python -m build
+[build:python:package] pip install -e .
+[build:python:package] pip wheel .
+[build:python:package] python -m pip install .
+[build:python:package] python -m pytest
+[build:python:package] tox
+
+# Lint and static analysis
+[build:lint:check] lint file
+[build:lint:check] shellcheck script.sh
+[build:lint:check] pylint file.py
+[build:lint:check] flake8 file.py
+[build:lint:check] eslint file.js
+[build:lint:check] golangci-lint run
+[build:lint:check] ruff check file.py
+[build:lint:check] mypy file.py
+
+# Linking
+[build:link:link] ld -o output object.o
+[build:link:link] ar rcs lib.a object.o
+[build:link:link] ranlib lib.a
+[build:link:link] strip binary
+[build:link:link] objcopy --strip-debug binary

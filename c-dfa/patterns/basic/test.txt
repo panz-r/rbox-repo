@@ -1,3 +1,14 @@
+[CATEGORIES]
+0: safe
+1: caution
+2: modifying
+3: dangerous
+4: network
+5: admin
+6: build
+7: container
+
+
 # Test patterns for the TEST PATTERN TESTS group
 # These patterns should match the test cases in run_test_pattern_tests()
 

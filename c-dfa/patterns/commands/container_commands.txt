@@ -1,0 +1,118 @@
+[CATEGORIES]
+0: safe
+1: caution
+2: modifying
+3: dangerous
+4: network
+5: admin
+6: build
+7: container
+
+
+# Container Commands - Docker, containerd, and container orchestration operations
+
+# Docker container operations
+[container:docker:run] docker run image
+[container:docker:run] docker run -d image
+[container:docker:run] docker run --name container image
+[container:docker:run] docker run -p port:port image
+[container:docker:run] docker run -v volume image
+[container:docker:run] docker run --privileged image
+[container:docker:run] docker run --network host image
+
+# Docker image operations
+[container:docker:image] docker build .
+[container:docker:image] docker build -t tag .
+[container:docker:image] docker pull image
+[container:docker:image] docker push image
+[container:docker:image] docker rmi image
+[container:docker:image] docker tag image tag
+[container:docker:image] docker save image
+[container:docker:image] docker load image
+
+# Docker container lifecycle
+[container:docker:lifecycle] docker start container
+[container:docker:lifecycle] docker stop container
+[container:docker:lifecycle] docker restart container
+[container:docker:lifecycle] docker kill container
+[container:docker:lifecycle] docker rm container
+[container:docker:lifecycle] docker rm -f container
+[container:docker:lifecycle] docker pause container
+[container:docker:lifecycle] docker unpause container
+
+# Docker inspection and management
+[container:docker:inspect] docker ps
+[container:docker:inspect] docker ps -a
+[container:docker:inspect] docker images
+[container:docker:inspect] docker logs container
+[container:docker:inspect] docker inspect container
+[container:docker:inspect] docker stats
+[container:docker:inspect] docker top container
+[container:docker:inspect] docker exec container command
+
+# Docker compose operations
+[container:compose:run] docker compose up
+[container:compose:run] docker compose up -d
+[container:compose:run] docker compose down
+[container:compose:run] docker compose build
+[container:compose:run] docker compose ps
+[container:compose:run] docker compose logs
+[container:compose:run] docker compose restart
+[container:compose:run] docker compose stop
+[container:compose:run] docker compose start
+
+# Docker network operations
+[container:docker:network] docker network create name
+[container:docker:network] docker network rm name
+[container:docker:network] docker network ls
+[container:docker:network] docker network inspect name
+[container:docker:network] docker network connect name container
+[container:docker:network] docker network disconnect name container
+
+# Docker volume operations
+[container:docker:volume] docker volume create name
+[container:docker:volume] docker volume rm name
+[container:docker:volume] docker volume ls
+[container:docker:volume] docker volume inspect name
+[container:docker:volume] docker volume prune
+
+# Kubernetes operations
+[container:k8s:run] kubectl apply -f file.yaml
+[container:k8s:run] kubectl create deployment name --image image
+[container:k8s:run] kubectl run name --image image
+[container:k8s:run] kubectl expose deployment name --port port
+[container:k8s:run] kubectl scale deployment name --replicas count
+[container:k8s:run] kubectl rollout restart deployment name
+[container:k8s:run] kubectl rollout status deployment name
+
+# Kubernetes pod operations
+[container:k8s:pod] kubectl get pods
+[container:k8s:pod] kubectl describe pod name
+[container:k8s:pod] kubectl logs pod
+[container:k8s:pod] kubectl exec pod -- command
+[container:k8s:pod] kubectl delete pod name
+[container:k8s:pod] kubectl port-forward pod port:port
+
+# Kubernetes service and ingress
+[container:k8s:service] kubectl get services
+[container:k8s:service] kubectl get ingress
+[container:k8s:service] kubectl describe service name
+[container:k8s:service] kubectl delete service name
+
+# Container registry operations
+[container:registry:push] docker login registry
+[container:registry:push] docker logout registry
+[container:registry:push] crane pull image
+[container:registry:push] crane push image
+[container:registry:push] skopeo copy image image
+
+# Podman operations
+[container:podman:run] podman run image
+[container:podman:run] podman build .
+[container:podman:run] podman ps
+[container:podman:run] podman images
+[container:podman:run] podman stop container
+[container:podman:run] podman rm container
+[container:podman:run] podman pod create name
+[container:podman:run] podman pod start name
+[container:podman:run] podman pod stop name

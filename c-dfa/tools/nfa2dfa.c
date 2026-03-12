@@ -150,30 +150,27 @@ static void collect_markers_from_states(const int* states, int state_count,
     *out_count = count;
 }
 
-// Comparator for sorting NFA states (for canonical ordering)
-static int compare_ints(const void* a, const void* b) {
-    return (*(int*)a - *(int*)b);
-}
 
-// Sort states canonically before hashing to enable better state merging
-// This ensures that equivalent NFA state sets get the same hash even if
-// they were discovered in different orders during NFA-to-DFA conversion
+// Insertion sort for small-to-medium integer arrays.
+// Faster than qsort for typical NFA state set sizes (10-1000 elements)
+// due to no function call overhead and better cache behavior.
 static void sort_states_canonical(int* states, int count) {
-    qsort(states, count, sizeof(int), compare_ints);
+    for (int i = 1; i < count; i++) {
+        int key = states[i];
+        int j = i - 1;
+        while (j >= 0 && states[j] > key) {
+            states[j + 1] = states[j];
+            j--;
+        }
+        states[j + 1] = key;
+    }
 }
 
-static uint32_t hash_nfa_set(const int* states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
-    // Sort states canonically for consistent hashing
-    int sorted[MAX_STATES];
-    int sorted_count = count;
-    for (int i = 0; i < count && i < MAX_STATES; i++) {
-        sorted[i] = states[i];
-    }
-    sort_states_canonical(sorted, sorted_count);
-    
+// Hash a canonical (sorted) NFA state set
+static uint32_t hash_nfa_set(const int* sorted_states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
     uint32_t hash = 2166136261u;
-    for (int i = 0; i < sorted_count; i++) {
-        hash ^= (uint32_t)sorted[i];
+    for (int i = 0; i < count; i++) {
+        hash ^= (uint32_t)sorted_states[i];
         hash *= 16777619;
     }
     hash ^= (uint32_t)mask << 24;
@@ -181,23 +178,15 @@ static uint32_t hash_nfa_set(const int* states, int count, uint8_t mask, uint16_
     return hash;
 }
 
-static int find_dfa_state_hashed(uint32_t hash, const int* states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
-    // Sort states canonically for comparison
-    int sorted[MAX_STATES];
-    int sorted_count = count;
-    for (int i = 0; i < count && i < MAX_STATES; i++) {
-        sorted[i] = states[i];
-    }
-    sort_states_canonical(sorted, sorted_count);
-    
+static int find_dfa_state_hashed(uint32_t hash, const int* sorted_states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
     int idx = dfa_hash_table[hash % DFA_HASH_SIZE];
     while (idx != -1) {
-        if (dfa[idx].nfa_state_count == sorted_count) {
+        if (dfa[idx].nfa_state_count == count) {
             uint8_t existing_mask = (uint8_t)(dfa[idx].flags >> 8);
             if (existing_mask == mask && dfa[idx].first_accepting_pattern == first_accepting_pattern) {
                 bool match = true;
-                for (int j = 0; j < sorted_count; j++) {
-                    if (dfa[idx].nfa_states[j] != sorted[j]) { match = false; break; }
+                for (int j = 0; j < count; j++) {
+                    if (dfa[idx].nfa_states[j] != sorted_states[j]) { match = false; break; }
                 }
                 if (match) return idx;
             }
@@ -437,17 +426,19 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
 }
 
 int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id, uint16_t first_accepting_pattern) {
-    //fprintf(stderr, "DEBUG dfa_add_state: START count=%d, dfa_state_count=%d\n", nfa_count, dfa_state_count);
-    uint32_t h = hash_nfa_set(nfa_states, nfa_count, category_mask, first_accepting_pattern);
-    //fprintf(stderr, "DEBUG dfa_add_state: hash done\n");
+    // Sort once for hash, lookup, and storage
+    int sorted[MAX_STATES];
+    for (int i = 0; i < nfa_count && i < MAX_STATES; i++) {
+        sorted[i] = nfa_states[i];
+    }
+    sort_states_canonical(sorted, nfa_count);
+
+    uint32_t h = hash_nfa_set(sorted, nfa_count, category_mask, first_accepting_pattern);
     int bucket = h % DFA_HASH_SIZE;
-    //fprintf(stderr, "DEBUG dfa_add_state: bucket=%d\n", bucket);
-    int existing = find_dfa_state_hashed(h, nfa_states, nfa_count, category_mask, first_accepting_pattern);
-    //fprintf(stderr, "DEBUG dfa_add_state: find done, existing=%d\n", existing);
+    int existing = find_dfa_state_hashed(h, sorted, nfa_count, category_mask, first_accepting_pattern);
     if (existing != -1) {
         return existing;
     }
-    //fprintf(stderr, "DEBUG dfa_add_state: adding new state\n");
     if (dfa_state_count >= MAX_STATES) { 
         FATAL("Max DFA states reached (%d states)", MAX_STATES);
         ERROR("  Split patterns into multiple files or simplify complex patterns");
@@ -457,21 +448,13 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     memset(&dfa[state], 0, sizeof(build_dfa_state_t));
     for (int i = 0; i < MAX_SYMBOLS; i++) dfa[state].transitions[i] = -1;
     dfa[state].flags = (category_mask << 8);
-    // Only mark as accepting if there's an actual accepting pattern
-    // Don't mark as accepting just because category_mask is non-zero
-    // (category comes from is_eos_target states which include fork states)
     if (accepting_pattern_id != 0 || first_accepting_pattern != 0) {
         dfa[state].flags |= DFA_STATE_ACCEPTING;
     }
     dfa[state].accepting_pattern_id = accepting_pattern_id;
     dfa[state].first_accepting_pattern = first_accepting_pattern;
     
-    // Store sorted states for canonical form (helps with later minimization)
-    int sorted[MAX_STATES];
-    for (int i = 0; i < nfa_count && i < MAX_STATES; i++) {
-        sorted[i] = nfa_states[i];
-    }
-    sort_states_canonical(sorted, nfa_count);
+    // Store pre-sorted states
     dfa[state].nfa_state_count = nfa_count;
     for (int i = 0; i < nfa_count && i < 8192; i++) dfa[state].nfa_states[i] = sorted[i];
     dfa_next_in_bucket[state] = dfa_hash_table[bucket];

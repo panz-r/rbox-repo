@@ -1,3 +1,14 @@
+[CATEGORIES]
+0: safe
+1: caution
+2: modifying
+3: dangerous
+4: network
+5: admin
+6: build
+7: container
+
+
 # Step patterns - progressive matching tests
 # step1: 'a' should match
 [safe:test:step1] a

@@ -271,6 +271,10 @@ static int last_element_sid = -1;
 // For + quantifier: tracks if we're inside a capture (capture ID to defer)
 static int8_t pending_capture_defer_id = -1;
 
+// For sequential fragment connections: tracks previous fragment's exit state
+// Must be file-scope (not static local) so it can be reset between patterns
+static int prev_frag_exit = -1;
+
 // Reset pattern state - clears pending markers and capture stack for a new pattern
 // This prevents cross-pattern contamination when states are shared
 static void reset_nfa_builder_pattern_state(void) {
@@ -278,6 +282,7 @@ static void reset_nfa_builder_pattern_state(void) {
     capture_stack_depth = 0;
     pending_capture_defer_id = -1;
     last_element_sid = -1;
+    prev_frag_exit = -1;
 }
 
 // ============================================================================
@@ -887,6 +892,10 @@ static void init_default_categories(void) {
     categories_defined = true;
 }
 
+// Forward declaration for add_category_mapping
+static void add_category_mapping(const char* category, const char* subcategory,
+                                  const char* operations, int acceptance_cat);
+
 // Parse category definition line (N: name format)
 static void parse_category_definition(const char* line) {
     // Format: "0: safe" or "1:caution" etc.
@@ -900,19 +909,28 @@ static void parse_category_definition(const char* line) {
     if (*name_start == '\0' || *name_start == '\n' || *name_start == '#') return;
 
     // Extract name (until whitespace, newline, or end)
+    char name[MAX_CATEGORY_NAME];
     int name_len = 0;
     const char* p = name_start;
     while (*p && *p != ' ' && *p != '\t' && *p != '\n' && *p != '#' && name_len < MAX_CATEGORY_NAME - 1) {
-        dynamic_category_names[idx][name_len++] = *p;
+        name[name_len++] = *p;
         p++;
     }
-    dynamic_category_names[idx][name_len] = '\0';
+    name[name_len] = '\0';
+
+    strncpy(dynamic_category_names[idx], name, MAX_CATEGORY_NAME - 1);
+    dynamic_category_names[idx][MAX_CATEGORY_NAME - 1] = '\0';
 
     if (idx >= dynamic_category_count) {
         dynamic_category_count = idx + 1;
     }
 
     categories_defined = true;
+
+    // CRITICAL: Also add an ACCEPTANCE_MAPPING entry so that
+    // lookup_acceptance_category() can find this category.
+    // The [CATEGORIES] section defines both the name AND the mapping.
+    add_category_mapping(name, "", "", idx);
 
     DEBUG_PRINT("Category %d: '%s'\n", idx, dynamic_category_names[idx]);
 }
@@ -1312,9 +1330,7 @@ static int parse_rdp_element(const char* pattern, int* pos, int start_state) {
 
                             // For fragments in sequence like ((frag1))((frag2)):
                             // Connect from previous fragment's EXIT to this fragment's anchor
-                            // This allows continuation after completing the first fragment
-                            static int prev_frag_exit = -1;
-
+                            // prev_frag_exit is file-scope, reset between patterns
                             if (prev_frag_exit >= 0) {
                                 int epsilon_sid = VSYM_EPS;
                                 if (epsilon_sid != -1) {
@@ -2358,23 +2374,28 @@ void parse_advanced_pattern(const char* line) {
         char* end = strchr(line, ']');
         if (end != NULL) {
             char category_section[256];
-            strncpy(category_section, line, end - line);
-            category_section[end - line] = '\0';
+            size_t cat_sec_len = end - line;
+            if (cat_sec_len >= sizeof(category_section)) cat_sec_len = sizeof(category_section) - 1;
+            strncpy(category_section, line, cat_sec_len);
+            category_section[cat_sec_len] = '\0';
 
             // Parse category:subcategory:operations
             char* tok = strtok(category_section, ":");
             if (tok != NULL) {
                 strncpy(category, tok, sizeof(category) - 1);
+                category[sizeof(category) - 1] = '\0';
             }
 
             tok = strtok(NULL, ":");
             if (tok != NULL) {
                 strncpy(subcategory, tok, sizeof(subcategory) - 1);
+                subcategory[sizeof(subcategory) - 1] = '\0';
             }
 
             tok = strtok(NULL, ":");
             if (tok != NULL) {
                 strncpy(operations, tok, sizeof(operations) - 1);
+                operations[sizeof(operations) - 1] = '\0';
             }
 
             line = end + 1;
@@ -2433,6 +2454,7 @@ void parse_advanced_pattern(const char* line) {
         arrow += 2; // Skip "->"
         while (*arrow == ' ' || *arrow == '\t') arrow++;
         strncpy(action, arrow, sizeof(action) - 1);
+        action[sizeof(action) - 1] = '\0';
 
         // Trim action
         end = action + strlen(action) - 1;
@@ -2486,6 +2508,33 @@ typedef struct {
 
 static category_mapping_t category_mappings[MAX_CATEGORY_MAPPINGS];
 static int category_mapping_count = 0;
+
+// Add a category mapping entry
+static void add_category_mapping(const char* category, const char* subcategory,
+                                  const char* operations, int acceptance_cat) {
+    // Check if this exact mapping already exists (avoid duplicates)
+    for (int i = 0; i < category_mapping_count; i++) {
+        if (strcmp(category_mappings[i].category, category) == 0 &&
+            strcmp(category_mappings[i].subcategory, subcategory) == 0 &&
+            strcmp(category_mappings[i].operations, operations) == 0) {
+            // Update existing mapping
+            category_mappings[i].acceptance_category = acceptance_cat;
+            return;
+        }
+    }
+
+    // Add new mapping
+    if (category_mapping_count < MAX_CATEGORY_MAPPINGS) {
+        category_mapping_t* mapping = &category_mappings[category_mapping_count++];
+        strncpy(mapping->category, category, sizeof(mapping->category));
+        mapping->category[sizeof(mapping->category) - 1] = '\0';
+        strncpy(mapping->subcategory, subcategory, sizeof(mapping->subcategory));
+        mapping->subcategory[sizeof(mapping->subcategory) - 1] = '\0';
+        strncpy(mapping->operations, operations, sizeof(mapping->operations));
+        mapping->operations[sizeof(mapping->operations) - 1] = '\0';
+        mapping->acceptance_category = acceptance_cat;
+    }
+}
 
 // Parse #ACCEPTANCE_MAPPING directive
 // Syntax: #ACCEPTANCE_MAPPING [category:subcategory:operations] -> N
@@ -2546,17 +2595,9 @@ static void parse_acceptance_mapping(const char* line) {
     }
 
     // Store the mapping
-    if (category_mapping_count < MAX_CATEGORY_MAPPINGS) {
-        category_mapping_t* mapping = &category_mappings[category_mapping_count++];
-        strncpy(mapping->category, category, sizeof(mapping->category));
-        strncpy(mapping->subcategory, subcategory, sizeof(mapping->subcategory));
-        strncpy(mapping->operations, operations, sizeof(mapping->operations));
-        mapping->acceptance_category = acceptance_cat;
-        VERBOSE_PRINT("ACCEPTANCE_MAPPING: [%s:%s:%s] -> %d\n",
-                category, subcategory, operations, acceptance_cat);
-    } else {
-        WARNING("Too many category mappings, ignoring: %s", line);
-    }
+    add_category_mapping(category, subcategory, operations, acceptance_cat);
+    VERBOSE_PRINT("ACCEPTANCE_MAPPING: [%s:%s:%s] -> %d\n",
+            category, subcategory, operations, acceptance_cat);
 }
 
 // Look up acceptance category for a given category:subcategory:operations

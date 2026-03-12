@@ -1,3 +1,14 @@
+[CATEGORIES]
+0: safe
+1: caution
+2: modifying
+3: dangerous
+4: network
+5: admin
+6: build
+7: container
+
+
 # Isolated Alternation Test Patterns
 # This file contains ONLY the patterns needed for the ALTERNATION TESTS
 # No overlapping patterns that would cause unexpected matches
