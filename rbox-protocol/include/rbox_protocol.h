@@ -216,9 +216,21 @@ const char *rbox_server_request_arg(const rbox_server_request_t *req, int index)
 //export rbox_server_request_argc
 int rbox_server_request_argc(const rbox_server_request_t *req);
 
+/* Check if this is a stop request (server is shutting down) */
+//export rbox_server_request_is_stop
+int rbox_server_request_is_stop(const rbox_server_request_t *req);
+
 /* Get shell parse result from request */
 //export rbox_server_request_parse
 const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t *req);
+
+/* Get caller from request (null-terminated, from v7 protocol) */
+//export rbox_server_request_caller
+const char *rbox_server_request_caller(const rbox_server_request_t *req);
+
+/* Get syscall from request (null-terminated, from v7 protocol) */
+//export rbox_server_request_syscall
+const char *rbox_server_request_syscall(const rbox_server_request_t *req);
 
 /* 
  * Send decision to client and free request buffers
@@ -326,6 +338,9 @@ rbox_error_t rbox_header_validate(const rbox_header_t *header);
 /* Calculate header checksum */
 uint32_t rbox_calculate_checksum(const void *data, size_t len);
 
+/* 64-bit command hash - two-step hash for time-limited decisions */
+uint64_t rbox_hash64(const char *str, size_t len);
+
 /* Initialize library (call once at startup) */
 void rbox_init(void);
 
@@ -359,6 +374,7 @@ void rbox_init(void);
  */
 rbox_error_t rbox_blocking_request(const char *socket_path,
     const char *command, int argc, const char **argv,
+    const char *caller, const char *syscall,
     rbox_response_t *out_response,
     uint32_t base_delay_ms, uint32_t max_retries);
 
@@ -434,9 +450,12 @@ rbox_error_t rbox_session_error(const rbox_session_t *session);
  * Returns:
  *   RBOX_OK: request sent, state -> WAITING
  *   RBOX_ERR_INVALID: wrong state or null params
- *   RBOX_ERR_IO: send failed (state -> FAILED) */
+ *   RBOX_ERR_IO: send failed (state -> FAILED)
+ * 
+ * caller and syscall: optional caller identification (truncated to 15 chars each) */
 rbox_error_t rbox_session_send_request(rbox_session_t *session,
-    const char *command, int argc, const char **argv);
+    const char *command, int argc, const char **argv,
+    const char *caller, const char *syscall);
 
 /* Session heartbeat - call when fd is ready
  * 

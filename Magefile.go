@@ -189,6 +189,28 @@ func BuildBinaries() error {
 	wd, _ := os.Getwd()
 	os.Setenv("CGO_ENABLED", "1")
 	
+	// Force rebuild if DFA .c file is newer than .so
+	dfaC := filepath.Join(wd, "internal/client/readonlybox_dfa.c")
+	dfaSo := filepath.Join(wd, "bin/libreadonlybox_client.so")
+	dfaStat, err := os.Stat(dfaC)
+	if err == nil {
+		if soStat, err := os.Stat(dfaSo); err != nil || dfaStat.ModTime().After(soStat.ModTime()) {
+			// DFA is newer, force rebuild of .so
+			os.RemoveAll(dfaSo)
+		}
+	}
+	
+	// Force rebuild if .so is newer than binary
+	soStat, err := os.Stat(dfaSo)
+	if err == nil {
+		for _, bin := range []string{"readonlybox", "readonlybox-server"} {
+			binPath := filepath.Join(wd, "bin", bin)
+			if binStat, err := os.Stat(binPath); err == nil && soStat.ModTime().After(binStat.ModTime()) {
+				os.RemoveAll(binPath)
+			}
+		}
+	}
+	
 	// readonlybox (dynamic linking with C library)
 	cmd := exec.Command("go", "build", "-tags", "cgo",
 		"-o", filepath.Join(wd, "bin", "readonlybox"))

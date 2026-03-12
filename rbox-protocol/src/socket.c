@@ -22,7 +22,13 @@
 #include "socket.h"
 
 /* Default timeout for operations (milliseconds) */
-#define RBOX_DEFAULT_TIMEOUT 5000
+/* Timeout for socket operations (milliseconds) */
+/* -1 means infinite (wait forever for server response) */
+#define RBOX_DEFAULT_TIMEOUT -1
+
+/* Timeout for connection attempts (milliseconds) */
+/* This is used during connect() to detect failures and trigger retry */
+#define RBOX_CONNECT_TIMEOUT 5000
 
 /* Client structure */
 struct rbox_client {
@@ -30,6 +36,8 @@ struct rbox_client {
     char socket_path[256];
     int closed;           /* Peer has closed */
     int error;           /* Last error code */
+    int timeout_ms;      /* Timeout for operations (-1 = infinite) */
+    int connected;       /* 1 if connected, 0 if still connecting */
 };
 
 /* Server structure */
@@ -102,7 +110,7 @@ rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_
         } else if (ret < 0) {
             /* Connect in progress - wait for it */
             struct pollfd pfd = { .fd = client->fd, .events = POLLOUT };
-            ret = poll(&pfd, 1, RBOX_DEFAULT_TIMEOUT);
+            ret = poll(&pfd, 1, RBOX_CONNECT_TIMEOUT);
             
             if (ret <= 0) {
                 /* Timeout or error */

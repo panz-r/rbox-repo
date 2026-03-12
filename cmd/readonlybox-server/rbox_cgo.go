@@ -127,6 +127,38 @@ func (r *RBoxRequest) GetArgc() int {
 	return int(C.rbox_server_request_argc(r.cRequest))
 }
 
+// IsStop returns true if this is a stop request (signals server should shut down)
+func (r *RBoxRequest) IsStop() bool {
+	if r.cRequest == nil {
+		return false
+	}
+	return C.rbox_server_request_is_stop(r.cRequest) == 1
+}
+
+// GetCaller returns the caller from the request (from v7 protocol)
+func (r *RBoxRequest) GetCaller() string {
+	if r.cRequest == nil {
+		return ""
+	}
+	caller := C.rbox_server_request_caller(r.cRequest)
+	if caller == nil {
+		return ""
+	}
+	return C.GoString(caller)
+}
+
+// GetSyscall returns the syscall from the request (from v7 protocol)
+func (r *RBoxRequest) GetSyscall() string {
+	if r.cRequest == nil {
+		return ""
+	}
+	syscall := C.rbox_server_request_syscall(r.cRequest)
+	if syscall == nil {
+		return ""
+	}
+	return C.GoString(syscall)
+}
+
 // Decide sends the decision to the client
 func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32) error {
 	if r.cRequest == nil {

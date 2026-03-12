@@ -251,7 +251,7 @@ static void *server_drops_response(void *arg) {
 static int do_request(const char *path, const char *cmd, int argc, const char **args, 
                       uint8_t *decision, char *errmsg, size_t errlen) {
     rbox_response_t response;
-    rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, &response, 0, 0);
+    rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, NULL, NULL, &response, 0, 0);
     
     if (err != RBOX_OK) {
         if (errmsg && errlen > 0) {
@@ -271,7 +271,7 @@ static int do_request_retry(const char *path, const char *cmd, int argc, const c
                             uint8_t *decision, char *errmsg, size_t errlen,
                             uint32_t base_delay_ms, uint32_t max_retries) {
     rbox_response_t response;
-    rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, &response, 
+    rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, NULL, NULL, &response, 
                                              base_delay_ms, max_retries);
     
     if (err != RBOX_OK) {

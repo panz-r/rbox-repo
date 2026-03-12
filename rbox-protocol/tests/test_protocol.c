@@ -23,9 +23,9 @@ void test_header_validate(void) {
     header.flags = RBOX_FLAG_FIRST;
     header.chunk_len = 100;
     header.total_len = 100;
-    /* Calculate checksum over 84 bytes (v5 protocol, excluding checksum field at offset 84) */
+    /* Calculate checksum over 88 bytes (v6 protocol, excluding checksum field at offset 88) */
     header.checksum = 0;
-    header.checksum = rbox_calculate_checksum(&header, 84);
+    header.checksum = rbox_calculate_checksum(&header, 88);
     
     assert(rbox_header_validate(&header) == RBOX_OK);
     printf("  ✓ Valid header passes\n");
@@ -44,7 +44,7 @@ void test_header_validate(void) {
     header.chunk_len = 100;
     header.total_len = 100;
     header.checksum = 0;
-    header.checksum = rbox_calculate_checksum(&header, 84);
+    header.checksum = rbox_calculate_checksum(&header, 88);
     assert(rbox_header_validate(&header) == RBOX_ERR_VERSION);
     printf("  ✓ Invalid version detected\n");
     
@@ -101,7 +101,7 @@ void test_session(void) {
     printf("  ✓ Session created in DISCONNECTED state\n");
     
     /* Try to send without connecting - should fail */
-    rbox_error_t err = rbox_session_send_request(session, "ls", 0, NULL);
+    rbox_error_t err = rbox_session_send_request(session, "ls", 0, NULL, NULL, NULL);
     assert(err == RBOX_ERR_INVALID);
     printf("  ✓ Send request without connection returns INVALID\n");
     

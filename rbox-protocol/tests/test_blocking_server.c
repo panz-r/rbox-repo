@@ -86,17 +86,24 @@ static ssize_t write_all(int fd, const void *buf, size_t len) {
 /* Build request packet */
 static void build_request(char *pkt, const char *cmd) {
     uint32_t cmd_len = cmd ? strlen(cmd) : 0;
-    memset(pkt, 0, 88 + cmd_len);
+    memset(pkt, 0, RBOX_HEADER_SIZE + cmd_len);
     
-    *(uint32_t *)(pkt + 0) = RBOX_MAGIC;
-    *(uint32_t *)(pkt + 4) = RBOX_VERSION;
-    memset(pkt + 8, 0x11, 16);
-    memset(pkt + 24, 0x22, 16);
-    *(uint32_t *)(pkt + 72) = cmd_len;
-    *(uint32_t *)(pkt + 76) = cmd_len;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
+    memset(pkt + RBOX_HEADER_OFFSET_CLIENT_ID, 0x11, 16);
+    
+    /* Generate random request_id */
+    uint32_t rand_id = (uint32_t)clock() ^ (uintptr_t)pkt;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID) = rand_id;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID + 4) = rand_id ^ 0x12345678;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID + 8) = rand_id ^ 0xABCDEF;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID + 12) = rand_id ^ 0xFEDCBA;
+    
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = cmd_len;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_TOTAL_LEN) = cmd_len;
     
     if (cmd_len > 0) {
-        memcpy(pkt + 88, cmd, cmd_len);
+        memcpy(pkt + RBOX_HEADER_SIZE, cmd, cmd_len);
     }
 }
 
@@ -124,7 +131,7 @@ static void *client_send_thread(void *arg) {
     char pkt[1024];
     build_request(pkt, cmd);
     uint32_t cmd_len = cmd ? strlen(cmd) : 0;
-    write(fd, pkt, 88 + cmd_len);
+    write(fd, pkt, RBOX_HEADER_SIZE + cmd_len);
     
     /* Read response */
     char resp[256];
@@ -180,11 +187,11 @@ static void *client_misbehave_bad_magic(void *arg) {
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
     connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-    char pkt[88];
-    memset(pkt, 0, 88);
+    char pkt[RBOX_HEADER_SIZE];
+    memset(pkt, 0, RBOX_HEADER_SIZE);
     *(uint32_t *)(pkt + 0) = 0xDEADBEEF;  /* Bad magic */
-    *(uint32_t *)(pkt + 4) = RBOX_VERSION;
-    write(fd, pkt, 88);
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
+    write(fd, pkt, RBOX_HEADER_SIZE);
     close(fd);
     return NULL;
 }
@@ -212,12 +219,12 @@ static void *client_misbehave_truncated_body(void *arg) {
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
     connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-    char pkt[100];
-    memset(pkt, 0, 100);
-    *(uint32_t *)(pkt + 0) = RBOX_MAGIC;
-    *(uint32_t *)(pkt + 4) = RBOX_VERSION;
-    *(uint32_t *)(pkt + 72) = 50;  /* Claims 50 bytes */
-    write(fd, pkt, 50);  /* But only sends 50, not 88+50 */
+    char pkt[RBOX_HEADER_SIZE + 50];
+    memset(pkt, 0, sizeof(pkt));
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = 50;  /* Claims 50 bytes */
+    write(fd, pkt, RBOX_HEADER_SIZE + 50);  /* Sends header + 50 bytes claim */
     close(fd);
     return NULL;
 }
@@ -232,12 +239,12 @@ static void *client_misbehave_too_large(void *arg) {
     connect(fd, (struct sockaddr *)&addr, sizeof(addr));
     
     /* Send a packet claiming 2MB (over limit) */
-    char pkt[88];
-    memset(pkt, 0, 88);
-    *(uint32_t *)(pkt + 0) = RBOX_MAGIC;
-    *(uint32_t *)(pkt + 4) = RBOX_VERSION;
-    *(uint32_t *)(pkt + 72) = 2 * 1024 * 1024;  /* 2MB - over limit */
-    write(fd, pkt, 88);
+    char pkt[RBOX_HEADER_SIZE];
+    memset(pkt, 0, RBOX_HEADER_SIZE);
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = 2 * 1024 * 1024;  /* 2MB - over limit */
+    write(fd, pkt, RBOX_HEADER_SIZE);
     
     /* Read response - should indicate error or connection close */
     char resp[256];
@@ -268,7 +275,7 @@ static void *client_with_reconnect(void *arg) {
         char pkt[1024];
         snprintf(pkt, sizeof(pkt), "reconnect_test_%d", attempt);
         build_request(pkt, pkt);
-        write(fd, pkt, 88 + strlen(pkt));
+        write(fd, pkt, RBOX_HEADER_SIZE + strlen(pkt));
         
         /* Wait for response */
         char resp[256];
@@ -303,7 +310,7 @@ static void *client_misbehave_multiple_requests(void *arg) {
         char pkt[1024];
         snprintf(pkt, sizeof(pkt), "cmd_%d", i);
         build_request(pkt, pkt);
-        write(fd, pkt, 88 + strlen(pkt));
+        write(fd, pkt, RBOX_HEADER_SIZE + strlen(pkt));
     }
     /* Read responses */
     char resp[256];

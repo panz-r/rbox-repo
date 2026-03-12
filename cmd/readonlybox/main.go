@@ -36,10 +36,12 @@ func main() {
 			return
 		}
 		if os.Args[1] == "--run" {
+			os.Setenv("READONLYBOX_MODE", "run")
 			handleRun()
 			return
 		}
 		if os.Args[1] == "--judge" {
+			os.Setenv("READONLYBOX_MODE", "judge")
 			handleJudge()
 			return
 		}
@@ -196,8 +198,10 @@ func handleJudge() {
 		os.Exit(1)
 	}
 
+	//fmt.Printf("DEBUG: os.Args=%v\n", os.Args)
 	command := os.Args[2]
 	argsForServer := os.Args[3:]
+	//fmt.Printf("DEBUG handleJudge: command='%s', argsForServer=%v\n", command, argsForServer)
 
 	/* Check local DFA first for fast-path */
 	if allowed, reason := CheckDFALocal(command, argsForServer); allowed {
@@ -606,7 +610,7 @@ func handlePtrace() {
 /* Server client for --run validation */
 
 type serverClient struct {
-	conn *RBoxClient
+	socketPath string
 }
 
 func newServerClient() (*serverClient, error) {
@@ -615,24 +619,35 @@ func newServerClient() (*serverClient, error) {
 	if socketPath == "" {
 		socketPath = DefaultSocketPath
 	}
-	conn, err := NewRBoxClient(socketPath)
-	if err != nil {
-		return nil, err
-	}
-	return &serverClient{conn: conn}, nil
+	return &serverClient{socketPath: socketPath}, nil
 }
 
 func (c *serverClient) close() {
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
-	}
+	// No-op - blocking request handles connection internally
 }
 
 func (c *serverClient) requestDecision(command string, args []string) (bool, string, error) {
-	// Send the command and args directly to the server
-	// The server handles security decisions based on the command
-	decision, reason, err := c.conn.SendRequest(command, args)
+	// Get caller info from environment (set by ptrace) or use default based on mode
+	caller := os.Getenv("READONLYBOX_CALLER")
+	syscall := os.Getenv("READONLYBOX_SYSCALL")
+	mode := os.Getenv("READONLYBOX_MODE")
+	
+	// Set default caller based on mode if not provided
+	if caller == "" {
+		if mode == "run" {
+			caller = "--run"
+		} else {
+			caller = "--judge"  // Default for judge mode or unknown
+		}
+	}
+	
+	// For now, don't prepend caller to command string - shellsplit will parse it incorrectly
+	// The caller info is passed to the server but not used for command matching yet
+	// TODO: Add proper caller field to protocol
+	fullCommand := command
+	
+	// Use blocking request which handles retries automatically
+	decision, reason, err := BlockingRequest(c.socketPath, fullCommand, caller, syscall, args, 10, 0)
 	if err != nil {
 		return false, "", err
 	}

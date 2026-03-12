@@ -255,6 +255,8 @@ type CommandLog struct {
 	Decision  string
 	Command   string
 	Args      string
+	Caller    string
+	Syscall   string
 	Reason    string
 	ClientID  string
 	RequestID int
@@ -282,6 +284,8 @@ type Event struct {
 	Decision  string
 	Command   string
 	Args      string
+	Caller    string
+	Syscall   string
 	Reason    string
 	Log       string
 	RequestID int
@@ -381,7 +385,7 @@ func (m *Model) AddConnection() {
 	m.connections++
 }
 
-func (m *Model) AddCommand(decision, cmd, args, reason, clientID, cwd string, requestID int) {
+func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientID, cwd string, requestID int) {
 	m.lastCmd = cmd + " " + args
 	m.lastDecision = decision
 	m.lastTime = time.Now()
@@ -392,6 +396,8 @@ func (m *Model) AddCommand(decision, cmd, args, reason, clientID, cwd string, re
 		Decision:  decision,
 		Command:   cmd,
 		Args:      args,
+		Caller:    caller,
+		Syscall:   syscall,
 		Reason:    reason,
 		ClientID:  clientID,
 		RequestID: requestID,
@@ -631,7 +637,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case EventConnect:
 			m.connections++
 		case EventRequest:
-			m.AddCommand("PENDING", msg.Command, msg.Args, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID)
+			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID)
 		case EventCommand:
 			m.lastDecision = msg.Decision
 			m.lastTime = time.Now()
@@ -720,7 +726,9 @@ func wrapText(text string, maxWidth int) []string {
 	return lines
 }
 
-func durationToReason(allow bool, choice int) (decision, reason string) {
+// durationToReason returns the decision, reason, and duration (in seconds) for a given choice
+// choice: 0=once, 1=15m, 2=1h, 3=4h, 5=session, 6=always, 7=pattern
+func durationToReason(allow bool, choice int) (decision, reason string, duration uint32) {
 	if allow {
 		decision = "ALLOW"
 	} else {
@@ -730,18 +738,25 @@ func durationToReason(allow bool, choice int) (decision, reason string) {
 	switch choice {
 	case 0:
 		reason = "once"
+		duration = 0
 	case 1:
 		reason = "15m"
+		duration = 900  // 15 minutes
 	case 2:
 		reason = "1h"
+		duration = 3600  // 1 hour
 	case 3:
 		reason = "4h"
+		duration = 14400  // 4 hours
 	case 5:
 		reason = "session"
+		duration = 0  // session - use 0, treated specially
 	case 6:
 		reason = "always"
+		duration = 0  // always - use 0, treated specially
 	case 7:
 		reason = "pattern"
+		duration = 0  // pattern - use 0
 	default:
 		reason = "unknown"
 	}
@@ -754,11 +769,11 @@ func (m *Model) executeDecision() {
 	}
 
 	allow := m.allowChosen
-	decision, reason := durationToReason(allow, m.cursor)
+	decision, reason, duration := durationToReason(allow, m.cursor)
 	baseCmd := extractBaseName(m.expandedCmd.Command)
-	fmt.Printf("Executing: %s %s for %s %s\n", decision, reason, baseCmd, m.expandedCmd.Args)
+	fmt.Printf("Executing: %s %s for %s %s (duration=%d)\n", decision, reason, baseCmd, m.expandedCmd.Args, duration)
 
-	MakeDecision(m.expandedCmd.RequestID, allow, reason)
+	MakeDecision(m.expandedCmd.RequestID, allow, reason, duration)
 
 	// Log decision to user_log.xml if marked
 	if m.logDecision {
@@ -951,28 +966,23 @@ func (m *Model) renderHistoryList(sb *strings.Builder, maxHeight int) {
 			decisionStr = dimStyle.Render("?")
 		}
 
-		// Build summary: show [caller:call] basename args...
+		// Build summary: show caller:syscall$ command args or caller$ command args
 		baseCmd := extractBaseName(cmd.Command)
-		summary := cmd.Command
-		// If has caller prefix, keep it but use basename for display
-		if strings.HasPrefix(summary, "[") {
-			endBracket := strings.Index(summary, "]")
-			if endBracket > 0 {
-				// Extract caller
-				callerInfo := summary[1:endBracket]
-				// Get the rest of the command
-				rest := strings.TrimPrefix(summary[endBracket+1:], " ")
-				// Build new summary: [caller] basename args...
-				baseName := baseCmd
-				if idx := strings.Index(rest, " "); idx > 0 {
-					restArgs := rest[idx+1:]
-					summary = fmt.Sprintf("[%s] %s %s", callerInfo, baseName, truncateString(restArgs, 30))
-				} else {
-					summary = fmt.Sprintf("[%s] %s", callerInfo, baseName)
-				}
+		var summary string
+		if cmd.Caller != "" {
+			// Format: caller:syscall$ command args or caller$ command args
+			callerPrefix := cmd.Caller
+			if cmd.Syscall != "" {
+				callerPrefix = cmd.Caller + ":" + cmd.Syscall
+			}
+			callerPrefix += "$"
+			if cmd.Args != "" {
+				summary = fmt.Sprintf("%s %s %s", callerPrefix, baseCmd, truncateString(cmd.Args, 30))
+			} else {
+				summary = fmt.Sprintf("%s %s", callerPrefix, baseCmd)
 			}
 		} else {
-			// No caller prefix - use baseCmd + args
+			// No caller - use baseCmd + args
 			summary = baseCmd
 			if cmd.Args != "" {
 				summary = fmt.Sprintf("%s %s", baseCmd, truncateString(cmd.Args, 30))
@@ -1590,14 +1600,22 @@ func RunTUIMode() {
 			for i := 0; i < argc; i++ {
 				args[i] = req.GetArg(i)
 			}
-			argsStr := strings.Join(args, " ")
+			// Skip args[0] since it's the command itself (shellsplit includes command as first arg)
+			argsStr := ""
+			if len(args) > 1 {
+				argsStr = strings.Join(args[1:], " ")
+			}
+			
+			// Get caller and syscall from request (v7 protocol)
+			caller := req.GetCaller()
+			syscall := req.GetSyscall()
 			
 			// Store request for later decision
 			StoreRequest(requestID, req)
 			
 			// Send request event to TUI
 			select {
-			case model.eventChan <- Event{Type: EventRequest, RequestID: requestID, Command: cmd, Args: argsStr}:
+			case model.eventChan <- Event{Type: EventRequest, RequestID: requestID, Command: cmd, Args: argsStr, Caller: caller, Syscall: syscall}:
 			default:
 			}
 		}
@@ -1609,5 +1627,6 @@ func RunTUIMode() {
 	}
 	
 	fmt.Println("\nShutting down...")
+	server.Stop()
 	server.Free()
 }

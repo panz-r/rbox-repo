@@ -64,6 +64,29 @@ uint32_t rbox_calculate_checksum(const void *data, size_t len) {
     return crc ^ 0xFFFFFFFF;
 }
 
+/* 64-bit command hash - two-step hash with different constants */
+/* Used for time-limited decision matching - different from 32-bit cmd_hash */
+uint64_t rbox_hash64(const char *str, size_t len) {
+    if (!str || len == 0) return 0;
+    
+    /* Two-step hash with different constants */
+    /* Step 1: Mix using FNV-1a like algorithm with different prime */
+    uint64_t hash = 14695981039346656037ULL;  /* FNV offset basis */
+    for (size_t i = 0; i < len; i++) {
+        hash ^= (uint64_t)(unsigned char)str[i];
+        hash *= 1099511628211ULL;  /* FNV prime 64-bit */
+    }
+    
+    /* Step 2: Mix using DJB2-like algorithm with different constants */
+    uint64_t hash2 = 5381ULL;
+    for (size_t i = 0; i < len; i++) {
+        hash2 = ((hash2 << 5) + hash2) + (uint64_t)(unsigned char)str[i];  /* hash2 * 33 + c */
+    }
+    
+    /* Combine both hashes */
+    return hash ^ (hash2 + 0x9e3779b97f4a7c15ULL);
+}
+
 /* ============================================================
  * HEADER VALIDATION
  * ============================================================ */
@@ -234,36 +257,69 @@ rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *re
         return RBOX_ERR_INVALID;
     }
 
-    /* Build binary response packet matching v2 protocol (defined in rbox_protocol_defs.h) */
+    /* Build binary response packet matching v6 protocol (uses full header) */
     char buffer[1024];
     memset(buffer, 0, sizeof(buffer));
     
-    /* Magic (4 bytes) at offset 0 */
+    /* Header starts at offset 0 - use macros from rbox_protocol_defs.h */
     uint32_t magic = RBOX_MAGIC;
-    memcpy(buffer + RBOX_RESPONSE_OFFSET_MAGIC_V2, &magic, 4);
+    memcpy(buffer + RBOX_HEADER_OFFSET_MAGIC, &magic, 4);
     
-    /* Server ID (16 bytes) at offset 4 */
-    memset(buffer + RBOX_RESPONSE_OFFSET_SERVER_ID_V2, 'S', 16);
+    uint32_t version = RBOX_VERSION;
+    memcpy(buffer + RBOX_HEADER_OFFSET_VERSION, &version, 4);
     
-    /* Request ID (16 bytes) at offset 20 - echo back client's request_id */
-    memcpy(buffer + RBOX_RESPONSE_OFFSET_REQUEST_ID_V2, response->request_id, 16);
+    /* Client ID (16 bytes) at offset 8 - echo back client's client_id */
+    /* We don't have client_id stored, use zeros */
+    memset(buffer + RBOX_HEADER_OFFSET_CLIENT_ID, 0, 16);
     
-    /* Decision (1 byte) at offset 36 */
-    buffer[RBOX_RESPONSE_OFFSET_DECISION_V2] = response->decision;
+    /* Request ID (16 bytes) at offset 24 - echo back client's request_id */
+    memcpy(buffer + RBOX_HEADER_OFFSET_REQUEST_ID, response->request_id, 16);
     
-    /* Reason length (4 bytes) at offset 37 */
+    /* Server ID (16 bytes) at offset 40 */
+    memset(buffer + RBOX_HEADER_OFFSET_SERVER_ID, 'S', 16);
+    
+    /* Type (4 bytes) at offset 56 - 0 for response */
+    uint32_t type = 0;
+    memcpy(buffer + RBOX_HEADER_OFFSET_TYPE, &type, 4);
+    
+    /* Flags (4 bytes) at offset 60 - 0 */
+    uint32_t flags = 0;
+    memcpy(buffer + RBOX_HEADER_OFFSET_FLAGS, &flags, 4);
+    
+    /* Offset (8 bytes) at offset 64 - 0 */
+    uint64_t offset = 0;
+    memcpy(buffer + RBOX_HEADER_OFFSET_OFFSET, &offset, 8);
+    
+    /* Chunk len (4 bytes) at offset 72 - decision + reason length */
     uint32_t reason_len = strlen(response->reason);
-    memcpy(buffer + RBOX_RESPONSE_OFFSET_REASON_LEN_V2, &reason_len, 4);
+    if (reason_len > RBOX_RESPONSE_MAX_REASON) {
+        reason_len = RBOX_RESPONSE_MAX_REASON;
+    }
+    uint32_t chunk_len = 1 + reason_len;  /* decision + reason */
+    memcpy(buffer + RBOX_HEADER_OFFSET_CHUNK_LEN, &chunk_len, 4);
     
-    /* Reason string at offset 41 */
-    memcpy(buffer + RBOX_RESPONSE_OFFSET_REASON_V2, response->reason, reason_len + 1);
+    /* Total len (8 bytes) at offset 76 - decision + reason length */
+    uint64_t total_len = chunk_len;
+    memcpy(buffer + RBOX_HEADER_OFFSET_TOTAL_LEN, &total_len, 8);
     
-    size_t pos = RBOX_RESPONSE_OFFSET_REASON_V2 + reason_len + 1;
+    /* Cmd hash (4 bytes) at offset 84 - 0 */
+    uint32_t cmd_hash = 0;
+    memcpy(buffer + RBOX_HEADER_OFFSET_CMD_HASH, &cmd_hash, 4);
+    
+    /* Checksum (4 bytes) at offset 88 - 0 for now (could calculate) */
+    uint32_t checksum = 0;
+    memcpy(buffer + RBOX_HEADER_OFFSET_CHECKSUM, &checksum, 4);
+    
+    /* Decision (1 byte) at offset 92 (RBOX_HEADER_SIZE) */
+    buffer[RBOX_HEADER_SIZE] = response->decision;
+    
+    /* Reason string starts at offset 93 (1 byte decision + 4 bytes reason_len) */
+    memcpy(buffer + RBOX_HEADER_SIZE + 1, response->reason, reason_len + 1);  /* +1 for null terminator */
+    
+    size_t total_len_out = RBOX_HEADER_SIZE + 1 + reason_len + 1;
 
     /* Send response using rbox_write (handles all I/O correctly) */
-    /* Note: rbox_write returns -1 on error or if peer closed, but that's OK - 
-     * the client may have already closed */
-    ssize_t n = rbox_write(rbox_client_fd(client), buffer, pos);
+    ssize_t n = rbox_write(rbox_client_fd(client), buffer, total_len_out);
     if (n < 0) {
         /* Peer closed or error - this is acceptable */
         return RBOX_OK;
@@ -663,7 +719,7 @@ rbox_error_t rbox_build_request(char *packet, size_t *out_len,
     memcpy(packet + 76, &total_len, 8);
     
     /* Body: command + args */
-    size_t pos = 88;
+    size_t pos = RBOX_HEADER_SIZE;
     
     memcpy(packet + pos, command, strlen(command) + 1);
     pos += strlen(command) + 1;
@@ -675,14 +731,14 @@ rbox_error_t rbox_build_request(char *packet, size_t *out_len,
     }
     
     /* Update chunk_len and total_len */
-    chunk_len = pos - 88;
+    chunk_len = pos - RBOX_HEADER_SIZE;
     total_len = chunk_len;
     memcpy(packet + 72, &chunk_len, 4);
     memcpy(packet + 76, &total_len, 8);
     
     /* Calculate checksum */
-    uint32_t checksum = rbox_calculate_checksum(packet, 84);
-    memcpy(packet + 84, &checksum, 4);
+    uint32_t checksum = rbox_calculate_checksum(packet, RBOX_HEADER_OFFSET_CHECKSUM);
+    memcpy(packet + RBOX_HEADER_OFFSET_CHECKSUM, &checksum, 4);
     
     *out_len = pos;
     return RBOX_OK;
@@ -747,13 +803,16 @@ static rbox_error_t validate_response(const char *packet, size_t len,
     size_t request_id_offset;
     
     if (version == RBOX_VERSION) {
-        /* v5 format */
+        /* v6 format */
         if (len < RBOX_HEADER_SIZE) {
             return RBOX_ERR_TRUNCATED;
         }
         
-        decision = packet[64];  /* decision is at offset 64 in v5 response */
+        decision = packet[RBOX_HEADER_SIZE];  /* decision at offset 92 */
         reason_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
+        if (reason_len > 0) {
+            reason_len -= 1;  /* chunk_len includes decision byte */
+        }
         reason_offset = RBOX_HEADER_SIZE;
         request_id_offset = RBOX_HEADER_OFFSET_REQUEST_ID;
         
@@ -842,18 +901,28 @@ static void generate_request_id(uint8_t *id_out) {
     memcpy(id_out + 8, &b, 8);
 }
 
-/* Build request packet with specific request_id (v5 protocol)
+/* Build request packet with specific request_id (v7 protocol with caller/syscall)
  * 
- * This version allows caller to specify request_id for matching */
+ * This version allows caller to specify request_id for matching
+ * caller and syscall are truncated to 15 chars max each */
 static rbox_error_t build_request_with_id(char *packet, size_t *out_len,
                                          const uint8_t *request_id,
                                          const char *command, 
-                                         int argc, const char **argv) {
+                                         int argc, const char **argv,
+                                         const char *caller,
+                                         const char *syscall) {
     if (!packet || !command || !out_len) {
         return RBOX_ERR_INVALID;
     }
     
     memset(packet, 0, 4096);
+    
+    /* Truncate caller and syscall to max 15 chars each */
+    size_t caller_len = caller ? strlen(caller) : 0;
+    if (caller_len > RBOX_MAX_CALLER_LEN) caller_len = RBOX_MAX_CALLER_LEN;
+    
+    size_t syscall_len = syscall ? strlen(syscall) : 0;
+    if (syscall_len > RBOX_MAX_SYSCALL_LEN) syscall_len = RBOX_MAX_SYSCALL_LEN;
     
     /* Header fields */
     uint32_t magic = RBOX_MAGIC;
@@ -878,8 +947,8 @@ static rbox_error_t build_request_with_id(char *packet, size_t *out_len,
     memcpy(packet + 72, &chunk_len, 4);
     memcpy(packet + 76, &total_len, 8);
     
-    /* Body: command + args */
-    size_t pos = 88;
+    /* Body: command + args (starts at offset 123 in v7) */
+    size_t pos = RBOX_HEADER_SIZE;
     
     memcpy(packet + pos, command, strlen(command) + 1);
     pos += strlen(command) + 1;
@@ -891,14 +960,33 @@ static rbox_error_t build_request_with_id(char *packet, size_t *out_len,
     }
     
     /* Update chunk_len and total_len */
-    chunk_len = pos - 88;
+    chunk_len = pos - RBOX_HEADER_SIZE;
     total_len = chunk_len;
     memcpy(packet + 72, &chunk_len, 4);
     memcpy(packet + 76, &total_len, 8);
+    memcpy(packet + 72, &chunk_len, 4);
+    memcpy(packet + 76, &total_len, 8);
     
-    /* Calculate checksum over header only (first 84 bytes) */
-    uint32_t checksum = rbox_calculate_checksum(packet, 84);
-    memcpy(packet + 84, &checksum, 4);
+    /* Copy cmd_hash (already set above, but we include it in checksum area) */
+    /* cmd_hash is at offset 84, already set by caller if needed */
+    
+    /* Encode caller_syscall_size byte: low 4 bits = caller_len, high 4 bits = syscall_len */
+    uint8_t cs_size = (caller_len & 0x0F) | ((syscall_len << 4) & 0xF0);
+    memcpy(packet + RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE, &cs_size, 1);
+    
+    /* Copy caller (no null terminator) */
+    if (caller_len > 0) {
+        memcpy(packet + RBOX_HEADER_OFFSET_CALLER, caller, caller_len);
+    }
+    
+    /* Copy syscall (no null terminator) */
+    if (syscall_len > 0) {
+        memcpy(packet + RBOX_HEADER_OFFSET_SYSCALL, syscall, syscall_len);
+    }
+    
+    /* Calculate checksum over header (includes caller/syscall fields) */
+    uint32_t checksum = rbox_calculate_checksum(packet, RBOX_HEADER_OFFSET_CHECKSUM);
+    memcpy(packet + RBOX_HEADER_OFFSET_CHECKSUM, &checksum, 4);
     
     *out_len = pos;
     return RBOX_OK;
@@ -929,6 +1017,9 @@ static ssize_t read_response(int fd, char *buf, size_t max_len) {
     
     /* Get reason length from chunk_len field */
     uint32_t reason_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
+    if (reason_len > 0) {
+        reason_len -= 1;  /* chunk_len includes decision byte */
+    }
     if (reason_len > RBOX_RESPONSE_MAX_REASON) {
         reason_len = RBOX_RESPONSE_MAX_REASON;
     }
@@ -970,7 +1061,7 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
     char packet[4096];
     size_t packet_len;
     rbox_error_t err = build_request_with_id(packet, &packet_len, request_id, 
-                                             command, argc, argv);
+                                             command, argc, argv, NULL, NULL);
     if (err != RBOX_OK) {
         return err;
     }
@@ -1182,7 +1273,8 @@ rbox_error_t rbox_session_connect(rbox_session_t *session) {
 }
 
 rbox_error_t rbox_session_send_request(rbox_session_t *session,
-    const char *command, int argc, const char **argv) {
+    const char *command, int argc, const char **argv,
+    const char *caller, const char *syscall) {
     if (!session || !command) return RBOX_ERR_INVALID;
     if (session->state != RBOX_SESSION_CONNECTED) return RBOX_ERR_INVALID;
     
@@ -1191,7 +1283,7 @@ rbox_error_t rbox_session_send_request(rbox_session_t *session,
     
     /* Build request */
     session->error = build_request_with_id(session->packet, &session->packet_len,
-        session->request_id, command, argc, argv);
+        session->request_id, command, argc, argv, caller, syscall);
     if (session->error != RBOX_OK) {
         session->state = RBOX_SESSION_FAILED;
         return session->error;
@@ -1340,11 +1432,18 @@ void rbox_session_disconnect(rbox_session_t *session) {
 
 rbox_error_t rbox_blocking_request(const char *socket_path,
     const char *command, int argc, const char **argv,
+    const char *caller, const char *syscall,
     rbox_response_t *out_response,
     uint32_t base_delay_ms, uint32_t max_retries) {
     if (!socket_path || !command || !out_response) {
         return RBOX_ERR_INVALID;
     }
+    
+    //fprintf(stderr, "DEBUG C: rbox_blocking_request called: command='%s', argc=%d\n", command, argc);
+    for (int i = 0; i < argc; i++) {
+        //fprintf(stderr, "DEBUG C: argv[%d]='%s'\n", i, argv[i] ? argv[i] : "(null)");
+    }
+    fflush(stderr);
     
     /* Initialize response */
     memset(out_response, 0, sizeof(*out_response));
@@ -1393,7 +1492,7 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
             
             case RBOX_SESSION_CONNECTED: {
                 /* Send request */
-                result = rbox_session_send_request(session, command, argc, argv);
+                result = rbox_session_send_request(session, command, argc, argv, caller, syscall);
                 if (result != RBOX_OK) {
                     goto cleanup;
                 }
@@ -1448,7 +1547,12 @@ struct rbox_server_request {
     int fd;                         /* Client socket fd */
     uint8_t client_id[16];          /* Client identifier */
     uint8_t request_id[16];         /* Request identifier */
+    uint32_t cmd_hash;              /* Command hash for verification */
     rbox_server_handle_t *server;   /* Back-pointer to server */
+    
+    /* Caller/syscall from v7 protocol (truncated to 15 chars, no null) */
+    char caller[RBOX_MAX_CALLER_LEN + 1];   /* Null-terminated */
+    char syscall[RBOX_MAX_SYSCALL_LEN + 1]; /* Null-terminated */
     
     /* Request data (owned by request, freed on decide) */
     char *command_data;
@@ -1469,6 +1573,38 @@ typedef struct rbox_server_decision {
     struct rbox_server_decision *next;
 } rbox_server_decision_t;
 
+/* Forward declaration */
+struct rbox_server_handle;
+typedef struct rbox_server_handle rbox_server_handle_t;
+
+/* Server response cache entry */
+typedef struct {
+    uint8_t request_id[16];       /* Request ID from client */
+    uint8_t client_id[16];         /* Client ID */
+    uint32_t cmd_hash;             /* Command hash for verification */
+    uint64_t cmd_hash2;            /* Second command hash for verification */
+    uint8_t decision;             /* ALLOW/DENY/ERROR */
+    char reason[256];              /* Reason string */
+    uint32_t duration;             /* Duration in seconds */
+    time_t timestamp;             /* When cached */
+    time_t expires_at;            /* When this entry expires (0 = never) */
+    int valid;                     /* 1 if entry is valid */
+} rbox_response_cache_entry_t;
+
+#define RBOX_RESPONSE_CACHE_SIZE 128
+
+/* Send queue entry - for outgoing responses */
+typedef struct rbox_server_send_entry {
+    int fd;                        /* Socket to send to */
+    char *data;                    /* Response packet data */
+    size_t len;                    /* Response length */
+    struct rbox_server_send_entry *next;
+} rbox_server_send_entry_t;
+
+/* Forward declaration */
+struct rbox_server_handle;
+typedef struct rbox_server_handle rbox_server_handle_t;
+
 /* Server handle */
 struct rbox_server_handle {
     char socket_path[256];
@@ -1479,6 +1615,17 @@ struct rbox_server_handle {
     pthread_t thread;
     volatile int running;          /* Flag to signal shutdown */
     int wake_fd;                   /* eventfd to wake epoll thread */
+    
+    /* Send queue for outgoing responses (mutex protected) */
+    pthread_mutex_t send_mutex;
+    rbox_server_send_entry_t *send_queue;
+    rbox_server_send_entry_t *send_tail;
+    int send_count;
+    
+    /* Response cache (fixed 128 entries) */
+    rbox_response_cache_entry_t response_cache[RBOX_RESPONSE_CACHE_SIZE];
+    int response_cache_next;      /* Next index to replace (round-robin) */
+    pthread_mutex_t cache_mutex;   /* Protects response cache */
     
     /* Request queue (mutex protected) */
     pthread_mutex_t mutex;
@@ -1495,6 +1642,116 @@ struct rbox_server_handle {
     int decision_count;
 };
 
+/* Queue a response for sending via send queue */
+static void send_queue_add(rbox_server_handle_t *server, int fd, char *data, size_t len) {
+    rbox_server_send_entry_t *entry = calloc(1, sizeof(*entry));
+    if (!entry) {
+        free(data);
+        return;
+    }
+    entry->fd = fd;
+    entry->data = data;
+    entry->len = len;
+    
+    pthread_mutex_lock(&server->send_mutex);
+    entry->next = NULL;
+    if (server->send_tail) {
+        server->send_tail->next = entry;
+        server->send_tail = entry;
+    } else {
+        server->send_queue = entry;
+        server->send_tail = entry;
+    }
+    server->send_count++;
+    pthread_mutex_unlock(&server->send_mutex);
+    
+    /* Add socket to epoll for output - need both EPOLLIN (for new requests) and EPOLLOUT (for sending response) */
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.events = EPOLLIN | EPOLLOUT;
+    ev.data.fd = fd;
+    
+    /* Try MOD first, if that fails try ADD */
+    if (epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, fd, &ev) < 0) {
+        epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
+    }
+}
+
+/* Response cache lookup - returns 1 if found, fills in decision/reason/duration */
+/* Also checks cmd_hash2 and expiration for time-limited decisions */
+static int response_cache_lookup(rbox_server_handle_t *server, 
+                                 const uint8_t *request_id, uint32_t cmd_hash, uint64_t cmd_hash2,
+                                 uint8_t *decision, char *reason, uint32_t *duration) {
+    pthread_mutex_lock(&server->cache_mutex);
+    time_t now = time(NULL);
+    for (int i = 0; i < RBOX_RESPONSE_CACHE_SIZE; i++) {
+        /* Only match valid entries */
+        if (!server->response_cache[i].valid) continue;
+        
+        /* Check expiration - if set, entry is only valid until expires_at */
+        if (server->response_cache[i].expires_at > 0 && 
+            now > server->response_cache[i].expires_at) {
+            /* Entry expired - mark invalid and skip */
+            server->response_cache[i].valid = 0;
+            continue;
+        }
+        
+        /* Check request_id match OR cmd_hash + cmd_hash2 match for same command */
+        int match = 0;
+        if (memcmp(server->response_cache[i].request_id, request_id, 16) == 0) {
+            /* Exact request ID match */
+            match = 1;
+        } else if (server->response_cache[i].cmd_hash == cmd_hash && 
+                   server->response_cache[i].cmd_hash2 == cmd_hash2) {
+            /* Same command (by hash) - for time-limited decisions */
+            match = 1;
+        }
+        
+        if (match) {
+            /* Copy response data before releasing lock */
+            *decision = server->response_cache[i].decision;
+            strncpy(reason, server->response_cache[i].reason, 255);
+            *duration = server->response_cache[i].duration;
+            pthread_mutex_unlock(&server->cache_mutex);
+            return 1;
+        }
+    }
+    pthread_mutex_unlock(&server->cache_mutex);
+    return 0;
+}
+
+/* Response cache insert - stores response for future duplicate requests */
+/* Also stores cmd_hash2 and expires_at for time-limited decisions */
+static void response_cache_insert(rbox_server_handle_t *server,
+                                    const uint8_t *client_id,
+                                    const uint8_t *request_id,
+                                    uint32_t cmd_hash, uint64_t cmd_hash2,
+                                    uint8_t decision, const char *reason, uint32_t duration) {
+    pthread_mutex_lock(&server->cache_mutex);
+    int idx = server->response_cache_next;
+    server->response_cache_next = (idx + 1) % RBOX_RESPONSE_CACHE_SIZE;
+    
+    rbox_response_cache_entry_t *entry = &server->response_cache[idx];
+    memcpy(entry->client_id, client_id, 16);
+    memcpy(entry->request_id, request_id, 16);
+    entry->cmd_hash = cmd_hash;
+    entry->cmd_hash2 = cmd_hash2;
+    entry->decision = decision;
+    strncpy(entry->reason, reason ? reason : "", 255);
+    entry->duration = duration;
+    entry->timestamp = time(NULL);
+    
+    /* Calculate expiration time if duration > 0 */
+    if (duration > 0) {
+        entry->expires_at = entry->timestamp + duration;
+    } else {
+        entry->expires_at = 0;  /* Never expires */
+    }
+    
+    entry->valid = 1;
+    pthread_mutex_unlock(&server->cache_mutex);
+}
+
 /* Free server request */
 static void server_request_free(rbox_server_request_t *req) {
     if (!req) return;
@@ -1505,11 +1762,13 @@ static void server_request_free(rbox_server_request_t *req) {
     free(req);
 }
 
-/* Read header from client */
-static int server_read_header(int fd, uint8_t *client_id, uint8_t *request_id, uint32_t *chunk_len) {
-    char header[88];
-    ssize_t n = rbox_read(fd, header, 88);
-    if (n != 88) {
+/* Read header from client (v7 protocol with caller/syscall) */
+static int server_read_header(int fd, uint8_t *client_id, uint8_t *request_id, uint32_t *cmd_hash, 
+                               char *caller, size_t caller_len, char *syscall, size_t syscall_len,
+                               uint32_t *chunk_len) {
+    char header[RBOX_HEADER_SIZE];
+    ssize_t n = rbox_read(fd, header, RBOX_HEADER_SIZE);
+    if (n != RBOX_HEADER_SIZE) {
         return -1;
     }
     
@@ -1521,11 +1780,31 @@ static int server_read_header(int fd, uint8_t *client_id, uint8_t *request_id, u
     }
     
     /* Get client_id and request_id */
-    memcpy(client_id, header + 8, 16);
-    memcpy(request_id, header + 24, 16);
+    memcpy(client_id, header + RBOX_HEADER_OFFSET_CLIENT_ID, 16);
+    memcpy(request_id, header + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
+    
+    /* Get cmd_hash */
+    *cmd_hash = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CMD_HASH);
+    
+    /* Get caller and syscall from header */
+    uint8_t cs_size = *(uint8_t *)(header + RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE);
+    size_t caller_size = cs_size & 0x0F;
+    size_t syscall_size = (cs_size >> 4) & 0x0F;
+    
+    if (caller && caller_len > 0) {
+        size_t copy_len = caller_size < caller_len ? caller_size : caller_len;
+        memcpy(caller, header + RBOX_HEADER_OFFSET_CALLER, copy_len);
+        caller[copy_len] = '\0';
+    }
+    
+    if (syscall && syscall_len > 0) {
+        size_t copy_len = syscall_size < syscall_len ? syscall_size : syscall_len;
+        memcpy(syscall, header + RBOX_HEADER_OFFSET_SYSCALL, copy_len);
+        syscall[copy_len] = '\0';
+    }
     
     /* Get chunk_len */
-    *chunk_len = *(uint32_t *)(header + 72);
+    *chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
     if (*chunk_len > 1024 * 1024) { /* 1MB max */
         return -1;
     }
@@ -1554,35 +1833,41 @@ static char *read_body(int fd, uint32_t chunk_len) {
     return data;
 }
 
-/* Build response packet */
-static char *build_response(uint8_t *client_id, uint8_t *request_id, 
+/* Build response packet in v6 format */
+static char *build_response(uint8_t *client_id, uint8_t *request_id, uint32_t cmd_hash,
                            uint8_t decision, const char *reason, uint32_t duration,
                            size_t *out_len) {
     size_t reason_len = reason ? strlen(reason) : 0;
-    size_t total_len = 88 + reason_len;
+    if (reason_len > RBOX_RESPONSE_MAX_REASON) {
+        reason_len = RBOX_RESPONSE_MAX_REASON;
+    }
+    size_t total_len = RBOX_HEADER_SIZE + 1 + reason_len;  /* header + decision + reason */
     
     char *pkt = malloc(total_len);
     if (!pkt) return NULL;
+    memset(pkt, 0, total_len);
     
-    /* Header */
-    *(uint32_t *)(pkt + 0) = RBOX_MAGIC;
-    *(uint32_t *)(pkt + 4) = RBOX_VERSION;
-    memcpy(pkt + 8, client_id, 16);
-    memcpy(pkt + 24, request_id, 16);
-    *(uint32_t *)(pkt + 40) = 0;  /* flags = 0 (response) */
-    *(uint32_t *)(pkt + 44) = 0;  /* offset = 0 */
-    *(uint32_t *)(pkt + 48) = 0;  /* reserved */
-    *(uint64_t *)(pkt + 56) = duration;  /* duration */
-    *(uint32_t *)(pkt + 64) = decision;  /* decision */
-    *(uint32_t *)(pkt + 68) = 0;  /* reserved */
-    *(uint32_t *)(pkt + 72) = reason_len;  /* chunk_len */
-    *(uint32_t *)(pkt + 76) = reason_len;  /* total_len */
-    *(uint32_t *)(pkt + 80) = 0;  /* checksum (0 = none) */
-    *(uint32_t *)(pkt + 84) = 0;  /* reserved */
+    /* Header using macros from rbox_protocol_defs.h */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
+    memcpy(pkt + RBOX_HEADER_OFFSET_CLIENT_ID, client_id, 16);
+    memcpy(pkt + RBOX_HEADER_OFFSET_REQUEST_ID, request_id, 16);
+    memset(pkt + RBOX_HEADER_OFFSET_SERVER_ID, 'S', 16);  /* server_id */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_TYPE) = 0;  /* type = 0 for response */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_FLAGS) = 0;  /* flags = 0 */
+    *(uint64_t *)(pkt + RBOX_HEADER_OFFSET_OFFSET) = 0;  /* offset = 0 */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = reason_len;  /* chunk_len = reason length */
+    *(uint64_t *)(pkt + RBOX_HEADER_OFFSET_TOTAL_LEN) = reason_len;  /* total_len = reason length */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CMD_HASH) = cmd_hash;  /* cmd_hash from request */
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = 0;  /* checksum = 0 */
     
-    /* Body */
+    /* Decision at offset RBOX_HEADER_SIZE (92) */
+    pkt[RBOX_HEADER_SIZE] = decision;
+    
+    /* Reason string at offset RBOX_HEADER_SIZE + 1 */
     if (reason_len > 0) {
-        memcpy(pkt + 88, reason, reason_len);
+        memcpy(pkt + RBOX_HEADER_SIZE + 1, reason, reason_len);
+        pkt[RBOX_HEADER_SIZE + 1 + reason_len] = '\0';  /* null terminator */
     }
     
     *out_len = total_len;
@@ -1629,6 +1914,8 @@ static void *server_thread_func(void *arg) {
         /* First, check for pending decisions */
         pthread_mutex_lock(&server->decision_mutex);
         while (server->decision_queue && server->decision_queue->ready) {
+            //////fprintf(stderr, "DEBUG C: processing decision from queue\n");
+            fflush(stderr);
             rbox_server_decision_t *dec = server->decision_queue;
             server->decision_queue = (void*)dec->next;
             if (!server->decision_queue) {
@@ -1641,11 +1928,32 @@ static void *server_thread_func(void *arg) {
             rbox_server_request_t *req = dec->request;
             if (req) {
                 size_t resp_len;
-                char *resp = build_response(req->client_id, req->request_id, dec->decision, dec->reason, dec->duration, &resp_len);
-                if (resp) {
-                    rbox_write(req->fd, resp, resp_len);
-                    free(resp);
+                uint32_t cmd_hash = req->cmd_hash;
+                
+                /* Compute 64-bit hash of command for time-limited decisions */
+                uint64_t cmd_hash2 = 0;
+                if (req->command_data && req->command_len > 0) {
+                    cmd_hash2 = rbox_hash64(req->command_data, req->command_len);
                 }
+                
+                /* First, store response in cache for duplicate requests */
+                response_cache_insert(server, req->client_id, req->request_id, cmd_hash, cmd_hash2,
+                                      dec->decision, dec->reason, dec->duration);
+                
+                /* Then build and send response directly */
+                char *resp = build_response(req->client_id, req->request_id, cmd_hash, dec->decision, dec->reason, dec->duration, &resp_len);
+                ////fprintf(stderr, "DEBUG C: build_response returned %p, len=%zu\n", (void*)resp, resp_len);
+                if (resp) {
+                    /* Send response directly - socket should be ready */
+                    ////fprintf(stderr, "DEBUG C: about to write %zu bytes to fd %d\n", resp_len, req->fd);
+                    ssize_t sent = rbox_write(req->fd, resp, resp_len);
+                    ////fprintf(stderr, "DEBUG C: wrote %zd bytes\n", sent);
+                    free(resp);
+                } else {
+                    ////fprintf(stderr, "DEBUG C: build_response returned NULL!\n");
+                }
+                /* Close and cleanup */
+                epoll_del(server->epoll_fd, req->fd);
                 close(req->fd);
                 server_request_free(req);
             }
@@ -1654,8 +1962,10 @@ static void *server_thread_func(void *arg) {
         }
         pthread_mutex_unlock(&server->decision_mutex);
         
-        /* Then process epoll events */
+        /* Process epoll events */
+        ////////fprintf(stderr, "DEBUG: calling epoll_wait\n");
         int n = epoll_wait(server->epoll_fd, events, 64, 100); /* 100ms timeout */
+        ////////fprintf(stderr, "DEBUG: epoll_wait returned n=%d\n", n);
         
         if (n < 0) {
             if (errno == EINTR) continue;
@@ -1667,15 +1977,21 @@ static void *server_thread_func(void *arg) {
             continue;
         }
         
+        //////fprintf(stderr, "DEBUG: got %d events\n", n);
+        fflush(stderr);
+        
         for (int i = 0; i < n; i++) {
             struct epoll_event *ev = &events[i];
             
             /* Listen socket - accept new connection */
             if (ev->data.fd == server->listen_fd) {
+                //////fprintf(stderr, "DEBUG: accept() called\n");
+                fflush(stderr);
                 struct sockaddr_un addr;
                 socklen_t addrlen = sizeof(addr);
                 int cl_fd = accept(server->listen_fd, (struct sockaddr *)&addr, &addrlen);
                 if (cl_fd >= 0) {
+                    //////fprintf(stderr, "DEBUG: accepted fd=%d\n", cl_fd);
                     /* Add to epoll for reading - use fd as key */
                     struct epoll_event cev = {
                         .events = EPOLLIN,
@@ -1708,23 +2024,104 @@ static void *server_thread_func(void *arg) {
                 continue;
             }
             
+            /* Handle EPOLLOUT - try to send pending response */
+            if (ev->events & EPOLLOUT) {
+                /* Look for pending response in send queue for this fd */
+                pthread_mutex_lock(&server->send_mutex);
+                rbox_server_send_entry_t **prev = &server->send_queue;
+                rbox_server_send_entry_t *entry = server->send_queue;
+                while (entry) {
+                    if (entry->fd == cl_fd) {
+                        /* Found pending response for this fd */
+                        *prev = entry->next;
+                        if (!entry->next) {
+                            server->send_tail = *prev;
+                        }
+                        server->send_count--;
+                        pthread_mutex_unlock(&server->send_mutex);
+                        
+                        /* Remove from epoll and try to send */
+                        epoll_del(server->epoll_fd, cl_fd);
+                        ssize_t sent = rbox_write(entry->fd, entry->data, entry->len);
+                        (void)sent;
+                        close(entry->fd);
+                        free(entry->data);
+                        free(entry);
+                        break;
+                    }
+                    prev = &entry->next;
+                    entry = entry->next;
+                }
+                if (!entry) {
+                    pthread_mutex_unlock(&server->send_mutex);
+                }
+                /* If no pending response, just continue */
+            }
+            
             if (ev->events & EPOLLIN) {
                 /* Try to read request */
                 uint8_t client_id[16], request_id[16];
-                uint32_t chunk_len;
+                uint32_t cmd_hash, chunk_len;
+                char caller[RBOX_MAX_CALLER_LEN + 1];
+                char syscall[RBOX_MAX_SYSCALL_LEN + 1];
                 
-                if (server_read_header(cl_fd, client_id, request_id, &chunk_len) == 0) {
+                int hdr_result = server_read_header(cl_fd, client_id, request_id, &cmd_hash, 
+                    caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len);
+                //////fprintf(stderr, "DEBUG: server_read_header returned %d\n", hdr_result);
+                fflush(stderr);
+                
+                if (hdr_result == 0) {
+                    //////fprintf(stderr, "DEBUG: header OK, chunk_len=%u\n", chunk_len);
+                    fflush(stderr);
+                    
+                    /* Read the body first so we can compute cmd_hash2 for cache lookup */
                     char *cmd_data = read_body(cl_fd, chunk_len);
+                    
+                    /* Compute 64-bit hash for time-limited decision matching */
+                    uint64_t cmd_hash2 = 0;
+                    if (cmd_data && chunk_len > 0) {
+                        cmd_hash2 = rbox_hash64(cmd_data, chunk_len);
+                    }
+                    
+                    // Check response cache for duplicate request (now includes cmd_hash2)
+                    uint8_t cached_decision;
+                    char cached_reason[256];
+                    uint32_t cached_duration;
+                    if (response_cache_lookup(server, request_id, cmd_hash, cmd_hash2, &cached_decision, cached_reason, &cached_duration)) {
+                        // Send cached response directly
+                        size_t resp_len;
+                        char *resp = build_response(client_id, request_id, cmd_hash, cached_decision, cached_reason, cached_duration, &resp_len);
+                        if (resp) {
+                            ssize_t sent = rbox_write(cl_fd, resp, resp_len);
+                            (void)sent;
+                            free(resp);
+                        }
+                        free(cmd_data);
+                        epoll_del(server->epoll_fd, cl_fd);
+                        close(cl_fd);
+                        continue;
+                    }
+                    
                     if (cmd_data) {
+                        //////fprintf(stderr, "DEBUG: cmd_data='%s'\n", cmd_data);
+                        fflush(stderr);
+                        
                         /* Create request handle */
                         rbox_server_request_t *req = calloc(1, sizeof(*req));
                         if (req) {
                             req->fd = cl_fd;
                             memcpy(req->client_id, client_id, 16);
                             memcpy(req->request_id, request_id, 16);
+                            req->cmd_hash = cmd_hash;
                             req->server = server;
                             req->command_data = cmd_data;
                             req->command_len = chunk_len;
+                            
+                            /* Store caller and syscall from v7 protocol */
+                            strncpy(req->caller, caller, RBOX_MAX_CALLER_LEN);
+                            req->caller[RBOX_MAX_CALLER_LEN] = '\0';
+                            strncpy(req->syscall, syscall, RBOX_MAX_SYSCALL_LEN);
+                            req->syscall[RBOX_MAX_SYSCALL_LEN] = '\0';
                             
                             /* Parse command */
                             rbox_command_parse(cmd_data, chunk_len, &req->parse);
@@ -1839,9 +2236,24 @@ const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t
     return &req->parse;
 }
 
+/* Get caller from request (null-terminated) */
+const char *rbox_server_request_caller(const rbox_server_request_t *req) {
+    if (!req) return NULL;
+    return req->caller;
+}
+
+/* Get syscall from request (null-terminated) */
+const char *rbox_server_request_syscall(const rbox_server_request_t *req) {
+    if (!req) return NULL;
+    return req->syscall;
+}
+
 /* Queue decision to be sent by background thread (thread-safe) */
 rbox_error_t rbox_server_decide(rbox_server_request_t *req, uint8_t decision, const char *reason, uint32_t duration) {
     if (!req) return RBOX_ERR_INVALID;
+    
+    //////fprintf(stderr, "DEBUG C: rbox_server_decide called\n");
+    fflush(stderr);
     
     /* Get server handle from request */
     rbox_server_handle_t *server = req->server;
@@ -1928,6 +2340,19 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     pthread_cond_init(&srv->cond, NULL);
     pthread_mutex_init(&srv->decision_mutex, NULL);
     pthread_cond_init(&srv->decision_cond, NULL);
+    pthread_mutex_init(&srv->cache_mutex, NULL);
+    pthread_mutex_init(&srv->send_mutex, NULL);
+    
+    /* Initialize send queue */
+    srv->send_queue = NULL;
+    srv->send_tail = NULL;
+    srv->send_count = 0;
+    
+    /* Initialize response cache - set all to invalid */
+    for (int i = 0; i < RBOX_RESPONSE_CACHE_SIZE; i++) {
+        srv->response_cache[i].valid = 0;
+    }
+    srv->response_cache_next = 0;
     
     /* Create eventfd for waking epoll thread */
     srv->wake_fd = eventfd(0, EFD_NONBLOCK);
@@ -1962,4 +2387,10 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
     pthread_cond_destroy(&server->cond);
     
     free(server);
+}
+
+/* Check if request is a stop request */
+int rbox_server_request_is_stop(const rbox_server_request_t *req) {
+    if (!req || !req->command_data) return 0;
+    return (strcmp(req->command_data, "__RBOX_STOP__") == 0);
 }

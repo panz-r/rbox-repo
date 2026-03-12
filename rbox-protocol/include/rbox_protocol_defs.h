@@ -16,7 +16,7 @@
  * ============================================================ */
 
 #define RBOX_MAGIC       0x524F424F  /* "ROBO" */
-#define RBOX_VERSION     5  /* Chunked transfer version */
+#define RBOX_VERSION     7  /* Protocol version with caller/syscall */
 
 /* ============================================================
  * MESSAGE TYPES
@@ -27,6 +27,13 @@
 #define RBOX_MSG_CHUNK   2   /* Subsequent chunk */
 #define RBOX_MSG_COMPLETE 3  /* All chunks received */
 #define RBOX_MSG_ABORT   4   /* Client aborted */
+
+/* ============================================================
+ * CALLER/SYSCALL LIMITS (max 15 chars each, stored in 4 bits)
+ * ============================================================ */
+
+#define RBOX_MAX_CALLER_LEN  15
+#define RBOX_MAX_SYSCALL_LEN 15
 
 /* ============================================================
  * CHUNK FLAGS
@@ -69,7 +76,7 @@
 #define RBOX_DEFAULT_SOCKET  "/tmp/readonlybox.sock"
 
 /* ============================================================
- * HEADER STRUCTURE (88 bytes total)
+ * HEADER STRUCTURE (92 bytes total)
  * All fields are little-endian
  * ============================================================ */
 
@@ -88,24 +95,36 @@
  *  64      8    offset (byte offset in total stream)
  *  72      4    chunk_len (length of this chunk's data)
  *  76      8    total_len (total expected length of all chunks)
- *  84      4    checksum (CRC32 of this chunk)
+ *  84      4    cmd_hash (hash of command for verification)
+ *  88      4    checksum (CRC32 of this chunk)
  *  --     --
- *  88           (end of header)
+ *  92           (end of header)
  */
 
-#define RBOX_HEADER_OFFSET_MAGIC      0
-#define RBOX_HEADER_OFFSET_VERSION    4
-#define RBOX_HEADER_OFFSET_CLIENT_ID  8
-#define RBOX_HEADER_OFFSET_REQUEST_ID 24
+#define RBOX_HEADER_OFFSET_MAGIC           0
+#define RBOX_HEADER_OFFSET_VERSION        4
+#define RBOX_HEADER_OFFSET_CLIENT_ID      8
+#define RBOX_HEADER_OFFSET_REQUEST_ID    24
+#define RBOX_HEADER_OFFSET_SERVER_ID    40
+#define RBOX_HEADER_OFFSET_TYPE         56
+#define RBOX_HEADER_OFFSET_FLAGS         60
+#define RBOX_HEADER_OFFSET_OFFSET        64
+#define RBOX_HEADER_OFFSET_CHUNK_LEN     72
+#define RBOX_HEADER_OFFSET_TOTAL_LEN     76
+#define RBOX_HEADER_OFFSET_CMD_HASH      84
+#define RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE 88
+#define RBOX_HEADER_OFFSET_CALLER        89
+#define RBOX_HEADER_OFFSET_SYSCALL      104
+#define RBOX_HEADER_OFFSET_CHECKSUM    119
+
+#define RBOX_HEADER_SIZE                123
 #define RBOX_HEADER_OFFSET_SERVER_ID 40
 #define RBOX_HEADER_OFFSET_TYPE      56
 #define RBOX_HEADER_OFFSET_FLAGS     60
 #define RBOX_HEADER_OFFSET_OFFSET    64
 #define RBOX_HEADER_OFFSET_CHUNK_LEN 72
 #define RBOX_HEADER_OFFSET_TOTAL_LEN 76
-#define RBOX_HEADER_OFFSET_CHECKSUM  84
-
-#define RBOX_HEADER_SIZE             88
+#define RBOX_HEADER_OFFSET_CMD_HASH   84
 
 /* Backward compatibility aliases (v4 protocol used these fields) */
 #define RBOX_HEADER_OFFSET_ARGC       RBOX_HEADER_OFFSET_FLAGS  /* Reuse flags offset for argc */
@@ -174,6 +193,10 @@
 #define RBOX_RESPONSE_MAX_REASON         256
 
 #define RBOX_RESPONSE_HEADER_SIZE        29
+
+/* V6 Response packet (uses same header format + decision field) */
+#define RBOX_RESPONSE_V6_OFFSET_DECISION  64  /* decision at offset 64 */
+#define RBOX_RESPONSE_V6_SIZE           (RBOX_HEADER_SIZE + RBOX_RESPONSE_MAX_REASON)
 
 /* ============================================================
  * STRUCTURES (for convenience)

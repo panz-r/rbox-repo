@@ -9,8 +9,66 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
+
+// RecentDecision stores a decision with expiration time
+type RecentDecision struct {
+	decision   uint8
+	reason    string
+	expiresAt time.Time
+}
+
+// RecentDecisionsCache stores recent decisions for auto-allow/deny
+type RecentDecisionsCache struct {
+	mu    sync.RWMutex
+	cache map[string]RecentDecision
+}
+
+var recentDecisions = RecentDecisionsCache{
+	cache: make(map[string]RecentDecision),
+}
+
+// checkRecentDecision checks if a command has a recent decision
+func (c *RecentDecisionsCache) checkRecentDecision(cmd string) (uint8, string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	if dec, ok := c.cache[cmd]; ok {
+		if time.Now().Before(dec.expiresAt) {
+			return dec.decision, dec.reason, true
+		}
+		// Expired - will be cleaned up lazily
+	}
+	return 0, "", false
+}
+
+// addRecentDecision adds a decision to the cache
+func (c *RecentDecisionsCache) addRecentDecision(cmd string, decision uint8, reason string, duration time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	c.cache[cmd] = RecentDecision{
+		decision:   decision,
+		reason:    reason,
+		expiresAt: time.Now().Add(duration),
+	}
+}
+
+// cleanupExpired removes expired decisions from cache
+func (c *RecentDecisionsCache) cleanupExpired() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	now := time.Now()
+	for cmd, dec := range c.cache {
+		if now.After(dec.expiresAt) {
+			delete(c.cache, cmd)
+		}
+	}
+}
 
 // Logger for server output
 type Logger struct {
@@ -97,19 +155,42 @@ func main() {
 	
 	go func() {
 		<-sigChan
+		server.Stop()
 		server.Free()
 	}()
 
 	// Process requests in a loop
 	for {
+	//fmt.Fprintf(os.Stderr, "DEBUG GO: About to call GetRequest\n")
 		req := server.GetRequest()
+		//fmt.Fprintf(os.Stderr, "DEBUG GO: GetRequest returned %v\n", req)
 		if req == nil {
 			// Server stopped
 			break
 		}
+		
+		// Check for stop request
+		if req.IsStop() {
+			fmt.Println("\nShutting down...")
+			break
+		}
 
 		cmd := req.GetCommand()
+		caller := req.GetCaller()
+		syscall := req.GetSyscall()
+		
+		// Log caller info if present
+		callerInfo := ""
+		if caller != "" {
+			callerInfo = " [caller: " + caller
+			if syscall != "" {
+				callerInfo += ", syscall: " + syscall
+			}
+			callerInfo += "]"
+		}
+		
 		argc := req.GetArgc()
+		//fmt.Fprintf(os.Stderr, "DEBUG GO: GetArgc returned %d\n", argc)
 
 		args := make([]string, argc)
 		for i := 0; i < argc; i++ {
@@ -118,7 +199,7 @@ func main() {
 
 		// Log request if verbose
 		if *verbose || *veryVerbose {
-			fmt.Printf("Request: %s", cmd)
+			fmt.Printf("Request: %s%s", cmd, callerInfo)
 			for _, arg := range args {
 				fmt.Printf(" %s", arg)
 			}
@@ -126,10 +207,14 @@ func main() {
 		}
 
 		// Make decision
+		//fmt.Fprintf(os.Stderr, "DEBUG GO: About to makeDecision\n")
 		decision, reason := makeDecision(cmd, args)
+		//fmt.Fprintf(os.Stderr, "DEBUG GO: decision=%d, reason='%s'\n", decision, reason)
 
 		// Send decision
+		//fmt.Fprintf(os.Stderr, "DEBUG GO: About to call Decide\n")
 		if err := req.Decide(decision, reason, 0); err != nil {
+			//fmt.Fprintf(os.Stderr, "DEBUG GO: Decide returned error: %v\n", err)
 			if gLogger != nil {
 				gLogger.Log(1, "Error sending decision: %v", err)
 			}
@@ -158,6 +243,16 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 		return DecisionDeny, "empty command"
 	}
 
+	// Strip caller prefix if present: [caller] command or [caller:syscall] command
+	// We need to extract just the actual command for decision making
+	actualCmd := cmd
+	if strings.HasPrefix(cmd, "[") {
+		// Find the closing bracket
+		if idx := strings.Index(cmd, "]"); idx > 0 {
+			actualCmd = strings.TrimSpace(cmd[idx+1:])
+		}
+	}
+
 	// Check for dangerous patterns in arguments
 	for _, arg := range args {
 		if arg == "/etc/passwd" || arg == "/etc/shadow" || arg == "/etc/group" {
@@ -166,7 +261,7 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 	}
 
 	// Convert to lowercase for matching
-	cmdLower := strings.ToLower(cmd)
+	cmdLower := strings.ToLower(actualCmd)
 
 	// Read-only commands that are always allowed
 	readOnlyCmds := map[string]bool{
@@ -209,7 +304,8 @@ func StoreRequest(id int, req *RBoxRequest) {
 }
 
 // MakeDecision sends a decision for a pending request
-func MakeDecision(id int, allowed bool, reason string) error {
+// duration: time in seconds for time-limited decision (0 = no time limit)
+func MakeDecision(id int, allowed bool, reason string, duration uint32) error {
 	req, ok := pendingRequests[id]
 	if !ok {
 		return fmt.Errorf("request not found")
@@ -220,7 +316,7 @@ func MakeDecision(id int, allowed bool, reason string) error {
 		decision = DecisionDeny
 	}
 	
-	err := req.Decide(decision, reason, 0)
+	err := req.Decide(decision, reason, duration)
 	delete(pendingRequests, id)
 	return err
 }

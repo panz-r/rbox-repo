@@ -38,68 +38,60 @@ const (
 // DefaultSocketPath is the default server socket
 const DefaultSocketPath = "/tmp/readonlybox.sock"
 
-// RBoxClient wraps the C library client
-type RBoxClient struct {
-	cClient *C.rbox_client_t
-}
-
-// NewRBoxClient connects to the ReadOnlyBox server
-func NewRBoxClient(socketPath string) (*RBoxClient, error) {
-	cPath := C.CString(socketPath)
-	defer C.free(unsafe.Pointer(cPath))
-
-	client := C.rbox_client_connect(cPath)
-	if client == nil {
-		return nil, fmt.Errorf("failed to connect to %s", socketPath)
-	}
-
-	return &RBoxClient{cClient: client}, nil
-}
-
-// NewRBoxClientWithRetry connects with exponential backoff retry
-func NewRBoxClientWithRetry(socketPath string, baseDelayMs uint32, maxRetries uint32) (*RBoxClient, error) {
-	cPath := C.CString(socketPath)
-	defer C.free(unsafe.Pointer(cPath))
-
-	client := C.rbox_client_connect_retry(cPath, C.uint32_t(baseDelayMs), C.uint32_t(maxRetries))
-	if client == nil {
-		return nil, fmt.Errorf("failed to connect to %s after retries", socketPath)
-	}
-
-	return &RBoxClient{cClient: client}, nil
-}
-
-// SendRequest sends a command to the server and gets the decision
-// command: the command to execute
-// args: command arguments
-// Returns: decision (DecisionAllow/DecisionDeny), reason string, error
-func (c *RBoxClient) SendRequest(command string, args []string) (uint8, string, error) {
-	if c.cClient == nil {
-		return DecisionError, "", fmt.Errorf("client not connected")
+// BlockingRequest sends a command to the server and waits for response
+// Handles connection retries and request resends automatically
+// baseDelayMs: minimum 10ms, maxRetries: 0 means unlimited
+// caller: identifies the calling application (e.g., "ptrace", "--judge")
+// syscall: optional syscall context (e.g., "execve")
+func BlockingRequest(socketPath, command, caller, syscall string, args []string, baseDelayMs uint32, maxRetries uint32) (uint8, string, error) {
+	// Ensure minimum base delay
+	if baseDelayMs < 10 {
+		baseDelayMs = 10
 	}
 
 	// Build argv for C
-	argv := make([]*C.char, len(args))
-	for i, arg := range args {
-		argv[i] = C.CString(arg)
-		defer C.free(unsafe.Pointer(argv[i]))
+	var cArgv **C.char = nil
+	if len(args) > 0 {
+		//fmt.Printf("DEBUG Go: Building argv with len=%d\n", len(args))
+		argv := make([]*C.char, len(args))
+		for i, arg := range args {
+			//fmt.Printf("DEBUG Go: argv[%d] = '%s'\n", i, arg)
+			argv[i] = C.CString(arg)
+			defer C.free(unsafe.Pointer(argv[i]))
+		}
+		cArgv = &argv[0]
+	} else {
+		//fmt.Printf("DEBUG Go: No args (len=0)\n")
 	}
 
 	// Convert command
 	cCommand := C.CString(command)
 	defer C.free(unsafe.Pointer(cCommand))
 
+	// Convert caller info
+	cCaller := C.CString(caller)
+	defer C.free(unsafe.Pointer(cCaller))
+	
+	cSyscall := C.CString(syscall)
+	defer C.free(unsafe.Pointer(cSyscall))
+
 	// Prepare response struct
 	var response C.rbox_response_t
 
-	// Send request
-	cArgc := C.int(len(args))
-	var cArgv **C.char
-	if len(args) > 0 {
-		cArgv = &argv[0]
-	}
-
-	err := C.rbox_client_send_request(c.cClient, cCommand, cArgc, cArgv, &response)
+	// Use blocking request which handles retries automatically
+	// Parameters: socket_path, command, argc, argv, caller, syscall, response, base_delay, max_retries
+	err := C.rbox_blocking_request(
+		C.CString(socketPath),
+		cCommand,
+		C.int(len(args)),
+		cArgv,
+		cCaller,
+		cSyscall,
+		&response,
+		C.uint32_t(baseDelayMs),
+		C.uint32_t(maxRetries),
+	)
+	
 	if err != C.RBOX_OK {
 		errStr := C.GoString(C.rbox_strerror(err))
 		return DecisionError, "", fmt.Errorf("request failed: %s", errStr)
@@ -109,30 +101,10 @@ func (c *RBoxClient) SendRequest(command string, args []string) (uint8, string, 
 	return uint8(response.decision), reason, nil
 }
 
-// Close closes the client connection
-func (c *RBoxClient) Close() {
-	if c.cClient != nil {
-		C.rbox_client_close(c.cClient)
-		c.cClient = nil
-	}
-}
-
-// BlockingRequest is a convenience function that connects, sends, and gets response
-// It handles connection retry internally
-func BlockingRequest(socketPath, command string, args []string, baseDelayMs uint32, maxRetries uint32) (uint8, string, error) {
-	client, err := NewRBoxClientWithRetry(socketPath, baseDelayMs, maxRetries)
-	if err != nil {
-		return DecisionError, "", err
-	}
-	defer client.Close()
-
-	return client.SendRequest(command, args)
-}
-
 // SimpleRequest is a convenience for simple use cases
-// Uses default retry settings (100ms base, 10 retries)
-func SimpleRequest(socketPath, command string, args ...string) (uint8, string, error) {
-	return BlockingRequest(socketPath, command, args, 100, 10)
+// Uses default retry settings (10ms base, unlimited retries)
+func SimpleRequest(socketPath, command, caller, syscall string, args ...string) (uint8, string, error) {
+	return BlockingRequest(socketPath, command, caller, syscall, args, 10, 0)
 }
 
 // CheckDFALocal checks if command is allowed by local DFA without contacting server
