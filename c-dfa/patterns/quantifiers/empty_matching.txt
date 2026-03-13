@@ -14,13 +14,13 @@
 
 [safe:empty_star1] a*
 [safe:empty_star2] (a)*
-[safe:empty_star3] ((a))*
+[safe:empty_star3] (a)*
 [safe:empty_star4] abc*
 [safe:empty_star5] (abc)*
 
 [safe:empty_q1] a?
 [safe:empty_q2] (a)?
-[safe:empty_q3] ((a))?
+[safe:empty_q3] (a)?
 [safe:empty_q4] abc?
 [safe:empty_q5] (abc)?
 

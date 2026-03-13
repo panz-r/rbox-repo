@@ -144,14 +144,14 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
                    strstr(filename, "build_commands") || strstr(filename, "container_commands") ||
                    strstr(filename, "acceptance_category") || strstr(filename, "category_mix")) {
             subdir = "commands";
+        } else if (strstr(filename, "fragment_interact") || strstr(filename, "expanded_fragment")) {
+            subdir = "fragments";
         } else if (strstr(filename, "boundary") || strstr(filename, "edge") || strstr(filename, "hard") ||
                    strstr(filename, "whitespace") || strstr(filename, "space_test") ||
                    strstr(filename, "deep_nested") || strstr(filename, "long_chain") ||
                    strstr(filename, "negative_integrity") || strstr(filename, "tripled") ||
                    strstr(filename, "character_classes") || strstr(filename, "expanded_")) {
             subdir = "edge";
-        } else if (strstr(filename, "fragment_interact") || strstr(filename, "expanded_fragment")) {
-            subdir = "fragments";
         }
         
         snprintf(patterns_path, sizeof(patterns_path), "patterns/%s/%s", subdir, filename);

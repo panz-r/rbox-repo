@@ -64,7 +64,7 @@ typedef struct {
 
 // Partition structure - dynamically allocated states
 typedef struct {
-    int* states;    // Dynamically allocated (one pool shared across partitions)
+    int* states;    // Points into shared pool (initial) or individually malloc'd (after split)
     int count;
 } partition_t;
 
@@ -73,6 +73,11 @@ typedef struct {
     int partition_map[MAX_STATES];  // state -> partition_id
     partition_t partitions[MAX_STATES];
     int partition_count;
+    int* shared_pool;               // Shared pool for initial partition arrays
+    int shared_pool_size;           // Size of shared pool in elements
+    int* split_pool;                // Pre-allocated pool for split partition arrays
+    int split_pool_size;            // Total size of split pool in elements
+    int split_pool_offset;          // Current offset into split pool
 } minimizer_state_t;
 
 // Helper for predecessor sorting
@@ -91,9 +96,26 @@ static int compare_sort_entries(const void* a, const void* b) {
 // Free minimizer state and its dynamically allocated partition pools
 static void free_minimizer(minimizer_state_t* ms) {
     if (ms) {
-        // Free each partition's states array
+        // Free the shared pools (used for initial and split partition arrays)
+        free(ms->shared_pool);
+        free(ms->split_pool);
+        // Free individually allocated partition arrays (overflow cases only)
         for (int i = 0; i < ms->partition_count; i++) {
-            free(ms->partitions[i].states);
+            if (ms->partitions[i].states) {
+                char* states_ptr = (char*)ms->partitions[i].states;
+                // Check if in shared pool
+                char* shared_start = (char*)ms->shared_pool;
+                char* shared_end = shared_start + (ms->shared_pool_size * sizeof(int));
+                bool in_shared = (states_ptr >= shared_start && states_ptr < shared_end);
+                // Check if in split pool
+                char* split_start = (char*)ms->split_pool;
+                char* split_end = split_start + (ms->split_pool_size * sizeof(int));
+                bool in_split = (states_ptr >= split_start && states_ptr < split_end);
+                // Only free if not in either pool (i.e., overflow malloc)
+                if (!in_shared && !in_split) {
+                    free(ms->partitions[i].states);
+                }
+            }
         }
         free(ms);
     }
@@ -318,39 +340,76 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
 
 static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t* dfa, int state_count) {
     for (int i = 0; i < MAX_STATES; i++) ms->partition_map[i] = -1;
-    // Each partition gets its own malloc'd array. Total memory across all
-    // partitions is O(state_count) since each state belongs to exactly one partition.
+    
+    // Two-pass approach with shared pool and hash-based grouping for O(n) performance
+    // Pass 1: Count states per group using hash table to avoid O(n²) linear search
     int group_count = 0;
+    uint32_t* group_keys = alloc_or_abort(malloc(MAX_STATES * sizeof(uint32_t)), "Alloc group_keys");
+    int* group_sizes = alloc_or_abort(calloc(MAX_STATES, sizeof(int)), "Alloc group_sizes");
+    
     for (int s = 0; s < state_count; s++) {
-        bool found = false;
-        for (int g = 0; g < group_count; g++) {
-            int rep = ms->partitions[g].states[0];
-            if (dfa[s].flags == dfa[rep].flags && 
-                dfa[s].reachable_accepting_patterns == dfa[rep].reachable_accepting_patterns) {
-                ms->partitions[g].states[ms->partitions[g].count++] = s;
-                ms->partition_map[s] = g;
-                found = true; break;
-            }
+        uint32_t key = ((uint32_t)dfa[s].flags << 16) | (uint32_t)dfa[s].reachable_accepting_patterns;
+        
+        // Find group using hash-based lookup
+        int g = -1;
+        for (int i = 0; i < group_count; i++) {
+            if (group_keys[i] == key) { g = i; break; }
         }
-        if (!found) {
-            // Allocate array for this partition (will hold at most state_count entries)
-            ms->partitions[group_count].states = alloc_or_abort(
-                malloc(state_count * sizeof(int)),
-                "Failed to allocate partition states"
-            );
-            ms->partitions[group_count].states[0] = s;
-            ms->partitions[group_count].count = 1;
-            ms->partition_map[s] = group_count;
-            group_count++;
+        if (g == -1) {
+            g = group_count++;
+            group_keys[g] = key;
+            group_sizes[g] = 0;
         }
+        group_sizes[g]++;
     }
+    
+    // Allocate shared pool: one contiguous block for all initial partition arrays
+    ms->shared_pool_size = state_count;
+    ms->shared_pool = alloc_or_abort(
+        malloc(state_count * sizeof(int)),
+        "Failed to allocate shared partition pool"
+    );
+
+    // Allocate split pool: pre-allocated block for split partition arrays
+    // Upper bound: each state can be moved at most once to a new partition,
+    // so total split elements needed ≤ state_count
+    ms->split_pool_size = state_count;
+    ms->split_pool_offset = 0;
+    ms->split_pool = alloc_or_abort(
+        malloc(state_count * sizeof(int)),
+        "Failed to allocate split partition pool"
+    );
+    
+    // Pass 2: Assign states to partitions
+    int pool_offset = 0;
+    int* group_pos = alloc_or_abort(calloc(MAX_STATES, sizeof(int)), "Alloc group_pos");
+    
+    for (int g = 0; g < group_count; g++) {
+        ms->partitions[g].states = ms->shared_pool + pool_offset;
+        ms->partitions[g].count = 0;
+        pool_offset += group_sizes[g];
+    }
+    
+    for (int s = 0; s < state_count; s++) {
+        uint32_t key = ((uint32_t)dfa[s].flags << 16) | (uint32_t)dfa[s].reachable_accepting_patterns;
+        
+        int g = -1;
+        for (int i = 0; i < group_count; i++) {
+            if (group_keys[i] == key) { g = i; break; }
+        }
+        ms->partitions[g].states[group_pos[g]++] = s;
+        ms->partitions[g].count++;
+        ms->partition_map[s] = g;
+    }
+    
     ms->partition_count = group_count;
+    free(group_keys); free(group_sizes); free(group_pos);
 }
 
 static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* ms, int old_state_count) {
     build_dfa_state_t* new_dfa = malloc(ms->partition_count * sizeof(build_dfa_state_t));
     alloc_or_abort(new_dfa, "Alloc New DFA Buffer");
-    int state_remap[MAX_STATES];
+    int* state_remap = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc state_remap");
     for (int i = 0; i < MAX_STATES; i++) state_remap[i] = -1;  // Initialize to -1
     int new_count = 0;
 
@@ -404,7 +463,7 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
     }
 
     memcpy(dfa, new_dfa, new_count * sizeof(build_dfa_state_t));
-    free(new_dfa); return new_count;
+    free(new_dfa); free(state_remap); return new_count;
 }
 
 // ============================================================================
@@ -418,8 +477,8 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
     inverse_graph_t inv;
     if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
     int head = 0, tail = 0;
-    int worklist[MAX_STATES * 4];
-    bool in_worklist[MAX_STATES] = {false};
+    int* worklist = alloc_or_abort(malloc(MAX_STATES * 4 * sizeof(int)), "Alloc worklist");
+    bool* in_worklist = alloc_or_abort(calloc(MAX_STATES, sizeof(bool)), "Alloc in_worklist");
     for (int p = 0; p < ms->partition_count; p++) { worklist[tail++] = p; in_worklist[p] = true; }
     int* char_preds = malloc((inv.total_edges + 1) * sizeof(int));
     int* char_pred_counts = calloc(TOTAL_SYMBOLS, sizeof(int));
@@ -452,10 +511,16 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
                 if (group_size < ms->partitions[P].count) {
                     int NewP = ms->partition_count++;
                     ms->partitions[NewP].count = 0;
-                    ms->partitions[NewP].states = alloc_or_abort(
-                        malloc(ms->partitions[P].count * sizeof(int)),
-                        "Failed to allocate split partition"
-                    );
+                    int needed = ms->partitions[P].count;
+                    if (ms->split_pool_offset + needed <= ms->split_pool_size) {
+                        ms->partitions[NewP].states = ms->split_pool + ms->split_pool_offset;
+                        ms->split_pool_offset += needed;
+                    } else {
+                        ms->partitions[NewP].states = alloc_or_abort(
+                            malloc(needed * sizeof(int)),
+                            "Failed to allocate split partition"
+                        );
+                    }
                     for (int i = 0; i < group_size; i++) { int s = sort_buf[gs + i].state_id; ms->partition_map[s] = NewP; ms->partitions[NewP].states[ms->partitions[NewP].count++] = s; }
                     int kept = 0;
                     for (int i = 0; i < ms->partitions[P].count; i++) { int s = ms->partitions[P].states[i]; if (ms->partition_map[s] == P) ms->partitions[P].states[kept++] = s; }
@@ -473,7 +538,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
 
     int new_count = build_minimized_dfa(dfa, ms, state_count);
     VERBOSE_PRINT("Minimized to %d states (from %d)\n", new_count, state_count);
-    free_minimizer(ms); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
+    free_minimizer(ms); free(worklist); free(in_worklist); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
     
     // Apply cache-optimized layout
     layout_options_t layout_opts = get_default_layout_options();
@@ -493,13 +558,20 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
 int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
+    
+    // Allocate working arrays on heap instead of stack (was ~512KB on stack)
+    int* state_to_sg = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc state_to_sg");
+    int* sg_reps = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc sg_reps");
+    int* new_p_ids = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc new_p_ids");
+    int* kept = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc kept");
+    
     int iterations = 0;
     while (iterations < 100) {
         iterations++; bool changed = false;
         int old_count = ms->partition_count;
         for (int p = 0; p < old_count; p++) {
             if (ms->partitions[p].count <= 1) continue;
-            int subgroup_count = 0; int state_to_sg[MAX_STATES]; int sg_reps[MAX_STATES];
+            int subgroup_count = 0;
             for (int i = 0; i < ms->partitions[p].count; i++) {
                 int s = ms->partitions[p].states[i]; int sg = -1;
                 uint16_t sig = compute_hash(&dfa[s], ms->partition_map);
@@ -512,16 +584,22 @@ int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
                 state_to_sg[i] = sg;
             }
             if (subgroup_count > 1) {
-                changed = true; int new_p_ids[MAX_STATES]; new_p_ids[0] = p;
-                for (int sg = 1; sg < subgroup_count; sg++) { 
-                    new_p_ids[sg] = ms->partition_count++; 
-                    ms->partitions[new_p_ids[sg]].count = 0; 
-                    ms->partitions[new_p_ids[sg]].states = alloc_or_abort(
-                        malloc(ms->partitions[p].count * sizeof(int)),
-                        "Failed to allocate Moore split partition"
-                    );
+                changed = true; new_p_ids[0] = p;
+                for (int sg = 1; sg < subgroup_count; sg++) {
+                    new_p_ids[sg] = ms->partition_count++;
+                    ms->partitions[new_p_ids[sg]].count = 0;
+                    int needed = ms->partitions[p].count;
+                    if (ms->split_pool_offset + needed <= ms->split_pool_size) {
+                        ms->partitions[new_p_ids[sg]].states = ms->split_pool + ms->split_pool_offset;
+                        ms->split_pool_offset += needed;
+                    } else {
+                        ms->partitions[new_p_ids[sg]].states = alloc_or_abort(
+                            malloc(needed * sizeof(int)),
+                            "Failed to allocate Moore split partition"
+                        );
+                    }
                 }
-                int kept[MAX_STATES], kept_count = 0;
+                int kept_count = 0;
                 for (int i = 0; i < ms->partitions[p].count; i++) {
                     int s = ms->partitions[p].states[i]; int dest = new_p_ids[state_to_sg[i]];
                     if (dest == p) kept[kept_count++] = s;
@@ -533,7 +611,9 @@ int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
         if (!changed) break;
     }
     int new_count = build_minimized_dfa(dfa, ms, state_count);
-    free_minimizer(ms); return new_count;
+    free_minimizer(ms);
+    free(state_to_sg); free(sg_reps); free(new_p_ids); free(kept);
+    return new_count;
 }
 
 // ============================================================================
