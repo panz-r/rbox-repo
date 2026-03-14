@@ -16,7 +16,7 @@
  * ============================================================ */
 
 #define RBOX_MAGIC       0x524F424F  /* "ROBO" */
-#define RBOX_VERSION     7  /* Protocol version with caller/syscall */
+#define RBOX_VERSION     9  /* Protocol version with separate header/body checksums */
 
 /* ============================================================
  * MESSAGE TYPES
@@ -76,7 +76,7 @@
 #define RBOX_DEFAULT_SOCKET  "/tmp/readonlybox.sock"
 
 /* ============================================================
- * HEADER STRUCTURE (92 bytes total)
+ * HEADER STRUCTURE (127 bytes total)
  * All fields are little-endian
  * ============================================================ */
 
@@ -96,9 +96,13 @@
  *  72      4    chunk_len (length of this chunk's data)
  *  76      8    total_len (total expected length of all chunks)
  *  84      4    cmd_hash (hash of command for verification)
- *  88      4    checksum (CRC32 of this chunk)
- *  --     --
- *  92           (end of header)
+ *  88      4    fenv_hash (hash of flagged env vars)
+ *  92      1    caller_syscall_size
+ *  93     15    caller name
+ * 108     15    syscall name
+ * 119      4    header_checksum (CRC32 of header bytes 0-118)
+ * 123      4    body_checksum (CRC32 of body)
+ * 127           (end of header)
  */
 
 #define RBOX_HEADER_OFFSET_MAGIC           0
@@ -112,19 +116,13 @@
 #define RBOX_HEADER_OFFSET_CHUNK_LEN     72
 #define RBOX_HEADER_OFFSET_TOTAL_LEN     76
 #define RBOX_HEADER_OFFSET_CMD_HASH      84
-#define RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE 88
-#define RBOX_HEADER_OFFSET_CALLER        89
-#define RBOX_HEADER_OFFSET_SYSCALL      104
+#define RBOX_HEADER_OFFSET_FENV_HASH     88
+#define RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE 92
+#define RBOX_HEADER_OFFSET_CALLER        93
+#define RBOX_HEADER_OFFSET_SYSCALL      108
 #define RBOX_HEADER_OFFSET_CHECKSUM    119
-
-#define RBOX_HEADER_SIZE                123
-#define RBOX_HEADER_OFFSET_SERVER_ID 40
-#define RBOX_HEADER_OFFSET_TYPE      56
-#define RBOX_HEADER_OFFSET_FLAGS     60
-#define RBOX_HEADER_OFFSET_OFFSET    64
-#define RBOX_HEADER_OFFSET_CHUNK_LEN 72
-#define RBOX_HEADER_OFFSET_TOTAL_LEN 76
-#define RBOX_HEADER_OFFSET_CMD_HASH   84
+#define RBOX_HEADER_OFFSET_BODY_CHECKSUM 123
+#define RBOX_HEADER_SIZE                127
 
 /* Backward compatibility aliases (v4 protocol used these fields) */
 #define RBOX_HEADER_OFFSET_ARGC       RBOX_HEADER_OFFSET_FLAGS  /* Reuse flags offset for argc */
@@ -214,10 +212,12 @@ typedef struct __attribute__((packed)) {
     uint32_t chunk_len;
     uint64_t total_len;
     uint32_t cmd_hash;
-    uint8_t  caller_syscall_size;  /* bits 0-3: caller_len, bits 4-7: syscall_len */
-    uint8_t  caller[15];           /* caller name, truncated to 15 chars */
-    uint8_t  syscall[15];          /* syscall name, truncated to 15 chars */
-    uint32_t checksum;
+    uint32_t fenv_hash;                    /* Hash of flagged env vars */
+    uint8_t  caller_syscall_size;          /* bits 0-3: caller_len, bits 4-7: syscall_len */
+    uint8_t  caller[15];                   /* caller name, truncated to 15 chars */
+    uint8_t  syscall[15];                  /* syscall name, truncated to 15 chars */
+    uint32_t checksum;                     /* Header checksum */
+    uint32_t body_checksum;                /* Body checksum */
 } rbox_header_t;
 
 typedef struct __attribute__((packed)) {

@@ -1,5 +1,5 @@
 /*
- * test_integration.c - Comprehensive integration tests for v5 protocol
+ * test_integration.c - Comprehensive integration tests for v9 protocol
  * Tests all scenarios including hickups, retries, and edge cases
  */
 
@@ -88,7 +88,7 @@ static ssize_t write_all(int fd, const void *buf, size_t len) {
  * Robust server implementations that handle edge cases
  * ============================================================================ */
 
-/* Robust server: handles malformed input without hanging */
+/* Robust server: uses canonical library functions for request handling */
 static void *server_robust(void *arg) {
     const char *path = arg;
     rbox_server_t *srv = rbox_server_new(path);
@@ -96,52 +96,25 @@ static void *server_robust(void *arg) {
     
     rbox_client_t *cl = rbox_server_accept(srv);
     if (cl) {
-        /* Use poll with timeout to avoid hanging on bad input */
-        struct pollfd pfd = { .fd = rbox_client_fd(cl), .events = POLLIN };
+        /* Use canonical library function to read and parse request */
+        rbox_request_t request;
+        rbox_error_t err = rbox_request_read(cl, &request);
         
-        /* Try to read header with timeout */
-        char hdr[88];
-        ssize_t n = 0;
-        
-        if (poll(&pfd, 1, 500) > 0) {  /* 500ms timeout */
-            n = rbox_read(rbox_client_fd(cl), hdr, 88);
+        if (err == RBOX_OK && request.command) {
+            /* Valid request received - send ALLOW response */
+            rbox_response_t resp = { .decision = RBOX_DECISION_ALLOW };
+            memcpy(resp.request_id, request.header.request_id, 16);
+            snprintf(resp.reason, sizeof(resp.reason), "ok");
+            rbox_response_send(cl, &resp);
         }
-        
-        /* Only process if we got exactly 88 bytes */
-        if (n == 88) {
-            /* Validate chunk_len before reading body */
-            uint32_t clen = *(uint32_t *)(hdr + 72);
-            
-            /* Sanity check: don't read more than 64KB */
-            if (clen > 0 && clen <= 65536) {
-                if (poll(&pfd, 1, 500) > 0) {
-                    char body[65536];
-                    rbox_read(rbox_client_fd(cl), body, clen);
-                }
-            } else if (clen > 65536) {
-                /* Invalid chunk_len - close without response */
-                rbox_client_close(cl);
-                rbox_server_free(srv);
-                return NULL;
-            }
-            
-            /* Only send response if we got valid header */
-            uint32_t magic = *(uint32_t *)hdr;
-            if (magic == RBOX_MAGIC) {
-                /* Echo back the request_id from the client */
-                rbox_response_t resp = { .decision = RBOX_DECISION_ALLOW };
-                memcpy(resp.request_id, hdr + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
-                snprintf(resp.reason, sizeof(resp.reason), "ok");
-                rbox_response_send(cl, &resp);
-            }
-        }
+        rbox_request_free(&request);
         rbox_client_close(cl);
     }
     rbox_server_free(srv);
     return NULL;
 }
 
-/* Server that sends DENY */
+/* Server that sends DENY - uses canonical library functions */
 static void *server_deny(void *arg) {
     const char *path = arg;
     rbox_server_t *srv = rbox_server_new(path);
@@ -149,32 +122,23 @@ static void *server_deny(void *arg) {
     
     rbox_client_t *cl = rbox_server_accept(srv);
     if (cl) {
-        char hdr[88];
-        struct pollfd pfd = { .fd = rbox_client_fd(cl), .events = POLLIN };
+        rbox_request_t request;
+        rbox_error_t err = rbox_request_read(cl, &request);
         
-        if (poll(&pfd, 1, 500) > 0) {
-            ssize_t n = rbox_read(rbox_client_fd(cl), hdr, 88);
-            if (n == 88) {
-                uint32_t clen = *(uint32_t *)(hdr + 72);
-                if (clen > 0 && clen <= 65536) {
-                    if (poll(&pfd, 1, 500) > 0) {
-                        char body[65536];
-                        rbox_read(rbox_client_fd(cl), body, clen);
-                    }
-                }
-                rbox_response_t resp = { .decision = RBOX_DECISION_DENY };
-                memcpy(resp.request_id, hdr + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
-                snprintf(resp.reason, sizeof(resp.reason), "denied");
-                rbox_response_send(cl, &resp);
-            }
+        if (err == RBOX_OK && request.command) {
+            rbox_response_t resp = { .decision = RBOX_DECISION_DENY };
+            memcpy(resp.request_id, request.header.request_id, 16);
+            snprintf(resp.reason, sizeof(resp.reason), "denied");
+            rbox_response_send(cl, &resp);
         }
+        rbox_request_free(&request);
         rbox_client_close(cl);
     }
     rbox_server_free(srv);
     return NULL;
 }
 
-/* Server with delayed response */
+/* Server with delayed response - uses canonical library functions */
 static void *server_delayed(void *arg) {
     const char *path = arg;
     rbox_server_t *srv = rbox_server_new(path);
@@ -182,34 +146,25 @@ static void *server_delayed(void *arg) {
     
     rbox_client_t *cl = rbox_server_accept(srv);
     if (cl) {
-        char hdr[88];
-        struct pollfd pfd = { .fd = rbox_client_fd(cl), .events = POLLIN };
+        rbox_request_t request;
+        rbox_error_t err = rbox_request_read(cl, &request);
         
-        if (poll(&pfd, 1, 500) > 0) {
-            ssize_t n = rbox_read(rbox_client_fd(cl), hdr, 88);
-            if (n == 88) {
-                uint32_t clen = *(uint32_t *)(hdr + 72);
-                if (clen > 0 && clen <= 65536) {
-                    if (poll(&pfd, 1, 500) > 0) {
-                        char body[65536];
-                        rbox_read(rbox_client_fd(cl), body, clen);
-                    }
-                }
-                /* Delay before response */
-                usleep(200000);
-                rbox_response_t resp = { .decision = RBOX_DECISION_ALLOW };
-                memcpy(resp.request_id, hdr + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
-                snprintf(resp.reason, sizeof(resp.reason), "ok");
-                rbox_response_send(cl, &resp);
-            }
+        if (err == RBOX_OK && request.command) {
+            /* Delay before response */
+            usleep(200000);
+            rbox_response_t resp = { .decision = RBOX_DECISION_ALLOW };
+            memcpy(resp.request_id, request.header.request_id, 16);
+            snprintf(resp.reason, sizeof(resp.reason), "ok");
+            rbox_response_send(cl, &resp);
         }
+        rbox_request_free(&request);
         rbox_client_close(cl);
     }
     rbox_server_free(srv);
     return NULL;
 }
 
-/* Server that reads but doesn't respond */
+/* Server that reads but doesn't respond - uses canonical library functions */
 static void *server_drops_response(void *arg) {
     const char *path = arg;
     rbox_server_t *srv = rbox_server_new(path);
@@ -217,22 +172,13 @@ static void *server_drops_response(void *arg) {
     
     rbox_client_t *cl = rbox_server_accept(srv);
     if (cl) {
-        char hdr[88];
-        struct pollfd pfd = { .fd = rbox_client_fd(cl), .events = POLLIN };
+        rbox_request_t request;
+        rbox_error_t err = rbox_request_read(cl, &request);
         
-        if (poll(&pfd, 1, 500) > 0) {
-            ssize_t n = rbox_read(rbox_client_fd(cl), hdr, 88);
-            if (n == 88) {
-                uint32_t clen = *(uint32_t *)(hdr + 72);
-                if (clen > 0 && clen <= 65536) {
-                    if (poll(&pfd, 1, 500) > 0) {
-                        char body[65536];
-                        rbox_read(rbox_client_fd(cl), body, clen);
-                    }
-                }
-                /* Just close without sending response */
-            }
+        if (err == RBOX_OK && request.command) {
+            /* Just close without sending response */
         }
+        rbox_request_free(&request);
         rbox_client_close(cl);
     }
     rbox_server_free(srv);
@@ -387,10 +333,9 @@ static int test_hickup_bad_version(void) {
         char pkt[4096];
         size_t plen;
         const char *args[] = {"-la"};
-        rbox_build_request(pkt, &plen, "ls", 1, args);
+        rbox_build_request(pkt, sizeof(pkt), &plen, "ls", NULL, NULL, 1, args);
         *(uint32_t *)(pkt + 4) = 999;  /* Bad version */
-        *(uint32_t *)(pkt + 84) = 0;
-        *(uint32_t *)(pkt + 84) = rbox_calculate_checksum(pkt, 84);
+        *(uint32_t *)(pkt + 84) = rbox_calculate_checksum_crc32(0, pkt, 84);
         write_all(rbox_client_fd(cl), pkt, plen);
         rbox_client_close(cl);
     }
@@ -456,7 +401,7 @@ static int test_hickup_truncated_body(void) {
         char pkt[4096];
         size_t plen;
         const char *args[] = {"-la"};
-        rbox_build_request(pkt, &plen, "ls", 1, args);
+        rbox_build_request(pkt, sizeof(pkt), &plen, "ls", NULL, NULL, 1, args);
         /* Send only partial body */
         write_all(rbox_client_fd(cl), pkt, plen - 5);
         rbox_client_close(cl);
@@ -510,7 +455,7 @@ static int test_hickup_dropped_response(void) {
         char pkt[4096];
         size_t plen;
         const char *args[] = {"-la"};
-        rbox_build_request(pkt, &plen, "ls", 1, args);
+        rbox_build_request(pkt, sizeof(pkt), &plen, "ls", NULL, NULL, 1, args);
         write_all(rbox_client_fd(cl), pkt, plen);
         /* Don't wait for response, just close */
         rbox_client_close(cl);
@@ -560,7 +505,7 @@ static int test_retry_until_success(void) {
         char pkt[4096];
         size_t plen;
         const char *args[] = {"-la"};
-        rbox_build_request(pkt, &plen, "ls", 1, args);
+        rbox_build_request(pkt, sizeof(pkt), &plen, "ls", NULL, NULL, 1, args);
         write_all(rbox_client_fd(cl), pkt, plen);
         rbox_client_close(cl);
     }
@@ -700,7 +645,7 @@ static int test_long_args(void) {
  * ============================================================================ */
 
 int main(void) {
-    printf("=== Integration tests (v5 protocol) ===\n\n");
+    printf("=== Integration tests (v9 protocol) ===\n\n");
     fflush(stdout);
     
     /* Basic tests */

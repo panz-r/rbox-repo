@@ -95,6 +95,11 @@ typedef struct {
     char **execve_argv;     /* Saved argv for execve */
     char **execve_envp;     /* Saved envp for execve */
     char *last_validated_cmd; /* Last command that was validated for this process */
+    
+    /* Flagged env vars for current execve (for server decision) */
+    char **flagged_env_vars;  /* Array of flagged env var names */
+    float *flagged_env_scores; /* Array of scores */
+    int flagged_env_count;    /* Number of flagged env vars */
 } ProcessState;
 
 /* Set the main process PID */

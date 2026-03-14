@@ -56,10 +56,13 @@ $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
 # Run both unit tests and integration tests
-test: $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN)
+test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
 	./$(TEST_BASIC_BIN)
+	@echo ""
+	@echo "=== Running full protocol tests ==="
+	./$(TEST_FULL_BIN)
 	@echo ""
 	@echo "=== Running integration tests ==="
 	./$(TEST_INTEG_BIN)

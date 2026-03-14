@@ -27,7 +27,14 @@
 #include "syscall_handler.h"
 #include "validation.h"
 #include "protocol.h"
+#include <rbox_protocol_defs.h>
+#include <rbox_protocol.h>
+
 #include "env_screener.h"
+
+/* Global storage for flagged env var names (used by run_judge) */
+static char *g_flagged_env_names[256];
+static int g_flagged_env_count = 0;
 
 /* Forward declarations for judge execution */
 static const char *get_readonlybox_path(void);
@@ -207,6 +214,20 @@ static void screen_environment(void) {
     
     if (status != ENV_SCREENER_OK || flagged_count == 0) {
         return;
+    }
+    
+    /* Store flagged env var names globally for run_judge to access */
+    g_flagged_env_count = flagged_count;
+    for (int i = 0; i < flagged_count && i < 256; i++) {
+        extern char **environ;
+        char *entry = environ[indices[i]];
+        
+        char name[256];
+        extract_env_name(entry, name, sizeof(name));
+        
+        /* Store a copy of the name */
+        if (g_flagged_env_names[i]) free(g_flagged_env_names[i]);
+        g_flagged_env_names[i] = strdup(name);
     }
     
     /* Collect blocked variable names to remove after prompting */
@@ -805,7 +826,7 @@ int run_judge(const char *command, const char *caller_info) {
         /* Child: detach from tracer before exec to avoid re-intercepting */
         ptrace(PTRACE_DETACH, 0, NULL, 0);
         
-        /* Child: exec readonlybox --judge */
+        /* Child: exec readonlybox --bin --judge for binary protocol */
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
@@ -816,20 +837,61 @@ int run_judge(const char *command, const char *caller_info) {
             setenv("READONLYBOX_CALLER", caller_info, 1);
         }
 
+        /* Set flagged env vars so server can make decisions about them */
+        /* This must be set BEFORE exec so the Go server can read it */
+        /* Format: NAME1:score1,NAME2:score2,... */
+        if (g_flagged_env_count > 0) {
+            char env_buf[4096] = {0};
+            char *p = env_buf;
+            size_t rem = sizeof(env_buf) - 1;
+            
+            for (int i = 0; i < g_flagged_env_count && rem > 1; i++) {
+                if (g_flagged_env_names[i]) {
+                    /* Get the score from process state if available, otherwise use default */
+                    float score = 0.7;  /* Default score for screened vars */
+                    
+                    size_t len = strlen(g_flagged_env_names[i]);
+                    if (len < rem) {
+                        /* Format: name:score */
+                        memcpy(p, g_flagged_env_names[i], len);
+                        p += len;
+                        rem -= len;
+                        
+                        /* Add score */
+                        int n = snprintf(p, rem, ":%.2f", score);
+                        if (n > 0 && (size_t)n < rem) {
+                            p += n;
+                            rem -= n;
+                        }
+                        
+                        if (rem > 1 && i < g_flagged_env_count - 1) {
+                            *p++ = ',';
+                            rem--;
+                        }
+                    }
+                }
+            }
+            
+            if (env_buf[0]) {
+                setenv("READONLYBOX_FLAGGED_ENVS", env_buf, 1);
+            }
+        }
+
         /* Find readonlybox binary */
         const char *readonlybox_path = get_readonlybox_path();
         
-        execl(readonlybox_path, "readonlybox", "--judge", command, NULL);
+        /* Use binary mode for v8 protocol */
+        execl(readonlybox_path, "readonlybox", "--bin", "--judge", command, NULL);
         /* If we get here, execl failed */
         _exit(1);
     }
 
-    /* Parent: read output */
+    /* Parent: read binary output */
     /* Wait for child to finish first - this ensures all data is written */
     int status;
     waitpid(pid, &status, 0);
     
-    /* Now read the output from the closed pipe */
+    /* Now read the binary packet from the closed pipe */
     bytes_read = read(pipefd[0], buffer, sizeof(buffer) - 1);
     close(pipefd[0]);
     close(pipefd[1]);
@@ -850,26 +912,97 @@ int run_judge(const char *command, const char *caller_info) {
         exit_code = -1;
     }
     
-    /* Parse output: check exit code first, then look for ALLOW/DENY in output */
-    /* Exit codes: 0 = ALLOW, 9 = DENY, 1 = error */
-    if (exit_code == 0) {
-        DEBUG_PRINT("JUDGE: ALLOW for '%s'\n", command);
-        return 0;  /* Allowed */
-    } else if (exit_code == 9) {
-        DEBUG_PRINT("JUDGE: DENY for '%s'\n", command);
-        return 9;  /* Denied */
+    /* Use v8 protocol decode utilities to parse binary response */
+    rbox_decoded_header_t header;
+    rbox_response_details_t details;
+    rbox_env_decisions_t env_decisions;
+    
+    /* Decode header */
+    rbox_decode_header(buffer, bytes_read, &header);
+    if (!header.valid) {
+        DEBUG_PRINT("JUDGE: invalid header for '%s'\n", command);
+        /* Fall back to exit code */
+        if (exit_code == 0) return 0;
+        if (exit_code == 9) return 9;
+        return -1;
     }
     
-    /* Fallback: check output string */
-    if (strncmp(buffer, "ALLOW", 5) == 0) {
-        DEBUG_PRINT("JUDGE: ALLOW for '%s'\n", command);
-        return 0;  /* Allowed */
-    } else if (strncmp(buffer, "DENY", 4) == 0) {
-        DEBUG_PRINT("JUDGE: DENY for '%s'\n", command);
-        return 9;  /* Denied */
+    /* Decode response details */
+    rbox_decode_response_details(&header, buffer, bytes_read, &details);
+    if (!details.valid) {
+        DEBUG_PRINT("JUDGE: invalid details for '%s'\n", command);
+        if (exit_code == 0) return 0;
+        if (exit_code == 9) return 9;
+        return -1;
     }
-
-    DEBUG_PRINT("JUDGE: Unknown response for '%s': %s\n", command, buffer);
+    
+    /* Decode env decisions if present */
+    rbox_decode_env_decisions(&header, &details, buffer, bytes_read, &env_decisions);
+    if (env_decisions.valid && env_decisions.env_count > 0 && env_decisions.bitmap) {
+        /* Build env_decisions string with index:decision format */
+        char env_decisions_buf[4096] = {0};
+        char *p = env_decisions_buf;
+        size_t remaining = sizeof(env_decisions_buf) - 1;
+        
+        for (int i = 0; i < env_decisions.env_count && remaining > 1; i++) {
+            uint8_t bit = (env_decisions.bitmap[i / 8] >> (i % 8)) & 1;
+            int n = snprintf(p, remaining, "%d:%d", i, bit);
+            if (n > 0 && (size_t)n < remaining) {
+                p += n;
+                remaining -= n;
+                if (remaining > 1 && i < env_decisions.env_count - 1) {
+                    *p++ = ',';
+                    remaining--;
+                }
+            }
+        }
+        
+        if (env_decisions_buf[0]) {
+            DEBUG_PRINT("JUDGE: env_decisions: '%s'\n", env_decisions_buf);
+            setenv("READONLYBOX_ENV_DECISIONS", env_decisions_buf, 1);
+        }
+        
+        /* Also set the flagged env var names so child can filter */
+        if (g_flagged_env_count > 0) {
+            char env_names_buf[4096] = {0};
+            char *p = env_names_buf;
+            size_t rem = sizeof(env_names_buf) - 1;
+            
+            for (int i = 0; i < g_flagged_env_count && i < env_decisions.env_count && rem > 1; i++) {
+                if (g_flagged_env_names[i]) {
+                    size_t len = strlen(g_flagged_env_names[i]);
+                    if (len < rem) {
+                        memcpy(p, g_flagged_env_names[i], len);
+                        p += len;
+                        rem -= len;
+                        if (rem > 1 && i < g_flagged_env_count - 1) {
+                            *p++ = ',';
+                            rem--;
+                        }
+                    }
+                }
+            }
+            
+            if (env_names_buf[0]) {
+                DEBUG_PRINT("JUDGE: flagged env names: '%s'\n", env_names_buf);
+                setenv("READONLYBOX_FLAGGED_ENV_NAMES", env_names_buf, 1);
+            }
+        }
+        
+        /* Free bitmap */
+        rbox_free_env_decisions(&env_decisions);
+    }
+    
+    /* Return based on decision */
+    DEBUG_PRINT("JUDGE: decision=%d for '%s'\n", details.decision, command);
+    if (details.decision == 2) return 0;   /* ALLOW */
+    if (details.decision == 3) return 9;   /* DENY */
+    
+    /* Fallback to exit code */
+    if (exit_code == 0) return 0;
+    if (exit_code == 9) return 9;
+    
+    DEBUG_PRINT("JUDGE: Unknown response for '%s'\n", command);
     return -1;  /* Error */
 }
 

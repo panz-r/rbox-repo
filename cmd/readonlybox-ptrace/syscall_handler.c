@@ -52,8 +52,11 @@ static void debug_close(void) {
         fflush(g_debug_file); \
     } while(0)
 #else
-#define DEBUG_PRINT(fmt, ...) ((void)0)
+#define DEBUG_PRINT(fmt, ...) do { } while(0)
 #endif
+
+/* Forward declarations */
+static void filter_env_decisions(ProcessState *state);
 
 /* Allowance table for tracking validated commands */
 Allowance g_allowances[MAX_ALLOWANCES];
@@ -569,10 +572,122 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         /* Track this validated command to prevent duplicates on retry */
         free(state->last_validated_cmd);
         state->last_validated_cmd = strdup(command);
+        
+        /* Filter environment variables based on server decisions */
+        filter_env_decisions(state);
+        
         return 0;
     }
 
     return 0;
+}
+
+/* Filter environment variables based on server decisions
+ * Reads READONLYBOX_ENV_DECISIONS and removes denied vars from state->execve_envp */
+static void filter_env_decisions(ProcessState *state) {
+    if (!state || !state->execve_envp) return;
+    
+    const char *env_decisions_str = getenv("READONLYBOX_ENV_DECISIONS");
+    if (!env_decisions_str || strlen(env_decisions_str) == 0) return;
+    
+    DEBUG_PRINT("FILTER: parsing env decisions: '%s'\n", env_decisions_str);
+    
+    /* Parse decisions: format is "index:decision,index:decision,..."
+     * where decision is 0=allow, 1=deny */
+    int decisions[256] = {0};  /* index -> decision */
+    int max_index = -1;
+    
+    const char *p = env_decisions_str;
+    while (*p) {
+        char *end;
+        int idx = strtol(p, &end, 10);
+        if (end == p || idx < 0 || idx >= 256) break;
+        if (*end != ':') break;
+        p = end + 1;
+        int decision = strtol(p, &end, 10);
+        if (end == p) break;
+        
+        decisions[idx] = decision;
+        if (idx > max_index) max_index = idx;
+        
+        if (*end == ',') p = end + 1;
+        else if (*end == '\0') break;
+        else break;
+    }
+    
+    if (max_index < 0) return;
+    
+    /* Get flagged env var names - first try environment, then process state */
+    const char *env_names_str = getenv("READONLYBOX_FLAGGED_ENV_NAMES");
+    char *flagged_names[256] = {0};
+    int flagged_count = 0;
+    
+    if (env_names_str && strlen(env_names_str) > 0) {
+        /* Parse names from environment */
+        char buf[4096];
+        strncpy(buf, env_names_str, sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+        
+        char *saveptr;
+        char *token = strtok_r(buf, ",", &saveptr);
+        while (token && flagged_count < 256) {
+            flagged_names[flagged_count++] = token;
+            token = strtok_r(NULL, ",", &saveptr);
+        }
+    } else if (state->flagged_env_vars && state->flagged_env_count > 0) {
+        /* Use from process state */
+        flagged_count = state->flagged_env_count;
+        for (int i = 0; i < flagged_count && i < 256; i++) {
+            flagged_names[i] = state->flagged_env_vars[i];
+        }
+    } else {
+        DEBUG_PRINT("FILTER: no flagged env var names available\n");
+        return;
+    }
+    
+    /* Filter envp - remove denied vars */
+    /* Build new filtered envp */
+    int env_count = 0;
+    while (state->execve_envp[env_count]) env_count++;
+    
+    /* Allocate new envp */
+    char **new_envp = calloc(env_count + 1, sizeof(char *));
+    if (!new_envp) return;
+    
+    int new_idx = 0;
+    for (int i = 0; i < env_count && state->execve_envp[i]; i++) {
+        /* Get env var name */
+        char *eq = strchr(state->execve_envp[i], '=');
+        size_t name_len = eq ? (size_t)(eq - state->execve_envp[i]) : strlen(state->execve_envp[i]);
+        
+        /* Check if this var is in flagged list and denied */
+        int denied = 0;
+        for (int j = 0; j < flagged_count && j <= max_index; j++) {
+            if (decisions[j] == 1 && flagged_names[j]) {
+                if (strncmp(state->execve_envp[i], flagged_names[j], name_len) == 0 &&
+                    (flagged_names[j][name_len] == '\0' || flagged_names[j][name_len] == '=')) {
+                    /* This env var is denied */
+                    DEBUG_PRINT("FILTER: removing denied env var '%s'\n", state->execve_envp[i]);
+                    denied = 1;
+                    break;
+                }
+            }
+        }
+        
+        if (!denied) {
+            new_envp[new_idx++] = state->execve_envp[i];
+        }
+    }
+    new_envp[new_idx] = NULL;
+    
+    /* Replace envp */
+    free(state->execve_envp);
+    state->execve_envp = new_envp;
+    
+    /* Update regs to use new envp */
+    /* This is handled in the syscall by using the saved envp */
+    
+    DEBUG_PRINT("FILTER: env vars filtered, %d remaining\n", new_idx);
 }
 
 /* Handle syscall exit (after execution) */

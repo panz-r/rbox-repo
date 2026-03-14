@@ -9,66 +9,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
-	"time"
 )
-
-// RecentDecision stores a decision with expiration time
-type RecentDecision struct {
-	decision   uint8
-	reason    string
-	expiresAt time.Time
-}
-
-// RecentDecisionsCache stores recent decisions for auto-allow/deny
-type RecentDecisionsCache struct {
-	mu    sync.RWMutex
-	cache map[string]RecentDecision
-}
-
-var recentDecisions = RecentDecisionsCache{
-	cache: make(map[string]RecentDecision),
-}
-
-// checkRecentDecision checks if a command has a recent decision
-func (c *RecentDecisionsCache) checkRecentDecision(cmd string) (uint8, string, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	
-	if dec, ok := c.cache[cmd]; ok {
-		if time.Now().Before(dec.expiresAt) {
-			return dec.decision, dec.reason, true
-		}
-		// Expired - will be cleaned up lazily
-	}
-	return 0, "", false
-}
-
-// addRecentDecision adds a decision to the cache
-func (c *RecentDecisionsCache) addRecentDecision(cmd string, decision uint8, reason string, duration time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
-	c.cache[cmd] = RecentDecision{
-		decision:   decision,
-		reason:    reason,
-		expiresAt: time.Now().Add(duration),
-	}
-}
-
-// cleanupExpired removes expired decisions from cache
-func (c *RecentDecisionsCache) cleanupExpired() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	
-	now := time.Now()
-	for cmd, dec := range c.cache {
-		if now.After(dec.expiresAt) {
-			delete(c.cache, cmd)
-		}
-	}
-}
 
 // Logger for server output
 type Logger struct {
@@ -160,10 +102,14 @@ func main() {
 	}()
 
 	// Process requests in a loop
+	fmt.Println("Server: Entering request loop...")
 	for {
+		fmt.Println("Server: Calling GetRequest...")
 		req := server.GetRequest()
+		fmt.Printf("Server: GetRequest returned %v\n", req)
 		if req == nil {
 			// Server stopped
+			fmt.Println("Server: GetRequest returned nil, exiting loop")
 			break
 		}
 		
@@ -172,6 +118,8 @@ func main() {
 			fmt.Println("\nShutting down...")
 			break
 		}
+
+		fmt.Println("Server: Got request!")
 
 		cmd := req.GetCommand()
 		caller := req.GetCaller()
@@ -206,9 +154,12 @@ func main() {
 
 		// Make decision
 		decision, reason := makeDecision(cmd, args)
-
-		// Send decision
-		if err := req.Decide(decision, reason, 0); err != nil {
+		
+		// Make env decisions: auto-deny high-score env vars (score >= 0.8)
+		envDecisions := makeEnvDecisions(req)
+		
+		// Send decision with env decisions
+		if err := req.DecideWithEnv(decision, reason, 0, envDecisions); err != nil {
 			if gLogger != nil {
 				gLogger.Log(1, "Error sending decision: %v", err)
 			}
@@ -282,6 +233,33 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 // SetDecisionWithAllowance is used by the TUI
 var pendingRequests = make(map[int]*RBoxRequest)
 
+// makeEnvDecisions creates env decisions based on flagged env vars from request
+// Auto-deny env vars with score >= 0.8
+func makeEnvDecisions(req *RBoxRequest) []EnvVarDecision {
+	envCount := req.GetEnvVarCount()
+	fmt.Printf("DEBUG: makeEnvDecisions called with %d env vars\n", envCount)
+	if envCount == 0 {
+		return nil
+	}
+	
+	decisions := make([]EnvVarDecision, 0, envCount)
+	for i := 0; i < envCount; i++ {
+		name := req.GetEnvVarName(i)
+		score := req.GetEnvVarScore(i)
+		
+		// Auto-deny high-score env vars (score >= 0.8)
+		decision := uint8(0) // allow
+		if score >= 0.8 {
+			decision = 1 // deny
+		}
+		decisions = append(decisions, EnvVarDecision{
+			Name:     name,
+			Decision: decision,
+		})
+	}
+	return decisions
+}
+
 // StoreRequest stores a request for later decision
 func StoreRequest(id int, req *RBoxRequest) {
 	pendingRequests[id] = req
@@ -289,7 +267,7 @@ func StoreRequest(id int, req *RBoxRequest) {
 
 // MakeDecision sends a decision for a pending request
 // duration: time in seconds for time-limited decision (0 = no time limit)
-func MakeDecision(id int, allowed bool, reason string, duration uint32) error {
+func MakeDecision(id int, allowed bool, reason string, duration uint32, envDecisions []EnvVarDecision) error {
 	req, ok := pendingRequests[id]
 	if !ok {
 		return fmt.Errorf("request not found")
@@ -300,7 +278,7 @@ func MakeDecision(id int, allowed bool, reason string, duration uint32) error {
 		decision = DecisionDeny
 	}
 	
-	err := req.Decide(decision, reason, duration)
+	err := req.DecideWithEnv(decision, reason, duration, envDecisions)
 	delete(pendingRequests, id)
 	return err
 }

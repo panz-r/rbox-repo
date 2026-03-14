@@ -2,6 +2,60 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## General Coding Principles
+
+### Single Source of Truth
+
+**When implementing any feature, there must be ONE canonical implementation - not multiple implementations of the same logic.**
+
+- If you need a function to do X, create ONE function that does X well
+- Do NOT create variant functions like `doX()`, `doX_with_param()`, `doX_fast()`, `doX_legacy()`
+- Tests, wrappers, and all code must use the canonical implementation
+- When requirements change, MODIFY the existing function rather than adding new ones
+
+**Why this matters:**
+- Duplicate code causes bugs when only one copy is fixed
+- Protocol field placement becomes inconsistent
+- Caches and matching logic breaks when implementations diverge
+- Maintenance becomes impossible
+
+### Buffer Capacity - MANDATORY for All Write Functions
+
+**Every function that writes to a buffer MUST take a capacity/size parameter and MUST NOT write beyond it.**
+
+```c
+// CORRECT: Takes capacity, returns error if buffer too small
+rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len, ...);
+
+// WRONG: No capacity - can overwrite beyond buffer (STACK SMASHING BUG!)
+rbox_error_t rbox_build_request(char *packet, size_t *out_len, ...);
+```
+
+**Requirements:**
+1. All packet-building, encode, serialize, write functions MUST have a capacity parameter
+2. Functions MUST check `if (capacity < min_required_size) return RBOX_ERR_INVALID;`
+3. Functions MUST use capacity (not hardcoded values like 4096) for any memset/memcpy operations
+4. Callers MUST pass `sizeof(buffer)` or the actual allocated size
+5. Return a clear error code (e.g., `RBOX_ERR_INVALID`) when buffer is too small
+
+**Why this matters:**
+- Hardcoded sizes like `memset(packet, 0, 4096)` on a 1024-byte buffer causes STACK SMASHING
+- Security implications: stack smashing can be exploited
+- Correctness: buffer overruns corrupt memory unpredictably
+
+### Protocol Field Placement
+
+When working with protocols or data formats:
+- The protocol defines WHERE fields go (header vs body, offset X vs offset Y)
+- This placement is FIXED - do not create alternative encoders that put same data in different places
+- All code must use canonical encoding functions
+
+### Testing
+
+- Tests should validate the canonical functions, not reimplement logic
+- No local "build_packet()" or "parse_response()" functions in test files
+- Tests use the same functions the production code uses
+
 ## Project Overview
 
 **ReadOnlyBox** is a BusyBox-like single binary that provides read-only command wrappers for common Unix/Linux CLI tools. The project has evolved from individual wrappers to a consolidated single binary architecture while maintaining the same security principles.

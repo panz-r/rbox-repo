@@ -10,43 +10,41 @@
 
 #include "rbox_protocol.h"
 
-/* Test header validation */
+/* Test header validation - uses canonical library function */
 void test_header_validate(void) {
     printf("Testing header validation...\n");
     
-    rbox_header_t header;
+    /* Build proper request packet using canonical library function - do once */
+    char packet[1024];
+    size_t pkt_len;
+    const char *args[] = {"test"};
+    rbox_build_request(packet, sizeof(packet), &pkt_len, "test", NULL, NULL, 1, args);
     
-    /* Valid header */
-    memset(&header, 0, sizeof(header));
-    header.magic = RBOX_MAGIC;
-    header.version = RBOX_VERSION;
-    header.flags = RBOX_FLAG_FIRST;
-    header.chunk_len = 100;
-    header.total_len = 100;
-    /* Calculate checksum over header (v7 protocol, excluding checksum field at offset 119) */
-    header.checksum = 0;
-    header.checksum = rbox_calculate_checksum(&header, RBOX_HEADER_OFFSET_CHECKSUM);
+    /* Save original values using explicit offsets */
+    uint32_t orig_magic = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_MAGIC);
+    uint32_t orig_version = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_VERSION);
+    uint32_t orig_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
     
-    assert(rbox_header_validate(&header) == RBOX_OK);
+    /* Test 1: Valid header should pass */
+    assert(rbox_header_validate(packet, pkt_len) == RBOX_OK);
     printf("  ✓ Valid header passes\n");
     
-    /* Invalid magic */
-    memset(&header, 0, sizeof(header));
-    header.magic = 0xDEADBEEF;
-    assert(rbox_header_validate(&header) == RBOX_ERR_MAGIC);
+    /* Test 2: Invalid magic should fail */
+    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_MAGIC) = 0xDEADBEEF;
+    assert(rbox_header_validate(packet, pkt_len) == RBOX_ERR_MAGIC);
     printf("  ✓ Invalid magic detected\n");
+    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_MAGIC) = orig_magic;  /* Restore */
     
-    /* Invalid version */
-    memset(&header, 0, sizeof(header));
-    header.magic = RBOX_MAGIC;
-    header.version = 999;
-    header.flags = RBOX_FLAG_FIRST;
-    header.chunk_len = 100;
-    header.total_len = 100;
-    header.checksum = 0;
-    header.checksum = rbox_calculate_checksum(&header, RBOX_HEADER_OFFSET_CHECKSUM);
-    assert(rbox_header_validate(&header) == RBOX_ERR_VERSION);
+    /* Test 3: Invalid version should fail */
+    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_VERSION) = 999;
+    assert(rbox_header_validate(packet, pkt_len) == RBOX_ERR_VERSION);
     printf("  ✓ Invalid version detected\n");
+    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_VERSION) = orig_version;  /* Restore */
+    
+    /* Test 4: Corrupt checksum should fail */
+    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM) ^= 0xFFFFFFFF;
+    assert(rbox_header_validate(packet, pkt_len) == RBOX_ERR_CHECKSUM);
+    printf("  ✓ Checksum mismatch detected\n");
     
     printf("test_header_validate: PASSED\n\n");
 }
@@ -68,20 +66,20 @@ void test_strerror(void) {
     printf("test_strerror: PASSED\n\n");
 }
 
-/* Test checksum */
+/* Test checksum - tests the checksum function itself */
 void test_checksum(void) {
     printf("Testing checksum...\n");
     
     const char *data = "test data";
-    uint32_t sum1 = rbox_calculate_checksum(data, strlen(data));
-    uint32_t sum2 = rbox_calculate_checksum(data, strlen(data));
+    uint32_t sum1 = rbox_calculate_checksum_crc32(0, data, strlen(data));
+    uint32_t sum2 = rbox_calculate_checksum_crc32(0, data, strlen(data));
     
     assert(sum1 == sum2);
     printf("  ✓ Checksum is deterministic\n");
     
     /* Different data = different checksum */
     const char *data2 = "other data";
-    uint32_t sum3 = rbox_calculate_checksum(data2, strlen(data2));
+    uint32_t sum3 = rbox_calculate_checksum_crc32(0, data2, strlen(data2));
     assert(sum1 != sum3);
     printf("  ✓ Different data = different checksum\n");
     
@@ -115,19 +113,17 @@ void test_session(void) {
     rbox_session_free(session);
     printf("  ✓ Session freed\n");
     
-    /* Create session with retry */
+    /* Test session with retry */
     session = rbox_session_new("/nonexistent.sock", 10, 3);
     assert(session != NULL);
     assert(rbox_session_state(session) == RBOX_SESSION_DISCONNECTED);
+    rbox_session_free(session);
     printf("  ✓ Session with retry created\n");
     
-    rbox_session_free(session);
     printf("test_session: PASSED\n\n");
 }
 
 int main(void) {
-    printf("=== rbox-protocol unit tests ===\n\n");
-    
     test_header_validate();
     test_strerror();
     test_checksum();

@@ -57,13 +57,100 @@ typedef struct {
 struct rbox_parse_result;
 typedef struct rbox_parse_result rbox_parse_result_t;
 
+/* Decoded response details (v8) */
+typedef struct rbox_response_details {
+    uint8_t decision;
+    char reason[256];
+    uint32_t reason_len;
+    int valid;  /* 1 if details are valid */
+} rbox_response_details_t;
+
+/* Decoded env decisions from response (v8) */
+typedef struct rbox_env_decisions {
+    uint32_t fenv_hash;
+    uint16_t env_count;
+    uint8_t *bitmap;  /* Caller must free */
+    int valid;  /* 1 if env decisions are valid */
+} rbox_env_decisions_t;
+
+/* Decoded header with validation status (not packed, for decoded values) */
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint8_t client_id[16];
+    uint8_t request_id[16];
+    uint8_t server_id[16];
+    uint32_t cmd_type;  /* Renamed from type to avoid Go keyword conflict */
+    uint32_t flags;
+    uint64_t offset;
+    uint32_t chunk_len;
+    uint64_t total_len;
+    uint32_t cmd_hash;
+    uint32_t fenv_hash;
+    uint32_t checksum;        /* Header checksum */
+    uint32_t body_checksum;   /* Body checksum */
+    int valid;  /* 1 if header is valid (checksum passed) */
+} rbox_decoded_header_t;
+
 /* Response structure */
 typedef struct {
     uint8_t decision;       /* ALLOW/DENY/ERROR */
     char     reason[256];   /* Reason string */
     uint32_t duration;       /* Duration in seconds (0 = once) */
     uint8_t request_id[16]; /* Server should echo back client's request_id */
+    
+    /* Env decisions from server (v8) */
+    int env_decision_count;
+    char **env_decision_names;   /* Array of env var names */
+    uint8_t *env_decisions;     /* Array of decisions: 0=allow, 1=deny */
 } rbox_response_t;
+
+/* Get env decision count from response */
+//export rbox_response_env_decision_count
+int rbox_response_env_decision_count(const rbox_response_t *resp);
+
+/* Get env decision name at index (caller frees) */
+//export rbox_response_env_decision_name
+char *rbox_response_env_decision_name(const rbox_response_t *resp, int index);
+
+/* Get env decision at index (0=allow, 1=deny) */
+//export rbox_response_env_decision
+int rbox_response_env_decision(const rbox_response_t *resp, int index);
+
+/* Free env decisions in response */
+//export rbox_response_free_env_decisions
+void rbox_response_free_env_decisions(rbox_response_t *resp);
+
+/* ============================================================
+ * LAYERED DECODE UTILITIES (v8)
+ * ============================================================ */
+
+/* Decode header from packet - verifies magic, version, checksum
+ * Returns: header struct with valid=1 if successful, valid=0 if failed
+ * Caller provides allocated rbox_decoded_header_t* */
+//export rbox_decode_header
+void rbox_decode_header(const char *packet, size_t len, rbox_decoded_header_t *header);
+
+/* Decode response details from packet using header
+ * Returns: details struct with valid=1 if successful, valid=0 if failed
+ * Caller provides allocated rbox_response_details_t* */
+//export rbox_decode_response_details
+void rbox_decode_response_details(const rbox_decoded_header_t *header, const char *packet, size_t len, rbox_response_details_t *details);
+
+/* Decode env decisions from packet using header and details
+ * Returns: env_decisions struct with valid=1 if successful, valid=0 if failed
+ * Caller provides allocated rbox_env_decisions_t*, bitmap is allocated and must be freed by caller
+ * If no env decisions in packet, bitmap will be NULL and count will be 0 */
+//export rbox_decode_env_decisions
+void rbox_decode_env_decisions(const rbox_decoded_header_t *header, const rbox_response_details_t *details, const char *packet, size_t len, rbox_env_decisions_t *env_decisions);
+
+/* Free env decisions resources */
+//export rbox_free_env_decisions
+void rbox_free_env_decisions(rbox_env_decisions_t *env_decisions);
+
+/* Free env decisions resources */
+//export rbox_free_env_decisions
+void rbox_free_env_decisions(rbox_env_decisions_t *env_decisions);
 
 /* ============================================================
  * CLIENT HANDLE
@@ -232,12 +319,32 @@ const char *rbox_server_request_caller(const rbox_server_request_t *req);
 //export rbox_server_request_syscall
 const char *rbox_server_request_syscall(const rbox_server_request_t *req);
 
+/* Get flagged env var count from request (from v8 protocol) */
+//export rbox_server_request_env_var_count
+int rbox_server_request_env_var_count(const rbox_server_request_t *req);
+
+/* Get flagged env var name at index (caller frees) */
+//export rbox_server_request_env_var_name
+char *rbox_server_request_env_var_name(const rbox_server_request_t *req, int index);
+
+/* Get flagged env var score at index */
+//export rbox_server_request_env_var_score
+float rbox_server_request_env_var_score(const rbox_server_request_t *req, int index);
+
 /* 
  * Send decision to client and free request buffers
  * 
  * Must be called after get_request() to send the decision back
  * and release the request buffers
+ * 
+ * Extended version with env decisions (v8)
  */
+//export rbox_server_decide_with_env
+rbox_error_t rbox_server_decide_with_env(rbox_server_request_t *req, 
+    uint8_t decision, const char *reason, uint32_t duration,
+    int env_decision_count, const char **env_decision_names, const uint8_t *env_decisions);
+
+/* Legacy version without env decisions */
 //export rbox_server_decide
 rbox_error_t rbox_server_decide(rbox_server_request_t *req, 
     uint8_t decision, const char *reason, uint32_t duration);
@@ -333,10 +440,10 @@ rbox_error_t rbox_server_stream_complete(rbox_stream_t *stream,
 const char *rbox_strerror(rbox_error_t err);
 
 /* Validate packet header */
-rbox_error_t rbox_header_validate(const rbox_header_t *header);
+rbox_error_t rbox_header_validate(const char *packet, size_t len);
 
-/* Calculate header checksum */
-uint32_t rbox_calculate_checksum(const void *data, size_t len);
+/* Calculate CRC32 checksum - composable, prev_crc=0 for fresh start */
+uint32_t rbox_calculate_checksum_crc32(uint32_t prev_crc, const void *data, size_t len);
 
 /* 64-bit command hash - two-step hash for time-limited decisions */
 uint64_t rbox_hash64(const char *str, size_t len);
@@ -372,11 +479,46 @@ void rbox_init(void);
  *   RBOX_OK: valid decision in out_response->decision
  *   RBOX_ERR_*: error (out_response not valid)
  */
+
+/* Extended version with flagged env vars for decisions */
+rbox_error_t rbox_blocking_request_with_env(const char *socket_path,
+    const char *command, int argc, const char **argv,
+    const char *caller, const char *syscall,
+    int env_var_count, const char **env_var_names, const float *env_var_scores,
+    rbox_response_t *out_response,
+    uint32_t base_delay_ms, uint32_t max_retries);
+
+/* Legacy wrapper without env vars (calls _with_env with 0 env vars) */
 rbox_error_t rbox_blocking_request(const char *socket_path,
     const char *command, int argc, const char **argv,
     const char *caller, const char *syscall,
     rbox_response_t *out_response,
     uint32_t base_delay_ms, uint32_t max_retries);
+
+/* Extended version that returns raw response packet (for --bin mode)
+ * Caller must free the returned packet with free()
+ * Returns packet starting from magic (includes full header)
+ */
+//export rbox_blocking_request_raw
+rbox_error_t rbox_blocking_request_raw(const char *socket_path,
+    const char *command, int argc, const char **argv,
+    const char *caller, const char *syscall,
+    int env_var_count, const char **env_var_names, const float *env_var_scores,
+    char **out_packet, size_t *out_packet_len,
+    uint32_t base_delay_ms, uint32_t max_retries);
+
+/* ============================================================
+ * RESPONSE PACKET BUILDING (For DFA fast-path and testing)
+ * ============================================================ */
+
+/* Build a response packet (allocates memory)
+ * Returns: packet in *out_packet, length in *out_len
+ * Caller must free the packet with free() */
+//export rbox_build_response
+rbox_error_t rbox_build_response(
+    uint8_t decision, const char *reason, uint32_t duration,
+    uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
+    char **out_packet, size_t *out_len);
 
 /* ============================================================
  * NON-BLOCKING SESSION INTERFACE (For clients with own poll loop)
@@ -510,16 +652,16 @@ void rbox_session_disconnect(rbox_session_t *session);
  *   RBOX_ERR_IO: failed to start connect */
 rbox_error_t rbox_session_connect(rbox_session_t *session);
 
-/* Build request packet (v5 protocol)
+/* Build request packet (v9 protocol)
+ * Parameters:
+ *   - packet: output buffer
+ *   - capacity: size of output buffer
+ *   - out_len: actual packet length written
  * Returns packet length in *out_len
- * Data format: header + command\0 + args...\0 */
-rbox_error_t rbox_build_request(char *packet, size_t *out_len,
-                               const char *command, int argc, const char **argv);
-
-/* Parse response packet
- * Returns decision in *out_decision
- * Returns 0 on success */
-int rbox_parse_response(const char *packet, size_t len, uint8_t *out_decision);
+ * Data format: header + command\0caller\0syscall\0argv[0]\0argv[1]\0...\0 */
+rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
+                               const char *command, const char *caller, const char *syscall,
+                               int argc, const char **argv);
 
 /* ============================================================
  * NON-BLOCKING SOCKET I/O

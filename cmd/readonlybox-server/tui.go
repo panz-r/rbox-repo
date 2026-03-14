@@ -251,16 +251,30 @@ func (g *GrepParser) ParseArguments(args []string) (interface{}, error) {
 }
 
 type CommandLog struct {
-	Timestamp time.Time
-	Decision  string
-	Command   string
-	Args      string
-	Caller    string
-	Syscall   string
-	Reason    string
-	ClientID  string
-	RequestID int
-	Cwd       string
+	Timestamp   time.Time
+	Decision    string
+	Command     string
+	Args        string
+	Caller      string
+	Syscall     string
+	Reason      string
+	ClientID    string
+	RequestID   int
+	Cwd         string
+	EnvVars     []EnvVarInfo  // Flagged env vars from request
+	EnvDecisions []EnvVarDecision // User's decisions on env vars
+}
+
+// EnvVarInfo holds info about a flagged env var
+type EnvVarInfo struct {
+	Name  string
+	Score float32
+}
+
+// EnvVarDecision holds the user's decision on an env var
+type EnvVarDecision struct {
+	Name     string
+	Decision uint8 // 0 = allow, 1 = deny
 }
 
 type Stats struct {
@@ -291,6 +305,7 @@ type Event struct {
 	RequestID int
 	ClientID  string
 	Cwd       string
+	EnvVars   []EnvVarInfo  // Flagged env vars from request
 }
 
 var (
@@ -367,6 +382,7 @@ type Model struct {
 	expandedCmd   *CommandLog // currently expanded command
 	decisionReqID int         // request ID being decided - prevents switching to different request
 	logDecision   bool        // true = mark decision for logging to user_log.txt
+	envVarCursor int         // -1 = command selected, 0+ = index of selected env var
 }
 
 func NewModel() *Model {
@@ -385,23 +401,25 @@ func (m *Model) AddConnection() {
 	m.connections++
 }
 
-func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientID, cwd string, requestID int) {
+func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientID, cwd string, requestID int, envVars []EnvVarInfo) {
 	m.lastCmd = cmd + " " + args
 	m.lastDecision = decision
 	m.lastTime = time.Now()
 	m.flashTimer = 3
 
 	log := CommandLog{
-		Timestamp: time.Now(),
-		Decision:  decision,
-		Command:   cmd,
-		Args:      args,
-		Caller:    caller,
-		Syscall:   syscall,
-		Reason:    reason,
-		ClientID:  clientID,
-		RequestID: requestID,
-		Cwd:       cwd,
+		Timestamp:   time.Now(),
+		Decision:    decision,
+		Command:     cmd,
+		Args:        args,
+		Caller:      caller,
+		Syscall:     syscall,
+		Reason:      reason,
+		ClientID:    clientID,
+		RequestID:   requestID,
+		Cwd:         cwd,
+		EnvVars:     envVars,
+		EnvDecisions: make([]EnvVarDecision, len(envVars)),
 	}
 	m.commands = append(m.commands, &log)
 
@@ -447,17 +465,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == 1 && m.selectedIdx > 0 {
 				m.selectedIdx--
 			} else if m.step == 2 {
-				// Scroll details up
-				if m.detailsScroll > 0 {
-					m.detailsScroll--
+				// If focused on details, navigate between command and env vars
+				if m.focus == "details" && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
+					m.envVarCursor--
+					if m.envVarCursor < -1 {
+						m.envVarCursor = -1  // Go back to command
+					}
+				} else {
+					// Scroll details up
+					if m.detailsScroll > 0 {
+						m.detailsScroll--
+					}
 				}
 			}
 		case "down":
 			if m.step == 1 && m.selectedIdx < len(m.commands)-1 {
 				m.selectedIdx++
 			} else if m.step == 2 {
-				// Scroll details down
-				m.detailsScroll++
+				// If focused on details, navigate between command and env vars
+				if m.focus == "details" && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
+					maxEnv := len(m.expandedCmd.EnvVars) - 1
+					if m.envVarCursor < maxEnv {
+						m.envVarCursor++
+					}
+				} else {
+					// Scroll details down
+					m.detailsScroll++
+				}
 			}
 		case "home":
 			if m.step == 1 && len(m.commands) > 0 {
@@ -535,6 +569,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
 					m.expandedCmd = m.commands[m.selectedIdx]
 					m.decisionReqID = m.commands[m.selectedIdx].RequestID
+					m.envVarCursor = -1  // Reset to command selection
+				}
+			} else if m.step == 2 && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
+				// Set env var to allow
+				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
+					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 0  // allow
 				}
 			} else if m.step == 2 {
 				// Switch to Allow mode
@@ -553,6 +593,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
 					m.expandedCmd = m.commands[m.selectedIdx]
 					m.decisionReqID = m.commands[m.selectedIdx].RequestID
+					m.envVarCursor = -1  // Reset to command selection
+				}
+			} else if m.step == 2 && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
+				// Set env var to deny
+				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
+					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 1  // deny
 				}
 			} else if m.step == 2 {
 				// Switch to Deny mode
@@ -637,7 +683,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case EventConnect:
 			m.connections++
 		case EventRequest:
-			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID)
+			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars)
 		case EventCommand:
 			m.lastDecision = msg.Decision
 			m.lastTime = time.Now()
@@ -772,8 +818,14 @@ func (m *Model) executeDecision() {
 	decision, reason, duration := durationToReason(allow, m.cursor)
 	baseCmd := extractBaseName(m.expandedCmd.Command)
 	fmt.Printf("Executing: %s %s for %s %s (duration=%d)\n", decision, reason, baseCmd, m.expandedCmd.Args, duration)
-
-	MakeDecision(m.expandedCmd.RequestID, allow, reason, duration)
+	
+	// Get env decisions from the command
+	var envDecisions []EnvVarDecision
+	if len(m.expandedCmd.EnvDecisions) > 0 {
+		envDecisions = m.expandedCmd.EnvDecisions
+	}
+	
+	MakeDecision(m.expandedCmd.RequestID, allow, reason, duration, envDecisions)
 
 	// Log decision to user_log.xml if marked
 	if m.logDecision {
@@ -1352,6 +1404,35 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		sb.WriteString(detailsFocus.Render("  Cwd: <unknown>"))
 	}
 	sb.WriteString("\n")
+	
+	// Show Flagged Env Vars (from v8 protocol)
+	if len(cmd.EnvVars) > 0 {
+		// If envVarCursor is -1, command is selected, else env var is selected
+		if m.envVarCursor == -1 {
+			sb.WriteString(detailsFocus.Render("> Flagged Env Vars:"))
+		} else {
+			sb.WriteString(detailsFocus.Render("  Flagged Env Vars:"))
+		}
+		sb.WriteString("\n")
+		for i, env := range cmd.EnvVars {
+			decision := "allow"
+			if i < len(cmd.EnvDecisions) {
+				if cmd.EnvDecisions[i].Decision == 1 {
+					decision = "deny"
+				}
+			}
+			// Highlight selected env var
+			if i == m.envVarCursor {
+				sb.WriteString(allowSelectedStyle.Render(fmt.Sprintf("  ● %s (%.2f) [%s]", env.Name, env.Score, decision)))
+			} else {
+				sb.WriteString(detailsFocus.Render(fmt.Sprintf("    %s (%.2f) [%s]", env.Name, env.Score, decision)))
+			}
+			sb.WriteString("\n")
+		}
+	} else {
+		// No env vars - reset cursor
+		m.envVarCursor = -1
+	}
 
 	// Show Path (executable path, if determinable from command)
 	// Path shows the actual executable path when different from basename
@@ -1594,12 +1675,22 @@ func RunTUIMode() {
 			caller := req.GetCaller()
 			syscall := req.GetSyscall()
 			
+			// Get flagged env vars from request (v8 protocol)
+			envVarCount := req.GetEnvVarCount()
+			envVars := make([]EnvVarInfo, envVarCount)
+			for i := 0; i < envVarCount; i++ {
+				envVars[i] = EnvVarInfo{
+					Name:  req.GetEnvVarName(i),
+					Score: req.GetEnvVarScore(i),
+				}
+			}
+			
 			// Store request for later decision
 			StoreRequest(requestID, req)
 			
 			// Send request event to TUI
 			select {
-			case model.eventChan <- Event{Type: EventRequest, RequestID: requestID, Command: cmd, Args: argsStr, Caller: caller, Syscall: syscall}:
+			case model.eventChan <- Event{Type: EventRequest, RequestID: requestID, Command: cmd, Args: argsStr, Caller: caller, Syscall: syscall, EnvVars: envVars}:
 			default:
 			}
 		}

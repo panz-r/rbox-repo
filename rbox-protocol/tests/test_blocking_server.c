@@ -83,43 +83,6 @@ static ssize_t write_all(int fd, const void *buf, size_t len) {
     fflush(stdout); \
 } while(0)
 
-/* Build request packet (v7 format) */
-static void build_request(char *pkt, const char *cmd) {
-    uint32_t cmd_len = cmd ? strlen(cmd) : 0;
-    memset(pkt, 0, RBOX_HEADER_SIZE + cmd_len);
-    
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
-    memset(pkt + RBOX_HEADER_OFFSET_CLIENT_ID, 0x11, 16);
-    
-    /* Generate random request_id */
-    uint32_t rand_id = (uint32_t)clock() ^ (uintptr_t)pkt;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID) = rand_id;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID + 4) = rand_id ^ 0x12345678;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID + 8) = rand_id ^ 0xABCDEF;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_REQUEST_ID + 12) = rand_id ^ 0xFEDCBA;
-    
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_TYPE) = 1;  /* RBOX_MSG_REQ */
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_FLAGS) = 1;  /* RBOX_FLAG_FIRST */
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_OFFSET) = 0;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = cmd_len;
-    *(uint64_t *)(pkt + RBOX_HEADER_OFFSET_TOTAL_LEN) = cmd_len;
-    
-    /* v7: Set cmd_hash to 0 (not used by test) */
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CMD_HASH) = 0;
-    
-    /* v7: Set caller_syscall_size to 0 (no caller/syscall) */
-    *(uint8_t *)(pkt + RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE) = 0;
-    
-    /* v7: Calculate checksum over header (up to checksum field at offset 119) */
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = 0;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = rbox_calculate_checksum(pkt, RBOX_HEADER_OFFSET_CHECKSUM);
-    
-    if (cmd_len > 0) {
-        memcpy(pkt + RBOX_HEADER_SIZE, cmd, cmd_len);
-    }
-}
-
 /* Send request and get response */
 static void *client_send_thread(void *arg) {
     const char *cmd = arg;
@@ -142,9 +105,10 @@ static void *client_send_thread(void *arg) {
     }
     
     char pkt[1024];
-    build_request(pkt, cmd);
-    uint32_t cmd_len = cmd ? strlen(cmd) : 0;
-    ssize_t written = write(fd, pkt, RBOX_HEADER_SIZE + cmd_len);
+    size_t pkt_len;
+    const char *args[] = { cmd };
+    rbox_build_request(pkt, sizeof(pkt), &pkt_len, cmd, NULL, NULL, 1, args);
+    ssize_t written = write(fd, pkt, pkt_len);
     
     /* Read response */
     char resp[256];
@@ -286,9 +250,12 @@ static void *client_with_reconnect(void *arg) {
         
         /* Send request */
         char pkt[1024];
-        snprintf(pkt, sizeof(pkt), "reconnect_test_%d", attempt);
-        build_request(pkt, pkt);
-        write(fd, pkt, RBOX_HEADER_SIZE + strlen(pkt));
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "reconnect_test_%d", attempt);
+        size_t pkt_len;
+        const char *args[] = { cmd };
+        rbox_build_request(pkt, sizeof(pkt), &pkt_len, cmd, NULL, NULL, 1, args);
+        write(fd, pkt, pkt_len);
         
         /* Wait for response */
         char resp[256];
@@ -321,9 +288,12 @@ static void *client_misbehave_multiple_requests(void *arg) {
     /* Send 3 requests without waiting for responses */
     for (int i = 0; i < 3; i++) {
         char pkt[1024];
-        snprintf(pkt, sizeof(pkt), "cmd_%d", i);
-        build_request(pkt, pkt);
-        write(fd, pkt, RBOX_HEADER_SIZE + strlen(pkt));
+        char cmd[32];
+        snprintf(cmd, sizeof(cmd), "cmd_%d", i);
+        size_t pkt_len;
+        const char *args[] = { cmd };
+        rbox_build_request(pkt, sizeof(pkt), &pkt_len, cmd, NULL, NULL, 1, args);
+        write(fd, pkt, pkt_len);
     }
     /* Read responses */
     char resp[256];
