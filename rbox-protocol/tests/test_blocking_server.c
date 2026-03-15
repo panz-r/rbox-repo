@@ -70,6 +70,36 @@ static ssize_t write_all(int fd, const void *buf, size_t len) {
     return len;
 }
 
+/* Robust read helper for testing - reads until buffer full or error */
+static ssize_t read_all(int fd, void *buf, size_t len) {
+    if (!buf || len == 0) {
+        return 0;
+    }
+    
+    char *ptr = buf;
+    size_t remaining = len;
+    
+    while (remaining > 0) {
+        ssize_t r = read(fd, ptr, remaining);
+        
+        if (r < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        
+        if (r == 0) {
+            break;  /* EOF */
+        }
+        
+        ptr += r;
+        remaining -= r;
+    }
+    
+    return len - remaining;
+}
+
 #define RUN_TEST(fn, name) do { \
     test_total++; \
     printf("  Testing: %s...\n", name); \
@@ -108,11 +138,15 @@ static void *client_send_thread(void *arg) {
     size_t pkt_len;
     const char *args[] = { cmd };
     rbox_build_request(pkt, sizeof(pkt), &pkt_len, cmd, NULL, NULL, 1, args);
-    ssize_t written = write(fd, pkt, pkt_len);
+    if (write_all(fd, pkt, pkt_len) < 0) {
+        close(fd);
+        return NULL;
+    }
     
-    /* Read response */
+    /* Read response - use read_all for proper error handling */
     char resp[256];
-    ssize_t n = read(fd, resp, sizeof(resp));
+    ssize_t r = read_all(fd, resp, sizeof(resp));
+    (void)r;  /* Response received - for testing we just need to know it worked */
     close(fd);
     
     return NULL;
@@ -151,7 +185,8 @@ static void *client_misbehave_garbage(void *arg) {
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
     connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-    write(fd, "GARBAGE DATA NOT A PACKET", 25);
+    ssize_t w = write_all(fd, "GARBAGE DATA NOT A PACKET", 25);
+    (void)w;  /* May fail - testing error handling */
     close(fd);
     return NULL;
 }
@@ -168,7 +203,8 @@ static void *client_misbehave_bad_magic(void *arg) {
     memset(pkt, 0, RBOX_HEADER_SIZE);
     *(uint32_t *)(pkt + 0) = 0xDEADBEEF;  /* Bad magic */
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
-    write(fd, pkt, RBOX_HEADER_SIZE);
+    ssize_t w = write_all(fd, pkt, RBOX_HEADER_SIZE);
+    (void)w;  /* May fail - testing error handling */
     close(fd);
     return NULL;
 }
@@ -183,7 +219,8 @@ static void *client_misbehave_truncated_header(void *arg) {
     connect(fd, (struct sockaddr *)&addr, sizeof(addr));
     char pkt[10];
     memset(pkt, 0, 10);
-    write(fd, pkt, 10);  /* Only 10 bytes */
+    ssize_t w = write_all(fd, pkt, 10);  /* Only 10 bytes */
+    (void)w;
     close(fd);
     return NULL;
 }
@@ -201,7 +238,8 @@ static void *client_misbehave_truncated_body(void *arg) {
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = 50;  /* Claims 50 bytes */
-    write(fd, pkt, RBOX_HEADER_SIZE + 50);  /* Sends header + 50 bytes claim */
+    ssize_t w = write_all(fd, pkt, RBOX_HEADER_SIZE + 50);  /* Sends header + 50 bytes claim */
+    (void)w;
     close(fd);
     return NULL;
 }
@@ -221,11 +259,13 @@ static void *client_misbehave_too_large(void *arg) {
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = 2 * 1024 * 1024;  /* 2MB - over limit */
-    write(fd, pkt, RBOX_HEADER_SIZE);
+    ssize_t w = write_all(fd, pkt, RBOX_HEADER_SIZE);
+    (void)w;
     
     /* Read response - should indicate error or connection close */
     char resp[256];
-    read(fd, resp, sizeof(resp));  /* May not get response for oversized */
+    ssize_t r = read_all(fd, resp, sizeof(resp));  /* May not get response for oversized */
+    (void)r;
     close(fd);
     return NULL;
 }
@@ -255,11 +295,13 @@ static void *client_with_reconnect(void *arg) {
         size_t pkt_len;
         const char *args[] = { cmd };
         rbox_build_request(pkt, sizeof(pkt), &pkt_len, cmd, NULL, NULL, 1, args);
-        write(fd, pkt, pkt_len);
+        ssize_t w = write_all(fd, pkt, pkt_len);
+        (void)w;
         
         /* Wait for response */
         char resp[256];
-        ssize_t n = read(fd, resp, sizeof(resp));
+        ssize_t n = read_all(fd, resp, sizeof(resp));
+        (void)n;
         close(fd);
         
         if (n > 0) {
@@ -293,12 +335,14 @@ static void *client_misbehave_multiple_requests(void *arg) {
         size_t pkt_len;
         const char *args[] = { cmd };
         rbox_build_request(pkt, sizeof(pkt), &pkt_len, cmd, NULL, NULL, 1, args);
-        write(fd, pkt, pkt_len);
+        ssize_t w = write_all(fd, pkt, pkt_len);
+        (void)w;
     }
     /* Read responses */
     char resp[256];
     for (int i = 0; i < 3; i++) {
-        read(fd, resp, sizeof(resp));
+        ssize_t r = read_all(fd, resp, sizeof(resp));
+        (void)r;
     }
     close(fd);
     return NULL;
@@ -327,14 +371,14 @@ static int test_single_request(void) {
     /* Verify */
     const char *cmd = rbox_server_request_command(req);
     if (!cmd || strcmp(cmd, "ls -la") != 0) {
-        rbox_server_decide(req, RBOX_DECISION_DENY, "invalid", 0);
+        rbox_server_decide(req, RBOX_DECISION_DENY, "invalid", 0, 0, NULL, NULL);
         rbox_server_stop(srv);
         rbox_server_handle_free(srv);
         return -1;
     }
     
     /* Allow */
-    if (rbox_server_decide(req, RBOX_DECISION_ALLOW, "allowed", 50) != RBOX_OK) {
+    if (rbox_server_decide(req, RBOX_DECISION_ALLOW, "allowed", 50, 0, NULL, NULL) != RBOX_OK) {
         rbox_server_stop(srv);
         rbox_server_handle_free(srv);
         return -1;
@@ -361,7 +405,8 @@ static int test_multiple_args(void) {
     
     /* Should have multiple args via shellsplit */
     int argc = rbox_server_request_argc(req);
-    rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+    (void)argc;  /* Verify shellsplit parsed arguments */
+    rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     
     usleep(100000);
     rbox_server_stop(srv);
@@ -377,8 +422,6 @@ static int test_deny_decision(void) {
     rbox_server_handle_listen(srv);
     rbox_server_start(srv);
     
-    uint8_t decision = 0;
-    
     /* Client sends dangerous command */
     pthread_t cl;
     pthread_create(&cl, NULL, client_send_thread, (void *)"rm -rf /");
@@ -388,14 +431,14 @@ static int test_deny_decision(void) {
     if (!req) { pthread_join(cl, NULL); rbox_server_stop(srv); rbox_server_handle_free(srv); return -1; }
     
     /* Deny */
-    rbox_server_decide(req, RBOX_DECISION_DENY, "dangerous command", 0);
+    rbox_server_decide(req, RBOX_DECISION_DENY, "dangerous command", 0, 0, NULL, NULL);
     
     pthread_join(cl, NULL);
     
     /* Create new client to get response */
     pthread_create(&cl, NULL, client_send_thread, (void *)"ls");
     req = rbox_server_get_request(srv);
-    if (req) rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+    if (req) rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     pthread_join(cl, NULL);
     
     rbox_server_stop(srv);
@@ -415,12 +458,12 @@ static int test_sequential_requests(void) {
     send_request_async("ps aux");
     rbox_server_request_t *req1 = rbox_server_get_request(srv);
     if (!req1) { rbox_server_stop(srv); rbox_server_handle_free(srv); return -1; }
-    rbox_server_decide(req1, RBOX_DECISION_ALLOW, "ok", 10);
+    rbox_server_decide(req1, RBOX_DECISION_ALLOW, "ok", 10, 0, NULL, NULL);
     
     send_request_async("df -h");
     rbox_server_request_t *req2 = rbox_server_get_request(srv);
     if (!req2) { rbox_server_stop(srv); rbox_server_handle_free(srv); return -1; }
-    rbox_server_decide(req2, RBOX_DECISION_ALLOW, "ok", 10);
+    rbox_server_decide(req2, RBOX_DECISION_ALLOW, "ok", 10, 0, NULL, NULL);
     
     usleep(100000);
     rbox_server_stop(srv);
@@ -458,7 +501,7 @@ static int test_concurrent_clients(void) {
         }
         
         /* Process and decide */
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "allowed", 0);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "allowed", 0, 0, NULL, NULL);
         
         pthread_join(cl, NULL);
     }
@@ -483,13 +526,13 @@ static int test_empty_command(void) {
     
     const char *cmd = rbox_server_request_command(req);
     if (cmd == NULL || cmd[0] != '\0') {
-        rbox_server_decide(req, RBOX_DECISION_DENY, "empty", 0);
+        rbox_server_decide(req, RBOX_DECISION_DENY, "empty", 0, 0, NULL, NULL);
         rbox_server_stop(srv);
         rbox_server_handle_free(srv);
         return -1;
     }
     
-    rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+    rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     
     usleep(100000);
     rbox_server_stop(srv);
@@ -527,7 +570,7 @@ static int test_parse_result(void) {
         if (arg0) printf("    arg0 = %s\n", arg0);
     }
     
-    rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+    rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     
     pthread_join(cl, NULL);
     rbox_server_stop(srv);
@@ -551,7 +594,7 @@ static int test_duration_response(void) {
     if (!req) { pthread_join(cl, NULL); rbox_server_stop(srv); rbox_server_handle_free(srv); return -1; }
     
     /* Send decision with specific duration */
-    rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 1000);
+    rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 1000, 0, NULL, NULL);
     
     pthread_join(cl, NULL);
     rbox_server_stop(srv);
@@ -574,7 +617,7 @@ static int test_reason_response(void) {
     if (!req) { pthread_join(cl, NULL); rbox_server_stop(srv); rbox_server_handle_free(srv); return -1; }
     
     /* Send decision with reason */
-    rbox_error_t err = rbox_server_decide(req, RBOX_DECISION_ALLOW, "test reason", 0);
+    rbox_error_t err = rbox_server_decide(req, RBOX_DECISION_ALLOW, "test reason", 0, 0, NULL, NULL);
     if (err != RBOX_OK) { pthread_join(cl, NULL); rbox_server_stop(srv); rbox_server_handle_free(srv); return -1; }
     
     pthread_join(cl, NULL);
@@ -636,7 +679,7 @@ static int test_many_clients(void) {
         
         printf("    decide #%d...\n", received);
         fflush(stdout);
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     }
     
     /* Wait for all client threads */
@@ -707,7 +750,7 @@ static int test_misbehaving_clients(void) {
             rbox_server_request_t *req = rbox_server_get_request(s);
             if (!req) break;
             received++;
-            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
         }
         return NULL;
     }
@@ -755,7 +798,7 @@ static int test_server_restart(void) {
                 continue;
             }
             received++;
-            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
         }
         return NULL;
     }
@@ -860,7 +903,7 @@ static int test_too_large_command(void) {
             rbox_server_request_t *req = rbox_server_get_request(s);
             if (!req) break;
             received++;
-            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
         }
         return NULL;
     }
@@ -907,7 +950,7 @@ int main(void) {
     RUN_TEST(test_reason_response, "reason response");
     RUN_TEST(test_many_clients, "100 concurrent clients");
     RUN_TEST(test_misbehaving_clients, "misbehaving clients");
-    /* RUN_TEST(test_server_restart, "server restart with reconnection"); - TODO: fix */
+    RUN_TEST(test_server_restart, "server restart with reconnection");
     RUN_TEST(test_too_large_command, "too large command rejection");
     
     printf("\n=== Results: %d/%d tests passed ===\n", test_passed, test_total);

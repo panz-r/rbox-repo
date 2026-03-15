@@ -318,7 +318,6 @@ static int test_shellsplit_dup(void) {
 }
 
 /* ============================================================
-/* ============================================================
  * PROXY-BASED NETWORK CORRUPTION TESTS
  * Tests real library server code with simulated lossy connection
  * Uses two pairs of unix sockets for client-server communication through proxy
@@ -369,7 +368,7 @@ static void corrupt_data(char *data, size_t len, corruption_params_t *params) {
 }
 
 /* Handle one client connection - forwards bidirectionally with corruption */
-static void handle_proxy_client(void *arg) {
+static void *handle_proxy_client(void *arg) {
     
     /* arg is a struct with client_fd, target_socket, and corruption params */
     struct client_info {
@@ -382,8 +381,10 @@ static void handle_proxy_client(void *arg) {
     /* Copy data to local vars BEFORE freeing */
     int client_fd = info->client_fd;
     char target_socket[256];
-    strncpy(target_socket, info->target_socket, sizeof(target_socket) - 1);
-    target_socket[255] = '\0';
+    size_t copy_len = strlen(info->target_socket);
+    if (copy_len >= sizeof(target_socket)) copy_len = sizeof(target_socket) - 1;
+    memcpy(target_socket, info->target_socket, copy_len);
+    target_socket[copy_len] = '\0';
     corruption_params_t c2s = info->c2s;
     corruption_params_t s2c = info->s2c;
     free(arg);
@@ -397,18 +398,21 @@ static void handle_proxy_client(void *arg) {
     if (target_fd < 0) {
         
         close(client_fd);
-        return;
+        return NULL;
     }
 
     struct sockaddr_un target_addr = {0};
     target_addr.sun_family = AF_UNIX;
-    strncpy(target_addr.sun_path, target_socket, sizeof(target_addr.sun_path) - 1);
+    size_t path_len = strlen(target_socket);
+    if (path_len >= sizeof(target_addr.sun_path)) path_len = sizeof(target_addr.sun_path) - 1;
+    memcpy(target_addr.sun_path, target_socket, path_len);
+    target_addr.sun_path[path_len] = '\0';
 
     if (connect(target_fd, (struct sockaddr *)&target_addr, sizeof(target_addr)) < 0) {
         
         close(target_fd);
         close(client_fd);
-        return;
+        return NULL;
     }
     
      
@@ -458,6 +462,8 @@ static void handle_proxy_client(void *arg) {
 
     close(target_fd);
     close(client_fd);
+    
+    return NULL;
 }
 
 /* Proxy listener thread */
@@ -494,7 +500,7 @@ static void *proxy_thread_func(void *arg) {
             memcpy(&info->c2s, &proxy->client_to_server, sizeof(corruption_params_t));
             memcpy(&info->s2c, &proxy->server_to_client, sizeof(corruption_params_t));
             pthread_t tid;
-            pthread_create(&tid, NULL, (void *(*)(void *))handle_proxy_client, info);
+            pthread_create(&tid, NULL, handle_proxy_client, info);
             pthread_detach(tid);
         }
     }
@@ -594,7 +600,7 @@ static void *rbox_server_thread(void *arg) {
         }
 
         /* Send ALLOW decision for any valid request */
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     }
 
     rbox_server_handle_free(server);
@@ -860,6 +866,12 @@ int main(void) {
     test_socket_create();
     test_socket_connect();
     test_accept_loop();
+    printf("\n");
+
+    /* Packet build tests */
+    printf("Packet build tests:\n");
+    test_build_request();
+    test_build_response();
     printf("\n");
 
     /* Shellsplit parsing tests */

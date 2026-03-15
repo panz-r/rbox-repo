@@ -203,7 +203,7 @@ func BuildBinaries() error {
 	// Force rebuild if .so is newer than binary
 	soStat, err := os.Stat(dfaSo)
 	if err == nil {
-		for _, bin := range []string{"readonlybox", "readonlybox-server"} {
+		for _, bin := range []string{"readonlybox-ptrace"} {
 			binPath := filepath.Join(wd, "bin", bin)
 			if binStat, err := os.Stat(binPath); err == nil && soStat.ModTime().After(binStat.ModTime()) {
 				os.RemoveAll(binPath)
@@ -211,18 +211,13 @@ func BuildBinaries() error {
 		}
 	}
 	
-	// readonlybox (dynamic linking with C library)
-	cmd := exec.Command("go", "build", "-tags", "cgo",
-		"-o", filepath.Join(wd, "bin", "readonlybox"))
-	cmd.Dir = filepath.Join(wd, "cmd/readonlybox")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("readonlybox: %w", err)
+	// rbox-wrap (LD_PRELOAD client)
+	if err := runMake(filepath.Join(wd, "rbox-wrap")); err != nil {
+		return err
 	}
 	
 	// readonlybox-server (dynamic linking with C library)
-	cmd = exec.Command("go", "build", "-tags", "cgo",
+	cmd := exec.Command("go", "build", "-tags", "cgo",
 		"-o", filepath.Join(wd, "bin", "readonlybox-server"))
 	cmd.Dir = filepath.Join(wd, "cmd/readonlybox-server")
 	cmd.Stdout = os.Stdout
@@ -302,7 +297,18 @@ func Clean() error {
 // Test runs all tests
 func Test() error {
 	mg.Deps(Build)
-	return runTests()
+	
+	// Run rbox-protocol tests
+	if err := runMake("rbox-protocol"); err != nil {
+		return err
+	}
+	
+	// Run rbox-wrap tests
+	if err := runMake("rbox-wrap"); err != nil {
+		return err
+	}
+	
+	return nil
 }
 
 // ValidatePatterns validates command patterns

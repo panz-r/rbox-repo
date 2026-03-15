@@ -11,7 +11,7 @@ import (
 
 func getReadonlyboxPath() string {
 	wd, _ := os.Getwd()
-	return filepath.Join(wd, "..", "bin", "readonlybox")
+	return filepath.Join(wd, "..", "rbox-wrap", "rbox-wrap")
 }
 
 // TestReadonlyboxGitIntegration tests the readonlybox git subcommand end-to-end

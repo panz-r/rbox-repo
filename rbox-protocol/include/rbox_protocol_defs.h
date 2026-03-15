@@ -192,10 +192,6 @@
 
 #define RBOX_RESPONSE_HEADER_SIZE        29
 
-/* V6 Response packet (uses same header format + decision field) */
-#define RBOX_RESPONSE_V6_OFFSET_DECISION  64  /* decision at offset 64 */
-#define RBOX_RESPONSE_V6_SIZE           (RBOX_HEADER_SIZE + RBOX_RESPONSE_MAX_REASON)
-
 /* ============================================================
  * STRUCTURES (for convenience)
  * ============================================================ */

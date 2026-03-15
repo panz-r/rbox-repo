@@ -4,7 +4,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=gnu11 -O2 -g \
          -I./include \
          -I../shellsplit/include
-LDFLAGS = -lpthread -lm
+LDFLAGS = -lpthread -lm -z noexecstack
 
 # Shellsplit
 SHELLSPLIT_SRC = ../shellsplit/src/shell_tokenizer.c
@@ -37,7 +37,7 @@ TEST_BLOCK_BIN = test_blocking_server
 
 .PHONY: all clean test test-unit test-full test-integration test-blocking test-fuzz test-fuzz-1h test-fuzz-4h
 
-all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN)
+all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN)
 
 $(LIB): $(OBJS)
 	ar rcs $@ $^

@@ -16,13 +16,16 @@ C_DFA = ../c-dfa
 RBOX_LIB = $(RBOX_PROTOCOL)/librbox_protocol.a
 SHELLSPLIT_OBJ = $(SHELLSPLIT)/src/shell_tokenizer.o
 C_DFA_OBJ = $(C_DFA)/src/dfa_eval.o $(C_DFA)/src/dfa_loader.o
-SHELLSPLIT_OBJ = $(SHELLSPLIT)/src/shell_tokenizer.o
 
 # Target
 TARGET = rbox-wrap
 SRC = main.c
 
-.PHONY: all clean
+# Test
+TEST_BIN = test_wrap
+TEST_SRC = tests/test.c
+
+.PHONY: all clean test
 
 all: $(TARGET)
 
@@ -35,5 +38,12 @@ $(RBOX_LIB):
 $(C_DFA_OBJ):
 	$(MAKE) -C $(C_DFA)
 
+# Test target
+test: $(TEST_BIN)
+	./$(TEST_BIN)
+
+$(TEST_BIN): $(TEST_SRC) $(RBOX_LIB)
+	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(RBOX_LIB) $(LDFLAGS)
+
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TEST_BIN)
