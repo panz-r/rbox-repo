@@ -23,7 +23,7 @@ void test_header_validate(void) {
     /* Save original values using explicit offsets */
     uint32_t orig_magic = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_MAGIC);
     uint32_t orig_version = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_VERSION);
-    uint32_t orig_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
+    /* Note: orig_checksum not needed - we test by modifying and checking validation fails */
     
     /* Test 1: Valid header should pass */
     assert(rbox_header_validate(packet, pkt_len) == RBOX_OK);

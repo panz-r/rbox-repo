@@ -337,6 +337,7 @@ rbox_error_t rbox_stream_send_chunk(rbox_client_t *client, rbox_stream_t *stream
     
     /* Build chunk packet */
     char buffer[RBOX_HEADER_SIZE + RBOX_CHUNK_MAX];
+    memset(buffer, 0, sizeof(buffer));
     size_t pos = 0;
     
     /* Magic */
@@ -473,29 +474,28 @@ rbox_error_t rbox_server_stream_recv(rbox_client_t *client, rbox_stream_t *strea
     }
     
     /* Read header first */
-    char header[RBOX_HEADER_SIZE];
-    ssize_t n = rbox_read(rbox_client_fd(client), header, RBOX_HEADER_SIZE);
-    if (n != RBOX_HEADER_SIZE) {
+    rbox_header_t header_buf;
+    ssize_t n = rbox_read(rbox_client_fd(client), &header_buf, sizeof(header_buf));
+    if (n != sizeof(header_buf)) {
         return RBOX_ERR_TRUNCATED;
     }
     
     /* Validate header */
-    rbox_header_t *hdr = (rbox_header_t *)header;
-    if (hdr->magic != RBOX_MAGIC) {
+    if (header_buf.magic != RBOX_MAGIC) {
         return RBOX_ERR_MAGIC;
     }
-    if (hdr->version != RBOX_VERSION) {
+    if (header_buf.version != RBOX_VERSION) {
         return RBOX_ERR_VERSION;
     }
     
     /* Validate offset matches expected */
-    if (hdr->offset != stream->offset) {
+    if (header_buf.offset != stream->offset) {
         /* Client trying to resume from wrong offset */
         return RBOX_ERR_INVALID;
     }
     
     /* Read chunk data */
-    size_t chunk_len = hdr->chunk_len;
+    size_t chunk_len = header_buf.chunk_len;
     if (chunk_len > buf_size || chunk_len > RBOX_CHUNK_MAX) {
         return RBOX_ERR_INVALID;
     }
@@ -807,7 +807,8 @@ static rbox_error_t validate_response(const char *packet, size_t len,
  * ============================================================ */
 
 /* Compute checksum for header verification */
-static uint32_t compute_header_checksum(const char *packet, size_t len) {
+/* Note: Currently unused - kept for potential future use */
+static __attribute__((unused)) uint32_t compute_header_checksum(const char *packet, size_t len) {
     if (!packet || len < RBOX_HEADER_SIZE) return 0;
     uint32_t sum = 0;
     for (size_t i = 0; i < RBOX_HEADER_OFFSET_CHECKSUM; i++) {
@@ -1482,7 +1483,8 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
     
     /* Copy to output response */
     out_response->decision = details.decision;
-    strncpy(out_response->reason, details.reason, sizeof(out_response->reason) - 1);
+    strncpy(out_response->reason, details.reason, sizeof(out_response->reason) - 2);
+    out_response->reason[sizeof(out_response->reason) - 1] = '\0';
     out_response->duration = 0;
     memcpy(out_response->request_id, header.request_id, 16);
     
@@ -1866,7 +1868,7 @@ static int response_cache_lookup(rbox_server_handle_t *server,
             }
             
             /* Compute fenv_hash2 for matching */
-            uint64_t fenv_hash2 = ((uint64_t)fenv_hash << 32) | ((uint64_t)fenv_hash << 16) ^ 0xDEADBEEF;
+            uint64_t fenv_hash2 = ((uint64_t)fenv_hash << 32) | (((uint64_t)fenv_hash << 16) ^ 0xDEADBEEF);
             
             /* Match by cmd_hash + cmd_hash2 + fenv_hash + fenv_hash2 */
             if (server->response_cache[i].cmd_hash == cmd_hash &&
@@ -1911,9 +1913,14 @@ static void response_cache_insert(rbox_server_handle_t *server,
     entry->cmd_hash2 = cmd_hash2;
     entry->fenv_hash = fenv_hash;
     /* Compute fenv_hash2 from fenv_hash (simple 64-bit extension) */
-    entry->fenv_hash2 = ((uint64_t)fenv_hash << 32) | ((uint64_t)fenv_hash << 16) ^ 0xDEADBEEF;
+    entry->fenv_hash2 = ((uint64_t)fenv_hash << 32) | (((uint64_t)fenv_hash << 16) ^ 0xDEADBEEF);
     entry->decision = decision;
-    strncpy(entry->reason, reason ? reason : "", 255);
+    /* Reason max is 255 bytes, ensure null termination */
+    if (reason && *reason) {
+        snprintf(entry->reason, sizeof(entry->reason), "%.*s", 254, reason);
+    } else {
+        entry->reason[0] = '\0';
+    }
     entry->duration = duration;
     entry->timestamp = time(NULL);
     
@@ -2189,6 +2196,9 @@ static char *rbox_build_response_internal(uint8_t *client_id, uint8_t *request_i
                            uint8_t decision, const char *reason, uint32_t duration,
                            uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
                            size_t *out_len) {
+    /* Duration is used by caller for caching, not encoded in response */
+    (void)duration;
+    
     /* Encode body first */
     size_t body_buf_size = 1 + RBOX_RESPONSE_MAX_REASON + 1 + 4 + 2 + 256;
     char *body_buf = alloca(body_buf_size);
@@ -2238,7 +2248,7 @@ rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *re
     if (!client || !response) return RBOX_ERR_INVALID;
 
     size_t pkt_len;
-    char *pkt = rbox_build_response_internal(NULL, response->request_id, 0, response->decision,
+    char *pkt = rbox_build_response_internal(NULL, (uint8_t *)response->request_id, 0, response->decision,
                                    response->reason, response->duration, 0, 0, NULL, &pkt_len);
     if (!pkt) return RBOX_ERR_MEMORY;
     
@@ -2402,7 +2412,8 @@ static void *server_thread_func(void *arg) {
             if (server->wake_fd >= 0 && ev->data.fd == server->wake_fd) {
                 /* Drain the eventfd */
                 uint64_t val;
-                read(server->wake_fd, &val, sizeof(val));
+                ssize_t n = read(server->wake_fd, &val, sizeof(val));
+                (void)n;  /* We just need to drain it */
                 continue;
             }
             
@@ -2438,6 +2449,7 @@ static void *server_thread_func(void *arg) {
                         
                         /* Send response (non-blocking, socket ready for write) */
                         ssize_t sent = write(entry->fd, entry->data, entry->len);
+                        (void)sent;  /* Response sent - peer may close connection */
                         
                         /* Always close fd and free response data */
                         if (entry->fd >= 0) {
@@ -2749,7 +2761,8 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req, uint8_t decision, co
     /* Wake up epoll thread via eventfd */
     if (server->wake_fd >= 0) {
         uint64_t val = 1;
-        write(server->wake_fd, &val, sizeof(val));
+        ssize_t n = write(server->wake_fd, &val, sizeof(val));
+        (void)n;  /* Wake signal - errors ignored */
     }
     
     return RBOX_OK;
@@ -2825,7 +2838,8 @@ rbox_error_t rbox_server_decide_with_env(rbox_server_request_t *req,
     /* Wake up epoll thread via eventfd */
     if (server->wake_fd >= 0) {
         uint64_t val = 1;
-        write(server->wake_fd, &val, sizeof(val));
+        ssize_t n = write(server->wake_fd, &val, sizeof(val));
+        (void)n;  /* Wake signal - errors ignored */
     }
     
     return RBOX_OK;
@@ -2989,6 +3003,13 @@ rbox_error_t rbox_blocking_request_with_env(const char *socket_path,
     if (!socket_path || !command || !out_response) {
         return RBOX_ERR_INVALID;
     }
+    
+    /* Env params not used yet - screening happens at execution time */
+    (void)env_var_count;
+    (void)env_var_names;
+    (void)env_var_scores;
+    (void)base_delay_ms;
+    (void)max_retries;
     
     /* For now, just call the regular blocking request */
     /* The env var screening happens at execution time, not at request time */
