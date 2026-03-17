@@ -1,4 +1,4 @@
-/* Auto-generated from /w/rbox-repo/internal/client/readonlybox.dfa */
+/* Auto-generated from /w/rbox-dev/internal/client/readonlybox.dfa */
 /* Do not edit manually */
 
 #include <stdint.h>

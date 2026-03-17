@@ -36,7 +36,7 @@ $(RBOX_LIB):
 	$(MAKE) -C $(RBOX_PROTOCOL)
 
 $(C_DFA_OBJ):
-	$(MAKE) -C $(C_DFA)
+	$(MAKE) -C $(C_DFA) lib
 
 # Test target
 test: $(TEST_BIN)
