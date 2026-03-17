@@ -3,7 +3,7 @@
 
 /*
  * rbox_cgo.go - Go wrapper for rbox-protocol C library
- * 
+ *
  * This provides the bridge between the Go TUI server and the C library
  * for protocol handling.
  */
@@ -66,12 +66,12 @@ func (s *RBoxServer) GetRequest() *RBoxRequest {
 	if s.cServer == nil {
 		return nil
 	}
-	
+
 	cReq := C.rbox_server_get_request(s.cServer)
 	if cReq == nil {
 		return nil
 	}
-	
+
 	return &RBoxRequest{cRequest: cReq}
 }
 
@@ -188,13 +188,9 @@ func (r *RBoxRequest) GetEnvVarScore(index int) float32 {
 	return float32(C.rbox_server_request_env_var_score(r.cRequest, C.int(index)))
 }
 
-// Decide sends the decision to the client
-func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32) error {
-	return r.DecideWithEnv(decision, reason, duration, nil)
-}
 
 // DecideWithEnv sends the decision to the client with env decisions
-func (r *RBoxRequest) DecideWithEnv(decision uint8, reason string, duration uint32, envDecisions []EnvVarDecision) error {
+func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, envDecisions []EnvVarDecision) error {
 	if r.cRequest == nil {
 		return fmt.Errorf("nil request")
 	}
@@ -206,7 +202,7 @@ func (r *RBoxRequest) DecideWithEnv(decision uint8, reason string, duration uint
 	var envCount C.int = 0
 	var cEnvNames **C.char = nil
 	var cEnvDecisions *C.uint8_t = nil
-	
+
 	if len(envDecisions) > 0 {
 		envCount = C.int(len(envDecisions))
 		envNames := make([]*C.char, len(envDecisions))
@@ -214,12 +210,13 @@ func (r *RBoxRequest) DecideWithEnv(decision uint8, reason string, duration uint
 		for i, e := range envDecisions {
 			envNames[i] = C.CString(e.Name)
 			envDecs[i] = C.uint8_t(e.Decision)
+			defer C.free(unsafe.Pointer(envNames[i]))
 		}
 		cEnvNames = &envNames[0]
 		cEnvDecisions = &envDecs[0]
 	}
 
-	err := C.rbox_server_decide_with_env(r.cRequest, C.uint8_t(decision), cReason, C.uint32_t(duration),
+	err := C.rbox_server_decide(r.cRequest, C.uint8_t(decision), cReason, C.uint32_t(duration),
 		envCount, cEnvNames, cEnvDecisions)
 	if err != C.RBOX_OK {
 		return fmt.Errorf("decide failed: %s", C.GoString(C.rbox_strerror(err)))

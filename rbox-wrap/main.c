@@ -302,6 +302,9 @@ int main(int argc, char *argv[]) {
         args,
         caller,
         syscall,
+        0,      /* env_var_count */
+        NULL,   /* env_var_names */
+        NULL,   /* env_var_scores */
         &response,
         100,   /* base_delay_ms */
         3      /* max_retries */

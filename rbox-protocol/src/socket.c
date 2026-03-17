@@ -17,9 +17,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <time.h>
+#include <pthread.h>
 
 #include "rbox_protocol.h"
 #include "socket.h"
+
+/* Thread-local seed for rand_r() - each thread gets its own seed */
+static __thread uint32_t g_rand_seed = 0;
 
 /* Default timeout for operations (milliseconds) */
 /* Timeout for socket operations (milliseconds) */
@@ -73,8 +78,16 @@ rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_
         return NULL;
     }
 
+    /* Initialize seed once per thread at function entry */
+    if (g_rand_seed == 0) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        uintptr_t tid = (uintptr_t)pthread_self();
+        g_rand_seed = (uint32_t)((uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 32) ^ tid);
+    }
+
     uint32_t attempt = 0;
-    
+
     while (1) {
         rbox_client_t *client = calloc(1, sizeof(rbox_client_t));
         if (!client) return NULL;
@@ -155,25 +168,36 @@ rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_
         }
         
         attempt++;
-        
-        /* Calculate delay: exponential backoff with jitter */
-        /* delay = min(base * 2^attempt + random(0..base), base * 16) */
-        uint32_t max_delay = base_delay_ms * 64;
-        if (max_delay < base_delay_ms) max_delay = UINT32_MAX;  /* Overflow protection */
-        
-        uint32_t exp_delay = base_delay_ms;
-        for (uint32_t i = 1; i < attempt && exp_delay < UINT32_MAX / 2; i++) {
-            exp_delay *= 2;
+
+        /* Calculate delay: exponential backoff with jitter
+         * Use 64-bit arithmetic to prevent overflow */
+        uint64_t max_delay_64 = (uint64_t)base_delay_ms * 64;
+        uint32_t max_delay = (max_delay_64 > UINT32_MAX) ? UINT32_MAX : (uint32_t)max_delay_64;
+
+        /* Compute exponential delay with overflow protection */
+        uint64_t exp_delay_64 = base_delay_ms;
+        for (uint32_t i = 1; i < attempt && exp_delay_64 < UINT64_MAX / 2; i++) {
+            exp_delay_64 *= 2;
         }
-        
-        /* Add jitter: random(0..base_delay_ms) */
-        uint32_t jitter = (uint32_t)((double)base_delay_ms * rand() / (RAND_MAX + 1.0));
-        
+        uint32_t exp_delay = (exp_delay_64 > UINT32_MAX) ? UINT32_MAX : (uint32_t)exp_delay_64;
+
+        /* Add jitter: random(0..base_delay_ms) - using thread-safe integer arithmetic */
+        uint32_t jitter = (uint32_t)(((uint64_t)base_delay_ms * (uint64_t)rand_r(&g_rand_seed)) / (RAND_MAX + 1ULL));
+
         uint32_t delay = exp_delay + jitter;
         if (delay > max_delay) delay = max_delay;
-        
-        /* Sleep for delay (convert to microseconds) */
-        usleep(delay * 1000);
+
+        /* Cap delay (nanosleep handles any value, but cap for sanity) */
+        if (delay > RBOX_MAX_SLEEP_DELAY_MS) {
+            delay = RBOX_MAX_SLEEP_DELAY_MS;
+        }
+
+        /* Sleep for delay using nanosleep (portable, handles any delay value) */
+        struct timespec ts = {
+            .tv_sec = delay / 1000,
+            .tv_nsec = (delay % 1000) * 1000000
+        };
+        while (nanosleep(&ts, &ts) < 0 && errno == EINTR);
     }
     
     /* Never reached */
@@ -262,22 +286,46 @@ rbox_client_t *rbox_server_accept(rbox_server_t *server) {
         return NULL;
     }
 
-    /* Wait for incoming connection (using poll with timeout) */
+    /* Wait for incoming connection (using poll with timeout)
+     * Retry on EINTR to avoid dropping connection attempts */
     struct pollfd pfd = { .fd = server->fd, .events = POLLIN };
-    int ret = poll(&pfd, 1, RBOX_DEFAULT_TIMEOUT);
-    
+    int ret;
+    int eintr_count = 0;
+    const int max_eintr_retry = 5;
+
+    do {
+        ret = poll(&pfd, 1, RBOX_DEFAULT_TIMEOUT);
+        if (ret < 0 && errno == EINTR) {
+            eintr_count++;
+            if (eintr_count >= max_eintr_retry) {
+                return NULL;  /* Too many EINTR retries */
+            }
+        }
+    } while (ret < 0 && errno == EINTR);
+
     if (ret <= 0) {
         return NULL;  /* Timeout or error */
     }
-    
+
     if (!(pfd.revents & POLLIN)) {
         return NULL;
     }
 
     struct sockaddr_un addr;
     socklen_t addr_len = sizeof(addr);
-    
-    int client_fd = accept(server->fd, (struct sockaddr *)&addr, &addr_len);
+
+    /* Accept with EINTR retry - signals can interrupt accept after poll succeeds */
+    int client_fd;
+    do {
+        client_fd = accept(server->fd, (struct sockaddr *)&addr, &addr_len);
+        if (client_fd < 0 && errno == EINTR) {
+            eintr_count++;
+            if (eintr_count >= max_eintr_retry) {
+                return NULL;  /* Too many EINTR retries */
+            }
+        }
+    } while (client_fd < 0 && errno == EINTR);
+
     if (client_fd < 0) {
         return NULL;
     }
@@ -520,6 +568,140 @@ int rbox_pollout(int fd, int timeout_ms) {
     /* Allow writing if POLLOUT is set, even with POLLHUP/POLLERR */
     if (pfd.revents & POLLOUT) return 1;
     if (pfd.revents & (POLLERR | POLLHUP)) return -1;
-    
+
     return 0;
+}
+
+/* Read with timeout - for server use to prevent indefinite blocking
+ * Returns: bytes read, 0 on timeout, -1 on error, -2 on closed
+ *
+ * This is like rbox_read() but uses a finite timeout to prevent
+ * hanging forever on malicious/truncated client data.
+ */
+ssize_t rbox_read_timeout(int fd, void *buf, size_t len, int timeout_ms) {
+    if (fd < 0 || !buf || len == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    size_t total_read = 0;
+    char *ptr = (char *)buf;
+
+    while (total_read < len) {
+        /* Wait for data with timeout */
+        struct pollfd pfd = { .fd = fd, .events = POLLIN };
+        int ret = poll(&pfd, 1, timeout_ms);
+
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (ret == 0) {
+            /* Timeout - return what we have so far (may be partial) */
+            if (total_read > 0) {
+                return (ssize_t)total_read;
+            }
+            errno = ETIMEDOUT;
+            return 0;
+        }
+
+        /* Check for errors */
+        if (pfd.revents & (POLLERR | POLLHUP)) {
+            if (!(pfd.revents & POLLIN)) {
+                errno = ECONNRESET;
+                return -1;
+            }
+        }
+
+        /* Read */
+        ssize_t n = read(fd, ptr + total_read, len - total_read);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            if (total_read > 0) {
+                break;
+            }
+            return -1;
+        }
+        if (n == 0) {
+            /* Peer closed */
+            break;
+        }
+
+        total_read += n;
+    }
+
+    return (ssize_t)total_read;
+}
+
+/* Non-blocking read - reads what's available, returns immediately
+ * Returns: bytes read (0 if no data available yet), -1 on error, -2 on closed */
+ssize_t rbox_read_nonblocking(int fd, void *buf, size_t len) {
+    if (fd < 0 || !buf || len == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    /* Try to read immediately without waiting */
+    ssize_t n = read(fd, buf, len);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;  /* Would block, nothing read */
+        }
+        if (errno == EINTR) {
+            return 0;  /* Interrupted, nothing read */
+        }
+        return -1;  /* Real error */
+    }
+    if (n == 0) {
+        /* Peer closed */
+        return -2;
+    }
+
+    return n;
+}
+
+/* Non-blocking write - writes what it can, returns immediately
+ * Returns: bytes written (0 if no data could be written), -1 on error
+ *
+ * Use this for non-blocking contexts where you can't wait for all data to be written.
+ * Tracks position via *io_offset - caller should maintain state across calls.
+ */
+ssize_t rbox_write_nonblocking(int fd, const void *buf, size_t len, size_t *io_offset) {
+    if (fd < 0 || !buf || len == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    size_t offset = io_offset ? *io_offset : 0;
+    if (offset >= len) {
+        return 0;  /* Already sent everything */
+    }
+
+    const char *ptr = (const char *)buf + offset;
+    size_t remaining = len - offset;
+
+    /* Try to write immediately without waiting */
+    ssize_t n = write(fd, ptr, remaining);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;  /* Would block, nothing written */
+        }
+        if (errno == EINTR) {
+            return 0;  /* Interrupted, nothing written */
+        }
+        return -1;  /* Real error */
+    }
+    if (n == 0) {
+        /* Shouldn't happen with socket, but treat as error */
+        errno = ECONNRESET;
+        return -1;
+    }
+
+    /* Update offset */
+    if (io_offset) {
+        *io_offset += n;
+    }
+
+    return n;
 }

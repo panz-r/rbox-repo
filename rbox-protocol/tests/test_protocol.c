@@ -18,7 +18,7 @@ void test_header_validate(void) {
     char packet[1024];
     size_t pkt_len;
     const char *args[] = {"test"};
-    rbox_build_request(packet, sizeof(packet), &pkt_len, "test", NULL, NULL, 1, args);
+    rbox_build_request(packet, sizeof(packet), &pkt_len, "test", NULL, NULL, 1, args, 0, NULL, NULL);
     
     /* Save original values using explicit offsets */
     uint32_t orig_magic = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_MAGIC);
@@ -99,7 +99,7 @@ void test_session(void) {
     printf("  ✓ Session created in DISCONNECTED state\n");
     
     /* Try to send without connecting - should fail */
-    rbox_error_t err = rbox_session_send_request(session, "ls", 0, NULL, NULL, NULL);
+    rbox_error_t err = rbox_session_send_request(session, "ls", NULL, NULL, 0, NULL, 0, NULL, NULL);
     assert(err == RBOX_ERR_INVALID);
     printf("  ✓ Send request without connection returns INVALID\n");
     

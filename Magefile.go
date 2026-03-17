@@ -216,10 +216,10 @@ func BuildBinaries() error {
 		return err
 	}
 	
-	// readonlybox-server (dynamic linking with C library)
+	// rbox-server (Go with C library)
 	cmd := exec.Command("go", "build", "-tags", "cgo",
 		"-o", filepath.Join(wd, "bin", "readonlybox-server"))
-	cmd.Dir = filepath.Join(wd, "cmd/readonlybox-server")
+	cmd.Dir = filepath.Join(wd, "rbox-server")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

@@ -1,7 +1,7 @@
 # Makefile for rbox-protocol
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -g \
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -g -pthread \
          -I./include \
          -I../shellsplit/include
 LDFLAGS = -lpthread -lm -z noexecstack
@@ -13,7 +13,8 @@ SHELLSPLIT_OBJ = ../shellsplit/src/shell_tokenizer.o
 # Source files
 SRCS = src/socket.c \
        src/packet.c \
-       src/parser.c
+       src/parser.c \
+       src/server.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)

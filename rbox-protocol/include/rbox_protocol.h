@@ -204,7 +204,8 @@ int rbox_client_error(const rbox_client_t *client);
  *   RBOX_ERR_MISMATCH: request_id mismatch (may retry - stale response)
  */
 rbox_error_t rbox_client_send_request(rbox_client_t *client,
-    const char *command, int argc, const char **argv,
+    const char *command, const char *caller, const char *syscall, int argc, const char **argv,
+    int env_var_count, const char **env_var_names, const float *env_var_scores,
     rbox_response_t *response);
 
 /* ============================================================
@@ -286,6 +287,11 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server);
  */
 //export rbox_server_get_request
 rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server);
+
+/* Check if server is still running
+ * Returns: 1 if running, 0 if stopped
+ */
+int rbox_server_is_running(rbox_server_handle_t *server);
 
 /* Get command from request (zero-copy) */
 //export rbox_server_request_command
@@ -471,18 +477,11 @@ void rbox_init(void);
  *   RBOX_ERR_*: error (out_response not valid)
  */
 
-/* Extended version with flagged env vars for decisions */
-rbox_error_t rbox_blocking_request_with_env(const char *socket_path,
-    const char *command, int argc, const char **argv,
-    const char *caller, const char *syscall,
-    int env_var_count, const char **env_var_names, const float *env_var_scores,
-    rbox_response_t *out_response,
-    uint32_t base_delay_ms, uint32_t max_retries);
-
-/* Legacy wrapper without env vars (calls _with_env with 0 env vars) */
+/* Blocking request - supports flagged env vars for decisions */
 rbox_error_t rbox_blocking_request(const char *socket_path,
     const char *command, int argc, const char **argv,
     const char *caller, const char *syscall,
+    int env_var_count, const char **env_var_names, const float *env_var_scores,
     rbox_response_t *out_response,
     uint32_t base_delay_ms, uint32_t max_retries);
 
@@ -510,6 +509,12 @@ rbox_error_t rbox_build_response(
     uint8_t decision, const char *reason, uint32_t duration,
     uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
     char **out_packet, size_t *out_len);
+
+/* Internal: Build response packet (used by server) */
+char *rbox_build_response_internal(uint8_t *client_id, uint8_t *request_id, uint32_t cmd_hash,
+                           uint8_t decision, const char *reason, uint32_t duration,
+                           uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
+                           size_t *out_len);
 
 /* ============================================================
  * NON-BLOCKING SESSION INTERFACE (For clients with own poll loop)
@@ -587,8 +592,9 @@ rbox_error_t rbox_session_error(const rbox_session_t *session);
  *
  * caller and syscall: optional caller identification (truncated to 15 chars each) */
 rbox_error_t rbox_session_send_request(rbox_session_t *session,
-    const char *command, int argc, const char **argv,
-    const char *caller, const char *syscall);
+    const char *command, const char *caller, const char *syscall,
+    int argc, const char **argv,
+    int env_var_count, const char **env_var_names, const float *env_var_scores);
 
 /* Session heartbeat - call when fd is ready
  *
@@ -652,7 +658,8 @@ rbox_error_t rbox_session_connect(rbox_session_t *session);
  * Data format: header + command\0caller\0syscall\0argv[0]\0argv[1]\0...\0 */
 rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
                                const char *command, const char *caller, const char *syscall,
-                               int argc, const char **argv);
+                               int argc, const char **argv,
+                               int env_var_count, const char **env_var_names, const float *env_var_scores);
 
 /* ============================================================
  * NON-BLOCKING SOCKET I/O
@@ -675,6 +682,11 @@ ssize_t rbox_read_exact(int fd, void *buf, size_t len);
 /* Write exactly N bytes (non-blocking, with timeout)
  * Returns bytes written (equals len on success), -1 on error */
 ssize_t rbox_write_exact(int fd, const void *buf, size_t len);
+
+/* Non-blocking write - writes what it can, returns immediately
+ * Returns: bytes written (0 if no data could be written), -1 on error
+ * Use io_offset to track position across calls for partial writes */
+ssize_t rbox_write_nonblocking(int fd, const void *buf, size_t len, size_t *io_offset);
 
 /* Check if socket is ready for reading (non-blocking poll)
  * Returns: 1 if ready, 0 if not ready, -1 on error */

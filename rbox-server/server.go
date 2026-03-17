@@ -94,7 +94,7 @@ func main() {
 	// Setup signal handler
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	
+
 	go func() {
 		<-sigChan
 		server.Stop()
@@ -112,7 +112,7 @@ func main() {
 			fmt.Println("Server: GetRequest returned nil, exiting loop")
 			break
 		}
-		
+
 		// Check for stop request
 		if req.IsStop() {
 			fmt.Println("\nShutting down...")
@@ -124,7 +124,7 @@ func main() {
 		cmd := req.GetCommand()
 		caller := req.GetCaller()
 		syscall := req.GetSyscall()
-		
+
 		// Log caller info if present
 		callerInfo := ""
 		if caller != "" {
@@ -134,7 +134,7 @@ func main() {
 			}
 			callerInfo += "]"
 		}
-		
+
 		argc := req.GetArgc()
 
 		args := make([]string, argc)
@@ -154,12 +154,12 @@ func main() {
 
 		// Make decision
 		decision, reason := makeDecision(cmd, args)
-		
+
 		// Make env decisions: auto-deny high-score env vars (score >= 0.8)
 		envDecisions := makeEnvDecisions(req)
-		
+
 		// Send decision with env decisions
-		if err := req.DecideWithEnv(decision, reason, 0, envDecisions); err != nil {
+		if err := req.Decide(decision, reason, 0, envDecisions); err != nil {
 			if gLogger != nil {
 				gLogger.Log(1, "Error sending decision: %v", err)
 			}
@@ -241,12 +241,12 @@ func makeEnvDecisions(req *RBoxRequest) []EnvVarDecision {
 	if envCount == 0 {
 		return nil
 	}
-	
+
 	decisions := make([]EnvVarDecision, 0, envCount)
 	for i := 0; i < envCount; i++ {
 		name := req.GetEnvVarName(i)
 		score := req.GetEnvVarScore(i)
-		
+
 		// Auto-deny high-score env vars (score >= 0.8)
 		decision := uint8(0) // allow
 		if score >= 0.8 {
@@ -272,13 +272,13 @@ func MakeDecision(id int, allowed bool, reason string, duration uint32, envDecis
 	if !ok {
 		return fmt.Errorf("request not found")
 	}
-	
+
 	decision := DecisionAllow
 	if !allowed {
 		decision = DecisionDeny
 	}
-	
-	err := req.DecideWithEnv(decision, reason, duration, envDecisions)
+
+	err := req.Decide(decision, reason, duration, envDecisions)
 	delete(pendingRequests, id)
 	return err
 }
