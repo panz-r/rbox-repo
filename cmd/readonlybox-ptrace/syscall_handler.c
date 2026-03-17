@@ -301,36 +301,35 @@ int syscall_is_fork(USER_REGS *regs) {
             sysnum == SYSCALL_VFORK);
 }
 
-/* Build command string from argv */
-static void build_command_string(char *buf, size_t buf_size, char *const argv[]) {
-    buf[0] = '\0';
-    if (!argv || !argv[0]) return;
+/* Build command string from argv - dynamic allocation */
+static char *build_command_string_alloc(char *const argv[]) {
+    if (!argv || !argv[0]) return NULL;
 
-    /* Use snprintf for safer string building */
-    size_t remaining = buf_size - 1;
+    /* First pass: calculate total length needed */
+    size_t total_len = 0;
+    for (int i = 0; argv[i]; i++) {
+        total_len += strlen(argv[i]) + 1;  /* +1 for space or null terminator */
+    }
+    
+    if (total_len == 0) return NULL;
+    
+    /* Allocate buffer (add 1 for null terminator) */
+    char *buf = malloc(total_len + 1);
+    if (!buf) return NULL;
+    
+    /* Second pass: build the string */
     char *p = buf;
-    
-    /* Start with argv[0] (the command name) */
-    int n = snprintf(p, remaining, "%s", argv[0]);
-    if (n < 0 || (size_t)n >= remaining) {
-        buf[buf_size - 1] = '\0';
-        return;
-    }
-    p += n;
-    remaining -= n;
-
-    /* Append arguments */
-    for (int i = 1; argv[i] && remaining > 1; i++) {
-        n = snprintf(p, remaining, " %s", argv[i]);
-        if (n < 0 || (size_t)n >= remaining) {
-            buf[buf_size - 1] = '\0';
-            return;
+    for (int i = 0; argv[i]; i++) {
+        if (i > 0) {
+            *p++ = ' ';
         }
-        p += n;
-        remaining -= n;
+        size_t len = strlen(argv[i]);
+        memcpy(p, argv[i], len);
+        p += len;
     }
+    *p = '\0';
     
-    buf[buf_size - 1] = '\0';
+    return buf;
 }
 
 /* Get basename from path */
@@ -417,32 +416,10 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         return 0;
     }
 
-    /* Only check redirected flag for execve syscalls */
+    /* Only check execve syscalls */
     if (syscall_is_execve(regs)) {
         DEBUG_PRINT("HANDLER: pid=%d execve detected, initial=%d, detached=%d, redirected=%d, post_redirect=%d\n", 
                     pid, state->initial_execve, state->detached, state->redirected, state->post_redirect_exec);
-        
-        /* Check if this process was already redirected to readonlybox */
-        if (state->redirected) {
-            /* Check if we've already allowed the post-redirect execve.
-             * If yes, this is a subsequent exec (like npm→tsx) - check what is being execed.
-             * If no, this is the approved command (readonlybox→npm) - allow without request. */
-            if (state->post_redirect_exec) {
-                /* This process already executed the approved command.
-                 * Allow subsequent execs to proceed but they should go through validation
-                 * since they're new commands (e.g., npm→tsx). */
-                DEBUG_PRINT("HANDLER: pid=%d allowing execve after approved command to be validated\n", pid);
-                /* Fall through to validation logic */
-            } else {
-                /* This is readonlybox execving the approved command - allow without request */
-                DEBUG_PRINT("HANDLER: pid=%d allowing post-redirect execve (readonlybox running command), continuing to trace\n", pid);
-                state->post_redirect_exec = 1;
-                state->in_execve = 1;  /* Mark that we're in an execve so exit handler knows */
-                state->validated = 1;
-                /* Continue tracing - don't detach */
-                return 0;
-            }
-        }
         
         /* New execve that needs validation - reset validated flag */
         state->validated = 0;
@@ -489,15 +466,18 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             return 0;
         }
 
-        /* Build command string for validation */
-        char command[4096];
-        build_command_string(command, sizeof(command), state->execve_argv);
+        /* Build command string for validation - use dynamic allocation to avoid truncation */
+        char *command = build_command_string_alloc(state->execve_argv);
+        if (!command) {
+            return 0;
+        }
 
         /* Check if this is the main process's initial execve - allow without validation */
         if (!state->initial_execve && pid == g_main_process_pid) {
             /* This is the main process's first execve, allow without validation */
             DEBUG_PRINT("HANDLER: Allowing main process %d initial execve without validation\n", pid);
             state->initial_execve = 1;
+            free(command);
             /* Don't detach - continue tracing this process for future execves */
             return 0;
         }
@@ -511,6 +491,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
          * This prevents duplicate requests when a process retries exec while we're waiting. */
         if (state->last_validated_cmd && strcmp(state->last_validated_cmd, command) == 0) {
             DEBUG_PRINT("HANDLER: pid=%d command '%s' already validated, allowing\n", pid, command);
+            free(command);
             state->validated = 1;
             return 0;
         }
@@ -555,7 +536,15 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             /* Fast allow - mark as validated but continue tracing for future execves */
             DEBUG_PRINT("DFA: Fast-allowing command '%s', continuing to trace\n", command);
             state->validated = 1;
+            
+            /* Filter environment variables even for DFA-allowed commands */
+            if (filter_env_decisions(state, pid, regs) < 0) {
+                /* Filter failed - log but continue (not critical for DFA-allowed) */
+                DEBUG_PRINT("HANDLER: pid=%d env filter failed for '%s', continuing anyway\n", pid, command);
+            }
+            
             /* Continue tracing - don't detach */
+            free(command);
             return 0;
         }
 
@@ -593,6 +582,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             if (block_execve(pid, regs) < 0) {
                 kill(pid, SIGKILL);
             }
+            free(command);
             return 0;
         }
 
@@ -609,8 +599,17 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         state->last_validated_cmd = strdup(command);
         
         /* Filter environment variables based on server decisions and apply to child */
-        filter_env_decisions(state, pid, regs);
+        if (filter_env_decisions(state, pid, regs) < 0) {
+            /* Filter failed - block the command to be safe */
+            DEBUG_PRINT("HANDLER: pid=%d env filter failed for '%s', blocking\n", pid, command);
+            if (block_execve(pid, regs) < 0) {
+                kill(pid, SIGKILL);
+            }
+            free(command);
+            return 0;
+        }
         
+        free(command);
         return 0;
     }
 
@@ -691,11 +690,13 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     unsigned long *new_env_addrs = calloc(env_count + 1, sizeof(unsigned long));
     if (!new_envp) {
         free(new_env_addrs);
-        return 0;
+        DEBUG_PRINT("FILTER: failed to allocate new_envp\n");
+        return -1;
     }
     if (!new_env_addrs) {
         free(new_envp);
-        return 0;
+        DEBUG_PRINT("FILTER: failed to allocate new_env_addrs\n");
+        return -1;
     }
     
     int new_idx = 0;

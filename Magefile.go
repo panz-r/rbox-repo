@@ -215,7 +215,16 @@ func BuildBinaries() error {
 	if err := runMake(filepath.Join(wd, "rbox-wrap")); err != nil {
 		return err
 	}
-	
+
+	// Force rebuild if rbox-protocol library is newer than binary
+	protoLib := filepath.Join(wd, "rbox-protocol/librbox_protocol.a")
+	serverBin := filepath.Join(wd, "bin", "readonlybox-server")
+	if libStat, err := os.Stat(protoLib); err == nil {
+		if binStat, err := os.Stat(serverBin); err != nil || libStat.ModTime().After(binStat.ModTime()) {
+			os.RemoveAll(serverBin)
+		}
+	}
+
 	// rbox-server (Go with C library)
 	cmd := exec.Command("go", "build", "-tags", "cgo",
 		"-o", filepath.Join(wd, "bin", "readonlybox-server"))

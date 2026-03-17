@@ -26,20 +26,8 @@
 
 /* Debug flag - set to 1 to enable request_id tracing */
 #ifndef RBOX_SERVER_DEBUG
-#define RBOX_SERVER_DEBUG 1
+#define RBOX_SERVER_DEBUG 0
 #endif
-
-/* Debug helper to print request_id */
-static void debug_print_request_id(const char *msg, const uint8_t *request_id) {
-    if (RBOX_SERVER_DEBUG) {
-        fprintf(stderr, "[DEBUG] %s: %02x%02x%02x%02x-%02x%02x%02x%02x-%02x%02x%02x%02x-%02x%02x%02x%02x\n",
-                msg,
-                request_id[0], request_id[1], request_id[2], request_id[3],
-                request_id[4], request_id[5], request_id[6], request_id[7],
-                request_id[8], request_id[9], request_id[10], request_id[11],
-                request_id[12], request_id[13], request_id[14], request_id[15]);
-    }
-}
 
 /* ============================================================
  * FORWARD DECLARATIONS
@@ -184,11 +172,7 @@ static void send_queue_add(rbox_server_handle_t *server, int fd, char *data, siz
     /* Try MOD first (fd already in epoll from accept), if fails try ADD */
     int mod_result = epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, fd, &ev);
     if (mod_result < 0) {
-        int add_result = epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
-        fprintf(stderr, "[DEBUG] send_queue_add: MOD failed (%s), ADD result=%d, fd=%d\n",
-                strerror(errno), add_result, fd);
-    } else {
-        fprintf(stderr, "[DEBUG] send_queue_add: MOD succeeded, fd=%d\n", fd);
+        epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
     }
 }
 
@@ -356,7 +340,6 @@ static int server_read_header(int fd, uint8_t *client_id, uint8_t *request_id, u
     /* Get client_id and request_id */
     memcpy(client_id, header + RBOX_HEADER_OFFSET_CLIENT_ID, 16);
     memcpy(request_id, header + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
-    debug_print_request_id("server_read_header: request_id from packet", request_id);
 
     /* Get cmd_hash */
     *cmd_hash = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CMD_HASH);
@@ -500,7 +483,6 @@ static void *server_thread_func(void *arg) {
                                       dec->fenv_hash, dec->decision, dec->reason, dec->duration);
 
                 /* Build response and queue for non-blocking send via epoll */
-                debug_print_request_id("Decision queue: building response with request_id", req->request_id);
                 char *resp = rbox_build_response_internal(req->client_id, req->request_id, cmd_hash,
                     dec->decision, dec->reason, dec->duration,
                     dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
@@ -609,19 +591,7 @@ static void *server_thread_func(void *arg) {
                             fprintf(stderr, "ERROR: partial write on fd %d: %zu of %zu bytes\n",
                                     entry->fd, (size_t)n, entry->len);
                         } else {
-                            fprintf(stderr, "[DEBUG] EPOLLOUT: successfully wrote %zd bytes to fd %d\n", n, entry->fd);
-                            /* Print the request_id in the response for debugging */
-                            if (entry->request) {
-                                fprintf(stderr, "[DEBUG] EPOLLOUT: response request_id: %02x%02x%02x%02x-%02x%02x%02x%02x-%02x%02x%02x%02x-%02x%02x%02x%02x\n",
-                                        entry->request->request_id[0], entry->request->request_id[1],
-                                        entry->request->request_id[2], entry->request->request_id[3],
-                                        entry->request->request_id[4], entry->request->request_id[5],
-                                        entry->request->request_id[6], entry->request->request_id[7],
-                                        entry->request->request_id[8], entry->request->request_id[9],
-                                        entry->request->request_id[10], entry->request->request_id[11],
-                                        entry->request->request_id[12], entry->request->request_id[13],
-                                        entry->request->request_id[14], entry->request->request_id[15]);
-                            }
+                            /* Write successful */
                         }
 
                         /* Free associated request (but don't close fd - send queue handles it) */
@@ -637,11 +607,7 @@ static void *server_thread_func(void *arg) {
                             rev.events = EPOLLIN;  /* Ready for next request */
                             rev.data.fd = entry->fd;
                             if (epoll_ctl(server->epoll_fd, EPOLL_CTL_MOD, entry->fd, &rev) < 0) {
-                                fprintf(stderr, "[DEBUG] EPOLLOUT: failed to MOD fd %d: %s\n",
-                                        entry->fd, strerror(errno));
                                 close(entry->fd);
-                            } else {
-                                fprintf(stderr, "[DEBUG] EPOLLOUT: MOD fd %d to EPOLLIN for next request\n", entry->fd);
                             }
                         }
                         free(entry->data);
@@ -658,8 +624,6 @@ static void *server_thread_func(void *arg) {
             }
 
             if (ev->events & EPOLLIN) {
-                fprintf(stderr, "[DEBUG] EPOLLIN: fd=%d, processing request\n", cl_fd);
-
                 /* Try to read request */
                 uint8_t client_id[16], request_id[16];
                 uint32_t cmd_hash, fenv_hash, chunk_len;
@@ -668,7 +632,6 @@ static void *server_thread_func(void *arg) {
 
                 int hdr_result = server_read_header(cl_fd, client_id, request_id, &cmd_hash, &fenv_hash,
                     caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len);
-                fprintf(stderr, "[DEBUG] EPOLLIN: hdr_result=%d for fd=%d\n", hdr_result, cl_fd);
 
                 if (hdr_result == 0) {
 
@@ -716,7 +679,6 @@ static void *server_thread_func(void *arg) {
                             req->fd = cl_fd;
                             memcpy(req->client_id, client_id, 16);
                             memcpy(req->request_id, request_id, 16);
-                            debug_print_request_id("EPOLLIN: stored request_id in req", req->request_id);
                             req->cmd_hash = cmd_hash;
                             req->server = server;
                             req->command_data = cmd_data;
@@ -795,9 +757,6 @@ static void *server_thread_func(void *arg) {
                             /* Add to queue and signal */
                             pthread_mutex_lock(&server->mutex);
                             req->next = NULL;
-                            fprintf(stderr, "[DEBUG] enqueue: before - count=%d, queue=%p, tail=%p, new_req=%p\n",
-                                    server->request_count, (void*)server->request_queue,
-                                    (void*)server->request_tail, (void*)req);
                             if (server->request_tail) {
                                 server->request_tail->next = req;
                                 server->request_tail = req;
@@ -806,8 +765,6 @@ static void *server_thread_func(void *arg) {
                                 server->request_tail = req;
                             }
                             server->request_count++;
-                            fprintf(stderr, "[DEBUG] enqueue: after - count=%d, queue=%p, tail=%p\n",
-                                    server->request_count, (void*)server->request_queue, (void*)server->request_tail);
                             pthread_cond_signal(&server->cond);
                             pthread_mutex_unlock(&server->mutex);
 
@@ -963,16 +920,12 @@ rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server) {
 
     /* Pop request from queue */
     rbox_server_request_t *req = server->request_queue;
-    fprintf(stderr, "[DEBUG] get_request: before pop - count=%d, queue=%p, req=%p, req->next=%p\n",
-            server->request_count, (void*)server->request_queue, (void*)req, (void*)(req ? req->next : NULL));
     server->request_queue = req->next;
     if (server->request_queue == NULL) {
         server->request_tail = NULL;
     }
     req->next = NULL;
     server->request_count--;
-    fprintf(stderr, "[DEBUG] get_request: after pop - count=%d, queue=%p, returned req=%p\n",
-            server->request_count, (void*)server->request_queue, (void*)req);
 
     pthread_mutex_unlock(&server->mutex);
 

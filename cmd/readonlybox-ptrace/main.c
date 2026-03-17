@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <sys/user.h>
 #include <sys/prctl.h>
+#include <sys/fcntl.h>
 #include <linux/capability.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,16 +33,22 @@
 
 #include "env_screener.h"
 
-/* Global storage for flagged env var names (used by run_judge) */
-static char *g_flagged_env_names[256];
+/* Structure to hold flagged environment variable with its score */
+typedef struct {
+    char *name;
+    double score;
+} FlaggedEnv;
+
+/* Global storage for flagged env vars with scores (used by run_judge) */
+static FlaggedEnv g_flagged_envs[256];
 static int g_flagged_env_count = 0;
 
 /* Cleanup function for atexit */
 static void cleanup_flagged_env_names(void) {
     for (int i = 0; i < g_flagged_env_count && i < 256; i++) {
-        if (g_flagged_env_names[i]) {
-            free(g_flagged_env_names[i]);
-            g_flagged_env_names[i] = NULL;
+        if (g_flagged_envs[i].name) {
+            free(g_flagged_envs[i].name);
+            g_flagged_envs[i].name = NULL;
         }
     }
     g_flagged_env_count = 0;
@@ -227,25 +234,16 @@ static void screen_environment(void) {
         return;
     }
     
-    /* Store flagged env var names globally for run_judge to access */
-    g_flagged_env_count = flagged_count;
-    for (int i = 0; i < flagged_count && i < 256; i++) {
-        extern char **environ;
-        char *entry = environ[indices[i]];
-        
-        char name[256];
-        extract_env_name(entry, name, sizeof(name));
-        
-        /* Store a copy of the name */
-        if (g_flagged_env_names[i]) free(g_flagged_env_names[i]);
-        g_flagged_env_names[i] = strdup(name);
+    /* Reset the flagged env names list - we'll add only allowed vars */
+    for (int i = 0; i < g_flagged_env_count && i < 256; i++) {
+        if (g_flagged_envs[i].name) {
+            free(g_flagged_envs[i].name);
+            g_flagged_envs[i].name = NULL;
+        }
     }
+    g_flagged_env_count = 0;
     
-    /* Collect blocked variable names to remove after prompting */
-    char *blocked[32];
-    int blocked_count = 0;
-    
-    /* Prompt user for each flagged variable */
+    /* Prompt user for each flagged variable and only add allowed ones */
     for (int i = 0; i < flagged_count; i++) {
         extern char **environ;
         char *entry = environ[indices[i]];
@@ -268,18 +266,19 @@ static void screen_environment(void) {
         
         char response[8];
         if (fgets(response, sizeof(response), stdin)) {
-            if (response[0] != 'y' && response[0] != 'Y') {
-                /* Store name to remove after loop */
-                blocked[blocked_count++] = strdup(name);
+            if (response[0] == 'y' || response[0] == 'Y') {
+                /* User allowed this variable - add to our list with its score */
+                if (g_flagged_env_count < 256) {
+                    g_flagged_envs[g_flagged_env_count].name = strdup(name);
+                    g_flagged_envs[g_flagged_env_count].score = score;
+                    g_flagged_env_count++;
+                }
+            } else {
+                /* User blocked this variable - unset it */
+                unsetenv(name);
+                fprintf(stderr, "   → Blocked: %s\n", name);
             }
         }
-    }
-    
-    /* Remove all blocked variables in one pass */
-    for (int j = 0; j < blocked_count; j++) {
-        unsetenv(blocked[j]);
-        fprintf(stderr, "   → Blocked: %s\n", blocked[j]);
-        free(blocked[j]);
     }
     
     fprintf(stderr, "\n✓ Environment screened\n");
@@ -306,6 +305,32 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
         return 1;
     }
 
+    /* Track allocated strings for cleanup.
+     * Allocate enough space for all strings we'll potentially allocate:
+     * - 3 fixed strings (uid_str, cwd, cmd_path)
+     * - env_count environment variables
+     */
+    int max_allocated = 3 + env_count;
+    char **allocated_strings = malloc(max_allocated * sizeof(char *));
+    if (!allocated_strings) {
+        free(new_argv);
+        return 1;
+    }
+    int allocated_count = 0;
+
+#define ADD_ALLOCATED(str) do { \
+        if ((str) && allocated_count < max_allocated) { \
+            allocated_strings[allocated_count++] = (str); \
+        } \
+    } while(0)
+
+#define FREE_ALLOCATED() do { \
+        for (int _i = 0; _i < allocated_count; _i++) { \
+            free(allocated_strings[_i]); \
+        } \
+        free(allocated_strings); \
+    } while(0)
+
     int idx = 0;
     new_argv[idx++] = "pkexec";
     new_argv[idx++] = "--disable-internal-agent";
@@ -315,27 +340,33 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
     snprintf(uid_str, sizeof(uid_str), "%d", original_uid);
     new_argv[idx] = strdup(uid_str);
     if (!new_argv[idx]) {
+        FREE_ALLOCATED();
         free(new_argv);
         return 1;
     }
+    ADD_ALLOCATED(new_argv[idx]);
     idx++;
     new_argv[idx++] = "--cwd";
     new_argv[idx] = strdup(cwd);
     if (!new_argv[idx]) {
-        free(new_argv[4]);
+        FREE_ALLOCATED();
         free(new_argv);
         return 1;
     }
+    ADD_ALLOCATED(new_argv[idx]);
     idx++;
     new_argv[idx++] = "--cmd";
     new_argv[idx] = strdup(cmd_path);
     if (!new_argv[idx]) {
-        free(new_argv[4]);
-        free(new_argv[6]);
+        FREE_ALLOCATED();
         free(new_argv);
         return 1;
     }
+    ADD_ALLOCATED(new_argv[idx]);
     idx++;
+    
+    /* Add hidden internal flag to indicate we've already screened the environment */
+    new_argv[idx++] = "--internal-screened";
 
     for (char **e = environ; *e; e++) {
         /* Check for valid UTF-8 */
@@ -361,14 +392,17 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
         }
         
         if (!valid_utf8) {
-            fprintf(stderr, "DEBUG: Skipping non-UTF8 env var: %.50s...\n", *e);
             continue;
         }
         
         /* Use --env=VAR format instead of --env VAR */
         char env_arg[8192];
         snprintf(env_arg, sizeof(env_arg), "--env=%s", *e);
-        new_argv[idx++] = strdup(env_arg);
+        new_argv[idx] = strdup(env_arg);
+        if (new_argv[idx]) {
+            ADD_ALLOCATED(new_argv[idx]);
+        }
+        idx++;
     }
 
     for (int i = 1; i < argc; i++) {
@@ -378,8 +412,10 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
 
     execvp("pkexec", new_argv);
 
-    fprintf(stderr, "\n%s: Failed to get elevated privileges via pkexec.\n", g_progname);
-    /* Cleanup on error - would need to free all strdup'd env vars */
+    /* Cleanup on error */
+    fprintf(stderr, "\n%s: Failed to get elevated privileges via pkexec: %s\n", 
+            g_progname, strerror(errno));
+    FREE_ALLOCATED();
     free(new_argv);
     return 1;
 }
@@ -506,11 +542,30 @@ static int trace_process(pid_t initial_pid) {
                 }
             }
             
-            /* Detach only if parent is readonlybox binary - all other processes
+            /* Also check if parent is our own tracer process (the judge subprocess).
+             * The judge process forks a child to exec rbox-wrap - we should detach it. */
+            bool parent_is_tracer = false;
+            if (!parent_is_readonlybox) {
+                snprintf(parent_link, sizeof(parent_link), "/proc/%d/exe", pid);
+                parent_len = readlink(parent_link, parent_exe, sizeof(parent_exe) - 1);
+                if (parent_len > 0) {
+                    parent_exe[parent_len] = '\0';
+                    /* Check if parent is the ptrace binary itself */
+                    if (strstr(parent_exe, "readonlybox-ptrace") != NULL) {
+                        parent_is_tracer = true;
+                    }
+                }
+            }
+            
+            /* Detach if parent is readonlybox binary OR if parent is our tracer
+             * (judge child that will exec rbox-wrap). All other processes
              * should continue to be traced so their execves get validated */
-            if (parent_is_readonlybox) {
-                DEBUG_PRINT("PARENT: pid=%d is readonlybox binary, detaching child %d\n", pid, (int)child_pid);
+            if (parent_is_readonlybox || parent_is_tracer) {
+                DEBUG_PRINT("PARENT: detaching child %d (parent_is_readonlybox=%d, parent_is_tracer=%d)\n", 
+                          (int)child_pid, parent_is_readonlybox, parent_is_tracer);
                 ptrace(PTRACE_DETACH, (pid_t)child_pid, 0, 0);
+                /* Also remove process state for the detached child */
+                syscall_remove_process_state((pid_t)child_pid);
             } else {
                 DEBUG_PRINT("PARENT: pid=%d (%s) fork/clone, resuming child %d\n", pid, parent_exe, (int)child_pid);
                 /* Set options on child for tracing */
@@ -585,6 +640,7 @@ int main(int argc, char *argv[]) {
     const char *provided_cwd = NULL;
     char *provided_cmd_path = NULL;
     pid_t attach_pid = 0;  /* PID to attach to (0 = spawn new process) */
+    int internal_screened = 0;  /* Flag: already screened (set after pkexec relaunch) */
 
     g_progname = argv[0];
 
@@ -600,6 +656,8 @@ int main(int argc, char *argv[]) {
         {"attach", required_argument, 0, 'p'},
         {"keep-env", no_argument, 0, 'k'},
         {"env", required_argument, 0, 'e'},
+        /* Hidden internal flag: set after pkexec relaunch to skip re-screening */
+        {"internal-screened", no_argument, 0, 256},
         {0, 0, 0, 0}
     };
 
@@ -635,6 +693,10 @@ int main(int argc, char *argv[]) {
             case 'e':
                 g_extra_env = realloc(g_extra_env, (g_extra_env_count + 1) * sizeof(char *));
                 g_extra_env[g_extra_env_count++] = strdup(optarg);
+                break;
+            case 256:
+                /* Hidden internal flag: already screened after pkexec relaunch */
+                internal_screened = 1;
                 break;
             default:
                 print_usage();
@@ -684,9 +746,15 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Screen environment for potential secrets before launching (unless --keep-env) */
+    /* Screen environment for potential secrets before launching (unless --keep-env)
+     * Skip if internal flag is set AND we're running as root (after pkexec relaunch).
+     * The flag is only set by the wrapper when it relaunches via pkexec. */
     if (!g_keep_env) {
-        screen_environment();
+        if (internal_screened && geteuid() == 0) {
+            /* Already screened in the first instance; skip to avoid double prompt */
+        } else {
+            screen_environment();
+        }
     }
 
     if (attach_pid == 0 && provided_uid == 0 && !have_ptrace_capability()) {
@@ -755,9 +823,9 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         
-        /* Resume the process - it will be traced and we'll intercept its execves */
-        if (ptrace(PTRACE_CONT, attach_pid, NULL, NULL) < 0) {
-            perror("ptrace(CONT)");
+        /* Resume the process with PTRACE_SYSCALL to trap syscall entries/exits */
+        if (ptrace(PTRACE_SYSCALL, attach_pid, NULL, NULL) < 0) {
+            perror("ptrace(SYSCALL)");
             syscall_handler_cleanup();
             validation_shutdown();
             free(cmd_path);
@@ -821,7 +889,8 @@ int main(int argc, char *argv[]) {
 int run_judge(const char *command, const char *caller_info) {
     int pipefd[2];
     pid_t pid;
-    char buffer[4096];
+    /* Increased buffer size to prevent truncation */
+    char buffer[65536];
     ssize_t bytes_read;
 
     /* Clear any stale environment variables from previous decisions
@@ -843,10 +912,10 @@ int run_judge(const char *command, const char *caller_info) {
     }
 
     if (pid == 0) {
-        /* Child process */
-        /* Child: detach from tracer before exec to avoid re-intercepting */
-        ptrace(PTRACE_DETACH, 0, NULL, 0);
-        
+        /* Child process - will exec rbox-wrap for server decision */
+        /* Note: We don't call PTRACE_DETACH here - the parent will handle detaching
+         * this process after fork/clone events are detected */
+
         /* Child: exec readonlybox --bin --judge for binary protocol */
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
@@ -867,14 +936,14 @@ int run_judge(const char *command, const char *caller_info) {
             size_t rem = sizeof(env_buf) - 1;
             
             for (int i = 0; i < g_flagged_env_count && rem > 1; i++) {
-                if (g_flagged_env_names[i]) {
-                    /* Get the score from process state if available, otherwise use default */
-                    float score = 0.7;  /* Default score for screened vars */
+                if (g_flagged_envs[i].name) {
+                    /* Use the actual score stored during screening */
+                    double score = g_flagged_envs[i].score;
                     
-                    size_t len = strlen(g_flagged_env_names[i]);
+                    size_t len = strlen(g_flagged_envs[i].name);
                     if (len < rem) {
                         /* Format: name:score */
-                        memcpy(p, g_flagged_env_names[i], len);
+                        memcpy(p, g_flagged_envs[i].name, len);
                         p += len;
                         rem -= len;
                         
@@ -912,21 +981,34 @@ int run_judge(const char *command, const char *caller_info) {
     }
 
     /* Parent: read binary output */
-    /* Wait for child to finish first - this ensures all data is written */
+    /* Read the binary packet from the pipe while the child is running.
+     * This avoids potential deadlock if the child writes more than the pipe buffer can hold. */
+
+    /* Close parent's write end - child only needs to write */
+    close(pipefd[1]);
+
+    bytes_read = 0;
+    ssize_t n;
+    while (bytes_read < (ssize_t)(sizeof(buffer) - 1)) {
+        n = read(pipefd[0], buffer + bytes_read, sizeof(buffer) - 1 - bytes_read);
+        if (n <= 0) {
+            break;
+        }
+        bytes_read += n;
+    }
+    close(pipefd[0]);
+    /* pipefd[1] already closed by parent before reading */
+
+    /* Wait for child to finish */
     int status;
     waitpid(pid, &status, 0);
-    
-    /* Now read the binary packet from the closed pipe */
-    bytes_read = read(pipefd[0], buffer, sizeof(buffer) - 1);
-    close(pipefd[0]);
-    close(pipefd[1]);
-    
+
     if (bytes_read <= 0) {
         return -1;
     }
 
-    buffer[bytes_read] = '\0';
-    
+    /* Do NOT null-terminate - this is binary protocol data */
+
     /* Check if child exited normally or was killed by signal */
     int exit_code;
     if (WIFEXITED(status)) {
@@ -936,12 +1018,12 @@ int run_judge(const char *command, const char *caller_info) {
     } else {
         exit_code = -1;
     }
-    
+
     /* Use v8 protocol decode utilities to parse binary response */
     rbox_decoded_header_t header;
     rbox_response_details_t details;
     rbox_env_decisions_t env_decisions;
-    
+
     /* Decode header */
     rbox_decode_header(buffer, bytes_read, &header);
     if (!header.valid) {
@@ -950,23 +1032,15 @@ int run_judge(const char *command, const char *caller_info) {
         if (exit_code == 9) return 9;
         return -1;
     }
-    
-    /* Decode response details */
-    rbox_decode_response_details(&header, buffer, bytes_read, &details);
-    if (!details.valid) {
-        if (exit_code == 0) return 0;
-        if (exit_code == 9) return 9;
-        return -1;
-    }
-    
-    /* Decode env decisions if present */
+
+    /* Decode env decisions FIRST - apply them regardless of allow/deny decision */
     rbox_decode_env_decisions(&header, &details, buffer, bytes_read, &env_decisions);
     if (env_decisions.valid && env_decisions.env_count > 0 && env_decisions.bitmap) {
         /* Build env_decisions string with index:decision format */
         char env_decisions_buf[4096] = {0};
         char *p = env_decisions_buf;
         size_t remaining = sizeof(env_decisions_buf) - 1;
-        
+
         for (int i = 0; i < env_decisions.env_count && remaining > 1; i++) {
             uint8_t bit = (env_decisions.bitmap[i / 8] >> (i % 8)) & 1;
             int n = snprintf(p, remaining, "%d:%d", i, bit);
@@ -979,22 +1053,22 @@ int run_judge(const char *command, const char *caller_info) {
                 }
             }
         }
-        
+
         if (env_decisions_buf[0]) {
             setenv("READONLYBOX_ENV_DECISIONS", env_decisions_buf, 1);
         }
-        
+
         /* Also set the flagged env var names so child can filter */
         if (g_flagged_env_count > 0) {
             char env_names_buf[4096] = {0};
             char *p = env_names_buf;
             size_t rem = sizeof(env_names_buf) - 1;
-            
+
             for (int i = 0; i < g_flagged_env_count && i < env_decisions.env_count && rem > 1; i++) {
-                if (g_flagged_env_names[i]) {
-                    size_t len = strlen(g_flagged_env_names[i]);
+                if (g_flagged_envs[i].name) {
+                    size_t len = strlen(g_flagged_envs[i].name);
                     if (len < rem) {
-                        memcpy(p, g_flagged_env_names[i], len);
+                        memcpy(p, g_flagged_envs[i].name, len);
                         p += len;
                         rem -= len;
                         if (rem > 1 && i < g_flagged_env_count - 1) {
@@ -1004,25 +1078,32 @@ int run_judge(const char *command, const char *caller_info) {
                     }
                 }
             }
-            
+
             if (env_names_buf[0]) {
                 setenv("READONLYBOX_FLAGGED_ENV_NAMES", env_names_buf, 1);
             }
         }
-        
+
         /* Free bitmap */
-        rbox_free_env_decisions(&env_decisions);
+        free(env_decisions.bitmap);
     }
-    
-    /* Return based on decision */
-    if (details.decision == 2) return 0;   /* ALLOW */
-    if (details.decision == 3) return 9;   /* DENY */
-    
-    /* Fallback to exit code */
+
+    /* Decode response details */
+    rbox_decode_response_details(&header, buffer, bytes_read, &details);
+    if (details.valid) {
+        /* Use decision from response packet - this is the authoritative source */
+        /* Decision: RBOX_DECISION_ALLOW=2 means allow, anything else is deny */
+        if (details.decision == RBOX_DECISION_ALLOW) {
+            return 0;  /* Allowed */
+        } else {
+            return 9;  /* Denied */
+        }
+    }
+
+    /* Fallback to exit code if details not valid */
     if (exit_code == 0) return 0;
     if (exit_code == 9) return 9;
-    
-    return -1;  /* Error */
+    return -1;
 }
 
 /* Get path to readonlybox binary */

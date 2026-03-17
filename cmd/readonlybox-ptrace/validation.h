@@ -22,11 +22,6 @@ void validation_shutdown(void);
 /* Check if command is allowed using DFA fast-path */
 int validation_check_dfa(const char *command);
 
-/* Request decision from server with retry/backoff */
-int validation_request_decision(const char *command, const char *pathname,
-                                 char *const argv[], char *const envp[],
-                                 const char *cwd, const char *caller);
-
 /* Get socket path from environment */
 const char *validation_get_socket_path(void);
 
