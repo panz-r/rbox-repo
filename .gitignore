@@ -14,7 +14,7 @@ c-dfa/test_dfa_simple
 *.nfa
 plans/
 # exececutables
-cmd/readonlybox-ptrace/readonlybox-ptrace
-cmd/readonlybox-ptrace/tests/test_runner
-cmd/readonlybox-ptrace/compile_commands.json
-cmd/readonlybox-ptrace/.cache/
+rbox-ptrace/readonlybox-ptrace
+rbox-ptrace/tests/test_runner
+rbox-ptrace/compile_commands.json
+rbox-ptrace/.cache/

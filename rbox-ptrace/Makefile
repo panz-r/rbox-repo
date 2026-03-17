@@ -1,11 +1,11 @@
 # Makefile for readonlybox-ptrace
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -I../../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN -DDEBUG
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -I../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN -DDEBUG
 LDFLAGS = -lpthread -lm
 
 # Add rbox-protocol library
-LDFLAGS += ../../rbox-protocol/librbox_protocol.a
+LDFLAGS += ../rbox-protocol/librbox_protocol.a
 
 # Source files
 SRCS = main.c \
@@ -14,11 +14,11 @@ SRCS = main.c \
        validation.c \
        dfa.c \
        readonlybox_dfa_data.c \
-       ../../c-dfa/src/dfa_eval.c \
-       ../../c-dfa/src/dfa_loader.c \
-       ../../shellsplit/src/env_screener.c \
-       ../../shellsplit/src/relative_permutation_entropy.c \
-       ../../shellsplit/src/shell_tokenizer.c
+       ../c-dfa/src/dfa_eval.c \
+       ../c-dfa/src/dfa_loader.c \
+       ../shellsplit/src/env_screener.c \
+       ../shellsplit/src/relative_permutation_entropy.c \
+       ../shellsplit/src/shell_tokenizer.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)
@@ -41,14 +41,14 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Special rule for c-dfa sources
-../../c-dfa/src/%.o: ../../c-dfa/src/%.c
+../c-dfa/src/%.o: ../c-dfa/src/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
 	rm -f $(TARGET) $(OBJS) *.o
 
 # Debug build
-debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -DDEBUG
+debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -DDEBUG
 debug: $(TARGET)
 
 # Test targets - delegate to tests subdirectory

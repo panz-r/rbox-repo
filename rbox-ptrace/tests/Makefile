@@ -1,7 +1,7 @@
 # Makefile for ptrace client unit tests
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../../c-dfa/include -I../../../internal/client -I../../../shellsplit/include -I../../../rbox-protocol/include
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -I../../rbox-protocol/include
 LDFLAGS = -lpthread -lm
 
 # Test source files
@@ -19,9 +19,9 @@ SRCS = ../memory.c \
        ../dfa.c \
        ../main.c \
        ../readonlybox_dfa_data.c \
-       ../../../c-dfa/src/dfa_eval.c \
-       ../../../c-dfa/src/dfa_loader.c \
-       ../../../shellsplit/src/shell_tokenizer.c
+       ../../c-dfa/src/dfa_eval.c \
+       ../../c-dfa/src/dfa_loader.c \
+       ../../shellsplit/src/shell_tokenizer.c
 
 # Object files
 TEST_OBJS = $(TEST_SRCS:.c=.o)
@@ -48,7 +48,7 @@ $(TARGET): $(TEST_OBJS) $(OBJS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Compile c-dfa source files
-../../../c-dfa/src/%.o: ../../../c-dfa/src/%.c
+../../c-dfa/src/%.o: ../../c-dfa/src/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Run all unit tests (excluding e2e)
@@ -108,14 +108,14 @@ help:
 
 # Clean build files
 clean:
-	rm -f $(TARGET) $(TEST_OBJS) $(OBJS) ../*.o ../../../c-dfa/src/*.o
+	rm -f $(TARGET) $(TEST_OBJS) $(OBJS) ../*.o ../../c-dfa/src/*.o
 
 # Debug build
-debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I.. -I../../../c-dfa/include -I../../../internal/client -DDEBUG
+debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I.. -I../../c-dfa/include -I../../internal/client -DDEBUG
 debug: $(TARGET)
 
 # Coverage build (requires gcov)
-coverage: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I.. -I../../../c-dfa/include -I../../../internal/client --coverage
+coverage: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I.. -I../../c-dfa/include -I../../internal/client --coverage
 coverage: LDFLAGS = -lpthread -lm --coverage
 coverage: clean $(TARGET)
 	./$(TARGET)
@@ -124,7 +124,7 @@ coverage: clean $(TARGET)
 # Static analysis with cppcheck (if available)
 cppcheck:
 	@which cppcheck > /dev/null 2>&1 && cppcheck --enable=all --suppress=missingIncludeSystem \
-		-I.. -I../../../c-dfa/include -I../../../internal/client \
+		-I.. -I../../c-dfa/include -I../../internal/client \
 		$(TEST_SRCS) $(SRCS) || echo "cppcheck not installed"
 
 # Valgrind memory check (if available)

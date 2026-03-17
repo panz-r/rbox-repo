@@ -236,10 +236,10 @@ func BuildBinaries() error {
 	}
 	
 	// readonlybox-ptrace
-	if err := runMake(filepath.Join(wd, "cmd/readonlybox-ptrace")); err != nil {
+	if err := runMake(filepath.Join(wd, "rbox-ptrace")); err != nil {
 		return err
 	}
-	copyFile(filepath.Join(wd, "cmd/readonlybox-ptrace", "readonlybox-ptrace"), 
+	copyFile(filepath.Join(wd, "rbox-ptrace", "readonlybox-ptrace"), 
 		filepath.Join(wd, "bin", "readonlybox-ptrace"))
 	
 	return nil
@@ -278,7 +278,7 @@ func Clean() error {
 	if err := runMakeClean(filepath.Join(wd, "rbox-protocol")); err != nil {
 		return err
 	}
-	if err := runMakeClean(filepath.Join(wd, "cmd/readonlybox-ptrace")); err != nil {
+	if err := runMakeClean(filepath.Join(wd, "rbox-ptrace")); err != nil {
 		return err
 	}
 	
@@ -296,8 +296,8 @@ func Clean() error {
 	// Clean any stale binaries in project root
 	os.RemoveAll(filepath.Join(wd, "readonlybox"))
 	os.RemoveAll(filepath.Join(wd, "readonlybox-server"))
-	os.RemoveAll(filepath.Join(wd, "readonlybox-ptrace"))
 	os.RemoveAll(filepath.Join(wd, "libreadonlybox_client.so"))
+	os.RemoveAll(filepath.Join(wd, "rbox-server/server"))
 	
 	fmt.Println("Clean complete")
 	return nil
