@@ -1,7 +1,7 @@
 # Makefile for ptrace client unit tests
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../../c-dfa/include -I../../../internal/client
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../../c-dfa/include -I../../../internal/client -I../../../shellsplit/include -I../../../rbox-protocol/include
 LDFLAGS = -lpthread -lm
 
 # Test source files
@@ -17,9 +17,11 @@ SRCS = ../memory.c \
        ../syscall_handler.c \
        ../validation.c \
        ../dfa.c \
+       ../main.c \
        ../readonlybox_dfa_data.c \
        ../../../c-dfa/src/dfa_eval.c \
-       ../../../c-dfa/src/dfa_loader.c
+       ../../../c-dfa/src/dfa_loader.c \
+       ../../../shellsplit/src/shell_tokenizer.c
 
 # Object files
 TEST_OBJS = $(TEST_SRCS:.c=.o)

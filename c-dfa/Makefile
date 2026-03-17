@@ -47,6 +47,19 @@ TEST = dfa_test
 # Default target: build everything
 all: $(TOOLS) $(TEST)
 
+# Build library object files (for linking with external projects)
+LIB_OBJS = $(SRC_DIR)/dfa_eval.o $(SRC_DIR)/dfa_loader.o
+
+lib: $(LIB_OBJS)
+
+$(SRC_DIR)/dfa_eval.o: $(SRC_DIR)/dfa_eval.c $(INCLUDE_DIR)/*.h
+	@mkdir -p $(SRC_DIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(SRC_DIR)/dfa_loader.o: $(SRC_DIR)/dfa_loader.c $(INCLUDE_DIR)/*.h
+	@mkdir -p $(SRC_DIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 # Build tools
 $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/pattern_order.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/nfa_builder.c $(TOOLS_DIR)/pattern_order.c $(TOOLS_DIR)/multi_target_array.c $(LDFLAGS)

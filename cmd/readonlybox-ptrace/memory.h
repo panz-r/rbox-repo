@@ -24,14 +24,26 @@ char *memory_read_string(pid_t pid, unsigned long addr);
 /* Read a null-terminated array of strings from traced process memory */
 char **memory_read_string_array(pid_t pid, unsigned long addr);
 
+/* Read a null-terminated array of strings and also store addresses */
+char **memory_read_string_array_with_addrs(pid_t pid, unsigned long addr, unsigned long **out_addrs);
+
 /* Write a string to traced process memory */
 unsigned long memory_write_string(MemoryContext *ctx, const char *str);
+
+/* Allocate space in traced process memory */
+unsigned long memory_alloc(MemoryContext *ctx, size_t size);
 
 /* Write an array of pointers to traced process memory */
 unsigned long memory_write_pointer_array(MemoryContext *ctx, unsigned long *pointers, int count);
 
+/* Write a pointer to traced process memory at a specific address */
+int memory_write_pointer_at(MemoryContext *ctx, unsigned long addr, unsigned long value);
+
 /* Free memory allocated by read operations */
 void memory_free_string(char *str);
 void memory_free_string_array(char **array);
+
+/* Free addresses array */
+void memory_free_ulong_array(unsigned long *array);
 
 #endif /* READONLYBOX_PTRACE_MEMORY_H */

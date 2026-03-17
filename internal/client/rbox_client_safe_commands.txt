@@ -177,9 +177,7 @@ ACCEPTANCE_MAPPING [alwaysask::] -> 2
 [autoallow:readonly:file] ls --color-auto
 [autoallow:readonly:file] ls --color=auto
 [autoallow:readonly:file] cat
-[autoallow:readonly:file] cat *
-[autoallow:readonly:file] cat test.txt
-[autoallow:readonly:file] cat ((safe::filename))
+[autoallow:readonly:file] cat ((safe::filename))+
 [autoallow:readonly:file] head
 [autoallow:readonly:file] head -n ((safe::digit))
 [autoallow:readonly:file] head -n ((safe::digit)) *

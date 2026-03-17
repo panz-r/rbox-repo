@@ -36,6 +36,17 @@
 static char *g_flagged_env_names[256];
 static int g_flagged_env_count = 0;
 
+/* Cleanup function for atexit */
+static void cleanup_flagged_env_names(void) {
+    for (int i = 0; i < g_flagged_env_count && i < 256; i++) {
+        if (g_flagged_env_names[i]) {
+            free(g_flagged_env_names[i]);
+            g_flagged_env_names[i] = NULL;
+        }
+    }
+    g_flagged_env_count = 0;
+}
+
 /* Forward declarations for judge execution */
 static const char *get_readonlybox_path(void);
 int run_judge(const char *command, const char *caller_info);
@@ -577,6 +588,9 @@ int main(int argc, char *argv[]) {
 
     g_progname = argv[0];
 
+    /* Register cleanup function for flagged env names */
+    atexit(cleanup_flagged_env_names);
+
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'v'},
@@ -810,19 +824,33 @@ int run_judge(const char *command, const char *caller_info) {
     char buffer[4096];
     ssize_t bytes_read;
 
+    DEBUG_PRINT("JUDGE: run_judge called for '%s'\n", command);
+
+    /* Clear any stale environment variables from previous decisions
+     * This prevents stale values from being used if a later execve is
+     * allowed by DFA (bypassing server call) */
+    unsetenv("READONLYBOX_ENV_DECISIONS");
+    unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
+
     /* Create pipe for reading output */
     if (pipe(pipefd) < 0) {
+        DEBUG_PRINT("JUDGE: pipe failed\n");
         return -1;
     }
 
+    DEBUG_PRINT("JUDGE: about to fork for '%s'\n", command);
     pid = fork();
     if (pid < 0) {
+        DEBUG_PRINT("JUDGE: fork failed\n");
         close(pipefd[0]);
         close(pipefd[1]);
         return -1;
     }
 
     if (pid == 0) {
+        /* Child process */
+        DEBUG_PRINT("JUDGE: child process, detaching from tracer\n");
+        fflush(g_debug_file);
         /* Child: detach from tracer before exec to avoid re-intercepting */
         ptrace(PTRACE_DETACH, 0, NULL, 0);
         
@@ -877,12 +905,18 @@ int run_judge(const char *command, const char *caller_info) {
             }
         }
 
-        /* Find readonlybox binary */
+        /* Find rbox-wrap binary */
         const char *readonlybox_path = get_readonlybox_path();
         
+        if (!readonlybox_path) {
+            DEBUG_PRINT("JUDGE: rbox-wrap not found!\n");
+            _exit(1);
+        }
+        
         /* Use binary mode for v8 protocol */
-        execl(readonlybox_path, "readonlybox", "--bin", "--judge", command, NULL);
+        execl(readonlybox_path, "rbox-wrap", "--bin", "--judge", command, NULL);
         /* If we get here, execl failed */
+        DEBUG_PRINT("JUDGE: execl failed for rbox-wrap: %s\n", strerror(errno));
         _exit(1);
     }
 
@@ -1010,11 +1044,6 @@ int run_judge(const char *command, const char *caller_info) {
 static const char *get_readonlybox_path(void) {
     static char path_buf[PATH_MAX];
     
-    /* First try production path */
-    if (access("/usr/local/bin/readonlybox", X_OK) == 0) {
-        return "/usr/local/bin/readonlybox";
-    }
-    
     /* Try to find relative to our executable location */
     char self_path[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
@@ -1022,29 +1051,57 @@ static const char *get_readonlybox_path(void) {
         self_path[len] = '\0';
         char *dir = dirname(self_path);
         
-        /* Try relative to executable: ../../bin/readonlybox */
-        snprintf(path_buf, sizeof(path_buf), "%s/../../bin/readonlybox", dir);
+        /* Try relative to executable: ../rbox-wrap/rbox-wrap */
+        snprintf(path_buf, sizeof(path_buf), "%s/../rbox-wrap/rbox-wrap", dir);
         if (access(path_buf, X_OK) == 0) {
+            DEBUG_PRINT("JUDGE: found rbox-wrap at: %s\n", path_buf);
             return path_buf;
         }
         
-        /* Try relative to executable: ../bin/readonlybox */
-        snprintf(path_buf, sizeof(path_buf), "%s/../bin/readonlybox", dir);
+        /* Try relative to executable: ../../rbox-wrap/rbox-wrap */
+        snprintf(path_buf, sizeof(path_buf), "%s/../../rbox-wrap/rbox-wrap", dir);
         if (access(path_buf, X_OK) == 0) {
+            DEBUG_PRINT("JUDGE: found rbox-wrap at: %s\n", path_buf);
             return path_buf;
         }
+        
+        /* Also try readonlybox as fallback */
+        snprintf(path_buf, sizeof(path_buf), "%s/../readonlybox-ptrace", dir);
+        if (access(path_buf, X_OK) == 0) {
+            /* This is the ptrace binary itself - check sibling directory */
+            snprintf(path_buf, sizeof(path_buf), "%s/../../bin/rbox-wrap", dir);
+            if (access(path_buf, X_OK) == 0) {
+                DEBUG_PRINT("JUDGE: found rbox-wrap at: %s\n", path_buf);
+                return path_buf;
+            }
+        }
+        
+        DEBUG_PRINT("JUDGE: rbox-wrap not found relative to exe, trying current dir\n");
     }
     
     /* Try current working directory */
-    if (access("./bin/readonlybox", X_OK) == 0) {
-        return "./bin/readonlybox";
+    if (access("./rbox-wrap/rbox-wrap", X_OK) == 0) {
+        DEBUG_PRINT("JUDGE: found rbox-wrap at: ./rbox-wrap/rbox-wrap\n");
+        return "./rbox-wrap/rbox-wrap";
     }
     
-    /* Try absolute path */
-    if (access("/w/rbox-copy/bin/readonlybox", X_OK) == 0) {
-        return "/w/rbox-copy/bin/readonlybox";
+    /* Try PATH */
+    char *path_env = getenv("PATH");
+    if (path_env) {
+        char *path_copy = strdup(path_env);
+        char *dir = strtok(path_copy, ":");
+        while (dir) {
+            snprintf(path_buf, sizeof(path_buf), "%s/rbox-wrap", dir);
+            if (access(path_buf, X_OK) == 0) {
+                DEBUG_PRINT("JUDGE: found rbox-wrap in PATH at: %s\n", path_buf);
+                free(path_copy);
+                return path_buf;
+            }
+            dir = strtok(NULL, ":");
+        }
+        free(path_copy);
     }
     
-    /* Fall back to PATH lookup */
-    return "readonlybox";
+    DEBUG_PRINT("JUDGE: rbox-wrap not found anywhere!\n");
+    return NULL;
 }

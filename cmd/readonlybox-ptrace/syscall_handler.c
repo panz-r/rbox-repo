@@ -56,10 +56,25 @@ static void debug_close(void) {
 #endif
 
 /* Forward declarations */
-static void filter_env_decisions(ProcessState *state);
+static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs);
 
 /* Allowance table for tracking validated commands */
 Allowance g_allowances[MAX_ALLOWANCES];
+
+/* Clear all allowances for a specific PID */
+static void clear_allowances_for_pid(pid_t pid) {
+    for (int i = 0; i < MAX_ALLOWANCES; i++) {
+        if (g_allowances[i].parent_pid == pid) {
+            DEBUG_PRINT("ALLOWANCE: clearing allowances for exited parent %d\n", pid);
+            for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
+                free(g_allowances[i].subcommands[j]);
+                g_allowances[i].subcommands[j] = NULL;
+            }
+            g_allowances[i].subcommand_count = 0;
+            g_allowances[i].parent_pid = 0;
+        }
+    }
+}
 
 /* Extract first word (command name) from a subcommand range */
 static void extract_command_name(const char *cmd, shell_range_t range, char *buf, size_t buf_size) {
@@ -219,6 +234,7 @@ void syscall_handler_cleanup(void) {
             free(g_process_table[i]->execve_pathname);
             memory_free_string_array(g_process_table[i]->execve_argv);
             memory_free_string_array(g_process_table[i]->execve_envp);
+            memory_free_ulong_array(g_process_table[i]->execve_envp_addrs);
             free(g_process_table[i]->last_validated_cmd);
             free(g_process_table[i]);
             g_process_table[i] = NULL;
@@ -256,9 +272,13 @@ void syscall_remove_process_state(pid_t pid) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         int probe = (idx + i) % MAX_PROCESSES;
         if (g_process_table[probe] && g_process_table[probe]->pid == pid) {
+            /* Clear any allowances associated with this PID */
+            clear_allowances_for_pid(pid);
+            
             free(g_process_table[probe]->execve_pathname);
             memory_free_string_array(g_process_table[probe]->execve_argv);
             memory_free_string_array(g_process_table[probe]->execve_envp);
+            memory_free_ulong_array(g_process_table[probe]->execve_envp_addrs);
             free(g_process_table[probe]->last_validated_cmd);
             free(g_process_table[probe]);
             g_process_table[probe] = NULL;
@@ -286,18 +306,31 @@ static void build_command_string(char *buf, size_t buf_size, char *const argv[])
     buf[0] = '\0';
     if (!argv || !argv[0]) return;
 
+    /* Use snprintf for safer string building */
+    size_t remaining = buf_size - 1;
+    char *p = buf;
+    
     /* Start with argv[0] (the command name) */
-    strncpy(buf, argv[0], buf_size - 1);
-    buf[buf_size - 1] = '\0';
+    int n = snprintf(p, remaining, "%s", argv[0]);
+    if (n < 0 || (size_t)n >= remaining) {
+        buf[buf_size - 1] = '\0';
+        return;
+    }
+    p += n;
+    remaining -= n;
 
     /* Append arguments */
-    size_t len = strlen(buf);
-    for (int i = 1; argv[i] && len < buf_size - 2; i++) {
-        strncat(buf, " ", buf_size - len - 1);
-        len = strlen(buf);
-        strncat(buf, argv[i], buf_size - len - 1);
-        len = strlen(buf);
+    for (int i = 1; argv[i] && remaining > 1; i++) {
+        n = snprintf(p, remaining, " %s", argv[i]);
+        if (n < 0 || (size_t)n >= remaining) {
+            buf[buf_size - 1] = '\0';
+            return;
+        }
+        p += n;
+        remaining -= n;
     }
+    
+    buf[buf_size - 1] = '\0';
 }
 
 /* Get basename from path */
@@ -440,10 +473,12 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         free(state->execve_pathname);
         memory_free_string_array(state->execve_argv);
         memory_free_string_array(state->execve_envp);
+        memory_free_ulong_array(state->execve_envp_addrs);
 
         state->execve_pathname = memory_read_string(pid, pathname_addr);
         state->execve_argv = memory_read_string_array(pid, argv_addr);
-        state->execve_envp = memory_read_string_array(pid, envp_addr);
+        /* Also capture the addresses of environment variables in child memory */
+        state->execve_envp = memory_read_string_array_with_addrs(pid, envp_addr, &state->execve_envp_addrs);
 
         if (!state->execve_pathname || !state->execve_argv) {
             /* Block the command by replacing it with a permission denied message */
@@ -573,8 +608,8 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         free(state->last_validated_cmd);
         state->last_validated_cmd = strdup(command);
         
-        /* Filter environment variables based on server decisions */
-        filter_env_decisions(state);
+        /* Filter environment variables based on server decisions and apply to child */
+        filter_env_decisions(state, pid, regs);
         
         return 0;
     }
@@ -583,12 +618,13 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 }
 
 /* Filter environment variables based on server decisions
- * Reads READONLYBOX_ENV_DECISIONS and removes denied vars from state->execve_envp */
-static void filter_env_decisions(ProcessState *state) {
-    if (!state || !state->execve_envp) return;
+ * Reads READONLYBOX_ENV_DECISIONS and removes denied vars from state->execve_envp
+ * Also writes the filtered envp to the child's memory and updates the register */
+static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs) {
+    if (!state || !state->execve_envp || !state->execve_envp_addrs) return 0;
     
     const char *env_decisions_str = getenv("READONLYBOX_ENV_DECISIONS");
-    if (!env_decisions_str || strlen(env_decisions_str) == 0) return;
+    if (!env_decisions_str || strlen(env_decisions_str) == 0) return 0;
     
     DEBUG_PRINT("FILTER: parsing env decisions: '%s'\n", env_decisions_str);
     
@@ -615,7 +651,7 @@ static void filter_env_decisions(ProcessState *state) {
         else break;
     }
     
-    if (max_index < 0) return;
+    if (max_index < 0) return 0;
     
     /* Get flagged env var names - first try environment, then process state */
     const char *env_names_str = getenv("READONLYBOX_FLAGGED_ENV_NAMES");
@@ -642,7 +678,7 @@ static void filter_env_decisions(ProcessState *state) {
         }
     } else {
         DEBUG_PRINT("FILTER: no flagged env var names available\n");
-        return;
+        return 0;
     }
     
     /* Filter envp - remove denied vars */
@@ -652,7 +688,15 @@ static void filter_env_decisions(ProcessState *state) {
     
     /* Allocate new envp */
     char **new_envp = calloc(env_count + 1, sizeof(char *));
-    if (!new_envp) return;
+    unsigned long *new_env_addrs = calloc(env_count + 1, sizeof(unsigned long));
+    if (!new_envp) {
+        free(new_env_addrs);
+        return 0;
+    }
+    if (!new_env_addrs) {
+        free(new_envp);
+        return 0;
+    }
     
     int new_idx = 0;
     for (int i = 0; i < env_count && state->execve_envp[i]; i++) {
@@ -675,19 +719,89 @@ static void filter_env_decisions(ProcessState *state) {
         }
         
         if (!denied) {
-            new_envp[new_idx++] = state->execve_envp[i];
+            new_envp[new_idx] = state->execve_envp[i];
+            new_env_addrs[new_idx] = state->execve_envp_addrs[i];
+            new_idx++;
         }
     }
     new_envp[new_idx] = NULL;
+    new_env_addrs[new_idx] = 0;
     
     /* Replace envp */
     free(state->execve_envp);
     state->execve_envp = new_envp;
+    free(state->execve_envp_addrs);
+    state->execve_envp_addrs = new_env_addrs;
     
-    /* Update regs to use new envp */
-    /* This is handled in the syscall by using the saved envp */
+    /* Write the new envp array to the child's memory and update the register */
+    MemoryContext mem_ctx;
+    if (memory_init(&mem_ctx, pid, REG_SP(regs)) < 0) {
+        DEBUG_PRINT("FILTER: failed to init memory context\n");
+        return -1;
+    }
     
-    DEBUG_PRINT("FILTER: env vars filtered, %d remaining\n", new_idx);
+    /* Count how many env vars we're keeping */
+    int keep_count = 0;
+    while (state->execve_envp[keep_count]) keep_count++;
+    
+    if (keep_count == 0) {
+        /* No environment variables - set envp to NULL */
+        unsigned long new_envp_addr = 0;
+        
+        /* Update register */
+        if (REG_SYSCALL(regs) == SYSCALL_EXECVEAT) {
+            REG_ARG4(regs) = new_envp_addr;
+        } else {
+            REG_ARG3(regs) = new_envp_addr;
+        }
+        
+        if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+            DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
+            return -1;
+        }
+        
+        DEBUG_PRINT("FILTER: env vars filtered, 0 remaining (empty envp)\n");
+        return 0;
+    }
+    
+    /* Allocate space in child for the new envp pointer array */
+    unsigned long new_envp_addr = memory_alloc(&mem_ctx, (keep_count + 1) * sizeof(unsigned long));
+    if (!new_envp_addr) {
+        DEBUG_PRINT("FILTER: failed to allocate memory for envp\n");
+        return -1;
+    }
+    
+    /* Write each pointer to the child's memory.
+     * We use the original addresses of each string in the child memory. */
+    for (int i = 0; i < keep_count; i++) {
+        if (memory_write_pointer_at(&mem_ctx, new_envp_addr + i * sizeof(unsigned long), 
+                                     state->execve_envp_addrs[i]) < 0) {
+            DEBUG_PRINT("FILTER: failed to write envp pointer %d\n", i);
+            return -1;
+        }
+    }
+    
+    /* Write NULL terminator */
+    if (memory_write_pointer_at(&mem_ctx, new_envp_addr + keep_count * sizeof(unsigned long), 0) < 0) {
+        DEBUG_PRINT("FILTER: failed to write envp NULL terminator\n");
+        return -1;
+    }
+    
+    /* Update register to point to new envp array */
+    if (REG_SYSCALL(regs) == SYSCALL_EXECVEAT) {
+        REG_ARG4(regs) = new_envp_addr;
+    } else {
+        REG_ARG3(regs) = new_envp_addr;
+    }
+    
+    /* Apply changes to the child */
+    if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+        DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
+        return -1;
+    }
+    
+    DEBUG_PRINT("FILTER: env vars filtered, %d remaining, envp updated at 0x%lx\n", keep_count, new_envp_addr);
+    return 0;
 }
 
 /* Handle syscall exit (after execution) */

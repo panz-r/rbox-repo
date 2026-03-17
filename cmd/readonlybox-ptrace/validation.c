@@ -11,9 +11,33 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "validation.h"
 #include "protocol.h"
+
+/* Debug output macro - only enabled when DEBUG is defined */
+#ifdef DEBUG
+static FILE *g_debug_file = NULL;
+
+static void debug_init(void) {
+    g_debug_file = fopen("/tmp/readonlybox-ptrace.log", "a");
+    if (!g_debug_file) {
+        g_debug_file = stderr;
+    }
+}
+
+#define DEBUG_PRINT(fmt, ...) do { \
+        if (!g_debug_file) debug_init(); \
+        time_t now = time(NULL); \
+        struct tm *tm = localtime(&now); \
+        fprintf(g_debug_file, "[%02d:%02d:%02d] ", tm->tm_hour, tm->tm_min, tm->tm_sec); \
+        fprintf(g_debug_file, fmt, ##__VA_ARGS__); \
+        fflush(g_debug_file); \
+    } while(0)
+#else
+#define DEBUG_PRINT(fmt, ...) do { } while(0)
+#endif
 
 /* External DFA functions from the linked library */
 extern int dfa_should_allow(const char *cmd);
@@ -56,6 +80,9 @@ int validation_check_dfa(const char *command) {
     uint8_t category_mask = 0;
     int matched = dfa_get_category_mask(command, &category_mask);
 
+    DEBUG_PRINT("DFA: '%s' matched=%d, category_mask=0x%02x\n", 
+                command, matched, category_mask);
+
     if (!matched) {
         /* No DFA match - need to ask server */
         return VALIDATION_ASK;
@@ -63,15 +90,19 @@ int validation_check_dfa(const char *command) {
 
     /* Priority logic: alwaysask > autodeny > autoallow > ask */
     if (category_mask & CAT_MASK_ALWAYSASK) {
+        DEBUG_PRINT("DFA: '%s' matched ALWAYSASK (bit 2)\n", command);
         return VALIDATION_ASK;
     }
     if (category_mask & CAT_MASK_AUTODENY) {
+        DEBUG_PRINT("DFA: '%s' matched AUTODENY (bit 1)\n", command);
         return VALIDATION_DENY;
     }
     if (category_mask & CAT_MASK_AUTOALLOW) {
+        DEBUG_PRINT("DFA: '%s' matched AUTOALLOW (bit 0)\n", command);
         return VALIDATION_ALLOW;
     }
 
     /* No explicit category - ask server by default */
+    DEBUG_PRINT("DFA: '%s' no category bits set, defaulting to ASK\n", command);
     return VALIDATION_ASK;
 }

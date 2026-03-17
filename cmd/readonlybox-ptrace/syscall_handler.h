@@ -94,6 +94,7 @@ typedef struct {
     char *execve_pathname;  /* Saved pathname for execve */
     char **execve_argv;     /* Saved argv for execve */
     char **execve_envp;     /* Saved envp for execve */
+    unsigned long *execve_envp_addrs; /* Original addresses of envp strings in child memory */
     char *last_validated_cmd; /* Last command that was validated for this process */
     
     /* Flagged env vars for current execve (for server decision) */

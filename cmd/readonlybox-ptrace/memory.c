@@ -60,10 +60,26 @@ char *memory_read_string(pid_t pid, unsigned long addr) {
 
 /* Read a null-terminated array of strings from traced process memory */
 char **memory_read_string_array(pid_t pid, unsigned long addr) {
-    if (addr == 0) return NULL;
+    unsigned long *addrs;
+    char **result = memory_read_string_array_with_addrs(pid, addr, &addrs);
+    free(addrs);
+    return result;
+}
+
+/* Read a null-terminated array of strings and also store addresses */
+char **memory_read_string_array_with_addrs(pid_t pid, unsigned long addr, unsigned long **out_addrs) {
+    if (addr == 0) {
+        if (out_addrs) *out_addrs = NULL;
+        return NULL;
+    }
 
     char **array = malloc(256 * sizeof(char *));
-    if (!array) return NULL;
+    unsigned long *addrs = malloc(256 * sizeof(unsigned long));
+    if (!array || !addrs) {
+        free(array);
+        free(addrs);
+        return NULL;
+    }
 
     unsigned long ptr;
     int i = 0;
@@ -73,6 +89,7 @@ char **memory_read_string_array(pid_t pid, unsigned long addr) {
         ptr = ptrace(PTRACE_PEEKDATA, pid, addr + i * sizeof(long), NULL);
         if (errno != 0 || ptr == 0) break;
 
+        addrs[i] = ptr;
         array[i] = memory_read_string(pid, ptr);
         if (!array[i]) break;
 
@@ -80,7 +97,29 @@ char **memory_read_string_array(pid_t pid, unsigned long addr) {
     }
 
     array[i] = NULL;
+    addrs[i] = 0;
+    
+    if (out_addrs) {
+        *out_addrs = addrs;
+    } else {
+        free(addrs);
+    }
+    
     return array;
+}
+
+/* Allocate space in traced process memory */
+unsigned long memory_alloc(MemoryContext *ctx, size_t size) {
+    if (!ctx) return 0;
+    
+    /* Align to 8 bytes */
+    size_t aligned_size = (size + 7) & ~7;
+    if (aligned_size < 8) aligned_size = 8;
+    
+    unsigned long addr = ctx->free_addr;
+    ctx->free_addr += aligned_size;
+    
+    return addr;
 }
 
 /* Write a string to traced process memory */
@@ -104,6 +143,16 @@ unsigned long memory_write_string(MemoryContext *ctx, const char *str) {
     unsigned long result = ctx->free_addr;
     ctx->free_addr += words * sizeof(long);
     return result;
+}
+
+/* Write a pointer to traced process memory at a specific address */
+int memory_write_pointer_at(MemoryContext *ctx, unsigned long addr, unsigned long value) {
+    if (!ctx || addr == 0) return -1;
+    
+    if (ptrace(PTRACE_POKEDATA, ctx->pid, addr, value) == -1) {
+        return -1;
+    }
+    return 0;
 }
 
 /* Write an array of pointers to traced process memory */
@@ -138,5 +187,10 @@ void memory_free_string_array(char **array) {
     for (int i = 0; array[i] != NULL; i++) {
         free(array[i]);
     }
+    free(array);
+}
+
+/* Free addresses array */
+void memory_free_ulong_array(unsigned long *array) {
     free(array);
 }
