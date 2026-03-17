@@ -3,6 +3,7 @@ telemetry-id
 
 # Binaries (in root)
 dfa_test
+check_struct_size
 
 # Tools (in tools/)
 tools/nfa_builder
@@ -16,6 +17,7 @@ tools/*_asan
 # Test binaries
 tests/test_minimize_integrity
 tests/test_sat_encoding
+tests/test_library_api
 
 # Fuzzing binaries (build artifacts)
 fuzz/nfa_build_fuzzer

@@ -19,6 +19,6 @@
 #include "../include/dfa_types.h"
 #include "dfa_minimize.h"
 
-int dfa_minimize_brzozowski(build_dfa_state_t* dfa, int state_count) {
+int dfa_minimize_brzozowski(build_dfa_state_t** dfa, int state_count) {
     return dfa_minimize_hopcroft(dfa, state_count);
 }

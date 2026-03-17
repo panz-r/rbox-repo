@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <signal.h>
 
-#include "../include/dfa.h"
+#include "../include/dfa_internal.h"
 #include "../include/dfa_types.h"
 
 // Maximum sizes
@@ -79,8 +79,9 @@ static bool validate_result(const dfa_result_t* result, size_t input_len) {
 static int test_dfa_with_strings(const uint8_t* dfa_data, size_t dfa_size,
                                   const uint8_t* strings_data, size_t strings_size) {
     // Try to initialize the DFA
-    // dfa_init should handle malformed input gracefully
-    if (!dfa_init(dfa_data, dfa_size)) {
+    // dfa_machine_init should handle malformed input gracefully
+    dfa_machine_t machine;
+    if (!dfa_machine_init(&machine, dfa_data, dfa_size)) {
         // Initialization failed - this is OK, invalid DFA
         if (g_verbose) {
             fprintf(stderr, "DEBUG: DFA init failed (invalid DFA)\n");
@@ -91,7 +92,7 @@ static int test_dfa_with_strings(const uint8_t* dfa_data, size_t dfa_size,
     // Parse string data
     size_t pos = 0;
     uint16_t num_strings = 0;
-    
+
     if (strings_size >= 2) {
         num_strings = read_u16(strings_data);
         pos = 2;
@@ -106,26 +107,26 @@ static int test_dfa_with_strings(const uint8_t* dfa_data, size_t dfa_size,
     for (uint16_t i = 0; i < num_strings && pos + 2 <= strings_size; i++) {
         uint16_t str_len = read_u16(strings_data + pos);
         pos += 2;
-        
+
         // Clamp string length
         if (str_len > MAX_STRING_SIZE) {
             str_len = MAX_STRING_SIZE;
         }
-        
+
         // Check if we have enough data
         if (pos + str_len > strings_size) {
             str_len = (uint16_t)(strings_size - pos);
         }
-        
+
         const char* input = (const char*)(strings_data + pos);
         pos += str_len;
-        
+
         // Evaluate the string against the DFA
         dfa_result_t result;
         memset(&result, 0, sizeof(result));
-        
-        bool ok = dfa_evaluate_with_limit(input, str_len, &result, DFA_MAX_CAPTURES);
-        
+
+        bool ok = dfa_machine_evaluate_with_limit(&machine, input, str_len, &result, DFA_MAX_CAPTURES);
+
         if (ok) {
             // Validate result sanity
             if (!validate_result(&result, str_len)) {
@@ -136,10 +137,9 @@ static int test_dfa_with_strings(const uint8_t* dfa_data, size_t dfa_size,
                 bugs_found++;
             }
         }
-        // Don't call dfa_reset() - it clears current_dfa pointer
-        // Each evaluation starts fresh from initial state anyway
     }
-    
+
+    dfa_machine_reset(&machine);
     return bugs_found > 0 ? 1 : 0;
 }
 

@@ -179,7 +179,7 @@ static int optimize_ranges_for_state(build_dfa_state_t* state) {
  * 
  * @return Number of states that can share defaults
  */
-static int find_default_sharing(build_dfa_state_t* dfa, int state_count) {
+static int find_default_sharing(build_dfa_state_t** dfa, int state_count) {
     // For simplicity, count states with identical transition patterns
     int shared = 0;
     bool* counted = calloc(state_count, sizeof(bool));
@@ -194,8 +194,8 @@ static int find_default_sharing(build_dfa_state_t* dfa, int state_count) {
             // Compare transition patterns
             bool same = true;
             for (int c = 0; c < 256 && same; c++) {
-                if (dfa[i].transitions[c] != dfa[j].transitions[c] ||
-                    dfa[i].marker_offsets[c] != dfa[j].marker_offsets[c]) {
+                if (dfa[i]->transitions[c] != dfa[j]->transitions[c] ||
+                    dfa[i]->marker_offsets[c] != dfa[j]->marker_offsets[c]) {
                     same = false;
                 }
             }
@@ -222,7 +222,7 @@ static int find_default_sharing(build_dfa_state_t* dfa, int state_count) {
 /**
  * Estimate compression ratio without modifying DFA
  */
-float dfa_estimate_compression(const build_dfa_state_t* dfa, int state_count, 
+float dfa_estimate_compression(const build_dfa_state_t** dfa, int state_count, 
                                const compress_options_t* options) {
     if (!dfa || state_count <= 0) return 1.0f;
     
@@ -232,7 +232,7 @@ float dfa_estimate_compression(const build_dfa_state_t* dfa, int state_count,
     int total_saved = 0;
     
     for (int s = 0; s < state_count; s++) {
-        const build_dfa_state_t* state = &dfa[s];
+        const build_dfa_state_t* state = dfa[s];
         
         // Count transitions
         for (int c = 0; c < 256; c++) {
@@ -255,7 +255,7 @@ float dfa_estimate_compression(const build_dfa_state_t* dfa, int state_count,
 /**
  * Compress DFA transition tables
  */
-int dfa_compress(build_dfa_state_t* dfa, int state_count, const compress_options_t* options) {
+int dfa_compress(build_dfa_state_t** dfa, int state_count, const compress_options_t* options) {
     if (!dfa || state_count <= 0) return state_count;
     
     compress_options_t opts = options ? *options : get_default_compress_options();
@@ -267,7 +267,7 @@ int dfa_compress(build_dfa_state_t* dfa, int state_count, const compress_options
     // Count original rules
     for (int s = 0; s < state_count; s++) {
         for (int c = 0; c < 256; c++) {
-            if (dfa[s].transitions[c] >= 0) {
+            if (dfa[s]->transitions[c] >= 0) {
                 last_stats.original_rules++;
             }
         }
@@ -281,7 +281,7 @@ int dfa_compress(build_dfa_state_t* dfa, int state_count, const compress_options
     if (opts.enable_rule_merging) {
         VERBOSE_PRINT("Applying rule merging (%s)...\n", opts.use_sat ? "SAT" : "greedy");
         for (int s = 0; s < state_count; s++) {
-            last_stats.rules_merged += merge_rules_with_options(&dfa[s], opts.max_group_size, opts.use_sat);
+            last_stats.rules_merged += merge_rules_with_options(dfa[s], opts.max_group_size, opts.use_sat);
         }
         VERBOSE_PRINT("  Saved %d rules by merging\n", last_stats.rules_merged);
     }
@@ -294,7 +294,7 @@ int dfa_compress(build_dfa_state_t* dfa, int state_count, const compress_options
         // For now, we report this separately but don't add to total savings.
         int range_savings = 0;
         for (int s = 0; s < state_count; s++) {
-            range_savings += optimize_ranges_for_state(&dfa[s]);
+            range_savings += optimize_ranges_for_state(dfa[s]);
         }
         last_stats.ranges_created = range_savings;
         VERBOSE_PRINT("  Potential additional savings from ranges: %d rules\n", last_stats.ranges_created);

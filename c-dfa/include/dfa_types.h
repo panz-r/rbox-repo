@@ -242,6 +242,61 @@ typedef struct {
  */
 typedef uint32_t dfa_marker_t;
 
+/**
+ * DFA Machine State - per-evaluator state (no global state)
+ *
+ * This struct holds all state needed to evaluate strings against a DFA.
+ * It enables multiple concurrent evaluators in the same process.
+ */
+typedef struct {
+    const dfa_t* dfa;           // Pointer to DFA data (not owned)
+    size_t dfa_size;            // Size of DFA data in bytes
+    char identifier[256];       // Identifier string (null-terminated)
+} dfa_machine_t;
+
+/* ------------------------------------------------------------------------- */
+/* Dynamic build-time DFA state (Phase 6)                                    */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Build-time DFA state with dynamic allocation.
+ * Replaces the fixed-size arrays in build_dfa_state_t.
+ */
+typedef struct {
+    // Metadata for flattening
+    uint32_t transitions_offset;      // Offset to rule table (absolute, from DFA base, 0 = no rules)
+    uint16_t transition_count;        // Number of rules
+    uint16_t flags;                   // State flags (accepting, capture markers, etc.)
+    uint16_t accepting_pattern_id;    // Pattern ID for accepting state (0 = not accepting)
+    uint32_t eos_target;              // Offset to EOS target state (absolute, 0 = no EOS transition)
+    uint32_t eos_marker_offset;       // Offset to EOS marker list (absolute, 0 = no markers)
+    uint16_t first_accepting_pattern; // First pattern ID in closure (0 = none)
+    uint64_t reachable_accepting_patterns; // All patterns reachable from this state
+
+    // Transitions indexed by symbol ID
+    int* transitions;               // [alphabet_size] — target DFA state, -1 = no transition
+    bool* transitions_from_any;     // [alphabet_size] — true if from ANY match
+    uint32_t* marker_offsets;       // [alphabet_size] — offset into marker storage
+
+    // NFA states in this DFA state (epsilon closure)
+    int* nfa_states;                // [nfa_state_capacity]
+    int nfa_state_count;
+    int nfa_state_capacity;
+
+    // Metadata
+    int alphabet_size;              // size of transition arrays
+    uint32_t identity_hash;         // Identity hash for deduplication (computed from nfa_states)
+} build_dfa_state_t;
+
+/**
+ * Build-time DFA state management functions
+ */
+build_dfa_state_t* build_dfa_state_create(int alphabet_size, int initial_nfa_capacity);
+void build_dfa_state_destroy(build_dfa_state_t* state);
+void build_dfa_state_destroy_array(build_dfa_state_t** states, int count);
+bool build_dfa_state_grow_nfa(build_dfa_state_t* state, int additional);
+build_dfa_state_t* build_dfa_state_clone(const build_dfa_state_t* src);
+
 #if defined(__cplusplus) && defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif

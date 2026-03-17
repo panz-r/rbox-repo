@@ -45,11 +45,10 @@ layout_options_t get_default_layout_options(void) {
  * Build forward BFS depths from start state.
  * Returns array of depths (caller must free).
  */
-static int* build_forward_depths(const build_dfa_state_t* dfa, int state_count) {
+static int* build_forward_depths(build_dfa_state_t** dfa, int state_count) {
     int* depths = malloc(state_count * sizeof(int));
     int* queue = malloc(state_count * sizeof(int));
     bool* visited = calloc(state_count, sizeof(bool));
-    
     if (!depths || !queue || !visited) {
         free(depths); free(queue); free(visited);
         return NULL;
@@ -67,15 +66,15 @@ static int* build_forward_depths(const build_dfa_state_t* dfa, int state_count) 
     while (head < tail) {
         int state = queue[head++];
         for (int c = 0; c < 256; c++) {
-            int next = dfa[state].transitions[c];
+            int next = dfa[state]->transitions[c];
             if (next >= 0 && next < state_count && !visited[next]) {
                 visited[next] = true;
                 depths[next] = depths[state] + 1;
                 queue[tail++] = next;
             }
         }
-        if (dfa[state].eos_target > 0 && dfa[state].eos_target < (uint32_t)state_count) {
-            int next = (int)dfa[state].eos_target;
+        if (dfa[state]->eos_target > 0 && dfa[state]->eos_target < (uint32_t)state_count) {
+            int next = (int)dfa[state]->eos_target;
             if (!visited[next]) {
                 visited[next] = true;
                 depths[next] = depths[state] + 1;
@@ -93,7 +92,7 @@ static int* build_forward_depths(const build_dfa_state_t* dfa, int state_count) 
  * Build backward BFS depths from accepting states.
  * Returns array of depths (caller must free).
  */
-static int* build_backward_depths(const build_dfa_state_t* dfa, int state_count) {
+static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
     int* depths = malloc(state_count * sizeof(int));
     int* queue = malloc(state_count * sizeof(int));
     bool* visited = calloc(state_count, sizeof(bool));
@@ -109,13 +108,13 @@ static int* build_backward_depths(const build_dfa_state_t* dfa, int state_count)
     // Count predecessors
     for (int s = 0; s < state_count; s++) {
         for (int c = 0; c < 256; c++) {
-            int t = dfa[s].transitions[c];
+            int t = dfa[s]->transitions[c];
             if (t >= 0 && t < state_count) {
                 pred_count[t]++;
             }
         }
-        if (dfa[s].eos_target > 0 && dfa[s].eos_target < (uint32_t)state_count) {
-            pred_count[dfa[s].eos_target]++;
+        if (dfa[s]->eos_target > 0 && dfa[s]->eos_target < (uint32_t)state_count) {
+            pred_count[dfa[s]->eos_target]++;
         }
     }
     
@@ -143,20 +142,20 @@ static int* build_backward_depths(const build_dfa_state_t* dfa, int state_count)
     // Fill predecessor arrays
     for (int s = 0; s < state_count; s++) {
         for (int c = 0; c < 256; c++) {
-            int t = dfa[s].transitions[c];
+            int t = dfa[s]->transitions[c];
             if (t >= 0 && t < state_count) {
                 preds[t][pred_count[t]++] = s;
             }
         }
-        if (dfa[s].eos_target > 0 && dfa[s].eos_target < (uint32_t)state_count) {
-            preds[dfa[s].eos_target][pred_count[dfa[s].eos_target]++] = s;
+        if (dfa[s]->eos_target > 0 && dfa[s]->eos_target < (uint32_t)state_count) {
+            preds[dfa[s]->eos_target][pred_count[dfa[s]->eos_target]++] = s;
         }
     }
     
     // Initialize
     for (int i = 0; i < state_count; i++) {
         depths[i] = -1;
-        if (dfa[i].flags & DFA_STATE_ACCEPTING) {
+        if (dfa[i]->flags & DFA_STATE_ACCEPTING) {
             is_accepting[i] = true;
         }
     }
@@ -201,7 +200,7 @@ static int* build_backward_depths(const build_dfa_state_t* dfa, int state_count)
  * Simplified version: just use state ID as group (identity).
  * The middle region has no clear optimal layout, so we keep original order.
  */
-static int* build_affinity_groups(const build_dfa_state_t* dfa, int state_count, int* group_count) {
+static int* build_affinity_groups(build_dfa_state_t** dfa, int state_count, int* group_count) {
     // For middle region: just use state ID as group
     // This preserves original order when sorted by (group, depth)
     // Since group=i for all states, sorting becomes just by depth
@@ -221,7 +220,7 @@ static int* build_affinity_groups(const build_dfa_state_t* dfa, int state_count,
  * 2. Affinity groups: States that transition to each other
  * 3. Backward-BFS region: States close to accepting states
  */
-int* build_state_order_bfs(const build_dfa_state_t* dfa, int state_count) {
+int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
     if (state_count <= 0) return NULL;
     
     int* forward_depths = build_forward_depths(dfa, state_count);
@@ -345,8 +344,8 @@ static int* create_inverse_order(const int* order, int state_count) {
  * Reorder states according to the given order.
  * order[i] = new position of state i
  */
-static void reorder_states(build_dfa_state_t* dfa, int state_count, const int* order) {
-    build_dfa_state_t* temp = malloc(state_count * sizeof(build_dfa_state_t));
+static void reorder_states(build_dfa_state_t** dfa, int state_count, const int* order) {
+    build_dfa_state_t** temp = malloc(state_count * sizeof(build_dfa_state_t*));
     if (!temp) return;
     
     // Create inverse mapping
@@ -364,18 +363,18 @@ static void reorder_states(build_dfa_state_t* dfa, int state_count, const int* o
     // Update transition targets to use new positions
     for (int i = 0; i < state_count; i++) {
         for (int c = 0; c < 256; c++) {
-            int old_target = temp[i].transitions[c];
+            int old_target = temp[i]->transitions[c];
             if (old_target >= 0 && old_target < state_count) {
-                temp[i].transitions[c] = order[old_target];
+                temp[i]->transitions[c] = order[old_target];
             }
         }
-        if (temp[i].eos_target > 0 && temp[i].eos_target < (uint32_t)state_count) {
-            temp[i].eos_target = order[temp[i].eos_target];
+        if (temp[i]->eos_target > 0 && temp[i]->eos_target < (uint32_t)state_count) {
+            temp[i]->eos_target = order[temp[i]->eos_target];
         }
     }
     
     // Copy back
-    memcpy(dfa, temp, state_count * sizeof(build_dfa_state_t));
+    memcpy(dfa, temp, state_count * sizeof(build_dfa_state_t*));
     
     free(temp);
     free(inverse);
@@ -385,7 +384,7 @@ static void reorder_states(build_dfa_state_t* dfa, int state_count, const int* o
  * Apply layout optimization to the DFA.
  */
 int* optimize_dfa_layout(
-    build_dfa_state_t* dfa,
+    build_dfa_state_t** dfa,
     int state_count,
     const layout_options_t* options
 ) {
@@ -414,7 +413,7 @@ int* optimize_dfa_layout(
  * Calculate the size of the optimized DFA layout.
  */
 size_t calculate_optimized_layout_size(
-    const build_dfa_state_t* dfa,
+    const build_dfa_state_t** dfa,
     int state_count,
     const layout_options_t* options
 ) {
@@ -431,7 +430,7 @@ size_t calculate_optimized_layout_size(
     int total_rules = 0;
     for (int i = 0; i < state_count; i++) {
         for (int c = 0; c < 256; c++) {
-            if (dfa[i].transitions[c] >= 0) {
+            if (dfa[i]->transitions[c] >= 0) {
                 total_rules++;
             }
         }
@@ -443,7 +442,7 @@ size_t calculate_optimized_layout_size(
     // Marker data (approximate)
     for (int i = 0; i < state_count; i++) {
         for (int c = 0; c < 256; c++) {
-            if (dfa[i].marker_offsets[c] != 0) {
+            if (dfa[i]->marker_offsets[c] != 0) {
                 size += 16;  // Approximate marker list size
             }
         }

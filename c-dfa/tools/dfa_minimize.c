@@ -50,6 +50,72 @@ static void* alloc_or_abort(void* ptr, const char* msg) {
 }
 
 // ============================================================================
+// DFA State Arena Allocator
+// ============================================================================
+
+dfa_state_arena_t* dfa_arena_create(int initial_capacity) {
+    if (initial_capacity <= 0) initial_capacity = 256;
+
+    dfa_state_arena_t* arena = calloc(1, sizeof(dfa_state_arena_t));
+    if (!arena) return NULL;
+
+    arena->states = calloc(initial_capacity, sizeof(build_dfa_state_t*));
+    if (!arena->states) {
+        free(arena);
+        return NULL;
+    }
+
+    arena->capacity = initial_capacity;
+    arena->count = 0;
+    return arena;
+}
+
+void dfa_arena_destroy(dfa_state_arena_t* arena) {
+    if (!arena) return;
+    for (int i = 0; i < arena->count; i++) {
+        build_dfa_state_destroy(arena->states[i]);
+    }
+    free(arena->states);
+    free(arena);
+}
+
+build_dfa_state_t* dfa_arena_alloc(dfa_state_arena_t* arena) {
+    if (!arena) return NULL;
+
+    // Grow if needed
+    if (arena->count >= arena->capacity) {
+        int new_capacity = arena->capacity * 2;
+        build_dfa_state_t** new_states = realloc(arena->states,
+            sizeof(build_dfa_state_t*) * new_capacity);
+        if (!new_states) return NULL;
+
+        // Zero-initialize new portion
+        memset(new_states + arena->capacity, 0,
+               sizeof(build_dfa_state_t*) * (new_capacity - arena->capacity));
+
+        arena->states = new_states;
+        arena->capacity = new_capacity;
+    }
+
+    build_dfa_state_t* state = build_dfa_state_create(MAX_SYMBOLS, 64);
+    if (!state) return NULL;
+
+    arena->states[arena->count] = state;
+    arena->count++;
+
+    return state;
+}
+
+void dfa_arena_reset(dfa_state_arena_t* arena) {
+    if (!arena) return;
+    for (int i = 0; i < arena->count; i++) {
+        build_dfa_state_destroy(arena->states[i]);
+        arena->states[i] = NULL;
+    }
+    arena->count = 0;
+}
+
+// ============================================================================
 // Data Structures for Minimization
 // ============================================================================
 
@@ -134,7 +200,7 @@ static void free_inverse_graph(inverse_graph_t* g) {
     }
 }
 
-static bool build_inverse_graph(const build_dfa_state_t* dfa, int state_count, inverse_graph_t* g) {
+static bool build_inverse_graph(build_dfa_state_t** dfa, int state_count, inverse_graph_t* g) {
     memset(g, 0, sizeof(inverse_graph_t));
     g->counts = calloc(state_count, sizeof(int));
     g->offsets = calloc(state_count, sizeof(int));
@@ -143,14 +209,14 @@ static bool build_inverse_graph(const build_dfa_state_t* dfa, int state_count, i
     // Count incoming edges
     for (int s = 0; s < state_count; s++) {
         for (int c = 0; c < 256; c++) {
-            int target = dfa[s].transitions[c];
+            int target = dfa[s]->transitions[c];
             if (target >= 0 && target < state_count) {
                 g->counts[target]++;
                 g->total_edges++;
             }
         }
-        if (dfa[s].eos_target != 0 && dfa[s].eos_target < (uint32_t)state_count) {
-            g->counts[dfa[s].eos_target]++;
+        if (dfa[s]->eos_target != 0 && dfa[s]->eos_target < (uint32_t)state_count) {
+            g->counts[dfa[s]->eos_target]++;
             g->total_edges++;
         }
     }
@@ -168,16 +234,16 @@ static bool build_inverse_graph(const build_dfa_state_t* dfa, int state_count, i
 
     for (int s = 0; s < state_count; s++) {
         for (int c = 0; c < 256; c++) {
-            int target = dfa[s].transitions[c];
+            int target = dfa[s]->transitions[c];
             if (target >= 0 && target < state_count) {
                 int idx = g->offsets[target] + g->counts[target]++;
                 g->sources[idx] = s;
                 // Encode symbol: 1-256 for Literal, 257-512 for ANY
-                g->char_codes[idx] = dfa[s].transitions_from_any[c] ? (c + 257) : (c + 1);
+                g->char_codes[idx] = dfa[s]->transitions_from_any[c] ? (c + 257) : (c + 1);
             }
         }
-        if (dfa[s].eos_target != 0 && dfa[s].eos_target < (uint32_t)state_count) {
-            int target = dfa[s].eos_target;
+        if (dfa[s]->eos_target != 0 && dfa[s]->eos_target < (uint32_t)state_count) {
+            int target = dfa[s]->eos_target;
             int idx = g->offsets[target] + g->counts[target]++;
             g->sources[idx] = s;
             g->char_codes[idx] = 0; // EOS symbol
@@ -190,7 +256,7 @@ static bool build_inverse_graph(const build_dfa_state_t* dfa, int state_count, i
 // Phase 1: Dead State Pruning (Two-Pass: Forward + Backward)
 // ============================================================================
 
-static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
+static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
     // Phase 1: Forward reachability from start state (state 0)
     bool* forward_reachable = calloc(state_count, sizeof(bool));
     int* queue = malloc(state_count * sizeof(int));
@@ -205,7 +271,7 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
     while (head < tail) {
         int s = queue[head++];
         for (int c = 0; c < 256; c++) {
-            int t = dfa[s].transitions[c];
+            int t = dfa[s]->transitions[c];
             if (t != -1 && !forward_reachable[t]) {
                 forward_reachable[t] = true;
                 queue[tail++] = t;
@@ -223,7 +289,7 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
 
     head = 0; tail = 0;
     for (int s = 0; s < state_count; s++) {
-        if ((dfa[s].flags & 0xFF00) != 0) {  // Accepting states
+        if ((dfa[s]->flags & 0xFF00) != 0) {  // Accepting states
             backward_reachable[s] = true;
             queue[tail++] = s;
         }
@@ -268,11 +334,11 @@ static int prune_dead_states(build_dfa_state_t* dfa, int state_count) {
     // Phase 5: Update transitions using the compact map
     for (int s = 0; s < new_count; s++) {
         for (int c = 0; c < 256; c++) {
-            int t = dfa[s].transitions[c];
-            if (t != -1) dfa[s].transitions[c] = (t < state_count) ? map[t] : -1;
+            int t = dfa[s]->transitions[c];
+            if (t != -1) dfa[s]->transitions[c] = (t < state_count) ? map[t] : -1;
         }
-        if (dfa[s].eos_target != 0 && dfa[s].eos_target < (uint32_t)state_count) {
-            dfa[s].eos_target = (uint32_t)map[dfa[s].eos_target];
+        if (dfa[s]->eos_target != 0 && dfa[s]->eos_target < (uint32_t)state_count) {
+            dfa[s]->eos_target = (uint32_t)map[dfa[s]->eos_target];
         }
     }
 
@@ -338,7 +404,7 @@ static uint16_t compute_hash(const build_dfa_state_t* state, const int* partitio
     return (uint16_t)((hash >> 16) ^ (hash & 0xFFFF));
 }
 
-static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t* dfa, int state_count) {
+static void initialize_partitions(minimizer_state_t* ms, build_dfa_state_t** dfa, int state_count) {
     for (int i = 0; i < MAX_STATES; i++) ms->partition_map[i] = -1;
     
     // Two-pass approach with shared pool and hash-based grouping for O(n) performance
@@ -348,7 +414,7 @@ static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t
     int* group_sizes = alloc_or_abort(calloc(MAX_STATES, sizeof(int)), "Alloc group_sizes");
     
     for (int s = 0; s < state_count; s++) {
-        uint32_t key = ((uint32_t)dfa[s].flags << 16) | (uint32_t)dfa[s].reachable_accepting_patterns;
+        uint32_t key = ((uint32_t)dfa[s]->flags << 16) | (uint32_t)dfa[s]->reachable_accepting_patterns;
         
         // Find group using hash-based lookup
         int g = -1;
@@ -391,7 +457,7 @@ static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t
     }
     
     for (int s = 0; s < state_count; s++) {
-        uint32_t key = ((uint32_t)dfa[s].flags << 16) | (uint32_t)dfa[s].reachable_accepting_patterns;
+        uint32_t key = ((uint32_t)dfa[s]->flags << 16) | (uint32_t)dfa[s]->reachable_accepting_patterns;
         
         int g = -1;
         for (int i = 0; i < group_count; i++) {
@@ -406,8 +472,8 @@ static void initialize_partitions(minimizer_state_t* ms, const build_dfa_state_t
     free(group_keys); free(group_sizes); free(group_pos);
 }
 
-static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* ms, int old_state_count) {
-    build_dfa_state_t* new_dfa = malloc(ms->partition_count * sizeof(build_dfa_state_t));
+static int build_minimized_dfa(build_dfa_state_t** dfa, const minimizer_state_t* ms, int old_state_count) {
+    build_dfa_state_t** new_dfa = malloc(ms->partition_count * sizeof(build_dfa_state_t*));
     alloc_or_abort(new_dfa, "Alloc New DFA Buffer");
     int* state_remap = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc state_remap");
     for (int i = 0; i < MAX_STATES; i++) state_remap[i] = -1;  // Initialize to -1
@@ -429,7 +495,7 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
     // Process start partition first to ensure it gets position 0
     if (start_partition >= 0) {
         int rep = ms->partitions[start_partition].states[0];
-        memcpy(&new_dfa[new_count], &dfa[rep], sizeof(build_dfa_state_t));
+        new_dfa[new_count] = build_dfa_state_clone(dfa[rep]);
         for (int i = 0; i < ms->partitions[start_partition].count; i++) {
             state_remap[ms->partitions[start_partition].states[i]] = new_count;
         }
@@ -440,29 +506,29 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
     for (int p = 0; p < ms->partition_count; p++) {
         if (ms->partitions[p].count == 0 || p == start_partition) continue;
         int rep = ms->partitions[p].states[0];
-        memcpy(&new_dfa[new_count], &dfa[rep], sizeof(build_dfa_state_t));
+        new_dfa[new_count] = build_dfa_state_clone(dfa[rep]);
         for (int i = 0; i < ms->partitions[p].count; i++) state_remap[ms->partitions[p].states[i]] = new_count;
         new_count++;
     }
 
     for (int s = 0; s < new_count; s++) {
         for (int c = 0; c < 256; c++) {
-            int t = new_dfa[s].transitions[c];
+            int t = new_dfa[s]->transitions[c];
             if (t != -1 && t < old_state_count && state_remap[t] != -1) {
-                new_dfa[s].transitions[c] = state_remap[t];
+                new_dfa[s]->transitions[c] = state_remap[t];
             } else if (t != -1) {
-                new_dfa[s].transitions[c] = -1;  // Transition to removed state
+                new_dfa[s]->transitions[c] = -1;  // Transition to removed state
             }
         }
-        if (new_dfa[s].eos_target != 0 && new_dfa[s].eos_target < (uint32_t)old_state_count && state_remap[new_dfa[s].eos_target] != -1) {
-            new_dfa[s].eos_target = (uint32_t)state_remap[new_dfa[s].eos_target];
-        } else if (new_dfa[s].eos_target != 0) {
-            new_dfa[s].eos_target = 0;  // EOS transition to removed state
+        if (new_dfa[s]->eos_target != 0 && new_dfa[s]->eos_target < (uint32_t)old_state_count && state_remap[new_dfa[s]->eos_target] != -1) {
+            new_dfa[s]->eos_target = (uint32_t)state_remap[new_dfa[s]->eos_target];
+        } else if (new_dfa[s]->eos_target != 0) {
+            new_dfa[s]->eos_target = 0;  // EOS transition to removed state
         }
-        new_dfa[s].nfa_state_count = 0;
+        new_dfa[s]->nfa_state_count = 0;
     }
 
-    memcpy(dfa, new_dfa, new_count * sizeof(build_dfa_state_t));
+    memcpy(dfa, new_dfa, new_count * sizeof(build_dfa_state_t*));
     free(new_dfa); free(state_remap); return new_count;
 }
 
@@ -470,7 +536,7 @@ static int build_minimized_dfa(build_dfa_state_t* dfa, const minimizer_state_t* 
 // Phase 2 (A): Hopcroft's Algorithm
 // ============================================================================
 
-int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
+int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
     VERBOSE_PRINT("Initial partitions: %d (from %d states)\n", ms->partition_count, state_count);
@@ -555,7 +621,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t* dfa, int state_count) {
 // Phase 2 (B): Moore's Algorithm (Fallback)
 // ============================================================================
 
-int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
+int dfa_minimize_moore(build_dfa_state_t** dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
     
@@ -574,10 +640,10 @@ int dfa_minimize_moore(build_dfa_state_t* dfa, int state_count) {
             int subgroup_count = 0;
             for (int i = 0; i < ms->partitions[p].count; i++) {
                 int s = ms->partitions[p].states[i]; int sg = -1;
-                uint16_t sig = compute_hash(&dfa[s], ms->partition_map);
+                uint16_t sig = compute_hash(dfa[s], ms->partition_map);
                 for (int u = 0; u < subgroup_count; u++) {
-                    if (sig == compute_hash(&dfa[sg_reps[u]], ms->partition_map)) {
-                        if (are_transitions_equivalent(&dfa[s], &dfa[sg_reps[u]], ms->partition_map)) { sg = u; break; }
+                    if (sig == compute_hash(dfa[sg_reps[u]], ms->partition_map)) {
+                        if (are_transitions_equivalent(dfa[s], dfa[sg_reps[u]], ms->partition_map)) { sg = u; break; }
                     }
                 }
                 if (sg == -1) { sg = subgroup_count++; sg_reps[sg] = s; }
@@ -626,19 +692,19 @@ void dfa_minimize_set_moore(bool use_moore) { current_algo = use_moore ? DFA_MIN
 void dfa_minimize_set_verbose(bool verbose) { minimize_verbose = verbose; }
 void dfa_minimize_get_stats(dfa_minimize_stats_t* stats) { if(stats) *stats = last_stats; }
 
-static bool verify_minimized_dfa(const build_dfa_state_t* dfa, int state_count) {
+static bool verify_minimized_dfa(build_dfa_state_t** dfa, int state_count) {
     if (state_count <= 0) return false;
     for (int s = 0; s < state_count; s++) {
         for (int c = 0; c < 256; c++) {
-            int t = dfa[s].transitions[c];
+            int t = dfa[s]->transitions[c];
             if (t != -1 && (t < 0 || t >= state_count)) return false;
         }
-        if (dfa[s].eos_target != 0 && dfa[s].eos_target >= (uint32_t)state_count) return false;
+        if (dfa[s]->eos_target != 0 && dfa[s]->eos_target >= (uint32_t)state_count) return false;
     }
     return true;
 }
 
-int dfa_minimize(build_dfa_state_t* dfa, int state_count) {
+int dfa_minimize(build_dfa_state_t** dfa, int state_count) {
     if (state_count <= 0) return 0;
     int original = state_count;
     

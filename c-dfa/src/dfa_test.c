@@ -1,5 +1,6 @@
-#include "dfa.h"
+#include "dfa_internal.h"
 #include "dfa_types.h"
+#include "pipeline.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +12,6 @@ static int total_tests_run = 0;
 static int total_tests_passed = 0;
 static int total_groups_run = 0;
 static int total_groups_failed = 0;
-static const char* build_dir = "build_test";
 static const char* minimize_algo = "--minimize-moore";
 static bool use_compress_sat = false;
 static char test_set_mask = 0;
@@ -22,22 +22,8 @@ static char test_set_mask = 0;
 #define MAX_CAPTURES_PER_TEST 8
 
 #define MAX_TRACKED_FILES 256
-static char tracked_nfa_files[MAX_TRACKED_FILES][64];
-static int tracked_nfa_count = 0;
 static char tracked_dfa_files[MAX_TRACKED_FILES][64];
 static int tracked_dfa_count = 0;
-
-static void track_nfa_file(const char* filepath) {
-    if (tracked_nfa_count < MAX_TRACKED_FILES) {
-        size_t len = strlen(filepath);
-        if (len >= sizeof(tracked_nfa_files[0])) {
-            len = sizeof(tracked_nfa_files[0]) - 1;
-        }
-        memcpy(tracked_nfa_files[tracked_nfa_count], filepath, len);
-        tracked_nfa_files[tracked_nfa_count][len] = '\0';
-        tracked_nfa_count++;
-    }
-}
 
 static void track_dfa_file(const char* filepath) {
     if (tracked_dfa_count < MAX_TRACKED_FILES) {
@@ -52,13 +38,9 @@ static void track_dfa_file(const char* filepath) {
 }
 
 static void cleanup_tracked_files(void) {
-    for (int i = 0; i < tracked_nfa_count; i++) {
-        remove(tracked_nfa_files[i]);
-    }
     for (int i = 0; i < tracked_dfa_count; i++) {
         remove(tracked_dfa_files[i]);
     }
-    tracked_nfa_count = 0;
     tracked_dfa_count = 0;
 }
 
@@ -104,33 +86,24 @@ static void print_usage(const char* progname) {
     printf("  %s --minimize-moore --compress-sat --test-set ABC\n", progname);
 }
 
-static void build_dfa(const char* patterns_file, const char* dfa_file) {
-    char nfa_file[256];
-    char patterns_path[512];
-    snprintf(nfa_file, sizeof(nfa_file), "%s/test.nfa", build_dir);
-    track_nfa_file(nfa_file);
-
-    // Build proper path: strip patterns_ prefix and add subdirectory
-    // patterns_file comes in as "patterns_xxx.txt", we need "patterns/subdir/xxx.txt"
+/**
+ * Resolve patterns file path from the test's shorthand notation.
+ * Converts patterns_file to full path like "patterns/subdir/file.txt"
+ */
+static void resolve_patterns_path(const char* patterns_file, char* patterns_path, size_t path_size) {
     const char* filename = patterns_file;
     if (strncmp(filename, "patterns/", 9) == 0 || filename[0] == '/') {
-        // Already has full path
-        snprintf(patterns_path, sizeof(patterns_path), "%s", filename);
+        snprintf(patterns_path, path_size, "%s", filename);
     } else if (strncmp(filename, "stress_test.txt", 15) == 0) {
-        // Special case for stress test at root
-        snprintf(patterns_path, sizeof(patterns_path), "patterns/%s", filename);
+        snprintf(patterns_path, path_size, "patterns/%s", filename);
     } else if (strchr(filename, '/') != NULL) {
-        // Already has subdirectory prefix (e.g., "captures/with_captures.txt")
-        snprintf(patterns_path, sizeof(patterns_path), "patterns/%s", filename);
+        snprintf(patterns_path, path_size, "patterns/%s", filename);
     } else {
-        // Map filename to subdirectory
-        // Strip "patterns_" prefix if present
         if (strncmp(filename, "patterns_", 9) == 0) {
             filename = filename + 9;
         }
-        
-        // Determine subdirectory based on filename pattern
-        const char* subdir = "basic";  // default
+
+        const char* subdir = "basic";
         if (strstr(filename, "quantifier") || strstr(filename, "frag_quant") || strstr(filename, "frag_plus") ||
             strstr(filename, "empty_matching") || strstr(filename, "test_plus_only")) {
             subdir = "quantifiers";
@@ -153,35 +126,60 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
                    strstr(filename, "character_classes") || strstr(filename, "expanded_")) {
             subdir = "edge";
         }
-        
-        snprintf(patterns_path, sizeof(patterns_path), "patterns/%s/%s", subdir, filename);
-    }
 
-    // Use nfa2dfa_sat for SAT minimization, otherwise nfa2dfa_advanced
-    const char* nfa2dfa_binary = "./tools/nfa2dfa_advanced";
-    if (minimize_algo && strcmp(minimize_algo, "--minimize-sat") == 0) {
-        nfa2dfa_binary = "./tools/nfa2dfa_sat";
+        snprintf(patterns_path, path_size, "patterns/%s/%s", subdir, filename);
     }
+}
 
-    char cmd[1024];
-    const char* compress_flag = use_compress_sat ? " --compress-sat" : "";
-    if (minimize_algo && strlen(minimize_algo) > 0) {
-        (void)snprintf(cmd, sizeof(cmd),
-            "mkdir -p %s && "
-            "./tools/nfa_builder %s %s && "
-            "%s %s %s %s%s",
-            build_dir, patterns_path, nfa_file, nfa2dfa_binary, nfa_file, dfa_file, minimize_algo, compress_flag);
+/**
+ * Build DFA from patterns file using library API (no shell-out).
+ * This replaces the old system() call approach.
+ */
+static void build_dfa(const char* patterns_file, const char* dfa_file) {
+    char patterns_path[512];
+    resolve_patterns_path(patterns_file, patterns_path, sizeof(patterns_path));
+
+    // Configure pipeline based on test options
+    pipeline_config_t config = {0};
+
+    // Map minimize algorithm
+    if (minimize_algo && strcmp(minimize_algo, "--minimize-hopcroft") == 0) {
+        config.minimize_algo = PIPELINE_MIN_HOPCROFT;
+    } else if (minimize_algo && strcmp(minimize_algo, "--minimize-sat") == 0) {
+        // SAT minimization not supported via library (requires C++/CaDiCaL)
+        // Fall back to Hopcroft for library-based tests
+        config.minimize_algo = PIPELINE_MIN_HOPCROFT;
+        fprintf(stderr, "Note: SAT minimization not available in library mode, using Hopcroft\n");
     } else {
-        (void)snprintf(cmd, sizeof(cmd),
-            "mkdir -p %s && "
-            "./tools/nfa_builder %s %s && "
-            "%s %s %s",
-            build_dir, patterns_path, nfa_file, nfa2dfa_binary, nfa_file, dfa_file);
+        config.minimize_algo = PIPELINE_MIN_MOORE;
     }
-    fprintf(stderr, "DEBUG CMD: %s\n", cmd);
-    if (system(cmd) != 0) {
-        fprintf(stderr, "Warning: DFA build failed for %s\n", patterns_path);
+
+    config.compress = use_compress_sat;
+    config.optimize_layout = true;
+
+    // Create and run pipeline
+    pipeline_t* p = pipeline_create(&config);
+    if (!p) {
+        fprintf(stderr, "Warning: Failed to create pipeline for %s\n", patterns_path);
+        return;
     }
+
+    pipeline_error_t err = pipeline_run(p, patterns_path);
+    if (err != PIPELINE_OK) {
+        fprintf(stderr, "Warning: DFA build failed for %s: %s\n",
+                patterns_path, pipeline_error_string(err));
+        pipeline_destroy(p);
+        return;
+    }
+
+    // Save binary to output file
+    err = pipeline_save_binary(p, dfa_file);
+    if (err != PIPELINE_OK) {
+        fprintf(stderr, "Warning: Failed to save DFA to %s: %s\n",
+                dfa_file, pipeline_error_string(err));
+    }
+
+    pipeline_destroy(p);
 }
 
 static void run_stress_structural_tests(void);
@@ -221,7 +219,8 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
         return;
     }
 
-    if (!dfa_init(data, size)) {
+    dfa_machine_t machine;
+    if (!dfa_machine_init(&machine, data, size)) {
         printf("  [ERROR] Failed to init DFA\n");
         free(data);
         return;
@@ -232,7 +231,7 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
 
     for (int i = 0; i < count; i++) {
         dfa_result_t result;
-        dfa_evaluate(cases[i].input, strlen(cases[i].input), &result);
+        dfa_machine_evaluate(&machine, cases[i].input, strlen(cases[i].input), &result);
         bool passed = true;
 
         // Check match status
@@ -342,8 +341,8 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
         total_groups_failed++;
         fprintf(stderr, "[ERROR] Test group '%s' had %d failures\n", group_name, group_run - group_passed);
     }
-    
-    dfa_reset();
+
+    dfa_machine_reset(&machine);
     free(data);
     remove(dfa_file);
 }

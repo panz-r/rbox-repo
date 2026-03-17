@@ -14,7 +14,7 @@
 #include <sys/resource.h>
 #include <errno.h>
 
-#include "../include/dfa.h"
+#include "../include/dfa_internal.h"
 #include "../include/dfa_types.h"
 
 // Resource limits (can be overridden via environment)
@@ -83,8 +83,9 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    // Initialize DFA
-    if (!dfa_init(dfa_data, dfa_size)) {
+    // Initialize DFA machine (no globals)
+    dfa_machine_t machine;
+    if (!dfa_machine_init(&machine, dfa_data, dfa_size)) {
         fprintf(stderr, "ERROR: DFA initialization failed\n");
         free(dfa_data);
         return 2;
@@ -92,7 +93,7 @@ int main(int argc, char* argv[]) {
 
     // Evaluate the command
     dfa_result_t result;
-    bool ok = dfa_evaluate_with_limit(command, strlen(command), &result, DFA_MAX_CAPTURES);
+    bool ok = dfa_machine_evaluate_with_limit(&machine, command, strlen(command), &result, DFA_MAX_CAPTURES);
 
     int exit_code = 0;  // Success by default
 
@@ -161,6 +162,7 @@ int main(int argc, char* argv[]) {
         printf("matched=0 category=0 (Unknown)\n");
     }
 
+    dfa_machine_reset(&machine);
     free(dfa_data);
     return exit_code;
 }

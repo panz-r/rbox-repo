@@ -609,10 +609,10 @@ extern "C" int sat_merge_rules_for_state(build_dfa_state_t* state, int max_group
 /**
  * SAT-based compression for all states in a DFA.
  */
-extern "C" int sat_compress_dfa(build_dfa_state_t* dfa, int state_count, int max_group_size) {
+extern "C" int sat_compress_dfa(build_dfa_state_t** dfa, int state_count, int max_group_size) {
     int total_saved = 0;
     for (int s = 0; s < state_count; s++) {
-        total_saved += sat_merge_rules_for_state(&dfa[s], max_group_size);
+        total_saved += sat_merge_rules_for_state(dfa[s], max_group_size);
     }
     return total_saved;
 }

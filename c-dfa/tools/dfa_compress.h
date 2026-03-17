@@ -57,7 +57,7 @@ compress_options_t get_default_compress_options(void);
  * @param options Compression options (NULL for defaults)
  * @return New state count (may change due to default sharing)
  */
-int dfa_compress(build_dfa_state_t* dfa, int state_count, const compress_options_t* options);
+int dfa_compress(build_dfa_state_t** dfa, int state_count, const compress_options_t* options);
 
 /**
  * Get compression statistics from last run.
@@ -83,7 +83,7 @@ int sat_merge_rules_for_state(build_dfa_state_t* state, int max_group_size);
  * @param max_group_size Maximum characters per group (typically 3)
  * @return Total number of rules saved
  */
-int sat_compress_dfa(build_dfa_state_t* dfa, int state_count, int max_group_size);
+int sat_compress_dfa(build_dfa_state_t** dfa, int state_count, int max_group_size);
 
 /**
  * Greedy rule merging for a single state.
@@ -103,6 +103,6 @@ int merge_rules_for_state(build_dfa_state_t* state, int max_group_size);
  * @param options Compression options
  * @return Estimated compression ratio (0.0-1.0)
  */
-float dfa_estimate_compression(const build_dfa_state_t* dfa, int state_count, const compress_options_t* options);
+float dfa_estimate_compression(const build_dfa_state_t** dfa, int state_count, const compress_options_t* options);
 
 #endif // DFA_COMPRESS_H

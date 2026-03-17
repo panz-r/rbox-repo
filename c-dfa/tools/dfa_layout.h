@@ -34,14 +34,14 @@ layout_options_t get_default_layout_options(void);
  * Returns an array mapping old_state -> new_position.
  * Caller must free the returned array.
  */
-int* build_state_order_bfs(const build_dfa_state_t* dfa, int state_count);
+int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count);
 
 /**
  * Calculate the size of the optimized DFA layout.
  * Returns the total size in bytes.
  */
 size_t calculate_optimized_layout_size(
-    const build_dfa_state_t* dfa,
+    const build_dfa_state_t** dfa,
     int state_count,
     const layout_options_t* options
 );
@@ -52,7 +52,7 @@ size_t calculate_optimized_layout_size(
  * Returns the new state order (old_state -> new_position).
  */
 int* optimize_dfa_layout(
-    build_dfa_state_t* dfa,
+    build_dfa_state_t** dfa,
     int state_count,
     const layout_options_t* options
 );

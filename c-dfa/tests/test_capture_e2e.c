@@ -9,10 +9,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../include/dfa_types.h"
-#include "../include/dfa.h"
+#include "../include/dfa_internal.h"
 #include "../include/nfa.h"
 
 static bool dfa_loaded = false;
+static dfa_machine_t machine;
 
 void test_match(const char* input, const char* expected_pattern, int expected_captures) {
     if (!dfa_loaded) {
@@ -21,7 +22,7 @@ void test_match(const char* input, const char* expected_pattern, int expected_ca
     }
 
     dfa_result_t result;
-    if (!dfa_evaluate(input, strlen(input), &result)) {
+    if (!dfa_machine_evaluate(&machine, input, strlen(input), &result)) {
         printf("FAIL: '%s' - No match (expected '%s')\n", input, expected_pattern);
         return;
     }
@@ -76,7 +77,7 @@ int main(int argc, char* argv[]) {
     }
     fclose(f);
 
-    if (!dfa_init(data, size)) {
+    if (!dfa_machine_init(&machine, data, size)) {
         printf("ERROR: Failed to initialize DFA\n");
         free(data);
         return 1;
