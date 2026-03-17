@@ -294,8 +294,8 @@ bool dfa_machine_evaluate_with_limit(const dfa_machine_t* m, const char* input, 
     }
 
     size_t pos = 0;
-    size_t dfa_total_size = dfa->initial_state + dfa->state_count * sizeof(dfa_state_t);
-    size_t rules_start = dfa_total_size;
+    size_t dfa_total_size = dfa_size;  // Use actual file size, not computed (accounts for alignment padding)
+    size_t rules_start = dfa->initial_state;  // Rules can start anywhere after header
 
     while (pos < length && pos < MAX_EVAL_LENGTH) {
         unsigned char c = (unsigned char)input[pos];

@@ -958,6 +958,11 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     (void)ctx; // CLI version uses global state
     FILE* file = fopen(filename, "wb");
     if (!file) { FATAL_SYS("Cannot open '%s' for writing", filename); exit(EXIT_FAILURE); }
+    
+    // Cache-line alignment parameters
+    const int CACHE_LINE_SIZE = 64;
+    const int MAX_SLACK = 5;  // Max bytes to waste for alignment
+    
     intermediate_rule_t* all_rules = alloc_or_abort(malloc(dfa_state_count * MAX_SYMBOLS * sizeof(intermediate_rule_t)), "Rules");
     size_t total_rules = 0;
     for (int i = 0; i < dfa_state_count; i++) total_rules += compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
@@ -979,12 +984,63 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         }
     }
 
-    size_t dfa_size = 23 + id_len + dfa_state_count * sizeof(dfa_state_t) + total_rules * sizeof(dfa_rule_t);
-    dfa_t* ds = calloc(1, dfa_size + marker_data_size);
-    if (!ds) { FATAL("Failed to allocate DFA buffer (%zu + %zu bytes)", dfa_size, marker_data_size); exit(EXIT_FAILURE); }
+    // Pre-compute per-state rule counts
+    int* rule_counts = malloc(dfa_state_count * sizeof(int));
+    for (int i = 0; i < dfa_state_count; i++) {
+        rule_counts[i] = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
+        if (rule_counts[i] > 256) rule_counts[i] = 256;
+    }
+    
+    // Compute state offsets with cache-line alignment
+    // State i starts at state_offset[i], its rules at rule_offset[i]
+    size_t header_size = 23 + id_len;  // DFA header + identifier
+    size_t* state_offset = malloc(dfa_state_count * sizeof(size_t));
+    size_t* rule_offset = malloc(dfa_state_count * sizeof(size_t));
+    
+    size_t cur_offset = header_size;
+    for (int i = 0; i < dfa_state_count; i++) {
+        // Check if we should cache-align this state
+        int misalignment = cur_offset % CACHE_LINE_SIZE;
+        int padding = (misalignment == 0) ? 0 : (CACHE_LINE_SIZE - misalignment);
+        
+        // Only align if padding is within max_slack OR this is a hot state (0 or accepting)
+        bool is_hot = (i == 0 || (dfa[i]->flags & DFA_STATE_ACCEPTING));
+        bool align = false;
+        
+        if (misalignment == 0) {
+            align = false; // Already aligned
+        } else if (is_hot && padding <= MAX_SLACK * 4) {
+            // Hot states get more generous slack (4x)
+            align = true;
+        } else if (padding <= MAX_SLACK) {
+            align = true;
+        }
+        
+        if (align) {
+            cur_offset += padding;
+        }
+        
+        state_offset[i] = cur_offset;
+        cur_offset += sizeof(dfa_state_t);
+    }
+    
+    // Rule offsets come after all state headers
+    for (int i = 0; i < dfa_state_count; i++) {
+        rule_offset[i] = cur_offset;
+        cur_offset += rule_counts[i] * sizeof(dfa_rule_t);
+    }
+    
+    size_t metadata_offset = cur_offset;
+    size_t total_size = metadata_offset + marker_data_size;
+    
+    // Allocate exact-sized buffer
+    dfa_t* ds = calloc(1, total_size);
+    if (!ds) { FATAL("Failed to allocate DFA buffer (%zu bytes)", total_size); exit(EXIT_FAILURE); }
+    
     ds->magic = DFA_MAGIC; ds->version = DFA_VERSION;
-    ds->state_count = dfa_state_count; ds->initial_state = 23 + id_len;  // Header is 23 bytes total (magic=4, ver=2, cnt=2, init=4, mask=4, flags=2, id_len=1, meta=4 = 23), identifier starts at offset 23
-    ds->metadata_offset = 0;  // Will be set after states are written if needed
+    ds->state_count = dfa_state_count;
+    ds->initial_state = (uint32_t)state_offset[0];
+    ds->metadata_offset = 0;
 
     uint32_t accepting_mask = 0;
     for (int i = 0; i < dfa_state_count; i++) {
@@ -993,92 +1049,87 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         }
     }
     ds->accepting_mask = accepting_mask;
-
     ds->identifier_length = (uint8_t)id_len;
     memcpy(ds->identifier, pattern_identifier, id_len);
 
-    dfa_state_t* sarr = (dfa_state_t*)((char*)ds + ds->initial_state);
-    dfa_rule_t* rarr = (dfa_rule_t*)((char*)sarr + dfa_state_count * sizeof(dfa_state_t));
-    size_t cro = ds->initial_state + dfa_state_count * sizeof(dfa_state_t);
+    // Write state headers at their aligned offsets
+    for (int i = 0; i < dfa_state_count; i++) {
+        dfa_state_t* s = (dfa_state_t*)((char*)ds + state_offset[i]);
+        s->transition_count = (uint16_t)rule_counts[i];
+        s->transitions_offset = (rule_counts[i] > 0) ? (uint32_t)rule_offset[i] : 0;
+        s->flags = dfa[i]->flags;
+        s->accepting_pattern_id = dfa[i]->accepting_pattern_id;
+        s->eos_marker_offset = 0;
+        if (dfa[i]->eos_target != 0) {
+            s->eos_target = (uint32_t)state_offset[dfa[i]->eos_target];
+        } else {
+            s->eos_target = 0;
+        }
+    }
+    
+    // Write rules
     size_t gri = 0;
     for (int i = 0; i < dfa_state_count; i++) {
-        int rc = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
-        if (rc > 256) rc = 256;
-        sarr[i].transition_count = (uint16_t)rc; sarr[i].transitions_offset = (rc > 0) ? (uint32_t)cro : 0;
-        sarr[i].flags = dfa[i]->flags;
-        sarr[i].accepting_pattern_id = dfa[i]->accepting_pattern_id;
-        sarr[i].eos_marker_offset = 0;
-        if (dfa[i]->eos_target != 0) {
-            uint32_t eos_offset = (uint32_t)(ds->initial_state + (size_t)dfa[i]->eos_target * sizeof(dfa_state_t));
-            sarr[i].eos_target = eos_offset;
-        } else {
-            sarr[i].eos_target = 0;
-        }
-        for (int r = 0; r < rc; r++) {
-            dfa_rule_t* dst = &rarr[gri++];
-            dst->type = all_rules[i * MAX_SYMBOLS + r].type; dst->data1 = all_rules[i * MAX_SYMBOLS + r].d1;
-            dst->data2 = all_rules[i * MAX_SYMBOLS + r].d2; dst->data3 = 0;
+        for (int r = 0; r < rule_counts[i]; r++) {
+            dfa_rule_t* dst = (dfa_rule_t*)((char*)ds + rule_offset[i] + r * sizeof(dfa_rule_t));
+            dst->type = all_rules[i * MAX_SYMBOLS + r].type;
+            dst->data1 = all_rules[i * MAX_SYMBOLS + r].d1;
+            dst->data2 = all_rules[i * MAX_SYMBOLS + r].d2;
+            dst->data3 = 0;
             dst->marker_offset = 0;
             int tidx = all_rules[i * MAX_SYMBOLS + r].target_state_index;
             if (tidx < 0 || tidx >= dfa_state_count) {
-                FATAL("State %d rule %d target index %d out of bounds (max %d)", i, r, tidx, dfa_state_count - 1);
+                FATAL("State %d rule %d target index %d out of bounds", i, r, tidx);
                 exit(EXIT_FAILURE);
             }
-            uint32_t calculated_target = (uint32_t)(ds->initial_state + (size_t)tidx * sizeof(dfa_state_t));
-            dst->target = calculated_target;
+            dst->target = (uint32_t)state_offset[tidx];
         }
-        cro += rc * sizeof(dfa_rule_t);
+        gri += rule_counts[i];
     }
 
-    size_t metadata_offset = cro;
+    // Write marker data
+    size_t moffset = 0;
     if (marker_list_count > 0) {
         ds->metadata_offset = (uint32_t)metadata_offset;
-
         uint32_t* marker_base = (uint32_t*)((char*)ds + metadata_offset);
-        size_t moffset = 0;
-
+        
         for (int i = 0; i < dfa_state_count; i++) {
-            int rule_count = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
-            size_t rule_offset = sarr[i].transitions_offset;
-            for (int r = 0; r < rule_count && r < 256; r++) {
-                dfa_rule_t* dst = (dfa_rule_t*)((char*)ds + rule_offset + r * sizeof(dfa_rule_t));
+            size_t state_rule_off = rule_offset[i];
+            for (int r = 0; r < rule_counts[i] && r < 256; r++) {
+                dfa_rule_t* dst = (dfa_rule_t*)((char*)ds + state_rule_off + r * sizeof(dfa_rule_t));
                 uint32_t list_idx = dfa[i]->marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1];
                 if (list_idx > 0 && list_idx <= (uint32_t)marker_list_count) {
                     MarkerList* ml = &dfa_marker_lists[list_idx - 1];
-                    // Set dst->marker_offset BEFORE writing markers
                     dst->marker_offset = (uint32_t)(metadata_offset + moffset * sizeof(uint32_t));
-                    for (int k = 0; k < ml->count; k++) {
-                        uint32_t val = ml->markers[k];
-                        // Write byte-by-byte to avoid endianness issues
-                        ((uint8_t*)marker_base)[moffset * 4 + 0] = (val >> 0) & 0xFF;
-                        ((uint8_t*)marker_base)[moffset * 4 + 1] = (val >> 8) & 0xFF;
-                        ((uint8_t*)marker_base)[moffset * 4 + 2] = (val >> 16) & 0xFF;
-                        ((uint8_t*)marker_base)[moffset * 4 + 3] = (val >> 24) & 0xFF;
-                        moffset++;
+                    marker_base[moffset++] = (uint32_t)ml->count;
+                    for (int m = 0; m < ml->count; m++) {
+                        marker_base[moffset++] = ml->markers[m];
                     }
-                    uint32_t sentinel = MARKER_SENTINEL;
-                    ((uint8_t*)marker_base)[moffset * 4 + 0] = (sentinel >> 0) & 0xFF;
-                    ((uint8_t*)marker_base)[moffset * 4 + 1] = (sentinel >> 8) & 0xFF;
-                    ((uint8_t*)marker_base)[moffset * 4 + 2] = (sentinel >> 16) & 0xFF;
-                    ((uint8_t*)marker_base)[moffset * 4 + 3] = (sentinel >> 24) & 0xFF;
-                    moffset++;
                 }
-            }
-            if (dfa[i]->eos_marker_offset > 0 && dfa[i]->eos_marker_offset < (uint32_t)marker_list_count) {
-                MarkerList* ml = &dfa_marker_lists[dfa[i]->eos_marker_offset - 1];
-                sarr[i].eos_marker_offset = (uint32_t)(metadata_offset + moffset * sizeof(uint32_t));
-                for (int k = 0; k < ml->count; k++) marker_base[moffset++] = ml->markers[k];
-                marker_base[moffset++] = MARKER_SENTINEL;
             }
         }
     }
 
-    size_t total_size = dfa_size + marker_data_size;
-    if (fwrite(ds, 1, total_size, file) != total_size) {
-        FATAL("Failed to write DFA file - disk may be full");
-        exit(EXIT_FAILURE);
+    fwrite(ds, 1, total_size, file);
+    
+    // Report alignment statistics if verbose
+    int aligned_count = 0;
+    int hot_aligned = 0;
+    for (int i = 0; i < dfa_state_count; i++) {
+        if (state_offset[i] % CACHE_LINE_SIZE == 0) {
+            aligned_count++;
+            if (i == 0 || (dfa[i]->flags & DFA_STATE_ACCEPTING)) {
+                hot_aligned++;
+            }
+        }
     }
+    if (flag_verbose) {
+        fprintf(stderr, "Cache alignment: %d/%d states aligned (%d hot states aligned, max_slack=%d)\n",
+                aligned_count, dfa_state_count, hot_aligned, MAX_SLACK);
+    }
+    
     fclose(file); free(ds); free(all_rules);
+    free(rule_counts); free(state_offset); free(rule_offset);
 }
 
 void load_nfa_file(nfa2dfa_context_t* ctx, const char* filename) {

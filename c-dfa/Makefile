@@ -74,6 +74,7 @@ LIB_OBJS = lib/pipeline.o \
            $(TOOLS_DIR)/dfa_compress_sat_stub.o \
            $(TOOLS_DIR)/nfa_preminimize.o \
            $(TOOLS_DIR)/nfa_preminimize_sat_optimal_stub.o \
+           $(TOOLS_DIR)/dfa_layout_sat_stub.o \
            $(TOOLS_DIR)/pattern_order.o \
            $(TOOLS_DIR)/multi_target_array.o
 
@@ -122,6 +123,7 @@ $(TOOLS_DIR)/nfa2dfa_cli.o: $(TOOLS_DIR)/nfa2dfa.c $(INCLUDE_DIR)/*.h
 # Main tool with compression support (links against library + SAT modules)
 $(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa_cli.o $(LIB) \
 		$(TOOLS_DIR)/dfa_compress_sat.o \
+		$(TOOLS_DIR)/dfa_layout_sat.o \
 		$(TOOLS_DIR)/nfa_preminimize_sat.o \
 		$(TOOLS_DIR)/nfa_preminimize_windowed.o \
 		$(TOOLS_DIR)/nfa_preminimize_sat_optimal.o \
@@ -129,6 +131,7 @@ $(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa_cli.o $(LIB) \
 	$(CXX) -o $@ $(TOOLS_DIR)/nfa2dfa_cli.o \
 		-L. -lreadonlybox_dfa \
 		$(TOOLS_DIR)/dfa_compress_sat.o \
+		$(TOOLS_DIR)/dfa_layout_sat.o \
 		$(TOOLS_DIR)/nfa_preminimize_sat.o \
 		$(TOOLS_DIR)/nfa_preminimize_windowed.o \
 		$(TOOLS_DIR)/nfa_preminimize_sat_optimal.o \
@@ -143,6 +146,9 @@ $(TOOLS_DIR)/dfa_compress_sat_stub.o: $(TOOLS_DIR)/dfa_compress_sat_stub.c $(TOO
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(TOOLS_DIR)/nfa_preminimize_sat_optimal_stub.o: $(TOOLS_DIR)/nfa_preminimize_sat_optimal_stub.c $(TOOLS_DIR)/nfa_preminimize.h $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TOOLS_DIR)/dfa_layout_sat_stub.o: $(TOOLS_DIR)/dfa_layout_sat_stub.c $(TOOLS_DIR)/dfa_layout_sat.h $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(TOOLS_DIR)/nfa_builder_lib.o: $(TOOLS_DIR)/nfa_builder_lib.c $(INCLUDE_DIR)/*.h $(TOOLS_DIR)/nfa_builder.h
@@ -195,6 +201,9 @@ $(TOOLS_DIR)/nfa_preminimize_windowed.o: $(TOOLS_DIR)/nfa_preminimize_windowed.c
 	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -DUSE_CADICAL -c -o $@ $<
 
 $(TOOLS_DIR)/nfa_preminimize_sat_optimal.o: $(TOOLS_DIR)/nfa_preminimize_sat_optimal.cpp $(TOOLS_DIR)/nfa_preminimize.h $(INCLUDE_DIR)/*.h $(CADICAL_LIB)
+	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -DUSE_CADICAL -c -o $@ $<
+
+$(TOOLS_DIR)/dfa_layout_sat.o: $(TOOLS_DIR)/dfa_layout_sat.cpp $(TOOLS_DIR)/dfa_layout_sat.h $(INCLUDE_DIR)/*.h $(CADICAL_LIB)
 	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -DUSE_CADICAL -c -o $@ $<
 
 $(TOOLS_DIR)/multi_target_array.o: $(TOOLS_DIR)/multi_target_array.c $(INCLUDE_DIR)/*.h

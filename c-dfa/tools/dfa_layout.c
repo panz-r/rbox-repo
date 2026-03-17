@@ -195,22 +195,595 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
     return depths;
 }
 
+// ============================================================================
+// SCC-Based Layout Optimization
+// ============================================================================
+
+#define MAX_SCCS 4096
+
+typedef struct {
+    int* states;        // States in this SCC
+    int count;          // Number of states
+    int capacity;       // Allocated capacity
+    int entry_layer;    // Min BFS layer from entry points
+    int sort_key;       // For ordering SCCs in final layout
+} scc_info_t;
+
 /**
- * Build affinity groups - states that transition to each other.
- * Simplified version: just use state ID as group (identity).
- * The middle region has no clear optimal layout, so we keep original order.
+ * Tarjan's SCC algorithm for finding strongly connected components.
+ * Returns scc_id[state] = SCC index for each state.
+ * scc_info array is populated with states in each SCC.
  */
-static int* build_affinity_groups(build_dfa_state_t** dfa, int state_count, int* group_count) {
-    // For middle region: just use state ID as group
-    // This preserves original order when sorted by (group, depth)
-    // Since group=i for all states, sorting becomes just by depth
-    int* group_id = malloc(state_count * sizeof(int));
-    if (!group_id) return NULL;
-    for (int i = 0; i < state_count; i++) {
-        group_id[i] = i;  // Each state in its own group = identity order
+static int* find_sccs_tarjan(
+    build_dfa_state_t** dfa,
+    int state_count,
+    scc_info_t* scc_info,
+    int* scc_count_out
+) {
+    int* index = malloc(state_count * sizeof(int));
+    int* lowlink = malloc(state_count * sizeof(int));
+    bool* on_stack = calloc(state_count, sizeof(bool));
+    int* stack = malloc(state_count * sizeof(int));
+    int* scc_id = calloc(state_count, sizeof(int));  // Use calloc, init to 0
+    
+    if (!index || !lowlink || !on_stack || !stack || !scc_id) {
+        free(index); free(lowlink); free(on_stack); free(stack); free(scc_id);
+        return NULL;
     }
-    *group_count = state_count;
-    (void)dfa;  // Unused
+    
+    for (int i = 0; i < state_count; i++) {
+        index[i] = -1;
+        scc_id[i] = -1;  // Mark as unvisited
+    }
+    
+    // Initialize SCC info
+    for (int i = 0; i < MAX_SCCS; i++) {
+        scc_info[i].states = NULL;
+        scc_info[i].count = 0;
+        scc_info[i].capacity = 0;
+        scc_info[i].entry_layer = 0;
+        scc_info[i].sort_key = 0;
+    }
+    
+    int current_index = 0;
+    int stack_top = 0;
+    int scc_count = 0;
+    
+    // Tarjan's DFS (iterative to handle large graphs)
+    int* dfs_stack = malloc(state_count * 2 * sizeof(int)); // (state, next_child_index)
+    int dfs_top = 0;
+    
+    for (int start = 0; start < state_count; start++) {
+        if (index[start] >= 0) continue;
+        
+        // Start DFS from this state
+        dfs_stack[dfs_top * 2] = start;
+        dfs_stack[dfs_top * 2 + 1] = 0;
+        dfs_top++;
+        
+        while (dfs_top > 0) {
+            int state = dfs_stack[(dfs_top - 1) * 2];
+            int* next_child = &dfs_stack[(dfs_top - 1) * 2 + 1];
+            
+            if (index[state] < 0) {
+                // First visit
+                index[state] = current_index;
+                lowlink[state] = current_index;
+                current_index++;
+                stack[stack_top++] = state;
+                on_stack[state] = true;
+            }
+            
+            bool done = true;
+            // Process children starting from next_child
+            for (int c = *next_child; c < 256; c++) {
+                int next = dfa[state]->transitions[c];
+                if (next >= 0 && next < state_count) {
+                    if (index[next] < 0) {
+                        // Unvisited child - recurse
+                        *next_child = c + 1;
+                        dfs_stack[dfs_top * 2] = next;
+                        dfs_stack[dfs_top * 2 + 1] = 0;
+                        dfs_top++;
+                        done = false;
+                        break;
+                    } else if (on_stack[next]) {
+                        // Back edge
+                        if (index[next] < lowlink[state]) {
+                            lowlink[state] = index[next];
+                        }
+                    }
+                }
+            }
+            
+            // Also check EOS transitions
+            if (done) {
+                if (*next_child <= 256) {
+                    if (dfa[state]->eos_target > 0 && dfa[state]->eos_target < (uint32_t)state_count) {
+                        int next = (int)dfa[state]->eos_target;
+                        if (index[next] < 0) {
+                            *next_child = 257; // Mark EOS processed
+                            dfs_stack[dfs_top * 2] = next;
+                            dfs_stack[dfs_top * 2 + 1] = 0;
+                            dfs_top++;
+                            done = false;
+                        } else if (on_stack[next]) {
+                            if (index[next] < lowlink[state]) {
+                                lowlink[state] = index[next];
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (done) {
+                // All children processed - check if root of SCC
+                if (lowlink[state] == index[state]) {
+                    // Found an SCC
+                    if (scc_count >= MAX_SCCS) break;
+                    
+                    // Initialize SCC info
+                    int initial_cap = 64;
+                    scc_info[scc_count].states = malloc(initial_cap * sizeof(int));
+                    scc_info[scc_count].count = 0;
+                    scc_info[scc_count].capacity = initial_cap;
+                    
+                    int s;
+                    do {
+                        s = stack[--stack_top];
+                        on_stack[s] = false;
+                        
+                        // Grow if needed
+                        if (scc_info[scc_count].count >= scc_info[scc_count].capacity) {
+                            scc_info[scc_count].capacity *= 2;
+                            scc_info[scc_count].states = realloc(
+                                scc_info[scc_count].states,
+                                scc_info[scc_count].capacity * sizeof(int)
+                            );
+                        }
+                        
+                        scc_info[scc_count].states[scc_info[scc_count].count++] = s;
+                        scc_id[s] = scc_count;
+                    } while (s != state);
+                    
+                    scc_count++;
+                }
+                dfs_top--;
+            }
+        }
+    }
+    
+    free(dfs_stack);
+    free(index);
+    free(lowlink);
+    free(on_stack);
+    free(stack);
+    
+    *scc_count_out = scc_count;
+    return scc_id;
+}
+
+/**
+ * Build condensation graph (DAG of SCCs).
+ * condensation[i][j] = number of transitions from SCC i to SCC j
+ */
+static int** build_condensation_graph(
+    build_dfa_state_t** dfa,
+    int state_count,
+    const int* scc_id,
+    int scc_count
+) {
+    int** cond = calloc(scc_count, sizeof(int*));
+    if (!cond) return NULL;
+    
+    for (int i = 0; i < scc_count; i++) {
+        cond[i] = calloc(scc_count, sizeof(int));
+        if (!cond[i]) {
+            for (int j = 0; j < i; j++) free(cond[j]);
+            free(cond);
+            return NULL;
+        }
+    }
+    
+    // Count edges between SCCs
+    for (int s = 0; s < state_count; s++) {
+        int src_scc = scc_id[s];
+        for (int c = 0; c < 256; c++) {
+            int t = dfa[s]->transitions[c];
+            if (t >= 0 && t < state_count) {
+                int dst_scc = scc_id[t];
+                if (src_scc != dst_scc) {
+                    cond[src_scc][dst_scc]++;
+                }
+            }
+        }
+        if (dfa[s]->eos_target > 0 && dfa[s]->eos_target < (uint32_t)state_count) {
+            int t = (int)dfa[s]->eos_target;
+            int dst_scc = scc_id[t];
+            if (src_scc != dst_scc) {
+                cond[src_scc][dst_scc]++;
+            }
+        }
+    }
+    
+    return cond;
+}
+
+/**
+ * Free condensation graph.
+ */
+static void free_condensation_graph(int** cond, int scc_count) {
+    if (!cond) return;
+    for (int i = 0; i < scc_count; i++) {
+        free(cond[i]);
+    }
+    free(cond);
+}
+
+/**
+ * Topological sort of condensation DAG using Kahn's algorithm.
+ * Returns array: topo_order[position] = SCC index
+ */
+static int* topo_sort_condensation(int** cond, int scc_count) {
+    int* in_degree = calloc(scc_count, sizeof(int));
+    int* queue = malloc(scc_count * sizeof(int));
+    int* order = malloc(scc_count * sizeof(int));
+    
+    if (!in_degree || !queue || !order) {
+        free(in_degree); free(queue); free(order);
+        return NULL;
+    }
+    
+    // Compute in-degrees
+    for (int i = 0; i < scc_count; i++) {
+        for (int j = 0; j < scc_count; j++) {
+            if (cond[j][i] > 0) {
+                in_degree[i]++;
+            }
+        }
+    }
+    
+    // Kahn's algorithm
+    int head = 0, tail = 0;
+    for (int i = 0; i < scc_count; i++) {
+        if (in_degree[i] == 0) {
+            queue[tail++] = i;
+        }
+    }
+    
+    int pos = 0;
+    while (head < tail) {
+        int scc = queue[head++];
+        order[pos++] = scc;
+        
+        for (int j = 0; j < scc_count; j++) {
+            if (cond[scc][j] > 0) {
+                in_degree[j]--;
+                if (in_degree[j] == 0) {
+                    queue[tail++] = j;
+                }
+            }
+        }
+    }
+    
+    free(in_degree);
+    free(queue);
+    return order;
+}
+
+/**
+ * Compute BFS layers within an SCC from entry states.
+ * entry_states are states with predecessors in other SCCs (or state 0).
+ * Returns scc_layer[state] = BFS layer (0 = entry, 1 = one hop, etc.)
+ */
+static void compute_scc_layers(
+    build_dfa_state_t** dfa,
+    int state_count,
+    const int* scc_states,
+    int scc_size,
+    const bool* is_entry,
+    int* scc_layer
+) {
+    int* queue = malloc(scc_size * sizeof(int));
+    if (!queue) return;
+    
+    int head = 0, tail = 0;
+    
+    // BFS from entry states
+    for (int i = 0; i < scc_size; i++) {
+        int s = scc_states[i];
+        scc_layer[s] = -1;
+        if (is_entry[s]) {
+            scc_layer[s] = 0;
+            queue[tail++] = s;
+        }
+    }
+    
+    // If no explicit entry states, start from first state
+    if (tail == 0 && scc_size > 0) {
+        int s = scc_states[0];
+        scc_layer[s] = 0;
+        queue[tail++] = s;
+    }
+    
+    while (head < tail) {
+        int state = queue[head++];
+        int next_layer = scc_layer[state] + 1;
+        
+        for (int c = 0; c < 256; c++) {
+            int next = dfa[state]->transitions[c];
+            if (next >= 0 && next < state_count && scc_layer[next] < 0) {
+                // Only traverse within the same SCC
+                bool in_scc = false;
+                for (int i = 0; i < scc_size; i++) {
+                    if (scc_states[i] == next) { in_scc = true; break; }
+                }
+                if (in_scc) {
+                    scc_layer[next] = next_layer;
+                    queue[tail++] = next;
+                }
+            }
+        }
+    }
+    
+    free(queue);
+}
+
+/**
+ * Compute cache locality metrics for the current DFA layout.
+ * Returns average transition distance (lower = better cache locality).
+ */
+static double compute_avg_transition_distance(
+    build_dfa_state_t** dfa,
+    int state_count
+) {
+    long long total_distance = 0;
+    long long total_transitions = 0;
+    
+    for (int s = 0; s < state_count; s++) {
+        for (int c = 0; c < 256; c++) {
+            int t = dfa[s]->transitions[c];
+            if (t >= 0 && t < state_count) {
+                total_distance += abs(t - s);
+                total_transitions++;
+            }
+        }
+    }
+    
+    if (total_transitions == 0) return 0.0;
+    return (double)total_distance / total_transitions;
+}
+
+/**
+ * Check if swapping positions p and p+1 preserves topological order.
+ */
+static bool can_swap_positions(int** cond, const int* order, int p, int scc_count) {
+    if (p < 0 || p >= scc_count - 1) return false;
+    int scc_a = order[p];
+    int scc_b = order[p + 1];
+    // Can swap only if there's no edge from scc_b to scc_a (would violate topo order)
+    return cond[scc_b][scc_a] == 0;
+}
+
+/**
+ * Compute cost delta for swapping adjacent SCCs at positions p and p+1.
+ */
+static long long swap_cost_delta(int** cond, const int* order, const int* pos, int p, int scc_count) {
+    int scc_a = order[p];
+    int scc_b = order[p + 1];
+    long long delta = 0;
+    
+    for (int k = 0; k < scc_count; k++) {
+        if (k == scc_a || k == scc_b) continue;
+        delta += (long long)cond[k][scc_a] * (abs(pos[k] - (p + 1)) - abs(pos[k] - p));
+        delta += (long long)cond[scc_a][k] * (abs((p + 1) - pos[k]) - abs(p - pos[k]));
+        delta += (long long)cond[k][scc_b] * (abs(pos[k] - p) - abs(pos[k] - (p + 1)));
+        delta += (long long)cond[scc_b][k] * (abs(p - pos[k]) - abs((p + 1) - pos[k]));
+    }
+    
+    return delta;
+}
+
+#include "dfa_layout_sat.h"
+
+/**
+ * Greedy refinement of topological ordering for condensation DAG.
+ * Minimizes Σ cond[i][j] * |pos[i] - pos[j]| (total weighted transition distance).
+ * Uses iterative adjacent swap improvement.
+ */
+static int* refine_condensation_order(
+    int** cond,
+    int scc_count,
+    int* topo_order
+) {
+    if (scc_count <= 2) {
+        int* order = malloc(scc_count * sizeof(int));
+        memcpy(order, topo_order, scc_count * sizeof(int));
+        return order;
+    }
+    
+    // Copy topological order
+    int* order = malloc(scc_count * sizeof(int));
+    memcpy(order, topo_order, scc_count * sizeof(int));
+    
+    // Map SCC -> position
+    int* pos = malloc(scc_count * sizeof(int));
+    for (int i = 0; i < scc_count; i++) {
+        pos[order[i]] = i;
+    }
+    
+    // Greedy improvement: try swapping adjacent SCCs
+    bool improved = true;
+    while (improved) {
+        improved = false;
+        for (int p = 0; p < scc_count - 1; p++) {
+            if (!can_swap_positions(cond, order, p, scc_count)) continue;
+            
+            long long delta = swap_cost_delta(cond, order, pos, p, scc_count);
+            
+            if (delta < 0) {
+                // Swap improves cost
+                int scc_a = order[p];
+                int scc_b = order[p + 1];
+                order[p] = scc_b;
+                order[p + 1] = scc_a;
+                pos[scc_a] = p + 1;
+                pos[scc_b] = p;
+                improved = true;
+            }
+        }
+    }
+    
+    free(pos);
+    return order;
+}
+
+/**
+ * Build affinity groups based on SCC decomposition.
+ * States in the same SCC share the same affinity group.
+ * SCCs are ordered by topological sort of the condensation DAG.
+ */
+static int* build_scc_affinity_groups(
+    build_dfa_state_t** dfa,
+    int state_count,
+    int* group_count,
+    int* scc_layer_out
+) {
+    if (state_count <= 0) return NULL;
+    
+    // For small DFAs, SCC analysis is unnecessary - use identity groups
+    if (state_count < 8) {
+        int* group_id = malloc(state_count * sizeof(int));
+        if (!group_id) return NULL;
+        for (int i = 0; i < state_count; i++) group_id[i] = i;
+        if (scc_layer_out) memset(scc_layer_out, 0, state_count * sizeof(int));
+        *group_count = state_count;
+        return group_id;
+    }
+    
+    // Step 1: Find SCCs
+    scc_info_t scc_info[MAX_SCCS];
+    int scc_count = 0;
+    int* scc_id = find_sccs_tarjan(dfa, state_count, scc_info, &scc_count);
+    if (!scc_id || scc_count == 0) {
+        free(scc_id);
+        return NULL;
+    }
+    
+    // Step 2: Build condensation graph
+    int** cond = build_condensation_graph(dfa, state_count, scc_id, scc_count);
+    if (!cond) {
+        for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+        free(scc_id);
+        return NULL;
+    }
+    
+    // Step 3: Topological sort
+    int* topo_order = topo_sort_condensation(cond, scc_count);
+    if (!topo_order) {
+        free_condensation_graph(cond, scc_count);
+        for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+        free(scc_id);
+        return NULL;
+    }
+    
+    // Step 3b: Refine ordering for better cache locality (greedy)
+    int* refined_order = refine_condensation_order(cond, scc_count, topo_order);
+    if (!refined_order) {
+        refined_order = topo_order; // Fallback to topological order
+    } else {
+        free(topo_order);
+        topo_order = refined_order;
+    }
+    
+    // Step 3c: SAT-based refinement (if available and graph is small enough)
+    if (sat_layout_available() && scc_count >= 4 && scc_count <= 20) {
+        // Compute cost of greedy ordering
+        int* greedy_pos = malloc(scc_count * sizeof(int));
+        for (int p = 0; p < scc_count; p++) {
+            greedy_pos[topo_order[p]] = p;
+        }
+        long long greedy_cost = 0;
+        for (int i = 0; i < scc_count; i++) {
+            for (int j = 0; j < scc_count; j++) {
+                if (cond[i][j] > 0) {
+                    greedy_cost += (long long)cond[i][j] * abs(greedy_pos[i] - greedy_pos[j]);
+                }
+            }
+        }
+        free(greedy_pos);
+        
+        // Try SAT optimization
+        int* sat_order = sat_optimize_condensation_order(cond, scc_count, topo_order, greedy_cost);
+        if (sat_order) {
+            free(topo_order);
+            topo_order = sat_order;
+        }
+    }
+    
+    // Step 4: Compute entry states and BFS layers within each SCC
+    int* scc_layer = calloc(state_count, sizeof(int));
+    bool* is_entry = calloc(state_count, sizeof(bool));
+    
+    // Mark entry states (state 0, and states with predecessors from other SCCs)
+    is_entry[0] = true;
+    for (int s = 0; s < state_count; s++) {
+        int sid = scc_id[s];
+        for (int c = 0; c < 256; c++) {
+            int t = dfa[s]->transitions[c];
+            if (t >= 0 && t < state_count && scc_id[t] != sid) {
+                is_entry[t] = true; // t is entry to its SCC
+            }
+        }
+    }
+    
+    for (int i = 0; i < scc_count; i++) {
+        compute_scc_layers(dfa, state_count, scc_info[i].states,
+                          scc_info[i].count, is_entry, scc_layer);
+    }
+    
+    // Step 5: Build group ID based on topological order
+    int* group_id = malloc(state_count * sizeof(int));
+    if (!group_id) {
+        free(scc_layer); free(is_entry);
+        free_condensation_graph(cond, scc_count);
+        for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+        free(scc_id); free(topo_order);
+        return NULL;
+    }
+    
+    // Map SCC to topological position
+    int* scc_topo_pos = malloc(scc_count * sizeof(int));
+    for (int i = 0; i < scc_count; i++) {
+        scc_topo_pos[topo_order[i]] = i;
+    }
+    
+    // Initialize group_id to 0 for safety, then assign based on SCC
+    for (int s = 0; s < state_count; s++) {
+        group_id[s] = 0;  // Default for states not visited by Tarjan
+    }
+    for (int s = 0; s < state_count; s++) {
+        if (scc_id[s] >= 0 && scc_id[s] < scc_count) {
+            group_id[s] = scc_topo_pos[scc_id[s]];
+        }
+    }
+    
+    // Copy SCC layers to output
+    if (scc_layer_out) {
+        memcpy(scc_layer_out, scc_layer, state_count * sizeof(int));
+    }
+    
+    *group_count = scc_count;
+    
+    // Cleanup
+    free(scc_layer);
+    free(is_entry);
+    free(scc_topo_pos);
+    free_condensation_graph(cond, scc_count);
+    for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+    free(scc_id);
+    free(topo_order);
+    
     return group_id;
 }
 
@@ -243,9 +816,16 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
     int forward_threshold = max_forward / 3;      // Top 1/3 by forward depth
     int backward_threshold = max_backward / 3;    // Top 1/3 by backward depth
     
-    // Build affinity groups for middle region
+    // Build SCC-based affinity groups for middle region
     int affinity_group_count;
-    int* affinity_groups = build_affinity_groups(dfa, state_count, &affinity_group_count);
+    int* scc_layers = calloc(state_count, sizeof(int));
+    int* affinity_groups = build_scc_affinity_groups(dfa, state_count, &affinity_group_count, scc_layers);
+    if (!affinity_groups) {
+        // Fallback: each state in its own group
+        affinity_groups = malloc(state_count * sizeof(int));
+        for (int i = 0; i < state_count; i++) affinity_groups[i] = i;
+        affinity_group_count = state_count;
+    }
     
     // Classify states into regions
     int* region = malloc(state_count * sizeof(int));
@@ -263,7 +843,7 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
         }
     }
     
-    // Sort states: first by region, then by affinity group (for middle), then by depth
+    // Sort states: first by region, then by SCC group (for middle), then by depth
     int* order = malloc(state_count * sizeof(int));
     for (int i = 0; i < state_count; i++) {
         order[i] = i;
@@ -278,8 +858,10 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
         } else if (region[i] == REGION_BACKWARD) {
             subkey = backward_depths[i];
         } else {
-            // Middle region: affinity group in high bits, combined depth in low bits
-            subkey = (affinity_groups[i] << 16) | (forward_depths[i] + backward_depths[i]);
+            // Middle region: SCC group in high bits, SCC-internal BFS layer in low bits
+            // This groups states by SCC, then orders within SCC by unrolled BFS layer
+            int scc_layer = scc_layers[i] >= 0 ? scc_layers[i] : (forward_depths[i] + backward_depths[i]);
+            subkey = (affinity_groups[i] << 16) | (scc_layer & 0xFFFF);
         }
         // Region in bits 30-31, subkey in bits 0-29
         sort_key[i] = (region[i] << 30) | (subkey & 0x3FFFFFFF);
@@ -322,6 +904,7 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
     free(backward_depths);
     free(region);
     free(affinity_groups);
+    free(scc_layers);
     
     return final_order;
 }
