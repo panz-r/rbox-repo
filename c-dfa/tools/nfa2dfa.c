@@ -242,7 +242,7 @@ void epsilon_closure_with_markers(int* states, int* count, int max_states,
         return;
     }
 
-    static bool in_set[MAX_STATES];
+    bool in_set[MAX_STATES];
     memset(in_set, 0, sizeof(in_set));
     int stack[MAX_STATES], top = 0;
 
@@ -293,7 +293,7 @@ void epsilon_closure(int* states, int* count, int max_states) {
         return;
     }
 
-    static bool in_set[MAX_STATES];
+    bool in_set[MAX_STATES];
     memset(in_set, 0, sizeof(in_set));
     int stack[MAX_STATES], top = 0;
     
@@ -343,7 +343,7 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
     // that are actually reachable via epsilon transitions
     // This ensures + quantifier (which has NO skip path) doesn't incorrectly match empty
     if (is_initial_state) {
-        static bool visited[MAX_STATES];
+        bool visited[MAX_STATES];
         memset(visited, 0, sizeof(visited));
         
         int stack[MAX_STATES];
@@ -380,7 +380,7 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
     }
     
     // For non-initial states, search from all states via epsilon closure
-    static bool visited[MAX_STATES];
+    bool visited[MAX_STATES];
     memset(visited, 0, sizeof(visited));
     
     int stack[MAX_STATES];
@@ -457,14 +457,20 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     
     // Store pre-sorted states
     dfa[state]->nfa_state_count = nfa_count;
-    for (int i = 0; i < nfa_count && i < dfa[state]->nfa_state_capacity; i++) dfa[state]->nfa_states[i] = sorted[i];
+    if (nfa_count > dfa[state]->nfa_state_capacity) {
+        if (!build_dfa_state_grow_nfa(dfa[state], nfa_count - dfa[state]->nfa_state_capacity)) {
+            FATAL("Failed to grow NFA state array for DFA state %d", state);
+            exit(EXIT_FAILURE);
+        }
+    }
+    for (int i = 0; i < nfa_count; i++) dfa[state]->nfa_states[i] = sorted[i];
     dfa_next_in_bucket[state] = dfa_hash_table[bucket];
     dfa_hash_table[bucket] = state;
     return state;
 }
 
 void nfa_move(int* states, int* count, int sid, int max_states) {
-    int ns[MAX_STATES], nc = 0; static bool is[MAX_STATES];
+    int ns[MAX_STATES], nc = 0; bool is[MAX_STATES];
     memset(is, 0, sizeof(is));
     for (int i = 0; i < *count; i++) {
         int s = states[i]; if (s < 0 || s >= nfa_state_count) continue;
@@ -959,19 +965,32 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     FILE* file = fopen(filename, "wb");
     if (!file) { FATAL_SYS("Cannot open '%s' for writing", filename); exit(EXIT_FAILURE); }
     
-    // Cache-line alignment parameters
-    const int CACHE_LINE_SIZE = 64;
-    const int MAX_SLACK = 5;  // Max bytes to waste for alignment
+// Cache-line alignment parameters
+#define DFA_CHAR_TRANSITIONS 256
+#define DFA_CACHE_LINE_SIZE 64
+#define DFA_MAX_ALIGNMENT_SLACK 5  // Max bytes to waste for alignment
     
-    intermediate_rule_t* all_rules = alloc_or_abort(malloc(dfa_state_count * MAX_SYMBOLS * sizeof(intermediate_rule_t)), "Rules");
+    size_t alloc_size = (size_t)dfa_state_count * MAX_SYMBOLS * sizeof(intermediate_rule_t);
+    if (dfa_state_count > 0 && alloc_size / sizeof(intermediate_rule_t) / MAX_SYMBOLS != (size_t)dfa_state_count) {
+        FATAL("Integer overflow in rule allocation");
+        exit(EXIT_FAILURE);
+    }
+    intermediate_rule_t* all_rules = alloc_or_abort(malloc(alloc_size), "Rules");
+    
+    // Cache rule counts - compute once, use everywhere
+    int* rule_counts = malloc(dfa_state_count * sizeof(int));
+    if (!rule_counts) { FATAL("Failed to allocate rule counts"); exit(EXIT_FAILURE); }
+    
     size_t total_rules = 0;
-    for (int i = 0; i < dfa_state_count; i++) total_rules += compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
+    for (int i = 0; i < dfa_state_count; i++) {
+        rule_counts[i] = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
+        total_rules += rule_counts[i];
+    }
     size_t id_len = strlen(pattern_identifier);
 
     size_t marker_data_size = 0;
     for (int i = 0; i < dfa_state_count; i++) {
-        int rule_count = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
-        for (int r = 0; r < rule_count && r < 256; r++) {
+        for (int r = 0; r < rule_counts[i] && r < 256; r++) {
             uint32_t list_idx = dfa[i]->marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1];
             if (list_idx > 0 && list_idx <= (uint32_t)marker_list_count) {
                 MarkerList* ml = &dfa_marker_lists[list_idx - 1];
@@ -984,12 +1003,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         }
     }
 
-    // Pre-compute per-state rule counts
-    int* rule_counts = malloc(dfa_state_count * sizeof(int));
-    for (int i = 0; i < dfa_state_count; i++) {
-        rule_counts[i] = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
-        if (rule_counts[i] > 256) rule_counts[i] = 256;
-    }
+    // Pre-compute per-state rule counts (already computed above in rule_counts)
     
     // Compute state offsets with cache-line alignment
     // State i starts at state_offset[i], its rules at rule_offset[i]
@@ -1000,8 +1014,8 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     size_t cur_offset = header_size;
     for (int i = 0; i < dfa_state_count; i++) {
         // Check if we should cache-align this state
-        int misalignment = cur_offset % CACHE_LINE_SIZE;
-        int padding = (misalignment == 0) ? 0 : (CACHE_LINE_SIZE - misalignment);
+        int misalignment = cur_offset % DFA_CACHE_LINE_SIZE;
+        int padding = (misalignment == 0) ? 0 : (DFA_CACHE_LINE_SIZE - misalignment);
         
         // Only align if padding is within max_slack OR this is a hot state (0 or accepting)
         bool is_hot = (i == 0 || (dfa[i]->flags & DFA_STATE_ACCEPTING));
@@ -1009,10 +1023,10 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         
         if (misalignment == 0) {
             align = false; // Already aligned
-        } else if (is_hot && padding <= MAX_SLACK * 4) {
+        } else if (is_hot && padding <= DFA_MAX_ALIGNMENT_SLACK * 4) {
             // Hot states get more generous slack (4x)
             align = true;
-        } else if (padding <= MAX_SLACK) {
+        } else if (padding <= DFA_MAX_ALIGNMENT_SLACK) {
             align = true;
         }
         
@@ -1116,7 +1130,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     int aligned_count = 0;
     int hot_aligned = 0;
     for (int i = 0; i < dfa_state_count; i++) {
-        if (state_offset[i] % CACHE_LINE_SIZE == 0) {
+        if (state_offset[i] % DFA_CACHE_LINE_SIZE == 0) {
             aligned_count++;
             if (i == 0 || (dfa[i]->flags & DFA_STATE_ACCEPTING)) {
                 hot_aligned++;
@@ -1125,7 +1139,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     }
     if (flag_verbose) {
         fprintf(stderr, "Cache alignment: %d/%d states aligned (%d hot states aligned, max_slack=%d)\n",
-                aligned_count, dfa_state_count, hot_aligned, MAX_SLACK);
+                aligned_count, dfa_state_count, hot_aligned, DFA_MAX_ALIGNMENT_SLACK);
     }
     
     fclose(file); free(ds); free(all_rules);

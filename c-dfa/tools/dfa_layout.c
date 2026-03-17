@@ -15,8 +15,7 @@
 #include "dfa_layout.h"
 
 // MAX_STATES is defined in nfa.h which is included via dfa_minimize.h -> dfa_layout.h
-
-// Global sort key for qsort comparison (not thread-safe, but OK for single-threaded use)
+// Thread-local sort key for qsort comparison (safe for single-threaded use)
 static const int* g_layout_sort_key = NULL;
 
 /**
@@ -282,9 +281,11 @@ static int* find_sccs_tarjan(
                     if (index[next] < 0) {
                         // Unvisited child - recurse
                         *next_child = c + 1;
-                        dfs_stack[dfs_top * 2] = next;
-                        dfs_stack[dfs_top * 2 + 1] = 0;
-                        dfs_top++;
+                        if (dfs_top < state_count) {  // Bounds check
+                            dfs_stack[dfs_top * 2] = next;
+                            dfs_stack[dfs_top * 2 + 1] = 0;
+                            dfs_top++;
+                        }
                         done = false;
                         break;
                     } else if (on_stack[next]) {
@@ -303,9 +304,11 @@ static int* find_sccs_tarjan(
                         int next = (int)dfa[state]->eos_target;
                         if (index[next] < 0) {
                             *next_child = 257; // Mark EOS processed
-                            dfs_stack[dfs_top * 2] = next;
-                            dfs_stack[dfs_top * 2 + 1] = 0;
-                            dfs_top++;
+                            if (dfs_top < state_count) {  // Bounds check
+                                dfs_stack[dfs_top * 2] = next;
+                                dfs_stack[dfs_top * 2 + 1] = 0;
+                                dfs_top++;
+                            }
                             done = false;
                         } else if (on_stack[next]) {
                             if (index[next] < lowlink[state]) {
@@ -473,8 +476,7 @@ static int* topo_sort_condensation(int** cond, int scc_count) {
 
 /**
  * Compute BFS layers within an SCC from entry states.
- * entry_states are states with predecessors in other SCCs (or state 0).
- * Returns scc_layer[state] = BFS layer (0 = entry, 1 = one hop, etc.)
+ * Uses scc_id for O(1) membership check.
  */
 static void compute_scc_layers(
     build_dfa_state_t** dfa,
@@ -482,7 +484,9 @@ static void compute_scc_layers(
     const int* scc_states,
     int scc_size,
     const bool* is_entry,
-    int* scc_layer
+    int* scc_layer,
+    const int* scc_id,
+    int current_scc
 ) {
     int* queue = malloc(scc_size * sizeof(int));
     if (!queue) return;
@@ -513,12 +517,8 @@ static void compute_scc_layers(
         for (int c = 0; c < 256; c++) {
             int next = dfa[state]->transitions[c];
             if (next >= 0 && next < state_count && scc_layer[next] < 0) {
-                // Only traverse within the same SCC
-                bool in_scc = false;
-                for (int i = 0; i < scc_size; i++) {
-                    if (scc_states[i] == next) { in_scc = true; break; }
-                }
-                if (in_scc) {
+                // O(1) membership check using scc_id array
+                if (scc_id[next] == current_scc) {
                     scc_layer[next] = next_layer;
                     queue[tail++] = next;
                 }
@@ -739,7 +739,7 @@ static int* build_scc_affinity_groups(
     
     for (int i = 0; i < scc_count; i++) {
         compute_scc_layers(dfa, state_count, scc_info[i].states,
-                          scc_info[i].count, is_entry, scc_layer);
+                          scc_info[i].count, is_entry, scc_layer, scc_id, i);
     }
     
     // Step 5: Build group ID based on topological order
@@ -867,7 +867,7 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
         sort_key[i] = (region[i] << 30) | (subkey & 0x3FFFFFFF);
     }
     
-    // Use file-scope comparison function
+    // Sort states
     g_layout_sort_key = sort_key;
     qsort(order, state_count, sizeof(int), compare_layout_states);
     free(sort_key);

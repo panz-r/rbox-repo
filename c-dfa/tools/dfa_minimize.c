@@ -342,8 +342,8 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
         }
     }
 
-    VERBOSE_PRINT("Pruned %d dead states (forward=%d, backward=%d, useful=%d)\n",
-                  state_count - new_count, useful_count, useful_count, new_count);
+    VERBOSE_PRINT("Pruned %d dead states (useful=%d)\n",
+                  state_count - new_count, new_count);
     free(forward_reachable); free(backward_reachable); free(useful); free(map);
     return new_count;
 }
