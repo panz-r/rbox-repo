@@ -824,8 +824,6 @@ int run_judge(const char *command, const char *caller_info) {
     char buffer[4096];
     ssize_t bytes_read;
 
-    DEBUG_PRINT("JUDGE: run_judge called for '%s'\n", command);
-
     /* Clear any stale environment variables from previous decisions
      * This prevents stale values from being used if a later execve is
      * allowed by DFA (bypassing server call) */
@@ -834,14 +832,11 @@ int run_judge(const char *command, const char *caller_info) {
 
     /* Create pipe for reading output */
     if (pipe(pipefd) < 0) {
-        DEBUG_PRINT("JUDGE: pipe failed\n");
         return -1;
     }
 
-    DEBUG_PRINT("JUDGE: about to fork for '%s'\n", command);
     pid = fork();
     if (pid < 0) {
-        DEBUG_PRINT("JUDGE: fork failed\n");
         close(pipefd[0]);
         close(pipefd[1]);
         return -1;
@@ -849,8 +844,6 @@ int run_judge(const char *command, const char *caller_info) {
 
     if (pid == 0) {
         /* Child process */
-        DEBUG_PRINT("JUDGE: child process, detaching from tracer\n");
-        fflush(g_debug_file);
         /* Child: detach from tracer before exec to avoid re-intercepting */
         ptrace(PTRACE_DETACH, 0, NULL, 0);
         
@@ -909,14 +902,12 @@ int run_judge(const char *command, const char *caller_info) {
         const char *readonlybox_path = get_readonlybox_path();
         
         if (!readonlybox_path) {
-            DEBUG_PRINT("JUDGE: rbox-wrap not found!\n");
             _exit(1);
         }
         
         /* Use binary mode for v8 protocol */
         execl(readonlybox_path, "rbox-wrap", "--bin", "--judge", command, NULL);
         /* If we get here, execl failed */
-        DEBUG_PRINT("JUDGE: execl failed for rbox-wrap: %s\n", strerror(errno));
         _exit(1);
     }
 
@@ -954,7 +945,6 @@ int run_judge(const char *command, const char *caller_info) {
     /* Decode header */
     rbox_decode_header(buffer, bytes_read, &header);
     if (!header.valid) {
-        DEBUG_PRINT("JUDGE: invalid header for '%s'\n", command);
         /* Fall back to exit code */
         if (exit_code == 0) return 0;
         if (exit_code == 9) return 9;
@@ -964,7 +954,6 @@ int run_judge(const char *command, const char *caller_info) {
     /* Decode response details */
     rbox_decode_response_details(&header, buffer, bytes_read, &details);
     if (!details.valid) {
-        DEBUG_PRINT("JUDGE: invalid details for '%s'\n", command);
         if (exit_code == 0) return 0;
         if (exit_code == 9) return 9;
         return -1;
@@ -992,7 +981,6 @@ int run_judge(const char *command, const char *caller_info) {
         }
         
         if (env_decisions_buf[0]) {
-            DEBUG_PRINT("JUDGE: env_decisions: '%s'\n", env_decisions_buf);
             setenv("READONLYBOX_ENV_DECISIONS", env_decisions_buf, 1);
         }
         
@@ -1018,7 +1006,6 @@ int run_judge(const char *command, const char *caller_info) {
             }
             
             if (env_names_buf[0]) {
-                DEBUG_PRINT("JUDGE: flagged env names: '%s'\n", env_names_buf);
                 setenv("READONLYBOX_FLAGGED_ENV_NAMES", env_names_buf, 1);
             }
         }
@@ -1028,7 +1015,6 @@ int run_judge(const char *command, const char *caller_info) {
     }
     
     /* Return based on decision */
-    DEBUG_PRINT("JUDGE: decision=%d for '%s'\n", details.decision, command);
     if (details.decision == 2) return 0;   /* ALLOW */
     if (details.decision == 3) return 9;   /* DENY */
     
@@ -1036,7 +1022,6 @@ int run_judge(const char *command, const char *caller_info) {
     if (exit_code == 0) return 0;
     if (exit_code == 9) return 9;
     
-    DEBUG_PRINT("JUDGE: Unknown response for '%s'\n", command);
     return -1;  /* Error */
 }
 
@@ -1054,14 +1039,12 @@ static const char *get_readonlybox_path(void) {
         /* Try relative to executable: ../rbox-wrap/rbox-wrap */
         snprintf(path_buf, sizeof(path_buf), "%s/../rbox-wrap/rbox-wrap", dir);
         if (access(path_buf, X_OK) == 0) {
-            DEBUG_PRINT("JUDGE: found rbox-wrap at: %s\n", path_buf);
             return path_buf;
         }
         
         /* Try relative to executable: ../../rbox-wrap/rbox-wrap */
         snprintf(path_buf, sizeof(path_buf), "%s/../../rbox-wrap/rbox-wrap", dir);
         if (access(path_buf, X_OK) == 0) {
-            DEBUG_PRINT("JUDGE: found rbox-wrap at: %s\n", path_buf);
             return path_buf;
         }
         
@@ -1071,17 +1054,13 @@ static const char *get_readonlybox_path(void) {
             /* This is the ptrace binary itself - check sibling directory */
             snprintf(path_buf, sizeof(path_buf), "%s/../../bin/rbox-wrap", dir);
             if (access(path_buf, X_OK) == 0) {
-                DEBUG_PRINT("JUDGE: found rbox-wrap at: %s\n", path_buf);
                 return path_buf;
             }
         }
-        
-        DEBUG_PRINT("JUDGE: rbox-wrap not found relative to exe, trying current dir\n");
     }
     
     /* Try current working directory */
     if (access("./rbox-wrap/rbox-wrap", X_OK) == 0) {
-        DEBUG_PRINT("JUDGE: found rbox-wrap at: ./rbox-wrap/rbox-wrap\n");
         return "./rbox-wrap/rbox-wrap";
     }
     
@@ -1093,7 +1072,6 @@ static const char *get_readonlybox_path(void) {
         while (dir) {
             snprintf(path_buf, sizeof(path_buf), "%s/rbox-wrap", dir);
             if (access(path_buf, X_OK) == 0) {
-                DEBUG_PRINT("JUDGE: found rbox-wrap in PATH at: %s\n", path_buf);
                 free(path_copy);
                 return path_buf;
             }
@@ -1102,6 +1080,5 @@ static const char *get_readonlybox_path(void) {
         free(path_copy);
     }
     
-    DEBUG_PRINT("JUDGE: rbox-wrap not found anywhere!\n");
     return NULL;
 }
