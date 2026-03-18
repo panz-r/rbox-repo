@@ -1,164 +1,124 @@
-# DFA Layout Optimization
+# Layout Optimization
 
 ## Overview
 
-This document describes the cache-optimized layout strategy for the ReadOnlyBox DFA binary representation. The layout algorithm reorders DFA states to maximize cache performance throughout all stages of evaluation.
+The layout optimizer reorders DFA states in the binary output to maximize cache locality during evaluation. It uses **SCC-based decomposition** with **condensation graph ordering**.
 
-## Problem Statement
+## Algorithm
 
-During DFA evaluation, the evaluator traverses states by following transitions. Cache performance is critical for high-throughput command validation. A naive layout (states in arbitrary order) results in poor cache locality, especially for:
-
-1. **Early evaluation**: States near the start are accessed frequently
-2. **Mid evaluation**: States in the "middle" of the DFA are accessed based on input patterns
-3. **Late evaluation**: States near accepting states are accessed when approaching match completion
-
-## Solution: 3-Region Layout
-
-The DFA is divided into three regions, each optimized for a different evaluation phase:
+### 1. Region Decomposition
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Region 1: Forward-BFS    │  Region 2: Affinity    │  Region 3:    │
-│  (Early Evaluation)       │  Groups (Mid Eval)     │  Backward-BFS │
-│                           │                        │  (Late Eval)  │
-├───────────────────────────┼────────────────────────┼───────────────┤
-│  States close to start    │  States grouped by     │  States close │
-│  Sorted by forward depth  │  mutual transitions    │  to accepting │
-│                           │  Then by combined depth│  Sorted by    │
-│                           │                        │  backward depth│
-└─────────────────────────────────────────────────────────────────────┘
+S0 → S1 → S2 → [SCC_A] → [SCC_B] → S8 → S9 ✓
+          ↕    [SCC_C]
+   fan-out     intermediate    fan-in
 ```
 
-### Region 1: Forward-BFS Region
+- **Fan-out** (Forward BFS from S0): States near start state
+- **Fan-in** (Reverse BFS from accepting states): States near accept states
+- **Intermediate**: Everything in between - decomposed into SCCs
 
-**Purpose**: Optimize cache performance during early evaluation when the evaluator is close to the start state.
+### 2. SCC Detection (Tarjan's Algorithm)
 
-**Algorithm**:
-1. Run BFS from start state (state 0)
-2. Calculate forward depth for each state: `forward_depth[s] = distance from start`
-3. Define threshold: `forward_threshold = max_forward_depth / 3`
-4. States with `forward_depth <= forward_threshold` belong to this region
-5. Sort by forward depth (ascending)
+Finds strongly connected components in the intermediate region. Each SCC is a maximal set of states where every state is reachable from every other.
 
-**Rationale**: States close to the start are accessed most frequently during the initial characters of input matching.
+- Iterative implementation (handles deep graphs without stack overflow)
+- O(V + E) complexity
+- Dynamic allocation (no hardcoded state limits)
 
-### Region 2: Affinity Groups (Middle Region)
+### 3. Condensation Graph
 
-**Purpose**: Optimize cache performance during mid-evaluation when the evaluator is traversing the "middle" of the DFA.
+Builds a DAG of SCCs:
+- Nodes: SCCs
+- Edges: Transitions between SCCs (weighted by count)
+- This DAG captures the coarse structure of the DFA
 
-**Algorithm**:
-1. Build affinity groups using Union-Find:
-   - For each pair of states (s, t), check if they have mutual transitions
-   - Mutual transition: s → t on some symbol AND t → s on some symbol
-   - Union states with mutual transitions into the same group
-2. States not in Region 1 or Region 3 belong to this region
-3. Sort by affinity group ID, then by combined depth score
+### 4. SCC Ordering
 
-**Rationale**: States that transition to each other are likely to be accessed in sequence. Grouping them together improves cache locality for mid-evaluation patterns.
+Orders SCCs to minimize total weighted transition distance:
 
-### Region 3: Backward-BFS Region
-
-**Purpose**: Optimize cache performance during late evaluation when approaching accepting states.
-
-**Algorithm**:
-1. Build reverse graph (predecessor lists)
-2. Run BFS from all accepting states simultaneously
-3. Calculate backward depth for each state: `backward_depth[s] = distance to nearest accepting state`
-4. Define threshold: `backward_threshold = max_backward_depth / 3`
-5. States with `backward_depth <= backward_threshold` belong to this region
-6. Sort by backward depth (ascending)
-
-**Rationale**: As the evaluator approaches an accepting state, it traverses states close to acceptance. These states should be cache-friendly.
-
-## Implementation Details
-
-### Data Structures
-
-```c
-// Forward depths (BFS from start)
-int* forward_depths;  // forward_depths[state] = depth from start
-
-// Backward depths (BFS from accepting states)
-int* backward_depths;  // backward_depths[state] = distance to accepting
-
-// Affinity groups (Union-Find)
-int* parent;  // parent[state] = representative of group
-int* rank;    // rank[state] = tree depth for union by rank
-
-// Region classification
-int* region;  // region[state] = {REGION_FORWARD, REGION_MIDDLE, REGION_BACKWARD}
+```
+cost = Σ cond[i][j] × |pos[i] - pos[j]|
 ```
 
-### Algorithm Complexity
+**Strategy:**
+1. Topological sort of condensation DAG (respects edge directions)
+2. Greedy refinement via adjacent swap optimization
+3. Optional: Bounded SAT for small graphs (≤20 SCCs)
 
-| Step | Complexity |
-|------|------------|
-| Forward BFS | O(V + E) |
-| Backward BFS | O(V + E) |
-| Affinity grouping | O(V × Σ) where Σ = alphabet size |
-| Sorting | O(V²) with simple sort, O(V log V) with qsort |
-| **Total** | O(V²) or O(V log V) with optimized sort |
+### 5. Layered BFS Unrolling
 
-Where V = number of states, E = number of transitions.
+Within each SCC, states are ordered by BFS layer from entry points:
 
-### Code Location
+```
+SCC: A → B → C → D
+     ↑         ↓
+     F ← E ←───┘
 
-- Header: [`tools/dfa_layout.h`](tools/dfa_layout.h)
-- Implementation: [`tools/dfa_layout.c`](tools/dfa_layout.c)
-- Integration: Called from [`tools/dfa_minimize.c`](tools/dfa_minimize.c) after minimization
-
-## Configuration
-
-The layout algorithm is controlled by `layout_options_t`:
-
-```c
-typedef struct {
-    bool reorder_states;         // Enable state reordering
-    bool place_rules_near_state; // Place rule tables near source state (future)
-    bool align_cache_lines;      // Align to 64-byte cache lines (future)
-    int cache_line_size;         // Cache line size (default 64)
-} layout_options_t;
+Unrolled: Layer 0: A
+          Layer 1: B, F
+          Layer 2: C, E
+          Layer 3: D
 ```
 
-Default options enable all optimizations.
+Forward paths through loops become cache-linear. Back-edges become long jumps, but that's unavoidable with cycles.
 
-## Tuning Parameters
+### 6. Final Layout
 
-The region boundaries are controlled by threshold divisors:
-
-```c
-int forward_threshold = max_forward / 3;   // Top 1/3 by forward depth
-int backward_threshold = max_backward / 3; // Top 1/3 by backward depth
+```
+[Entry fan-out BFS layers]
+[SCC_0 unrolled, SCC_1 unrolled, ...]  ← SAT/refined order
+[Exit fan-in reverse-BFS layers]
 ```
 
-These can be tuned based on:
-- DFA structure (wide vs deep)
-- Typical input patterns
-- Cache size of target hardware
+## Cache-Line Alignment
 
-## Future Improvements
+States are aligned to 64-byte cache boundaries with a max-slack constraint:
 
-1. **Rule table placement**: Place transition rules near their source state
-2. **Cache line alignment**: Align state structures to 64-byte boundaries
-3. **Profile-guided optimization**: Use runtime profiling to determine hot paths
-4. **NUMA awareness**: Consider NUMA topology for large DFAs
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MAX_SLACK` | 5 | Max bytes wasted for alignment |
+| Hot state slack | 20 | 4× slack for start + accepting states |
+| Cache line | 64 bytes | Alignment boundary |
 
-## Testing
-
-The layout algorithm is tested as part of the minimization integrity tests:
-
-```bash
-make test-integrity
+**Example:**
+```
+State 0 (start):    offset 64   ← aligned (hot state, ≤20 bytes padding)
+State 1:            offset 84   ← not aligned (28 bytes padding > 5)
+State 2 (accept):   offset 128  ← aligned (hot state)
 ```
 
-Functional correctness is verified by running the full test suite:
+## Bounded SAT (Optional)
 
-```bash
-./dfa_test --dfa /tmp/optimized.dfa --test-set ABC
-```
+**File:** `tools/dfa_layout_sat.cpp` (requires CaDiCaL)
 
-## References
+For condensation graphs with ≤20 SCCs, SAT finds optimal ordering:
 
-- Hopcroft's Algorithm for DFA Minimization
-- Cache-Oblivious Algorithms and Data Structures
-- Union-Find Data Structure (Disjoint Set Union)
+### Encoding:
+- **Variables**: `x[i][p]` = SCC i at position p (one-hot, k² vars)
+- **All-different**: Each SCC at one position, each position has one SCC
+- **Topological**: If edge i→j, then pos[i] < pos[j]
+- **Distance**: `t_{i,j,d}` = (|pos[i] - pos[j]| ≥ d) for d = 1..k-1
+- **Cost**: Σ cond[i][j] × Σ_d t_{i,j,d}
+- **Bound**: Sequential counter ≤ greedy_cost
+
+### Search:
+Binary search: find minimum cost that is SAT.
+
+### When it helps:
+- Condensation graphs with 5-20 SCCs
+- When greedy ordering isn't optimal
+- Not needed for graphs with <5 SCCs (greedy is already optimal)
+
+## Small DFA Guard
+
+For DFAs with <8 states, SCC analysis is skipped. The BFS layout (fan-out → identity → fan-in) is already optimal for small DFAs.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `tools/dfa_layout.c` | Layout optimizer (SCC, BFS, greedy refinement) |
+| `tools/dfa_layout_sat.cpp` | Bounded SAT for condensation ordering |
+| `tools/dfa_layout_sat_stub.c` | Stub when CaDiCaL not available |
+| `tools/dfa_layout_sat.h` | Header |

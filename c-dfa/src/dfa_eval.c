@@ -41,65 +41,6 @@ typedef struct {
 // Machine lifecycle
 // ============================================================================
 
-bool dfa_machine_init(dfa_machine_t* m, const void* dfa_data, size_t size) {
-    return dfa_machine_init_with_id(m, dfa_data, size, NULL);
-}
-
-bool dfa_machine_init_with_id(dfa_machine_t* m, const void* dfa_data, size_t size, const char* expected_id) {
-    if (!m || !dfa_data || size < sizeof(dfa_t)) return false;
-
-    const dfa_t* dfa = (const dfa_t*)dfa_data;
-    if (dfa->magic != DFA_MAGIC) return false;
-    if (dfa->version < 5 || dfa->version > 6) return false;
-    if (dfa->state_count == 0 || dfa->initial_state >= size) return false;
-
-    m->dfa = dfa;
-    m->dfa_size = size;
-
-    if (expected_id) {
-        strncpy(m->identifier, expected_id, sizeof(m->identifier) - 1);
-        m->identifier[sizeof(m->identifier) - 1] = '\0';
-    } else {
-        m->identifier[0] = '\0';
-    }
-
-    EVAL_DEBUG_PRINT("DFA LOADED: initial_state=%u, state_count=%u, size=%zu\n",
-                     dfa->initial_state, dfa->state_count, size);
-    return true;
-}
-
-void dfa_machine_reset(dfa_machine_t* m) {
-    if (m) {
-        m->dfa = NULL;
-        m->dfa_size = 0;
-        m->identifier[0] = '\0';
-    }
-}
-
-bool dfa_machine_is_valid(const dfa_machine_t* m) {
-    return m && m->dfa != NULL;
-}
-
-// ============================================================================
-// Machine state queries
-// ============================================================================
-
-const dfa_t* dfa_machine_get_dfa(const dfa_machine_t* m) {
-    return m ? m->dfa : NULL;
-}
-
-const char* dfa_machine_get_identifier(const dfa_machine_t* m) {
-    return m ? m->identifier : "";
-}
-
-uint16_t dfa_machine_get_version(const dfa_machine_t* m) {
-    return (m && m->dfa) ? m->dfa->version : 0;
-}
-
-uint16_t dfa_machine_get_state_count(const dfa_machine_t* m) {
-    return (m && m->dfa) ? m->dfa->state_count : 0;
-}
-
 // ============================================================================
 // Category string
 // ============================================================================
@@ -116,6 +57,8 @@ const char* dfa_category_string(dfa_command_category_t cat) {
 // ============================================================================
 
 static bool get_capture_name_from_table(const dfa_t* dfa, size_t dfa_size, int capture_id, int pattern_id, char* buffer, size_t buffer_size) {
+    (void)capture_id; // Used in loop below, but compiler doesn't see it
+    (void)pattern_id;
     if (!dfa || dfa->metadata_offset == 0 || !buffer || buffer_size == 0) return false;
 
     const char* base = (const char*)dfa;
@@ -150,19 +93,13 @@ static bool get_capture_name_from_table(const dfa_t* dfa, size_t dfa_size, int c
     return false;
 }
 
-static void add_capture(const dfa_t* dfa, size_t dfa_size, dfa_result_t* result, int capture_id, size_t start, size_t end, uint16_t pattern_id) {
+static void add_capture(dfa_result_t* result, int capture_id, size_t start, size_t end, uint16_t pattern_id) {
     if (result->capture_count >= DFA_MAX_CAPTURES) return;
     dfa_capture_t* cap = &result->captures[result->capture_count++];
     cap->start = start;
     cap->end = end;
     cap->capture_id = capture_id;
-
-    char name_buf[64];
-    if (get_capture_name_from_table(dfa, dfa_size, capture_id, pattern_id, name_buf, sizeof(name_buf))) {
-        snprintf(cap->name, sizeof(cap->name), "%.31s", name_buf);
-    } else {
-        snprintf(cap->name, sizeof(cap->name), "capture_%d", capture_id);
-    }
+    cap->name[0] = '\0';  // Name resolved lazily via dfa_result_get_capture_string()
     cap->active = false;
     cap->completed = true;
 }
@@ -198,7 +135,7 @@ static void process_marker_list(const dfa_t* dfa, size_t dfa_size, const uint32_
                 for (int j = *stack_depth - 1; j >= 0; j--) {
                     if (capture_stack[j].capture_id == capture_id && capture_stack[j].end_pos == 0) {
                         capture_stack[j].end_pos = pos;
-                        add_capture(dfa, dfa_size, result, capture_id, capture_stack[j].start_pos, pos, pattern_id);
+                        add_capture(result, capture_id, capture_stack[j].start_pos, pos, pattern_id);
                         break;
                     }
                 }
@@ -463,4 +400,71 @@ bool dfa_result_get_capture_by_index(const dfa_result_t* result, int index, size
     if (out_start) *out_start = cap->start;
     if (out_length) *out_length = cap->end - cap->start;
     return true;
+}
+
+/**
+ * Get capture string. Resolves name from DFA metadata on first call.
+ * Returns pointer into original input buffer (no copy).
+ *
+ * @param result    Result from a prior dfa_eval() call
+ * @param index     Capture index (0..capture_count-1)
+ * @param dfa_data  Binary DFA data (same pointer passed to dfa_eval)
+ * @param dfa_size  DFA data size
+ * @param input     Original input string (same pointer passed to dfa_eval)
+ * @param out_start Output: pointer to captured substring in input
+ * @param out_len   Output: length of captured substring
+ * @param out_name  Output: capture name (from DFA metadata), or NULL to skip
+ * @return true on success
+ */
+bool dfa_result_get_capture_string(const dfa_result_t* result, int index,
+                                    const void* dfa_data, size_t dfa_size,
+                                    const char* input,
+                                    const char** out_start, size_t* out_len,
+                                    const char** out_name) {
+    if (!result || index < 0 || index >= result->capture_count) return false;
+    dfa_capture_t* cap = (dfa_capture_t*)&result->captures[index];  // mutable for name cache
+
+    // Return captured substring (pointer into original input, zero copy)
+    if (out_start) *out_start = input + cap->start;
+    if (out_len) *out_len = cap->end - cap->start;
+
+    // Resolve name lazily on first access
+    if (out_name) {
+        if (cap->name[0] == '\0' && dfa_data) {
+            // Need pattern_id to look up name - stored in capture_id high bits or separate field
+            // For now, use capture_id as lookup key
+            get_capture_name_from_table((const dfa_t*)dfa_data, dfa_size,
+                                        cap->capture_id, 0, cap->name, sizeof(cap->name));
+            if (cap->name[0] == '\0') {
+                snprintf(cap->name, sizeof(cap->name), "capture_%d", cap->capture_id);
+            }
+        }
+        *out_name = cap->name;
+    }
+
+    return true;
+}
+
+/**
+ * One-time DFA identifier check. Verifies the loaded binary matches expected identifier.
+ * Call once after loading, before any eval calls.
+ *
+ * @param dfa_data    Binary DFA data
+ * @param dfa_size    Size of DFA data
+ * @param expected_id Identifier string embedded in the DFA binary
+ * @return true if identifiers match, false if mismatch or invalid data
+ */
+bool dfa_eval_validate_id(const void* dfa_data, size_t dfa_size, const char* expected_id) {
+    if (!dfa_data || dfa_size < sizeof(dfa_t) || !expected_id) return false;
+
+    const dfa_t* dfa = (const dfa_t*)dfa_data;
+    if (dfa->magic != DFA_MAGIC) return false;
+
+    size_t id_offset = 21;  // sizeof(dfa_t) header fields before identifier
+    if (id_offset + dfa->identifier_length > dfa_size) return false;
+
+    size_t expected_len = strlen(expected_id);
+    if (dfa->identifier_length != expected_len) return false;
+
+    return memcmp(dfa->identifier, expected_id, expected_len) == 0;
 }

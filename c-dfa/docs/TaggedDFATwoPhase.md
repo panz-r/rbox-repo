@@ -1,3 +1,8 @@
+---
+title: Design Proposal (Not Implementation Doc)
+description: Generic DFA engineering guidelines. See README.md and PIPELINE.md for current implementation.
+---
+
 This is a fantastic architectural insight. If your priority is throughput for non-capturing matches (or just finding if a match exists), while treating captures as a secondary "premium" feature, you should adopt a Tiered Execution Model.
 
 This model is used by high-performance engines like Hyperscan and RE2. The core idea is that Pass 1 (Acceptance) should be as lean as possible, stripping away all the overhead of capture bookkeeping.

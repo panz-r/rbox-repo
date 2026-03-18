@@ -2,10 +2,24 @@
 #define DFA_INTERNAL_H
 
 /**
- * dfa_internal.h - State-passing DFA evaluation API
+ * dfa_internal.h - DFA Machine Lifecycle and State Management
  *
- * All functions take an explicit dfa_machine_t* instead of using globals.
- * This enables multiple concurrent evaluators in the same process.
+ * FOR: Machine builders / library internal code that manages DFA lifecycle.
+ * FOR: Applications that need multiple concurrent DFA evaluators.
+ * NOT FOR: Eval-only users (see dfa.h for the simple eval API).
+ *
+ * This header provides the dfa_machine_t struct for applications that need
+ * to hold DFA state (validation, identifier checking, concurrent evaluators).
+ * For simple eval-only use, prefer dfa_eval() from dfa.h which needs no struct.
+ *
+ * Usage:
+ *   dfa_machine_t machine;
+ *   if (dfa_machine_init(&machine, dfa_data, dfa_size)) {
+ *       dfa_result_t result;
+ *       dfa_machine_evaluate(&machine, input, strlen(input), &result);
+ *   }
+ *
+ * For building DFAs from pattern sets, see pipeline.h.
  */
 
 #include "dfa_types.h"
@@ -42,10 +56,8 @@ bool dfa_result_get_capture_by_index(const dfa_result_t* result, int index, size
 // Category string
 const char* dfa_category_string(dfa_command_category_t category);
 
-// File I/O (unchanged)
+// Builder file I/O (not in eval library)
 void* load_dfa_from_file(const char* filename, size_t* size);
-bool save_dfa_to_file(const char* filename, const void* data, size_t size);
-const char* get_dfa_identifier(const char* filename);
 
 #ifdef __cplusplus
 }

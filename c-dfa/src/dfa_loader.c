@@ -239,7 +239,7 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
 }
 
 // Save DFA to file
-bool save_dfa_to_file(const char* filename, const void* data, size_t size) {
+static bool save_dfa_to_file(const char* filename, const void* data, size_t size) {
     FILE* file = fopen(filename, "wb");
     if (file == NULL) {
         return false;

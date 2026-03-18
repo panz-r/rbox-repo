@@ -1,3 +1,8 @@
+---
+title: Design Proposal (Not Implementation Doc)
+description: Generic DFA engineering guidelines. See README.md and PIPELINE.md for current implementation.
+---
+
 Yes, absolutely. You have hit the nail on the head.
 
 Formally, a Mealy Machine is a finite-state automaton where the output values are determined both by the current state and the current input (the transition). This is distinct from a Moore Machine, where output depends only on the current state.

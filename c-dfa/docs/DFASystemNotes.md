@@ -1,3 +1,8 @@
+---
+title: Design Proposal (Not Implementation Doc)
+description: Generic DFA engineering guidelines. See README.md and PIPELINE.md for current implementation.
+---
+
 To elevate your byte-oriented regex engine from a functional implementation to a high-performance, production-grade system, consider integrating these advanced techniques. These span compilation optimizations, execution strategies, memory efficiency, and extended regex features.
 
 1. Advanced DFA Optimization Techniques

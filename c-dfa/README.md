@@ -28,7 +28,7 @@ See [docs/PIPELINE.md](docs/PIPELINE.md) for detailed pipeline documentation.
 
 | Command | Description |
 |---------|-------------|
-| `make` | Build all tools and tests |
+| `make` | Build all tools, tests, and libraries |
 | `make test` | Run full test suite |
 | `make test-moore` | Test Moore minimization |
 | `make test-hopcroft` | Test Hopcroft algorithm (recommended) |
@@ -38,6 +38,13 @@ See [docs/PIPELINE.md](docs/PIPELINE.md) for detailed pipeline documentation.
 | `make test-integrity` | Run minimization integrity tests |
 | `make clean` | Clean build artifacts |
 | `make fuzz-build` | Build fuzzers |
+
+**Libraries produced:**
+
+| Library | Size | Purpose |
+|---------|------|---------|
+| `libdfa_eval.a` | ~17KB | Eval-only (loading + evaluation). For pre-built DFAs. |
+| `libreadonlybox_dfa.a` | ~235KB | Full library (building + evaluating). For dynamic pattern sets. |
 
 ## Minimization Algorithms
 
@@ -136,24 +143,55 @@ make
 
 ## Using the DFA in Applications
 
+There are two types of users:
+
+### Eval-Only Users (Recommended)
+
+If you only need to evaluate strings against a pre-built binary DFA, link against `libdfa_eval.a` (17KB). No setup, no allocations, zero overhead.
+
 ```c
 #include "dfa.h"
-#include "dfa_types.h"
 
-// Load DFA from file
-void* dfa_data = load_dfa_from_file("readonlybox.dfa");
-dfa_init(dfa_data, size);
+// Load DFA from file (you own the memory)
+size_t dfa_size;
+void* dfa_data = load_dfa_from_file("readonlybox.dfa", &dfa_size);
+if (!dfa_data) { /* handle error */ }
 
-// Evaluate a command
+// Evaluate - pass DFA pointer and size directly
 dfa_result_t result;
-if (dfa_evaluate("cat file.txt", 0, &result)) {
+if (dfa_eval(dfa_data, dfa_size, "cat file.txt", 12, &result)) {
     if (result.category == DFA_CMD_READONLY_SAFE) {
         // Command is safe
     }
 }
 
-// Cleanup
-dfa_reset();
+// Free when done
+free(dfa_data);
+```
+
+Link with:
+```bash
+gcc -o myapp myapp.c -ldfa_eval -Iinclude
+```
+
+### Machine Builders
+
+If you need to build DFAs dynamically from pattern sets, link against `libreadonlybox_dfa.a` (235KB). See [docs/PIPELINE.md](docs/PIPELINE.md).
+
+```c
+#include "dfa.h"
+#include "pipeline.h"
+
+pipeline_t* p = pipeline_create();
+pipeline_set_patterns_file(p, "patterns.txt");
+pipeline_run(p);
+dfa_result_t result = pipeline_evaluate(p, "cat file.txt");
+pipeline_destroy(p);
+```
+
+Link with:
+```bash
+gcc -o builder builder.c -lreadonlybox_dfa -Iinclude -lstdc++
 ```
 
 ## Test Organization
@@ -210,10 +248,9 @@ Key documentation files in `docs/`:
 | File | Description |
 |------|-------------|
 | [docs/PIPELINE.md](docs/PIPELINE.md) | Full pipeline overview |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture |
-| [docs/GLOSSARY.md](docs/GLOSSARY.md) | Terminology definitions |
-| [docs/LAYOUT_OPTIMIZATION.md](docs/LAYOUT_OPTIMIZATION.md) | Cache optimization |
+| [docs/LAYOUT_OPTIMIZATION.md](docs/LAYOUT_OPTIMIZATION.md) | SCC-based cache optimization |
 | [docs/TRANSITION_COMPRESSION.md](docs/TRANSITION_COMPRESSION.md) | Rule compression |
+| [docs/GLOSSARY.md](docs/GLOSSARY.md) | Terminology definitions |
 
 ## Integration
 

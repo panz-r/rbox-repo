@@ -429,34 +429,51 @@ compress_options_t opts = {
 
 **File:** `tools/dfa_layout.c`
 
-Optimizes binary layout for cache performance.
+Optimizes binary layout for cache performance using **SCC-based decomposition**.
 
-### Layout Strategies:
+### SCC-Based Layout
 
-#### Forward-BFS Region
-States close to start state (early evaluation path)
+The layout decomposes the DFA into strongly connected components (SCCs), then orders them optimally.
 
-#### Affinity Groups
-States that frequently transition to each other (placed near each other)
+#### Algorithm:
+1. **Forward BFS**: States close to start state (fan-out region)
+2. **Reverse BFS**: States close to accepting states (fan-in region)
+3. **SCC Detection**: Tarjan's algorithm finds strongly connected components in the intermediate region
+4. **Condensation Graph**: Build DAG of SCCs with edge weights (transition counts)
+5. **SCC Ordering**: Greedy refinement of topological sort to minimize cross-SCC transition distances
+6. **Bounded SAT** (optional): Optimal ordering for small condensation graphs (≤20 SCCs)
+7. **Layered BFS Unrolling**: Within each SCC, states ordered by BFS layer from entry points
 
-#### Backward-BFS Region  
-States close to accepting states (late evaluation path)
+### Cache-Line Alignment
 
-### What it does:
-- **State Reordering**: Orders states by BFS depth and transition affinity
-- **Rule Placement**: Places transition rules near their source state
-- **Cache Line Alignment**: Aligns data to cache line boundaries (default 64 bytes)
+States are aligned to 64-byte cache boundaries with a **max-slack** constraint:
+
+- `MAX_SLACK = 5`: only pad if ≤5 bytes wasted
+- Hot states (start + accepting): 4× slack (20 bytes)
+- Dynamic buffer sizing based on actual alignment
 
 ### Why it matters:
-- Reduces cache misses during evaluation
-- Improves branch prediction
-- Better memory locality
+- **Forward path locality**: BFS layers within SCCs are contiguous in memory
+- **Cross-SCC locality**: Frequently connected SCCs are adjacent
+- **Cache-line boundaries**: Hot states start at cache-line boundaries
+- **Bounded SAT**: Finds optimal SCC ordering for small graphs
 
-### Layout Example:
+### Layout Order:
 ```
-Before: Random state order
-After:  [Start states] [Common path states] [Rare path states] [Accepting states]
+[Entry fan-out: BFS layers 0..d1]
+[SCC_0 unrolled, SCC_1 unrolled, ...]  ← refined condensation order
+[Exit fan-in: rev-BFS layers 0..d2]
 ```
+
+### Option: Bounded SAT for Condensation Ordering
+
+**File:** `tools/dfa_layout_sat.cpp` (requires CaDiCaL)
+
+For condensation graphs with ≤20 SCCs, bounded SAT finds optimal ordering:
+- One-hot position encoding: `x[i][p]` = SCC i at position p
+- Topological constraints: edge i→j implies pos[i] < pos[j]
+- Sequential counter: bounds total weighted transition distance
+- Binary search: iteratively tightens bound until UNSAT
 
 ## Summary
 
@@ -469,9 +486,8 @@ After:  [Start states] [Common path states] [Rare path states] [Accepting states
 | 5. DFA Construct | `nfa2dfa.c` | Subset construction | DFA states/transitions |
 | 6. DFA Flatten | `nfa2dfa.c` | Expand special transitions | Full 256-char tables |
 | 7. DFA Minimize | `dfa_minimize.c` | Minimize DFA | Minimal DFA |
-| **Mealy Layer** | `nfa_builder.c` + `dfa_eval.c` | Capture extraction | Capture metadata |
 | 8. Compress | `dfa_compress.c` | Rule merging, range opt | Compressed rules |
-| 9. Layout | `dfa_layout.c` | Cache-optimized layout | Optimized binary |
+| 9. Layout | `dfa_layout.c` | SCC-based cache-optimized layout | Optimized binary |
 
 ## Usage Flow
 

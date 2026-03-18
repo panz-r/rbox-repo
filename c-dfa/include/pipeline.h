@@ -1,8 +1,22 @@
 /**
- * pipeline.h - Public API for ReadOnlyBox DFA pipeline library
+ * pipeline.h - DFA Building Pipeline API
  *
- * Enables use from Go (cgo), Python (ctypes), Rust (ffi), and C.
- * All state is encapsulated in opaque handles - no global state.
+ * FOR: Machine builders who need to compile patterns into binary DFAs.
+ * NOT FOR: Eval-only users (see dfa.h for simple eval on pre-built DFAs).
+ *
+ * Provides:
+ *   - Pattern set compilation (NFA → DFA → minimize → compress → binary)
+ *   - Pipeline orchestration for building DFA binaries from pattern files
+ *   - Evaluator wrapper for convenient evaluation of built DFAs
+ *
+ * Usage:
+ *   pipeline_t* p = pipeline_create();
+ *   pipeline_set_patterns_file(p, "patterns.txt");
+ *   pipeline_run(p);  // builds binary DFA
+ *   dfa_result_t result = pipeline_evaluate(p, "input");
+ *   pipeline_destroy(p);
+ *
+ * For eval-only use on pre-built DFAs, see dfa.h.
  */
 
 #ifndef PIPELINE_H

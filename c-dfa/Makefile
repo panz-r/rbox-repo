@@ -63,6 +63,7 @@ LIB_OBJS = lib/pipeline.o \
            lib/nfa2dfa_context.o \
            $(SRC_DIR)/dfa_eval.o \
            $(SRC_DIR)/dfa_loader.o \
+           $(SRC_DIR)/dfa_machine.o \
            $(TOOLS_DIR)/nfa_builder_lib.o \
            $(NFA_BUILDER_MODULES) \
            $(TOOLS_DIR)/nfa2dfa.o \
@@ -81,6 +82,13 @@ LIB_OBJS = lib/pipeline.o \
 $(LIB): $(LIB_OBJS)
 	$(AR) rcs $@ $(LIB_OBJS)
 
+# Eval-only library - just evaluation, no loader/I/O
+EVAL_LIB = libdfa_eval.a
+EVAL_LIB_OBJS = $(SRC_DIR)/dfa_eval.o
+
+$(EVAL_LIB): $(EVAL_LIB_OBJS)
+	$(AR) rcs $@ $(EVAL_LIB_OBJS)
+
 lib/pipeline.o: lib/pipeline.c $(INCLUDE_DIR)/*.h $(TOOLS_DIR)/nfa_builder.h $(TOOLS_DIR)/nfa2dfa_context.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -96,6 +104,9 @@ $(SRC_DIR)/dfa_eval.o: $(SRC_DIR)/dfa_eval.c $(INCLUDE_DIR)/*.h
 $(SRC_DIR)/dfa_loader.o: $(SRC_DIR)/dfa_loader.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(SRC_DIR)/dfa_machine.o: $(SRC_DIR)/dfa_machine.c $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 # Install library and headers
 PREFIX ?= /usr/local
 install-lib: $(LIB)
@@ -106,7 +117,7 @@ install-lib: $(LIB)
 	install -m 644 include/dfa_types.h $(DESTDIR)$(PREFIX)/include/
 
 # Default target: build everything
-all: $(TOOLS) $(TEST) $(LIB)
+all: $(TOOLS) $(TEST) $(LIB) $(EVAL_LIB)
 
 # Build standalone nfa_builder (links against library for all modules)
 $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(LIB)
@@ -248,6 +259,10 @@ $(TESTS_DIR)/test_minimize_integrity: $(TESTS_DIR)/test_minimize_integrity.c $(L
 $(TESTS_DIR)/test_library_api: $(TESTS_DIR)/test_library_api.c $(LIB) $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/test_library_api.c -L. -lreadonlybox_dfa $(LDFLAGS)
 
+# Build eval-only test (links against libdfa_eval.a only, no builder deps)
+$(TESTS_DIR)/test_eval_only: $(TESTS_DIR)/test_eval_only.c $(EVAL_LIB) $(INCLUDE_DIR)/dfa.h $(INCLUDE_DIR)/dfa_types.h
+	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/test_eval_only.c -L. -ldfa_eval $(LDFLAGS)
+
 # Run minimization integrity test
 test-integrity: $(TESTS_DIR)/test_minimize_integrity
 	@echo ""
@@ -264,12 +279,20 @@ test-library: $(TESTS_DIR)/test_library_api
 	@echo "================================================="
 	@./$(TESTS_DIR)/test_library_api
 
+test-eval-only: $(TESTS_DIR)/test_eval_only $(EVAL_LIB)
+	@echo ""
+	@echo "================================================="
+	@echo "EVAL-ONLY LIBRARY TESTS (libdfa_eval.a)"
+	@echo "================================================="
+	@./$(TESTS_DIR)/test_eval_only
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR) $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced \
 		$(TOOLS_DIR)/nfa2dfa_sat $(TOOLS_DIR)/pattern_order \
-		$(TESTS_DIR)/test_minimize_integrity \
-		$(TESTS_DIR)/test_library_api \
+	$(TESTS_DIR)/test_minimize_integrity \
+	$(TESTS_DIR)/test_library_api \
+	$(TESTS_DIR)/test_eval_only \
 		$(TEST) $(TEST_SAT) $(LIB)
 	rm -f $(TOOLS_DIR)/*.o lib/*.o $(SRC_DIR)/*.o
 
@@ -325,6 +348,7 @@ test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity $(TESTS_DIR)/test_li
 	@make test-integrity 2>&1 | tail -5
 	@echo ""
 	@make test-library 2>&1 | tail -4
+	@make test-eval-only 2>&1 | tail -4
 	@make test-patterns 2>&1 | tail -5
 	@echo ""
 	@echo "================================================="

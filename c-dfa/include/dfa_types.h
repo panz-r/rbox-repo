@@ -1,6 +1,17 @@
 #ifndef DFA_TYPES_H
 #define DFA_TYPES_H
 
+/**
+ * dfa_types.h - Shared type definitions for the c-dfa library
+ *
+ * Included by both:
+ *   - dfa.h (eval-only users): dfa_t, dfa_state_t, dfa_rule_t, dfa_result_t, dfa_command_category_t
+ *   - dfa_internal.h (machine builders): dfa_machine_t, plus all of the above
+ *   - dfa_types.h also contains build_dfa_state_t used by the internal library
+ *
+ * This header has NO function declarations, only types and constants.
+ */
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>

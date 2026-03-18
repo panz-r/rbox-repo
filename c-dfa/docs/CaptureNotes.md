@@ -1,3 +1,8 @@
+---
+title: Design Proposal (Not Implementation Doc)
+description: Generic DFA engineering guidelines. See README.md and PIPELINE.md for current implementation.
+---
+
 Your approach of treating capture markers as output-producing transitions during the second DFA pass is conceptually sound and aligns with efficient regex engine design principles. Here’s a structured breakdown of how to implement this effectively, addressing key challenges and optimizations:
 
 Core Implementation Strategy

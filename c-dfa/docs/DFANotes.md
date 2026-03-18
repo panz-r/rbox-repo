@@ -1,3 +1,8 @@
+---
+title: Design Proposal (Not Implementation Doc)
+description: Generic DFA engineering guidelines. See README.md and PIPELINE.md for current implementation.
+---
+
 This is a comprehensive engineering guideline document designed to take your byte-oriented regex engine from a prototype to an industrial-strength system. It focuses on correctness, performance, memory safety, and maintainability.
 
 Engineering Guideline: Industrial-Strength Byte-Oriented Regex Engine
