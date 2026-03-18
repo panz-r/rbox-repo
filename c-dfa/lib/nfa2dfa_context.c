@@ -4,8 +4,8 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include "../include/dfa_types.h"
-#include "../include/nfa.h"
+#include "dfa_types.h"
+#include "nfa.h"
 #include "../tools/nfa2dfa_context.h"
 
 #define DFA_HASH_SIZE 32749

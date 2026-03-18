@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -22,6 +24,21 @@ static int tests_passed = 0;
     if (test_##name()) { tests_passed++; printf("  [PASS] %s\n", #name); } \
     else { printf("  [FAIL] %s\n", #name); } \
 } while(0)
+
+// Redirect stderr to /dev/null for tests that intentionally trigger errors
+static void suppress_stderr_start(int* out_saved) {
+    fflush(stderr);
+    *out_saved = dup(STDERR_FILENO);
+    int devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, STDERR_FILENO);
+    close(devnull);
+}
+
+static void suppress_stderr_end(int saved_fd) {
+    fflush(stderr);
+    dup2(saved_fd, STDERR_FILENO);
+    close(saved_fd);
+}
 
 // ============================================================================
 // Pipeline error handling tests
@@ -41,15 +58,20 @@ static bool test_pipeline_null_inputs(void) {
 }
 
 static bool test_pipeline_nonexistent_file(void) {
+    int saved;
+    suppress_stderr_start(&saved);
+    printf("    [EXPECTED FAILURE: nonexistent file] ");
     pipeline_t* p = pipeline_create(NULL);
-    if (!p) return false;
+    if (!p) { suppress_stderr_end(saved); return false; }
 
     pipeline_error_t err = pipeline_run(p, "/nonexistent/path/patterns.txt");
     pipeline_destroy(p);
+    suppress_stderr_end(saved);
     return (err != PIPELINE_OK);
 }
 
 static bool test_pipeline_invalid_pattern_file(void) {
+    printf("    [EXPECTED FAILURE: invalid pattern syntax] ");
     // Create a temporary invalid pattern file
     const char* tmpfile = "/tmp/invalid_patterns_test.txt";
     FILE* f = fopen(tmpfile, "w");
@@ -60,7 +82,10 @@ static bool test_pipeline_invalid_pattern_file(void) {
     pipeline_t* p = pipeline_create(NULL);
     if (!p) { remove(tmpfile); return false; }
 
+    int saved;
+    suppress_stderr_start(&saved);
     pipeline_error_t err = pipeline_run(p, tmpfile);
+    suppress_stderr_end(saved);
     pipeline_destroy(p);
     remove(tmpfile);
 

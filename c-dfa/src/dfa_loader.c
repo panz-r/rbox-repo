@@ -1,8 +1,8 @@
 #define DFA_ERROR_PROGRAM "dfa_loader"
-#include "../include/dfa_errors.h"
+#include "dfa_errors.h"
 
-#include "../include/dfa_types.h"
-#include "../include/dfa.h"
+#include "dfa_types.h"
+#include "dfa.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

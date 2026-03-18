@@ -1,0 +1,7 @@
+[CATEGORIES]
+0: safe
+
+IDENTIFIER "dfa-eval-test-only"
+
+[safe:evaltest] cat
+[safe:evaltest2] ls

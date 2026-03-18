@@ -56,6 +56,9 @@ NFA_BUILDER_MODULES = $(TOOLS_DIR)/nfa_construct.o \
 # Static Library Target
 # ============================================================================
 
+# Default target: build everything (MUST be first rule)
+all: $(TOOLS) $(TEST) $(LIB) $(EVAL_LIB)
+
 LIB = libreadonlybox_dfa.a
 
 LIB_OBJS = lib/pipeline.o \
@@ -115,9 +118,6 @@ install-lib: $(LIB)
 	install -m 644 $(LIB) $(DESTDIR)$(PREFIX)/lib/
 	install -m 644 include/pipeline.h $(DESTDIR)$(PREFIX)/include/
 	install -m 644 include/dfa_types.h $(DESTDIR)$(PREFIX)/include/
-
-# Default target: build everything
-all: $(TOOLS) $(TEST) $(LIB) $(EVAL_LIB)
 
 # Build standalone nfa_builder (links against library for all modules)
 $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(LIB)
@@ -279,11 +279,13 @@ test-library: $(TESTS_DIR)/test_library_api
 	@echo "================================================="
 	@./$(TESTS_DIR)/test_library_api
 
-test-eval-only: $(TESTS_DIR)/test_eval_only $(EVAL_LIB)
+test-eval-only: $(TESTS_DIR)/test_eval_only $(EVAL_LIB) $(TOOLS)
 	@echo ""
 	@echo "================================================="
 	@echo "EVAL-ONLY LIBRARY TESTS (libdfa_eval.a)"
 	@echo "================================================="
+	@./tools/nfa_builder $(TESTS_DIR)/eval_test_patterns.txt /tmp/eval_test_dfa.nfa 2>/dev/null
+	@./tools/nfa2dfa_advanced /tmp/eval_test_dfa.nfa /tmp/eval_test_dfa.dfa 2>/dev/null
 	@./$(TESTS_DIR)/test_eval_only
 
 # Clean build artifacts

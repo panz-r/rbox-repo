@@ -17,12 +17,14 @@
 
 #include <rbox_protocol.h>
 #include <shell_tokenizer.h>
-#include <dfa.h>
+#include <dfa_internal.h>
 
 #define DEFAULT_SOCKET "/tmp/readonlybox.sock"
 #define DEFAULT_DFA     "./expanded_perf.dfa"
 
 /* Global DFA state */
+static void* g_dfa_data = NULL;
+static size_t g_dfa_size = 0;
 static int g_dfa_loaded = 0;
 
 static void usage(const char *prog) {
@@ -64,20 +66,16 @@ static int load_dfa(const char *dfa_path) {
     }
     fclose(f);
     
-    /* Initialize DFA */
-    if (!dfa_init(data, size)) {
+    /* Validate DFA */
+    const dfa_t* dfa = (const dfa_t*)data;
+    if (dfa->magic != DFA_MAGIC || dfa->version < 5 || dfa->version > 6) {
         free(data);
         return -1;
     }
     
-    if (!dfa_is_valid()) {
-        dfa_reset();
-        free(data);
-        return -1;
-    }
-    
+    g_dfa_data = data;
+    g_dfa_size = size;
     g_dfa_loaded = 1;
-    free(data);
     return 0;
 }
 
@@ -91,7 +89,7 @@ static int check_dfa(int argc, const char *const *args) {
         }
     }
     
-    if (!g_dfa_loaded || !dfa_is_valid()) {
+    if (!g_dfa_loaded || !g_dfa_data) {
         return -1;
     }
     
@@ -105,7 +103,9 @@ static int check_dfa(int argc, const char *const *args) {
     
     /* Evaluate against DFA */
     dfa_result_t result;
-    dfa_evaluate(cmd_buf, strlen(cmd_buf), &result);
+    if (!dfa_eval(g_dfa_data, g_dfa_size, cmd_buf, strlen(cmd_buf), &result)) {
+        return 0;  /* Not matched */
+    }
     
     /* Category = DFA_CMD_READONLY_SAFE = read-only commands */
     if (result.matched && result.category == DFA_CMD_READONLY_SAFE) {

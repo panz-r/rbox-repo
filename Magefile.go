@@ -17,15 +17,18 @@ var Default = Build
 
 // BuildDependencies builds base C libraries
 func BuildDependencies() error {
-	mg.Deps(ValidatePatterns)
-	
 	wd, _ := os.Getwd()
 	os.Setenv("CGO_ENABLED", "1")
 	os.MkdirAll("bin", 0755)
-	
+
+	// Build c-dfa FIRST (produces tools needed for pattern validation)
 	if err := runMake(filepath.Join(wd, "c-dfa")); err != nil {
 		return err
 	}
+
+	// Now validate patterns (needs nfa_builder from c-dfa)
+	mg.Deps(ValidatePatterns)
+
 	if err := runMake(filepath.Join(wd, "shellsplit")); err != nil {
 		return err
 	}
@@ -39,52 +42,27 @@ func BuildDependencies() error {
 // Depends on BuildDependencies which creates the nfa tools
 func BuildDFA() error {
 	mg.Deps(BuildDependencies)
-	
+
 	wd, _ := os.Getwd()
 	os.Setenv("CGO_ENABLED", "1")
-	
+
+	// Check if shared library already exists
+	outputFile := filepath.Join(wd, "bin", "libreadonlybox_client.so")
+	if _, err := os.Stat(outputFile); err == nil {
+		fmt.Println("=== libreadonlybox_client.so already exists, skipping DFA build ===")
+		return nil
+	}
+
 	fmt.Println("=== Building libreadonlybox_client.so ===")
-	
-	// Build nfa_builder
+
+	// Tools are already built by make in BuildDependencies
 	nfaBuilder := filepath.Join(wd, "c-dfa/tools/nfa_builder")
-	os.Remove(nfaBuilder)
-	cmd := exec.Command("gcc", "-o", nfaBuilder,
-		filepath.Join(wd, "c-dfa/tools/nfa_builder.c"),
-		filepath.Join(wd, "c-dfa/tools/pattern_order.c"),
-		filepath.Join(wd, "c-dfa/tools/multi_target_array.c"),
-		"-I"+filepath.Join(wd, "c-dfa/include"),
-		"-Wall", "-Wextra", "-std=c11", "-O2")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	
-	// Build nfa2dfa
 	nfa2dfa := filepath.Join(wd, "c-dfa/tools/nfa2dfa_advanced")
-	if _, err := os.Stat(nfa2dfa); os.IsNotExist(err) {
-		os.Remove(nfa2dfa)
-		cmd = exec.Command("gcc", "-o", nfa2dfa,
-			filepath.Join(wd, "c-dfa/tools/nfa2dfa.c"),
-			filepath.Join(wd, "c-dfa/tools/pattern_order.c"),
-			filepath.Join(wd, "c-dfa/tools/multi_target_array.c"),
-			filepath.Join(wd, "c-dfa/tools/dfa_minimize.c"),
-			filepath.Join(wd, "c-dfa/tools/dfa_minimize_brzozowski.c"),
-			filepath.Join(wd, "c-dfa/tools/dfa_layout.c"),
-			filepath.Join(wd, "c-dfa/tools/dfa_compress.c"),
-			"-I"+filepath.Join(wd, "c-dfa/include"),
-			"-Wall", "-Wextra", "-std=c11", "-O2")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return err
-		}
-	}
-	
+
 	clientDir := filepath.Join(wd, "internal/client")
-	
+
 	// Generate NFA
-	cmd = exec.Command(nfaBuilder, 
+	cmd := exec.Command(nfaBuilder,
 		filepath.Join(clientDir, "rbox_client_safe_commands.txt"),
 		filepath.Join(clientDir, "readonlybox.nfa"))
 	cmd.Dir = clientDir
@@ -93,9 +71,9 @@ func BuildDFA() error {
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	
+
 	// Generate DFA
-	cmd = exec.Command(nfa2dfa, 
+	cmd = exec.Command(nfa2dfa,
 		filepath.Join(clientDir, "readonlybox.nfa"),
 		filepath.Join(clientDir, "readonlybox.dfa"))
 	cmd.Dir = clientDir
@@ -104,7 +82,7 @@ func BuildDFA() error {
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	
+
 	// Build dfa2c_array
 	dfa2cArray := filepath.Join(clientDir, "dfa2c_array")
 	if _, err := os.Stat(dfa2cArray); os.IsNotExist(err) {
@@ -116,10 +94,10 @@ func BuildDFA() error {
 			return err
 		}
 	}
-	
+
 	// Generate C array
 	dfaCArray := filepath.Join(clientDir, "readonlybox_dfa.c")
-	cmd = exec.Command(dfa2cArray, 
+	cmd = exec.Command(dfa2cArray,
 		filepath.Join(clientDir, "readonlybox.dfa"),
 		dfaCArray, "readonlybox_dfa_data")
 	cmd.Dir = clientDir
@@ -128,45 +106,11 @@ func BuildDFA() error {
 	if err := cmd.Run(); err != nil {
 		return err
 	}
-	
+
 	// Copy to dfa_static_data.c
 	copyFile(dfaCArray, filepath.Join(clientDir, "dfa_static_data.c"))
-	
-	// Compile object files needed for Go binary linking
-	cflags := fmt.Sprintf("-I%s -I%s -I%s -O2", 
-		filepath.Join(wd, "c-dfa/include"),
-		filepath.Join(wd, "internal/client"),
-		filepath.Join(wd, "shellsplit/include"))
-	
-	// Compile dfa.o
-	cmd = exec.Command("gcc", "-c", "-o", filepath.Join(clientDir, "dfa.o"),
-		filepath.Join(clientDir, "dfa.c"), cflags)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	
-	// Compile readonlybox_dfa_data.o
-	cmd = exec.Command("gcc", "-c", "-o", filepath.Join(clientDir, "readonlybox_dfa_data.o"),
-		dfaCArray, cflags)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	
-	// Compile dfa_eval.o
-	cmd = exec.Command("gcc", "-c", "-o", filepath.Join(clientDir, "dfa_eval.o"),
-		filepath.Join(wd, "c-dfa/src/dfa_eval.c"), cflags)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	
-	// Build shared library
-	outputFile := filepath.Join(wd, "bin", "libreadonlybox_client.so")
+
+	// Build shared library - use absolute paths and explicit include directories
 	cmd = exec.Command("gcc", "-shared", "-fPIC", "-O2", "-DFA_EVAL_DEBUG=0", "-o", outputFile,
 		filepath.Join(clientDir, "client.c"),
 		filepath.Join(clientDir, "dfa.c"),
@@ -185,10 +129,10 @@ func BuildDFA() error {
 // BuildBinaries builds the main binaries
 func BuildBinaries() error {
 	mg.Deps(BuildDFA)
-	
+
 	wd, _ := os.Getwd()
 	os.Setenv("CGO_ENABLED", "1")
-	
+
 	// Force rebuild if DFA .c file is newer than .so
 	dfaC := filepath.Join(wd, "internal/client/readonlybox_dfa.c")
 	dfaSo := filepath.Join(wd, "bin/libreadonlybox_client.so")
@@ -199,7 +143,7 @@ func BuildBinaries() error {
 			os.RemoveAll(dfaSo)
 		}
 	}
-	
+
 	// Force rebuild if .so is newer than binary
 	soStat, err := os.Stat(dfaSo)
 	if err == nil {
@@ -210,7 +154,7 @@ func BuildBinaries() error {
 			}
 		}
 	}
-	
+
 	// rbox-wrap (LD_PRELOAD client)
 	if err := runMake(filepath.Join(wd, "rbox-wrap")); err != nil {
 		return err
@@ -234,14 +178,14 @@ func BuildBinaries() error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("readonlybox-server: %w", err)
 	}
-	
+
 	// readonlybox-ptrace
 	if err := runMake(filepath.Join(wd, "rbox-ptrace")); err != nil {
 		return err
 	}
-	copyFile(filepath.Join(wd, "rbox-ptrace", "readonlybox-ptrace"), 
+	copyFile(filepath.Join(wd, "rbox-ptrace", "readonlybox-ptrace"),
 		filepath.Join(wd, "bin", "readonlybox-ptrace"))
-	
+
 	return nil
 }
 
@@ -256,10 +200,10 @@ func Build() error {
 // Clean removes build artifacts
 func Clean() error {
 	wd, _ := os.Getwd()
-	
+
 	// Remove bin directory
 	os.RemoveAll(filepath.Join(wd, "bin"))
-	
+
 	// Clean subprojects
 	runMakeClean := func(dir string) error {
 		cmd := exec.Command("make", "clean")
@@ -268,7 +212,7 @@ func Clean() error {
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
 	}
-	
+
 	if err := runMakeClean(filepath.Join(wd, "c-dfa")); err != nil {
 		return err
 	}
@@ -281,24 +225,24 @@ func Clean() error {
 	if err := runMakeClean(filepath.Join(wd, "rbox-ptrace")); err != nil {
 		return err
 	}
-	
+
 	// Clean generated DFA files
 	os.RemoveAll(filepath.Join(wd, "internal/client/readonlybox.nfa"))
 	os.RemoveAll(filepath.Join(wd, "internal/client/readonlybox.dfa"))
 	os.RemoveAll(filepath.Join(wd, "internal/client/readonlybox_dfa.c"))
 	os.RemoveAll(filepath.Join(wd, "internal/client/dfa_static_data.c"))
 	os.RemoveAll(filepath.Join(wd, "internal/client/dfa2c_array"))
-	
+
 	// Clean nfa_builder and nfa2dfa tools
 	os.RemoveAll(filepath.Join(wd, "c-dfa/tools/nfa_builder"))
 	os.RemoveAll(filepath.Join(wd, "c-dfa/tools/nfa2dfa_advanced"))
-	
+
 	// Clean any stale binaries in project root
 	os.RemoveAll(filepath.Join(wd, "readonlybox"))
 	os.RemoveAll(filepath.Join(wd, "readonlybox-server"))
 	os.RemoveAll(filepath.Join(wd, "libreadonlybox_client.so"))
 	os.RemoveAll(filepath.Join(wd, "rbox-server/server"))
-	
+
 	fmt.Println("Clean complete")
 	return nil
 }
@@ -306,17 +250,17 @@ func Clean() error {
 // Test runs all tests
 func Test() error {
 	mg.Deps(Build)
-	
+
 	// Run rbox-protocol tests
 	if err := runMake("rbox-protocol"); err != nil {
 		return err
 	}
-	
+
 	// Run rbox-wrap tests
 	if err := runMake("rbox-wrap"); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -324,23 +268,11 @@ func Test() error {
 func ValidatePatterns() error {
 	fmt.Println("Validating patterns...")
 	wd, _ := os.Getwd()
-	
+
+	// nfa_builder is already built by make c-dfa
 	nfaBuilder := filepath.Join(wd, "c-dfa/tools/nfa_builder")
-	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
-		cmd := exec.Command("gcc", "-o", nfaBuilder,
-			filepath.Join(wd, "c-dfa/tools/nfa_builder.c"),
-			filepath.Join(wd, "c-dfa/tools/pattern_order.c"),
-			filepath.Join(wd, "c-dfa/tools/multi_target_array.c"),
-			"-I"+filepath.Join(wd, "c-dfa/include"),
-			"-Wall", "-Wextra", "-std=c11", "-O2")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return err
-		}
-	}
-	
-	cmd := exec.Command(nfaBuilder, "--validate-only", 
+
+	cmd := exec.Command(nfaBuilder, "--validate-only",
 		filepath.Join(wd, "internal/client/rbox_client_safe_commands.txt"))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

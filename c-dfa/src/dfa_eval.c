@@ -1,6 +1,9 @@
-#include "../include/dfa_internal.h"
-#include "../include/dfa_types.h"
+#include "dfa_types.h"
+#include "dfa_format.h"
 #include <string.h>
+
+// Forward declarations
+bool dfa_eval_with_limit(const void* dfa_void, size_t dfa_size, const char* input, size_t length, dfa_result_t* result, int max_caps);
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -449,22 +452,27 @@ bool dfa_result_get_capture_string(const dfa_result_t* result, int index,
  * One-time DFA identifier check. Verifies the loaded binary matches expected identifier.
  * Call once after loading, before any eval calls.
  *
+ * Uses dfa_format.h for all binary offset definitions.
+ *
  * @param dfa_data    Binary DFA data
  * @param dfa_size    Size of DFA data
  * @param expected_id Identifier string embedded in the DFA binary
  * @return true if identifiers match, false if mismatch or invalid data
  */
 bool dfa_eval_validate_id(const void* dfa_data, size_t dfa_size, const char* expected_id) {
-    if (!dfa_data || dfa_size < sizeof(dfa_t) || !expected_id) return false;
+    if (!dfa_data || dfa_size < DFA_HEADER_SIZE || !expected_id) return false;
 
-    const dfa_t* dfa = (const dfa_t*)dfa_data;
-    if (dfa->magic != DFA_MAGIC) return false;
+    const uint8_t* data = (const uint8_t*)dfa_data;
 
-    size_t id_offset = 21;  // sizeof(dfa_t) header fields before identifier
-    if (id_offset + dfa->identifier_length > dfa_size) return false;
+    // Check magic at fixed offset
+    if (dfa_fmt_magic(data) != DFA_MAGIC) return false;
+
+    // Read identifier length from fixed offset
+    uint8_t id_len = dfa_fmt_id_len(data);
+    if (DFA_OFF_IDENTIFIER + id_len > dfa_size) return false;
 
     size_t expected_len = strlen(expected_id);
-    if (dfa->identifier_length != expected_len) return false;
+    if (id_len != expected_len) return false;
 
-    return memcmp(dfa->identifier, expected_id, expected_len) == 0;
+    return memcmp(dfa_fmt_identifier(data), expected_id, expected_len) == 0;
 }

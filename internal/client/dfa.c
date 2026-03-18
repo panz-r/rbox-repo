@@ -13,7 +13,7 @@ static pthread_once_t dfa_init_once = PTHREAD_ONCE_INIT;
 static bool g_dfa_initialized = false;
 
 static void dfa_init_once_wrapper(void) {
-    if (!dfa_init_with_identifier(readonlybox_dfa_data, readonlybox_dfa_data_size, EXPECTED_IDENTIFIER)) {
+    if (!dfa_eval_validate_id(readonlybox_dfa_data, readonlybox_dfa_data_size, EXPECTED_IDENTIFIER)) {
         fprintf(stderr, "DFA initialization failed: identifier mismatch\n");
         return;
     }
@@ -32,7 +32,7 @@ int dfa_should_allow_len(const char* cmd, int cmd_len) {
     }
 
     dfa_result_t result;
-    if (dfa_evaluate(cmd, cmd_len, &result)) {
+    if (dfa_eval(readonlybox_dfa_data, readonlybox_dfa_data_size, cmd, cmd_len, &result)) {
         return (result.category_mask & CAT_MASK_AUTOALLOW) && result.matched;
     }
     return 0;
@@ -59,7 +59,7 @@ int dfa_get_category_mask(const char* cmd, uint8_t* out_mask) {
     }
 
     dfa_result_t result;
-    if (dfa_evaluate(cmd, strlen(cmd), &result)) {
+    if (dfa_eval(readonlybox_dfa_data, readonlybox_dfa_data_size, cmd, strlen(cmd), &result)) {
         *out_mask = result.category_mask;
         return result.matched;
     }
@@ -80,7 +80,7 @@ void dfa_debug(const char* cmd) {
     }
 
     dfa_result_t result;
-    if (dfa_evaluate(cmd, strlen(cmd), &result)) {
+    if (dfa_eval(readonlybox_dfa_data, readonlybox_dfa_data_size, cmd, strlen(cmd), &result)) {
         fprintf(stderr, "DFA result for '%s': matched=%s, category_mask=0x%02x, length=%zu\n",
                 cmd, result.matched ? "yes" : "no",
                 result.category_mask,

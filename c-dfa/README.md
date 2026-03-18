@@ -43,7 +43,7 @@ See [docs/PIPELINE.md](docs/PIPELINE.md) for detailed pipeline documentation.
 
 | Library | Size | Purpose |
 |---------|------|---------|
-| `libdfa_eval.a` | ~17KB | Eval-only (loading + evaluation). For pre-built DFAs. |
+| `libdfa_eval.a` | ~8KB | Eval-only (loading + evaluation). For pre-built DFAs. |
 | `libreadonlybox_dfa.a` | ~235KB | Full library (building + evaluating). For dynamic pattern sets. |
 
 ## Minimization Algorithms
@@ -151,11 +151,20 @@ If you only need to evaluate strings against a pre-built binary DFA, link agains
 
 ```c
 #include "dfa.h"
+#include <stdlib.h>
+#include <stdio.h>
 
-// Load DFA from file (you own the memory)
-size_t dfa_size;
-void* dfa_data = load_dfa_from_file("readonlybox.dfa", &dfa_size);
-if (!dfa_data) { /* handle error */ }
+// Load DFA binary - however you want (you own the memory)
+FILE* f = fopen("readonlybox.dfa", "rb");
+fseek(f, 0, SEEK_END);
+size_t dfa_size = ftell(f);
+fseek(f, 0, SEEK_SET);
+void* dfa_data = malloc(dfa_size);
+fread(dfa_data, 1, dfa_size, f);
+fclose(f);
+
+// Optional: verify this is the right DFA
+dfa_eval_validate_id(dfa_data, dfa_size, "readonlybox-v2");
 
 // Evaluate - pass DFA pointer and size directly
 dfa_result_t result;

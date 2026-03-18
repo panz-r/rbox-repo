@@ -8,11 +8,11 @@
 #define _POSIX_C_SOURCE 200809L
 #define DFA_ERROR_PROGRAM "pipeline"
 
-#include "../include/pipeline.h"
-#include "../include/dfa_internal.h"
-#include "../include/dfa_types.h"
-#include "../include/nfa.h"
-#include "../include/dfa_errors.h"
+#include "pipeline.h"
+#include "dfa_internal.h"
+#include "dfa_types.h"
+#include "nfa.h"
+#include "dfa_errors.h"
 
 #include "../tools/nfa_builder.h"
 #include "../tools/nfa2dfa_context.h"

@@ -3,7 +3,7 @@
  * Part of the full library (libreadonlybox_dfa.a), NOT the eval library.
  */
 
-#include "../include/dfa_internal.h"
+#include "dfa_internal.h"
 #include <string.h>
 #include <stdio.h>
 
