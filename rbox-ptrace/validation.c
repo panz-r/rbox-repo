@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <time.h>
+#include <sys/fcntl.h>
 
 #include "validation.h"
 #include "protocol.h"
@@ -21,8 +22,14 @@
 static FILE *g_debug_file = NULL;
 
 static void debug_init(void) {
-    g_debug_file = fopen("/tmp/readonlybox-ptrace.log", "a");
-    if (!g_debug_file) {
+    int fd = open("/tmp/readonlybox-ptrace.log", O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        g_debug_file = fdopen(fd, "a");
+    }
+    if (!g_debug_file && fd >= 0) {
+        close(fd);
+        g_debug_file = stderr;
+    } else if (!g_debug_file) {
         g_debug_file = stderr;
     }
 }

@@ -10,8 +10,16 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <limits.h>
 
 #include "memory.h"
+
+/*
+ * Memory string read limit.
+ * PATH_MAX is the maximum length of a full pathname on Linux (typically 4096).
+ * We use this as the limit to prevent truncation of path arguments.
+ */
+#define MEMORY_STRING_MAX PATH_MAX
 
 /* Initialize memory context for a traced process */
 int memory_init(MemoryContext *ctx, pid_t pid, unsigned long stack_pointer) {
@@ -25,17 +33,20 @@ int memory_init(MemoryContext *ctx, pid_t pid, unsigned long stack_pointer) {
     return 0;
 }
 
-/* Read a string from traced process memory */
+/* Read a string from traced process memory.
+ * Returns a newly allocated string that must be freed by the caller.
+ * Strings longer than MEMORY_STRING_MAX - 1 are truncated.
+ */
 char *memory_read_string(pid_t pid, unsigned long addr) {
     if (addr == 0) return NULL;
 
-    char *buffer = malloc(4096);
+    char *buffer = malloc(MEMORY_STRING_MAX);
     if (!buffer) return NULL;
 
     unsigned long word;
     int offset = 0;
 
-    while (offset < 4095) {
+    while (offset < MEMORY_STRING_MAX - 1) {
         errno = 0;
         word = ptrace(PTRACE_PEEKDATA, pid, addr + offset, NULL);
         if (errno != 0) {
@@ -54,7 +65,7 @@ char *memory_read_string(pid_t pid, unsigned long addr) {
         offset += sizeof(long);
     }
 
-    buffer[4095] = '\0';
+    buffer[MEMORY_STRING_MAX - 1] = '\0';
     return buffer;
 }
 
@@ -73,8 +84,12 @@ char **memory_read_string_array_with_addrs(pid_t pid, unsigned long addr, unsign
         return NULL;
     }
 
-    char **array = malloc(256 * sizeof(char *));
-    unsigned long *addrs = malloc(256 * sizeof(unsigned long));
+    /* Limit to 1024 env vars to prevent excessive memory allocation
+     * This is well beyond typical needs (usually < 50) and exceeds the
+     * server protocol limit of 256, so no legitimate use case should be affected. */
+#define MAX_ENV_ARRAY_SIZE 1024
+    char **array = malloc(MAX_ENV_ARRAY_SIZE * sizeof(char *));
+    unsigned long *addrs = malloc(MAX_ENV_ARRAY_SIZE * sizeof(unsigned long));
     if (!array || !addrs) {
         free(array);
         free(addrs);
@@ -84,7 +99,7 @@ char **memory_read_string_array_with_addrs(pid_t pid, unsigned long addr, unsign
     unsigned long ptr;
     int i = 0;
 
-    while (i < 255) {
+    while (i < MAX_ENV_ARRAY_SIZE - 1) {
         errno = 0;
         ptr = ptrace(PTRACE_PEEKDATA, pid, addr + i * sizeof(long), NULL);
         if (errno != 0 || ptr == 0) break;
@@ -98,13 +113,13 @@ char **memory_read_string_array_with_addrs(pid_t pid, unsigned long addr, unsign
 
     array[i] = NULL;
     addrs[i] = 0;
-    
+
     if (out_addrs) {
         *out_addrs = addrs;
     } else {
         free(addrs);
     }
-    
+
     return array;
 }
 

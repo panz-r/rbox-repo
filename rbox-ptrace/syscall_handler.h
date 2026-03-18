@@ -12,14 +12,18 @@
 /* Shell tokenizer for parsing commands into subcommands */
 #include "shell_tokenizer.h"
 
-/* Allowance tracking for validated commands
+/*
+ * Allowance tracking for validated commands.
  * When a command is allowed, child processes can inherit the permission
  * to run subcommands without requiring new server requests.
- * Each allowance:
- * - Is tied to a parent PID that was allowed
- * - Tracks specific subcommands (e.g., "ps", "grep") extracted from the full command
- * - Each subcommand can be used once
- * - Expires after 10 minutes (auto-decay)
+ *
+ * LIMITS:
+ * - MAX_ALLOWANCES (256): Maximum number of concurrent allowances
+ * - ALLOWANCE_TIMEOUT_SECONDS (600): Allowances expire after 10 minutes
+ * - SHELL_MAX_SUBCOMMANDS: Maximum subcommands per command (from shell_tokenizer.h)
+ *
+ * When the allowance table is full, old allowances are reused (oldest slot).
+ * Each allowance tracks subcommands from one allowed parent command.
  */
 #define MAX_ALLOWANCES 256
 #define ALLOWANCE_TIMEOUT_SECONDS 600  /* 10 minutes */
@@ -28,7 +32,7 @@ typedef struct {
     pid_t parent_pid;           /* PID of the parent that was allowed */
     char *subcommands[SHELL_MAX_SUBCOMMANDS]; /* The subcommands that are allowed */
     int subcommand_count;
-    time_t timestamp;          /* When the allowance was granted */
+    struct timespec timestamp;  /* When the allowance was granted (monotonic clock) */
     int used_mask[(SHELL_MAX_SUBCOMMANDS + 31) / 32]; /* Bitmap of used subcommands */
 } Allowance;
 
@@ -68,26 +72,29 @@ extern Allowance g_allowances[MAX_ALLOWANCES];
     #error "Unsupported architecture"
 #endif
 
-/* Process state tracking structure.
- * 
+/*
+ * Process state tracking structure.
+ *
  * Why we need this: Ptrace intercepts syscalls from multiple processes
  * (the main process and its children). We need to track state for each
  * process separately to know:
  * - Which processes are in the middle of an execve
- * - Which processes were redirected to readonlybox
  * - Which processes have been detached
  * - The original command arguments for validation
- * 
- * The process table is a simple hash map indexed by PID. It can fill up
- * if the traced program creates more than MAX_PROCESSES (4096) processes.
- * In that case, new processes won't be tracked and their execves won't be
- * validated (they'll be allowed to run without server approval).
+ *
+ * LIMITS:
+ * - MAX_PROCESSES (4096): Maximum simultaneous traced processes
+ *   When full, new processes bypass validation (security tradeoff)
+ * - Process table is a simple hash map indexed by PID
+ * - When a process exits, its entry is freed for reuse
+ *
+ * The 4096 limit applies to simultaneous processes. Long-running shells
+ * that spawn many sequential commands are fine because each command
+ * process exits and frees its table entry.
  */
 typedef struct {
     pid_t pid;
     int in_execve;          /* Currently in execve syscall */
-    int redirected;         /* Process was redirected to readonlybox */
-    int post_redirect_exec; /* Already allowed post-redirect execve */
     int initial_execve;     /* This is the initial execve (first one) */
     int detached;           /* Process has been detached */
     int validated;          /* This execve has been validated */
@@ -96,12 +103,10 @@ typedef struct {
     char **execve_envp;     /* Saved envp for execve */
     unsigned long *execve_envp_addrs; /* Original addresses of envp strings in child memory */
     char *last_validated_cmd; /* Last command that was validated for this process */
-    
-    /* Flagged env vars for current execve (for server decision) */
-    char **flagged_env_vars;  /* Array of flagged env var names */
-    float *flagged_env_scores; /* Array of scores */
-    int flagged_env_count;    /* Number of flagged env vars */
 } ProcessState;
+
+/* Find process state without creating if not found - for fork event handling */
+ProcessState *syscall_find_process_state(pid_t pid);
 
 /* Set the main process PID */
 void syscall_set_main_process(pid_t pid);

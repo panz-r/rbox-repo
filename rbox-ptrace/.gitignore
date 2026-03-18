@@ -1,0 +1,6 @@
+# Generated files
+rbox_ptrace.nfa
+rbox_ptrace.dfa
+rbox_ptrace_dfa_data.c
+
+*.o

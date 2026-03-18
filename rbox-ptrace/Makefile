@@ -7,15 +7,25 @@ LDFLAGS = -lpthread -lm
 # Add rbox-protocol library
 LDFLAGS += ../rbox-protocol/librbox_protocol.a
 
+# DFA build tools
+NFA_BUILDER = ../c-dfa/tools/nfa_builder
+NFA2DFA = ../c-dfa/tools/nfa2dfa_advanced
+DFA2C = ../c-dfa/tools/dfa2c_array
+
+# Pattern file and output files
+PATTERN_FILE = rbox_ptrace_embedded_commands.txt
+NFA_FILE = rbox_ptrace.nfa
+DFA_FILE = rbox_ptrace.dfa
+DFA_DATA_C = rbox_ptrace_dfa_data.c
+
 # Source files
 SRCS = main.c \
        syscall_handler.c \
        memory.c \
        validation.c \
        dfa.c \
-       readonlybox_dfa_data.c \
+       $(DFA_DATA_C) \
        ../c-dfa/src/dfa_eval.c \
-       ../c-dfa/src/dfa_loader.c \
        ../shellsplit/src/env_screener.c \
        ../shellsplit/src/relative_permutation_entropy.c \
        ../shellsplit/src/shell_tokenizer.c
@@ -26,9 +36,21 @@ OBJS = $(SRCS:.c=.o)
 # Target binary
 TARGET = readonlybox-ptrace
 
-.PHONY: all clean test test-e2e test-memory test-syscall test-validation test-integration test-verbose list debug coverage cppcheck valgrind compile_commands
+.PHONY: all clean test test-e2e test-memory test-syscall test-validation test-integration test-verbose list debug coverage cppcheck valgrind compile_commands dfa
 
-all: $(TARGET)
+all: dfa $(TARGET)
+
+# Build DFA from pattern file
+dfa: $(DFA_DATA_C)
+
+$(NFA_FILE): $(PATTERN_FILE)
+	$(NFA_BUILDER) $(PATTERN_FILE) $(NFA_FILE)
+
+$(DFA_FILE): $(NFA_FILE)
+	$(NFA2DFA) $(NFA_FILE) $(DFA_FILE)
+
+$(DFA_DATA_C): $(DFA_FILE) $(DFA2C)
+	$(DFA2C) $(DFA_FILE) $(DFA_DATA_C) rbox_ptrace_dfa_data
 
 # Generate compile_commands.json using bear
 compile_commands:
@@ -45,7 +67,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(TARGET) $(OBJS) *.o
+	rm -f $(TARGET) $(OBJS) *.o $(NFA_FILE) $(DFA_FILE) $(DFA_DATA_C)
 
 # Debug build
 debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -DDEBUG

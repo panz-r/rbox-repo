@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/user.h>
+#include <sys/fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,8 +32,14 @@ extern int run_judge(const char *command, const char *caller_info);
 static FILE *g_debug_file = NULL;
 
 static void debug_init(void) {
-    g_debug_file = fopen("/tmp/readonlybox-ptrace.log", "a");
-    if (!g_debug_file) {
+    int fd = open("/tmp/readonlybox-ptrace.log", O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        g_debug_file = fdopen(fd, "a");
+    }
+    if (!g_debug_file && fd >= 0) {
+        close(fd);
+        g_debug_file = stderr;
+    } else if (!g_debug_file) {
         g_debug_file = stderr;
     }
 }
@@ -97,15 +104,18 @@ static void extract_command_name(const char *cmd, shell_range_t range, char *buf
 
 /* Check if a parent PID has a valid allowance for a specific subcommand */
 static int check_allowance(pid_t parent_pid, const char *subcommand) {
-    time_t now = time(NULL);
-    
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
     for (int i = 0; i < MAX_ALLOWANCES; i++) {
         if (g_allowances[i].parent_pid == 0) {
             continue;  /* Empty slot */
         }
-        
+
         /* Check timeout - discard allowances older than 10 minutes */
-        if (now - g_allowances[i].timestamp > ALLOWANCE_TIMEOUT_SECONDS) {
+        double age_seconds = (now.tv_sec - g_allowances[i].timestamp.tv_sec) +
+                            (now.tv_nsec - g_allowances[i].timestamp.tv_nsec) / 1e9;
+        if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
             DEBUG_PRINT("ALLOWANCE: expired allowance for parent %d\n", parent_pid);
             for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
                 free(g_allowances[i].subcommands[j]);
@@ -181,7 +191,7 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
     
     /* Store allowances for each subcommand */
     g_allowances[slot].parent_pid = parent_pid;
-    g_allowances[slot].timestamp = time(NULL);
+    clock_gettime(CLOCK_MONOTONIC, &g_allowances[slot].timestamp);
     g_allowances[slot].subcommand_count = 0;
     memset(g_allowances[slot].used_mask, 0, sizeof(g_allowances[slot].used_mask));
     
@@ -265,6 +275,21 @@ ProcessState *syscall_get_process_state(pid_t pid) {
     return NULL;  /* Table full */
 }
 
+/* Find process state without creating - returns NULL if not found */
+ProcessState *syscall_find_process_state(pid_t pid) {
+    int idx = pid_hash(pid);
+
+    /* Search for existing entry */
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        int probe = (idx + i) % MAX_PROCESSES;
+        if (g_process_table[probe] && g_process_table[probe]->pid == pid) {
+            return g_process_table[probe];
+        }
+    }
+
+    return NULL;  /* Not found */
+}
+
 /* Remove process state */
 void syscall_remove_process_state(pid_t pid) {
     int idx = pid_hash(pid);
@@ -302,17 +327,25 @@ int syscall_is_fork(USER_REGS *regs) {
 }
 
 /* Build command string from argv - dynamic allocation */
+#define MAX_COMMAND_STRING_LEN 65536  /* 64KB sanity limit */
+
 static char *build_command_string_alloc(char *const argv[]) {
     if (!argv || !argv[0]) return NULL;
 
     /* First pass: calculate total length needed */
     size_t total_len = 0;
     for (int i = 0; argv[i]; i++) {
-        total_len += strlen(argv[i]) + 1;  /* +1 for space or null terminator */
+        size_t len = strlen(argv[i]) + 1;  /* +1 for space separator */
+        /* Check for integer overflow */
+        if (total_len + len < total_len || total_len + len > MAX_COMMAND_STRING_LEN) {
+            DEBUG_PRINT("HANDLER: command string too large or overflow\n");
+            return NULL;
+        }
+        total_len += len;
     }
-    
+
     if (total_len == 0) return NULL;
-    
+
     /* Allocate buffer (add 1 for null terminator) */
     char *buf = malloc(total_len + 1);
     if (!buf) return NULL;
@@ -418,8 +451,8 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
     /* Only check execve syscalls */
     if (syscall_is_execve(regs)) {
-        DEBUG_PRINT("HANDLER: pid=%d execve detected, initial=%d, detached=%d, redirected=%d, post_redirect=%d\n", 
-                    pid, state->initial_execve, state->detached, state->redirected, state->post_redirect_exec);
+        DEBUG_PRINT("HANDLER: pid=%d execve detected, initial=%d, detached=%d\n",
+                    pid, state->initial_execve, state->detached);
         
         /* New execve that needs validation - reset validated flag */
         state->validated = 0;
@@ -469,6 +502,11 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         /* Build command string for validation - use dynamic allocation to avoid truncation */
         char *command = build_command_string_alloc(state->execve_argv);
         if (!command) {
+            /* Allocation failed - block the command to be safe */
+            DEBUG_PRINT("HANDLER: pid=%d failed to build command string, blocking\n", pid);
+            if (block_execve(pid, regs) < 0) {
+                kill(pid, SIGKILL);
+            }
             return 0;
         }
 
@@ -542,7 +580,11 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 /* Filter failed - log but continue (not critical for DFA-allowed) */
                 DEBUG_PRINT("HANDLER: pid=%d env filter failed for '%s', continuing anyway\n", pid, command);
             }
-            
+
+            /* Clear environment decision variables to prevent leakage to subsequent commands */
+            unsetenv("READONLYBOX_ENV_DECISIONS");
+            unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
+
             /* Continue tracing - don't detach */
             free(command);
             return 0;
@@ -605,10 +647,17 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             if (block_execve(pid, regs) < 0) {
                 kill(pid, SIGKILL);
             }
+            /* Clear environment decision variables before returning */
+            unsetenv("READONLYBOX_ENV_DECISIONS");
+            unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
             free(command);
             return 0;
         }
-        
+
+        /* Clear environment decision variables to prevent leakage to subsequent commands */
+        unsetenv("READONLYBOX_ENV_DECISIONS");
+        unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
+
         free(command);
         return 0;
     }
@@ -628,56 +677,70 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     DEBUG_PRINT("FILTER: parsing env decisions: '%s'\n", env_decisions_str);
     
     /* Parse decisions: format is "index:decision,index:decision,..."
-     * where decision is 0=allow, 1=deny */
+     * where decision is 0=allow, 1=deny
+     * Uses strict parsing - abort on any malformed input */
     int decisions[256] = {0};  /* index -> decision */
     int max_index = -1;
-    
+    int parse_error = 0;
+
     const char *p = env_decisions_str;
     while (*p) {
+        /* Parse index - must be non-negative integer */
         char *end;
-        int idx = strtol(p, &end, 10);
-        if (end == p || idx < 0 || idx >= 256) break;
-        if (*end != ':') break;
+        long idx = strtol(p, &end, 10);
+        if (end == p || idx < 0 || idx >= 256) { parse_error = 1; break; }
+        if (*end != ':') { parse_error = 1; break; }
         p = end + 1;
-        int decision = strtol(p, &end, 10);
-        if (end == p) break;
-        
-        decisions[idx] = decision;
-        if (idx > max_index) max_index = idx;
-        
-        if (*end == ',') p = end + 1;
-        else if (*end == '\0') break;
-        else break;
+
+        /* Parse decision - must be 0 or 1 */
+        int decision = *p - '0';
+        if (decision != 0 && decision != 1) { parse_error = 1; break; }
+        p++;
+
+        /* Must be either comma (more entries) or null (end) */
+        if (*p == ',') {
+            p++;
+        } else if (*p == '\0') {
+            /* Valid end of string */
+            decisions[(int)idx] = decision;
+            if ((int)idx > max_index) max_index = (int)idx;
+            break;
+        } else {
+            parse_error = 1; break;
+        }
+
+        decisions[(int)idx] = decision;
+        if ((int)idx > max_index) max_index = (int)idx;
     }
-    
+
+    /* Abort on parse error - reject potentially malicious/malformed input */
+    if (parse_error) {
+        DEBUG_PRINT("FILTER: env decision parse error, rejecting\n");
+        return -1;
+    }
+
     if (max_index < 0) return 0;
-    
-    /* Get flagged env var names - first try environment, then process state */
+
+    /* Get flagged env var names from environment */
     const char *env_names_str = getenv("READONLYBOX_FLAGGED_ENV_NAMES");
     char *flagged_names[256] = {0};
     int flagged_count = 0;
-    
-    if (env_names_str && strlen(env_names_str) > 0) {
-        /* Parse names from environment */
-        char buf[4096];
-        strncpy(buf, env_names_str, sizeof(buf) - 1);
-        buf[sizeof(buf) - 1] = '\0';
-        
-        char *saveptr;
-        char *token = strtok_r(buf, ",", &saveptr);
-        while (token && flagged_count < 256) {
-            flagged_names[flagged_count++] = token;
-            token = strtok_r(NULL, ",", &saveptr);
-        }
-    } else if (state->flagged_env_vars && state->flagged_env_count > 0) {
-        /* Use from process state */
-        flagged_count = state->flagged_env_count;
-        for (int i = 0; i < flagged_count && i < 256; i++) {
-            flagged_names[i] = state->flagged_env_vars[i];
-        }
-    } else {
+
+    if (!env_names_str || strlen(env_names_str) == 0) {
         DEBUG_PRINT("FILTER: no flagged env var names available\n");
         return 0;
+    }
+
+    /* Parse names from environment */
+    char buf[4096];
+    strncpy(buf, env_names_str, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    char *saveptr;
+    char *token = strtok_r(buf, ",", &saveptr);
+    while (token && flagged_count < 256) {
+        flagged_names[flagged_count++] = token;
+        token = strtok_r(NULL, ",", &saveptr);
     }
     
     /* Filter envp - remove denied vars */
@@ -719,7 +782,11 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
             }
         }
         
-        if (!denied) {
+        if (denied) {
+            /* Free the string for denied env vars to prevent memory leak */
+            free(state->execve_envp[i]);
+            state->execve_envp[i] = NULL;
+        } else {
             new_envp[new_idx] = state->execve_envp[i];
             new_env_addrs[new_idx] = state->execve_envp_addrs[i];
             new_idx++;

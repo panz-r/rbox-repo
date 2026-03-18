@@ -43,17 +43,6 @@ typedef struct {
 static FlaggedEnv g_flagged_envs[256];
 static int g_flagged_env_count = 0;
 
-/* Cleanup function for atexit */
-static void cleanup_flagged_env_names(void) {
-    for (int i = 0; i < g_flagged_env_count && i < 256; i++) {
-        if (g_flagged_envs[i].name) {
-            free(g_flagged_envs[i].name);
-            g_flagged_envs[i].name = NULL;
-        }
-    }
-    g_flagged_env_count = 0;
-}
-
 /* Forward declarations for judge execution */
 static const char *get_readonlybox_path(void);
 int run_judge(const char *command, const char *caller_info);
@@ -62,8 +51,14 @@ int run_judge(const char *command, const char *caller_info);
 static FILE *g_debug_file = NULL;
 
 static void debug_init(void) {
-    g_debug_file = fopen("/tmp/readonlybox-ptrace.log", "a");
-    if (!g_debug_file) {
+    int fd = open("/tmp/readonlybox-ptrace.log", O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        g_debug_file = fdopen(fd, "a");
+    }
+    if (!g_debug_file && fd >= 0) {
+        close(fd);
+        g_debug_file = stderr;
+    } else if (!g_debug_file) {
         g_debug_file = stderr;
     }
 }
@@ -90,9 +85,31 @@ static const char *g_progname = "readonlybox-ptrace";
 static uid_t g_original_uid = 0;
 static gid_t g_original_gid = 0;
 static char g_original_cwd[4096] = ".";
-static bool g_keep_env = false;
+static bool g_keep_env = true;  /* Keep environment by default */
+static bool g_clean_env = false;  /* Only clear environment if explicitly requested */
 static char **g_extra_env = NULL;
 static int g_extra_env_count = 0;
+
+/* Cleanup function for atexit */
+static void cleanup_global_resources(void) {
+    /* Free flagged env names */
+    for (int i = 0; i < g_flagged_env_count && i < 256; i++) {
+        if (g_flagged_envs[i].name) {
+            free(g_flagged_envs[i].name);
+            g_flagged_envs[i].name = NULL;
+        }
+    }
+    g_flagged_env_count = 0;
+
+    /* Free extra env strings from --env */
+    for (int i = 0; i < g_extra_env_count; i++) {
+        free(g_extra_env[i]);
+        g_extra_env[i] = NULL;
+    }
+    free(g_extra_env);
+    g_extra_env = NULL;
+    g_extra_env_count = 0;
+}
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: %s wrap <command> [args...]\n", g_progname);
@@ -106,7 +123,8 @@ static void print_usage(void) {
     fprintf(stderr, "  -u, --uid <uid>      Run command as specified user\n");
     fprintf(stderr, "  -c, --cwd <path>     Set working directory\n");
     fprintf(stderr, "  -m, --cmd <path>     Command path (for pkexec)\n");
-    fprintf(stderr, "  --keep-env           Pass through original environment (don't reset)\n");
+    fprintf(stderr, "  --keep-env           Keep original environment (default)\n");
+    fprintf(stderr, "  --clean-env          Clear environment before execution\n");
     fprintf(stderr, "  --env VAR=value      Set environment variable for command\n");
     fprintf(stderr, "  -h, --help           Show this help\n");
     fprintf(stderr, "  -v, --version        Show version\n");
@@ -146,7 +164,16 @@ static void drop_privileges(void) {
         perror("chdir");
     }
 
-    if (!g_keep_env) {
+    if (g_clean_env) {
+        /* Clear all environment variables - only when explicitly requested.
+         * This prevents LD_PRELOAD and other environment-based attacks.
+         * Note: clearenv() is a GNU extension, available on Linux.
+         * For other Unix-like systems, one would need to iterate over
+         * environ and call unsetenv() for each variable. */
+        if (clearenv() != 0) {
+            fprintf(stderr, "Warning: clearenv() failed\n");
+        }
+
         if (geteuid() == 0 && g_original_uid != 0) {
             struct passwd *pw = getpwuid(g_original_uid);
             gid_t gid = pw ? pw->pw_gid : g_original_gid;
@@ -167,10 +194,24 @@ static void drop_privileges(void) {
                 fprintf(stderr, "ERROR: Failed to drop privileges\n");
                 _exit(1);
             }
-            setenv("HOME", home, 1);
-            setenv("USER", username, 1);
-            setenv("LOGNAME", username, 1);
-            setenv("SHELL", shell, 1);
+
+            /* Prevent gaining new privileges via execve (e.g., setuid binaries) */
+            if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+                fprintf(stderr, "Warning: failed to set PR_SET_NO_NEW_PRIVS\n");
+            }
+
+            if (setenv("HOME", home, 1) != 0) {
+                fprintf(stderr, "Warning: failed to set HOME\n");
+            }
+            if (setenv("USER", username, 1) != 0) {
+                fprintf(stderr, "Warning: failed to set USER\n");
+            }
+            if (setenv("LOGNAME", username, 1) != 0) {
+                fprintf(stderr, "Warning: failed to set LOGNAME\n");
+            }
+            if (setenv("SHELL", shell, 1) != 0) {
+                fprintf(stderr, "Warning: failed to set SHELL\n");
+            }
             unsetenv("PKEXEC_UID");
             unsetenv("PKEXEC_AGENT");
         }
@@ -181,7 +222,9 @@ static void drop_privileges(void) {
         char *eq = strchr(g_extra_env[i], '=');
         if (eq) {
             *eq = '\0';
-            setenv(g_extra_env[i], eq + 1, 1);
+            if (setenv(g_extra_env[i], eq + 1, 1) != 0) {
+                fprintf(stderr, "Warning: failed to set env var %s\n", g_extra_env[i]);
+            }
             *eq = '=';
         } else {
             unsetenv(g_extra_env[i]);
@@ -210,50 +253,85 @@ static const char *extract_env_value(const char *entry) {
 
 /* Screen environment using shellsplit module - ptrace client handles prompting */
 static void screen_environment(void) {
-    int indices[32];
-    int flagged_count;
-    
-    env_screener_status_t status = env_screener_scan(
-        indices,
-        32,
-        &flagged_count,
-        0.7,   // posterior_threshold (Bayesian inference) - 0.7 for high confidence
-        12     // min_length
-    );
-    
-    if (status == ENV_SCREENER_BUFFER_TOO_SMALL) {
-        /* Allocate larger buffer if needed - shouldn't happen often */
-        int *larger = malloc(flagged_count * sizeof(int));
-        if (larger) {
-            env_screener_scan(larger, flagged_count, &flagged_count, 0.7, 12);
-            free(larger);
-        }
+    /* Check if stdin is a terminal - if not, auto-block high-confidence vars */
+    int is_terminal = isatty(STDIN_FILENO);
+
+    /* Dynamically grow indices buffer until we have enough space */
+    int indices_capacity = 32;
+    int *indices = malloc(indices_capacity * sizeof(int));
+    if (!indices) {
+        return;  /* Memory allocation failed - skip screening */
     }
-    
+    int flagged_count = 0;
+
+    env_screener_status_t status;
+    while ((status = env_screener_scan(
+            indices,
+            indices_capacity,
+            &flagged_count,
+            0.7,   /* posterior_threshold - 0.7 for high confidence */
+            12     /* min_length */
+            )) == ENV_SCREENER_BUFFER_TOO_SMALL) {
+        /* Buffer too small - grow it */
+        int *larger = realloc(indices, flagged_count * sizeof(int));
+        if (!larger) {
+            free(indices);
+            return;  /* Memory allocation failed */
+        }
+        indices = larger;
+        indices_capacity = flagged_count;
+    }
+
     if (status != ENV_SCREENER_OK || flagged_count == 0) {
+        free(indices);
         return;
     }
-    
+
     /* Reset the flagged env names list - we'll add only allowed vars */
-    for (int i = 0; i < g_flagged_env_count && i < 256; i++) {
+    for (int i = 0; i < g_flagged_env_count; i++) {
         if (g_flagged_envs[i].name) {
             free(g_flagged_envs[i].name);
             g_flagged_envs[i].name = NULL;
         }
     }
     g_flagged_env_count = 0;
-    
+
     /* Prompt user for each flagged variable and only add allowed ones */
     for (int i = 0; i < flagged_count; i++) {
         extern char **environ;
+        if (indices[i] < 0) continue;
         char *entry = environ[indices[i]];
-        
+        if (!entry) continue;
+
         char name[256];
         const char *value = extract_env_value(entry);
         extract_env_name(entry, name, sizeof(name));
-        
+
         double score = env_screener_combined_score_name(name, value);
-        
+
+        /* Check if we have room for more flagged envs */
+        if (g_flagged_env_count >= 256) {
+            /* No more room - block remaining vars to be safe */
+            unsetenv(name);
+            fprintf(stderr, "   → Auto-blocked (capacity): %s\n", name);
+            continue;
+        }
+
+        if (!is_terminal) {
+            /* Non-interactive mode: auto-block high-confidence, allow others */
+            if (score > 0.8) {
+                unsetenv(name);
+                fprintf(stderr, "   → Auto-blocked (non-interactive): %s\n", name);
+            } else {
+                /* Allow low-confidence vars by adding to list */
+                g_flagged_envs[g_flagged_env_count].name = strdup(name);
+                g_flagged_envs[g_flagged_env_count].score = score;
+                g_flagged_env_count++;
+            }
+            continue;
+        }
+
+        /* Interactive mode - prompt user */
         if (score > 0.8) {
             fprintf(stderr, "\n⚠️  High-confidence secret detected:\n");
             fprintf(stderr, "   %s=*** (score: %.2f)\n", name, score);
@@ -261,26 +339,27 @@ static void screen_environment(void) {
             fprintf(stderr, "\n⚠️  Potential secret detected:\n");
             fprintf(stderr, "   %s=*** (score: %.2f)\n", name, score);
         }
-        
+
         fprintf(stderr, "   Pass this variable to the command? [y/N]: ");
-        
-        char response[8];
-        if (fgets(response, sizeof(response), stdin)) {
-            if (response[0] == 'y' || response[0] == 'Y') {
-                /* User allowed this variable - add to our list with its score */
-                if (g_flagged_env_count < 256) {
-                    g_flagged_envs[g_flagged_env_count].name = strdup(name);
-                    g_flagged_envs[g_flagged_env_count].score = score;
-                    g_flagged_env_count++;
-                }
-            } else {
-                /* User blocked this variable - unset it */
-                unsetenv(name);
-                fprintf(stderr, "   → Blocked: %s\n", name);
-            }
+
+        /* Read full line to avoid stdin residue issues */
+        char *line = NULL;
+        size_t line_cap = 0;
+        ssize_t line_len = getline(&line, &line_cap, stdin);
+        if (line_len > 0 && (line[0] == 'y' || line[0] == 'Y')) {
+            /* User allowed this variable */
+            g_flagged_envs[g_flagged_env_count].name = strdup(name);
+            g_flagged_envs[g_flagged_env_count].score = score;
+            g_flagged_env_count++;
+        } else {
+            /* User blocked this variable or invalid input */
+            unsetenv(name);
+            fprintf(stderr, "   → Blocked: %s\n", name);
         }
+        free(line);
     }
-    
+
+    free(indices);
     fprintf(stderr, "\n✓ Environment screened\n");
 }
 
@@ -291,27 +370,17 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
         strcpy(cwd, ".");
     }
 
-    /* Count environment variables to pass */
-    int env_count = 0;
-    for (char **e = environ; *e; e++) {
-        env_count++;
-    }
-    
-    /* Allocate argv: pkexec + args + env vars + NULL */
-    /* Estimate: 10 pkexec args + argc + env_count + 1 */
-    char **new_argv = malloc((argc + env_count + 20) * sizeof(char *));
+    /* Allocate argv: pkexec + our options + args + NULL */
+    /* Estimate: 5 pkexec/our options + argc + 1 */
+    char **new_argv = malloc((argc + 10) * sizeof(char *));
     if (!new_argv) {
         perror("malloc");
         return 1;
     }
 
-    /* Track allocated strings for cleanup.
-     * Allocate enough space for all strings we'll potentially allocate:
-     * - 3 fixed strings (uid_str, cwd, cmd_path)
-     * - env_count environment variables
-     */
-    int max_allocated = 3 + env_count;
-    char **allocated_strings = malloc(max_allocated * sizeof(char *));
+    /* Track allocated strings for cleanup (uid_str, cwd, cmd_path) */
+#define MAX_ALLOCATED 4
+    char **allocated_strings = malloc(MAX_ALLOCATED * sizeof(char *));
     if (!allocated_strings) {
         free(new_argv);
         return 1;
@@ -319,7 +388,7 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
     int allocated_count = 0;
 
 #define ADD_ALLOCATED(str) do { \
-        if ((str) && allocated_count < max_allocated) { \
+        if ((str) && allocated_count < MAX_ALLOCATED) { \
             allocated_strings[allocated_count++] = (str); \
         } \
     } while(0)
@@ -332,9 +401,13 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
     } while(0)
 
     int idx = 0;
+    /* Build: pkexec --disable-internal-agent argv0 --uid uid --cwd cwd --cmd cmd --internal-screened -- actual_command */
     new_argv[idx++] = "pkexec";
     new_argv[idx++] = "--disable-internal-agent";
-    new_argv[idx++] = argv[0];
+
+    /* The -- separator tells pkexec that the program path follows.
+     * Everything after this goes to the program we're launching (our argv). */
+    new_argv[idx++] = argv[0];  /* Our program's path */
     new_argv[idx++] = "--uid";
     char uid_str[32];
     snprintf(uid_str, sizeof(uid_str), "%d", original_uid);
@@ -364,47 +437,12 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
     }
     ADD_ALLOCATED(new_argv[idx]);
     idx++;
-    
+
     /* Add hidden internal flag to indicate we've already screened the environment */
     new_argv[idx++] = "--internal-screened";
 
-    for (char **e = environ; *e; e++) {
-        /* Check for valid UTF-8 */
-        int valid_utf8 = 1;
-        for (char *p = *e; *p; p++) {
-            if ((*p & 0x80) == 0) {
-                /* ASCII - ok */
-            } else if ((*p & 0xE0) == 0xC0) {
-                /* 2-byte sequence */
-                if ((p[1] & 0xC0) != 0x80) { valid_utf8 = 0; break; }
-                p++;
-            } else if ((*p & 0xF0) == 0xE0) {
-                /* 3-byte sequence */
-                if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80) { valid_utf8 = 0; break; }
-                p += 2;
-            } else if ((*p & 0xF8) == 0xF0) {
-                /* 4-byte sequence */
-                if ((p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80 || (p[3] & 0xC0) != 0x80) { valid_utf8 = 0; break; }
-                p += 3;
-            } else {
-                valid_utf8 = 0; break;
-            }
-        }
-        
-        if (!valid_utf8) {
-            continue;
-        }
-        
-        /* Use --env=VAR format instead of --env VAR */
-        char env_arg[8192];
-        snprintf(env_arg, sizeof(env_arg), "--env=%s", *e);
-        new_argv[idx] = strdup(env_arg);
-        if (new_argv[idx]) {
-            ADD_ALLOCATED(new_argv[idx]);
-        }
-        idx++;
-    }
-
+    /* Add the actual command arguments (skip argv[0] which is our program).
+     * No second -- needed - everything after our program's args is the command. */
     for (int i = 1; i < argc; i++) {
         new_argv[idx++] = argv[i];
     }
@@ -517,51 +555,62 @@ static int trace_process(pid_t initial_pid) {
             status >> 8 == (SIGTRAP | (PTRACE_EVENT_VFORK << 8))) {
             unsigned long child_pid;
             if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_pid) != 0) {
-                ptrace(PTRACE_SYSCALL, pid, 0, 0);
+                DEBUG_PRINT("PARENT: pid=%d GETEVENTMSG failed: %s\n", pid, strerror(errno));
+                if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) {
+                    DEBUG_PRINT("PARENT: pid=%d SYSCALL failed: %s\n", pid, strerror(errno));
+                }
                 continue;
             }
 
             /* Check if parent is readonlybox binary - if so, detach its child.
-             * 
+             *
              * Why: When a command is redirected to readonlybox for validation,
              * readonlybox contacts the server and gets approval. Then readonlybox
              * forks a child process to execute the actual command. We don't want
              * to trace that child because:
              * 1. It was already validated when we redirected to readonlybox
              * 2. We don't want to intercept readonlybox's internal operations
+             *
+             * Use stored execve_pathname from parent's ProcessState when available
+             * to avoid race condition with /proc/pid/exe reading.
              */
-            char parent_exe[256];
-            char parent_link[64];
-            snprintf(parent_link, sizeof(parent_link), "/proc/%d/exe", pid);
-            ssize_t parent_len = readlink(parent_link, parent_exe, sizeof(parent_exe) - 1);
             bool parent_is_readonlybox = false;
-            if (parent_len > 0) {
-                parent_exe[parent_len] = '\0';
+            bool parent_is_tracer = false;
+            char parent_exe[256] = "unknown";
+
+            ProcessState *parent_state = syscall_find_process_state(pid);
+            if (parent_state && parent_state->execve_pathname) {
+                /* Use stored pathname from parent's state */
+                const char *path = parent_state->execve_pathname;
+                strncpy(parent_exe, path, sizeof(parent_exe) - 1);
+                parent_exe[sizeof(parent_exe) - 1] = '\0';
                 if (strstr(parent_exe, "readonlybox") != NULL) {
                     parent_is_readonlybox = true;
                 }
-            }
-            
-            /* Also check if parent is our own tracer process (the judge subprocess).
-             * The judge process forks a child to exec rbox-wrap - we should detach it. */
-            bool parent_is_tracer = false;
-            if (!parent_is_readonlybox) {
+                if (strstr(parent_exe, "readonlybox-ptrace") != NULL) {
+                    parent_is_tracer = true;
+                }
+            } else {
+                /* Fallback to /proc/pid/exe if parent state not available */
+                char parent_link[64];
                 snprintf(parent_link, sizeof(parent_link), "/proc/%d/exe", pid);
-                parent_len = readlink(parent_link, parent_exe, sizeof(parent_exe) - 1);
+                ssize_t parent_len = readlink(parent_link, parent_exe, sizeof(parent_exe) - 1);
                 if (parent_len > 0) {
                     parent_exe[parent_len] = '\0';
-                    /* Check if parent is the ptrace binary itself */
+                    if (strstr(parent_exe, "readonlybox") != NULL) {
+                        parent_is_readonlybox = true;
+                    }
                     if (strstr(parent_exe, "readonlybox-ptrace") != NULL) {
                         parent_is_tracer = true;
                     }
                 }
             }
-            
+
             /* Detach if parent is readonlybox binary OR if parent is our tracer
              * (judge child that will exec rbox-wrap). All other processes
              * should continue to be traced so their execves get validated */
             if (parent_is_readonlybox || parent_is_tracer) {
-                DEBUG_PRINT("PARENT: detaching child %d (parent_is_readonlybox=%d, parent_is_tracer=%d)\n", 
+                DEBUG_PRINT("PARENT: detaching child %d (parent_is_readonlybox=%d, parent_is_tracer=%d)\n",
                           (int)child_pid, parent_is_readonlybox, parent_is_tracer);
                 ptrace(PTRACE_DETACH, (pid_t)child_pid, 0, 0);
                 /* Also remove process state for the detached child */
@@ -582,7 +631,9 @@ static int trace_process(pid_t initial_pid) {
                     DEBUG_PRINT("PARENT: child %d already exited: %s\n", (int)child_pid, strerror(errno));
                 }
             }
-            ptrace(PTRACE_SYSCALL, pid, 0, 0);
+            if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) {
+                DEBUG_PRINT("PARENT: pid=%d SYSCALL failed after fork handling: %s\n", pid, strerror(errno));
+            }
             continue;
         }
 
@@ -603,8 +654,9 @@ static int trace_process(pid_t initial_pid) {
 
                 ProcessState *state = syscall_get_process_state(pid);
                 if (!state) {
-                    fprintf(stderr, "%s: Process table full\n", g_progname);
-                    ptrace(PTRACE_SYSCALL, pid, 0, 0);
+                    /* Process table full - detach and block to prevent untracked execves */
+                    fprintf(stderr, "%s: Process table full, detaching from pid %d\n", g_progname, pid);
+                    ptrace(PTRACE_DETACH, pid, 0, 0);
                     continue;
                 }
 
@@ -644,8 +696,12 @@ int main(int argc, char *argv[]) {
 
     g_progname = argv[0];
 
+    /* Disable core dumps to prevent sensitive data leakage when running with elevated privileges.
+     * This must be done early, before any potentially dangerous operations. */
+    prctl(PR_SET_DUMPABLE, 0);
+
     /* Register cleanup function for flagged env names */
-    atexit(cleanup_flagged_env_names);
+    atexit(cleanup_global_resources);
 
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
@@ -656,6 +712,8 @@ int main(int argc, char *argv[]) {
         {"attach", required_argument, 0, 'p'},
         {"keep-env", no_argument, 0, 'k'},
         {"env", required_argument, 0, 'e'},
+        /* Option to explicitly clean the environment */
+        {"clean-env", no_argument, 0, 257},
         /* Hidden internal flag: set after pkexec relaunch to skip re-screening */
         {"internal-screened", no_argument, 0, 256},
         {0, 0, 0, 0}
@@ -690,13 +748,24 @@ int main(int argc, char *argv[]) {
             case 'k':
                 g_keep_env = true;
                 break;
-            case 'e':
-                g_extra_env = realloc(g_extra_env, (g_extra_env_count + 1) * sizeof(char *));
+            case 'e': {
+                char **new_env = realloc(g_extra_env, (g_extra_env_count + 1) * sizeof(char *));
+                if (!new_env) {
+                    fprintf(stderr, "Failed to allocate memory for --env\n");
+                    return 1;
+                }
+                g_extra_env = new_env;
                 g_extra_env[g_extra_env_count++] = strdup(optarg);
                 break;
+            }
             case 256:
                 /* Hidden internal flag: already screened after pkexec relaunch */
                 internal_screened = 1;
+                break;
+            case 257:
+                /* Explicit request to clean environment */
+                g_clean_env = true;
+                g_keep_env = false;
                 break;
             default:
                 print_usage();
@@ -889,9 +958,14 @@ int main(int argc, char *argv[]) {
 int run_judge(const char *command, const char *caller_info) {
     int pipefd[2];
     pid_t pid;
-    /* Increased buffer size to prevent truncation */
-    char buffer[65536];
-    ssize_t bytes_read;
+
+    /* Dynamic buffer for server response - grows as needed */
+    size_t cap = 4096;
+    char *buffer = malloc(cap);
+    if (!buffer) {
+        return -1;
+    }
+    size_t bytes_read = 0;
 
     /* Clear any stale environment variables from previous decisions
      * This prevents stale values from being used if a later execve is
@@ -901,6 +975,7 @@ int run_judge(const char *command, const char *caller_info) {
 
     /* Create pipe for reading output */
     if (pipe(pipefd) < 0) {
+        free(buffer);
         return -1;
     }
 
@@ -908,6 +983,7 @@ int run_judge(const char *command, const char *caller_info) {
     if (pid < 0) {
         close(pipefd[0]);
         close(pipefd[1]);
+        free(buffer);
         return -1;
     }
 
@@ -931,39 +1007,49 @@ int run_judge(const char *command, const char *caller_info) {
         /* This must be set BEFORE exec so the Go server can read it */
         /* Format: NAME1:score1,NAME2:score2,... */
         if (g_flagged_env_count > 0) {
-            char env_buf[4096] = {0};
+            /* 16KB buffer - enough for ~256 flagged vars with typical name lengths */
+            char env_buf[16384] = {0};
             char *p = env_buf;
             size_t rem = sizeof(env_buf) - 1;
-            
+            int truncated = 0;
+
             for (int i = 0; i < g_flagged_env_count && rem > 1; i++) {
                 if (g_flagged_envs[i].name) {
                     /* Use the actual score stored during screening */
                     double score = g_flagged_envs[i].score;
-                    
+
                     size_t len = strlen(g_flagged_envs[i].name);
-                    if (len < rem) {
+                    /* Format: name:score (7 chars for :score + potential comma) */
+                    size_t needed = len + 8;
+
+                    if (rem >= needed) {
                         /* Format: name:score */
                         memcpy(p, g_flagged_envs[i].name, len);
                         p += len;
                         rem -= len;
-                        
+
                         /* Add score */
                         int n = snprintf(p, rem, ":%.2f", score);
                         if (n > 0 && (size_t)n < rem) {
                             p += n;
                             rem -= n;
                         }
-                        
+
                         if (rem > 1 && i < g_flagged_env_count - 1) {
                             *p++ = ',';
                             rem--;
                         }
+                    } else {
+                        truncated = 1;
                     }
                 }
             }
-            
+
             if (env_buf[0]) {
                 setenv("READONLYBOX_FLAGGED_ENVS", env_buf, 1);
+            }
+            if (truncated) {
+                fprintf(stderr, "Warning: READONLYBOX_FLAGGED_ENVS was truncated\n");
             }
         }
 
@@ -987,14 +1073,35 @@ int run_judge(const char *command, const char *caller_info) {
     /* Close parent's write end - child only needs to write */
     close(pipefd[1]);
 
-    bytes_read = 0;
+    /* Read with dynamically growing buffer (max 64KB for protocol response) */
+#define MAX_RESPONSE_SIZE 65536
     ssize_t n;
-    while (bytes_read < (ssize_t)(sizeof(buffer) - 1)) {
-        n = read(pipefd[0], buffer + bytes_read, sizeof(buffer) - 1 - bytes_read);
-        if (n <= 0) {
-            break;
-        }
+    while ((n = read(pipefd[0], buffer + bytes_read, cap - bytes_read)) > 0) {
         bytes_read += n;
+        if ((size_t)bytes_read == cap) {
+            if (cap >= MAX_RESPONSE_SIZE) {
+                /* Response too large - reject to prevent memory exhaustion */
+                kill(pid, SIGKILL);
+                close(pipefd[0]);
+                waitpid(pid, NULL, 0);
+                free(buffer);
+                return -1;
+            }
+            /* Grow buffer */
+            size_t new_cap = cap * 2;
+            if (new_cap > MAX_RESPONSE_SIZE) new_cap = MAX_RESPONSE_SIZE;
+            char *new_buf = realloc(buffer, new_cap);
+            if (!new_buf) {
+                /* Realloc failed - kill child and cleanup */
+                kill(pid, SIGKILL);
+                close(pipefd[0]);
+                waitpid(pid, NULL, 0);
+                free(buffer);
+                return -1;
+            }
+            buffer = new_buf;
+            cap = new_cap;
+        }
     }
     close(pipefd[0]);
     /* pipefd[1] already closed by parent before reading */
@@ -1004,6 +1111,7 @@ int run_judge(const char *command, const char *caller_info) {
     waitpid(pid, &status, 0);
 
     if (bytes_read <= 0) {
+        free(buffer);
         return -1;
     }
 
@@ -1023,11 +1131,13 @@ int run_judge(const char *command, const char *caller_info) {
     rbox_decoded_header_t header;
     rbox_response_details_t details;
     rbox_env_decisions_t env_decisions;
+    memset(&env_decisions, 0, sizeof(env_decisions));
 
     /* Decode header */
     rbox_decode_header(buffer, bytes_read, &header);
     if (!header.valid) {
         /* Fall back to exit code */
+        free(buffer);
         if (exit_code == 0) return 0;
         if (exit_code == 9) return 9;
         return -1;
@@ -1093,6 +1203,7 @@ int run_judge(const char *command, const char *caller_info) {
     if (details.valid) {
         /* Use decision from response packet - this is the authoritative source */
         /* Decision: RBOX_DECISION_ALLOW=2 means allow, anything else is deny */
+        free(buffer);
         if (details.decision == RBOX_DECISION_ALLOW) {
             return 0;  /* Allowed */
         } else {
@@ -1101,6 +1212,7 @@ int run_judge(const char *command, const char *caller_info) {
     }
 
     /* Fallback to exit code if details not valid */
+    free(buffer);
     if (exit_code == 0) return 0;
     if (exit_code == 9) return 9;
     return -1;
@@ -1109,7 +1221,15 @@ int run_judge(const char *command, const char *caller_info) {
 /* Get path to readonlybox binary */
 static const char *get_readonlybox_path(void) {
     static char path_buf[PATH_MAX];
-    
+
+    /* First, check environment variable for explicit override */
+    const char *env_path = getenv("READONLYBOX_WRAP_PATH");
+    if (env_path && env_path[0]) {
+        if (access(env_path, X_OK) == 0) {
+            return env_path;
+        }
+    }
+
     /* Try to find relative to our executable location */
     char self_path[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);

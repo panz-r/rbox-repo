@@ -1,3 +1,6 @@
+# generaqted files
+internal/client/readonlybox_dfa.c 
+
 bin/
 *.so
 *.o
