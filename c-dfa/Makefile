@@ -41,7 +41,7 @@ CADICAL_DIR = vendor/cadical
 CADICAL_LIB = $(CADICAL_DIR)/build/libcadical.a
 CADICAL_INC = -I$(CADICAL_DIR)/src
 
-TOOLS = $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TOOLS_DIR)/dfa_eval_wrapper
+TOOLS = $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TOOLS_DIR)/dfa_eval_wrapper $(TOOLS_DIR)/dfa2c_array
 TEST = dfa_test
 
 # NFA builder module objects (for both standalone and nfa2dfa_advanced)
@@ -126,6 +126,10 @@ $(TOOLS_DIR)/nfa_builder: $(TOOLS_DIR)/nfa_builder.c $(LIB)
 # DFA eval wrapper for fuzzing
 $(TOOLS_DIR)/dfa_eval_wrapper: $(TOOLS_DIR)/dfa_eval_wrapper.c $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/dfa_eval_wrapper.c $(SRC_DIR)/dfa_eval.c $(SRC_DIR)/dfa_loader.c $(LDFLAGS)
+
+# DFA binary to C array converter
+$(TOOLS_DIR)/dfa2c_array: $(TOOLS_DIR)/dfa2c_array.c $(INCLUDE_DIR)/dfa_errors.h
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/dfa2c_array.c $(LDFLAGS)
 
 # CLI version of nfa2dfa.o (includes main)
 $(TOOLS_DIR)/nfa2dfa_cli.o: $(TOOLS_DIR)/nfa2dfa.c $(INCLUDE_DIR)/*.h
@@ -288,14 +292,23 @@ test-eval-only: $(TESTS_DIR)/test_eval_only $(EVAL_LIB) $(TOOLS)
 	@./tools/nfa2dfa_advanced /tmp/eval_test_dfa.nfa /tmp/eval_test_dfa.dfa 2>/dev/null
 	@./$(TESTS_DIR)/test_eval_only
 
+# dfa2c_array tests
+test-dfa2c: $(TOOLS_DIR)/dfa2c_array
+	@echo ""
+	@echo "================================================="
+	@echo "DFA2C_ARRAY TOOL TESTS"
+	@echo "================================================="
+	@$(TESTS_DIR)/test_dfa2c_array.sh
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR) $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced \
-		$(TOOLS_DIR)/nfa2dfa_sat $(TOOLS_DIR)/pattern_order \
+		$(TOOLS_DIR)/nfa2dfa_sat $(TOOLS_DIR)/dfa2c_array $(TOOLS_DIR)/pattern_order \
 	$(TESTS_DIR)/test_minimize_integrity \
 	$(TESTS_DIR)/test_library_api \
 	$(TESTS_DIR)/test_eval_only \
-		$(TEST) $(TEST_SAT) $(LIB)
+	$(TESTS_DIR)/test_dfa2c_array \
+		$(TEST) $(TEST_SAT) $(LIB) $(EVAL_LIB)
 	rm -f $(TOOLS_DIR)/*.o lib/*.o $(SRC_DIR)/*.o
 
 # Clean including vendor builds
@@ -351,6 +364,7 @@ test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity $(TESTS_DIR)/test_li
 	@echo ""
 	@make test-library 2>&1 | tail -4
 	@make test-eval-only 2>&1 | tail -4
+	@make test-dfa2c 2>&1 | tail -5
 	@make test-patterns 2>&1 | tail -5
 	@echo ""
 	@echo "================================================="

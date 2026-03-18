@@ -39,6 +39,24 @@ func BuildDependencies() error {
 }
 
 // BuildDFA builds the DFA data for the client library
+// needsRebuild returns true if any input is newer than the output
+func needsRebuild(output string, inputs ...string) bool {
+	outStat, err := os.Stat(output)
+	if err != nil {
+		return true // output doesn't exist
+	}
+	for _, input := range inputs {
+		inStat, err := os.Stat(input)
+		if err != nil {
+			return true // input missing, rebuild to get proper error
+		}
+		if inStat.ModTime().After(outStat.ModTime()) {
+			return true
+		}
+	}
+	return false
+}
+
 // Depends on BuildDependencies which creates the nfa tools
 func BuildDFA() error {
 	mg.Deps(BuildDependencies)
@@ -46,48 +64,23 @@ func BuildDFA() error {
 	wd, _ := os.Getwd()
 	os.Setenv("CGO_ENABLED", "1")
 
-	// Check if shared library already exists
-	outputFile := filepath.Join(wd, "bin", "libreadonlybox_client.so")
-	if _, err := os.Stat(outputFile); err == nil {
-		fmt.Println("=== libreadonlybox_client.so already exists, skipping DFA build ===")
-		return nil
-	}
-
-	fmt.Println("=== Building libreadonlybox_client.so ===")
-
-	// Tools are already built by make in BuildDependencies
 	nfaBuilder := filepath.Join(wd, "c-dfa/tools/nfa_builder")
 	nfa2dfa := filepath.Join(wd, "c-dfa/tools/nfa2dfa_advanced")
-
+	dfa2cArray := filepath.Join(wd, "c-dfa/tools/dfa2c_array")
 	clientDir := filepath.Join(wd, "internal/client")
 
-	// Generate NFA
-	cmd := exec.Command(nfaBuilder,
-		filepath.Join(clientDir, "rbox_client_safe_commands.txt"),
-		filepath.Join(clientDir, "readonlybox.nfa"))
-	cmd.Dir = clientDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
+	patternFile := filepath.Join(clientDir, "rbox_client_safe_commands.txt")
+	nfaFile := filepath.Join(clientDir, "readonlybox.nfa")
+	dfaFile := filepath.Join(clientDir, "readonlybox.dfa")
+	cArrayFile := filepath.Join(clientDir, "readonlybox_dfa.c")
+	staticDataFile := filepath.Join(clientDir, "dfa_static_data.c")
+	outputFile := filepath.Join(wd, "bin", "libreadonlybox_client.so")
 
-	// Generate DFA
-	cmd = exec.Command(nfa2dfa,
-		filepath.Join(clientDir, "readonlybox.nfa"),
-		filepath.Join(clientDir, "readonlybox.dfa"))
-	cmd.Dir = clientDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-
-	// Build dfa2c_array
-	dfa2cArray := filepath.Join(clientDir, "dfa2c_array")
-	if _, err := os.Stat(dfa2cArray); os.IsNotExist(err) {
-		cmd = exec.Command("gcc", "-o", dfa2cArray, filepath.Join(clientDir, "dfa2c_array.c"),
-			"-Wall", "-Wextra", "-std=c11", "-O2")
+	// Step 1: Pattern → NFA
+	if needsRebuild(nfaFile, patternFile) {
+		fmt.Println("=== Pattern file changed, regenerating DFA ===")
+		cmd := exec.Command(nfaBuilder, patternFile, nfaFile)
+		cmd.Dir = clientDir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -95,35 +88,60 @@ func BuildDFA() error {
 		}
 	}
 
-	// Generate C array
-	dfaCArray := filepath.Join(clientDir, "readonlybox_dfa.c")
-	cmd = exec.Command(dfa2cArray,
-		filepath.Join(clientDir, "readonlybox.dfa"),
-		dfaCArray, "readonlybox_dfa_data")
-	cmd.Dir = clientDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return err
+	// Step 2: NFA → DFA
+	if needsRebuild(dfaFile, nfaFile) {
+		cmd := exec.Command(nfa2dfa, nfaFile, dfaFile)
+		cmd.Dir = clientDir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
 	}
 
-	// Copy to dfa_static_data.c
-	copyFile(dfaCArray, filepath.Join(clientDir, "dfa_static_data.c"))
+	// Step 3: DFA → C array
+	if needsRebuild(cArrayFile, dfaFile) {
+		cmd := exec.Command(dfa2cArray, dfaFile, cArrayFile, "readonlybox_dfa_data")
+		cmd.Dir = clientDir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	}
 
-	// Build shared library - use absolute paths and explicit include directories
-	cmd = exec.Command("gcc", "-shared", "-fPIC", "-O2", "-DFA_EVAL_DEBUG=0", "-o", outputFile,
+	// Step 4: Copy to dfa_static_data.c
+	if needsRebuild(staticDataFile, cArrayFile) {
+		copyFile(cArrayFile, staticDataFile)
+	}
+
+	// Step 5: Compile shared library
+	if needsRebuild(outputFile, staticDataFile,
 		filepath.Join(clientDir, "client.c"),
 		filepath.Join(clientDir, "dfa.c"),
-		filepath.Join(clientDir, "dfa_static_data.c"),
 		filepath.Join(wd, "c-dfa/src/dfa_eval.c"),
 		filepath.Join(wd, "shellsplit/src/shell_tokenizer.c"),
-		filepath.Join(wd, "shellsplit/src/shell_tokenizer_full.c"),
-		"-I"+filepath.Join(wd, "c-dfa/include"),
-		"-I"+filepath.Join(wd, "shellsplit/include"),
-		"-lpthread", "-ldl")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+		filepath.Join(wd, "shellsplit/src/shell_tokenizer_full.c")) {
+
+		fmt.Println("=== Building libreadonlybox_client.so ===")
+		cmd := exec.Command("gcc", "-shared", "-fPIC", "-O2", "-DFA_EVAL_DEBUG=0", "-o", outputFile,
+			filepath.Join(clientDir, "client.c"),
+			filepath.Join(clientDir, "dfa.c"),
+			staticDataFile,
+			filepath.Join(wd, "c-dfa/src/dfa_eval.c"),
+			filepath.Join(wd, "shellsplit/src/shell_tokenizer.c"),
+			filepath.Join(wd, "shellsplit/src/shell_tokenizer_full.c"),
+			"-I"+filepath.Join(wd, "c-dfa/include"),
+			"-I"+filepath.Join(wd, "shellsplit/include"),
+			"-lpthread", "-ldl")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // BuildBinaries builds the main binaries
@@ -231,11 +249,11 @@ func Clean() error {
 	os.RemoveAll(filepath.Join(wd, "internal/client/readonlybox.dfa"))
 	os.RemoveAll(filepath.Join(wd, "internal/client/readonlybox_dfa.c"))
 	os.RemoveAll(filepath.Join(wd, "internal/client/dfa_static_data.c"))
-	os.RemoveAll(filepath.Join(wd, "internal/client/dfa2c_array"))
 
-	// Clean nfa_builder and nfa2dfa tools
+	// Clean c-dfa tools
 	os.RemoveAll(filepath.Join(wd, "c-dfa/tools/nfa_builder"))
 	os.RemoveAll(filepath.Join(wd, "c-dfa/tools/nfa2dfa_advanced"))
+	os.RemoveAll(filepath.Join(wd, "c-dfa/tools/dfa2c_array"))
 
 	// Clean any stale binaries in project root
 	os.RemoveAll(filepath.Join(wd, "readonlybox"))

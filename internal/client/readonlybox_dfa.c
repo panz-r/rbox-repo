@@ -1,4 +1,4 @@
-/* Auto-generated from /w/rbox-copy/internal/client/readonlybox.dfa */
+/* Auto-generated from /w/rbox-copy/internal/client/readonlybox.dfa by dfa2c_array */
 /* Do not edit manually */
 
 #include <stdint.h>

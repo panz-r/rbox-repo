@@ -259,7 +259,7 @@ static int* find_sccs_tarjan(
     if (!dfs_stack) {
         free(index); free(lowlink); free(on_stack); free(stack); free(scc_id);
         *scc_count_out = 0;
-        return scc_id;
+        return NULL;
     }
     int dfs_top = 0;
     

@@ -13,6 +13,7 @@ tools/pattern_order
 tools/dfa_eval_wrapper
 tools/test_minimize_integrity
 tools/*_asan
+tools/dfa2c_array
 
 # Test binaries
 tests/test_minimize_integrity
