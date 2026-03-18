@@ -18,6 +18,7 @@
 #include "../tools/nfa2dfa_context.h"
 #include "../tools/dfa_minimize.h"
 #include "../tools/dfa_compress.h"
+#include "../tools/dfa_layout.h"
 #include "../tools/nfa_preminimize.h"
 
 #include <stdio.h>
@@ -249,8 +250,13 @@ pipeline_error_t pipeline_compress(pipeline_t* p) {
 }
 
 pipeline_error_t pipeline_optimize_layout(pipeline_t* p) {
-    (void)p;
-    // Layout optimization is handled by flatten_dfa
+    if (!p || !p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+
+    layout_options_t opts = get_default_layout_options();
+    int* order = optimize_dfa_layout(p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, &opts);
+    if (order) {
+        free(order);
+    }
     return PIPELINE_OK;
 }
 

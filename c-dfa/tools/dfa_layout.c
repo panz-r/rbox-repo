@@ -530,31 +530,6 @@ static void compute_scc_layers(
 }
 
 /**
- * Compute cache locality metrics for the current DFA layout.
- * Returns average transition distance (lower = better cache locality).
- */
-static double compute_avg_transition_distance(
-    build_dfa_state_t** dfa,
-    int state_count
-) {
-    long long total_distance = 0;
-    long long total_transitions = 0;
-    
-    for (int s = 0; s < state_count; s++) {
-        for (int c = 0; c < 256; c++) {
-            int t = dfa[s]->transitions[c];
-            if (t >= 0 && t < state_count) {
-                total_distance += abs(t - s);
-                total_transitions++;
-            }
-        }
-    }
-    
-    if (total_transitions == 0) return 0.0;
-    return (double)total_distance / total_transitions;
-}
-
-/**
  * Check if swapping positions p and p+1 preserves topological order.
  */
 static bool can_swap_positions(int** cond, const int* order, int p, int scc_count) {

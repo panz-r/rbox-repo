@@ -606,14 +606,6 @@ int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
     VERBOSE_PRINT("Minimized to %d states (from %d)\n", new_count, state_count);
     free_minimizer(ms); free(worklist); free(in_worklist); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
     
-    // Apply cache-optimized layout
-    layout_options_t layout_opts = get_default_layout_options();
-    int* order = optimize_dfa_layout(dfa, new_count, &layout_opts);
-    if (order) {
-        VERBOSE_PRINT("Applied cache-optimized layout\n");
-        free(order);
-    }
-    
     return new_count;
 }
 

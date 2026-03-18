@@ -286,18 +286,15 @@ int dfa_compress(build_dfa_state_t** dfa, int state_count, const compress_option
         VERBOSE_PRINT("  Saved %d rules by merging\n", last_stats.rules_merged);
     }
     
-    // Strategy 2: Range Optimization (only count additional savings not already counted by merging)
+    // Strategy 2: Range Optimization
     if (opts.enable_range_optimization) {
         VERBOSE_PRINT("Applying range optimization...\n");
-        // Note: This currently double-counts with rule merging. A proper implementation
-        // would track which transitions were already merged and only count additional savings.
-        // For now, we report this separately but don't add to total savings.
         int range_savings = 0;
         for (int s = 0; s < state_count; s++) {
             range_savings += optimize_ranges_for_state(dfa[s]);
         }
         last_stats.ranges_created = range_savings;
-        VERBOSE_PRINT("  Potential additional savings from ranges: %d rules\n", last_stats.ranges_created);
+        VERBOSE_PRINT("  Created %d range rules\n", last_stats.ranges_created);
     }
     
     // Strategy 3: Default State Sharing

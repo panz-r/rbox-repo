@@ -13,6 +13,7 @@
 #include "../include/nfa.h"
 #include "dfa_minimize.h"
 #include "dfa_compress.h"
+#include "dfa_layout.h"
 #include "nfa_preminimize.h"
 #include "nfa2dfa_context.h"
 
@@ -232,19 +233,12 @@ void dfa_init(nfa2dfa_context_t* ctx) {
 }
 
 void epsilon_closure_with_markers(int* states, int* count, int max_states,
-                                  uint32_t* markers, int* marker_count, int max_markers) {
-    int epsilon_sid = -1;
-    int epsilon_symbol_id = 257;
-    for (int s = 0; s < alphabet_size; s++) {
-        if (alphabet[s].symbol_id == 257) { epsilon_sid = s; break; }
-    }
-    if (epsilon_sid < 0) {
-        return;
-    }
-
-    bool in_set[MAX_STATES];
-    memset(in_set, 0, sizeof(in_set));
-    int stack[MAX_STATES], top = 0;
+                                   uint32_t* markers, int* marker_count, int max_markers) {
+    const int epsilon_symbol_id = 257;
+    bool* in_set = calloc(max_states, sizeof(bool));
+    int* stack = malloc(max_states * sizeof(int));
+    if (!in_set || !stack) { free(in_set); free(stack); return; }
+    int top = 0;
 
     for (int i = 0; i < *count; i++) {
         int s = states[i];
@@ -316,6 +310,8 @@ void epsilon_closure(int* states, int* count, int max_states) {
             }
         }
     }
+    free(in_set);
+    free(stack);
 }
 
 // Helper: Collect category mask from ALL accepting states reachable from given NFA states via epsilon
@@ -1056,10 +1052,12 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     ds->initial_state = (uint32_t)state_offset[0];
     ds->metadata_offset = 0;
 
+    // accepting_mask is a 32-bit convenience field - only represents first 32 states
+    // Evaluators should use per-state flags (DFA_STATE_ACCEPTING) for correctness
     uint32_t accepting_mask = 0;
-    for (int i = 0; i < dfa_state_count; i++) {
+    for (int i = 0; i < dfa_state_count && i < 32; i++) {
         if (dfa[i]->flags & DFA_STATE_ACCEPTING) {
-            accepting_mask |= (1 << i);
+            accepting_mask |= (1u << i);
         }
     }
     ds->accepting_mask = accepting_mask;
@@ -1293,6 +1291,10 @@ int main(int argc, char* argv[]) {
         if (algo != DFA_MIN_BRZOZOWSKI) {
             flatten_dfa(NULL);  // Re-flatten with new state indices after minimization
         }
+        // Apply cache-optimized layout (now separate from minimization)
+        layout_options_t layout_opts = get_default_layout_options();
+        int* order = optimize_dfa_layout(dfa, dfa_state_count, &layout_opts);
+        if (order) free(order);
     }
     
     if (compress) {
