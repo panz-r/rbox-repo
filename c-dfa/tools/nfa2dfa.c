@@ -235,9 +235,8 @@ void dfa_init(nfa2dfa_context_t* ctx) {
 void epsilon_closure_with_markers(int* states, int* count, int max_states,
                                    uint32_t* markers, int* marker_count, int max_markers) {
     const int epsilon_symbol_id = 257;
-    bool* in_set = calloc(max_states, sizeof(bool));
-    int* stack = malloc(max_states * sizeof(int));
-    if (!in_set || !stack) { free(in_set); free(stack); return; }
+    bool* in_set = alloc_or_abort(calloc(max_states, sizeof(bool)), "epsilon_closure in_set");
+    int* stack = alloc_or_abort(malloc(max_states * sizeof(int)), "epsilon_closure stack");
     int top = 0;
 
     for (int i = 0; i < *count; i++) {
@@ -287,9 +286,9 @@ void epsilon_closure(int* states, int* count, int max_states) {
         return;
     }
 
-    bool in_set[MAX_STATES];
-    memset(in_set, 0, sizeof(in_set));
-    int stack[MAX_STATES], top = 0;
+    bool* in_set = alloc_or_abort(calloc(max_states, sizeof(bool)), "epsilon_closure in_set");
+    int* stack = alloc_or_abort(malloc(max_states * sizeof(int)), "epsilon_closure stack");
+    int top = 0;
     
     for (int i = 0; i < *count; i++) {
         int s = states[i];
@@ -339,10 +338,8 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
     // that are actually reachable via epsilon transitions
     // This ensures + quantifier (which has NO skip path) doesn't incorrectly match empty
     if (is_initial_state) {
-        bool visited[MAX_STATES];
-        memset(visited, 0, sizeof(visited));
-        
-        int stack[MAX_STATES];
+        bool* visited = alloc_or_abort(calloc(nfa_state_count, sizeof(bool)), "collect_fork_categories visited");
+        int* stack = alloc_or_abort(malloc(nfa_state_count * sizeof(int)), "collect_fork_categories stack");
         int stack_top = 0;
         
         // Start from state 0 (initial state)
@@ -372,14 +369,14 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
                 }
             }
         }
+        free(visited);
+        free(stack);
         return fork_cats;
     }
     
     // For non-initial states, search from all states via epsilon closure
-    bool visited[MAX_STATES];
-    memset(visited, 0, sizeof(visited));
-    
-    int stack[MAX_STATES];
+    bool* visited = alloc_or_abort(calloc(nfa_state_count, sizeof(bool)), "collect_fork_categories visited");
+    int* stack = alloc_or_abort(malloc(nfa_state_count * sizeof(int)), "collect_fork_categories stack");
     int stack_top = 0;
     
     // For non-initial states, search from all states
@@ -415,13 +412,15 @@ static uint8_t collect_fork_categories(int* states, int count, bool is_initial_s
         }
     }
     
+    free(visited);
+    free(stack);
     return fork_cats;
 }
 
 int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id, uint16_t first_accepting_pattern) {
     // Sort once for hash, lookup, and storage
-    int sorted[MAX_STATES];
-    for (int i = 0; i < nfa_count && i < MAX_STATES; i++) {
+    int* sorted = alloc_or_abort(malloc(nfa_count * sizeof(int)), "dfa_add_state sorted");
+    for (int i = 0; i < nfa_count; i++) {
         sorted[i] = nfa_states[i];
     }
     sort_states_canonical(sorted, nfa_count);
@@ -462,12 +461,14 @@ int dfa_add_state(uint8_t category_mask, int* nfa_states, int nfa_count, uint16_
     for (int i = 0; i < nfa_count; i++) dfa[state]->nfa_states[i] = sorted[i];
     dfa_next_in_bucket[state] = dfa_hash_table[bucket];
     dfa_hash_table[bucket] = state;
+    free(sorted);
     return state;
 }
 
 void nfa_move(int* states, int* count, int sid, int max_states) {
-    int ns[MAX_STATES], nc = 0; bool is[MAX_STATES];
-    memset(is, 0, sizeof(is));
+    int* ns = alloc_or_abort(malloc(max_states * sizeof(int)), "nfa_move ns");
+    int nc = 0; 
+    bool* is = alloc_or_abort(calloc(max_states, sizeof(bool)), "nfa_move is");
     for (int i = 0; i < *count; i++) {
         int s = states[i]; if (s < 0 || s >= nfa_state_count) continue;
 
@@ -482,6 +483,8 @@ void nfa_move(int* states, int* count, int sid, int max_states) {
     }
     for (int i = 0; i < nc; i++) states[i] = ns[i];
     *count = nc;
+    free(ns);
+    free(is);
 }
 
 static void collect_transition_markers(int source_count, int* source_states, int sid,
@@ -544,12 +547,15 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx) {
     init_marker_lists();
     DEBUG_PRINT("after dfa_init\n");
 
-    int in[MAX_STATES] = {0}; int ic = 1;
+    int* in = alloc_or_abort(calloc(max_states, sizeof(int)), "nfa_to_dfa in");
+    int ic = 1;
     DEBUG_PRINT("before epsilon_closure\n");
-    int temp[MAX_STATES]; memcpy(temp, in, sizeof(int)); int tc = ic;
+    int* temp = alloc_or_abort(malloc(max_states * sizeof(int)), "nfa_to_dfa temp");
+    memcpy(temp, in, sizeof(int)); 
+    int tc = ic;
     uint32_t dummy_markers[MAX_MARKERS_PER_DFA_TRANSITION];
     int dummy_count = 0;
-    epsilon_closure_with_markers(temp, &tc, MAX_STATES, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
+    epsilon_closure_with_markers(temp, &tc, max_states, dummy_markers, &dummy_count, MAX_MARKERS_PER_DFA_TRANSITION);
     DEBUG_PRINT("after epsilon_closure, tc=%d\n", tc);
     DEBUG_PRINT("temp states: ");
     for (int i = 0; i < tc; i++) DEBUG_PRINT("%d ", temp[i]);
@@ -652,17 +658,20 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx) {
     // Allow empty matching for all patterns - the core fix is in category propagation
     // (not including category from is_eos_target states), which prevents false category matches
 
-    int q[MAX_STATES]; int h = 0, t = 1; q[0] = idfa;
-    //fprintf(stderr, "DEBUG: Starting main BFS loop, initial dfa_state_count=%d\n", dfa_state_count);
+    int* q = alloc_or_abort(malloc(max_states * sizeof(int)), "nfa_to_dfa queue");
+    int h = 0, t = 1; q[0] = idfa;
+    
+    // Pre-allocate working arrays for the loop
+    int* ms = alloc_or_abort(malloc(max_states * sizeof(int)), "nfa_to_dfa ms");
+    int* temp2 = alloc_or_abort(malloc(max_states * sizeof(int)), "nfa_to_dfa temp2");
 
     while (h < t) {
         int cur = q[h++];
-        //fprintf(stderr, "DEBUG: Processing DFA state %d (h=%d, t=%d, total_states=%d)\n", cur, h, t, dfa_state_count);
         for (int i = 0; i < alphabet_size; i++) {
             int symbol = alphabet[i].symbol_id;
             if (symbol == 257) continue;
 
-            int ms[MAX_STATES]; int mc = dfa[cur]->nfa_state_count;
+            int mc = dfa[cur]->nfa_state_count;
             for (int j = 0; j < mc; j++) ms[j] = dfa[cur]->nfa_states[j];
 
             uint32_t markers[MAX_MARKERS_PER_DFA_TRANSITION];
@@ -670,7 +679,7 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx) {
             int marker_count = 0;
             collect_transition_markers(mc, ms, symbol, markers, &marker_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
-            nfa_move(ms, &mc, symbol, MAX_STATES);
+            nfa_move(ms, &mc, symbol, max_states);
 
             if (mc == 0) {
                 int eos_sid = -1;
@@ -682,8 +691,9 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx) {
                 }
                 continue;
             }
-            int tc2 = mc; int temp2[MAX_STATES]; memcpy(temp2, ms, mc * sizeof(int));
-            epsilon_closure_with_markers(temp2, &tc2, MAX_STATES, markers, &marker_count, MAX_MARKERS_PER_DFA_TRANSITION);
+            int tc2 = mc; 
+            memcpy(temp2, ms, mc * sizeof(int));
+            epsilon_closure_with_markers(temp2, &tc2, max_states, markers, &marker_count, MAX_MARKERS_PER_DFA_TRANSITION);
 
             // Compute category mask and accepting pattern for target state
             // Category ONLY from TRUE accepting states (pattern_id != 0 OR is_eos_target)
@@ -861,7 +871,11 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx) {
 
         eos_done:;
     }
-    //fprintf(stderr, "DEBUG nfa_to_dfa: COMPLETED, dfa_state_count=%d\n", dfa_state_count);
+    free(q);
+    free(ms);
+    free(temp2);
+    free(in);
+    free(temp);
 }
 
 void flatten_dfa(nfa2dfa_context_t* ctx) {
@@ -1122,7 +1136,13 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         }
     }
 
-    fwrite(ds, 1, total_size, file);
+    size_t written = fwrite(ds, 1, total_size, file);
+    if (written != total_size) {
+        FATAL_SYS("Failed to write DFA file '%s' (wrote %zu of %zu bytes)", filename, written, total_size);
+        fclose(file); free(ds); free(all_rules);
+        free(rule_counts); free(state_offset); free(rule_offset);
+        exit(EXIT_FAILURE);
+    }
     
     // Report alignment statistics if verbose
     int aligned_count = 0;

@@ -115,23 +115,18 @@ const char* dfa_category_string(dfa_command_category_t cat) {
 // Internal helpers (machine-aware)
 // ============================================================================
 
-static bool get_capture_name_from_table(const dfa_machine_t* m, int capture_id, int pattern_id, char* buffer, size_t buffer_size) {
-    (void)capture_id;
-    if (!m || !m->dfa || m->dfa->metadata_offset == 0 || !buffer || buffer_size == 0) {
+static bool get_capture_name_from_table(const dfa_t* dfa, size_t dfa_size, int capture_id, int pattern_id, char* buffer, size_t buffer_size) {
+    if (!dfa || dfa->metadata_offset == 0 || !buffer || buffer_size == 0) return false;
+
+    const char* base = (const char*)dfa;
+    if (dfa->metadata_offset >= dfa_size ||
+        dfa->metadata_offset + 4 > dfa_size) {
         return false;
     }
+    uint32_t entry_count = *(const uint32_t*)(base + dfa->metadata_offset);
 
-    const char* base = (const char*)m->dfa;
-
-    if (m->dfa->metadata_offset >= m->dfa_size ||
-        m->dfa->metadata_offset + 4 > m->dfa_size) {
-        return false;
-    }
-
-    uint32_t entry_count = *(const uint32_t*)(base + m->dfa->metadata_offset);
-
-    const char* p = base + m->dfa->metadata_offset + 4;
-    const char* end = base + m->dfa_size;
+    const char* p = base + dfa->metadata_offset + 4;
+    const char* end = base + dfa_size;
 
     for (uint32_t i = 0; i < entry_count; i++) {
         if (p + 4 > end) {
@@ -155,7 +150,7 @@ static bool get_capture_name_from_table(const dfa_machine_t* m, int capture_id, 
     return false;
 }
 
-static void add_capture(const dfa_machine_t* m, dfa_result_t* result, int capture_id, size_t start, size_t end, uint16_t pattern_id) {
+static void add_capture(const dfa_t* dfa, size_t dfa_size, dfa_result_t* result, int capture_id, size_t start, size_t end, uint16_t pattern_id) {
     if (result->capture_count >= DFA_MAX_CAPTURES) return;
     dfa_capture_t* cap = &result->captures[result->capture_count++];
     cap->start = start;
@@ -163,7 +158,7 @@ static void add_capture(const dfa_machine_t* m, dfa_result_t* result, int captur
     cap->capture_id = capture_id;
 
     char name_buf[64];
-    if (get_capture_name_from_table(m, capture_id, pattern_id, name_buf, sizeof(name_buf))) {
+    if (get_capture_name_from_table(dfa, dfa_size, capture_id, pattern_id, name_buf, sizeof(name_buf))) {
         snprintf(cap->name, sizeof(cap->name), "%.31s", name_buf);
     } else {
         snprintf(cap->name, sizeof(cap->name), "capture_%d", capture_id);
@@ -172,7 +167,7 @@ static void add_capture(const dfa_machine_t* m, dfa_result_t* result, int captur
     cap->completed = true;
 }
 
-static void process_marker_list(const dfa_machine_t* m, const uint32_t* marker_base, size_t pos,
+static void process_marker_list(const dfa_t* dfa, size_t dfa_size, const uint32_t* marker_base, size_t pos,
                                  uint16_t winning_pattern_id, uint8_t category_mask,
                                  capture_range_t* capture_stack, int* stack_depth,
                                  dfa_result_t* result, size_t marker_max_count,
@@ -203,7 +198,7 @@ static void process_marker_list(const dfa_machine_t* m, const uint32_t* marker_b
                 for (int j = *stack_depth - 1; j >= 0; j--) {
                     if (capture_stack[j].capture_id == capture_id && capture_stack[j].end_pos == 0) {
                         capture_stack[j].end_pos = pos;
-                        add_capture(m, result, capture_id, capture_stack[j].start_pos, pos, pattern_id);
+                        add_capture(dfa, dfa_size, result, capture_id, capture_stack[j].start_pos, pos, pattern_id);
                         break;
                     }
                 }
@@ -216,21 +211,19 @@ static void process_marker_list(const dfa_machine_t* m, const uint32_t* marker_b
 // Evaluation
 // ============================================================================
 
-bool dfa_machine_evaluate(const dfa_machine_t* m, const char* input, size_t length, dfa_result_t* result) {
-    return dfa_machine_evaluate_with_limit(m, input, length, result, DFA_MAX_CAPTURES);
+// Direct API - dfa_data and size passed directly, no struct
+bool dfa_eval(const void* dfa_data, size_t dfa_size, const char* input, size_t length, dfa_result_t* result) {
+    return dfa_eval_with_limit(dfa_data, dfa_size, input, length, result, DFA_MAX_CAPTURES);
 }
 
-bool dfa_machine_evaluate_with_limit(const dfa_machine_t* m, const char* input, size_t length, dfa_result_t* result, int max_caps) {
+
+bool dfa_eval_with_limit(const void* dfa_void, size_t dfa_size, const char* input, size_t length, dfa_result_t* result, int max_caps) {
     (void)max_caps;
 
-    if (!m || !m->dfa || !input || !result) {
-        fprintf(stderr, "EVAL ERROR: m=%p, dfa=%p, input=%p, result=%p\n",
-                (void*)m, m ? (void*)m->dfa : NULL, (void*)input, (void*)result);
+    const dfa_t* dfa = (const dfa_t*)dfa_void;
+    if (!dfa || !input || !result) {
         return false;
     }
-
-    const dfa_t* dfa = m->dfa;
-    size_t dfa_size = m->dfa_size;
 
 #if DFA_EVAL_DEBUG
     fprintf(stderr, "EVAL: Starting evaluation of '%s', length=%zu\n", input, length);
@@ -425,7 +418,7 @@ bool dfa_machine_evaluate_with_limit(const dfa_machine_t* m, const char* input, 
                 }
 
                 if (transition_markers) {
-                    process_marker_list(m, transition_markers, t - 1, winning_pattern_id, mask,
+                    process_marker_list(dfa, dfa_size, transition_markers, t - 1, winning_pattern_id, mask,
                                        capture_stack, &stack_depth, result, MAX_MARKER_LIST_SIZE, marker_data_size);
                 }
             }
@@ -434,7 +427,7 @@ bool dfa_machine_evaluate_with_limit(const dfa_machine_t* m, const char* input, 
                 curr->eos_marker_offset + sizeof(uint32_t) <= dfa_size) {
                 const uint32_t* eos_markers = (const uint32_t*)((const uint8_t*)dfa + curr->eos_marker_offset);
                 marker_data_size = dfa_size - curr->eos_marker_offset;
-                process_marker_list(m, eos_markers, pos, winning_pattern_id, mask,
+                process_marker_list(dfa, dfa_size, eos_markers, pos, winning_pattern_id, mask,
                                    capture_stack, &stack_depth, result, MAX_MARKER_LIST_SIZE, marker_data_size);
             }
         }

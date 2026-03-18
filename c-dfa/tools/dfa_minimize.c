@@ -310,7 +310,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
     free(queue);
 
     // Phase 3: Keep states that are BOTH forward and backward reachable
-    bool* useful = malloc(state_count * sizeof(bool));
+    bool* useful = alloc_or_abort(malloc(state_count * sizeof(bool)), "Alloc useful");
     int useful_count = 0;
     for (int s = 0; s < state_count; s++) {
         if (forward_reachable[s] && backward_reachable[s]) {
@@ -321,7 +321,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
     useful[0] = true;  // Always keep start state
 
     // Phase 4: Compact the DFA
-    int* map = malloc(state_count * sizeof(int));
+    int* map = alloc_or_abort(malloc(state_count * sizeof(int)), "Alloc map");
     int new_count = 0;
     for (int s = 0; s < state_count; s++) {
         if (useful[s]) {
@@ -546,10 +546,10 @@ int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
     int* worklist = alloc_or_abort(malloc(MAX_STATES * 4 * sizeof(int)), "Alloc worklist");
     bool* in_worklist = alloc_or_abort(calloc(MAX_STATES, sizeof(bool)), "Alloc in_worklist");
     for (int p = 0; p < ms->partition_count; p++) { worklist[tail++] = p; in_worklist[p] = true; }
-    int* char_preds = malloc((inv.total_edges + 1) * sizeof(int));
-    int* char_pred_counts = calloc(TOTAL_SYMBOLS, sizeof(int));
-    int* char_pred_offsets = calloc(TOTAL_SYMBOLS, sizeof(int));
-    sort_entry_t* sort_buf = malloc(state_count * sizeof(sort_entry_t));
+    int* char_preds = alloc_or_abort(malloc((inv.total_edges + 1) * sizeof(int)), "Alloc char_preds");
+    int* char_pred_counts = alloc_or_abort(calloc(TOTAL_SYMBOLS, sizeof(int)), "Alloc char_pred_counts");
+    int* char_pred_offsets = alloc_or_abort(calloc(TOTAL_SYMBOLS, sizeof(int)), "Alloc char_pred_offsets");
+    sort_entry_t* sort_buf = alloc_or_abort(malloc(state_count * sizeof(sort_entry_t)), "Alloc sort_buf");
     while (head < tail) {
         int S = worklist[head++]; in_worklist[S] = false;
         memset(char_pred_counts, 0, TOTAL_SYMBOLS * sizeof(int));

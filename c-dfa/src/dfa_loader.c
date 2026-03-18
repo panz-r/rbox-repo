@@ -55,24 +55,22 @@ static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
         return false;
     }
 
+    // Validate metadata_offset if present (offset == size means no metadata, which is valid)
+    if (dfa->metadata_offset != 0) {
+        if (dfa->metadata_offset > file_size) {
+            ERROR("metadata_offset %u is beyond file size %zu", dfa->metadata_offset, file_size);
+            return false;
+        }
+    }
+
     // Validate accepting_mask only has bits for existing states
-    if (dfa->accepting_mask != 0) {
-        if (dfa->state_count < 32) {
-            uint32_t max_valid_mask = (1u << dfa->state_count) - 1;
-            if ((dfa->accepting_mask & ~max_valid_mask) != 0) {
-                ERROR("accepting_mask 0x%08X has bits beyond state_count %u (max: 0x%08X)",
-                        dfa->accepting_mask, dfa->state_count, max_valid_mask);
-                return false;
-            }
-        } else {
-            // For state_count >= 32, accepting_mask is a 32-bit mask
-            // so bits 0-31 are valid. Check that no bits >= 32 are set
-            // by verifying the upper bits of accepting_mask are zero
-            if ((dfa->accepting_mask & 0xFFFFFFFF00000000u) != 0) {
-                ERROR("accepting_mask 0x%08X has bits beyond 32 for state_count %u",
-                        dfa->accepting_mask, dfa->state_count);
-                return false;
-            }
+    // Note: accepting_mask is uint32_t, so only states 0-31 can be represented
+    if (dfa->accepting_mask != 0 && dfa->state_count < 32) {
+        uint32_t max_valid_mask = (1u << dfa->state_count) - 1;
+        if ((dfa->accepting_mask & ~max_valid_mask) != 0) {
+            ERROR("accepting_mask 0x%08X has bits beyond state_count %u (max: 0x%08X)",
+                    dfa->accepting_mask, dfa->state_count, max_valid_mask);
+            return false;
         }
     }
 
@@ -263,8 +261,11 @@ const char* lookup_capture_name(const void* dfa_data, uint16_t uid) {
     const uint32_t* name_table = (const uint32_t*)((const char*)dfa_data + dfa->metadata_offset);
     uint32_t entry_count = name_table[0];
 
+    // Use a reasonable upper bound: each entry has UID(4) + name_len(2) + name(N) bytes
+    // Maximum 256 entries with 64-byte names = ~18KB, use 32KB as safe upper bound
+    size_t max_metadata_size = 32768;
     size_t byte_offset = 4; // start after entry_count
-    for (uint32_t i = 0; i < entry_count && byte_offset < 10000; i++) {
+    for (uint32_t i = 0; i < entry_count && byte_offset + 6 <= max_metadata_size; i++) {
         // Read UID at current position
         uint32_t entry_uid = *(const uint32_t*)((const char*)name_table + byte_offset);
         byte_offset += 4;

@@ -219,8 +219,8 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
         return;
     }
 
-    dfa_machine_t machine;
-    if (!dfa_machine_init(&machine, data, size)) {
+    
+    if (!data || size < sizeof(dfa_t)) {
         printf("  [ERROR] Failed to init DFA\n");
         free(data);
         return;
@@ -231,7 +231,7 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
 
     for (int i = 0; i < count; i++) {
         dfa_result_t result;
-        dfa_machine_evaluate(&machine, cases[i].input, strlen(cases[i].input), &result);
+        dfa_eval(data, size, cases[i].input, strlen(cases[i].input), &result);
         bool passed = true;
 
         // Check match status
@@ -342,7 +342,7 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
         fprintf(stderr, "[ERROR] Test group '%s' had %d failures\n", group_name, group_run - group_passed);
     }
 
-    dfa_machine_reset(&machine);
+    
     free(data);
     remove(dfa_file);
 }

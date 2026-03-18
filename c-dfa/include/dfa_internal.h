@@ -30,8 +30,8 @@ uint16_t dfa_machine_get_version(const dfa_machine_t* m);
 uint16_t dfa_machine_get_state_count(const dfa_machine_t* m);
 
 // Evaluation
-bool dfa_machine_evaluate(const dfa_machine_t* m, const char* input, size_t length, dfa_result_t* result);
-bool dfa_machine_evaluate_with_limit(const dfa_machine_t* m, const char* input, size_t length, dfa_result_t* result, int max_captures);
+bool dfa_eval(const void* dfa_data, size_t dfa_size, const char* input, size_t length, dfa_result_t* result);
+bool dfa_eval_with_limit(const void* dfa_data, size_t dfa_size, const char* input, size_t length, dfa_result_t* result, int max_captures);
 
 // Capture access (operate on result, no machine state needed)
 int dfa_result_get_capture(const dfa_result_t* result, int index, const char** out_start, size_t* out_length);

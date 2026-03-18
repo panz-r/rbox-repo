@@ -84,16 +84,21 @@ int main(int argc, char* argv[]) {
     }
 
     // Initialize DFA machine (no globals)
-    dfa_machine_t machine;
-    if (!dfa_machine_init(&machine, dfa_data, dfa_size)) {
-        fprintf(stderr, "ERROR: DFA initialization failed\n");
-        free(dfa_data);
-        return 2;
+    dfa_result_t result;
+    memset(&result, 0, sizeof(result));
+
+    // Validate DFA
+    if (!dfa_data || dfa_size < sizeof(dfa_t)) {
+        fprintf(stderr, "Invalid DFA data\n");
+        return 1;
+    }
+    const dfa_t* dfa_header = (const dfa_t*)dfa_data;
+    if (dfa_header->magic != DFA_MAGIC) {
+        fprintf(stderr, "Invalid DFA magic\n");
+        return 1;
     }
 
-    // Evaluate the command
-    dfa_result_t result;
-    bool ok = dfa_machine_evaluate_with_limit(&machine, command, strlen(command), &result, DFA_MAX_CAPTURES);
+    bool ok = dfa_eval_with_limit(dfa_data, dfa_size, command, strlen(command), &result, DFA_MAX_CAPTURES);
 
     int exit_code = 0;  // Success by default
 
@@ -162,7 +167,6 @@ int main(int argc, char* argv[]) {
         printf("matched=0 category=0 (Unknown)\n");
     }
 
-    dfa_machine_reset(&machine);
     free(dfa_data);
     return exit_code;
 }

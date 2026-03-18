@@ -89,9 +89,15 @@ int merge_rules_for_state(build_dfa_state_t* state, int max_group_size) {
     
     // Group transitions by (target, markers)
     rule_group_t* groups = malloc(transition_count * sizeof(rule_group_t));
-    int group_count = 0;
-    
     bool* used = calloc(256, sizeof(bool));
+    
+    if (!groups || !used) {
+        free(groups);
+        free(used);
+        return 0;
+    }
+    
+    int group_count = 0;
     
     for (int c = 0; c < 256; c++) {
         if (state->transitions[c] < 0 || used[c]) continue;
@@ -183,6 +189,7 @@ static int find_default_sharing(build_dfa_state_t** dfa, int state_count) {
     // For simplicity, count states with identical transition patterns
     int shared = 0;
     bool* counted = calloc(state_count, sizeof(bool));
+    if (!counted) return 0;
     
     for (int i = 0; i < state_count; i++) {
         if (counted[i]) continue;
@@ -305,10 +312,13 @@ int dfa_compress(build_dfa_state_t** dfa, int state_count, const compress_option
     }
     
     // Calculate final statistics
-    // Note: Currently only rule merging savings are applied (ranges would overlap)
     last_stats.compressed_rules = last_stats.original_rules - last_stats.rules_merged;
     last_stats.compressed_bytes = last_stats.compressed_rules * 12;
-    last_stats.compression_ratio = (float)last_stats.compressed_bytes / last_stats.original_bytes;
+    if (last_stats.original_bytes > 0) {
+        last_stats.compression_ratio = (float)last_stats.compressed_bytes / last_stats.original_bytes;
+    } else {
+        last_stats.compression_ratio = 1.0f;
+    }
     
     VERBOSE_PRINT("Compressed: %d rules, %d bytes (%.1f%% reduction)\n",
                   last_stats.compressed_rules, last_stats.compressed_bytes,

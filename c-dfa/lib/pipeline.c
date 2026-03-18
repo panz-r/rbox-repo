@@ -56,10 +56,9 @@ struct pipeline {
 // ============================================================================
 
 struct dfa_evaluator {
-    uint8_t* data;
+    void* data;
     size_t size;
     bool owns_data;
-    dfa_machine_t machine;
 };
 
 // ============================================================================
@@ -316,15 +315,31 @@ pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file) {
 
     // Read binary into memory
     FILE* f = fopen(p->temp_dfa_file, "rb");
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        p->binary_size = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        p->binary_data = malloc(p->binary_size);
-        if (p->binary_data) {
-            fread(p->binary_data, 1, p->binary_size, f);
-        }
+    if (!f) {
+        ERROR("Failed to open temp DFA file '%s' for reading", p->temp_dfa_file);
+        return PIPELINE_IO_ERROR;
+    }
+    fseek(f, 0, SEEK_END);
+    p->binary_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (p->binary_size <= 0) {
         fclose(f);
+        ERROR("Temp DFA file '%s' is empty", p->temp_dfa_file);
+        return PIPELINE_IO_ERROR;
+    }
+    p->binary_data = malloc(p->binary_size);
+    if (!p->binary_data) {
+        fclose(f);
+        ERROR("Failed to allocate %zu bytes for DFA binary", p->binary_size);
+        return PIPELINE_OOM;
+    }
+    size_t bytes_read = fread(p->binary_data, 1, p->binary_size, f);
+    fclose(f);
+    if (bytes_read != (size_t)p->binary_size) {
+        ERROR("Failed to read DFA binary (got %zu of %ld bytes)", bytes_read, p->binary_size);
+        free(p->binary_data);
+        p->binary_data = NULL;
+        return PIPELINE_IO_ERROR;
     }
 
     return PIPELINE_OK;
@@ -360,17 +375,9 @@ dfa_evaluator_t* dfa_eval_create(const uint8_t* binary_data, size_t size) {
         free(e);
         return NULL;
     }
-
     memcpy(e->data, binary_data, size);
     e->size = size;
     e->owns_data = true;
-
-    // Initialize machine state (no globals)
-    if (!dfa_machine_init(&e->machine, e->data, e->size)) {
-        free(e->data);
-        free(e);
-        return NULL;
-    }
 
     return e;
 }
@@ -392,19 +399,11 @@ dfa_evaluator_t* dfa_eval_load(const char* filename) {
     e->size = size;
     e->owns_data = true;
 
-    // Initialize machine state (no globals)
-    if (!dfa_machine_init(&e->machine, e->data, e->size)) {
-        free(e->data);
-        free(e);
-        return NULL;
-    }
-
     return e;
 }
 
 void dfa_eval_destroy(dfa_evaluator_t* e) {
     if (!e) return;
-    dfa_machine_reset(&e->machine);
     if (e->owns_data) free(e->data);
     free(e);
 }
@@ -413,10 +412,7 @@ dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input) {
     dfa_result_t result = {0};
     if (!e || !input) return result;
 
-    dfa_machine_evaluate(&e->machine, input, strlen(input), &result);
+    dfa_eval(e->data, e->size, input, strlen(input), &result);
     return result;
 }
 
-const char* dfa_eval_category_name(uint16_t category) {
-    return dfa_category_string((dfa_command_category_t)category);
-}

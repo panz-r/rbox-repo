@@ -100,6 +100,12 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
     // Build predecessor lists
     int* pred_count = calloc(state_count, sizeof(int));
     int** preds = malloc(state_count * sizeof(int*));
+    
+    if (!depths || !queue || !visited || !is_accepting || !pred_count || !preds) {
+        free(depths); free(queue); free(visited); free(is_accepting);
+        free(pred_count); free(preds);
+        return NULL;
+    }
     for (int i = 0; i < state_count; i++) {
         preds[i] = NULL;
     }
@@ -250,6 +256,11 @@ static int* find_sccs_tarjan(
     
     // Tarjan's DFS (iterative to handle large graphs)
     int* dfs_stack = malloc(state_count * 2 * sizeof(int)); // (state, next_child_index)
+    if (!dfs_stack) {
+        free(index); free(lowlink); free(on_stack); free(stack); free(scc_id);
+        *scc_count_out = 0;
+        return scc_id;
+    }
     int dfs_top = 0;
     
     for (int start = 0; start < state_count; start++) {
@@ -328,6 +339,10 @@ static int* find_sccs_tarjan(
                     // Initialize SCC info
                     int initial_cap = 64;
                     scc_info[scc_count].states = malloc(initial_cap * sizeof(int));
+                    if (!scc_info[scc_count].states) {
+                        // Allocation failed - stop SCC detection
+                        break;
+                    }
                     scc_info[scc_count].count = 0;
                     scc_info[scc_count].capacity = initial_cap;
                     
@@ -338,11 +353,17 @@ static int* find_sccs_tarjan(
                         
                         // Grow if needed
                         if (scc_info[scc_count].count >= scc_info[scc_count].capacity) {
-                            scc_info[scc_count].capacity *= 2;
-                            scc_info[scc_count].states = realloc(
+                            int new_cap = scc_info[scc_count].capacity * 2;
+                            int* new_states = realloc(
                                 scc_info[scc_count].states,
-                                scc_info[scc_count].capacity * sizeof(int)
+                                new_cap * sizeof(int)
                             );
+                            if (!new_states) {
+                                // realloc failed - keep original pointer, stop adding states
+                                break;
+                            }
+                            scc_info[scc_count].states = new_states;
+                            scc_info[scc_count].capacity = new_cap;
                         }
                         
                         scc_info[scc_count].states[scc_info[scc_count].count++] = s;
