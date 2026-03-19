@@ -43,7 +43,16 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
 
     /* Create a temporary file in /dev/shm (tmpfs - memory-backed filesystem).
      * This keeps the environment data in kernel memory, not on disk.
-     * The file has a random name and will be cleaned up on reboot. */
+     * The file has a random name and will be cleaned up on reboot.
+     *
+     * NOTE: If pkexec fails to start the child (e.g., authentication cancelled,
+     * crash, or segfault), the temp file will remain until reboot. This is
+     * acceptable because: (1) the file contains only env vars already present
+     * in the parent's environment, (2) the filename is random and non-guessable,
+     * (3) /dev/shm is cleared on reboot. A watchdog is not practical since
+     * pkexec authentication can take arbitrarily long (user might be at a
+     * terminal). O_TMPFILE could solve this but requires passing an open fd
+     * through pkexec, which closes all fds. */
     char env_file_template[] = "/dev/shm/readonlybox-env-XXXXXX";
     int env_fd = mkstemp(env_file_template);
     if (env_fd < 0) {

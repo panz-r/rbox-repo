@@ -1,7 +1,7 @@
 # Makefile for readonlybox-ptrace
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -I../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN -DDEBUG
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -I../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
 LDFLAGS = -lpthread -lm
 
 # Add rbox-protocol library

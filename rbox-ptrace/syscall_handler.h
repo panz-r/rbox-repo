@@ -70,13 +70,38 @@ extern Allowance g_allowances[MAX_ALLOWANCES];
     #define REG_ARG3(regs)      ((regs)->regs[2])   /* x2 */
     #define REG_ARG4(regs)      ((regs)->regs[3])   /* x3 */
     #define REG_SP(regs)        ((regs)->sp)
+#elif __riscv
+    #define USER_REGS           struct user_regs_struct
+    #define REG_SYSCALL(regs)   ((regs)->regs[17])  /* a7 = syscall number */
+    #define REG_ARG1(regs)      ((regs)->regs[10])  /* a0 */
+    #define REG_ARG2(regs)      ((regs)->regs[11])  /* a1 */
+    #define REG_ARG3(regs)      ((regs)->regs[12])  /* a2 */
+    #define REG_ARG4(regs)      ((regs)->regs[13])  /* a3 */
+    #define REG_SP(regs)        ((regs)->regs[2])   /* sp */
 #else
     #error "Unsupported architecture"
 #endif
 
-/* Convenience macros using system syscall numbers */
+/* Convenience macros using system syscall numbers.
+ * System headers (<sys/syscall.h>) are the authoritative source for syscall numbers.
+ * This ensures architecture-appropriate values are used automatically at build time.
+ * If a syscall is not available on the build system, the fallback values below
+ * represent common Linux syscall numbers. */
 #define SYSCALL_EXECVE      SYS_execve
-#define SYSCALL_EXECVEAT    SYS_execveat
+#ifdef SYS_execveat
+    #define SYSCALL_EXECVEAT    SYS_execveat
+#else
+    /* execveat syscall numbers: x86_64=322, aarch64=281, i386=391, riscv64=281 */
+    #if defined(__x86_64__)
+        #define SYSCALL_EXECVEAT    322
+    #elif defined(__aarch64__) || defined(__riscv)
+        #define SYSCALL_EXECVEAT    281
+    #elif defined(__i386__)
+        #define SYSCALL_EXECVEAT    391
+    #else
+        #define SYSCALL_EXECVEAT    0
+    #endif
+#endif
 #define SYSCALL_CLONE       SYS_clone
 #define SYSCALL_FORK        SYS_fork
 #define SYSCALL_VFORK       SYS_vfork

@@ -400,15 +400,17 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Error: cannot open environment file %s: %s\n", optarg, strerror(errno));
                     return 1;
                 }
-                char line[16384];  /* enough for a single env var */
-                while (fgets(line, sizeof(line), f)) {
-                    size_t len = strlen(line);
-                    if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+                char *line = NULL;
+                size_t line_cap = 0;
+                ssize_t line_len;
+                while ((line_len = getline(&line, &line_cap, f)) != -1) {
+                    if (line_len > 0 && line[line_len-1] == '\n') line[line_len-1] = '\0';
                     if (line[0] == '\0') continue;
                     /* putenv expects the string to remain valid; strdup copies it */
                     char *env_entry = strdup(line);
                     if (!env_entry) {
                         fprintf(stderr, "Error: out of memory restoring environment\n");
+                        free(line);
                         fclose(f);
                         unlink(optarg);
                         return 1;
@@ -420,6 +422,7 @@ int main(int argc, char *argv[]) {
                     /* Note: putenv does not copy the string on success,
                      * so we must not free env_entry. The string remains in environment. */
                 }
+                free(line);
                 fclose(f);
                 unlink(optarg);  /* Clean up the temp file */
                 break;
