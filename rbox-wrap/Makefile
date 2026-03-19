@@ -16,7 +16,7 @@ INTERNAL_CLIENT = ../internal/client
 
 # Static library from rbox-protocol
 RBOX_LIB = $(RBOX_PROTOCOL)/librbox_protocol.a
-SHELLSPLIT_OBJ = $(SHELLSPLIT)/src/shell_tokenizer.o
+SHELLSPLIT_LIB = $(SHELLSPLIT)/libshellsplit.a
 
 # DFA eval library (new API - just evaluation, no loader)
 DFA_EVAL_LIB = $(C_DFA)/libdfa_eval.a
@@ -40,8 +40,8 @@ all: $(TARGET)
 $(INTERNAL_CLIENT)/readonlybox_dfa.o: $(DFA_DATA_C)
 	$(CC) $(CFLAGS) -c -o $@ $(DFA_DATA_C)
 
-$(TARGET): $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(SHELLSPLIT_OBJ) $(DFA_DATA_OBJ)
-	$(CC) $(CFLAGS) -o $@ $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(SHELLSPLIT_OBJ) $(DFA_DATA_OBJ) $(LDFLAGS)
+$(TARGET): $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(SHELLSPLIT_LIB) $(DFA_DATA_OBJ)
+	$(CC) $(CFLAGS) -o $@ $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(SHELLSPLIT_LIB) $(DFA_DATA_OBJ) $(LDFLAGS)
 
 $(RBOX_LIB):
 	$(MAKE) -C $(RBOX_PROTOCOL)
@@ -49,8 +49,8 @@ $(RBOX_LIB):
 $(DFA_EVAL_LIB):
 	$(MAKE) -C $(C_DFA) libdfa_eval.a
 
-$(SHELLSPLIT_OBJ):
-	$(MAKE) -C $(SHELLSPLIT)
+$(SHELLSPLIT_LIB):
+	$(MAKE) -C $(SHELLSPLIT) libshellsplit.a
 
 # Test target
 test: $(TEST_BIN)

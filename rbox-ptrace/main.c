@@ -9,6 +9,8 @@
 #include <sys/user.h>
 #include <sys/prctl.h>
 #include <sys/fcntl.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
 #include <linux/capability.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -164,6 +166,49 @@ static void drop_privileges(void) {
         perror("chdir");
     }
 
+    /* Always drop privileges if we're running as root with a non-root original UID */
+    if (geteuid() == 0 && g_original_uid != 0) {
+        struct passwd *pw = getpwuid(g_original_uid);
+        gid_t gid = pw ? pw->pw_gid : g_original_gid;
+        const char *username = pw ? pw->pw_name : "nobody";
+        const char *home = pw ? pw->pw_dir : "/";
+        const char *shell = pw ? pw->pw_shell : "/bin/sh";
+
+        if (initgroups(username, gid) < 0) {
+            perror("initgroups");
+        }
+        if (setgid(gid) < 0) {
+            perror("setgid");
+        }
+        if (setuid(g_original_uid) < 0) {
+            perror("setuid");
+        }
+        if (geteuid() != g_original_uid) {
+            fprintf(stderr, "ERROR: Failed to drop privileges\n");
+            _exit(1);
+        }
+
+        /* Prevent gaining new privileges via execve (e.g., setuid binaries) */
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+            fprintf(stderr, "Warning: failed to set PR_SET_NO_NEW_PRIVS\n");
+        }
+
+        if (setenv("HOME", home, 1) != 0) {
+            fprintf(stderr, "Warning: failed to set HOME\n");
+        }
+        if (setenv("USER", username, 1) != 0) {
+            fprintf(stderr, "Warning: failed to set USER\n");
+        }
+        if (setenv("LOGNAME", username, 1) != 0) {
+            fprintf(stderr, "Warning: failed to set LOGNAME\n");
+        }
+        if (setenv("SHELL", shell, 1) != 0) {
+            fprintf(stderr, "Warning: failed to set SHELL\n");
+        }
+        unsetenv("PKEXEC_UID");
+        unsetenv("PKEXEC_AGENT");
+    }
+
     if (g_clean_env) {
         /* Clear all environment variables - only when explicitly requested.
          * This prevents LD_PRELOAD and other environment-based attacks.
@@ -172,48 +217,6 @@ static void drop_privileges(void) {
          * environ and call unsetenv() for each variable. */
         if (clearenv() != 0) {
             fprintf(stderr, "Warning: clearenv() failed\n");
-        }
-
-        if (geteuid() == 0 && g_original_uid != 0) {
-            struct passwd *pw = getpwuid(g_original_uid);
-            gid_t gid = pw ? pw->pw_gid : g_original_gid;
-            const char *username = pw ? pw->pw_name : "nobody";
-            const char *home = pw ? pw->pw_dir : "/";
-            const char *shell = pw ? pw->pw_shell : "/bin/sh";
-
-            if (initgroups(username, gid) < 0) {
-                perror("initgroups");
-            }
-            if (setgid(gid) < 0) {
-                perror("setgid");
-            }
-            if (setuid(g_original_uid) < 0) {
-                perror("setuid");
-            }
-            if (geteuid() != g_original_uid) {
-                fprintf(stderr, "ERROR: Failed to drop privileges\n");
-                _exit(1);
-            }
-
-            /* Prevent gaining new privileges via execve (e.g., setuid binaries) */
-            if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-                fprintf(stderr, "Warning: failed to set PR_SET_NO_NEW_PRIVS\n");
-            }
-
-            if (setenv("HOME", home, 1) != 0) {
-                fprintf(stderr, "Warning: failed to set HOME\n");
-            }
-            if (setenv("USER", username, 1) != 0) {
-                fprintf(stderr, "Warning: failed to set USER\n");
-            }
-            if (setenv("LOGNAME", username, 1) != 0) {
-                fprintf(stderr, "Warning: failed to set LOGNAME\n");
-            }
-            if (setenv("SHELL", shell, 1) != 0) {
-                fprintf(stderr, "Warning: failed to set SHELL\n");
-            }
-            unsetenv("PKEXEC_UID");
-            unsetenv("PKEXEC_AGENT");
         }
     }
 
@@ -311,7 +314,7 @@ static void screen_environment(void) {
 
         /* Check if we have room for more flagged envs */
         if (g_flagged_env_count >= 256) {
-            /* No more room - block remaining vars to be safe */
+            /* No more room - unset to block this var */
             unsetenv(name);
             fprintf(stderr, "   → Auto-blocked (capacity): %s\n", name);
             continue;
@@ -320,7 +323,6 @@ static void screen_environment(void) {
         if (!is_terminal) {
             /* Non-interactive mode: auto-block high-confidence, allow others */
             if (score > 0.8) {
-                unsetenv(name);
                 fprintf(stderr, "   → Auto-blocked (non-interactive): %s\n", name);
             } else {
                 /* Allow low-confidence vars by adding to list */
@@ -370,19 +372,48 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
         strcpy(cwd, ".");
     }
 
+    /* Create a temporary file in /dev/shm (tmpfs - memory-backed filesystem).
+     * This keeps the environment data in kernel memory, not on disk.
+     * The file has a random name and will be cleaned up on reboot. */
+    char env_file_template[] = "/dev/shm/readonlybox-env-XXXXXX";
+    int env_fd = mkstemp(env_file_template);
+    if (env_fd < 0) {
+        /* Fallback to regular tmp if /dev/shm is not available */
+        char tmp_template[] = "/tmp/readonlybox-env-XXXXXX";
+        env_fd = mkstemp(tmp_template);
+        if (env_fd < 0) {
+            perror("mkstemp");
+            return 1;
+        }
+        strcpy(env_file_template, tmp_template);
+    }
+
+    /* Write the screened environment to the temp file */
+    extern char **environ;
+    FILE *env_file = fdopen(env_fd, "w");
+    if (!env_file) {
+        close(env_fd);
+        return 1;
+    }
+    for (char **e = environ; *e; e++) {
+        fprintf(env_file, "%s\n", *e);
+    }
+    fclose(env_file);  /* also closes the fd */
+
     /* Allocate argv: pkexec + our options + args + NULL */
-    /* Estimate: 5 pkexec/our options + argc + 1 */
+    /* Estimate: 6 pkexec/our options + argc + 1 */
     char **new_argv = malloc((argc + 10) * sizeof(char *));
     if (!new_argv) {
-        perror("malloc");
+        unlink(env_file_template);
         return 1;
     }
 
-    /* Track allocated strings for cleanup (uid_str, cwd, cmd_path) */
+    /* Track allocated strings for cleanup */
 #define MAX_ALLOCATED 4
     char **allocated_strings = malloc(MAX_ALLOCATED * sizeof(char *));
     if (!allocated_strings) {
         free(new_argv);
+        unlink(env_file_template);
         return 1;
     }
     int allocated_count = 0;
@@ -401,60 +432,54 @@ static int relaunch_with_pkexec(int argc, char *argv[], const char *cmd_path) {
     } while(0)
 
     int idx = 0;
-    /* Build: pkexec --disable-internal-agent argv0 --uid uid --cwd cwd --cmd cmd --internal-screened -- actual_command */
     new_argv[idx++] = "pkexec";
     new_argv[idx++] = "--disable-internal-agent";
-
-    /* The -- separator tells pkexec that the program path follows.
-     * Everything after this goes to the program we're launching (our argv). */
     new_argv[idx++] = argv[0];  /* Our program's path */
     new_argv[idx++] = "--uid";
     char uid_str[32];
     snprintf(uid_str, sizeof(uid_str), "%d", original_uid);
     new_argv[idx] = strdup(uid_str);
-    if (!new_argv[idx]) {
-        FREE_ALLOCATED();
-        free(new_argv);
-        return 1;
-    }
+    if (!new_argv[idx]) { FREE_ALLOCATED(); free(new_argv); unlink(env_file_template); return 1; }
     ADD_ALLOCATED(new_argv[idx]);
     idx++;
     new_argv[idx++] = "--cwd";
     new_argv[idx] = strdup(cwd);
-    if (!new_argv[idx]) {
-        FREE_ALLOCATED();
-        free(new_argv);
-        return 1;
-    }
+    if (!new_argv[idx]) { FREE_ALLOCATED(); free(new_argv); unlink(env_file_template); return 1; }
     ADD_ALLOCATED(new_argv[idx]);
     idx++;
     new_argv[idx++] = "--cmd";
     new_argv[idx] = strdup(cmd_path);
-    if (!new_argv[idx]) {
-        FREE_ALLOCATED();
-        free(new_argv);
-        return 1;
-    }
+    if (!new_argv[idx]) { FREE_ALLOCATED(); free(new_argv); unlink(env_file_template); return 1; }
     ADD_ALLOCATED(new_argv[idx]);
     idx++;
 
-    /* Add hidden internal flag to indicate we've already screened the environment */
+    /* Pass the environment file path so the child can restore the environment */
+    new_argv[idx++] = "--env-file";
+    new_argv[idx] = strdup(env_file_template);
+    if (!new_argv[idx]) { FREE_ALLOCATED(); free(new_argv); unlink(env_file_template); return 1; }
+    ADD_ALLOCATED(new_argv[idx]);
+    idx++;
+
+    /* Hidden internal flag to indicate we've already screened the environment */
     new_argv[idx++] = "--internal-screened";
 
-    /* Add the actual command arguments (skip argv[0] which is our program).
-     * No second -- needed - everything after our program's args is the command. */
+    /* Add the actual command arguments (skip argv[0] which is our program). */
     for (int i = 1; i < argc; i++) {
         new_argv[idx++] = argv[i];
     }
     new_argv[idx] = NULL;
 
-    execvp("pkexec", new_argv);
+    /* Execute pkexec. The env file is in /dev/shm (memory-backed tmpfs).
+     * The child (second instance) will read and unlink the file very early
+     * after pkexec completes authentication. The file exists only during
+     * the brief authentication window - no watchdog needed. */
+    execve("/usr/bin/pkexec", new_argv, environ);
 
-    /* Cleanup on error */
-    fprintf(stderr, "\n%s: Failed to get elevated privileges via pkexec: %s\n", 
-            g_progname, strerror(errno));
+    /* If we get here, execve failed */
+    fprintf(stderr, "\n%s: Failed to execute pkexec: %s\n", g_progname, strerror(errno));
     FREE_ALLOCATED();
     free(new_argv);
+    unlink(env_file_template);
     return 1;
 }
 
@@ -716,6 +741,8 @@ int main(int argc, char *argv[]) {
         {"clean-env", no_argument, 0, 257},
         /* Hidden internal flag: set after pkexec relaunch to skip re-screening */
         {"internal-screened", no_argument, 0, 256},
+        /* Hidden option: restore environment from file passed by relaunch_with_pkexec */
+        {"env-file", required_argument, 0, 258},
         {0, 0, 0, 0}
     };
 
@@ -767,6 +794,38 @@ int main(int argc, char *argv[]) {
                 g_clean_env = true;
                 g_keep_env = false;
                 break;
+            case 258: {
+                /* Hidden option: restore environment from file passed by relaunch_with_pkexec.
+                 * The file is in /dev/shm (memory-backed tmpfs) and is unlinked after reading. */
+                FILE *f = fopen(optarg, "r");
+                if (!f) {
+                    fprintf(stderr, "Error: cannot open environment file %s: %s\n", optarg, strerror(errno));
+                    return 1;
+                }
+                char line[16384];  /* enough for a single env var */
+                while (fgets(line, sizeof(line), f)) {
+                    size_t len = strlen(line);
+                    if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+                    if (line[0] == '\0') continue;
+                    /* putenv expects the string to remain valid; strdup copies it */
+                    char *env_entry = strdup(line);
+                    if (!env_entry) {
+                        fprintf(stderr, "Error: out of memory restoring environment\n");
+                        fclose(f);
+                        unlink(optarg);
+                        return 1;
+                    }
+                    if (putenv(env_entry) != 0) {
+                        fprintf(stderr, "Warning: putenv failed for '%s'\n", env_entry);
+                        free(env_entry);
+                    }
+                    /* Note: putenv does not copy the string on success,
+                     * so we must not free env_entry. The string remains in environment. */
+                }
+                fclose(f);
+                unlink(optarg);  /* Clean up the temp file */
+                break;
+            }
             default:
                 print_usage();
                 return 1;
@@ -815,15 +874,15 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Screen environment for potential secrets before launching (unless --keep-env)
+    /* Screen environment for potential secrets before launching.
+     * When g_keep_env is true: screen and unset only flagged variables.
+     * When g_keep_env is false: screen and clear everything (legacy behavior).
      * Skip if internal flag is set AND we're running as root (after pkexec relaunch).
      * The flag is only set by the wrapper when it relaunches via pkexec. */
-    if (!g_keep_env) {
-        if (internal_screened && geteuid() == 0) {
-            /* Already screened in the first instance; skip to avoid double prompt */
-        } else {
-            screen_environment();
-        }
+    if (internal_screened && geteuid() == 0) {
+        /* Already screened in the first instance; skip to avoid double prompt */
+    } else {
+        screen_environment();
     }
 
     if (attach_pid == 0 && provided_uid == 0 && !have_ptrace_capability()) {

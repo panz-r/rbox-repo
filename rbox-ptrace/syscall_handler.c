@@ -449,6 +449,12 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         return 0;
     }
 
+    /* Clear stale environment decisions before any DFA or filtering checks.
+     * These variables may be set from a previous command and should not affect
+     * subsequent commands (especially DFA-fast-path commands that don't query the server). */
+    unsetenv("READONLYBOX_ENV_DECISIONS");
+    unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
+
     /* Only check execve syscalls */
     if (syscall_is_execve(regs)) {
         DEBUG_PRINT("HANDLER: pid=%d execve detected, initial=%d, detached=%d\n",
