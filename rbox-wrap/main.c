@@ -129,10 +129,12 @@ static char *build_command_string_alloc(const char *const *argv) {
 
 /* Parse flagged environment variables from READONLYBOX_FLAGGED_ENVS
  * Format: NAME1:score1,NAME2:score2,...
- * Returns count and allocates names array (caller must free) */
-static int parse_flagged_envs(const char *env_str, char ***out_names) {
+ * Returns count and allocates names and scores arrays (caller must free both) */
+static int parse_flagged_envs(const char *env_str, char ***out_names, float **out_scores) {
+    if (out_names) *out_names = NULL;
+    if (out_scores) *out_scores = NULL;
+    
     if (!env_str || !*env_str) {
-        *out_names = NULL;
         return 0;
     }
 
@@ -142,13 +144,17 @@ static int parse_flagged_envs(const char *env_str, char ***out_names) {
     }
 
     char **names = calloc(count, sizeof(char *));
-    if (!names) {
+    float *scores = calloc(count, sizeof(float));
+    if (!names || !scores) {
+        free(names);
+        free(scores);
         return 0;
     }
 
     char *env_copy = strdup(env_str);
     if (!env_copy) {
         free(names);
+        free(scores);
         return 0;
     }
 
@@ -158,14 +164,17 @@ static int parse_flagged_envs(const char *env_str, char ***out_names) {
         char *colon = strchr(token, ':');
         if (colon) {
             *colon = '\0';
+            scores[idx] = (float)atof(colon + 1);
+        } else {
+            scores[idx] = 0.0f;
         }
         names[idx] = strdup(token);
         if (!names[idx]) {
-            /* Allocation failed - clean up and return error */
             for (int j = 0; j < idx; j++) {
                 free(names[j]);
             }
             free(names);
+            free(scores);
             free(env_copy);
             return -1;
         }
@@ -174,7 +183,10 @@ static int parse_flagged_envs(const char *env_str, char ***out_names) {
     }
     free(env_copy);
 
-    *out_names = names;
+    if (out_names) *out_names = names;
+    else free(names);
+    if (out_scores) *out_scores = scores;
+    else free(scores);
     return idx;
 }
 
@@ -346,7 +358,7 @@ static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clea
 static int run_with_filter(const char *socket_path, const char *command, 
                           int cmd_argc, const char **args,
                           const char *caller, const char *syscall,
-                          int flagged_count, char **flagged_names,
+                          int flagged_count, char **flagged_names, float *flagged_scores,
                           uid_t target_uid, int clear_env) {
     char *packet = NULL;
     size_t pkt_len = 0;
@@ -360,7 +372,7 @@ static int run_with_filter(const char *socket_path, const char *command,
         syscall,
         flagged_count,
         (const char **)flagged_names,
-        NULL,
+        flagged_scores,
         &packet,
         &pkt_len,
         100,
@@ -542,10 +554,11 @@ int main(int argc, char *argv[]) {
     
     /* Parse flagged environment variables */
     char **flagged_names = NULL;
+    float *flagged_scores = NULL;
     int flagged_count = 0;
     if (!mode_clear_env) {
         const char *env_str = getenv(ENV_FLAGGED_ENVS);
-        flagged_count = parse_flagged_envs(env_str, &flagged_names);
+        flagged_count = parse_flagged_envs(env_str, &flagged_names, &flagged_scores);
         if (flagged_count < 0) {
             fprintf(stderr, "%s: failed to parse flagged envs\n", program_name);
             return EXIT_ERROR;
@@ -555,9 +568,10 @@ int main(int argc, char *argv[]) {
     /* Handle --run mode with environment filtering */
     if (mode_run) {
         int ret = run_with_filter(socket_path, command, cmd_argc, args,
-                             caller, syscall, flagged_count, flagged_names,
+                             caller, syscall, flagged_count, flagged_names, flagged_scores,
                              target_uid, mode_clear_env);
         free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
         return ret;
     }
     
@@ -574,7 +588,7 @@ int main(int argc, char *argv[]) {
             syscall,
             flagged_count,
             (const char **)flagged_names,
-            NULL,
+            flagged_scores,
             &packet,
             &pkt_len,
             100,
@@ -582,6 +596,7 @@ int main(int argc, char *argv[]) {
         );
         
         free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
         
         if (err != RBOX_OK || !packet) {
             fprintf(stderr, "%s: %s\n", program_name, rbox_strerror(err));
@@ -608,13 +623,14 @@ int main(int argc, char *argv[]) {
         syscall,
         flagged_count,
         (const char **)flagged_names,
-        NULL,
+        flagged_scores,
         &response,
         100,
         3
     );
     
     free_flagged_envs(flagged_count, flagged_names);
+    free(flagged_scores);
     
     if (err != RBOX_OK) {
         fprintf(stderr, "%s: %s\n", program_name, rbox_strerror(err));

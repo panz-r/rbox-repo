@@ -52,9 +52,12 @@ $(DFA_EVAL_LIB):
 $(SHELLSPLIT_LIB):
 	$(MAKE) -C $(SHELLSPLIT) libshellsplit.a
 
-# Test target
-test: $(TEST_BIN)
+# Test targets
+test: $(TARGET) $(TEST_BIN)
 	./$(TEST_BIN)
+	@echo ""
+	@echo "Running shell integration tests..."
+	@cd tests && bash run_tests.sh
 
 $(TEST_BIN): $(TEST_SRC) $(RBOX_LIB)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(RBOX_LIB) $(LDFLAGS)
