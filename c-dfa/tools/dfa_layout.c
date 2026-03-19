@@ -994,17 +994,18 @@ int* optimize_dfa_layout(
 size_t calculate_optimized_layout_size(
     const build_dfa_state_t** dfa,
     int state_count,
-    const layout_options_t* options
+    int encoding
 ) {
-    (void)options;  // Currently not used
-    
-    // Header size
-    size_t size = 23;  // magic(4) + version(2) + state_count(2) + initial_state(4) + 
-                       // accepting_mask(4) + flags(2) + id_len(1) + metadata(4)
-    
+    int ss = DFA_STATE_SIZE(encoding);
+    int rs = DFA_RULE_SIZE(encoding);
+    uint8_t id_len = 0;  // Unknown at layout time; use 0 for estimate
+    size_t hs = DFA_HEADER_SIZE(encoding, id_len);
+
+    size_t size = hs;
+
     // States array
-    size += state_count * sizeof(dfa_state_t);
-    
+    size += (size_t)state_count * ss;
+
     // Count rules
     int total_rules = 0;
     for (int i = 0; i < state_count; i++) {
@@ -1014,10 +1015,10 @@ size_t calculate_optimized_layout_size(
             }
         }
     }
-    
+
     // Rules array
-    size += total_rules * sizeof(dfa_rule_t);
-    
+    size += (size_t)total_rules * rs;
+
     // Marker data (approximate)
     for (int i = 0; i < state_count; i++) {
         for (int c = 0; c < 256; c++) {
@@ -1026,6 +1027,6 @@ size_t calculate_optimized_layout_size(
             }
         }
     }
-    
+
     return size;
 }

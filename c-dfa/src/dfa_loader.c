@@ -2,6 +2,7 @@
 #include "dfa_errors.h"
 
 #include "dfa_types.h"
+#include "dfa_format.h"
 #include "dfa.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,67 +12,46 @@
 
 #define MAX_LINE_LENGTH 1024
 
-// Compile-time struct validation
-_Static_assert(sizeof(dfa_state_t) == 18, "dfa_state_t must be exactly 18 bytes (packed)");
-_Static_assert(sizeof(dfa_t) == 23, "dfa_t must be exactly 23 bytes (packed)");
-_Static_assert(sizeof(dfa_rule_t) == 12, "dfa_rule_t must be exactly 12 bytes (packed)");
-_Static_assert(offsetof(dfa_state_t, transitions_offset) == 0, "transitions_offset must be at offset 0");
-_Static_assert(offsetof(dfa_state_t, transition_count) == 4, "transition_count must be at offset 4");
-_Static_assert(offsetof(dfa_state_t, flags) == 6, "flags must be at offset 6");
-_Static_assert(offsetof(dfa_t, identifier) == 23, "identifier must be at offset 23 in dfa_t");
-
 // Validation function to verify DFA structure integrity
-static bool validate_dfa_structure(const dfa_t* dfa, size_t file_size) {
-    // Validate header fields
-    if (dfa->magic != DFA_MAGIC) {
-        ERROR("Invalid magic number (expected 0x%08X, got 0x%08X)", DFA_MAGIC, dfa->magic);
+static bool validate_dfa_structure(const uint8_t* d, size_t file_size) {
+    if (dfa_fmt_magic(d) != DFA_MAGIC) {
+        ERROR("Invalid magic number (expected 0x%08X, got 0x%08X)", DFA_MAGIC, dfa_fmt_magic(d));
         return false;
     }
 
-    if (dfa->version < 5 || dfa->version > 6) {
-        ERROR("Unsupported DFA version %u (expected 5 or 6)", dfa->version);
+    uint16_t ver = dfa_fmt_version(d);
+    if (ver != DFA_VERSION) {
+        ERROR("Unsupported DFA version %u (expected %u)", ver, DFA_VERSION);
         return false;
     }
 
-    if (dfa->state_count == 0) {
+    uint16_t sc = dfa_fmt_state_count(d);
+    if (sc == 0) {
         ERROR("state_count is zero");
         return false;
     }
 
-    // Note: DFA_MAX_STATES is 65535 (uint16_t max), so state_count > DFA_MAX_STATES
-    // is always false. Validation is effectively covered by file size checks below.
+    int enc = dfa_fmt_encoding(d);
+    uint8_t idl = dfa_fmt_id_len(d);
+    size_t hs = DFA_HEADER_SIZE(enc, idl);
+    uint32_t init = dfa_fmt_initial_state(d);
 
-    // Validate initial_state offset
-    size_t min_state_offset = dfa->initial_state;
-    if (min_state_offset < sizeof(dfa_t) + dfa->identifier_length) {
-        ERROR("initial_state %u is before expected start of states", dfa->initial_state);
+    if ((size_t)init < hs) {
+        ERROR("initial_state %u is before header end %zu", init, hs);
         return false;
     }
 
-    // Validate that states fit in file
-    size_t states_size = (size_t)dfa->state_count * sizeof(dfa_state_t);
-    if (dfa->initial_state + states_size > file_size) {
-        ERROR("States array extends beyond file size");
+    int ss = DFA_STATE_SIZE(enc);
+    size_t states_size = (size_t)sc * ss;
+    if ((size_t)init + states_size > file_size) {
+        ERROR("States extend beyond file size");
         return false;
     }
 
-    // Validate metadata_offset if present (offset == size means no metadata, which is valid)
-    if (dfa->metadata_offset != 0) {
-        if (dfa->metadata_offset > file_size) {
-            ERROR("metadata_offset %u is beyond file size %zu", dfa->metadata_offset, file_size);
-            return false;
-        }
-    }
-
-    // Validate accepting_mask only has bits for existing states
-    // Note: accepting_mask is uint32_t, so only states 0-31 can be represented
-    if (dfa->accepting_mask != 0 && dfa->state_count < 32) {
-        uint32_t max_valid_mask = (1u << dfa->state_count) - 1;
-        if ((dfa->accepting_mask & ~max_valid_mask) != 0) {
-            ERROR("accepting_mask 0x%08X has bits beyond state_count %u (max: 0x%08X)",
-                    dfa->accepting_mask, dfa->state_count, max_valid_mask);
-            return false;
-        }
+    uint32_t meta = dfa_fmt_meta_offset(d);
+    if (meta != 0 && meta > file_size) {
+        ERROR("metadata_offset %u beyond file size %zu", meta, file_size);
+        return false;
     }
 
     return true;
@@ -186,8 +166,7 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
         }
 
         // Validate DFA structure
-        const dfa_t* dfa = (const dfa_t*)dfa_data;
-        if (!validate_dfa_structure(dfa, (size_t)dfa_size)) {
+        if (!validate_dfa_structure((const uint8_t*)dfa_data, (size_t)dfa_size)) {
             ERROR("DFA structure validation failed for %s", filename);
             free(dfa_data);
             return NULL;

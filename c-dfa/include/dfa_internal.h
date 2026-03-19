@@ -23,6 +23,7 @@
  */
 
 #include "dfa_types.h"
+#include "dfa_format.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>

@@ -1,0 +1,10 @@
+# Tools (in tools/)
+nfa_builder
+nfa2dfa_advanced
+nfa2dfa_sat
+pattern_order
+dfa_eval_wrapper
+test_minimize_integrity
+*_asan
+dfa2c_array
+

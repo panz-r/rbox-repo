@@ -78,6 +78,8 @@ typedef struct __attribute__((packed)) {
 
 /**
  * DFA State Flags
+ * NOTE: DFA_STATE_ACCEPTING, DFA_GET_CATEGORY_MASK, DFA_SET_CATEGORY_MASK,
+ * DFA_MAGIC, and MARKER_SENTINEL are defined in dfa_format.h
  */
 #define DFA_STATE_ACCEPTING      0x0001  // This is an accepting state
 #define DFA_STATE_ERROR          0x0002  // This is an error state
@@ -87,20 +89,14 @@ typedef struct __attribute__((packed)) {
 #define DFA_STATE_CAPTURE_DEFER  0x0020  // Defer CAPTURE_END until leaving this state
 
 /**
- * Category mask extraction from flags
- */
-#define DFA_GET_CATEGORY_MASK(flags) ((flags) >> 8)
-#define DFA_SET_CATEGORY_MASK(flags, mask) ((flags) = ((flags) & 0x00FF) | ((mask) << 8))
-
-/**
  * Magic number for DFA validation
+ * NOTE: DFA_MAGIC is defined in dfa_format.h
  */
-#define DFA_MAGIC 0xDFA1DFA1
 
 /**
  * Current DFA version
+ * NOTE: DFA_VERSION is defined in dfa_format.h (single source of truth)
  */
-#define DFA_VERSION 6  // Version 6: Capture markers and scalable metadata
 
 /**
  * Maximum number of states in a single DFA
@@ -218,8 +214,8 @@ typedef struct {
 
 /**
  * Marker Block Constants
+ * NOTE: MARKER_SENTINEL is defined in dfa_format.h
  */
-#define MARKER_SENTINEL 0xFFFFFFFF
 #define MARKER_TYPE_START 0
 #define MARKER_TYPE_END 1
 

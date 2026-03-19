@@ -1,11 +1,11 @@
 /**
- * dfa_format.h - DFA Binary Format Definition
+ * dfa_format.h - DFA Binary Format Definition (v7, adaptive widths)
  *
- * This is the SINGLE SOURCE OF TRUTH for the DFA binary format.
- * Both the writer (nfa2dfa.c) and reader (dfa_eval.c, dfa_loader.c)
- * must use these definitions. Never hardcode offsets elsewhere.
+ * SINGLE SOURCE OF TRUTH for the DFA binary format.
+ * Writer (nfa2dfa.c) and reader (dfa_eval.c, dfa_loader.c) both use these.
+ * Never hardcode offsets elsewhere.
  *
- * Format version 6 (with capture markers).
+ * V7: encoding byte selects field widths. No struct casts.
  */
 
 #ifndef DFA_FORMAT_H
@@ -13,147 +13,289 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* ============================================================================
- * Header offsets (fixed byte positions)
+ * Encoding byte layout (offset 8 in header)
+ *
+ * Bits 1:0 - offset width code:  0=2B, 1=3B, 2=4B
+ * Bits 3:2 - count width code:   0=1B, 1=2B
+ * Bits 5:4 - pid width code:     0=1B, 1=2B
  * ============================================================================ */
-#define DFA_HEADER_SIZE          23
 
-#define DFA_OFF_MAGIC             0   /* uint32_t: 0xDFA1DFA1 */
-#define DFA_OFF_VERSION           4   /* uint16_t: 5 or 6 */
-#define DFA_OFF_STATE_COUNT       6   /* uint16_t */
-#define DFA_OFF_INITIAL_STATE     8   /* uint32_t: byte offset to state 0 */
-#define DFA_OFF_ACCEPT_MASK      12   /* uint32_t: bitmask of accepting states (0-31) */
-#define DFA_OFF_FLAGS            16   /* uint16_t */
-#define DFA_OFF_ID_LEN           18   /* uint8_t: length of identifier */
-#define DFA_OFF_META             19   /* uint32_t: byte offset to metadata/name table */
+#define DFA_ENC_OFF_W(enc)       ((enc) & 0x03)
+#define DFA_ENC_CNT_W(enc)       (((enc) >> 2) & 0x03)
+#define DFA_ENC_PID_W(enc)       (((enc) >> 4) & 0x03)
 
-/* Identifier starts right after header */
-#define DFA_OFF_IDENTIFIER       DFA_HEADER_SIZE
+#define DFA_W2  0
+#define DFA_W3  1
+#define DFA_W4  2
 
 /* ============================================================================
- * State header size (dfa_state_t in binary)
+ * Width code to byte count (MUST come before macros/functions that use them)
  * ============================================================================ */
-#define DFA_STATE_SIZE           20
 
-#define DFA_ST_OFF_TC             0   /* uint16_t: transition rule count */
-#define DFA_ST_OFF_RULES          2   /* uint32_t: byte offset to rules */
-#define DFA_ST_OFF_FLAGS          6   /* uint16_t */
-#define DFA_ST_OFF_PATTERN_ID     8   /* uint16_t */
-#define DFA_ST_OFF_EOS_TARGET    10   /* uint32_t: byte offset to EOS target state */
-#define DFA_ST_OFF_EOS_MARKERS   14   /* uint32_t: byte offset to EOS marker list */
-#define DFA_ST_OFF_FIRST_PAT     18   /* uint16_t */
+static inline int dfa_owb(int enc) {
+    int c = DFA_ENC_OFF_W(enc);
+    return (c == 0) ? 2 : (c == 1) ? 3 : 4;
+}
+static inline int dfa_cwb(int enc) {
+    return (DFA_ENC_CNT_W(enc) == 0) ? 1 : 2;
+}
+static inline int dfa_pwb(int enc) {
+    return (DFA_ENC_PID_W(enc) == 0) ? 1 : 2;
+}
+
+/* Best width code for a max value */
+static inline int dfa_best_ow(uint32_t max_val) {
+    if (max_val < 0x10000)   return DFA_W2;
+    if (max_val < 0x1000000) return DFA_W3;
+    return DFA_W4;
+}
+static inline int dfa_best_cw(uint32_t max_val) {
+    return (max_val < 0x100) ? 0 : 1;
+}
+static inline int dfa_best_pw(uint32_t max_val) {
+    return (max_val < 0x100) ? 0 : 1;
+}
+static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
+    return (uint8_t)((ow & 3) | ((cw & 3) << 2) | ((pw & 3) << 4));
+}
 
 /* ============================================================================
- * Rule size (dfa_rule_t in binary)
+ * Header layout (v7)
+ *
+ *  0: magic          (4B)
+ *  4: version        (2B)
+ *  6: state_count    (2B)
+ *  8: encoding       (1B)
+ *  9: id_len         (1B)
+ * 10: initial_state  (OW bytes)
+ * 10+OW: meta_offset (OW bytes)
+ * 10+2*OW: identifier (id_len bytes)
  * ============================================================================ */
-#define DFA_RULE_SIZE            12
 
-#define DFA_RL_OFF_TYPE           0   /* uint8_t */
-#define DFA_RL_OFF_DATA1          1   /* uint8_t */
-#define DFA_RL_OFF_DATA2          2   /* uint8_t */
-#define DFA_RL_OFF_DATA3          3   /* uint8_t */
-#define DFA_RL_OFF_TARGET         4   /* uint32_t: byte offset to target state */
-#define DFA_RL_OFF_MARKERS        8   /* uint32_t: byte offset to marker list */
+#define DFA_OFF_MAGIC          0
+#define DFA_OFF_VERSION        4
+#define DFA_OFF_STATE_COUNT    6
+#define DFA_OFF_ENCODING       8
+#define DFA_OFF_ID_LEN         9
+#define DFA_OFF_INIT_STATE    10
+#define DFA_HEADER_FIXED      10
+
+#define DFA_HEADER_SIZE(enc, id_len) \
+    (DFA_HEADER_FIXED + 2 * dfa_owb(enc) + (id_len))
 
 /* ============================================================================
  * Constants
  * ============================================================================ */
+
 #define DFA_MAGIC          0xDFA1DFA1
-#define DFA_MIN_VERSION    5
-#define DFA_MAX_VERSION    6
+#define DFA_VERSION        7
 
-/* Rule types */
-#define DFA_RULE_LITERAL   0
-#define DFA_RULE_RANGE     1
-#define DFA_RULE_ANY       2
+#define DFA_RULE_LITERAL       0
+#define DFA_RULE_RANGE         1
+#define DFA_RULE_LITERAL_2     2
+#define DFA_RULE_LITERAL_3     3
+#define DFA_RULE_RANGE_LITERAL 4
+#define DFA_RULE_DEFAULT       5
+#define DFA_RULE_NOT_LITERAL   6
+#define DFA_RULE_NOT_RANGE     7
 
-/* State flags */
-#define DFA_STATE_ACCEPTING  0x0001
+#define DFA_STATE_ACCEPTING      0x0001
 #define DFA_STATE_CATEGORY_MASK  0xFF00
 
-/* Marker sentinel */
+#define DFA_GET_CATEGORY_MASK(flags) ((uint8_t)(((flags) >> 8) & 0xFF))
+#define DFA_SET_CATEGORY_MASK(flags, mask) \
+    ((flags) = ((flags) & 0x00FF) | ((uint16_t)(mask) << 8))
+
 #define MARKER_SENTINEL    0xFFFFFFFF
 
 /* ============================================================================
- * Little-endian read helpers
+ * State layout size and field offsets
+ *
+ *  [tc: CW] [rules: OW] [flags: 2] [pid: PW] [eos_t: OW] [eos_m: 4] [first: PW]
  * ============================================================================ */
 
-static inline uint32_t dfa_fmt_read_u32(const uint8_t* data, size_t offset) {
-    return (uint32_t)data[offset]
-         | ((uint32_t)data[offset+1] << 8)
-         | ((uint32_t)data[offset+2] << 16)
-         | ((uint32_t)data[offset+3] << 24);
-}
+#define DFA_STATE_SIZE(enc) \
+    (dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc) + dfa_owb(enc) + 4 + dfa_pwb(enc))
 
-static inline uint16_t dfa_fmt_read_u16(const uint8_t* data, size_t offset) {
-    return (uint16_t)data[offset]
-         | ((uint16_t)data[offset+1] << 8);
-}
+static inline int dfa_st_off_rules(int enc) { return dfa_cwb(enc); }
+static inline int dfa_st_off_flags(int enc) { return dfa_cwb(enc) + dfa_owb(enc); }
+static inline int dfa_st_off_pid(int enc)   { return dfa_cwb(enc) + dfa_owb(enc) + 2; }
+static inline int dfa_st_off_eos_t(int enc) { return dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc); }
+static inline int dfa_st_off_eos_m(int enc) { return dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc) + dfa_owb(enc); }
+static inline int dfa_st_off_first(int enc) { return dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc) + dfa_owb(enc) + 4; }
 
-static inline uint8_t dfa_fmt_read_u8(const uint8_t* data, size_t offset) {
-    return data[offset];
+/* ============================================================================
+ * Rule layout size and field offsets
+ *
+ *  [type:1] [d1:1] [d2:1] [d3:1] [target: OW] [markers: 4]
+ * ============================================================================ */
+
+#define DFA_RULE_SIZE(enc)  (8 + dfa_owb(enc))
+
+#define DFA_RL_OFF_TYPE    0
+#define DFA_RL_OFF_DATA1   1
+#define DFA_RL_OFF_DATA2   2
+#define DFA_RL_OFF_DATA3   3
+
+static inline int dfa_rl_off_target(int enc)  { return 4; }
+static inline int dfa_rl_off_markers(int enc) { return 4 + dfa_owb(enc); }
+
+/* ============================================================================
+ * Fixed-width read helpers (little-endian)
+ * ============================================================================ */
+
+static inline uint32_t dfa_r32(const uint8_t* d, size_t o) {
+    return (uint32_t)d[o] | ((uint32_t)d[o+1]<<8) | ((uint32_t)d[o+2]<<16) | ((uint32_t)d[o+3]<<24);
+}
+static inline uint16_t dfa_r16(const uint8_t* d, size_t o) {
+    return (uint16_t)d[o] | ((uint16_t)d[o+1]<<8);
+}
+static inline uint8_t dfa_r8(const uint8_t* d, size_t o) {
+    return d[o];
+}
+static inline uint32_t dfa_r24(const uint8_t* d, size_t o) {
+    return (uint32_t)d[o] | ((uint32_t)d[o+1]<<8) | ((uint32_t)d[o+2]<<16);
 }
 
 /* ============================================================================
- * Little-endian write helpers
+ * Fixed-width write helpers (little-endian)
  * ============================================================================ */
 
-static inline void dfa_fmt_write_u32(uint8_t* data, size_t offset, uint32_t val) {
-    data[offset]   = (uint8_t)(val);
-    data[offset+1] = (uint8_t)(val >> 8);
-    data[offset+2] = (uint8_t)(val >> 16);
-    data[offset+3] = (uint8_t)(val >> 24);
+static inline void dfa_w32(uint8_t* d, size_t o, uint32_t v) {
+    d[o]=(uint8_t)v; d[o+1]=(uint8_t)(v>>8); d[o+2]=(uint8_t)(v>>16); d[o+3]=(uint8_t)(v>>24);
 }
-
-static inline void dfa_fmt_write_u16(uint8_t* data, size_t offset, uint16_t val) {
-    data[offset]   = (uint8_t)(val);
-    data[offset+1] = (uint8_t)(val >> 8);
+static inline void dfa_w16(uint8_t* d, size_t o, uint16_t v) {
+    d[o]=(uint8_t)v; d[o+1]=(uint8_t)(v>>8);
 }
-
-static inline void dfa_fmt_write_u8(uint8_t* data, size_t offset, uint8_t val) {
-    data[offset] = val;
+static inline void dfa_w8(uint8_t* d, size_t o, uint8_t v) {
+    d[o]=v;
+}
+static inline void dfa_w24(uint8_t* d, size_t o, uint32_t v) {
+    d[o]=(uint8_t)v; d[o+1]=(uint8_t)(v>>8); d[o+2]=(uint8_t)(v>>16);
 }
 
 /* ============================================================================
- * Header accessors - read fields from binary DFA data
+ * Variable-width read helpers
  * ============================================================================ */
 
-static inline uint32_t dfa_fmt_magic(const uint8_t* d)        { return dfa_fmt_read_u32(d, DFA_OFF_MAGIC); }
-static inline uint16_t dfa_fmt_version(const uint8_t* d)      { return dfa_fmt_read_u16(d, DFA_OFF_VERSION); }
-static inline uint16_t dfa_fmt_state_count(const uint8_t* d)  { return dfa_fmt_read_u16(d, DFA_OFF_STATE_COUNT); }
-static inline uint32_t dfa_fmt_initial_state(const uint8_t* d){ return dfa_fmt_read_u32(d, DFA_OFF_INITIAL_STATE); }
-static inline uint32_t dfa_fmt_accept_mask(const uint8_t* d)  { return dfa_fmt_read_u32(d, DFA_OFF_ACCEPT_MASK); }
-static inline uint16_t dfa_fmt_flags(const uint8_t* d)        { return dfa_fmt_read_u16(d, DFA_OFF_FLAGS); }
-static inline uint8_t  dfa_fmt_id_len(const uint8_t* d)       { return dfa_fmt_read_u8(d, DFA_OFF_ID_LEN); }
-static inline uint32_t dfa_fmt_meta_offset(const uint8_t* d)  { return dfa_fmt_read_u32(d, DFA_OFF_META); }
-static inline const uint8_t* dfa_fmt_identifier(const uint8_t* d) { return d + DFA_OFF_IDENTIFIER; }
+static inline uint32_t dfa_row(const uint8_t* d, size_t o, int enc) {
+    int w = DFA_ENC_OFF_W(enc);
+    return (w==0) ? dfa_r16(d,o) : (w==1) ? dfa_r24(d,o) : dfa_r32(d,o);
+}
+static inline uint16_t dfa_rcw(const uint8_t* d, size_t o, int enc) {
+    return (DFA_ENC_CNT_W(enc)==0) ? dfa_r8(d,o) : dfa_r16(d,o);
+}
+static inline uint16_t dfa_rpw(const uint8_t* d, size_t o, int enc) {
+    return (DFA_ENC_PID_W(enc)==0) ? dfa_r8(d,o) : dfa_r16(d,o);
+}
 
 /* ============================================================================
- * State accessors - read fields from a state at byte offset
+ * Variable-width write helpers
  * ============================================================================ */
 
-static inline uint16_t dfa_fmt_st_tc(const uint8_t* d, size_t off)         { return dfa_fmt_read_u16(d, off + DFA_ST_OFF_TC); }
-static inline uint32_t dfa_fmt_st_rules(const uint8_t* d, size_t off)      { return dfa_fmt_read_u32(d, off + DFA_ST_OFF_RULES); }
-static inline uint16_t dfa_fmt_st_flags(const uint8_t* d, size_t off)      { return dfa_fmt_read_u16(d, off + DFA_ST_OFF_FLAGS); }
-static inline uint16_t dfa_fmt_st_pattern_id(const uint8_t* d, size_t off) { return dfa_fmt_read_u16(d, off + DFA_ST_OFF_PATTERN_ID); }
-static inline uint32_t dfa_fmt_st_eos_target(const uint8_t* d, size_t off) { return dfa_fmt_read_u32(d, off + DFA_ST_OFF_EOS_TARGET); }
-static inline uint32_t dfa_fmt_st_eos_markers(const uint8_t* d, size_t off){ return dfa_fmt_read_u32(d, off + DFA_ST_OFF_EOS_MARKERS); }
+static inline void dfa_wow(uint8_t* d, size_t o, int enc, uint32_t v) {
+    int w = DFA_ENC_OFF_W(enc);
+    if (w==0) dfa_w16(d,o,(uint16_t)v);
+    else if (w==1) dfa_w24(d,o,v);
+    else dfa_w32(d,o,v);
+}
+static inline void dfa_wwc(uint8_t* d, size_t o, int enc, uint16_t v) {
+    if (DFA_ENC_CNT_W(enc)==0) dfa_w8(d,o,(uint8_t)v);
+    else dfa_w16(d,o,v);
+}
+static inline void dfa_wwp(uint8_t* d, size_t o, int enc, uint16_t v) {
+    if (DFA_ENC_PID_W(enc)==0) dfa_w8(d,o,(uint8_t)v);
+    else dfa_w16(d,o,v);
+}
 
 /* ============================================================================
- * Rule accessors - read fields from a rule at byte offset
+ * Header accessors (read)
  * ============================================================================ */
 
-static inline uint8_t  dfa_fmt_rl_type(const uint8_t* d, size_t off)    { return dfa_fmt_read_u8(d, off + DFA_RL_OFF_TYPE); }
-static inline uint8_t  dfa_fmt_rl_data1(const uint8_t* d, size_t off)   { return dfa_fmt_read_u8(d, off + DFA_RL_OFF_DATA1); }
-static inline uint8_t  dfa_fmt_rl_data2(const uint8_t* d, size_t off)   { return dfa_fmt_read_u8(d, off + DFA_RL_OFF_DATA2); }
-static inline uint32_t dfa_fmt_rl_target(const uint8_t* d, size_t off)  { return dfa_fmt_read_u32(d, off + DFA_RL_OFF_TARGET); }
-static inline uint32_t dfa_fmt_rl_markers(const uint8_t* d, size_t off) { return dfa_fmt_read_u32(d, off + DFA_RL_OFF_MARKERS); }
+static inline uint32_t dfa_fmt_magic(const uint8_t* d)         { return dfa_r32(d, DFA_OFF_MAGIC); }
+static inline uint16_t dfa_fmt_version(const uint8_t* d)       { return dfa_r16(d, DFA_OFF_VERSION); }
+static inline uint16_t dfa_fmt_state_count(const uint8_t* d)   { return dfa_r16(d, DFA_OFF_STATE_COUNT); }
+static inline uint8_t  dfa_fmt_encoding(const uint8_t* d)      { return dfa_r8(d, DFA_OFF_ENCODING); }
+static inline uint8_t  dfa_fmt_id_len(const uint8_t* d)        { return dfa_r8(d, DFA_OFF_ID_LEN); }
+
+static inline uint32_t dfa_fmt_initial_state(const uint8_t* d) {
+    return dfa_row(d, DFA_OFF_INIT_STATE, dfa_fmt_encoding(d));
+}
+static inline uint32_t dfa_fmt_meta_offset(const uint8_t* d) {
+    int e = dfa_fmt_encoding(d);
+    return dfa_row(d, DFA_OFF_INIT_STATE + dfa_owb(e), e);
+}
+static inline const uint8_t* dfa_fmt_identifier(const uint8_t* d) {
+    return d + DFA_OFF_INIT_STATE + 2 * dfa_owb(dfa_fmt_encoding(d));
+}
+
+/* ============================================================================
+ * Header accessors (write)
+ * ============================================================================ */
+
+static inline void dfa_fmt_set_magic(uint8_t* d, uint32_t v)       { dfa_w32(d, DFA_OFF_MAGIC, v); }
+static inline void dfa_fmt_set_version(uint8_t* d, uint16_t v)     { dfa_w16(d, DFA_OFF_VERSION, v); }
+static inline void dfa_fmt_set_state_count(uint8_t* d, uint16_t v) { dfa_w16(d, DFA_OFF_STATE_COUNT, v); }
+static inline void dfa_fmt_set_encoding(uint8_t* d, uint8_t v)     { dfa_w8(d, DFA_OFF_ENCODING, v); }
+static inline void dfa_fmt_set_id_len(uint8_t* d, uint8_t v)       { dfa_w8(d, DFA_OFF_ID_LEN, v); }
+static inline void dfa_fmt_set_initial_state(uint8_t* d, int enc, uint32_t v) {
+    dfa_wow(d, DFA_OFF_INIT_STATE, enc, v);
+}
+static inline void dfa_fmt_set_meta_offset(uint8_t* d, int enc, uint32_t v) {
+    dfa_wow(d, DFA_OFF_INIT_STATE + dfa_owb(enc), enc, v);
+}
+
+/* ============================================================================
+ * State accessors (read)
+ * ============================================================================ */
+
+static inline uint16_t dfa_fmt_st_tc(const uint8_t* d, size_t so, int enc)    { return dfa_rcw(d, so, enc); }
+static inline uint32_t dfa_fmt_st_rules(const uint8_t* d, size_t so, int enc) { return dfa_row(d, so + dfa_st_off_rules(enc), enc); }
+static inline uint16_t dfa_fmt_st_flags(const uint8_t* d, size_t so, int enc) { return dfa_r16(d, so + dfa_st_off_flags(enc)); }
+static inline uint16_t dfa_fmt_st_pid(const uint8_t* d, size_t so, int enc)   { return dfa_rpw(d, so + dfa_st_off_pid(enc), enc); }
+static inline uint32_t dfa_fmt_st_eos_t(const uint8_t* d, size_t so, int enc) { return dfa_row(d, so + dfa_st_off_eos_t(enc), enc); }
+static inline uint32_t dfa_fmt_st_eos_m(const uint8_t* d, size_t so, int enc) { return dfa_r32(d, so + dfa_st_off_eos_m(enc)); }
+static inline uint16_t dfa_fmt_st_first(const uint8_t* d, size_t so, int enc) { return dfa_rpw(d, so + dfa_st_off_first(enc), enc); }
+
+/* ============================================================================
+ * State accessors (write)
+ * ============================================================================ */
+
+static inline void dfa_fmt_set_st_tc(uint8_t* d, size_t so, int enc, uint16_t v)    { dfa_wwc(d, so, enc, v); }
+static inline void dfa_fmt_set_st_rules(uint8_t* d, size_t so, int enc, uint32_t v) { dfa_wow(d, so + dfa_st_off_rules(enc), enc, v); }
+static inline void dfa_fmt_set_st_flags(uint8_t* d, size_t so, int enc, uint16_t v) { dfa_w16(d, so + dfa_st_off_flags(enc), v); }
+static inline void dfa_fmt_set_st_pid(uint8_t* d, size_t so, int enc, uint16_t v)   { dfa_wwp(d, so + dfa_st_off_pid(enc), enc, v); }
+static inline void dfa_fmt_set_st_eos_t(uint8_t* d, size_t so, int enc, uint32_t v) { dfa_wow(d, so + dfa_st_off_eos_t(enc), enc, v); }
+static inline void dfa_fmt_set_st_eos_m(uint8_t* d, size_t so, int enc, uint32_t v) { dfa_w32(d, so + dfa_st_off_eos_m(enc), v); }
+static inline void dfa_fmt_set_st_first(uint8_t* d, size_t so, int enc, uint16_t v) { dfa_wwp(d, so + dfa_st_off_first(enc), enc, v); }
+
+/* ============================================================================
+ * Rule accessors (read)
+ * ============================================================================ */
+
+static inline uint8_t  dfa_fmt_rl_type(const uint8_t* d, size_t ro)             { return dfa_r8(d, ro + DFA_RL_OFF_TYPE); }
+static inline uint8_t  dfa_fmt_rl_d1(const uint8_t* d, size_t ro)               { return dfa_r8(d, ro + DFA_RL_OFF_DATA1); }
+static inline uint8_t  dfa_fmt_rl_d2(const uint8_t* d, size_t ro)               { return dfa_r8(d, ro + DFA_RL_OFF_DATA2); }
+static inline uint8_t  dfa_fmt_rl_d3(const uint8_t* d, size_t ro)               { return dfa_r8(d, ro + DFA_RL_OFF_DATA3); }
+static inline uint32_t dfa_fmt_rl_target(const uint8_t* d, size_t ro, int enc)  { return dfa_row(d, ro + dfa_rl_off_target(enc), enc); }
+static inline uint32_t dfa_fmt_rl_markers(const uint8_t* d, size_t ro, int enc) { return dfa_r32(d, ro + dfa_rl_off_markers(enc)); }
+
+/* ============================================================================
+ * Rule accessors (write)
+ * ============================================================================ */
+
+static inline void dfa_fmt_set_rl_type(uint8_t* d, size_t ro, uint8_t v)               { dfa_w8(d, ro + DFA_RL_OFF_TYPE, v); }
+static inline void dfa_fmt_set_rl_d1(uint8_t* d, size_t ro, uint8_t v)                 { dfa_w8(d, ro + DFA_RL_OFF_DATA1, v); }
+static inline void dfa_fmt_set_rl_d2(uint8_t* d, size_t ro, uint8_t v)                 { dfa_w8(d, ro + DFA_RL_OFF_DATA2, v); }
+static inline void dfa_fmt_set_rl_d3(uint8_t* d, size_t ro, uint8_t v)                 { dfa_w8(d, ro + DFA_RL_OFF_DATA3, v); }
+static inline void dfa_fmt_set_rl_target(uint8_t* d, size_t ro, int enc, uint32_t v)   { dfa_wow(d, ro + dfa_rl_off_target(enc), enc, v); }
+static inline void dfa_fmt_set_rl_markers(uint8_t* d, size_t ro, int enc, uint32_t v)  { dfa_w32(d, ro + dfa_rl_off_markers(enc), v); }
 
 #ifdef __cplusplus
 }

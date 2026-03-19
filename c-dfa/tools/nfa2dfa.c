@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include "../include/dfa_types.h"
+#include "../include/dfa_format.h"
 #include "../include/multi_target_array.h"
 #include "../include/nfa.h"
 #include "dfa_minimize.h"
@@ -975,29 +976,36 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     FILE* file = fopen(filename, "wb");
     if (!file) { FATAL_SYS("Cannot open '%s' for writing", filename); exit(EXIT_FAILURE); }
     
-// Cache-line alignment parameters
-#define DFA_CHAR_TRANSITIONS 256
 #define DFA_CACHE_LINE_SIZE 64
-#define DFA_MAX_ALIGNMENT_SLACK 5  // Max bytes to waste for alignment
+#define DFA_MAX_ALIGNMENT_SLACK 5
+    
+    /* ====================================================================
+     * PHASE 1: PRE-WRITE - collect rules, compute maxima
+     * ==================================================================== */
     
     size_t alloc_size = (size_t)dfa_state_count * MAX_SYMBOLS * sizeof(intermediate_rule_t);
     if (dfa_state_count > 0 && alloc_size / sizeof(intermediate_rule_t) / MAX_SYMBOLS != (size_t)dfa_state_count) {
-        FATAL("Integer overflow in rule allocation");
-        exit(EXIT_FAILURE);
+        FATAL("Integer overflow in rule allocation"); exit(EXIT_FAILURE);
     }
     intermediate_rule_t* all_rules = alloc_or_abort(malloc(alloc_size), "Rules");
     
-    // Cache rule counts - compute once, use everywhere
     int* rule_counts = malloc(dfa_state_count * sizeof(int));
     if (!rule_counts) { FATAL("Failed to allocate rule counts"); exit(EXIT_FAILURE); }
     
+    uint32_t max_offset = 0;
+    uint32_t max_count = 0;
+    uint32_t max_pid = 0;
     size_t total_rules = 0;
+    
     for (int i = 0; i < dfa_state_count; i++) {
         rule_counts[i] = compress_state_rules(i, &all_rules[i * MAX_SYMBOLS]);
         total_rules += rule_counts[i];
+        if ((uint32_t)rule_counts[i] > max_count) max_count = (uint32_t)rule_counts[i];
+        if (dfa[i]->accepting_pattern_id != 0xFFFF && dfa[i]->accepting_pattern_id > max_pid)
+            max_pid = dfa[i]->accepting_pattern_id;
     }
     size_t id_len = strlen(pattern_identifier);
-
+    
     size_t marker_data_size = 0;
     for (int i = 0; i < dfa_state_count; i++) {
         for (int r = 0; r < rule_counts[i] && r < 256; r++) {
@@ -1012,155 +1020,134 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
             marker_data_size += (ml->count + 1) * sizeof(uint32_t);
         }
     }
-
-    // Pre-compute per-state rule counts (already computed above in rule_counts)
+    
+    /* ====================================================================
+     * PHASE 2: OPTIMISE LAYOUT - pick encoding, compute sizes
+     * ==================================================================== */
+    
+    // Rough upper bound for offsets
+    max_offset = (uint32_t)(DFA_HEADER_FIXED + 2*4 + id_len
+                 + (size_t)dfa_state_count * DFA_STATE_SIZE(DFA_W4)
+                 + total_rules * DFA_RULE_SIZE(DFA_W4)
+                 + marker_data_size);
+    
+    int enc_ow = dfa_best_ow(max_offset);
+    int enc_cw = dfa_best_cw(max_count);
+    int enc_pw = dfa_best_pw(max_pid);
+    int enc = dfa_make_enc(enc_ow, enc_cw, enc_pw);
+    
+    int state_size = DFA_STATE_SIZE(enc);
+    int rule_size  = DFA_RULE_SIZE(enc);
+    size_t header_size = DFA_HEADER_SIZE(enc, (uint8_t)id_len);
     
     // Compute state offsets with cache-line alignment
-    // State i starts at state_offset[i], its rules at rule_offset[i]
-    size_t header_size = 23 + id_len;  // DFA header + identifier
     size_t* state_offset = malloc(dfa_state_count * sizeof(size_t));
-    size_t* rule_offset = malloc(dfa_state_count * sizeof(size_t));
+    size_t* rule_offset  = malloc(dfa_state_count * sizeof(size_t));
     
-    size_t cur_offset = header_size;
+    size_t cur = header_size;
     for (int i = 0; i < dfa_state_count; i++) {
-        // Check if we should cache-align this state
-        int misalignment = cur_offset % DFA_CACHE_LINE_SIZE;
-        int padding = (misalignment == 0) ? 0 : (DFA_CACHE_LINE_SIZE - misalignment);
-        
-        // Only align if padding is within max_slack OR this is a hot state (0 or accepting)
-        bool is_hot = (i == 0 || (dfa[i]->flags & DFA_STATE_ACCEPTING));
-        bool align = false;
-        
-        if (misalignment == 0) {
-            align = false; // Already aligned
-        } else if (is_hot && padding <= DFA_MAX_ALIGNMENT_SLACK * 4) {
-            // Hot states get more generous slack (4x)
-            align = true;
-        } else if (padding <= DFA_MAX_ALIGNMENT_SLACK) {
-            align = true;
-        }
-        
-        if (align) {
-            cur_offset += padding;
-        }
-        
-        state_offset[i] = cur_offset;
-        cur_offset += sizeof(dfa_state_t);
+        int mis = cur % DFA_CACHE_LINE_SIZE;
+        int pad = mis ? (DFA_CACHE_LINE_SIZE - mis) : 0;
+        bool hot = (i == 0 || (dfa[i]->flags & DFA_STATE_ACCEPTING));
+        bool align = (mis && (hot ? pad <= DFA_MAX_ALIGNMENT_SLACK*4 : pad <= DFA_MAX_ALIGNMENT_SLACK));
+        if (align) cur += pad;
+        state_offset[i] = cur;
+        cur += state_size;
     }
-    
-    // Rule offsets come after all state headers
     for (int i = 0; i < dfa_state_count; i++) {
-        rule_offset[i] = cur_offset;
-        cur_offset += rule_counts[i] * sizeof(dfa_rule_t);
+        rule_offset[i] = cur;
+        cur += (size_t)rule_counts[i] * rule_size;
     }
-    
-    size_t metadata_offset = cur_offset;
+    size_t metadata_offset = cur;
     size_t total_size = metadata_offset + marker_data_size;
     
-    // Allocate exact-sized buffer
-    dfa_t* ds = calloc(1, total_size);
-    if (!ds) { FATAL("Failed to allocate DFA buffer (%zu bytes)", total_size); exit(EXIT_FAILURE); }
+    /* ====================================================================
+     * PHASE 3: WRITE - allocate buffer, write all fields via accessors
+     * ==================================================================== */
     
-    ds->magic = DFA_MAGIC; ds->version = DFA_VERSION;
-    ds->state_count = dfa_state_count;
-    ds->initial_state = (uint32_t)state_offset[0];
-    ds->metadata_offset = 0;
-
-    // accepting_mask is a 32-bit convenience field - only represents first 32 states
-    // Evaluators should use per-state flags (DFA_STATE_ACCEPTING) for correctness
-    uint32_t accepting_mask = 0;
-    for (int i = 0; i < dfa_state_count && i < 32; i++) {
-        if (dfa[i]->flags & DFA_STATE_ACCEPTING) {
-            accepting_mask |= (1u << i);
-        }
-    }
-    ds->accepting_mask = accepting_mask;
-    ds->identifier_length = (uint8_t)id_len;
-    memcpy(ds->identifier, pattern_identifier, id_len);
-
-    // Write state headers at their aligned offsets
+    uint8_t* raw = calloc(1, total_size);
+    if (!raw) { FATAL("Failed to allocate DFA buffer (%zu bytes)", total_size); exit(EXIT_FAILURE); }
+    
+    // Header
+    dfa_fmt_set_magic(raw, DFA_MAGIC);
+    dfa_fmt_set_version(raw, DFA_VERSION);
+    dfa_fmt_set_state_count(raw, (uint16_t)dfa_state_count);
+    dfa_fmt_set_encoding(raw, (uint8_t)enc);
+    dfa_fmt_set_id_len(raw, (uint8_t)id_len);
+    dfa_fmt_set_initial_state(raw, enc, (uint32_t)state_offset[0]);
+    dfa_fmt_set_meta_offset(raw, enc, 0);
+    memcpy(raw + DFA_HEADER_SIZE(enc, (uint8_t)id_len) - id_len, pattern_identifier, id_len);
+    
+    // States
     for (int i = 0; i < dfa_state_count; i++) {
-        dfa_state_t* s = (dfa_state_t*)((char*)ds + state_offset[i]);
-        s->transition_count = (uint16_t)rule_counts[i];
-        s->transitions_offset = (rule_counts[i] > 0) ? (uint32_t)rule_offset[i] : 0;
-        s->flags = dfa[i]->flags;
-        s->accepting_pattern_id = dfa[i]->accepting_pattern_id;
-        s->eos_marker_offset = 0;
-        if (dfa[i]->eos_target != 0) {
-            s->eos_target = (uint32_t)state_offset[dfa[i]->eos_target];
-        } else {
-            s->eos_target = 0;
-        }
+        size_t so = state_offset[i];
+        dfa_fmt_set_st_tc(raw, so, enc, (uint16_t)rule_counts[i]);
+        dfa_fmt_set_st_rules(raw, so, enc, (rule_counts[i] > 0) ? (uint32_t)rule_offset[i] : 0);
+        dfa_fmt_set_st_flags(raw, so, enc, dfa[i]->flags);
+        dfa_fmt_set_st_pid(raw, so, enc, dfa[i]->accepting_pattern_id);
+        dfa_fmt_set_st_eos_m(raw, so, enc, 0);
+        dfa_fmt_set_st_eos_t(raw, so, enc,
+            dfa[i]->eos_target ? (uint32_t)state_offset[dfa[i]->eos_target] : 0);
+        dfa_fmt_set_st_first(raw, so, enc, 0);
     }
     
-    // Write rules
-    size_t gri = 0;
+    // Rules
     for (int i = 0; i < dfa_state_count; i++) {
         for (int r = 0; r < rule_counts[i]; r++) {
-            dfa_rule_t* dst = (dfa_rule_t*)((char*)ds + rule_offset[i] + r * sizeof(dfa_rule_t));
-            dst->type = all_rules[i * MAX_SYMBOLS + r].type;
-            dst->data1 = all_rules[i * MAX_SYMBOLS + r].d1;
-            dst->data2 = all_rules[i * MAX_SYMBOLS + r].d2;
-            dst->data3 = 0;
-            dst->marker_offset = 0;
+            size_t ro = rule_offset[i] + (size_t)r * rule_size;
+            dfa_fmt_set_rl_type(raw, ro, all_rules[i * MAX_SYMBOLS + r].type);
+            dfa_fmt_set_rl_d1(raw, ro, all_rules[i * MAX_SYMBOLS + r].d1);
+            dfa_fmt_set_rl_d2(raw, ro, all_rules[i * MAX_SYMBOLS + r].d2);
+            dfa_fmt_set_rl_d3(raw, ro, 0);
+            dfa_fmt_set_rl_markers(raw, ro, enc, 0);
             int tidx = all_rules[i * MAX_SYMBOLS + r].target_state_index;
             if (tidx < 0 || tidx >= dfa_state_count) {
                 FATAL("State %d rule %d target index %d out of bounds", i, r, tidx);
                 exit(EXIT_FAILURE);
             }
-            dst->target = (uint32_t)state_offset[tidx];
+            dfa_fmt_set_rl_target(raw, ro, enc, (uint32_t)state_offset[tidx]);
         }
-        gri += rule_counts[i];
     }
-
-    // Write marker data
-    size_t moffset = 0;
+    
+    // Markers
     if (marker_list_count > 0) {
-        ds->metadata_offset = (uint32_t)metadata_offset;
-        uint32_t* marker_base = (uint32_t*)((char*)ds + metadata_offset);
-        
+        dfa_fmt_set_meta_offset(raw, enc, (uint32_t)metadata_offset);
+        uint32_t* mbase = (uint32_t*)(raw + metadata_offset);
+        size_t moff = 0;
         for (int i = 0; i < dfa_state_count; i++) {
-            size_t state_rule_off = rule_offset[i];
             for (int r = 0; r < rule_counts[i] && r < 256; r++) {
-                dfa_rule_t* dst = (dfa_rule_t*)((char*)ds + state_rule_off + r * sizeof(dfa_rule_t));
-                uint32_t list_idx = dfa[i]->marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1];
-                if (list_idx > 0 && list_idx <= (uint32_t)marker_list_count) {
-                    MarkerList* ml = &dfa_marker_lists[list_idx - 1];
-                    dst->marker_offset = (uint32_t)(metadata_offset + moffset * sizeof(uint32_t));
-                    marker_base[moffset++] = (uint32_t)ml->count;
-                    for (int m = 0; m < ml->count; m++) {
-                        marker_base[moffset++] = ml->markers[m];
-                    }
+                size_t ro = rule_offset[i] + (size_t)r * rule_size;
+                uint32_t lidx = dfa[i]->marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1];
+                if (lidx > 0 && lidx <= (uint32_t)marker_list_count) {
+                    MarkerList* ml = &dfa_marker_lists[lidx - 1];
+                    dfa_fmt_set_rl_markers(raw, ro, enc, (uint32_t)(metadata_offset + moff * 4));
+                    mbase[moff++] = (uint32_t)ml->count;
+                    for (int m = 0; m < ml->count; m++) mbase[moff++] = ml->markers[m];
                 }
             }
         }
     }
-
-    size_t written = fwrite(ds, 1, total_size, file);
+    
+    size_t written = fwrite(raw, 1, total_size, file);
     if (written != total_size) {
         FATAL_SYS("Failed to write DFA file '%s' (wrote %zu of %zu bytes)", filename, written, total_size);
-        fclose(file); free(ds); free(all_rules);
-        free(rule_counts); free(state_offset); free(rule_offset);
-        exit(EXIT_FAILURE);
     }
     
-    // Report alignment statistics if verbose
-    int aligned_count = 0;
-    int hot_aligned = 0;
-    for (int i = 0; i < dfa_state_count; i++) {
-        if (state_offset[i] % DFA_CACHE_LINE_SIZE == 0) {
-            aligned_count++;
-            if (i == 0 || (dfa[i]->flags & DFA_STATE_ACCEPTING)) {
-                hot_aligned++;
+    if (flag_verbose) {
+        int ac = 0, hc = 0;
+        for (int i = 0; i < dfa_state_count; i++) {
+            if (state_offset[i] % DFA_CACHE_LINE_SIZE == 0) {
+                ac++;
+                if (i == 0 || (dfa[i]->flags & DFA_STATE_ACCEPTING)) hc++;
             }
         }
-    }
-    if (flag_verbose) {
-        fprintf(stderr, "Cache alignment: %d/%d states aligned (%d hot states aligned, max_slack=%d)\n",
-                aligned_count, dfa_state_count, hot_aligned, DFA_MAX_ALIGNMENT_SLACK);
+        fprintf(stderr, "DFA v%d: %zu bytes, %d states, %zu rules, enc=0x%02X (ow=%d cw=%d pw=%d)\n",
+                DFA_VERSION, total_size, dfa_state_count, total_rules, enc, enc_ow, enc_cw, enc_pw);
+        fprintf(stderr, "  state_size=%d rule_size=%d header_size=%zu aligned=%d/%d hot=%d\n",
+                state_size, rule_size, header_size, ac, dfa_state_count, hc);
     }
     
-    fclose(file); free(ds); free(all_rules);
+    fclose(file); free(raw); free(all_rules);
     free(rule_counts); free(state_offset); free(rule_offset);
 }
 
