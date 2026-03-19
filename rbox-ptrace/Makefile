@@ -24,6 +24,10 @@ SRCS = main.c \
        memory.c \
        validation.c \
        dfa.c \
+       privilege.c \
+       env.c \
+       pkexec.c \
+       judge.c \
        $(DFA_DATA_C) \
        ../c-dfa/src/dfa_eval.c \
        ../shellsplit/src/env_screener.c \

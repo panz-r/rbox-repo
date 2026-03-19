@@ -1,7 +1,7 @@
 # Makefile for ptrace client unit tests
 
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -I../../rbox-protocol/include
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -I../../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
 LDFLAGS = -lpthread -lm
 
 # Test source files
@@ -10,18 +10,27 @@ TEST_SRCS = test_main.c \
             test_syscall_handler.c \
             test_validation.c \
             test_integration.c \
-            test_e2e.c
+            test_e2e.c \
+            debug.c
 
 # Source files from parent directory (excluding main.c)
 SRCS = ../memory.c \
        ../syscall_handler.c \
        ../validation.c \
        ../dfa.c \
-       ../main.c \
-       ../readonlybox_dfa_data.c \
-       ../../c-dfa/src/dfa_eval.c \
-       ../../c-dfa/src/dfa_loader.c \
+       ../privilege.c \
+       ../env.c \
+       ../pkexec.c \
+       ../judge.c \
+       ../rbox_ptrace_dfa_data.c \
+       ../../shellsplit/src/env_screener.c \
+       ../../shellsplit/src/relative_permutation_entropy.c \
        ../../shellsplit/src/shell_tokenizer.c
+
+# Pre-built libraries
+LIBS = ../../c-dfa/libdfa_eval.a \
+       ../../shellsplit/libshellsplit.a \
+       ../../rbox-protocol/librbox_protocol.a
 
 # Object files
 TEST_OBJS = $(TEST_SRCS:.c=.o)
@@ -37,7 +46,7 @@ all: $(TARGET)
 
 # Build test runner
 $(TARGET): $(TEST_OBJS) $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 # Compile test source files
 %.o: %.c
@@ -47,8 +56,8 @@ $(TARGET): $(TEST_OBJS) $(OBJS)
 ../%.o: ../%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Compile c-dfa source files
-../../c-dfa/src/%.o: ../../c-dfa/src/%.c
+# Compile shellsplit source files
+../../shellsplit/src/%.o: ../../shellsplit/src/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Run all unit tests (excluding e2e)
@@ -108,7 +117,7 @@ help:
 
 # Clean build files
 clean:
-	rm -f $(TARGET) $(TEST_OBJS) $(OBJS) ../*.o ../../c-dfa/src/*.o
+	rm -f $(TARGET) $(TEST_OBJS) $(OBJS) ../*.o
 
 # Debug build
 debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I.. -I../../c-dfa/include -I../../internal/client -DDEBUG

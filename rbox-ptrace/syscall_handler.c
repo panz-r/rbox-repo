@@ -24,9 +24,7 @@
 #include "validation.h"
 #include "protocol.h"
 #include "debug.h"
-
-/* Forward declaration for judge execution */
-extern int run_judge(const char *command, const char *caller_info);
+#include "judge.h"
 
 /* Signal safety: block signals during critical sections that access g_allowances */
 static sigset_t g_blocked_signals;
@@ -616,7 +614,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
         /* Ask server for decision via readonlybox --judge
          * This reuses all the server communication code from the main binary */
-        int decision = run_judge(command, caller_info);
+        int decision = judge_run(command, caller_info);
 
         DEBUG_PRINT("JUDGE: pid=%d command='%s' decision=%d\n", pid, command, decision);
 
