@@ -53,7 +53,8 @@ $(SHELLSPLIT_LIB):
 	$(MAKE) -C $(SHELLSPLIT) libshellsplit.a
 
 # Test targets
-test: $(TARGET) $(TEST_BIN)
+DECODE_PACKET = tests/decode_packet
+test: $(TARGET) $(TEST_BIN) $(DECODE_PACKET)
 	./$(TEST_BIN)
 	@echo ""
 	@echo "Running shell integration tests..."
@@ -61,6 +62,9 @@ test: $(TARGET) $(TEST_BIN)
 
 $(TEST_BIN): $(TEST_SRC) $(RBOX_LIB)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(RBOX_LIB) $(LDFLAGS)
+
+$(DECODE_PACKET): tests/decode_packet.c $(RBOX_LIB) $(SHELLSPLIT_LIB)
+	$(CC) $(CFLAGS) -o $@ tests/decode_packet.c $(RBOX_LIB) $(SHELLSPLIT_LIB) $(LDFLAGS)
 
 clean:
 	rm -f $(TARGET) $(TEST_BIN) $(INTERNAL_CLIENT)/readonlybox_dfa.o
