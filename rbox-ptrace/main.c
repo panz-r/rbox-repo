@@ -26,6 +26,7 @@
 #include <limits.h>
 #include <math.h>
 #include <libgen.h>
+#include <syslog.h>
 
 #include "syscall_handler.h"
 #include "validation.h"
@@ -111,6 +112,9 @@ static void cleanup_global_resources(void) {
     free(g_extra_env);
     g_extra_env = NULL;
     g_extra_env_count = 0;
+
+    /* Close syslog */
+    closelog();
 }
 
 static void print_usage(void) {
@@ -680,7 +684,8 @@ static int trace_process(pid_t initial_pid) {
                 ProcessState *state = syscall_get_process_state(pid);
                 if (!state) {
                     /* Process table full - detach and block to prevent untracked execves */
-                    fprintf(stderr, "%s: Process table full, detaching from pid %d\n", g_progname, pid);
+                    fprintf(stderr, "%s: CRITICAL: Process table full, detaching from pid %d - execve will not be validated!\n", g_progname, pid);
+                    syslog(LOG_CRIT, "readonlybox-ptrace: CRITICAL: Process table full, detaching from pid %d - execve will not be validated!", pid);
                     ptrace(PTRACE_DETACH, pid, 0, 0);
                     continue;
                 }
@@ -725,7 +730,10 @@ int main(int argc, char *argv[]) {
      * This must be done early, before any potentially dangerous operations. */
     prctl(PR_SET_DUMPABLE, 0);
 
-    /* Register cleanup function for flagged env names */
+    /* Initialize syslog for critical error logging (process table full, etc.) */
+    openlog("readonlybox-ptrace", LOG_PID, LOG_USER);
+
+    /* Register cleanup function for flagged env names and syslog */
     atexit(cleanup_global_resources);
 
     static struct option long_options[] = {

@@ -62,6 +62,29 @@ static void debug_close(void) {
 #define DEBUG_PRINT(fmt, ...) do { } while(0)
 #endif
 
+/* Signal safety: block signals during critical sections that access g_allowances */
+static sigset_t g_blocked_signals;
+static bool g_signals_initialized = false;
+
+static void init_signal_blocking(void) {
+    if (g_signals_initialized) return;
+    sigemptyset(&g_blocked_signals);
+    sigaddset(&g_blocked_signals, SIGCHLD);
+    sigaddset(&g_blocked_signals, SIGTERM);
+    sigaddset(&g_blocked_signals, SIGINT);
+    g_signals_initialized = true;
+}
+
+static void block_signals(void) {
+    init_signal_blocking();
+    pthread_sigmask(SIG_BLOCK, &g_blocked_signals, NULL);
+}
+
+static void unblock_signals(void) {
+    init_signal_blocking();
+    pthread_sigmask(SIG_UNBLOCK, &g_blocked_signals, NULL);
+}
+
 /* Forward declarations */
 static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs);
 
@@ -70,6 +93,7 @@ Allowance g_allowances[MAX_ALLOWANCES];
 
 /* Clear all allowances for a specific PID */
 static void clear_allowances_for_pid(pid_t pid) {
+    block_signals();
     for (int i = 0; i < MAX_ALLOWANCES; i++) {
         if (g_allowances[i].parent_pid == pid) {
             DEBUG_PRINT("ALLOWANCE: clearing allowances for exited parent %d\n", pid);
@@ -81,6 +105,7 @@ static void clear_allowances_for_pid(pid_t pid) {
             g_allowances[i].parent_pid = 0;
         }
     }
+    unblock_signals();
 }
 
 /* Extract first word (command name) from a subcommand range */
@@ -107,6 +132,7 @@ static int check_allowance(pid_t parent_pid, const char *subcommand) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
+    block_signals();
     for (int i = 0; i < MAX_ALLOWANCES; i++) {
         if (g_allowances[i].parent_pid == 0) {
             continue;  /* Empty slot */
@@ -124,34 +150,36 @@ static int check_allowance(pid_t parent_pid, const char *subcommand) {
             g_allowances[i].parent_pid = 0;
             continue;
         }
-        
+
         /* Check if this allowance matches the parent */
         if (g_allowances[i].parent_pid == parent_pid) {
             /* Look for matching subcommand */
             for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
                 int word_idx = j / 32;
                 int bit_idx = j % 32;
-                
+
                 /* Already used? */
                 if (g_allowances[i].used_mask[word_idx] & (1 << bit_idx)) {
                     continue;
                 }
-                
+
                 /* Check if subcommand matches */
-                if (g_allowances[i].subcommands[j] && 
+                if (g_allowances[i].subcommands[j] &&
                     strcmp(g_allowances[i].subcommands[j], subcommand) == 0) {
-                    
+
                     /* Mark as used */
                     g_allowances[i].used_mask[word_idx] |= (1 << bit_idx);
-                    
-                    DEBUG_PRINT("ALLOWANCE: using allowance for parent %d, subcommand '%s'\n", 
+
+                    DEBUG_PRINT("ALLOWANCE: using allowance for parent %d, subcommand '%s'\n",
                                parent_pid, subcommand);
+                    unblock_signals();
                     return 1;  /* Allow */
                 }
             }
         }
     }
-    
+    unblock_signals();
+
     return 0;  /* No valid allowance */
 }
 
@@ -159,19 +187,20 @@ static int check_allowance(pid_t parent_pid, const char *subcommand) {
 static void grant_allowance(pid_t parent_pid, const char *full_command) {
     shell_parse_result_t result;
     shell_error_t err;
-    
+
     /* Try to parse with fast tokenizer */
-    err = shell_parse_fast(full_command, strlen(full_command), 
+    err = shell_parse_fast(full_command, strlen(full_command),
                           &SHELL_LIMITS_DEFAULT, &result);
-    
+
     if (err != SHELL_OK && err != SHELL_ETRUNC) {
         /* Parse failed - no allowances */
         DEBUG_PRINT("ALLOWANCE: shell_parse_fast failed for '%s', no allowances\n", full_command);
         return;
     }
-    
+
     DEBUG_PRINT("ALLOWANCE: parsed '%s' into %d subcommands\n", full_command, result.count);
-    
+
+    block_signals();
     /* Find empty slot */
     int slot = -1;
     for (int i = 0; i < MAX_ALLOWANCES; i++) {
@@ -180,7 +209,7 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
             break;
         }
     }
-    
+
     if (slot < 0) {
         /* No empty slot - use first one and replace */
         slot = 0;
@@ -188,23 +217,24 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
             free(g_allowances[0].subcommands[j]);
         }
     }
-    
+
     /* Store allowances for each subcommand */
     g_allowances[slot].parent_pid = parent_pid;
     clock_gettime(CLOCK_MONOTONIC, &g_allowances[slot].timestamp);
     g_allowances[slot].subcommand_count = 0;
     memset(g_allowances[slot].used_mask, 0, sizeof(g_allowances[slot].used_mask));
-    
+
     for (uint32_t i = 0; i < result.count && i < SHELL_MAX_SUBCOMMANDS; i++) {
         char cmd_name[256];
         extract_command_name(full_command, result.cmds[i], cmd_name, sizeof(cmd_name));
-        
+
         if (cmd_name[0] != '\0') {
             g_allowances[slot].subcommands[i] = strdup(cmd_name);
             g_allowances[slot].subcommand_count++;
             DEBUG_PRINT("ALLOWANCE: granted subcommand '%s' to parent %d\n", cmd_name, parent_pid);
         }
     }
+    unblock_signals();
 }
 
 /* Process state table (simple hash map).
