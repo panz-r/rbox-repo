@@ -39,14 +39,14 @@ typedef struct {
 /* Global allowance table */
 extern Allowance g_allowances[MAX_ALLOWANCES];
 
-/* Architecture-specific syscall numbers */
+/* Architecture-specific syscall numbers and register access
+ * Use system headers for syscall numbers (<sys/syscall.h> provides SYS_execve)
+ * and architecture-specific register definitions from <sys/reg.h> when available.
+ */
+#include <sys/syscall.h>
+
+/* Register access macros - architecture-specific */
 #ifdef __x86_64__
-    #define SYSCALL_EXECVE      59
-    #define SYSCALL_EXECVEAT    322
-    #define SYSCALL_CLONE       56
-    #define SYSCALL_FORK        57
-    #define SYSCALL_VFORK       58
-    #define SYSCALL_EXIT_GROUP  231
     #define USER_REGS           struct user_regs_struct
     #define REG_SYSCALL(regs)   ((regs)->orig_rax)
     #define REG_ARG1(regs)      ((regs)->rdi)
@@ -55,12 +55,6 @@ extern Allowance g_allowances[MAX_ALLOWANCES];
     #define REG_ARG4(regs)      ((regs)->r10)
     #define REG_SP(regs)        ((regs)->rsp)
 #elif __i386__
-    #define SYSCALL_EXECVE      11
-    #define SYSCALL_EXECVEAT    358
-    #define SYSCALL_CLONE       120
-    #define SYSCALL_FORK        2
-    #define SYSCALL_VFORK       190
-    #define SYSCALL_EXIT_GROUP  252
     #define USER_REGS           struct user_regs_struct
     #define REG_SYSCALL(regs)   ((regs)->orig_eax)
     #define REG_ARG1(regs)      ((regs)->ebx)
@@ -68,9 +62,25 @@ extern Allowance g_allowances[MAX_ALLOWANCES];
     #define REG_ARG3(regs)      ((regs)->edx)
     #define REG_ARG4(regs)      ((regs)->esi)
     #define REG_SP(regs)        ((regs)->esp)
+#elif __aarch64__
+    #define USER_REGS           struct user_regs_struct
+    #define REG_SYSCALL(regs)   ((regs)->regs[8])   /* x8 = syscall number */
+    #define REG_ARG1(regs)      ((regs)->regs[0])   /* x0 */
+    #define REG_ARG2(regs)      ((regs)->regs[1])   /* x1 */
+    #define REG_ARG3(regs)      ((regs)->regs[2])   /* x2 */
+    #define REG_ARG4(regs)      ((regs)->regs[3])   /* x3 */
+    #define REG_SP(regs)        ((regs)->sp)
 #else
     #error "Unsupported architecture"
 #endif
+
+/* Convenience macros using system syscall numbers */
+#define SYSCALL_EXECVE      SYS_execve
+#define SYSCALL_EXECVEAT    SYS_execveat
+#define SYSCALL_CLONE       SYS_clone
+#define SYSCALL_FORK        SYS_fork
+#define SYSCALL_VFORK       SYS_vfork
+#define SYSCALL_EXIT_GROUP  SYS_exit_group
 
 /*
  * Process state tracking structure.

@@ -16,35 +16,7 @@
 
 #include "validation.h"
 #include "protocol.h"
-
-/* Debug output macro - only enabled when DEBUG is defined */
-#ifdef DEBUG
-static FILE *g_debug_file = NULL;
-
-static void debug_init(void) {
-    int fd = open("/tmp/readonlybox-ptrace.log", O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC, 0644);
-    if (fd >= 0) {
-        g_debug_file = fdopen(fd, "a");
-    }
-    if (!g_debug_file && fd >= 0) {
-        close(fd);
-        g_debug_file = stderr;
-    } else if (!g_debug_file) {
-        g_debug_file = stderr;
-    }
-}
-
-#define DEBUG_PRINT(fmt, ...) do { \
-        if (!g_debug_file) debug_init(); \
-        time_t now = time(NULL); \
-        struct tm *tm = localtime(&now); \
-        fprintf(g_debug_file, "[%02d:%02d:%02d] ", tm->tm_hour, tm->tm_min, tm->tm_sec); \
-        fprintf(g_debug_file, fmt, ##__VA_ARGS__); \
-        fflush(g_debug_file); \
-    } while(0)
-#else
-#define DEBUG_PRINT(fmt, ...) do { } while(0)
-#endif
+#include "debug.h"
 
 /* External DFA functions from the linked library */
 extern int dfa_should_allow(const char *cmd);

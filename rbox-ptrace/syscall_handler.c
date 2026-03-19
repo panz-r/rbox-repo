@@ -23,44 +23,10 @@
 #include "memory.h"
 #include "validation.h"
 #include "protocol.h"
+#include "debug.h"
 
 /* Forward declaration for judge execution */
 extern int run_judge(const char *command, const char *caller_info);
-
-/* Debug output macro - only enabled when DEBUG is defined */
-#ifdef DEBUG
-static FILE *g_debug_file = NULL;
-
-static void debug_init(void) {
-    int fd = open("/tmp/readonlybox-ptrace.log", O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC, 0644);
-    if (fd >= 0) {
-        g_debug_file = fdopen(fd, "a");
-    }
-    if (!g_debug_file && fd >= 0) {
-        close(fd);
-        g_debug_file = stderr;
-    } else if (!g_debug_file) {
-        g_debug_file = stderr;
-    }
-}
-
-static void debug_close(void) {
-    if (g_debug_file && g_debug_file != stderr) {
-        fclose(g_debug_file);
-    }
-}
-
-#define DEBUG_PRINT(fmt, ...) do { \
-        if (!g_debug_file) debug_init(); \
-        time_t now = time(NULL); \
-        struct tm *tm = localtime(&now); \
-        fprintf(g_debug_file, "[%02d:%02d:%02d] ", tm->tm_hour, tm->tm_min, tm->tm_sec); \
-        fprintf(g_debug_file, fmt, ##__VA_ARGS__); \
-        fflush(g_debug_file); \
-    } while(0)
-#else
-#define DEBUG_PRINT(fmt, ...) do { } while(0)
-#endif
 
 /* Signal safety: block signals during critical sections that access g_allowances */
 static sigset_t g_blocked_signals;
