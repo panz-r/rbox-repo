@@ -3,6 +3,7 @@ bin/
 *.o
 */*.so
 c-dfa/tools/readonlybox_dfa.c
+internal/client/readonlybox_dfa.c
 internal/client/dfa_static_data.c
 internal/client/test_dfa
 c-dfa/tools/dfa2c

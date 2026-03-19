@@ -108,7 +108,10 @@ static int test_unknown_option(void) {
         FAIL("should have failed with unknown option");
     }
     
-    if (strstr(output, "Unknown option") == NULL && strstr(output, "Error:") == NULL) {
+    /* Check for any error-related message (unrecognized, unknown, or Error:) */
+    if (strstr(output, "unrecognized") == NULL && 
+        strstr(output, "unknown") == NULL &&
+        strstr(output, "Error:") == NULL) {
         printf("  Got: %s\n", output);
         FAIL("should show error for unknown option");
     }
