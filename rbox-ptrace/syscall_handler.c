@@ -548,6 +548,12 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 }
             }
             fclose(status_file);
+        } else {
+            /* /proc may not be mounted (e.g., containers with limited procfs).
+             * In this case, we skip the allowance check - commands will be
+             * validated normally via DFA/server. This is a safe degradation. */
+            DEBUG_PRINT("HANDLER: pid=%d could not open %s, skipping allowance check\n",
+                       pid, proc_status);
         }
 
         /* Check if parent has an allowance for this subcommand */

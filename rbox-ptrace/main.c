@@ -511,10 +511,17 @@ int main(int argc, char *argv[]) {
     if (attach_pid > 0) {
         /* Attach to existing process */
         fprintf(stderr, "%s: Attaching to process %d\n", g_progname, attach_pid);
-        
+
         /* Send PTRACE_ATTACH to the target process */
         if (ptrace(PTRACE_ATTACH, attach_pid, NULL, NULL) < 0) {
-            perror("ptrace(ATTACH)");
+            if (errno == EPERM) {
+                fprintf(stderr, "%s: ptrace attach denied for pid %d.\n", g_progname, attach_pid);
+                fprintf(stderr, "This may be due to Yama LSM (/proc/sys/kernel/yama/ptrace_scope).\n");
+                fprintf(stderr, "Try: echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope\n");
+                fprintf(stderr, "Or run as root.\n");
+            } else {
+                perror("ptrace(ATTACH)");
+            }
             syscall_handler_cleanup();
             validation_shutdown();
             free(cmd_path);

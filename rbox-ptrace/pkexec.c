@@ -54,13 +54,13 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
      * terminal). O_TMPFILE could solve this but requires passing an open fd
      * through pkexec, which closes all fds. */
     char env_file_template[] = "/dev/shm/readonlybox-env-XXXXXX";
-    int env_fd = mkstemp(env_file_template);
+    int env_fd = mkostemp(env_file_template, O_CLOEXEC);
     if (env_fd < 0) {
         /* Fallback to regular tmp if /dev/shm is not available */
         char tmp_template[] = "/tmp/readonlybox-env-XXXXXX";
-        env_fd = mkstemp(tmp_template);
+        env_fd = mkostemp(tmp_template, O_CLOEXEC);
         if (env_fd < 0) {
-            perror("mkstemp");
+            perror("mkostemp");
             return 1;
         }
         strcpy(env_file_template, tmp_template);

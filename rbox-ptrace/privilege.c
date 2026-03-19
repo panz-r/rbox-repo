@@ -106,11 +106,34 @@ void privilege_drop(void) {
     if (g_clean_env) {
         /* Clear all environment variables - only when explicitly requested.
          * This prevents LD_PRELOAD and other environment-based attacks.
-         * Note: clearenv() is a GNU extension, available on Linux.
-         * For other Unix-like systems, one would need to iterate over
-         * environ and call unsetenv() for each variable. */
+         * Use portable implementation for non-glibc systems (e.g., musl). */
+#if HAVE_CLEARENV
         if (clearenv() != 0) {
             fprintf(stderr, "Warning: clearenv() failed\n");
         }
+#else
+        extern char **environ;
+        if (environ) {
+            /* Save original environ pointer since we'll modify it */
+            char **original_environ = environ;
+            /* Unset each variable - iterate using original pointer */
+            for (char **e = original_environ; *e; e++) {
+                char *eq = strchr(*e, '=');
+                if (eq) {
+                    size_t len = eq - *e;
+                    if (len > 0) {
+                        char name[len + 1];
+                        memcpy(name, *e, len);
+                        name[len] = '\0';
+                        unsetenv(name);
+                    }
+                } else {
+                    unsetenv(*e);
+                }
+            }
+            /* Restore environ to empty state */
+            environ = NULL;
+        }
+#endif
     }
 }
