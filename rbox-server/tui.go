@@ -251,17 +251,17 @@ func (g *GrepParser) ParseArguments(args []string) (interface{}, error) {
 }
 
 type CommandLog struct {
-	Timestamp   time.Time
-	Decision    string
-	Command     string
-	Args        string
-	Caller      string
-	Syscall     string
-	Reason      string
-	ClientID    string
-	RequestID   int
-	Cwd         string
-	EnvVars     []EnvVarInfo  // Flagged env vars from request
+	Timestamp    time.Time
+	Decision     string
+	Command      string
+	Args         string
+	Caller       string
+	Syscall      string
+	Reason       string
+	ClientID     string
+	RequestID    int
+	Cwd          string
+	EnvVars      []EnvVarInfo     // Flagged env vars from request
 	EnvDecisions []EnvVarDecision // User's decisions on env vars
 }
 
@@ -293,6 +293,19 @@ const (
 	EventRequest
 )
 
+const (
+	MaxHistory          = 500
+	MaxLogs             = 50
+	FlashTimerSeconds   = 3
+	EventChanBufferSize = 100
+	TruncateWidth       = 30
+	MinTruncateWidth    = 20
+	DefaultPadding      = 30
+	Duration15Minutes   = 900
+	Duration1Hour       = 3600
+	Duration4Hours      = 14400
+)
+
 type Event struct {
 	Type      EventType
 	Decision  string
@@ -305,7 +318,7 @@ type Event struct {
 	RequestID int
 	ClientID  string
 	Cwd       string
-	EnvVars   []EnvVarInfo  // Flagged env vars from request
+	EnvVars   []EnvVarInfo // Flagged env vars from request
 }
 
 var (
@@ -382,7 +395,7 @@ type Model struct {
 	expandedCmd   *CommandLog // currently expanded command
 	decisionReqID int         // request ID being decided - prevents switching to different request
 	logDecision   bool        // true = mark decision for logging to user_log.txt
-	envVarCursor int         // -1 = command selected, 0+ = index of selected env var
+	envVarCursor  int         // -1 = command selected, 0+ = index of selected env var
 }
 
 func NewModel() *Model {
@@ -390,7 +403,7 @@ func NewModel() *Model {
 		commands:  make([]*CommandLog, 0),
 		logs:      make([]string, 0),
 		stats:     Stats{},
-		eventChan: make(chan Event, 100),
+		eventChan: make(chan Event, EventChanBufferSize),
 		step:      1,
 		cursor:    0,
 		focus:     "history",
@@ -405,23 +418,28 @@ func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientI
 	m.lastCmd = cmd + " " + args
 	m.lastDecision = decision
 	m.lastTime = time.Now()
-	m.flashTimer = 3
+	m.flashTimer = FlashTimerSeconds
 
 	log := CommandLog{
-		Timestamp:   time.Now(),
-		Decision:    decision,
-		Command:     cmd,
-		Args:        args,
-		Caller:      caller,
-		Syscall:     syscall,
-		Reason:      reason,
-		ClientID:    clientID,
-		RequestID:   requestID,
-		Cwd:         cwd,
-		EnvVars:     envVars,
+		Timestamp:    time.Now(),
+		Decision:     decision,
+		Command:      cmd,
+		Args:         args,
+		Caller:       caller,
+		Syscall:      syscall,
+		Reason:       reason,
+		ClientID:     clientID,
+		RequestID:    requestID,
+		Cwd:          cwd,
+		EnvVars:      envVars,
 		EnvDecisions: make([]EnvVarDecision, len(envVars)),
 	}
 	m.commands = append(m.commands, &log)
+
+	// Enforce MaxHistory limit
+	if len(m.commands) > MaxHistory {
+		m.commands = m.commands[len(m.commands)-MaxHistory:]
+	}
 
 	// Only select the new command if we're NOT in decision mode (step 2)
 	// This prevents the decision view from switching to a different request
@@ -440,8 +458,8 @@ func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientI
 
 func (m *Model) AddLog(log string) {
 	m.logs = append(m.logs, log)
-	if len(m.logs) > 50 {
-		m.logs = m.logs[len(m.logs)-50:]
+	if len(m.logs) > MaxLogs {
+		m.logs = m.logs[len(m.logs)-MaxLogs:]
 	}
 }
 
@@ -469,7 +487,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.focus == "details" && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
 					m.envVarCursor--
 					if m.envVarCursor < -1 {
-						m.envVarCursor = -1  // Go back to command
+						m.envVarCursor = -1 // Go back to command
 					}
 				} else {
 					// Scroll details up
@@ -569,12 +587,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
 					m.expandedCmd = m.commands[m.selectedIdx]
 					m.decisionReqID = m.commands[m.selectedIdx].RequestID
-					m.envVarCursor = -1  // Reset to command selection
+					m.envVarCursor = -1 // Reset to command selection
 				}
 			} else if m.step == 2 && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
 				// Set env var to allow
 				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
-					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 0  // allow
+					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 0 // allow
 				}
 			} else if m.step == 2 {
 				// Switch to Allow mode
@@ -593,12 +611,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
 					m.expandedCmd = m.commands[m.selectedIdx]
 					m.decisionReqID = m.commands[m.selectedIdx].RequestID
-					m.envVarCursor = -1  // Reset to command selection
+					m.envVarCursor = -1 // Reset to command selection
 				}
 			} else if m.step == 2 && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
 				// Set env var to deny
 				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
-					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 1  // deny
+					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 1 // deny
 				}
 			} else if m.step == 2 {
 				// Switch to Deny mode
@@ -787,22 +805,22 @@ func durationToReason(allow bool, choice int) (decision, reason string, duration
 		duration = 0
 	case 1:
 		reason = "15m"
-		duration = 900  // 15 minutes
+		duration = Duration15Minutes
 	case 2:
 		reason = "1h"
-		duration = 3600  // 1 hour
+		duration = Duration1Hour
 	case 3:
 		reason = "4h"
-		duration = 14400  // 4 hours
+		duration = Duration4Hours
 	case 5:
 		reason = "session"
-		duration = 0  // session - use 0, treated specially
+		duration = 0
 	case 6:
 		reason = "always"
-		duration = 0  // always - use 0, treated specially
+		duration = 0
 	case 7:
 		reason = "pattern"
-		duration = 0  // pattern - use 0
+		duration = 0
 	default:
 		reason = "unknown"
 	}
@@ -818,13 +836,13 @@ func (m *Model) executeDecision() {
 	decision, reason, duration := durationToReason(allow, m.cursor)
 	baseCmd := extractBaseName(m.expandedCmd.Command)
 	fmt.Printf("Executing: %s %s for %s %s (duration=%d)\n", decision, reason, baseCmd, m.expandedCmd.Args, duration)
-	
+
 	// Get env decisions from the command
 	var envDecisions []EnvVarDecision
 	if len(m.expandedCmd.EnvDecisions) > 0 {
 		envDecisions = m.expandedCmd.EnvDecisions
 	}
-	
+
 	MakeDecision(m.expandedCmd.RequestID, allow, reason, duration, envDecisions)
 
 	// Log decision to user_log.xml if marked
@@ -921,7 +939,7 @@ func (m *Model) View() string {
 
 	padding := m.width - len(statsStr)
 	if m.width == 0 {
-		padding = 30
+		padding = DefaultPadding
 	}
 	if padding < 0 {
 		padding = 0
@@ -1029,7 +1047,7 @@ func (m *Model) renderHistoryList(sb *strings.Builder, maxHeight int) {
 			}
 			callerPrefix += "$"
 			if cmd.Args != "" {
-				summary = fmt.Sprintf("%s %s %s", callerPrefix, baseCmd, truncateString(cmd.Args, 30))
+				summary = fmt.Sprintf("%s %s %s", callerPrefix, baseCmd, truncateString(cmd.Args, TruncateWidth))
 			} else {
 				summary = fmt.Sprintf("%s %s", callerPrefix, baseCmd)
 			}
@@ -1037,13 +1055,13 @@ func (m *Model) renderHistoryList(sb *strings.Builder, maxHeight int) {
 			// No caller - use baseCmd + args
 			summary = baseCmd
 			if cmd.Args != "" {
-				summary = fmt.Sprintf("%s %s", baseCmd, truncateString(cmd.Args, 30))
+				summary = fmt.Sprintf("%s %s", baseCmd, truncateString(cmd.Args, TruncateWidth))
 			}
 		}
 
 		maxWidth := m.width - 50
-		if maxWidth < 20 {
-			maxWidth = 20
+		if maxWidth < MinTruncateWidth {
+			maxWidth = MinTruncateWidth
 		}
 		truncatedSummary := truncateString(summary, maxWidth)
 
@@ -1404,7 +1422,7 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		sb.WriteString(detailsFocus.Render("  Cwd: <unknown>"))
 	}
 	sb.WriteString("\n")
-	
+
 	// Show Flagged Env Vars (from v8 protocol)
 	if len(cmd.EnvVars) > 0 {
 		// If envVarCursor is -1, command is selected, else env var is selected
@@ -1586,7 +1604,7 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		}
 	}
 	cmdSuggestion := cmd.Command
-	equalsContent := "[=] " + truncateString(cmdSuggestion, 30)
+	equalsContent := "[=] " + truncateString(cmdSuggestion, TruncateWidth)
 	plusContent := "[+] session"
 
 	if m.focus == "actions" {
@@ -1618,34 +1636,42 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 }
 
 func RunTUIMode() {
+	// Determine socket path using same logic as main()
+	sock := getDefaultSocketPath()
+	if *socketPath != "" {
+		sock = *socketPath
+	}
+	if *system {
+		sock = SystemSocketPath
+	}
+
 	// Start the C library server
-	server, err := NewRBoxServer(SocketPath)
+	server, err := NewRBoxServer(sock)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("readonlybox-server v%s - TUI mode\n", ServerVersion)
-	fmt.Println("Listening on:", SocketPath)
-	os.Chmod(SocketPath, 0666)
-	
+	fmt.Println("Listening on:", sock)
+
 	// Create model
 	model := NewModel()
-	
+
 	// Start TUI
 	p := tea.NewProgram(
 		model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
-	
+
 	// Goroutine: forward events to TUI
 	go func() {
 		for event := range model.eventChan {
 			p.Send(event)
 		}
 	}()
-	
+
 	// Goroutine: handle requests and send events to TUI
 	go func() {
 		requestID := 0
@@ -1656,9 +1682,9 @@ func RunTUIMode() {
 				close(model.eventChan)
 				break
 			}
-			
+
 			requestID++
-			
+
 			cmd := req.GetCommand()
 			argc := req.GetArgc()
 			args := make([]string, argc)
@@ -1670,11 +1696,11 @@ func RunTUIMode() {
 			if len(args) > 1 {
 				argsStr = strings.Join(args[1:], " ")
 			}
-			
+
 			// Get caller and syscall from request (v7 protocol)
 			caller := req.GetCaller()
 			syscall := req.GetSyscall()
-			
+
 			// Get flagged env vars from request (v8 protocol)
 			envVarCount := req.GetEnvVarCount()
 			envVars := make([]EnvVarInfo, envVarCount)
@@ -1684,10 +1710,10 @@ func RunTUIMode() {
 					Score: req.GetEnvVarScore(i),
 				}
 			}
-			
+
 			// Store request for later decision
 			StoreRequest(requestID, req)
-			
+
 			// Send request event to TUI
 			select {
 			case model.eventChan <- Event{Type: EventRequest, RequestID: requestID, Command: cmd, Args: argsStr, Caller: caller, Syscall: syscall, EnvVars: envVars}:
@@ -1695,12 +1721,12 @@ func RunTUIMode() {
 			}
 		}
 	}()
-	
+
 	// Run TUI (blocks until exit)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
-	
+
 	fmt.Println("\nShutting down...")
 	server.Stop()
 	server.Free()

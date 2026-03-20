@@ -11,8 +11,8 @@
 package main
 
 /*
-#cgo LDFLAGS: /w/rbox-repo/rbox-protocol/librbox_protocol.a /w/rbox-repo/shellsplit/libshellsplit.a -lpthread -lm
-#cgo CFLAGS: -I/w/rbox-repo/rbox-protocol/include -I/w/rbox-repo/shellsplit/include
+#cgo LDFLAGS: -lpthread -lm
+#cgo CFLAGS:
 
 #include <rbox_protocol.h>
 #include <stdlib.h>
@@ -28,7 +28,7 @@ import (
 
 // RBoxServer wraps the C rbox-protocol server
 type RBoxServer struct {
-	cServer *C.rbox_server_handle_t
+	cServer    *C.rbox_server_handle_t
 	socketPath string
 }
 
@@ -37,6 +37,10 @@ func NewRBoxServer(socketPath string) (*RBoxServer, error) {
 	cPath := C.CString(socketPath)
 	defer C.free(unsafe.Pointer(cPath))
 
+	// Remove any existing socket file first (ignore errors)
+	os.Remove(socketPath)
+
+	// Create the server
 	cServer := C.rbox_server_handle_new(cPath)
 	if cServer == nil {
 		return nil, fmt.Errorf("failed to create C server")
@@ -55,7 +59,7 @@ func NewRBoxServer(socketPath string) (*RBoxServer, error) {
 	}
 
 	return &RBoxServer{
-		cServer: cServer,
+		cServer:    cServer,
 		socketPath: socketPath,
 	}, nil
 }
@@ -188,7 +192,6 @@ func (r *RBoxRequest) GetEnvVarScore(index int) float32 {
 	return float32(C.rbox_server_request_env_var_score(r.cRequest, C.int(index)))
 }
 
-
 // DecideWithEnv sends the decision to the client with env decisions
 func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, envDecisions []EnvVarDecision) error {
 	if r.cRequest == nil {
@@ -236,12 +239,7 @@ func (r *RBoxRequest) IsNil() bool {
 // Decision constants (match C values)
 const (
 	DecisionUnknown = uint8(C.RBOX_DECISION_UNKNOWN)
-	DecisionAllow  = uint8(C.RBOX_DECISION_ALLOW)
-	DecisionDeny   = uint8(C.RBOX_DECISION_DENY)
-	DecisionError  = uint8(C.RBOX_DECISION_ERROR)
+	DecisionAllow   = uint8(C.RBOX_DECISION_ALLOW)
+	DecisionDeny    = uint8(C.RBOX_DECISION_DENY)
+	DecisionError   = uint8(C.RBOX_DECISION_ERROR)
 )
-
-// Ensure socket has correct permissions
-func init() {
-	os.Chmod("/run/readonlybox/readonlybox.sock", 0666)
-}

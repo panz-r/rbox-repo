@@ -193,6 +193,11 @@ func BuildBinaries() error {
 	cmd.Dir = filepath.Join(wd, "rbox-server")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	rboxProto := filepath.Join(wd, "rbox-protocol")
+	shellSplit := filepath.Join(wd, "shellsplit")
+	cmd.Env = append(os.Environ(),
+		"CGO_LDFLAGS=-L"+rboxProto+" -L"+shellSplit+" -lrbox_protocol -lshellsplit -lpthread -lm",
+		"CGO_CFLAGS=-I"+rboxProto+"/include -I"+shellSplit+"/include")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("readonlybox-server: %w", err)
 	}

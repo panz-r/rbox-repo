@@ -43,6 +43,42 @@ static const char* EXPECTED_IDENTIFIER = "rbox-wrap-cmd-v1";
 #endif
 
 #define ENV_FLAGGED_ENVS "READONLYBOX_FLAGGED_ENVS"
+
+/* Get default socket path following priority:
+ * 1. READONLYBOX_SOCKET env var (if set)
+ * 2. XDG_RUNTIME_DIR/readonlybox.sock (if XDG_RUNTIME_DIR is set)
+ * 3. /run/readonlybox/readonlybox.sock (default)
+ * Returns allocated string that caller must free, or NULL on error.
+ */
+static char *get_default_socket_path(void) {
+    const char *socket_path = NULL;
+    char *result = NULL;
+    size_t len;
+
+    /* 1. Check READONLYBOX_SOCKET env var */
+    socket_path = getenv("READONLYBOX_SOCKET");
+    if (socket_path && *socket_path) {
+        result = strdup(socket_path);
+        goto done;
+    }
+
+    /* 2. Check XDG_RUNTIME_DIR */
+    socket_path = getenv("XDG_RUNTIME_DIR");
+    if (socket_path && *socket_path) {
+        len = strlen(socket_path) + strlen("/readonlybox.sock") + 1;
+        result = malloc(len);
+        if (result) {
+            snprintf(result, len, "%s/readonlybox.sock", socket_path);
+        }
+        goto done;
+    }
+
+    /* 3. Default to system path */
+    result = strdup(DEFAULT_SOCKET);
+
+done:
+    return result;
+}
 #define ENV_CALLER      "READONLYBOX_CALLER"
 #define ENV_UID         "READONLYBOX_UID"
 
@@ -436,12 +472,19 @@ static int run_with_filter(const char *socket_path, const char *command,
 }
 
 int main(int argc, char *argv[]) {
-    const char *socket_path = DEFAULT_SOCKET;
+    char *socket_path = NULL;  /* Will be set by get_default_socket_path or --socket option */
     int mode_run = 0;
     int mode_bin = 0;
     int mode_relay = 0;
     int mode_clear_env = 0;
     const char *uid_str = NULL;
+    
+    /* Initialize default socket path */
+    socket_path = get_default_socket_path();
+    if (!socket_path) {
+        fprintf(stderr, "%s: failed to determine socket path\n", argv[0]);
+        return EXIT_ERROR;
+    }
     
     program_name = argv[0];
     
@@ -465,15 +508,19 @@ int main(int argc, char *argv[]) {
         switch (opt) {
             case 'h':
                 usage(argv[0]);
+                free(socket_path);
                 return 0;
             case 'v':
                 version_info();
+                free(socket_path);
                 return 0;
             case 's':
-                socket_path = optarg;
-                if (strlen(socket_path) >= UNIX_PATH_MAX) {
+                free(socket_path);
+                socket_path = strdup(optarg);
+                if (!socket_path || strlen(socket_path) >= UNIX_PATH_MAX) {
                     fprintf(stderr, "%s: socket path too long (max %d)\n",
                             program_name, UNIX_PATH_MAX);
+                    free(socket_path);
                     return EXIT_ERROR;
                 }
                 break;
@@ -497,6 +544,7 @@ int main(int argc, char *argv[]) {
                 break;
             default:
                 usage(argv[0]);
+                free(socket_path);
                 return 1;
         }
     }

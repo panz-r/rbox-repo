@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -45,7 +46,7 @@ func (l *Logger) Close() {
 var gLogger *Logger
 
 var (
-	socketPath  = flag.String("socket", SocketPath, "Unix socket path")
+	socketPath  = flag.String("socket", "", "Unix socket path (default: auto-detect)")
 	verbose     = flag.Bool("v", false, "Verbose: show all commands")
 	veryVerbose = flag.Bool("vv", false, "Very verbose: show all commands and logs")
 	quiet       = flag.Bool("q", false, "Quiet: only show blocked commands (default)")
@@ -54,13 +55,44 @@ var (
 	tui         = flag.Bool("tui", false, "Run in TUI mode")
 	autoDeny    = flag.Bool("auto-deny", false, "Auto-deny unknown commands (for testing)")
 	testEnvDeny = flag.String("test-env-deny", "", "Bitmap of env var indices to deny (for testing, e.g., '1,3' denies indices 1 and 3)")
+	system      = flag.Bool("system", false, "Use system socket path /run/readonlybox/ (requires root)")
 )
 
-const SocketPath = "/run/readonlybox/readonlybox.sock"
-const ServerVersion = "1.0.0"
+const (
+	ServerVersion    = "1.0.0"
+	SystemSocketPath = "/run/readonlybox/readonlybox.sock"
+)
+
+// getDefaultSocketPath returns the default socket path based on priority:
+// 1. READONLYBOX_SOCKET env var (if set)
+// 2. XDG_RUNTIME_DIR/readonlybox.sock (if XDG_RUNTIME_DIR is set)
+// 3. /run/readonlybox/readonlybox.sock (system-wide, requires root)
+func getDefaultSocketPath() string {
+	// 1. Check READONLYBOX_SOCKET env var
+	if sock := os.Getenv("READONLYBOX_SOCKET"); sock != "" {
+		return sock
+	}
+
+	// 2. Check XDG_RUNTIME_DIR
+	if xdgRuntime := os.Getenv("XDG_RUNTIME_DIR"); xdgRuntime != "" {
+		return xdgRuntime + "/readonlybox.sock"
+	}
+
+	// 3. Default to system path (requires root)
+	return "/run/readonlybox/readonlybox.sock"
+}
 
 func main() {
 	flag.Parse()
+
+	// Determine socket path
+	if *socketPath == "" {
+		*socketPath = getDefaultSocketPath()
+		if *system {
+			*socketPath = "/run/readonlybox/readonlybox.sock"
+		}
+		fmt.Printf("Using socket: %s\n", *socketPath)
+	}
 
 	gLogger = NewLogger(*logFile, *logLevel)
 	if gLogger != nil {
@@ -233,6 +265,7 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 
 // SetDecisionWithAllowance is used by the TUI
 var pendingRequests = make(map[int]*RBoxRequest)
+var pendingMu sync.RWMutex
 
 // makeEnvDecisions creates env decisions based on flagged env vars from request
 // If testEnvDeny flag is set, use that bitmap to deny specific indices
@@ -284,12 +317,16 @@ func makeEnvDecisions(req *RBoxRequest) []EnvVarDecision {
 
 // StoreRequest stores a request for later decision
 func StoreRequest(id int, req *RBoxRequest) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
 	pendingRequests[id] = req
 }
 
 // MakeDecision sends a decision for a pending request
 // duration: time in seconds for time-limited decision (0 = no time limit)
 func MakeDecision(id int, allowed bool, reason string, duration uint32, envDecisions []EnvVarDecision) error {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
 	req, ok := pendingRequests[id]
 	if !ok {
 		return fmt.Errorf("request not found")
