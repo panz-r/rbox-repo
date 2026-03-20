@@ -27,24 +27,95 @@ extern int dfa_get_category_mask(const char *cmd, uint8_t *out_mask);
 #define CAT_MASK_AUTODENY  0x02  /* Auto-deny: block without server query */
 #define CAT_MASK_ALWAYSASK 0x04  /* Always ask: query server even if autoallow matches */
 
-/* Socket path (kept for API compatibility) */
-static char g_socket_path[1024] = ROBO_DEFAULT_SOCKET;
+/* Socket path selection flags */
+static char g_socket_path[1024] = "";
+static int g_socket_explicitly_set = 0;  /* --socket PATH provided */
+static int g_force_system = 0;            /* --system-socket flag */
+static int g_force_user = 0;              /* --user-socket flag */
+
+/* Set socket path explicitly (from --socket PATH) - highest priority */
+void validation_set_socket_path(const char *path) {
+    if (path && path[0]) {
+        strncpy(g_socket_path, path, sizeof(g_socket_path) - 1);
+        g_socket_path[sizeof(g_socket_path) - 1] = '\0';
+        g_socket_explicitly_set = 1;
+    }
+}
+
+/* Set system socket mode - forces /run/readonlybox/readonlybox.sock */
+void validation_set_system_mode(void) {
+    g_force_system = 1;
+}
+
+/* Set user socket mode - uses $XDG_RUNTIME_DIR/readonlybox.sock if set, else system */
+void validation_set_user_mode(void) {
+    g_force_user = 1;
+}
 
 /* Initialize validation subsystem */
 int validation_init(void) {
-    /* Get socket path from environment (kept for compatibility) */
+    /* Socket path resolution order:
+     * 1. --socket PATH (explicit)
+     * 2. --system-socket → /run/readonlybox/readonlybox.sock
+     * 3. --user-socket → $XDG_RUNTIME_DIR/readonlybox.sock (or system if unset)
+     * 4. READONLYBOX_SOCKET env variable
+     * 5. XDG_RUNTIME_DIR/readonlybox.sock
+     * 6. /run/readonlybox/readonlybox.sock (default)
+     */
+
+    /* 1. --socket PATH (highest priority) */
+    if (g_socket_explicitly_set) {
+        return 0;
+    }
+
+    /* 2. --system-socket forces system path */
+    if (g_force_system) {
+        strncpy(g_socket_path, "/run/readonlybox/readonlybox.sock", sizeof(g_socket_path) - 1);
+        g_socket_path[sizeof(g_socket_path) - 1] = '\0';
+        return 0;
+    }
+
+    /* 3. --user-socket uses XDG if set, else system */
+    if (g_force_user) {
+        const char *xdg_dir = getenv("XDG_RUNTIME_DIR");
+        if (xdg_dir && xdg_dir[0]) {
+            snprintf(g_socket_path, sizeof(g_socket_path), "%s/readonlybox.sock", xdg_dir);
+        } else {
+            strncpy(g_socket_path, "/run/readonlybox/readonlybox.sock", sizeof(g_socket_path) - 1);
+            g_socket_path[sizeof(g_socket_path) - 1] = '\0';
+        }
+        return 0;
+    }
+
+    /* 4. READONLYBOX_SOCKET environment variable */
     const char *env_path = getenv(ROBO_ENV_SOCKET);
     if (env_path && env_path[0]) {
         strncpy(g_socket_path, env_path, sizeof(g_socket_path) - 1);
         g_socket_path[sizeof(g_socket_path) - 1] = '\0';
+        return 0;
     }
+
+    /* 5. XDG_RUNTIME_DIR */
+    const char *xdg_dir = getenv("XDG_RUNTIME_DIR");
+    if (xdg_dir && xdg_dir[0]) {
+        snprintf(g_socket_path, sizeof(g_socket_path), "%s/readonlybox.sock", xdg_dir);
+        return 0;
+    }
+
+    /* 6. Default system path */
+    strncpy(g_socket_path, "/run/readonlybox/readonlybox.sock", sizeof(g_socket_path) - 1);
+    g_socket_path[sizeof(g_socket_path) - 1] = '\0';
 
     return 0;
 }
 
 /* Shutdown validation subsystem */
 void validation_shutdown(void) {
-    /* Nothing to clean up for DFA-only validation */
+    /* Reset global state for clean re-initialization */
+    g_socket_path[0] = '\0';
+    g_socket_explicitly_set = 0;
+    g_force_system = 0;
+    g_force_user = 0;
 }
 
 /* Get socket path */

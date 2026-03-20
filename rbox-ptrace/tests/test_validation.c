@@ -80,11 +80,13 @@ TEST(validation_init_shutdown_cycle) {
  * Test validation_get_socket_path default
  */
 TEST(validation_get_socket_path_default) {
+    /* Unset XDG_RUNTIME_DIR to test pure default behavior */
+    unsetenv("XDG_RUNTIME_DIR");
     validation_init();
 
     const char *path = validation_get_socket_path();
     ASSERT_NOT_NULL(path);
-    ASSERT_STR_EQ(path, ROBO_DEFAULT_SOCKET);
+    ASSERT_STR_EQ(path, "/run/readonlybox/readonlybox.sock");
 
     validation_shutdown();
 }
@@ -106,6 +108,72 @@ TEST(validation_get_socket_path_env) {
 
     /* Clean up environment */
     unsetenv(ROBO_ENV_SOCKET);
+}
+
+/*
+ * Test validation_get_socket_path with --system flag (should override XDG_RUNTIME_DIR)
+ */
+TEST(validation_get_socket_path_system) {
+    /* Set XDG_RUNTIME_DIR to a custom path */
+    setenv("XDG_RUNTIME_DIR", "/custom/xdg/path", 1);
+
+    /* Set system mode */
+    validation_set_system_mode();
+
+    validation_init();
+
+    const char *path = validation_get_socket_path();
+    ASSERT_NOT_NULL(path);
+    /* --system should force /run/readonlybox even when XDG_RUNTIME_DIR is set */
+    ASSERT_STR_EQ(path, "/run/readonlybox/readonlybox.sock");
+
+    validation_shutdown();
+
+    /* Clean up environment */
+    unsetenv("XDG_RUNTIME_DIR");
+}
+
+/*
+ * Test validation_get_socket_path with --user-socket flag
+ */
+TEST(validation_get_socket_path_user) {
+    /* Set XDG_RUNTIME_DIR to a custom path */
+    setenv("XDG_RUNTIME_DIR", "/custom/xdg/path", 1);
+
+    /* Set user mode */
+    validation_set_user_mode();
+
+    validation_init();
+
+    const char *path = validation_get_socket_path();
+    ASSERT_NOT_NULL(path);
+    /* --user-socket should use XDG_RUNTIME_DIR when set */
+    ASSERT_STR_EQ(path, "/custom/xdg/path/readonlybox.sock");
+
+    validation_shutdown();
+
+    /* Clean up environment */
+    unsetenv("XDG_RUNTIME_DIR");
+}
+
+/*
+ * Test validation_get_socket_path with --user-socket when XDG_RUNTIME_DIR is not set
+ */
+TEST(validation_get_socket_path_user_no_xdg) {
+    /* Ensure XDG_RUNTIME_DIR is not set */
+    unsetenv("XDG_RUNTIME_DIR");
+
+    /* Set user mode */
+    validation_set_user_mode();
+
+    validation_init();
+
+    const char *path = validation_get_socket_path();
+    ASSERT_NOT_NULL(path);
+    /* --user-socket should fall back to system path when XDG_RUNTIME_DIR is not set */
+    ASSERT_STR_EQ(path, "/run/readonlybox/readonlybox.sock");
+
+    validation_shutdown();
 }
 
 /*
@@ -201,7 +269,7 @@ TEST(protocol_limits) {
  * Test default socket path
  */
 TEST(default_socket_path) {
-    ASSERT_STR_EQ(ROBO_DEFAULT_SOCKET, "/tmp/readonlybox.sock");
+    ASSERT_STR_EQ(ROBO_DEFAULT_SOCKET, "/run/readonlybox/readonlybox.sock");
 }
 
 /*
@@ -310,6 +378,9 @@ void run_validation_tests(void) {
     RUN_TEST(validation_init_shutdown_cycle);
     RUN_TEST(validation_get_socket_path_default);
     RUN_TEST(validation_get_socket_path_env);
+    RUN_TEST(validation_get_socket_path_system);
+    RUN_TEST(validation_get_socket_path_user);
+    RUN_TEST(validation_get_socket_path_user_no_xdg);
     RUN_TEST(validation_check_dfa_null);
     RUN_TEST(validation_check_dfa_empty);
     RUN_TEST(validation_check_dfa_simple_command);

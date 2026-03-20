@@ -341,6 +341,9 @@ int main(int argc, char *argv[]) {
         {"internal-screened", no_argument, 0, 256},
         /* Hidden option: restore environment from file passed by relaunch_with_pkexec */
         {"env-file", required_argument, 0, 258},
+        /* Socket path options */
+        {"system-socket", no_argument, 0, 259},
+        {"user-socket", no_argument, 0, 260},
         {0, 0, 0, 0}
     };
 
@@ -427,6 +430,14 @@ int main(int argc, char *argv[]) {
                 unlink(optarg);  /* Clean up the temp file */
                 break;
             }
+            case 259:
+                /* Force system socket path */
+                validation_set_system_mode();
+                break;
+            case 260:
+                /* Use user socket (XDG_RUNTIME_DIR) */
+                validation_set_user_mode();
+                break;
             default:
                 print_usage();
                 return 1;

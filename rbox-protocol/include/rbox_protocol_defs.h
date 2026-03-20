@@ -73,7 +73,7 @@
  * SOCKET PATH
  * ============================================================ */
 
-#define RBOX_DEFAULT_SOCKET  "/tmp/readonlybox.sock"
+#define RBOX_DEFAULT_SOCKET  "/run/readonlybox/readonlybox.sock"
 
 /* ============================================================
  * HEADER STRUCTURE (127 bytes total)

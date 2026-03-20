@@ -25,6 +25,7 @@
 #include "protocol.h"
 #include "debug.h"
 #include "judge.h"
+#include <shell_tokenizer.h>
 
 /* Signal safety: block signals during critical sections that access g_allowances */
 static sigset_t g_blocked_signals;
@@ -72,29 +73,12 @@ static void clear_allowances_for_pid(pid_t pid) {
     unblock_signals();
 }
 
-/* Extract first word (command name) from a subcommand range */
-static void extract_command_name(const char *cmd, shell_range_t range, char *buf, size_t buf_size) {
-    if (range.start + range.len > strlen(cmd)) {
-        buf[0] = '\0';
-        return;
-    }
-    
-    /* Copy the full subcommand (everything between separators) */
-    size_t len = range.len;
-    if (len >= buf_size) len = buf_size - 1;
-    memcpy(buf, cmd + range.start, len);
-    buf[len] = '\0';
-    
-    /* Trim trailing whitespace */
-    while (len > 0 && (buf[len-1] == ' ' || buf[len-1] == '\t' || buf[len-1] == '\n' || buf[len-1] == '\r')) {
-        buf[--len] = '\0';
-    }
-}
-
 /* Check if a parent PID has a valid allowance for a specific subcommand */
 static int check_allowance(pid_t parent_pid, const char *subcommand) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
+
+    int result = 0;  /* Default: no match */
 
     block_signals();
     for (int i = 0; i < MAX_ALLOWANCES; i++) {
@@ -112,12 +96,13 @@ static int check_allowance(pid_t parent_pid, const char *subcommand) {
             }
             g_allowances[i].subcommand_count = 0;
             g_allowances[i].parent_pid = 0;
+            memset(g_allowances[i].used_mask, 0, sizeof(g_allowances[i].used_mask));
             continue;
         }
 
         /* Check if this allowance matches the parent */
         if (g_allowances[i].parent_pid == parent_pid) {
-            /* Look for matching subcommand */
+            /* Look for matching subcommand (full string match) */
             for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
                 int word_idx = j / 32;
                 int bit_idx = j % 32;
@@ -127,7 +112,7 @@ static int check_allowance(pid_t parent_pid, const char *subcommand) {
                     continue;
                 }
 
-                /* Check if subcommand matches */
+                /* Full string match: incoming command must match stored subcommand exactly */
                 if (g_allowances[i].subcommands[j] &&
                     strcmp(g_allowances[i].subcommands[j], subcommand) == 0) {
 
@@ -136,15 +121,18 @@ static int check_allowance(pid_t parent_pid, const char *subcommand) {
 
                     DEBUG_PRINT("ALLOWANCE: using allowance for parent %d, subcommand '%s'\n",
                                parent_pid, subcommand);
-                    unblock_signals();
-                    return 1;  /* Allow */
+                    result = 1;  /* Found match */
+                    break;       /* Exit inner loop */
                 }
+            }
+            if (result == 1) {
+                break;  /* Exit outer loop if we found a match */
             }
         }
     }
     unblock_signals();
 
-    return 0;  /* No valid allowance */
+    return result;
 }
 
 /* Grant allowances to a parent PID based on the full command */
@@ -163,6 +151,13 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
     }
 
     DEBUG_PRINT("ALLOWANCE: parsed '%s' into %d subcommands\n", full_command, result.count);
+
+    /* If only 1 subcommand (the full command itself), don't store any allowances.
+     * Allowances are for subprocesses, not the command we just got a decision on. */
+    if (result.count <= 1) {
+        DEBUG_PRINT("ALLOWANCE: single subcommand (full command), no allowances to store\n");
+        return;
+    }
 
     block_signals();
     /* Find empty slot */
@@ -189,13 +184,15 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
     memset(g_allowances[slot].used_mask, 0, sizeof(g_allowances[slot].used_mask));
 
     for (uint32_t i = 0; i < result.count && i < SHELL_MAX_SUBCOMMANDS; i++) {
-        char cmd_name[256];
-        extract_command_name(full_command, result.cmds[i], cmd_name, sizeof(cmd_name));
+        /* Get length of this subcommand */
+        uint32_t subcmd_len;
+        const char *subcmd_ptr = shell_get_subcommand(full_command, &result.cmds[i], &subcmd_len);
 
-        if (cmd_name[0] != '\0') {
-            g_allowances[slot].subcommands[i] = strdup(cmd_name);
+        if (subcmd_len > 0) {
+            g_allowances[slot].subcommands[g_allowances[slot].subcommand_count] = strndup(subcmd_ptr, subcmd_len);
             g_allowances[slot].subcommand_count++;
-            DEBUG_PRINT("ALLOWANCE: granted subcommand '%s' to parent %d\n", cmd_name, parent_pid);
+            DEBUG_PRINT("ALLOWANCE: granted subcommand '%.*s' to parent %d\n",
+                       subcmd_len, subcmd_ptr, parent_pid);
         }
     }
     unblock_signals();

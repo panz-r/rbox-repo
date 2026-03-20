@@ -22,7 +22,16 @@ void validation_shutdown(void);
 /* Check if command is allowed using DFA fast-path */
 int validation_check_dfa(const char *command);
 
-/* Get socket path from environment */
+/* Get socket path - follows priority: --socket > --system-socket/--user-socket > env > XDG > default */
 const char *validation_get_socket_path(void);
+
+/* Set socket path explicitly (from --socket PATH) - highest priority */
+void validation_set_socket_path(const char *path);
+
+/* Set system socket mode - forces /run/readonlybox/readonlybox.sock */
+void validation_set_system_mode(void);
+
+/* Set user socket mode - uses $XDG_RUNTIME_DIR/readonlybox.sock if set, else falls back to system */
+void validation_set_user_mode(void);
 
 #endif /* READONLYBOX_PTRACE_VALIDATION_H */
