@@ -8,6 +8,9 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <sys/fcntl.h>
+#include <unistd.h>
+
 /* Fallback for PATH_MAX if not defined */
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -26,6 +29,23 @@
 #define HAVE_CLEARENV 1
 #else
 #define HAVE_CLEARENV 0
+#endif
+
+/* mkostemp fallback for non-glibc systems (e.g., musl)
+ * mkostemp is used with O_CLOEXEC for security.
+ * This fallback uses mkstemp + fcntl to achieve the same result. */
+#ifndef HAVE_MKOSTEMP
+static inline int portable_mkostemp(char *template, int flags) {
+    int fd = mkstemp(template);
+    if (fd != -1 && (flags & O_CLOEXEC)) {
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+    }
+    return fd;
+}
+#define mkostemp portable_mkostemp
+#define HAVE_MKOSTEMP 0
+#else
+#define HAVE_MKOSTEMP 1
 #endif
 
 #endif /* CONFIG_H */

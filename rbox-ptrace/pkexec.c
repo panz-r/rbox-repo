@@ -79,8 +79,8 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
     fclose(env_file);  /* also closes the fd */
 
     /* Allocate argv: pkexec + our options + args + NULL */
-    /* Estimate: 6 pkexec/our options + argc + 1 */
-    char **new_argv = malloc((argc + 10) * sizeof(char *));
+    /* pkexec args: 12 fixed (pkexec, --disable-internal-agent, argv[0], --uid, uid_str, --cwd, cwd, --cmd, cmd_path, --env-file, env_file, --internal-screened) + user args */
+    char **new_argv = malloc((argc + 20) * sizeof(char *));
     if (!new_argv) {
         unlink(env_file_template);
         return 1;
