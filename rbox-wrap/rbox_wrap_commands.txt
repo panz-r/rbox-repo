@@ -1,0 +1,264 @@
+# ============================================================================
+# ReadOnlyBox Wrapper Safe Commands Pattern Specification
+# ============================================================================
+#
+# This file defines safe command patterns for the rbox-wrap DFA.
+# Used by rbox-wrap for fast-path command validation.
+#
+# ============================================================================
+# IDENTIFIER
+# ============================================================================
+#
+# This identifier is included in the NFA and DFA files to ensure matching.
+# It must be a double-quoted string without internal double quotes.
+#
+IDENTIFIER "rbox-wrap-cmd-v1"
+
+# ============================================================================
+# CATEGORIES
+# ============================================================================
+#
+# Define custom category names for bit positions 0-7.
+# Format: N: name (where N is 0-7)
+# Maps category to bit positions (0-7) in the DFA category mask.
+# These map to the ACCEPTANCE_MAPPING bit positions:
+#   0: autoallow  - Auto-allow (execute without server query)
+#   1: autodeny   - Auto-deny (block without server query)
+#   2: alwaysask - Always ask (query server)
+
+[CATEGORIES]
+0: autoallow
+1: autodeny
+2: alwaysask
+
+# ============================================================================
+# LINE FORMAT
+# ============================================================================
+#
+# [category:subcategory:operations] pattern
+#
+# Components:
+#   category    - Primary safety category (required)
+#   subcategory - Optional secondary categorization
+#   operations  - Optional operations string (comma or dot-separated)
+#
+# Categories (8-bit bitmask):
+#   safe        - 0x01 - Completely read-only, no side effects
+#   caution     - 0x02 - May have minor side effects, use with care
+#   modifying   - 0x04 - Modifies files or state
+#   dangerous   - 0x08 - Potentially harmful operations
+#   network     - 0x10 - Network operations
+#   admin       - 0x20 - Administrative operations
+#   build       - 0x40 - Build/CI operations
+#   container   - 0x80 - Container-related operations
+#
+# ============================================================================
+# PATTERN SYNTAX
+# ============================================================================
+#
+# LITERAL CHARACTERS
+#   Most characters match themselves literally
+#
+# WHITESPACE HANDLING
+#   Space in patterns normalizes to [ \t]+ (one or more whitespace)
+#
+# CHARACTER CLASSES (single characters only)
+#   [abc]           - Matches any one of a, b, or c
+#   [^abc]          - Negated: matches anything EXCEPT a, b, c
+#
+# FRAGMENT DEFINITIONS
+#   [fragment:name] pattern_value
+#
+# FRAGMENT REFERENCES
+#   ((name))                - References fragment "name"
+#   ((namespace::name))     - References "name" in "namespace"
+#
+# QUANTIFIERS (applied to preceding element)
+#   *               - Zero or more of preceding element
+#   +               - One or more of preceding element
+#   ?               - Zero or one of preceding element
+#
+# GROUPING AND ALTERNATION
+#   (expr)          - Groups expressions together
+#   a|b|c           - Matches a OR b OR c
+#
+# WILDCARD (* at argument position)
+#   * used as standalone argument matches ANY argument
+#
+# ============================================================================
+# FRAGMENT DEFINITIONS
+# ============================================================================
+
+[fragment:safe::digit] 0|1|2|3|4|5|6|7|8|9
+[fragment:safe::filename] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|_|-|\.|/
+
+# ============================================================================
+# SAFE COMMAND PATTERNS
+# ============================================================================
+
+# Echo commands (safe - no side effects)
+# Note: echo * wildcard doesn't match arbitrary args, using fragment-based matching
+[autoallow:misc] echo
+[autoallow:misc] echo *
+[autoallow:misc] echo ((safe::filename))+
+
+# True/false commands (safe - no side effects)
+[autoallow:misc] true
+[autoallow:misc] false
+
+# File system read-only commands
+[autoallow:readonly:file] ls
+[autoallow:readonly:file] ls *
+[autoallow:readonly:file] ls -la
+[autoallow:readonly:file] ls -l
+[autoallow:readonly:file] ls -a
+[autoallow:readonly:file] ls -R
+[autoallow:readonly:file] ls -r
+[autoallow:readonly:file] ls -t
+[autoallow:readonly:file] ls -S
+[autoallow:readonly:file] ls -ltr
+[autoallow:readonly:file] ls --color-auto
+[autoallow:readonly:file] ls --color=auto
+[autoallow:readonly:file] cat
+[autoallow:readonly:file] cat *
+[autoallow:readonly:file] cat ((safe::filename))+
+[autoallow:readonly:file] head
+[autoallow:readonly:file] head -n ((safe::digit))
+[autoallow:readonly:file] head -n ((safe::digit)) *
+[autoallow:readonly:file] head -n ((safe::digit))+ file.txt
+[autoallow:readonly:file] tail
+[autoallow:readonly:file] tail -n ((safe::digit))
+[autoallow:readonly:file] tail -n ((safe::digit)) *
+[autoallow:readonly:file] tail -n ((safe::digit))+ file.txt
+[autoallow:readonly:file] more
+[autoallow:readonly:file] less
+[autoallow:readonly:file] md5sum
+[autoallow:readonly:file] sha256sum
+[autoallow:readonly:file] sha1sum
+[autoallow:readonly:file] basename
+[autoallow:readonly:file] basename *
+[autoallow:readonly:file] dirname
+[autoallow:readonly:file] dirname *
+[autoallow:readonly:file] dircolors
+[autoallow:readonly:file] dircolors -b
+[autoallow:readonly:file] lesspipe
+
+# Text processing commands
+[autoallow:processing:text] grep
+[autoallow:processing:text] grep *
+[autoallow:processing:text] grep -r
+[autoallow:processing:text] grep -R
+[autoallow:processing:text] egrep
+[autoallow:processing:text] fgrep
+[autoallow:processing:text] find
+[autoallow:processing:text] find *
+[autoallow:processing:text] xargs
+[autoallow:processing:text] sort
+[autoallow:processing:text] sort *
+[autoallow:processing:text] uniq
+[autoallow:processing:text] uniq *
+[autoallow:processing:text] wc
+[autoallow:processing:text] wc -l
+[autoallow:processing:text] wc -w
+[autoallow:processing:text] wc -c
+[autoallow:processing:text] cut
+[autoallow:processing:text] cut -d
+[autoallow:processing:text] tr
+[autoallow:processing:text] tee
+
+# System information commands
+[autoallow:system:info] ps
+[autoallow:system:info] ps aux
+[autoallow:system:info] ps -ef
+[autoallow:system:info] ps -aux
+[autoallow:system:info] top
+[autoallow:system:info] top -b -n 1
+[autoallow:system:info] df
+[autoallow:system:info] df -h
+[autoallow:system:info] du
+[autoallow:system:info] du -h
+[autoallow:system:info] du -sh
+[autoallow:system:info] free
+[autoallow:system:info] free -m
+[autoallow:system:info] free -g
+[autoallow:system:info] uptime
+[autoallow:system:info] hostname
+[autoallow:system:info] uname
+[autoallow:system:info] uname -a
+[autoallow:system:info] id
+[autoallow:system:info] whoami
+[autoallow:system:info] who
+[autoallow:system:info] w
+[autoallow:system:info] last
+[autoallow:system:info] last -n
+[autoallow:system:info] printenv
+[autoallow:system:info] env
+
+# Time/date commands
+[autoallow:time] date
+[autoallow:time] date -u
+[autoallow:time] cal
+[autoallow:time] cal -y
+[autoallow:time] ntpdate -q
+
+# Version information
+[autoallow:version] git --version
+[autoallow:version] ls --version
+[autoallow:version] cat --version
+[autoallow:version] grep --version
+[autoallow:version] sed --version
+[autoallow:version] awk --version
+[autoallow:version] find --version
+[autoallow:version] python --version
+[autoallow:version] python3 --version
+[autoallow:version] node --version
+[autoallow:version] go version
+
+# Help commands
+[autoallow:help] man
+[autoallow:help] man *
+[autoallow:help] help
+[autoallow:help] --help
+[autoallow:help] -h
+
+# Build tools (read-only operations)
+[autoallow:build:readonly] make -n
+[autoallow:build:readonly] make -q
+[autoallow:build:readonly] make -t
+[autoallow:build:readonly] make -p
+[autoallow:build:readonly] cmake --build . --target help
+[autoallow:build:readonly] cmake -L
+[autoallow:build:readonly] cmake -N
+
+# Archive operations (read-only)
+[autoallow:archive:readonly] tar -t
+[autoallow:archive:readonly] tar --list
+[autoallow:archive:readonly] tar -tzf
+[autoallow:archive:readonly] tar -tjzf
+[autoallow:archive:readonly] tar -tJf
+[autoallow:archive:readonly] unzip -l
+[autoallow:archive:readonly] zip -sf
+
+# File analysis
+[autoallow:analysis] file
+[autoallow:analysis] file *
+[autoallow:analysis] stat
+[autoallow:analysis] stat *
+[autoallow:analysis] readlink
+[autoallow:analysis] readlink -f
+[autoallow:analysis] which
+[autoallow:analysis] which *
+[autoallow:analysis] type
+[autoallow:analysis] type *
+[autoallow:analysis] whereis
+[autoallow:analysis] whereis *
+
+# Misc safe commands
+[autoallow:misc] base64 --decode
+[autoallow:misc] base64 -d
+[autoallow:misc] od
+[autoallow:misc] od -c
+[autoallow:misc] od -x
+[autoallow:misc] strings
+[autoallow:misc] test
+[autoallow:misc] yes
