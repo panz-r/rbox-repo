@@ -31,8 +31,9 @@
 #define ROBO_DECISION_DENY     3
 #define ROBO_DECISION_ERROR    4
 
-/* Default socket path */
-#define ROBO_DEFAULT_SOCKET "/tmp/readonlybox.sock"
+/* Default socket path - use the one from rbox-protocol for consistency */
+#include <rbox_protocol_defs.h>
+#define ROBO_DEFAULT_SOCKET RBOX_DEFAULT_SOCKET
 
 /* Environment variable names */
 #define ROBO_ENV_SOCKET     "READONLYBOX_SOCKET"

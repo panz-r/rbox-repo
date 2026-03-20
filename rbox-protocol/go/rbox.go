@@ -29,7 +29,8 @@ extern const char* rbox_server_request_arg(const rbox_server_request_t* req, int
 extern int rbox_server_request_argc(const rbox_server_request_t* req);
 extern const rbox_parse_result_t* rbox_server_request_parse(const rbox_server_request_t* req);
 
-extern rbox_error_t rbox_server_decide(rbox_server_request_t* req, uint8_t decision, const char* reason, uint32_t duration);
+extern rbox_error_t rbox_server_decide(rbox_server_request_t* req, uint8_t decision, const char* reason, uint32_t duration,
+    int env_decision_count, const char** env_decision_names, const uint8_t* env_decisions);
 
 extern const char* rbox_strerror(rbox_error_t err);
 */
@@ -140,7 +141,8 @@ func (r *RequestHandle) Decide(decision uint8, reason string, duration uint32) e
 	cReason := C.CString(reason)
 	defer C.free(unsafe.Pointer(cReason))
 
-	err := C.rbox_server_decide(r.cRequest, C.uint8_t(decision), cReason, C.uint32_t(duration))
+	err := C.rbox_server_decide(r.cRequest, C.uint8_t(decision), cReason, C.uint32_t(duration),
+		0, nil, nil)
 	if err != C.RBOX_OK {
 		return errors.New(C.GoString(C.rbox_strerror(err)))
 	}

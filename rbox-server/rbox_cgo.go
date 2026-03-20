@@ -11,7 +11,7 @@
 package main
 
 /*
-#cgo LDFLAGS: /w/rbox-repo/rbox-protocol/librbox_protocol.a /w/rbox-repo/shellsplit/src/shell_tokenizer.o -lpthread -lm
+#cgo LDFLAGS: /w/rbox-repo/rbox-protocol/librbox_protocol.a /w/rbox-repo/shellsplit/libshellsplit.a -lpthread -lm
 #cgo CFLAGS: -I/w/rbox-repo/rbox-protocol/include -I/w/rbox-repo/shellsplit/include
 
 #include <rbox_protocol.h>
@@ -243,5 +243,5 @@ const (
 
 // Ensure socket has correct permissions
 func init() {
-	os.Chmod("/tmp/readonlybox.sock", 0666)
+	os.Chmod("/run/readonlybox/readonlybox.sock", 0666)
 }

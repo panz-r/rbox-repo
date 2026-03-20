@@ -76,6 +76,13 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
     for (char **e = environ; *e; e++) {
         fprintf(env_file, "%s\n", *e);
     }
+    /* Check for write errors before closing */
+    if (fflush(env_file) != 0 || ferror(env_file)) {
+        fprintf(stderr, "Error writing environment to temp file\n");
+        fclose(env_file);
+        unlink(env_file_template);
+        return 1;
+    }
     fclose(env_file);  /* also closes the fd */
 
     /* Allocate argv: pkexec + our options + args + NULL */

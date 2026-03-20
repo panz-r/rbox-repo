@@ -147,7 +147,12 @@ void env_screen(void) {
                 fprintf(stderr, "   → Auto-blocked (non-interactive): %s\n", name);
             } else {
                 /* Allow low-confidence vars by adding to list */
-                g_flagged_envs[g_flagged_env_count].name = strdup(name);
+                char *dup = strdup(name);
+                if (!dup) {
+                    fprintf(stderr, "   → Auto-blocked (memory allocation failed): %s\n", name);
+                    continue;
+                }
+                g_flagged_envs[g_flagged_env_count].name = dup;
                 g_flagged_envs[g_flagged_env_count].score = score;
                 g_flagged_env_count++;
             }
@@ -171,9 +176,15 @@ void env_screen(void) {
         ssize_t line_len = getline(&line, &line_cap, stdin);
         if (line_len > 0 && (line[0] == 'y' || line[0] == 'Y')) {
             /* User allowed this variable */
-            g_flagged_envs[g_flagged_env_count].name = strdup(name);
-            g_flagged_envs[g_flagged_env_count].score = score;
-            g_flagged_env_count++;
+            char *dup = strdup(name);
+            if (!dup) {
+                fprintf(stderr, "   → Blocked (memory allocation failed): %s\n", name);
+                unsetenv(name);
+            } else {
+                g_flagged_envs[g_flagged_env_count].name = dup;
+                g_flagged_envs[g_flagged_env_count].score = score;
+                g_flagged_env_count++;
+            }
         } else {
             /* User blocked this variable or invalid input */
             unsetenv(name);
