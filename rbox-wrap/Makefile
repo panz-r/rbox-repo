@@ -3,6 +3,7 @@
 CC ?= gcc
 CFLAGS ?= -Wall -Wextra -std=gnu11 -O2 -g
 CFLAGS += -I../rbox-protocol/include -I../shellsplit/include -I../c-dfa/include
+CFLAGS += -DDEFAULT_SOCKET=\"/run/readonlybox/readonlybox.sock\"
 LDFLAGS ?= -lpthread -lm
 
 # Paths to libraries

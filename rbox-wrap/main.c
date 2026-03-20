@@ -38,7 +38,10 @@ extern const size_t rbox_wrap_dfa_data_size;
 /* Expected DFA identifier - must match pattern file */
 static const char* EXPECTED_IDENTIFIER = "rbox-wrap-cmd-v1";
 
-#define DEFAULT_SOCKET "/tmp/readonlybox.sock"
+#ifndef DEFAULT_SOCKET
+#define DEFAULT_SOCKET "/run/readonlybox/readonlybox.sock"
+#endif
+
 #define ENV_FLAGGED_ENVS "READONLYBOX_FLAGGED_ENVS"
 #define ENV_CALLER      "READONLYBOX_CALLER"
 #define ENV_UID         "READONLYBOX_UID"

@@ -53,9 +53,10 @@ var (
 	logLevel    = flag.Int("log-level", 0, "Log level: 0=off, 1=errors, 2=info, 3=debug")
 	tui         = flag.Bool("tui", false, "Run in TUI mode")
 	autoDeny    = flag.Bool("auto-deny", false, "Auto-deny unknown commands (for testing)")
+	testEnvDeny = flag.String("test-env-deny", "", "Bitmap of env var indices to deny (for testing, e.g., '1,3' denies indices 1 and 3)")
 )
 
-const SocketPath = "/tmp/readonlybox.sock"
+const SocketPath = "/run/readonlybox/readonlybox.sock"
 const ServerVersion = "1.0.0"
 
 func main() {
@@ -204,7 +205,7 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 		"head": true, "tail": true, "less": true, "more": true, "grep": true,
 		"find": true, "xargs": true, "tr": true, "cut": true, "join": true,
 		"paste": true, "comm": true, "diff": true, "nl": true, "od": true,
-		"base64": true, "strings": true,
+		"base64": true, "strings": true, "env": true, "printenv": true,
 	}
 
 	if readOnlyCmds[cmdLower] {
@@ -234,12 +235,24 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 var pendingRequests = make(map[int]*RBoxRequest)
 
 // makeEnvDecisions creates env decisions based on flagged env vars from request
-// Auto-deny env vars with score >= 0.8
+// If testEnvDeny flag is set, use that bitmap to deny specific indices
+// Otherwise auto-deny env vars with score >= 0.8
 func makeEnvDecisions(req *RBoxRequest) []EnvVarDecision {
 	envCount := req.GetEnvVarCount()
-	fmt.Printf("DEBUG: makeEnvDecisions called with %d env vars\n", envCount)
 	if envCount == 0 {
 		return nil
+	}
+
+	// Parse test-env-deny bitmap if set
+	testDenyMap := make(map[int]bool)
+	if *testEnvDeny != "" {
+		parts := strings.Split(*testEnvDeny, ",")
+		for _, p := range parts {
+			var idx int
+			if _, err := fmt.Sscanf(p, "%d", &idx); err == nil {
+				testDenyMap[idx] = true
+			}
+		}
 	}
 
 	decisions := make([]EnvVarDecision, 0, envCount)
@@ -247,11 +260,20 @@ func makeEnvDecisions(req *RBoxRequest) []EnvVarDecision {
 		name := req.GetEnvVarName(i)
 		score := req.GetEnvVarScore(i)
 
-		// Auto-deny high-score env vars (score >= 0.8)
 		decision := uint8(0) // allow
-		if score >= 0.8 {
-			decision = 1 // deny
+
+		// Use test bitmap if set
+		if len(testDenyMap) > 0 {
+			if testDenyMap[i] {
+				decision = 1 // deny
+			}
+		} else {
+			// Auto-deny high-score env vars (score >= 0.8)
+			if score >= 0.8 {
+				decision = 1 // deny
+			}
 		}
+
 		decisions = append(decisions, EnvVarDecision{
 			Name:     name,
 			Decision: decision,
