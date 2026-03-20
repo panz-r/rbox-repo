@@ -46,53 +46,72 @@ func (l *Logger) Close() {
 var gLogger *Logger
 
 var (
-	socketPath  = flag.String("socket", "", "Unix socket path (default: auto-detect)")
-	verbose     = flag.Bool("v", false, "Verbose: show all commands")
-	veryVerbose = flag.Bool("vv", false, "Very verbose: show all commands and logs")
-	quiet       = flag.Bool("q", false, "Quiet: only show blocked commands (default)")
-	logFile     = flag.String("log", "", "Log file path (empty=disabled)")
-	logLevel    = flag.Int("log-level", 0, "Log level: 0=off, 1=errors, 2=info, 3=debug")
-	tui         = flag.Bool("tui", false, "Run in TUI mode")
-	autoDeny    = flag.Bool("auto-deny", false, "Auto-deny unknown commands (for testing)")
-	testEnvDeny = flag.String("test-env-deny", "", "Bitmap of env var indices to deny (for testing, e.g., '1,3' denies indices 1 and 3)")
-	system      = flag.Bool("system", false, "Use system socket path /run/readonlybox/ (requires root)")
+	socketPath   = flag.String("socket", "", "Unix socket path (overrides env and defaults)")
+	verbose      = flag.Bool("v", false, "Verbose: show all commands")
+	veryVerbose  = flag.Bool("vv", false, "Very verbose: show all commands and logs")
+	quiet        = flag.Bool("q", false, "Quiet: only show blocked commands (default)")
+	logFile      = flag.String("log", "", "Log file path (empty=disabled)")
+	logLevel     = flag.Int("log-level", 0, "Log level: 0=off, 1=errors, 2=info, 3=debug")
+	tui          = flag.Bool("tui", false, "Run in TUI mode")
+	autoDeny     = flag.Bool("auto-deny", false, "Auto-deny unknown commands (for testing)")
+	testEnvDeny  = flag.String("test-env-deny", "", "Bitmap of env var indices to deny (for testing, e.g., '1,3' denies indices 1 and 3)")
+	systemSocket = flag.Bool("system-socket", false, "Use system socket /run/readonlybox/readonlybox.sock")
+	userSocket   = flag.Bool("user-socket", false, "Use user socket $XDG_RUNTIME_DIR/readonlybox.sock")
 )
 
 const (
 	ServerVersion    = "1.0.0"
 	SystemSocketPath = "/run/readonlybox/readonlybox.sock"
+	EnvSocket        = "READONLYBOX_SOCKET"
 )
 
-// getDefaultSocketPath returns the default socket path based on priority:
-// 1. READONLYBOX_SOCKET env var (if set)
-// 2. XDG_RUNTIME_DIR/readonlybox.sock (if XDG_RUNTIME_DIR is set)
-// 3. /run/readonlybox/readonlybox.sock (system-wide, requires root)
-func getDefaultSocketPath() string {
-	// 1. Check READONLYBOX_SOCKET env var
-	if sock := os.Getenv("READONLYBOX_SOCKET"); sock != "" {
+// getSocketPath returns the socket path following priority:
+// 1. cmd_socket (explicit --socket path) - highest priority
+// 2. --system-socket -> SYSTEM_SOCKET
+// 3. --user-socket -> XDG_RUNTIME_DIR/readonlybox.sock (if set), else SYSTEM_SOCKET
+// 4. READONLYBOX_SOCKET env var
+// 5. XDG_RUNTIME_DIR/readonlybox.sock (if XDG_RUNTIME_DIR is set)
+// 6. System default
+func getSocketPath(cmdSocket string, forceSystem, forceUser bool) string {
+	// 1. Explicit --socket path
+	if cmdSocket != "" {
+		return cmdSocket
+	}
+
+	// 2. --system-socket
+	if forceSystem {
+		return SystemSocketPath
+	}
+
+	// 3. --user-socket
+	if forceUser {
+		if xdgRuntime := os.Getenv("XDG_RUNTIME_DIR"); xdgRuntime != "" {
+			return xdgRuntime + "/readonlybox.sock"
+		}
+		// Fall back to system path if XDG_RUNTIME_DIR not set
+		return SystemSocketPath
+	}
+
+	// 4. READONLYBOX_SOCKET env var
+	if sock := os.Getenv(EnvSocket); sock != "" {
 		return sock
 	}
 
-	// 2. Check XDG_RUNTIME_DIR
+	// 5. XDG_RUNTIME_DIR
 	if xdgRuntime := os.Getenv("XDG_RUNTIME_DIR"); xdgRuntime != "" {
 		return xdgRuntime + "/readonlybox.sock"
 	}
 
-	// 3. Default to system path (requires root)
-	return "/run/readonlybox/readonlybox.sock"
+	// 6. System default
+	return SystemSocketPath
 }
 
 func main() {
 	flag.Parse()
 
 	// Determine socket path
-	if *socketPath == "" {
-		*socketPath = getDefaultSocketPath()
-		if *system {
-			*socketPath = "/run/readonlybox/readonlybox.sock"
-		}
-		fmt.Printf("Using socket: %s\n", *socketPath)
-	}
+	socketPath := getSocketPath(*socketPath, *systemSocket, *userSocket)
+	fmt.Printf("Using socket: %s\n", socketPath)
 
 	gLogger = NewLogger(*logFile, *logLevel)
 	if gLogger != nil {
@@ -105,14 +124,14 @@ func main() {
 		return
 	}
 
-	server, err := NewRBoxServer(*socketPath)
+	server, err := NewRBoxServer(socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("readonlybox-server v1.0 - listening on %s\n", *socketPath)
-	os.Chmod(*socketPath, 0666)
+	fmt.Printf("readonlybox-server v1.0 - listening on %s\n", socketPath)
+	os.Chmod(socketPath, 0666)
 
 	mode := "blocking"
 	if *quiet || (!*verbose && !*veryVerbose) {

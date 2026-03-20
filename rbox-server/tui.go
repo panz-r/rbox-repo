@@ -1637,13 +1637,7 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 
 func RunTUIMode() {
 	// Determine socket path using same logic as main()
-	sock := getDefaultSocketPath()
-	if *socketPath != "" {
-		sock = *socketPath
-	}
-	if *system {
-		sock = SystemSocketPath
-	}
+	sock := getSocketPath(*socketPath, *systemSocket, *userSocket)
 
 	// Start the C library server
 	server, err := NewRBoxServer(sock)

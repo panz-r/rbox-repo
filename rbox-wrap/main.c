@@ -43,26 +43,57 @@ static const char* EXPECTED_IDENTIFIER = "rbox-wrap-cmd-v1";
 #endif
 
 #define ENV_FLAGGED_ENVS "READONLYBOX_FLAGGED_ENVS"
+#define ENV_CALLER      "READONLYBOX_CALLER"
+#define ENV_UID         "READONLYBOX_UID"
+#define ENV_SOCKET      "READONLYBOX_SOCKET"
 
-/* Get default socket path following priority:
- * 1. READONLYBOX_SOCKET env var (if set)
- * 2. XDG_RUNTIME_DIR/readonlybox.sock (if XDG_RUNTIME_DIR is set)
- * 3. /run/readonlybox/readonlybox.sock (default)
+/* Get socket path following priority:
+ * 1. cmd_socket (explicit --socket path) - highest priority
+ * 2. force_system (--system-socket) -> SYSTEM_SOCKET
+ * 3. force_user (--user-socket) -> XDG_RUNTIME_DIR/readonlybox.sock (if set), else SYSTEM_SOCKET
+ * 4. READONLYBOX_SOCKET env var
+ * 5. XDG_RUNTIME_DIR/readonlybox.sock (if XDG_RUNTIME_DIR is set)
+ * 6. System default
+ *
  * Returns allocated string that caller must free, or NULL on error.
  */
-static char *get_default_socket_path(void) {
+static char *get_socket_path(const char *cmd_socket, int force_system, int force_user) {
     const char *socket_path = NULL;
     char *result = NULL;
     size_t len;
 
-    /* 1. Check READONLYBOX_SOCKET env var */
-    socket_path = getenv("READONLYBOX_SOCKET");
-    if (socket_path && *socket_path) {
-        result = strdup(socket_path);
-        goto done;
+    /* 1. Explicit --socket path */
+    if (cmd_socket && *cmd_socket) {
+        return strdup(cmd_socket);
     }
 
-    /* 2. Check XDG_RUNTIME_DIR */
+    /* 2. --system-socket */
+    if (force_system) {
+        return strdup(DEFAULT_SOCKET);
+    }
+
+    /* 3. --user-socket */
+    if (force_user) {
+        socket_path = getenv("XDG_RUNTIME_DIR");
+        if (socket_path && *socket_path) {
+            len = strlen(socket_path) + strlen("/readonlybox.sock") + 1;
+            result = malloc(len);
+            if (result) {
+                snprintf(result, len, "%s/readonlybox.sock", socket_path);
+            }
+            return result;
+        }
+        /* Fall back to system path if XDG_RUNTIME_DIR not set */
+        return strdup(DEFAULT_SOCKET);
+    }
+
+    /* 4. READONLYBOX_SOCKET env var */
+    socket_path = getenv(ENV_SOCKET);
+    if (socket_path && *socket_path) {
+        return strdup(socket_path);
+    }
+
+    /* 5. XDG_RUNTIME_DIR */
     socket_path = getenv("XDG_RUNTIME_DIR");
     if (socket_path && *socket_path) {
         len = strlen(socket_path) + strlen("/readonlybox.sock") + 1;
@@ -70,16 +101,12 @@ static char *get_default_socket_path(void) {
         if (result) {
             snprintf(result, len, "%s/readonlybox.sock", socket_path);
         }
-        goto done;
+        return result;
     }
 
-    /* 3. Default to system path */
-    result = strdup(DEFAULT_SOCKET);
-
-done:
-    return result;
+    /* 6. System default */
+    return strdup(DEFAULT_SOCKET);
 }
-#define ENV_CALLER      "READONLYBOX_CALLER"
 #define ENV_UID         "READONLYBOX_UID"
 
 #define EXIT_ALLOW  0
@@ -102,7 +129,9 @@ static void usage(const char *prog) {
     fprintf(stderr, "  --clear-env   Run with clean environment (no server env filtering)\n");
     fprintf(stderr, "  --bin         Output raw response packet to stdout\n");
     fprintf(stderr, "  --relay       Skip DFA, always contact server\n");
-    fprintf(stderr, "  --socket      Unix socket path (default: %s)\n", DEFAULT_SOCKET);
+    fprintf(stderr, "  --socket      Unix socket path (overrides env and defaults)\n");
+    fprintf(stderr, "  --system-socket  Use system socket /run/readonlybox/readonlybox.sock\n");
+    fprintf(stderr, "  --user-socket    Use user socket $XDG_RUNTIME_DIR/readonlybox.sock\n");
     fprintf(stderr, "  --uid         Drop privileges to this UID (for privilege separation)\n");
     fprintf(stderr, "  -h, --help    Show this help\n");
     fprintf(stderr, "  --version     Show version information\n");
@@ -110,6 +139,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  %s  Flagged env vars for server (set by ptrace client)\n", ENV_FLAGGED_ENVS);
     fprintf(stderr, "  %s        Caller info (set by ptrace client)\n", ENV_CALLER);
     fprintf(stderr, "  %s         UID to run as (set by ptrace client)\n", ENV_UID);
+    fprintf(stderr, "  %s   Socket path (overrides XDG_RUNTIME_DIR)\n", ENV_SOCKET);
     fprintf(stderr, "\nExit codes:\n");
     fprintf(stderr, "  0 - Command allowed and executed (--run only)\n");
     fprintf(stderr, "  1 - Command denied or error\n");
@@ -472,32 +502,30 @@ static int run_with_filter(const char *socket_path, const char *command,
 }
 
 int main(int argc, char *argv[]) {
-    char *socket_path = NULL;  /* Will be set by get_default_socket_path or --socket option */
+    const char *cmd_socket = NULL;  /* From --socket option */
+    int force_system = 0;          /* From --system-socket option */
+    int force_user = 0;            /* From --user-socket option */
+    char *socket_path = NULL;       /* Final resolved socket path */
     int mode_run = 0;
     int mode_bin = 0;
     int mode_relay = 0;
     int mode_clear_env = 0;
     const char *uid_str = NULL;
     
-    /* Initialize default socket path */
-    socket_path = get_default_socket_path();
-    if (!socket_path) {
-        fprintf(stderr, "%s: failed to determine socket path\n", argv[0]);
-        return EXIT_ERROR;
-    }
-    
     program_name = argv[0];
     
     static struct option long_options[] = {
-        {"judge",    no_argument,       0, 'j'},
-        {"run",      no_argument,       0, 'r'},
-        {"clear-env",no_argument,       0, 'c'},
-        {"bin",      no_argument,       0, 'b'},
-        {"relay",    no_argument,       0, 'l'},
-        {"socket",   required_argument, 0, 's'},
-        {"uid",      required_argument, 0, 'u'},
-        {"help",     no_argument,       0, 'h'},
-        {"version",  no_argument,       0, 'v'},
+        {"judge",        no_argument,       0, 'j'},
+        {"run",          no_argument,       0, 'r'},
+        {"clear-env",    no_argument,       0, 'c'},
+        {"bin",          no_argument,       0, 'b'},
+        {"relay",        no_argument,       0, 'l'},
+        {"socket",       required_argument, 0, 's'},
+        {"system-socket",no_argument,       0, 1},
+        {"user-socket",  no_argument,       0, 2},
+        {"uid",          required_argument, 0, 'u'},
+        {"help",         no_argument,       0, 'h'},
+        {"version",      no_argument,       0, 'v'},
         {0, 0, 0, 0}
     };
     
@@ -508,21 +536,18 @@ int main(int argc, char *argv[]) {
         switch (opt) {
             case 'h':
                 usage(argv[0]);
-                free(socket_path);
                 return 0;
             case 'v':
                 version_info();
-                free(socket_path);
                 return 0;
             case 's':
-                free(socket_path);
-                socket_path = strdup(optarg);
-                if (!socket_path || strlen(socket_path) >= UNIX_PATH_MAX) {
-                    fprintf(stderr, "%s: socket path too long (max %d)\n",
-                            program_name, UNIX_PATH_MAX);
-                    free(socket_path);
-                    return EXIT_ERROR;
-                }
+                cmd_socket = optarg;
+                break;
+            case 1:  /* --system-socket */
+                force_system = 1;
+                break;
+            case 2:  /* --user-socket */
+                force_user = 1;
                 break;
             case 'u':
                 uid_str = optarg;
@@ -544,9 +569,21 @@ int main(int argc, char *argv[]) {
                 break;
             default:
                 usage(argv[0]);
-                free(socket_path);
                 return 1;
         }
+    }
+    
+    /* Resolve socket path after option parsing */
+    socket_path = get_socket_path(cmd_socket, force_system, force_user);
+    if (!socket_path) {
+        fprintf(stderr, "%s: failed to determine socket path\n", argv[0]);
+        return EXIT_ERROR;
+    }
+    if (strlen(socket_path) >= UNIX_PATH_MAX) {
+        fprintf(stderr, "%s: socket path too long (max %d): %s\n",
+                program_name, UNIX_PATH_MAX, socket_path);
+        free(socket_path);
+        return EXIT_ERROR;
     }
     
     /* Check for -- separator */
