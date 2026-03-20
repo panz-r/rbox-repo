@@ -168,9 +168,23 @@ bool nfa_validate_pattern_file(nfa_builder_context_t* ctx, const char* spec_file
 
             // Basic validation - count parentheses
             int open_parens = 0, close_parens = 0;
+            bool in_escape = false;
             for (char* p = pattern_start; *p; p++) {
+                if (in_escape) { in_escape = false; continue; }
+                if (*p == '\\') { in_escape = true; continue; }
                 if (*p == '(') open_parens++;
                 else if (*p == ')') close_parens++;
+
+                // Quantifiers (*, +, ?) must follow ')'
+                if (*p == '*' || *p == '+' || *p == '?') {
+                    // Scan backward for previous non-whitespace char
+                    char* q = p - 1;
+                    while (q >= pattern_start && (*q == ' ' || *q == '\t')) q--;
+                    if (q < pattern_start || *q != ')') {
+                        ERROR("'%c' quantifier must follow ')' at line %d - use (expr)%c", *p, line_num, *p);
+                        errors++;
+                    }
+                }
             }
 
             if (open_parens != close_parens) {
@@ -240,12 +254,27 @@ bool nfa_validate_pattern_input(const char* line, size_t len) {
     int bracket_depth = 0;
     int paren_depth = 0;
     for (size_t i = 0; i < len; i++) {
+        // Skip escaped characters
+        if (line[i] == '\\' && i + 1 < len) {
+            i++;  // skip next char
+            continue;
+        }
         if (line[i] == '[') bracket_depth++;
         if (line[i] == ']') bracket_depth--;
         if (line[i] == '(') paren_depth++;
         if (line[i] == ')') paren_depth--;
         if (bracket_depth < 0 || paren_depth < 0) {
             return false;
+        }
+
+        // Quantifiers (*, +, ?) must follow ')'
+        if (line[i] == '*' || line[i] == '+' || line[i] == '?') {
+            // Scan backward for previous non-whitespace char
+            int p = (int)i - 1;
+            while (p >= 0 && (line[p] == ' ' || line[p] == '\t')) p--;
+            if (p < 0 || line[p] != ')') {
+                return false;
+            }
         }
     }
 

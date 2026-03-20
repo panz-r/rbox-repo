@@ -456,6 +456,17 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
 // RDP: Postfix quantifier handler (* + ?)
 // ============================================================================
 
+// Check if a quantifier at the given position is valid.
+// Quantifiers (*, +, ?) must follow a closing parenthesis ')'.
+// This prevents the common misunderstanding that * is a wildcard.
+static bool quantifier_is_valid(const char* pattern, int quant_pos, nfa_builder_context_t* ctx) {
+    // Scan backward for previous non-whitespace character
+    int p = quant_pos - 1;
+    while (p >= 0 && (pattern[p] == ' ' || pattern[p] == '\t')) p--;
+    if (p < 0) return false;
+    return pattern[p] == ')';
+}
+
 static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state) {
     int current;
     bool current_fragment_valid = (ctx->current_fragment.exit_state >= 0 && ctx->has_pending_quantifier);
@@ -475,6 +486,11 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
         if (op == '*') {
             if (*pos > 0 && pattern[*pos - 1] == '(') {
                 break;
+            }
+            if (!quantifier_is_valid(pattern, *pos, ctx)) {
+                ERROR("'*' quantifier must follow ')' - use (expr)* for zero-or-more");
+                ERROR("  Example: echo (files)* NOT echo * (use \\* for literal asterisk)");
+                return -1;
             }
             (*pos)++;
 
@@ -497,6 +513,10 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
             ctx->current_fragment.exit_state = exit_state;
 
         } else if (op == '+') {
+            if (!quantifier_is_valid(pattern, *pos, ctx)) {
+                ERROR("'+' quantifier must follow ')' - use (expr)+ for one-or-more");
+                return -1;
+            }
             (*pos)++;
 
             int exit_state = nfa_construct_add_state_with_minimization(ctx, false);
@@ -513,6 +533,10 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
             ctx->current_fragment.exit_state = exit_state;
 
         } else if (op == '?') {
+            if (!quantifier_is_valid(pattern, *pos, ctx)) {
+                ERROR("'?' quantifier must follow ')' - use (expr)? for optional");
+                return -1;
+            }
             (*pos)++;
 
             int exit_state = nfa_construct_add_state_with_minimization(ctx, false);
@@ -558,6 +582,7 @@ static int parse_rdp_sequence(nfa_builder_context_t* ctx, const char* pattern, i
             ctx->has_pending_quantifier = true;
             current = parse_rdp_postfix(ctx, pattern, pos, current);
             ctx->has_pending_quantifier = false;
+            if (current < 0) return -1;
         }
     }
 
@@ -693,6 +718,7 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
     int postfix_result = parse_rdp_postfix(ctx, pattern, pos, first_end);
     ctx->current_is_in_group = saved_in_group;
 
+    if (postfix_result < 0) return -1;
     return nfa_construct_finalize_state(ctx, postfix_result);
 }
 
@@ -926,6 +952,10 @@ static void parse_pattern_full(nfa_builder_context_t* ctx, const char* pattern,
                 end_state = parse_rdp_alternation_internal(ctx, remaining, &parse_pos, real_start);
             } else {
                 end_state = parse_rdp_sequence(ctx, remaining, &parse_pos, real_start);
+            }
+            if (end_state < 0) {
+                ERROR("Pattern parse failed for: %s", pattern);
+                return;
             }
         } else {
             end_state = parse_rdp_alternation_internal(ctx, remaining, &parse_pos, start_state);

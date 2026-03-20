@@ -133,10 +133,10 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 # Test that wildcard behavior is category-isolated
 # ============================================
 
-[safe::readonly::wild1] git show *
-[caution::network::wild2] git diff *
-[modifying::filesystem::wild3] git add *
-[dangerous::destructive::wild4] git rm *
+[safe::readonly::wild1] git show ((safe::filename))*
+[caution::network::wild2] git diff ((safe::filename))*
+[modifying::filesystem::wild3] git add ((safe::filename))*
+[dangerous::destructive::wild4] git rm ((safe::filename))*
 
 # ============================================
 # GROUP 8: Edge case - empty/short patterns vs longer patterns

@@ -127,39 +127,20 @@ static bool test_concurrent_evaluators(void) {
         return false;
     }
 
-    // Create two independent evaluators
-    dfa_evaluator_t* e1 = dfa_eval_create(binary, size);
-    dfa_evaluator_t* e2 = dfa_eval_create(binary, size);
+    // Test concurrent evaluations (stateless dfa_eval allows this)
+    dfa_result_t r1, r2, r3;
+    dfa_eval(binary, size, "git status", 10, &r1);
+    dfa_eval(binary, size, "ls -la", 6, &r2);
+    dfa_eval(binary, size, "git log", 7, &r3);
 
-    if (!e1 || !e2) {
-        dfa_eval_destroy(e1);
-        dfa_eval_destroy(e2);
-        pipeline_destroy(p);
-        return false;
-    }
+    bool ok = r1.matched && r2.matched && r3.matched;
 
-    // Both should work independently
-    dfa_result_t r1 = dfa_eval_evaluate(e1, "git status");
-    dfa_result_t r2 = dfa_eval_evaluate(e2, "ls -la");
-
-    bool ok = (r1.matched && r2.matched);
-
-    // Destroy in different order - e1 first while e2 still exists
-    dfa_eval_destroy(e1);
-
-    // e2 should still work after e1 is destroyed
-    dfa_result_t r3 = dfa_eval_evaluate(e2, "git log");
-    ok = ok && r3.matched;
-
-    dfa_eval_destroy(e2);
     pipeline_destroy(p);
-
     return ok;
 }
 
 static bool test_evaluator_destroy_null(void) {
-    // Should not crash
-    dfa_eval_destroy(NULL);
+    // dfa_eval is stateless, no destroy needed
     return true;
 }
 
@@ -176,17 +157,11 @@ static bool test_evaluator_null_input(void) {
 
     size_t size;
     const uint8_t* binary = pipeline_get_binary(p, &size);
-    dfa_evaluator_t* e = dfa_eval_create(binary, size);
-    if (!e) {
-        pipeline_destroy(p);
-        return false;
-    }
 
-    // NULL input should return unmatched result
-    dfa_result_t result = dfa_eval_evaluate(e, NULL);
-    bool ok = !result.matched;
+    // NULL input should return false (not crash)
+    dfa_result_t result;
+    bool ok = !dfa_eval(binary, size, NULL, 0, &result);
 
-    dfa_eval_destroy(e);
     pipeline_destroy(p);
     return ok;
 }

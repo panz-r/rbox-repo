@@ -246,10 +246,10 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 [safe] git log --decorate -n ((safe::digit))+
 
 [safe::readonly::file] head -n ((safe::digit))
-[safe::readonly::file] head -n ((safe::digit)) *
+[safe::readonly::file] head -n ((safe::digit))+ ((safe::filename))*
 [safe::readonly::file] head -n ((safe::digit))+ file.txt
 [safe::readonly::file] tail -n ((safe::digit))
-[safe::readonly::file] tail -n ((safe::digit)) *
+[safe::readonly::file] tail -n ((safe::digit))+ ((safe::filename))*
 [safe::readonly::file] tail -n ((safe::digit))+ file.txt
 
 [safe::readonly::system] which socat
@@ -268,7 +268,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [safe::readonly::git] git branch
 
-[safe::readonly::file] ls *
+[safe::readonly::file] ls ((safe::filename))*
 
 [safe::readonly::file] ls -la
 
@@ -278,11 +278,12 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [safe::readonly::file] ls --color-auto
 
-[safe::readonly::file] cat *
+[safe::readonly::file] cat ((safe::filename))*
 [safe::readonly::file] cat
 [safe::readonly::file] cat test.txt
 [safe::readonly::file] cat ((safe::filename))
 
+[safe::readonly::git] git log
 [safe::readonly::git] git log --oneline
 
 [safe::readonly::git] git log --graph
@@ -291,7 +292,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [safe::readonly::git] git log --oneline --graph
 
-[safe::readonly::git] git log *
+[safe::readonly::git] git log ((safe::filename))*
 
 [safe::readonly::git] git tag -l
 
@@ -325,7 +326,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 # MODERATE PATTERNS (Still efficient)
 #   - Character classes:      [safe] tail -n [0-9] (NOT SUPPORTED - use fragments)
 #   - Single-char fragments:  [safe] git log -n ((safe::digit))
-#   - Wildcards:              [safe] cat *
+#   - Wildcards:              [safe] cat ((safe::filename))*
 #
 # EXPENSIVE PATTERNS (May slow DFA)
 #   - Multi-char fragments:   [safe] grep ((LONG_PATTERN))+
@@ -368,7 +369,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #
 # COMMON PATTERNS:
 #   [safe::readonly::git] git status
-#   [safe::readonly::file] cat *
+#   [safe::readonly::file] cat ((safe::filename))*
 #   [safe::readonly::file] tail -n ((safe::digit))
 #   [safe] git (status|log|diff)
 #
