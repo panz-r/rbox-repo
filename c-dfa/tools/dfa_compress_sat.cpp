@@ -453,6 +453,11 @@ static int sat_compress_state(
 
     VERBOSE_PRINT("  SAT: %d chars, %d candidates, greedy bound = %d\n", n, m, greedy_bound);
 
+    if (m <= 1 || n <= 1) {
+        VERBOSE_PRINT("  SAT: too few candidates/chars, using greedy\n");
+        return greedy_bound;
+    }
+
     // Build mapping: char index -> set of candidate indices that cover it
     std::vector<std::set<int>> char_covered_by(n);
     for (int ci = 0; ci < m; ci++) {
@@ -589,9 +594,12 @@ extern "C" int sat_merge_rules_for_state(build_dfa_state_t* state, int max_group
 
     // Generate all rule candidates
     std::vector<RuleCandidate> candidates = generate_candidates(chars);
+    int m = (int)candidates.size();
+    fprintf(stderr, "SAT: state with %d chars, %d candidates\n", n, m);
 
     // Greedy lower bound
     int greedy_rules = greedy_min_rules(chars, candidates);
+    fprintf(stderr, "SAT: greedy bound = %d\n", greedy_rules);
 
     // SAT optimization (if available)
     int best_rules = greedy_rules;

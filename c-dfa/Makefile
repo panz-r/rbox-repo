@@ -300,6 +300,14 @@ test-dfa2c: $(TOOLS_DIR)/dfa2c_array
 	@echo "================================================="
 	@$(TESTS_DIR)/test_dfa2c_array.sh
 
+# Binary format edge case tests
+test-binary-format: $(TOOLS) $(LIB)
+	@echo ""
+	@echo "================================================="
+	@echo "BINARY FORMAT EDGE CASE TESTS"
+	@echo "================================================="
+	@$(TESTS_DIR)/test_binary_format.sh
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR) $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced \
@@ -365,6 +373,7 @@ test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity $(TESTS_DIR)/test_li
 	@make test-library 2>&1 | tail -4
 	@make test-eval-only 2>&1 | tail -4
 	@make test-dfa2c 2>&1 | tail -5
+	@make test-binary-format 2>&1 | tail -5
 	@make test-patterns 2>&1 | tail -5
 	@echo ""
 	@echo "================================================="

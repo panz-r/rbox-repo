@@ -83,21 +83,24 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     if (ver != DFA_VERSION) return false;
 
     int enc = dfa_fmt_encoding(d);
-    int ss = DFA_STATE_SIZE(enc);
     int rs = DFA_RULE_SIZE(enc);
     uint8_t idl = dfa_fmt_id_len(d);
     size_t hs = DFA_HEADER_SIZE(enc, idl);
 
     uint32_t init = dfa_fmt_initial_state(d);
-    if ((size_t)init + (size_t)ss > sz) return false;
+    if ((size_t)init + DFA_STATE_SIZE_TC(enc, 0) > sz) return false;  // min state size
 
     /* Empty input: check initial state and EOS */
     if (!len) {
-        uint16_t fl = dfa_fmt_st_flags(d, init, enc);
+        uint16_t tc0 = dfa_fmt_st_tc(d, init, enc);
+        uint16_t fl = dfa_fmt_st_flags_tc(d, init, enc, tc0);
         uint8_t cat = DFA_GET_CATEGORY_MASK(fl);
-        uint32_t eos = dfa_fmt_st_eos_t(d, init, enc);
-        if (eos && (size_t)eos + (size_t)ss <= sz)
-            cat |= DFA_GET_CATEGORY_MASK(dfa_fmt_st_flags(d, eos, enc));
+        uint32_t eos = dfa_fmt_st_eos_t_tc(d, init, enc, tc0);
+        if (eos) {
+            uint16_t eosc = dfa_fmt_st_tc(d, eos, enc);
+            if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz)
+                cat |= DFA_GET_CATEGORY_MASK(dfa_fmt_st_flags_tc(d, eos, enc, eosc));
+        }
         if (cat) {
             res->matched = true; res->matched_length = 0; res->category_mask = cat;
             for (int i=0;i<8;i++) if (cat&(1<<i)) { res->category=(dfa_command_category_t)(i+1); break; }
@@ -114,47 +117,100 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         unsigned char c = (unsigned char)in[pos];
         uint16_t tc = dfa_fmt_st_tc(d, cur, enc);
         uint32_t rl = dfa_fmt_st_rules(d, cur, enc);
-        DBG("pos=%zu c='%c' st=%u tc=%u rl=%u\n", pos, c, cur, tc, rl);
+        uint16_t flags = dfa_fmt_st_flags_tc(d, cur, enc, tc);
+        int renc = DFA_GET_RULE_ENC(flags);
+        DBG("pos=%zu c='%c' st=%u tc=%u rl=%u renc=%d\n", pos, c, cur, tc, rl, renc);
 
-        if ((size_t)cur < hs || (size_t)cur + (size_t)ss > sz) return false;
+        if ((size_t)cur < hs || (size_t)cur + DFA_STATE_SIZE_TC(enc, tc) > sz) return false;
 
         uint32_t nxt = 0; bool found = false;
-        for (uint16_t i = 0; i < tc; i++) {
-            size_t ro = rl + (size_t)i * rs;
-            if ((size_t)ro + (size_t)rs > sz) break;
-            uint8_t rt = dfa_fmt_rl_type(d, ro);
-            uint8_t r1 = dfa_fmt_rl_d1(d, ro);
-            uint8_t r2 = dfa_fmt_rl_d2(d, ro);
-            uint32_t tgt = dfa_fmt_rl_target(d, ro, enc);
-            bool m = false;
-            switch (rt) {
-                case DFA_RULE_LITERAL:       m=(c==r1); break;
-                case DFA_RULE_RANGE:         m=(c>=r1&&c<=r2); break;
-                case DFA_RULE_LITERAL_2:     m=(c==r1||c==r2); break;
-                case DFA_RULE_LITERAL_3:     { uint8_t r3=dfa_fmt_rl_d3(d,ro); m=(c==r1||c==r2||c==r3); break; }
-                case DFA_RULE_RANGE_LITERAL: { uint8_t r3=dfa_fmt_rl_d3(d,ro); m=((c>=r1&&c<=r2)||c==r3); break; }
-                case DFA_RULE_DEFAULT:       m=true; break;
-                case DFA_RULE_NOT_LITERAL:   m=(c!=r1); break;
-                case DFA_RULE_NOT_RANGE:     m=(c<r1||c>r2); break;
+
+        if (renc == DFA_RULE_ENC_PACKED) {
+            // Packed encoding: iterate variable-stride entries
+            uint16_t n_ent = dfa_fmt_st_first_tc(d, cur, enc, tc);
+            const uint8_t* entry = d + rl;
+            for (uint16_t i = 0; i < n_ent && !found; i++) {
+                if ((size_t)(entry - d) >= sz) break;
+                if (dfa_pack_is_literal(entry)) {
+                    if (c == dfa_pack_lit_char(entry)) {
+                        uint32_t tgt = dfa_pack_lit_target(entry, enc);
+                        if (tgt >= sz) return false;
+                        nxt = tgt; found = true;
+                    }
+                    entry += DFA_PACK_LITERAL_SIZE(enc);
+                } else {
+                    uint8_t start = dfa_pack_range_start(entry);
+                    uint8_t end = dfa_pack_range_end(entry);
+                    if (c >= start && c <= end) {
+                        uint32_t tgt = dfa_pack_range_target(entry, enc);
+                        if (tgt >= sz) return false;
+                        nxt = tgt; found = true;
+                    }
+                    entry += DFA_PACK_RANGE_SIZE(enc);
+                }
             }
-            if (m) { if (tgt>=sz) return false; nxt=tgt; found=true; break; }
+        } else if (renc == DFA_RULE_ENC_BITMASK) {
+            // Bitmask rules: check each bitmask rule for character match
+            int bms = DFA_RULE_BITMASK_SIZE(enc);
+            for (uint16_t i = 0; i < tc; i++) {
+                size_t ro = rl + (size_t)i * bms;
+                if ((size_t)ro + (size_t)bms > sz) break;
+                uint8_t rt = dfa_fmt_rl_type(d, ro);
+                if (rt != DFA_RULE_BITMASK && rt != DFA_RULE_NOT_BITMASK) break;
+                // Check bitmask
+                const uint8_t* mask = d + ro + DFA_BM_OFF_MASK;
+                bool bit = (mask[c / 8] >> (c % 8)) & 1;
+                bool m = (rt == DFA_RULE_BITMASK) ? bit : !bit;
+                if (m) {
+                    uint32_t tgt = dfa_row(d, ro + dfa_bm_off_target(enc), enc);
+                    if (tgt >= sz) return false;
+                    nxt = tgt; found = true; break;
+                }
+            }
+        } else {
+            // Normal fixed-stride rules
+            for (uint16_t i = 0; i < tc; i++) {
+                size_t ro = rl + (size_t)i * rs;
+                if ((size_t)ro + (size_t)rs > sz) break;
+                uint8_t rt = dfa_fmt_rl_type(d, ro);
+                uint8_t r1 = dfa_fmt_rl_d1(d, ro);
+                uint8_t r2 = dfa_fmt_rl_d2(d, ro);
+                uint32_t tgt = dfa_fmt_rl_target(d, ro, enc);
+                bool m = false;
+                switch (rt) {
+                    case DFA_RULE_LITERAL:       m=(c==r1); break;
+                    case DFA_RULE_RANGE:         m=(c>=r1&&c<=r2); break;
+                    case DFA_RULE_LITERAL_2:     m=(c==r1||c==r2); break;
+                    case DFA_RULE_LITERAL_3:     { uint8_t r3=dfa_fmt_rl_d3(d,ro); m=(c==r1||c==r2||c==r3); break; }
+                    case DFA_RULE_RANGE_LITERAL: { uint8_t r3=dfa_fmt_rl_d3(d,ro); m=((c>=r1&&c<=r2)||c==r3); break; }
+                    case DFA_RULE_DEFAULT:       m=true; break;
+                    case DFA_RULE_NOT_LITERAL:   m=(c!=r1); break;
+                    case DFA_RULE_NOT_RANGE:     m=(c<r1||c>r2); break;
+                }
+                if (m) { if (tgt>=sz) return false; nxt=tgt; found=true; break; }
+            }
         }
         if (!found) return false;
         pos++; cur = nxt; if (td < MAX_TRACE) tr[td++] = cur;
     }
 
     /* Determine category */
-    uint16_t src_fl = dfa_fmt_st_flags(d, cur, enc);
+    uint16_t cur_tc = dfa_fmt_st_tc(d, cur, enc);
+    uint16_t src_fl = dfa_fmt_st_flags_tc(d, cur, enc, cur_tc);
     uint8_t src_cat = DFA_GET_CATEGORY_MASK(src_fl);
-    uint16_t wpid = dfa_fmt_st_pid(d, cur, enc);
+    uint16_t wpid = dfa_fmt_st_pid_tc(d, cur, enc, cur_tc);
 
-    uint32_t eos = dfa_fmt_st_eos_t(d, cur, enc);
-    if (eos && (size_t)eos + (size_t)ss <= sz) {
-        cur = eos; if (td < MAX_TRACE) tr[td++] = cur;
-        wpid = dfa_fmt_st_pid(d, cur, enc);
+    uint32_t eos = dfa_fmt_st_eos_t_tc(d, cur, enc, cur_tc);
+    if (eos) {
+        uint16_t eosc = dfa_fmt_st_tc(d, eos, enc);
+        if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz) {
+            cur = eos; cur_tc = eosc;
+            if (td < MAX_TRACE) tr[td++] = cur;
+            wpid = dfa_fmt_st_pid_tc(d, cur, enc, cur_tc);
+        }
     }
 
-    uint8_t cat = src_cat ? src_cat : DFA_GET_CATEGORY_MASK(dfa_fmt_st_flags(d, cur, enc));
+    uint8_t cat = src_cat ? src_cat : DFA_GET_CATEGORY_MASK(dfa_fmt_st_flags_tc(d, cur, enc, cur_tc));
     if (cat || (wpid && wpid != UINT16_MAX)) {
         res->matched = true; res->matched_length = pos; res->category_mask = cat;
         res->final_state = cur;
@@ -178,7 +234,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                     }
                 }
             }
-            uint32_t em = dfa_fmt_st_eos_m(d, cur, enc);
+            uint32_t em = dfa_fmt_st_eos_m_tc(d, cur, enc, cur_tc);
             if (em && meta && em+4 <= sz)
                 proc_markers(d, sz, em, pos, wpid, cat, stk, &sd, res);
         }

@@ -971,6 +971,172 @@ int compress_state_rules(int sidx, intermediate_rule_t* out) {
     return rc;
 }
 
+/* ============================================================================
+ * Packed encoding helpers
+ * ============================================================================ */
+
+#define PACK_MAX_GROUPS 256
+typedef struct { int target_idx; uint8_t chars[256]; int nchars; } pack_group_t;
+typedef struct { uint8_t start; uint8_t end; int target_idx; bool is_default; } pack_entry_t;
+
+/* Compute packed entries preserving first-match order.
+ * 
+ * Rules are evaluated first-match. We scan in original order and merge
+ * only CONSECUTIVE rules that share the same target into ranges.
+ * Rules with different targets between them cannot be merged.
+ *
+ * DEFAULT rules (wildcards) are emitted as is_default=true entries.
+ * These are written as bitmask rules in the binary.
+ *
+ * Example: a->1, z->2, b->1 → entries: [a->1], [z->2], [b->1]
+ *          a->1, b->1, c->1 → entries: [a-c->1] (merged)
+ *          DEFAULT->1       → entries: [DEFAULT->1]
+ */
+static int compute_packed_entries(int state_idx, const intermediate_rule_t* rules, int rule_count,
+                                   pack_entry_t* entries, int max_entries) {
+    (void)state_idx;
+    int ne = 0;
+    int cur_target = -1;
+    uint8_t range_start = 0, range_end = 0;
+    bool cur_is_default = false;
+    
+    for (int r = 0; r < rule_count && ne < max_entries; r++) {
+        int tidx = rules[r].target_state_index;
+        uint8_t rtype = rules[r].type;
+        uint8_t ch = rules[r].d1;
+        uint8_t ch2 = rules[r].d2;
+        
+        if (rtype == DFA_RULE_DEFAULT) {
+            // Emit previous range (if any)
+            if (cur_target >= 0) {
+                entries[ne].start = range_start;
+                entries[ne].end = range_end;
+                entries[ne].target_idx = cur_target;
+                entries[ne].is_default = cur_is_default;
+                ne++;
+            }
+            // Emit DEFAULT entry
+            entries[ne].start = 0;
+            entries[ne].end = 0;
+            entries[ne].target_idx = tidx;
+            entries[ne].is_default = true;
+            ne++;
+            cur_target = -1;
+            cur_is_default = false;
+        } else if (rtype == DFA_RULE_RANGE) {
+            // RANGE rule: covers d1..d2
+            // Emit previous range (if any)
+            if (cur_target >= 0) {
+                entries[ne].start = range_start;
+                entries[ne].end = range_end;
+                entries[ne].target_idx = cur_target;
+                entries[ne].is_default = cur_is_default;
+                ne++;
+            }
+            // Emit range entry
+            if (ne < max_entries) {
+                entries[ne].start = ch;
+                entries[ne].end = ch2;
+                entries[ne].target_idx = tidx;
+                entries[ne].is_default = false;
+                ne++;
+            }
+            cur_target = -1;
+        } else if (rtype == DFA_RULE_LITERAL_2 || rtype == DFA_RULE_LITERAL_3) {
+            // LITERAL_2: matches d1 or d2. LITERAL_3: matches d1, d2, or d3.
+            // Emit as separate literal entries preserving order
+            if (cur_target >= 0) {
+                entries[ne].start = range_start;
+                entries[ne].end = range_end;
+                entries[ne].target_idx = cur_target;
+                entries[ne].is_default = cur_is_default;
+                ne++;
+            }
+            cur_target = -1;
+            // Emit d1
+            if (ne < max_entries) {
+                entries[ne].start = ch; entries[ne].end = ch;
+                entries[ne].target_idx = tidx; entries[ne].is_default = false;
+                ne++;
+            }
+            // Emit d2
+            if (ne < max_entries) {
+                entries[ne].start = ch2; entries[ne].end = ch2;
+                entries[ne].target_idx = tidx; entries[ne].is_default = false;
+                ne++;
+            }
+            // Emit d3 (LITERAL_3 only)
+            if (rtype == DFA_RULE_LITERAL_3 && ne < max_entries) {
+                uint8_t ch3 = rules[r].d3;
+                entries[ne].start = ch3; entries[ne].end = ch3;
+                entries[ne].target_idx = tidx; entries[ne].is_default = false;
+                ne++;
+            }
+        } else if (rtype == DFA_RULE_RANGE_LITERAL) {
+            // RANGE_LITERAL: matches d1..d2 or d3
+            if (cur_target >= 0) {
+                entries[ne].start = range_start; entries[ne].end = range_end;
+                entries[ne].target_idx = cur_target; entries[ne].is_default = cur_is_default;
+                ne++;
+            }
+            cur_target = -1;
+            // Emit range d1..d2
+            if (ne < max_entries) {
+                entries[ne].start = ch; entries[ne].end = ch2;
+                entries[ne].target_idx = tidx; entries[ne].is_default = false;
+                ne++;
+            }
+            // Emit literal d3
+            if (ne < max_entries) {
+                uint8_t ch3 = rules[r].d3;
+                entries[ne].start = ch3; entries[ne].end = ch3;
+                entries[ne].target_idx = tidx; entries[ne].is_default = false;
+                ne++;
+            }
+        } else if (rtype == DFA_RULE_NOT_LITERAL || rtype == DFA_RULE_NOT_RANGE) {
+            // NOT rules: emit as DEFAULT (match anything not covered by other rules)
+            if (cur_target >= 0) {
+                entries[ne].start = range_start; entries[ne].end = range_end;
+                entries[ne].target_idx = cur_target; entries[ne].is_default = cur_is_default;
+                ne++;
+            }
+            cur_target = -1;
+            // Emit as DEFAULT-like entry (covers all chars not matched by preceding rules)
+            if (ne < max_entries) {
+                entries[ne].start = 0; entries[ne].end = 0;
+                entries[ne].target_idx = tidx; entries[ne].is_default = true;
+                ne++;
+            }
+        } else if (tidx == cur_target && ch == range_end + 1 && !cur_is_default) {
+            // Extend current range with same target
+            range_end = ch;
+        } else {
+            // Emit previous range (if any)
+            if (cur_target >= 0) {
+                entries[ne].start = range_start;
+                entries[ne].end = range_end;
+                entries[ne].target_idx = cur_target;
+                entries[ne].is_default = cur_is_default;
+                ne++;
+            }
+            // Start new range
+            cur_target = tidx;
+            range_start = ch;
+            range_end = ch;
+            cur_is_default = false;
+        }
+    }
+    // Emit final range
+    if (cur_target >= 0 && ne < max_entries) {
+        entries[ne].start = range_start;
+        entries[ne].end = range_end;
+        entries[ne].target_idx = cur_target;
+        entries[ne].is_default = cur_is_default;
+        ne++;
+    }
+    return ne;
+}
+
 void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     (void)ctx; // CLI version uses global state
     FILE* file = fopen(filename, "wb");
@@ -1038,7 +1204,40 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     
     int state_size = DFA_STATE_SIZE(enc);
     int rule_size  = DFA_RULE_SIZE(enc);
+    int lit_size = DFA_PACK_LITERAL_SIZE(enc);
+    int rng_size = DFA_PACK_RANGE_SIZE(enc);
     size_t header_size = DFA_HEADER_SIZE(enc, (uint8_t)id_len);
+    
+    // Per-state encoding and packed sizes
+    int* rule_encoding = calloc(dfa_state_count, sizeof(int));
+    int* n_entries = calloc(dfa_state_count, sizeof(int));
+    size_t* packed_sizes = calloc(dfa_state_count, sizeof(size_t));
+    pack_entry_t* tmp_entries = malloc(MAX_SYMBOLS * sizeof(pack_entry_t));
+    
+    for (int i = 0; i < dfa_state_count; i++) {
+        if (rule_counts[i] == 0) continue;
+        rule_encoding[i] = DFA_RULE_ENC_NORMAL;
+        int ne = compute_packed_entries(i, &all_rules[i * MAX_SYMBOLS],
+                                         rule_counts[i], tmp_entries, MAX_SYMBOLS);
+        // Compute exact byte size matching how entries will be written
+        size_t pbs = 0; int actual_ne = 0;
+        for (int e = 0; e < ne; e++) {
+            if (tmp_entries[e].start == tmp_entries[e].end) {
+                pbs += lit_size; actual_ne++;
+            } else if (tmp_entries[e].end <= 127) {
+                pbs += rng_size; actual_ne++;
+            } else if (tmp_entries[e].start <= 127) {
+                pbs += rng_size; actual_ne++;
+                int extra = tmp_entries[e].end - 127;
+                pbs += (size_t)extra * lit_size; actual_ne += extra;
+            } else {
+                int cnt = tmp_entries[e].end - tmp_entries[e].start + 1;
+                pbs += (size_t)cnt * lit_size; actual_ne += cnt;
+            }
+        }
+        n_entries[i] = actual_ne;
+        packed_sizes[i] = pbs;
+    }
     
     // Compute state offsets with cache-line alignment
     size_t* state_offset = malloc(dfa_state_count * sizeof(size_t));
@@ -1052,11 +1251,14 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         bool align = (mis && (hot ? pad <= DFA_MAX_ALIGNMENT_SLACK*4 : pad <= DFA_MAX_ALIGNMENT_SLACK));
         if (align) cur += pad;
         state_offset[i] = cur;
-        cur += state_size;
+        cur += (rule_counts[i] == 0) ? DFA_STATE_SIZE_COMPACT(enc) : state_size;
     }
     for (int i = 0; i < dfa_state_count; i++) {
         rule_offset[i] = cur;
-        cur += (size_t)rule_counts[i] * rule_size;
+        if (rule_encoding[i] == DFA_RULE_ENC_PACKED)
+            cur += packed_sizes[i];
+        else
+            cur += (size_t)rule_counts[i] * rule_size;
     }
     size_t metadata_offset = cur;
     size_t total_size = metadata_offset + marker_data_size;
@@ -1078,36 +1280,79 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     dfa_fmt_set_meta_offset(raw, enc, 0);
     memcpy(raw + DFA_HEADER_SIZE(enc, (uint8_t)id_len) - id_len, pattern_identifier, id_len);
     
-    // States
+    // States (compact for empty, full for active)
     for (int i = 0; i < dfa_state_count; i++) {
         size_t so = state_offset[i];
         dfa_fmt_set_st_tc(raw, so, enc, (uint16_t)rule_counts[i]);
-        dfa_fmt_set_st_rules(raw, so, enc, (rule_counts[i] > 0) ? (uint32_t)rule_offset[i] : 0);
-        dfa_fmt_set_st_flags(raw, so, enc, dfa[i]->flags);
-        dfa_fmt_set_st_pid(raw, so, enc, dfa[i]->accepting_pattern_id);
-        dfa_fmt_set_st_eos_m(raw, so, enc, 0);
-        dfa_fmt_set_st_eos_t(raw, so, enc,
-            dfa[i]->eos_target ? (uint32_t)state_offset[dfa[i]->eos_target] : 0);
-        dfa_fmt_set_st_first(raw, so, enc, 0);
-    }
-    
-    // Rules
-    for (int i = 0; i < dfa_state_count; i++) {
-        for (int r = 0; r < rule_counts[i]; r++) {
-            size_t ro = rule_offset[i] + (size_t)r * rule_size;
-            dfa_fmt_set_rl_type(raw, ro, all_rules[i * MAX_SYMBOLS + r].type);
-            dfa_fmt_set_rl_d1(raw, ro, all_rules[i * MAX_SYMBOLS + r].d1);
-            dfa_fmt_set_rl_d2(raw, ro, all_rules[i * MAX_SYMBOLS + r].d2);
-            dfa_fmt_set_rl_d3(raw, ro, 0);
-            dfa_fmt_set_rl_markers(raw, ro, enc, 0);
-            int tidx = all_rules[i * MAX_SYMBOLS + r].target_state_index;
-            if (tidx < 0 || tidx >= dfa_state_count) {
-                FATAL("State %d rule %d target index %d out of bounds", i, r, tidx);
-                exit(EXIT_FAILURE);
-            }
-            dfa_fmt_set_rl_target(raw, ro, enc, (uint32_t)state_offset[tidx]);
+        if (rule_counts[i] > 0) {
+            dfa_fmt_set_st_rules(raw, so, enc, (uint32_t)rule_offset[i]);
+            uint16_t flags = dfa[i]->flags;
+            DFA_SET_RULE_ENC(flags, rule_encoding[i]);
+            dfa_fmt_set_st_flags(raw, so, enc, flags);
+            dfa_fmt_set_st_pid(raw, so, enc, dfa[i]->accepting_pattern_id);
+            dfa_fmt_set_st_eos_m(raw, so, enc, 0);
+            dfa_fmt_set_st_eos_t(raw, so, enc,
+                dfa[i]->eos_target ? (uint32_t)state_offset[dfa[i]->eos_target] : 0);
+            dfa_fmt_set_st_first(raw, so, enc, (uint16_t)n_entries[i]);
+        } else {
+            int cof = dfa_st_off_flags_c(enc);
+            dfa_w16(raw, so + cof, dfa[i]->flags);
+            dfa_wwp(raw, so + cof + 2, enc, dfa[i]->accepting_pattern_id);
+            dfa_wow(raw, so + cof + 2 + dfa_pwb(enc), enc,
+                dfa[i]->eos_target ? (uint32_t)state_offset[dfa[i]->eos_target] : 0);
+            dfa_w32(raw, so + cof + 2 + dfa_pwb(enc) + dfa_owb(enc), 0);
+            dfa_wwp(raw, so + cof + 2 + dfa_pwb(enc) + dfa_owb(enc) + 4, enc, 0);
         }
     }
+    
+    // Rules (packed or normal per state)
+    pack_entry_t* write_entries = malloc(MAX_SYMBOLS * sizeof(pack_entry_t));
+    for (int i = 0; i < dfa_state_count; i++) {
+        if (rule_counts[i] == 0) continue;
+        if (rule_encoding[i] == DFA_RULE_ENC_PACKED) {
+            int ne = compute_packed_entries(i, &all_rules[i * MAX_SYMBOLS],
+                                             rule_counts[i], write_entries, MAX_SYMBOLS);
+            size_t off = 0;
+            for (int e = 0; e < ne; e++) {
+                uint32_t target = (uint32_t)state_offset[write_entries[e].target_idx];
+                if (write_entries[e].start == write_entries[e].end) {
+                    dfa_pack_write_literal(raw + rule_offset[i] + off, write_entries[e].start, enc, target);
+                    off += lit_size;
+                } else if (write_entries[e].end <= 127) {
+                    dfa_pack_write_range(raw + rule_offset[i] + off, write_entries[e].start, write_entries[e].end, enc, target);
+                    off += rng_size;
+                } else if (write_entries[e].start <= 127) {
+                    dfa_pack_write_range(raw + rule_offset[i] + off, write_entries[e].start, 127, enc, target);
+                    off += rng_size;
+                    for (int ch = 128; ch <= write_entries[e].end; ch++) {
+                        dfa_pack_write_literal(raw + rule_offset[i] + off, (uint8_t)ch, enc, target);
+                        off += lit_size;
+                    }
+                } else {
+                    for (int ch = write_entries[e].start; ch <= write_entries[e].end; ch++) {
+                        dfa_pack_write_literal(raw + rule_offset[i] + off, (uint8_t)ch, enc, target);
+                        off += lit_size;
+                    }
+                }
+            }
+        } else {
+            for (int r = 0; r < rule_counts[i]; r++) {
+                size_t ro = rule_offset[i] + (size_t)r * rule_size;
+                dfa_fmt_set_rl_type(raw, ro, all_rules[i * MAX_SYMBOLS + r].type);
+                dfa_fmt_set_rl_d1(raw, ro, all_rules[i * MAX_SYMBOLS + r].d1);
+                dfa_fmt_set_rl_d2(raw, ro, all_rules[i * MAX_SYMBOLS + r].d2);
+                dfa_fmt_set_rl_d3(raw, ro, 0);
+                dfa_fmt_set_rl_markers(raw, ro, enc, 0);
+                int tidx = all_rules[i * MAX_SYMBOLS + r].target_state_index;
+                if (tidx < 0 || tidx >= dfa_state_count) {
+                    FATAL("State %d rule %d target index %d out of bounds", i, r, tidx);
+                    exit(EXIT_FAILURE);
+                }
+                dfa_fmt_set_rl_target(raw, ro, enc, (uint32_t)state_offset[tidx]);
+            }
+        }
+    }
+    free(write_entries);
     
     // Markers
     if (marker_list_count > 0) {
@@ -1149,6 +1394,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     
     fclose(file); free(raw); free(all_rules);
     free(rule_counts); free(state_offset); free(rule_offset);
+    free(rule_encoding); free(n_entries); free(packed_sizes); free(tmp_entries);
 }
 
 void load_nfa_file(nfa2dfa_context_t* ctx, const char* filename) {

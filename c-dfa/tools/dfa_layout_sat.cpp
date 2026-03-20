@@ -35,7 +35,11 @@ struct BoundedSAT {
     
     BoundedSAT() : num_vars(0) {}
     
-    int new_var() { return ++num_vars; }
+    int new_var() {
+        num_vars++;
+        solver.resize(num_vars);
+        return num_vars;
+    }
     
     void clause(const std::vector<int>& lits) {
         for (int l : lits) solver.add(l);

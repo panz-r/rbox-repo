@@ -94,7 +94,7 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
  * ============================================================================ */
 
 #define DFA_MAGIC          0xDFA1DFA1
-#define DFA_VERSION        7
+#define DFA_VERSION        8
 
 #define DFA_RULE_LITERAL       0
 #define DFA_RULE_RANGE         1
@@ -104,27 +104,84 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
 #define DFA_RULE_DEFAULT       5
 #define DFA_RULE_NOT_LITERAL   6
 #define DFA_RULE_NOT_RANGE     7
+#define DFA_RULE_BITMASK       8   /* match bytes in mask → target */
+#define DFA_RULE_NOT_BITMASK   9   /* match bytes NOT in mask → target */
+
+/* Bitmask rule size: type(1) + mask(32) + target(OW) + markers(4) */
+#define DFA_RULE_BITMASK_SIZE(enc) (1 + 32 + dfa_owb(enc) + 4)
+
+/* Bitmask rule field offsets */
+#define DFA_BM_OFF_MASK     1      /* 32 bytes */
+#define DFA_BM_OFF_TARGET  33      /* OW bytes */
+
+/* ============================================================================
+ * Packed encoding (DFA_RULE_ENC_PACKED = 2)
+ *
+ * Entries at rules_offset, evaluated first-match.
+ * Literal: [0b0LLLLLLL][target:OW] — 1+OW bytes, matches single char 0-127
+ * Range:   [0b1SSSSSSS][end:1][target:OW] — 2+OW bytes, matches start..end
+ * ============================================================================ */
+
+#define DFA_RULE_ENC_PACKED    2
+
+#define DFA_PACK_LITERAL       0x00  /* high bit clear = literal */
+#define DFA_PACK_RANGE         0x80  /* high bit set = range */
+#define DFA_PACK_TYPE_MASK     0x80
+#define DFA_PACK_CHAR_MASK     0x7F
+
+#define DFA_PACK_LITERAL_SIZE(enc) (1 + dfa_owb(enc))
+#define DFA_PACK_RANGE_SIZE(enc)   (2 + dfa_owb(enc))
+
+/* Bitmask rule field accessors */
+static inline int dfa_bm_off_target(int enc)  { return 33; }
+static inline int dfa_bm_off_markers(int enc) { return 33 + dfa_owb(enc); }
 
 #define DFA_STATE_ACCEPTING      0x0001
-#define DFA_STATE_CATEGORY_MASK  0xFF00
+#define DFA_STATE_CATEGORY_MASK  0xFF00  /* bits 8-15: 8-bit category mask */
+#define DFA_STATE_RULE_ENC_MASK  0x00C0  /* bits 6-7: rule encoding selector */
+#define DFA_STATE_RULE_ENC_SHIFT 6
+
+/* Rule encoding values (in bits 6-7 of state flags) */
+#define DFA_RULE_ENC_NORMAL   0  /* Fixed-stride rules */
+#define DFA_RULE_ENC_BITMASK  1  /* Bitmask rules (one per target) */
 
 #define DFA_GET_CATEGORY_MASK(flags) ((uint8_t)(((flags) >> 8) & 0xFF))
 #define DFA_SET_CATEGORY_MASK(flags, mask) \
-    ((flags) = ((flags) & 0x00FF) | ((uint16_t)(mask) << 8))
+    ((flags) = ((flags) & ~DFA_STATE_CATEGORY_MASK) | ((uint16_t)(mask) << 8))
+
+#define DFA_GET_RULE_ENC(flags) (((flags) & DFA_STATE_RULE_ENC_MASK) >> DFA_STATE_RULE_ENC_SHIFT)
+#define DFA_SET_RULE_ENC(flags, enc) \
+    ((flags) = ((flags) & ~DFA_STATE_RULE_ENC_MASK) | ((uint16_t)((enc) & 3) << DFA_STATE_RULE_ENC_SHIFT))
 
 #define MARKER_SENTINEL    0xFFFFFFFF
 
 /* ============================================================================
  * State layout size and field offsets
  *
- *  [tc: CW] [rules: OW] [flags: 2] [pid: PW] [eos_t: OW] [eos_m: 4] [first: PW]
+ * Full (tc>0):
+ *   [tc: CW] [rules: OW] [flags: 2] [pid: PW] [eos_t: OW] [eos_m: 4] [first: PW]
+ *
+ * Compact (tc=0, no rules):
+ *   [tc: CW] [flags: 2] [pid: PW] [eos_t: OW] [eos_m: 4] [first: PW]
  * ============================================================================ */
 
 #define DFA_STATE_SIZE(enc) \
     (dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc) + dfa_owb(enc) + 4 + dfa_pwb(enc))
 
+/* Compact state: skip rules_offset (saves OW bytes per empty state) */
+#define DFA_STATE_SIZE_COMPACT(enc) \
+    (dfa_cwb(enc) + 2 + dfa_pwb(enc) + dfa_owb(enc) + 4 + dfa_pwb(enc))
+
+/* State size based on whether it has rules */
+#define DFA_STATE_SIZE_TC(enc, tc) \
+    ((tc) == 0 ? DFA_STATE_SIZE_COMPACT(enc) : DFA_STATE_SIZE(enc))
+
+/* Full state field offsets (tc > 0) */
 static inline int dfa_st_off_rules(int enc) { return dfa_cwb(enc); }
 static inline int dfa_st_off_flags(int enc) { return dfa_cwb(enc) + dfa_owb(enc); }
+
+/* Compact state field offsets (tc == 0, no rules_offset) */
+static inline int dfa_st_off_flags_c(int enc) { return dfa_cwb(enc); }
 static inline int dfa_st_off_pid(int enc)   { return dfa_cwb(enc) + dfa_owb(enc) + 2; }
 static inline int dfa_st_off_eos_t(int enc) { return dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc); }
 static inline int dfa_st_off_eos_m(int enc) { return dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc) + dfa_owb(enc); }
@@ -263,6 +320,40 @@ static inline uint32_t dfa_fmt_st_eos_t(const uint8_t* d, size_t so, int enc) { 
 static inline uint32_t dfa_fmt_st_eos_m(const uint8_t* d, size_t so, int enc) { return dfa_r32(d, so + dfa_st_off_eos_m(enc)); }
 static inline uint16_t dfa_fmt_st_first(const uint8_t* d, size_t so, int enc) { return dfa_rpw(d, so + dfa_st_off_first(enc), enc); }
 
+/* TC-aware state field offsets: handle compact (tc=0) vs full (tc>0) */
+static inline int dfa_st_foff_flags(int enc, uint16_t tc) {
+    return dfa_cwb(enc) + (tc > 0 ? dfa_owb(enc) : 0);
+}
+static inline int dfa_st_foff_pid(int enc, uint16_t tc) {
+    return dfa_st_foff_flags(enc, tc) + 2;
+}
+static inline int dfa_st_foff_eos_t(int enc, uint16_t tc) {
+    return dfa_st_foff_pid(enc, tc) + dfa_pwb(enc);
+}
+static inline int dfa_st_foff_eos_m(int enc, uint16_t tc) {
+    return dfa_st_foff_eos_t(enc, tc) + dfa_owb(enc);
+}
+static inline int dfa_st_foff_first(int enc, uint16_t tc) {
+    return dfa_st_foff_eos_m(enc, tc) + 4;
+}
+
+/* TC-aware state readers: automatically use compact or full layout */
+static inline uint16_t dfa_fmt_st_flags_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
+    return dfa_r16(d, so + dfa_st_foff_flags(enc, tc));
+}
+static inline uint16_t dfa_fmt_st_pid_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
+    return dfa_rpw(d, so + dfa_st_foff_pid(enc, tc), enc);
+}
+static inline uint32_t dfa_fmt_st_eos_t_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
+    return dfa_row(d, so + dfa_st_foff_eos_t(enc, tc), enc);
+}
+static inline uint32_t dfa_fmt_st_eos_m_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
+    return dfa_r32(d, so + dfa_st_foff_eos_m(enc, tc));
+}
+static inline uint16_t dfa_fmt_st_first_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
+    return dfa_rpw(d, so + dfa_st_foff_first(enc, tc), enc);
+}
+
 /* ============================================================================
  * State accessors (write)
  * ============================================================================ */
@@ -296,6 +387,35 @@ static inline void dfa_fmt_set_rl_d2(uint8_t* d, size_t ro, uint8_t v)          
 static inline void dfa_fmt_set_rl_d3(uint8_t* d, size_t ro, uint8_t v)                 { dfa_w8(d, ro + DFA_RL_OFF_DATA3, v); }
 static inline void dfa_fmt_set_rl_target(uint8_t* d, size_t ro, int enc, uint32_t v)   { dfa_wow(d, ro + dfa_rl_off_target(enc), enc, v); }
 static inline void dfa_fmt_set_rl_markers(uint8_t* d, size_t ro, int enc, uint32_t v)  { dfa_w32(d, ro + dfa_rl_off_markers(enc), v); }
+
+/* ============================================================================
+ * Packed encoding read/write helpers (require dfa_row/dfa_wow from above)
+ * ============================================================================ */
+
+/* Encode */
+static inline void dfa_pack_write_literal(uint8_t* dst, uint8_t ch, int enc, uint32_t target) {
+    dst[0] = (uint8_t)(ch & DFA_PACK_CHAR_MASK);
+    dfa_wow(dst, 1, enc, target);
+}
+static inline void dfa_pack_write_range(uint8_t* dst, uint8_t start, uint8_t end, int enc, uint32_t target) {
+    dst[0] = (uint8_t)(DFA_PACK_RANGE | (start & DFA_PACK_CHAR_MASK));
+    dst[1] = end & DFA_PACK_CHAR_MASK;
+    dfa_wow(dst, 2, enc, target);
+}
+
+/* Decode */
+static inline int dfa_pack_is_literal(const uint8_t* e) { return (e[0] & DFA_PACK_TYPE_MASK) == DFA_PACK_LITERAL; }
+static inline int dfa_pack_is_range(const uint8_t* e)   { return (e[0] & DFA_PACK_TYPE_MASK) == DFA_PACK_RANGE; }
+static inline uint8_t dfa_pack_lit_char(const uint8_t* e)     { return e[0] & DFA_PACK_CHAR_MASK; }
+static inline uint32_t dfa_pack_lit_target(const uint8_t* e, int enc)  { return dfa_row(e, 1, enc); }
+static inline uint8_t dfa_pack_range_start(const uint8_t* e)   { return e[0] & DFA_PACK_CHAR_MASK; }
+static inline uint8_t dfa_pack_range_end(const uint8_t* e)     { return e[1]; }
+static inline uint32_t dfa_pack_range_target(const uint8_t* e, int enc) { return dfa_row(e, 2, enc); }
+
+/* Step to next entry */
+static inline const uint8_t* dfa_pack_next(const uint8_t* e, int enc) {
+    return e + (dfa_pack_is_literal(e) ? DFA_PACK_LITERAL_SIZE(enc) : DFA_PACK_RANGE_SIZE(enc));
+}
 
 #ifdef __cplusplus
 }
