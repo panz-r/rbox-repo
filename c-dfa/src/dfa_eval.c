@@ -220,17 +220,46 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         if (wpid && wpid != UINT16_MAX) {
             cap_t stk[MAX_CAP_STK]; int sd = 0;
             uint32_t meta = dfa_fmt_meta_offset(d);
+            int lit = DFA_PACK_LITERAL_SIZE(enc);
+            int rng = DFA_PACK_RANGE_SIZE(enc);
             for (int t = 1; t < td && (size_t)t <= pos; t++) {
                 uint32_t fo = tr[t-1], to = tr[t];
                 uint16_t ftc = dfa_fmt_st_tc(d, fo, enc);
                 uint32_t frl = dfa_fmt_st_rules(d, fo, enc);
-                for (uint16_t i = 0; i < ftc; i++) {
-                    size_t ro = frl + (size_t)i * rs;
-                    if (dfa_fmt_rl_target(d, ro, enc) == to) {
-                        uint32_t mk = dfa_fmt_rl_markers(d, ro, enc);
-                        if (mk && meta && mk+4 <= sz)
-                            proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res);
-                        break;
+                uint16_t fflags = dfa_fmt_st_flags_tc(d, fo, enc, ftc);
+                int frenc = DFA_GET_RULE_ENC(fflags);
+
+                if (frenc == DFA_RULE_ENC_PACKED) {
+                    // Packed encoding: iterate variable-stride entries
+                    uint16_t n_ent = dfa_fmt_st_first_tc(d, fo, enc, ftc);
+                    const uint8_t* entry = d + frl;
+                    for (uint16_t i = 0; i < n_ent; i++) {
+                        if ((size_t)(entry - d) >= sz) break;
+                        bool matched = false;
+                        if (dfa_pack_is_literal(entry)) {
+                            if (dfa_pack_lit_target(entry, enc) == to) matched = true;
+                            entry += lit;
+                        } else {
+                            if (dfa_pack_range_target(entry, enc) == to) matched = true;
+                            entry += rng;
+                        }
+                        if (matched) {
+                            uint32_t mk = dfa_r32(d, frl + dfa_rl_off_markers(enc));
+                            if (mk && meta && mk+4 <= sz)
+                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res);
+                            break;
+                        }
+                    }
+                } else {
+                    // Normal encoding: iterate fixed-stride rules
+                    for (uint16_t i = 0; i < ftc; i++) {
+                        size_t ro = frl + (size_t)i * rs;
+                        if (dfa_fmt_rl_target(d, ro, enc) == to) {
+                            uint32_t mk = dfa_fmt_rl_markers(d, ro, enc);
+                            if (mk && meta && mk+4 <= sz)
+                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res);
+                            break;
+                        }
                     }
                 }
             }

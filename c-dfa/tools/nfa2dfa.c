@@ -495,6 +495,7 @@ static void collect_transition_markers(int source_count, int* source_states, int
         int s = source_states[i];
         if (s < 0 || s >= nfa_state_count) continue;
 
+        // Collect markers from multi_targets
         int mta_marker_count = 0;
         transition_marker_t* mta_markers = mta_get_markers(&nfa[s].multi_targets, sid, &mta_marker_count);
         if (mta_markers && mta_marker_count > 0) {
@@ -502,6 +503,22 @@ static void collect_transition_markers(int source_count, int* source_states, int
                 uint32_t marker = ((uint32_t)mta_markers[m].pattern_id << 17) |
                                   ((uint32_t)mta_markers[m].uid << 1) |
                                   (uint32_t)mta_markers[m].type;
+                bool exists = false;
+                for (int j = 0; j < count; j++) {
+                    if (out_markers[j] == marker) { exists = true; break; }
+                }
+                if (!exists) {
+                    out_markers[count++] = marker;
+                }
+            }
+        }
+
+        // Also collect from pending_markers (capture markers)
+        for (int m = 0; m < nfa[s].pending_marker_count && count < max_markers; m++) {
+            if (nfa[s].pending_markers[m].active) {
+                uint32_t marker = ((uint32_t)nfa[s].pending_markers[m].pattern_id << 17) |
+                                  ((uint32_t)nfa[s].pending_markers[m].uid << 1) |
+                                  (uint32_t)nfa[s].pending_markers[m].type;
                 bool exists = false;
                 for (int j = 0; j < count; j++) {
                     if (out_markers[j] == marker) { exists = true; break; }
@@ -1213,10 +1230,37 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     int* n_entries = calloc(dfa_state_count, sizeof(int));
     size_t* packed_sizes = calloc(dfa_state_count, sizeof(size_t));
     pack_entry_t* tmp_entries = malloc(MAX_SYMBOLS * sizeof(pack_entry_t));
+    uint8_t* packed_data = malloc(dfa_state_count * MAX_SYMBOLS * (rng_size > lit_size ? rng_size : lit_size));
+    size_t* packed_data_offset = malloc(dfa_state_count * sizeof(size_t));
+    size_t packed_data_used = 0;
     
     for (int i = 0; i < dfa_state_count; i++) {
-        if (rule_counts[i] == 0) continue;
-        rule_encoding[i] = DFA_RULE_ENC_NORMAL;
+        if (rule_counts[i] == 0) {
+            n_entries[i] = 0;
+            packed_sizes[i] = 0;
+            packed_data_offset[i] = 0;
+            rule_encoding[i] = DFA_RULE_ENC_NORMAL;
+            continue;
+        }
+        // Check if any transition from this state carries markers.
+        // Packed entries have no marker slot, so states with markers
+        // MUST use normal encoding to preserve capture data.
+        // Also check eos_marker_offset for EOS markers.
+        bool has_markers = false;
+        if (dfa[i]->eos_marker_offset != 0) has_markers = true;
+        for (int r = 0; r < rule_counts[i] && !has_markers; r++) {
+            if (dfa[i]->marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1] != 0)
+                has_markers = true;
+        }
+        rule_encoding[i] = has_markers ? DFA_RULE_ENC_NORMAL : DFA_RULE_ENC_PACKED;
+        if (has_markers) {
+            // Normal encoding uses fixed-stride rules (rule_size each).
+            // Don't compute packed entries — just note normal encoding.
+            packed_sizes[i] = 0;
+            packed_data_offset[i] = 0;
+            n_entries[i] = rule_counts[i];
+            continue;
+        }
         int ne = compute_packed_entries(i, &all_rules[i * MAX_SYMBOLS],
                                          rule_counts[i], tmp_entries, MAX_SYMBOLS);
         // Compute exact byte size matching how entries will be written
@@ -1237,6 +1281,8 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         }
         n_entries[i] = actual_ne;
         packed_sizes[i] = pbs;
+        packed_data_offset[i] = packed_data_used;
+        packed_data_used += pbs;
     }
     
     // Compute state offsets with cache-line alignment
@@ -1253,12 +1299,64 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         state_offset[i] = cur;
         cur += (rule_counts[i] == 0) ? DFA_STATE_SIZE_COMPACT(enc) : state_size;
     }
+    
+    // Write packed data to temp buffer for deduplication comparison
+    pack_entry_t* write_entries = malloc(MAX_SYMBOLS * sizeof(pack_entry_t));
     for (int i = 0; i < dfa_state_count; i++) {
-        rule_offset[i] = cur;
-        if (rule_encoding[i] == DFA_RULE_ENC_PACKED)
+        if (rule_counts[i] == 0 || rule_encoding[i] != DFA_RULE_ENC_PACKED) continue;
+        int ne = compute_packed_entries(i, &all_rules[i * MAX_SYMBOLS],
+                                         rule_counts[i], write_entries, MAX_SYMBOLS);
+        size_t off = 0;
+        for (int e = 0; e < ne; e++) {
+            uint32_t target = (uint32_t)state_offset[write_entries[e].target_idx];
+            if (write_entries[e].start == write_entries[e].end) {
+                dfa_pack_write_literal(packed_data + packed_data_offset[i] + off, write_entries[e].start, enc, target);
+                off += lit_size;
+            } else if (write_entries[e].end <= 127) {
+                dfa_pack_write_range(packed_data + packed_data_offset[i] + off, write_entries[e].start, write_entries[e].end, enc, target);
+                off += rng_size;
+            } else {
+                for (int ch = write_entries[e].start; ch <= write_entries[e].end; ch++) {
+                    dfa_pack_write_literal(packed_data + packed_data_offset[i] + off, (uint8_t)ch, enc, target);
+                    off += lit_size;
+                }
+            }
+        }
+    }
+    
+    // Rule offsets with deduplication
+    for (int i = 0; i < dfa_state_count; i++) {
+        if (rule_counts[i] == 0) {
+            rule_offset[i] = cur;
+            continue;
+        }
+        if (rule_encoding[i] == DFA_RULE_ENC_NORMAL) {
+            // Normal encoding: fixed-stride rules, space = rule_counts * rule_size
+            // No deduplication for normal (different per-state targets)
+            rule_offset[i] = cur;
+            cur += (size_t)rule_counts[i] * (size_t)rule_size;
+            continue;
+        }
+        if (packed_sizes[i] == 0) {
+            rule_offset[i] = cur;
+            continue;
+        }
+        // Check if this state's packed data matches a previous state
+        bool found_dup = false;
+        for (int j = 0; j < i; j++) {
+            if (packed_sizes[j] == packed_sizes[i] && packed_sizes[i] > 0 &&
+                memcmp(packed_data + packed_data_offset[j],
+                       packed_data + packed_data_offset[i],
+                       packed_sizes[i]) == 0) {
+                rule_offset[i] = rule_offset[j];
+                found_dup = true;
+                break;
+            }
+        }
+        if (!found_dup) {
+            rule_offset[i] = cur;
             cur += packed_sizes[i];
-        else
-            cur += (size_t)rule_counts[i] * rule_size;
+        }
     }
     size_t metadata_offset = cur;
     size_t total_size = metadata_offset + marker_data_size;
@@ -1306,7 +1404,6 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     }
     
     // Rules (packed or normal per state)
-    pack_entry_t* write_entries = malloc(MAX_SYMBOLS * sizeof(pack_entry_t));
     for (int i = 0; i < dfa_state_count; i++) {
         if (rule_counts[i] == 0) continue;
         if (rule_encoding[i] == DFA_RULE_ENC_PACKED) {
@@ -1360,6 +1457,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         uint32_t* mbase = (uint32_t*)(raw + metadata_offset);
         size_t moff = 0;
         for (int i = 0; i < dfa_state_count; i++) {
+            if (rule_encoding[i] != DFA_RULE_ENC_NORMAL) continue;  // Skip packed/bitmask states
             for (int r = 0; r < rule_counts[i] && r < 256; r++) {
                 size_t ro = rule_offset[i] + (size_t)r * rule_size;
                 uint32_t lidx = dfa[i]->marker_offsets[all_rules[i * MAX_SYMBOLS + r].d1];
@@ -1447,13 +1545,23 @@ void load_nfa_file(nfa2dfa_context_t* ctx, const char* filename) {
                     }
                 }
                 // Phase 2: markers are now stored as edge payloads, not on states
-                // BUT CaptureEnd needs special handling: END markers attach to the state itself
-                // We add them to the state's multi_targets using a special marker transition (VSYM_EOS)
+                // BUT CaptureEnd and CaptureStart need special handling
                 else if (strncmp(line, "  CaptureEnd:", 12) == 0) {
                     int cap_id;
                     if (sscanf(line + 14, "%d", &cap_id) == 1) {
-                        // Add END marker to the state using VSYM_EOS (258)
                         mta_add_marker(&nfa[s_idx].multi_targets, VSYM_EOS, 0, cap_id, MARKER_TYPE_END);
+                    }
+                }
+                else if (strncmp(line, "  CaptureStart:", 14) == 0) {
+                    int cap_id;
+                    if (sscanf(line + 16, "%d", &cap_id) == 1) {
+                        // CaptureStart: add START marker to all character transitions
+                        // This ensures the marker fires on the first character after the capture start tag
+                        for (int sym = 0; sym < 256; sym++) {
+                            if (nfa[s_idx].transitions[sym] >= 0) {
+                                mta_add_marker(&nfa[s_idx].multi_targets, sym, 0, cap_id, MARKER_TYPE_START);
+                            }
+                        }
                     }
                 }
                 else if (strncmp(line, "    Symbol ", 11) == 0) {

@@ -317,6 +317,13 @@ test-binary-format: $(TOOLS) $(LIB)
 	@echo "================================================="
 	@$(TESTS_DIR)/test_binary_format.sh
 
+test-captures: $(TOOLS) $(LIB)
+	@echo ""
+	@echo "================================================="
+	@echo "CAPTURE SYSTEM TESTS"
+	@echo "================================================="
+	@$(TESTS_DIR)/test_captures.sh
+
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR) $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced \
@@ -403,6 +410,7 @@ test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity $(TESTS_DIR)/test_li
 	run_suite test-eval-only; \
 	run_suite test-dfa2c; \
 	run_suite test-binary-format; \
+	run_suite test-captures; \
 	run_suite test-patterns; \
 	echo ""; \
 	if [ $$TOTAL_GROUPS -gt 0 ]; then \

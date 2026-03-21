@@ -122,8 +122,6 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
  * Range:   [0b1SSSSSSS][end:1][target:OW] — 2+OW bytes, matches start..end
  * ============================================================================ */
 
-#define DFA_RULE_ENC_PACKED    2
-
 #define DFA_PACK_LITERAL       0x00  /* high bit clear = literal */
 #define DFA_PACK_RANGE         0x80  /* high bit set = range */
 #define DFA_PACK_TYPE_MASK     0x80
@@ -141,9 +139,17 @@ static inline int dfa_bm_off_markers(int enc) { return 33 + dfa_owb(enc); }
 #define DFA_STATE_RULE_ENC_MASK  0x00C0  /* bits 6-7: rule encoding selector */
 #define DFA_STATE_RULE_ENC_SHIFT 6
 
-/* Rule encoding values (in bits 6-7 of state flags) */
+/* Rule encoding values (in bits 6-7 of state flags)
+ *
+ * NORMAL:  fixed-stride rules [type(1) d1(1) d2(1) d3(1) target(OW) markers(4)]
+ * BITMASK: 32-byte bitmask per target [type(1) mask(32) target(OW) markers(4)]
+ * PACKED:  variable-stride entries [literal: 0b0LLLLLLL target(OW)]
+ *                                    [range:   0b1SSSSSSS end(1) target(OW)]
+ * 3 is reserved for future use
+ */
 #define DFA_RULE_ENC_NORMAL   0  /* Fixed-stride rules */
 #define DFA_RULE_ENC_BITMASK  1  /* Bitmask rules (one per target) */
+#define DFA_RULE_ENC_PACKED   2  /* Variable-stride packed entries */
 
 #define DFA_GET_CATEGORY_MASK(flags) ((uint8_t)(((flags) >> 8) & 0xFF))
 #define DFA_SET_CATEGORY_MASK(flags, mask) \
