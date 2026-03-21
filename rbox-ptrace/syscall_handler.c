@@ -56,6 +56,9 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
 /* Allowance table for tracking validated commands */
 Allowance g_allowances[MAX_ALLOWANCES];
 
+/* Wrapper chain table for tracking prefix-wrapper commands */
+WrapperChain g_wrapper_chains[MAX_WRAPPER_CHAINS];
+
 /* Clear all allowances for a specific PID */
 static void clear_allowances_for_pid(pid_t pid) {
     block_signals();
@@ -73,8 +76,40 @@ static void clear_allowances_for_pid(pid_t pid) {
     unblock_signals();
 }
 
+/* Clear all wrapper chains for a specific PID */
+static void clear_wrapper_chains_for_pid(pid_t pid) {
+    block_signals();
+    for (int i = 0; i < MAX_WRAPPER_CHAINS; i++) {
+        if (g_wrapper_chains[i].parent_pid == pid) {
+            DEBUG_PRINT("WRAPPER_CHAIN: clearing for exited parent %d\n", pid);
+            free(g_wrapper_chains[i].wrapper_command);
+            g_wrapper_chains[i].wrapper_command = NULL;
+            g_wrapper_chains[i].wrapper_offset = 0;
+            g_wrapper_chains[i].parent_pid = 0;
+        }
+    }
+    unblock_signals();
+}
+
+/* Known prefix wrappers that can prefix any command.
+ * These are safe, non-breaking commands that modify behavior but don't write files.
+ * "sh -c" is special: after "sh -c" comes a shell command string, not another command. */
+static const char *KNOWN_PREFIX_WRAPPERS[] = {
+    "sh -c",
+    "timeout",
+    "strace",
+    "nice",
+    "env",
+    "time",
+    "xargs",
+    "setarch",
+    "chroot",
+    "envoy",
+    NULL
+};
+
 /* Check if a parent PID has a valid allowance for a specific subcommand */
-static int check_allowance(pid_t parent_pid, const char *subcommand) {
+static int consume_allowance(pid_t parent_pid, const char *subcommand) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
@@ -135,7 +170,121 @@ static int check_allowance(pid_t parent_pid, const char *subcommand) {
     return result;
 }
 
-/* Grant allowances to a parent PID based on the full command */
+static const char * strip_wrapper_prefix(const char *full_command) {
+    if (!full_command) return NULL;
+    const size_t full_command_len = strlen(full_command);
+    /* Try each known wrapper */
+    /* This is stupid, but fine for now. */
+    for (int i = 0; KNOWN_PREFIX_WRAPPERS[i]; i++) {
+        const char *wrapper = KNOWN_PREFIX_WRAPPERS[i];
+        size_t wrapper_len = strlen(wrapper);
+        if (full_command_len > wrapper_len + 1u) {
+            /* Check if command starts with this wrapper */
+            if (strncmp(full_command, wrapper, wrapper_len) == 0) {
+                const char *pos = full_command + wrapper_len;
+                /* After wrapper must be whitespace AND not end of string */
+                if (*pos == ' ' || *pos == '\t') {
+                    ++pos;
+                    /* Skip whitespace to get to wrappee */
+                    while (*pos == ' ' || *pos == '\t') pos++;
+                    return pos;
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+/* Check and consume a wrapper chain for a parent PID.
+ * Returns 1 if the execve should be allowed.
+ *
+ * Grammar: wrappee = wrapper wrappee | wrappee (base)
+ * Example: timeout timeout ls
+ *   → wrapper=timeout, wrappee="timeout ls"
+ *   → wrapper=timeout, wrappee="ls"
+ *   → wrappee="ls" (base case)
+ *
+ * Logic:
+ * - If first word of execve IS a wrapper: advance offset past it (allow, don't consume)
+ * - If first word of execve is NOT a wrapper (base wrappee): consume chain (allow)
+ * - If execve matches remaining suffix AND first word is NOT a wrapper: consume
+ */
+static int consume_wrapper_chain(pid_t parent_pid, const char *subcommand) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    int result = 0;  /* Default: no match */
+
+    block_signals();
+    for (int i = 0; i < MAX_WRAPPER_CHAINS; i++) {
+        if (g_wrapper_chains[i].parent_pid == 0) {
+            continue;  /* Empty slot */
+        }
+
+        /* Check timeout - discard chains older than 10 minutes */
+        double age_seconds = (now.tv_sec - g_wrapper_chains[i].timestamp.tv_sec) +
+                            (now.tv_nsec - g_wrapper_chains[i].timestamp.tv_nsec) / 1e9;
+        if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
+            DEBUG_PRINT("WRAPPER_CHAIN: expired for parent %d\n", parent_pid);
+            free(g_wrapper_chains[i].wrapper_command);
+            g_wrapper_chains[i].wrapper_command = NULL;
+            g_wrapper_chains[i].wrapper_offset = 0;
+            g_wrapper_chains[i].parent_pid = 0;
+            continue;
+        }
+
+        /* Check if this wrapper chain matches the parent */
+        if (g_wrapper_chains[i].parent_pid == parent_pid) {
+            const char *remaining_suffix = g_wrapper_chains[i].wrapper_command + g_wrapper_chains[i].wrapper_offset;
+
+            /* Check if execve command begins with a known wrapper */
+            const char *csuffix = strip_wrapper_prefix(remaining_suffix);
+
+            if (csuffix != NULL) {
+                /* Execve is a wrappee with wrapper prefix (e.g., "timeout ls").
+                 * Advance offset past the first wrapper word. */
+                g_wrapper_chains[i].wrapper_offset += csuffix - remaining_suffix;
+
+                DEBUG_PRINT("WRAPPER_CHAIN: wrappee '%s' starts with wrapper, advanced offset to '%s' for parent %d\n",
+                           subcommand,
+                           g_wrapper_chains[i].wrapper_command + g_wrapper_chains[i].wrapper_offset,
+                           parent_pid);
+                result = 1;
+                /* If we've consumed the entire wrapper chain (only wrappers, no wrappee), clear it */
+                if (g_wrapper_chains[i].wrapper_command[g_wrapper_chains[i].wrapper_offset] == '\0') {
+                    DEBUG_PRINT("WRAPPER_CHAIN: only wrappers consumed, clearing for parent %d\n", parent_pid);
+                    free(g_wrapper_chains[i].wrapper_command);
+                    g_wrapper_chains[i].wrapper_command = NULL;
+                    g_wrapper_chains[i].wrapper_offset = 0;
+                    g_wrapper_chains[i].parent_pid = 0;
+                }
+                break;
+            }
+
+            /* Execve command does not start with a wrapper (base wrappee like "ls").
+             * Check if it matches the remaining suffix exactly, then consume. */
+            if (strcmp(remaining_suffix, subcommand) == 0) {
+                DEBUG_PRINT("WRAPPER_CHAIN: base wrappee '%s' matches, consuming for parent %d\n",
+                           subcommand, parent_pid);
+                free(g_wrapper_chains[i].wrapper_command);
+                g_wrapper_chains[i].wrapper_command = NULL;
+                g_wrapper_chains[i].wrapper_offset = 0;
+                g_wrapper_chains[i].parent_pid = 0;
+                result = 1;
+                break;
+            }
+            /* If first word is NOT a wrapper and doesn't match suffix, this exec is not allowed */
+        }
+    }
+    unblock_signals();
+
+    return result;
+}
+
+
+
+
+ /* Grant allowances to a parent PID based on the full command */
 static void grant_allowance(pid_t parent_pid, const char *full_command) {
     shell_parse_result_t result;
     shell_error_t err;
@@ -152,13 +301,42 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
 
     DEBUG_PRINT("ALLOWANCE: parsed '%s' into %d subcommands\n", full_command, result.count);
 
-    /* If only 1 subcommand (the full command itself), don't store any allowances.
-     * Allowances are for subprocesses, not the command we just got a decision on. */
+    /* If full command begins with a known wrapper, setup a chain allowance for the wrapped. */
     if (result.count <= 1) {
-        DEBUG_PRINT("ALLOWANCE: single subcommand (full command), no allowances to store\n");
+        const char *suffix = strip_wrapper_prefix(full_command);
+
+        if (!suffix) {
+            DEBUG_PRINT("ALLOWANCE: single subcommand (full command), no allowances to store\n");
+            return;
+        }
+
+        /* Store the suffix as a wrapper-chain allowance */
+        block_signals();
+        /* Find empty slot */
+        int slot = -1;
+        for (int i = 0; i < MAX_WRAPPER_CHAINS; i++) {
+            if (g_wrapper_chains[i].parent_pid == 0 && g_wrapper_chains[i].wrapper_command == NULL) {
+                slot = i;
+                break;
+            }
+        }
+
+        if (slot < 0) {
+            /* No empty slot - use first one and replace */
+            slot = 0;
+            free(g_wrapper_chains[slot].wrapper_command);
+        }
+
+        g_wrapper_chains[slot].parent_pid = parent_pid;
+        clock_gettime(CLOCK_MONOTONIC, &g_wrapper_chains[slot].timestamp);
+        g_wrapper_chains[slot].wrapper_command = strdup(suffix);
+        g_wrapper_chains[slot].wrapper_offset = 0;
+        unblock_signals();
+        DEBUG_PRINT("WRAPPER_CHAIN: stored '%s' for parent %d\n", suffix, parent_pid);
         return;
     }
 
+    /* Multiple subcommands - store in the subcommand allowance table */
     block_signals();
     /* Find empty slot */
     int slot = -1;
@@ -199,7 +377,7 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
 }
 
 /* Process state table (simple hash map).
- * 
+ *
  * IMPORTANT: This is for CONCURRENT processes, not total spawns over time.
  * When a process exits, its entry is removed and can be reused.
  * The limit (4096) is the maximum number of processes that can be
@@ -288,9 +466,10 @@ void syscall_remove_process_state(pid_t pid) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         int probe = (idx + i) % MAX_PROCESSES;
         if (g_process_table[probe] && g_process_table[probe]->pid == pid) {
-            /* Clear any allowances associated with this PID */
+            /* Clear any allowances and wrapper chains associated with this PID */
             clear_allowances_for_pid(pid);
-            
+            clear_wrapper_chains_for_pid(pid);
+
             free(g_process_table[probe]->execve_pathname);
             memory_free_string_array(g_process_table[probe]->execve_argv);
             memory_free_string_array(g_process_table[probe]->execve_envp);
@@ -340,7 +519,7 @@ static char *build_command_string_alloc(char *const argv[]) {
     /* Allocate buffer (add 1 for null terminator) */
     char *buf = malloc(total_len + 1);
     if (!buf) return NULL;
-    
+
     /* Second pass: build the string */
     char *p = buf;
     for (int i = 0; argv[i]; i++) {
@@ -352,7 +531,7 @@ static char *build_command_string_alloc(char *const argv[]) {
         p += len;
     }
     *p = '\0';
-    
+
     return buf;
 }
 
@@ -401,7 +580,7 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
         return -1;
     }
 
-    /* Update registers to exec /bin/sh 
+    /* Update registers to exec /bin/sh
      * Note: execveat has different argument order:
      *   execve(path, argv, envp) -> rdi, rsi, rdx
      *   execveat(dirfd, path, argv, envp, flags) -> rdi, rsi, rdx, r10
@@ -450,7 +629,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
     if (syscall_is_execve(regs)) {
         DEBUG_PRINT("HANDLER: pid=%d execve detected, initial=%d, detached=%d\n",
                     pid, state->initial_execve, state->detached);
-        
+
         /* New execve that needs validation - reset validated flag */
         state->validated = 0;
         state->in_execve = 1;
@@ -463,7 +642,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         unsigned long pathname_addr;
         unsigned long argv_addr;
         unsigned long envp_addr;
-        
+
         if (REG_SYSCALL(regs) == SYSCALL_EXECVEAT) {
             /* execveat: dirfd is in arg1, pathname in arg2 */
             pathname_addr = REG_ARG2(regs);
@@ -555,9 +734,18 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
         /* Check if parent has an allowance for this subcommand */
         if (parent_pid > 0) {
-            /* Pass the full command - the allowance check will match against stored subcommands */
-            if (check_allowance(parent_pid, command)) {
-                DEBUG_PRINT("HANDLER: pid=%d has allowance from parent %d for '%s', allowing\n", 
+            /* First check wrapper chain - if first word is a wrapper, advance offset.
+             * If first word is NOT a wrapper, consume the wrapper chain.
+             * Then check subcommand allowances. */
+            if (consume_wrapper_chain(parent_pid, command)) {
+                DEBUG_PRINT("HANDLER: pid=%d has wrapper-chain from parent %d for '%s', allowing\n",
+                           pid, parent_pid, command);
+                state->validated = 1;
+                return 0;
+            }
+            /* Check subcommand allowances */
+            if (consume_allowance(parent_pid, command)) {
+                DEBUG_PRINT("HANDLER: pid=%d has allowance from parent %d for '%s', allowing\n",
                            pid, parent_pid, command);
                 state->validated = 1;
                 return 0;
@@ -577,7 +765,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             /* Fast allow - mark as validated but continue tracing for future execves */
             DEBUG_PRINT("DFA: Fast-allowing command '%s', continuing to trace\n", command);
             state->validated = 1;
-            
+
             /* Filter environment variables even for DFA-allowed commands */
             if (filter_env_decisions(state, pid, regs) < 0) {
                 /* Filter failed - log but continue (not critical for DFA-allowed) */
@@ -594,7 +782,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         }
 
         /* DFA didn't allow - need to ask server for decision */
-        DEBUG_PRINT("HANDLER: pid=%d DFA result=%d, asking server for decision on '%s'\n", 
+        DEBUG_PRINT("HANDLER: pid=%d DFA result=%d, asking server for decision on '%s'\n",
                     pid, dfa_result, command);
 
         /* Build caller info for the request */
@@ -634,15 +822,15 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         /* Server allowed - let the execve proceed */
         DEBUG_PRINT("HANDLER: pid=%d server allowed command '%s', continuing to trace\n", pid, command);
         state->validated = 1;
-        
+
         /* Grant allowances to this process for subcommands of the allowed command.
          * Child processes will be able to exec subcommands without new server requests. */
         grant_allowance(pid, command);
-        
+
         /* Track this validated command to prevent duplicates on retry */
         free(state->last_validated_cmd);
         state->last_validated_cmd = strdup(command);
-        
+
         /* Filter environment variables based on server decisions and apply to child */
         if (filter_env_decisions(state, pid, regs) < 0) {
             /* Filter failed - block the command to be safe */
@@ -673,12 +861,12 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
  * Also writes the filtered envp to the child's memory and updates the register */
 static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs) {
     if (!state || !state->execve_envp || !state->execve_envp_addrs) return 0;
-    
+
     const char *env_decisions_str = getenv("READONLYBOX_ENV_DECISIONS");
     if (!env_decisions_str || strlen(env_decisions_str) == 0) return 0;
-    
+
     DEBUG_PRINT("FILTER: parsing env decisions: '%s'\n", env_decisions_str);
-    
+
     /* Parse decisions: format is "index:decision,index:decision,..."
      * where decision is 0=allow, 1=deny
      * Uses strict parsing - abort on any malformed input */
@@ -745,12 +933,12 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
         flagged_names[flagged_count++] = token;
         token = strtok_r(NULL, ",", &saveptr);
     }
-    
+
     /* Filter envp - remove denied vars */
     /* Build new filtered envp */
     int env_count = 0;
     while (state->execve_envp[env_count]) env_count++;
-    
+
     /* Allocate new envp */
     char **new_envp = calloc(env_count + 1, sizeof(char *));
     unsigned long *new_env_addrs = calloc(env_count + 1, sizeof(unsigned long));
@@ -764,13 +952,13 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
         DEBUG_PRINT("FILTER: failed to allocate new_env_addrs\n");
         return -1;
     }
-    
+
     int new_idx = 0;
     for (int i = 0; i < env_count && state->execve_envp[i]; i++) {
         /* Get env var name */
         char *eq = strchr(state->execve_envp[i], '=');
         size_t name_len = eq ? (size_t)(eq - state->execve_envp[i]) : strlen(state->execve_envp[i]);
-        
+
         /* Check if this var is in flagged list and denied */
         int denied = 0;
         for (int j = 0; j < flagged_count && j <= max_index; j++) {
@@ -784,7 +972,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
                 }
             }
         }
-        
+
         if (denied) {
             /* Free the string for denied env vars to prevent memory leak */
             free(state->execve_envp[i]);
@@ -797,80 +985,80 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     }
     new_envp[new_idx] = NULL;
     new_env_addrs[new_idx] = 0;
-    
+
     /* Replace envp */
     free(state->execve_envp);
     state->execve_envp = new_envp;
     free(state->execve_envp_addrs);
     state->execve_envp_addrs = new_env_addrs;
-    
+
     /* Write the new envp array to the child's memory and update the register */
     MemoryContext mem_ctx;
     if (memory_init(&mem_ctx, pid, REG_SP(regs)) < 0) {
         DEBUG_PRINT("FILTER: failed to init memory context\n");
         return -1;
     }
-    
+
     /* Count how many env vars we're keeping */
     int keep_count = 0;
     while (state->execve_envp[keep_count]) keep_count++;
-    
+
     if (keep_count == 0) {
         /* No environment variables - set envp to NULL */
         unsigned long new_envp_addr = 0;
-        
+
         /* Update register */
         if (REG_SYSCALL(regs) == SYSCALL_EXECVEAT) {
             REG_ARG4(regs) = new_envp_addr;
         } else {
             REG_ARG3(regs) = new_envp_addr;
         }
-        
+
         if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
             DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
             return -1;
         }
-        
+
         DEBUG_PRINT("FILTER: env vars filtered, 0 remaining (empty envp)\n");
         return 0;
     }
-    
+
     /* Allocate space in child for the new envp pointer array */
     unsigned long new_envp_addr = memory_alloc(&mem_ctx, (keep_count + 1) * sizeof(unsigned long));
     if (!new_envp_addr) {
         DEBUG_PRINT("FILTER: failed to allocate memory for envp\n");
         return -1;
     }
-    
+
     /* Write each pointer to the child's memory.
      * We use the original addresses of each string in the child memory. */
     for (int i = 0; i < keep_count; i++) {
-        if (memory_write_pointer_at(&mem_ctx, new_envp_addr + i * sizeof(unsigned long), 
+        if (memory_write_pointer_at(&mem_ctx, new_envp_addr + i * sizeof(unsigned long),
                                      state->execve_envp_addrs[i]) < 0) {
             DEBUG_PRINT("FILTER: failed to write envp pointer %d\n", i);
             return -1;
         }
     }
-    
+
     /* Write NULL terminator */
     if (memory_write_pointer_at(&mem_ctx, new_envp_addr + keep_count * sizeof(unsigned long), 0) < 0) {
         DEBUG_PRINT("FILTER: failed to write envp NULL terminator\n");
         return -1;
     }
-    
+
     /* Update register to point to new envp array */
     if (REG_SYSCALL(regs) == SYSCALL_EXECVEAT) {
         REG_ARG4(regs) = new_envp_addr;
     } else {
         REG_ARG3(regs) = new_envp_addr;
     }
-    
+
     /* Apply changes to the child */
     if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
         DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
         return -1;
     }
-    
+
     DEBUG_PRINT("FILTER: env vars filtered, %d remaining, envp updated at 0x%lx\n", keep_count, new_envp_addr);
     return 0;
 }
@@ -878,7 +1066,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
 /* Handle syscall exit (after execution) */
 int syscall_handle_exit(pid_t pid, USER_REGS *regs, ProcessState *state) {
     (void)pid;  /* Currently unused but may be needed for future logging */
-    
+
     if (!state) return 0;
 
     if (state->in_execve && syscall_is_execve(regs)) {

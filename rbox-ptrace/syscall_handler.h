@@ -28,6 +28,19 @@
 #define MAX_ALLOWANCES 256
 #define ALLOWANCE_TIMEOUT_SECONDS 600  /* 10 minutes */
 
+/*
+ * Allowance tracking for validated commands.
+ * When a command is allowed, child processes can inherit the permission
+ * to run subcommands without requiring new server requests.
+ *
+ * LIMITS:
+ * - MAX_ALLOWANCES (256): Maximum number of concurrent allowances
+ * - ALLOWANCE_TIMEOUT_SECONDS (600): Allowances expire after 10 minutes
+ * - SHELL_MAX_SUBCOMMANDS: Maximum subcommands per command (from shell_tokenizer.h)
+ *
+ * When the allowance table is full, old allowances are reused (oldest slot).
+ * Each allowance tracks subcommands from one allowed parent command.
+ */
 typedef struct {
     pid_t parent_pid;           /* PID of the parent that was allowed */
     char *subcommands[SHELL_MAX_SUBCOMMANDS]; /* The subcommands that are allowed */
@@ -35,6 +48,24 @@ typedef struct {
     struct timespec timestamp;  /* When the allowance was granted (monotonic clock) */
     int used_mask[(SHELL_MAX_SUBCOMMANDS + 31) / 32]; /* Bitmap of used subcommands */
 } Allowance;
+
+/*
+ * Wrapper chain tracking for prefix-wrappers.
+ * When a command with leading wrappers (e.g., "timeout timeout cmd") is allowed,
+ * the wrapper chain is tracked separately so children can exec the wrappers.
+ *
+ * This is a SEPARATE subsystem from subcommand allowances.
+ * Use when shellsplit returns count=1 (single command) with leading wrappers.
+ */
+#define MAX_WRAPPER_CHAINS 128
+typedef struct {
+    pid_t parent_pid;           /* PID of the parent that was allowed */
+    char *wrapper_command;      /* Full wrapper chain string (e.g., "timeout timeout cmd") */
+    int wrapper_offset;         /* Byte offset into wrapper_command for remaining suffix */
+    struct timespec timestamp;  /* When the allowance was granted (monotonic clock) */
+} WrapperChain;
+
+extern WrapperChain g_wrapper_chains[MAX_WRAPPER_CHAINS];
 
 /* Global allowance table */
 extern Allowance g_allowances[MAX_ALLOWANCES];
