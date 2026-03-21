@@ -68,9 +68,9 @@
 [safe:quoted_single] cmd ' '   # quoted space
 
 # Quoted with quantifier
-[safe:quoted_quant] cmd 'a'+
-[safe:quoted_quant] cmd 'a'*
-[safe:quoted_quant] cmd 'a'?
+[safe:quoted_quant] cmd 'a(')+
+[safe:quoted_quant] cmd 'a(')*
+[safe:quoted_quant] cmd 'a(')?
 
 # ============================================================================
 # NESTED FRAGMENT TESTS

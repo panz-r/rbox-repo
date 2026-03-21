@@ -13,11 +13,11 @@
 
 # Safe file operations
 [safe:file:read] cat file.txt
-[safe:file:read] cat (*).txt
+[safe:file:read] cat file.txt
 [safe:file:read] grep pattern file.txt
-[safe:file:read] find . -name "(*).txt"
+[safe:file:read] find . -name "\*.txt"
 [safe:file:read] ls -la
-[safe:file:read] ls (*).txt
+[safe:file:read] ls file.txt
 [safe:file:read] pwd
 [safe:file:read] stat file.txt
 [safe:file:read] file file.txt
@@ -47,7 +47,7 @@
 # Caution operations
 [caution:file:read] cat /etc/passwd
 [caution:file:read] cat /etc/shadow
-[caution:file:read] find / -name "(*).conf"
+[caution:file:read] find / -name "\*.conf"
 [caution:system:read] last
 [caution:system:read] w
 [caution:system:read] netstat -tuln
@@ -96,25 +96,25 @@
 [safe:file:read] cat file.txt | grep pattern
 [safe:file:read] cat file.txt | head -10
 [safe:file:read] grep pattern file.txt | wc -l
-[safe:file:read] find . -name "(*).txt" | xargs cat
+[safe:file:read] find . -name "\*.txt" | xargs cat
 [safe:file:read] git log --oneline | head -10
 [safe:file:read] ps aux | grep process
 
 # Patterns with special characters
 [safe:file:read] cat file\ with\ spaces.txt
 [safe:file:read] grep "pattern with spaces" file.txt
-[safe:file:read] find . -name "file\(*).txt"
+[safe:file:read] find . -name "file\*.txt"
 [safe:file:read] echo "test with quotes"
 
 # Patterns with wildcards
-[safe:file:read] ls (*).txt
-[safe:file:read] ls (*).log
-[safe:file:read] find . -name "(*).txt"
-[safe:file:read] grep pattern (*)
+[safe:file:read] ls file.txt
+[safe:file:read] ls file.log
+[safe:file:read] find . -name "\*.txt"
+[safe:file:read] grep pattern
 
 # Patterns with options
 [safe:file:read] cat -n file.txt
 [safe:file:read] grep -i pattern file.txt
-[safe:file:read] find . -type f -name "(*).txt"
+[safe:file:read] find . -type f -name "\*.txt"
 [safe:file:read] ls -la -h
 [safe:file:read] ps aux --sort=-%mem

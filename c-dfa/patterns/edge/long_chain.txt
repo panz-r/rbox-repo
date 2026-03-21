@@ -25,16 +25,16 @@
 [safe:chain5] a b c d e
 
 # With quantifiers in chain
-[safe:chainq1] a+ b
-[safe:chainq2] a b+
-[safe:chainq3] a+ b+
-[safe:chainq4] a+ b c+
+[safe:chainq1] (a)+ b
+[safe:chainq2] a (b)+
+[safe:chainq3] (a)+ (b)+
+[safe:chainq4] (a)+ b (c)+
 
 # Longer chains with mixed quantifiers
-[safe:chainq5] a+ b+ c
-[safe:chainq6] a b+ c+
-[safe:chainq7] a+ b c+ d
-[safe:chainq8] a+ b+ c+ d+
+[safe:chainq5] (a)+ (b)+ c
+[safe:chainq6] a (b)+ (c)+
+[safe:chainq7] (a)+ b (c)+ d
+[safe:chainq8] (a)+ (b)+ (c)+ (d)+
 
 # Very long chain
 [safe:chainlong] a b c d e f g h i j

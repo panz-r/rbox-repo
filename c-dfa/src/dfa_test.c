@@ -12,6 +12,7 @@ static int total_tests_run = 0;
 static int total_tests_passed = 0;
 static int total_groups_run = 0;
 static int total_groups_failed = 0;
+static int total_groups_defined = 0;
 static const char* minimize_algo = "--minimize-moore";
 static bool use_compress_sat = false;
 static char test_set_mask = 0;
@@ -206,6 +207,7 @@ static void run_multi_category_mask_tests(void);
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
+    total_groups_defined++;
     build_dfa(patterns_file, dfa_file);
     track_dfa_file(dfa_file);
 
@@ -216,6 +218,7 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
     void* data = load_dfa_from_file(dfa_file, &size);
     if (!data) {
         printf("  [ERROR] Failed to load DFA: %s\n", dfa_file);
+        total_groups_failed++;
         return;
     }
 
@@ -1301,11 +1304,12 @@ int main(int argc, char* argv[]) {
 
     print_separator();
     printf("=================================================\n");
-    printf("SUMMARY: %d/%d passed\n", total_tests_passed, total_tests_run);
+    printf("SUMMARY: %d/%d passed", total_tests_passed, total_tests_run);
+    printf(" (%d/%d groups)", total_groups_run, total_groups_defined);
     if (total_groups_failed > 0) {
-        fprintf(stderr, "\n[ERROR] %d of %d test groups had failures!\n", total_groups_failed, total_groups_run);
-        printf("FAILING GROUPS: %d of %d\n", total_groups_failed, total_groups_run);
+        printf(", %d failed", total_groups_failed);
     }
+    printf("\n");
     printf("=================================================\n");
 
     // Clean up only the files we tracked during this test run

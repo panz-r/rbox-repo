@@ -24,8 +24,8 @@
 [admin:pre1b] admin arg
 
 # Category with quantifier
-[safe:catq1] safe+
-[admin:catq2] admin+
+[safe:catq1] saf(e)+
+[admin:catq2] admi(n)+
 
 # Category with alternation  
 [safe:catalt1] safe|admin

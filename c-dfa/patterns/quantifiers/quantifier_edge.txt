@@ -14,30 +14,30 @@
 # ============================================================================
 
 # Empty vs single vs multiple - use different categories to distinguish patterns
-[safe:qes1] a*
-[caution:qes2] a+
-[safe:qes3] a?
+[safe:qes1] (a)*
+[caution:qes2] (a)+
+[safe:qes3] (a)?
 
 # Mixed safe/category in same file - critical for testing fork state leakage
-# a* allows empty (fork state), a+ requires at least one (not fork)
-# Testing empty with CAUTION should NOT match (a+ requires char)
-# Testing empty with SAFE should match (a* allows empty)
-[caution:mixed1] b+
+# (a)* allows empty (fork state), (a)+ requires at least one (not fork)
+# Testing empty with CAUTION should NOT match ((a)+ requires char)
+# Testing empty with SAFE should match ((a)* allows empty)
+[caution:mixed1] (b)+
 
 # Two chars with all quantifiers
-[safe:qes4] ab*
-[caution:qes5] ab+
-[safe:qes6] ab?
+[safe:qes4] a(b)*
+[caution:qes5] a(b)+
+[safe:qes6] a(b)?
 
 # Three chars
-[safe:qes7] abc*
-[caution:qes8] abc+
-[safe:qes9] abc?
+[safe:qes7] ab(c)*
+[caution:qes8] ab(c)+
+[safe:qes9] ab(c)?
 
 # Mixed in sequence
-[safe:qes10] a* b*
-[caution:qes11] a+ b+
-[safe:qes12] a? b?
+[safe:qes10] (a)* (b)*
+[caution:qes11] (a)+ (b)+
+[safe:qes12] (a)? (b)?
 
 # After alternation
 [safe:qes13] (a|b)*
@@ -50,5 +50,5 @@
 [safe:qes18] (ab)?
 
 # Multiple ? in sequence
-[safe:qes19] a? b? c?
-[safe:qes20] a? a? a?
+[safe:qes19] (a)? (b)? (c)?
+[safe:qes20] (a)? (a)? (a)?

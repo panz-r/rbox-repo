@@ -365,27 +365,52 @@ test-stress: $(TOOLS) $(TEST)
 	@echo "================================================="
 	@./$(TEST) --test-set C --minimize-moore --compress-sat
 
-# Full test suite - runs all three algorithms with their respective test sets
+# Full test suite - runs all algorithms with their respective test sets
 test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity $(TESTS_DIR)/test_library_api
-	@echo ""
-	@echo "================================================="
 	@echo "C-DFA FULL TEST SUITE"
-	@echo "================================================="
-	@echo ""
-	@make test-moore 2>&1 | tail -3
-	@echo ""
-	@make test-hopcroft 2>&1 | tail -3
-	@echo ""
-	@make test-stress 2>&1 | tail -3
-	@make test-integrity 2>&1 | tail -5
-	@echo ""
-	@make test-library 2>&1 | tail -4
-	@make test-eval-only 2>&1 | tail -4
-	@make test-dfa2c 2>&1 | tail -5
-	@make test-binary-format 2>&1 | tail -5
-	@make test-patterns 2>&1 | tail -5
-	@echo ""
-	@echo "================================================="
+	@TOTAL_SUITES=0; RUN_SUITES=0; TOTAL_PASSED=0; TOTAL_TESTS=0; \
+	TOTAL_GROUPS=0; RUN_GROUPS=0; FAILED_GROUPS=0; \
+	run_suite() { \
+		TOTAL_SUITES=$$((TOTAL_SUITES + 1)); \
+		OUTPUT=$$(make "$$1" 2>&1); \
+		if echo "$$OUTPUT" | grep -q "SUMMARY:\|Tests:\|completed\|passed"; then \
+			RUN_SUITES=$$((RUN_SUITES + 1)); \
+			MSG=$$(echo "$$OUTPUT" | grep "SUMMARY:\|Tests:" | tail -1); \
+			if [ -n "$$MSG" ]; then \
+				P=$$(echo "$$MSG" | grep -o '[0-9]*/[0-9]*' | head -1 | awk -F/ '{print $$1}'); \
+				T=$$(echo "$$MSG" | grep -o '[0-9]*/[0-9]*' | head -1 | awk -F/ '{print $$2}'); \
+				TOTAL_PASSED=$$((TOTAL_PASSED + P)); \
+				TOTAL_TESTS=$$((TOTAL_TESTS + T)); \
+				GRP=$$(echo "$$MSG" | grep -o '([0-9]*/[0-9]* groups)' | grep -o '[0-9]*/[0-9]*'); \
+				if [ -n "$$GRP" ]; then \
+					RG=$$(echo "$$GRP" | awk -F/ '{print $$1}'); \
+					TG=$$(echo "$$GRP" | awk -F/ '{print $$2}'); \
+					RUN_GROUPS=$$((RUN_GROUPS + RG)); \
+					TOTAL_GROUPS=$$((TOTAL_GROUPS + TG)); \
+				fi; \
+				FG=$$(echo "$$MSG" | grep -o '[0-9]* failed' | awk '{print $$1}'); \
+				if [ -n "$$FG" ]; then FAILED_GROUPS=$$((FAILED_GROUPS + FG)); fi; \
+			fi; \
+		else \
+			echo "  FAILED: $$1"; \
+		fi; \
+	}; \
+	run_suite test-moore; \
+	run_suite test-hopcroft; \
+	run_suite test-stress; \
+	run_suite test-integrity; \
+	run_suite test-library; \
+	run_suite test-eval-only; \
+	run_suite test-dfa2c; \
+	run_suite test-binary-format; \
+	run_suite test-patterns; \
+	echo ""; \
+	if [ $$TOTAL_GROUPS -gt 0 ]; then \
+		echo "SUMMARY: ran $$RUN_SUITES/$$TOTAL_SUITES suites, $$RUN_GROUPS/$$TOTAL_GROUPS groups, $$TOTAL_PASSED/$$TOTAL_TESTS passed"; \
+	else \
+		echo "SUMMARY: ran $$RUN_SUITES/$$TOTAL_SUITES suites, $$TOTAL_PASSED/$$TOTAL_TESTS passed"; \
+	fi; \
+	if [ $$FAILED_GROUPS -gt 0 ]; then echo "  $$FAILED_GROUPS group(s) failed to load"; fi
 
 # Pattern regression tests
 test-patterns: $(TOOLS)

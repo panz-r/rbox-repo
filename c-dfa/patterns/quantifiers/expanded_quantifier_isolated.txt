@@ -11,13 +11,13 @@
 
 # Isolated patterns for EXPANDED QUANTIFIER EDGE CASES tests
 # These patterns must NOT include (a)? or (a)* which match empty string
-# because the tests expect "a+ should NOT match empty"
+# because the tests expect "(a)+ should NOT match empty"
 
 [fragment:a] a
 [fragment:b] b
 [fragment:c] c
 
-# a+ - one or more a's (does NOT match empty)
+# (a)+ - one or more a's (does NOT match empty)
 [safe:quantifier] (a)+
 
 # ab(c)+ - ab followed by one or more c's

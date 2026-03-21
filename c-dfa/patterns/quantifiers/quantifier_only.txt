@@ -1,5 +1,6 @@
 [CATEGORIES]
 0: safe
+[fragment:safe::b] b
 1: caution
 2: modifying
 3: dangerous
@@ -13,35 +14,35 @@
 # Isolated Quantifier Test Patterns
 # ============================================================================
 # This file contains ONLY the patterns needed for quantifier tests.
-# No overly-broad patterns like (*) or ((alpha))+ that match everything.
+# No overly-broad patterns like (()*) or ((alpha))+ that match everything.
 # ============================================================================
 
 # ============================================================================
-# GROUP 1: Plus Quantifier (+) Tests
+# GROUP 1: Plus Quantifier (()+) Tests
 # ============================================================================
 # (a)+ - matches one or more 'a's only
 [safe] (a)+
 
 # ============================================================================
-# GROUP 2: Star Quantifier (*) Tests
+# GROUP 2: Star Quantifier (()*) Tests
 # ============================================================================
 # (a)* - matches zero or more 'a's
 [safe] (a)*
 
 # ============================================================================
-# GROUP 3: Question Mark Quantifier (?) Tests
+# GROUP 3: Question Mark Quantifier (()?) Tests
 # ============================================================================
 # (a)? - matches zero or one 'a'
 [safe] (a)?
 
 # ============================================================================
-# GROUP 4: a((b))+ Tests  
+# GROUP 4: a((safe::b))+ Tests  
 # ============================================================================
 # a followed by one or more 'b's
-[safe] a((b))+
+[safe] a((safe::b))+
 
 # ============================================================================
-# GROUP 5: abc((b))+ Tests
+# GROUP 5: abc((safe::b))+ Tests
 # ============================================================================
 # abc followed by one or more 'b's
-[safe] abc((b))+
+[safe] abc((safe::b))+

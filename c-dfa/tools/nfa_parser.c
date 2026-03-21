@@ -460,6 +460,17 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
 // Quantifiers (*, +, ?) must follow a closing parenthesis ')'.
 // This prevents the common misunderstanding that * is a wildcard.
 static bool quantifier_is_valid(const char* pattern, int quant_pos, nfa_builder_context_t* ctx) {
+    // Check if quant_pos is inside quoted strings - if so, it's a literal, not a quantifier
+    int quotes = 0;
+    bool in_esc = false;
+    for (int i = 0; i < quant_pos; i++) {
+        if (in_esc) { in_esc = false; continue; }
+        if (pattern[i] == '\\') { in_esc = true; continue; }
+        if (pattern[i] == '"') quotes++;
+    }
+    if (quotes % 2 == 1) return false;  // Inside quotes - treat as literal, reject as quantifier
+
+    (void)ctx;
     // Scan backward for previous non-whitespace character
     int p = quant_pos - 1;
     while (p >= 0 && (pattern[p] == ' ' || pattern[p] == '\t')) p--;

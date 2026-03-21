@@ -169,19 +169,26 @@ bool nfa_validate_pattern_file(nfa_builder_context_t* ctx, const char* spec_file
             // Basic validation - count parentheses
             int open_parens = 0, close_parens = 0;
             bool in_escape = false;
+            bool in_quote = false;
             for (char* p = pattern_start; *p; p++) {
                 if (in_escape) { in_escape = false; continue; }
                 if (*p == '\\') { in_escape = true; continue; }
+                if (*p == '"') { in_quote = !in_quote; continue; }
+                // Skip quoted content for parenthesis counting only
+                if (in_quote) continue;
                 if (*p == '(') open_parens++;
                 else if (*p == ')') close_parens++;
+            }
 
-                // Quantifiers (*, +, ?) must follow ')'
+            // Quantifier check - always applies (even inside quotes)
+            // Quotes do NOT protect quantifiers - use \* for literal asterisk
+            for (char* p = pattern_start; *p; p++) {
+                if (*(p - 1) == '\\' && p > pattern_start) continue;  // escaped
                 if (*p == '*' || *p == '+' || *p == '?') {
-                    // Scan backward for previous non-whitespace char
                     char* q = p - 1;
                     while (q >= pattern_start && (*q == ' ' || *q == '\t')) q--;
                     if (q < pattern_start || *q != ')') {
-                        ERROR("'%c' quantifier must follow ')' at line %d - use (expr)%c", *p, line_num, *p);
+                        ERROR("'%c' quantifier must follow ')' at line %d - use \\%c for literal", *p, line_num, *p);
                         errors++;
                     }
                 }

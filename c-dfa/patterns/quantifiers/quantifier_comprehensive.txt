@@ -59,7 +59,7 @@
 [fragment:TQ::SPACE] space|tab
 
 # ============================================================================
-# GROUP 1: Plus Quantifier (+) - Fragment-based
+# GROUP 1: Plus Quantifier (()+) - Fragment-based
 # ============================================================================
 # Test: Fragment-based + quantifier (one or more)
 [safe:quantifier:group1] a((TQ::B))+
@@ -68,7 +68,7 @@
 [safe:quantifier:group1] abc((TQ::B))+
 
 # ============================================================================
-# GROUP 2: Star Quantifier (*) - Fragment-based
+# GROUP 2: Star Quantifier (()*) - Fragment-based
 # ============================================================================
 # Test: Fragment-based * quantifier (zero or more)
 [safe:quantifier:group2] a((TQ::B))*
@@ -76,7 +76,7 @@
 [safe:quantifier:group2] abc((TQ::B))*
 
 # ============================================================================
-# GROUP 3: Question Mark Quantifier (?) - Fragment-based
+# GROUP 3: Question Mark Quantifier (()?) - Fragment-based
 # ============================================================================
 # Test: Fragment-based ? quantifier (zero or one)
 [safe:quantifier:group3] git((TQ::B))?
@@ -87,7 +87,7 @@
 # GROUP 4: Literal + Quantifier
 # ============================================================================
 # Test: Literal character with + quantifier (one or more)
-# NOTE: Must use explicit grouping like (p)+ because a+ is ambiguous
+# NOTE: Must use explicit grouping like (p)+ because (a)+ is ambiguous
 [safe:quantifier:group4] (p)+
 [safe:quantifier:group4] (a)+
 [safe:quantifier:group4] xy(z)+
@@ -110,11 +110,11 @@
 # ============================================================================
 # GROUP 7: Wildcards
 # ============================================================================
-# Test: Wildcard patterns with .* and combined with literals
-[safe:quantifier:group7] (*)
-[safe:quantifier:group7] (.+)
-[safe:quantifier:group7] (*)\.txt
-[safe:quantifier:group7] file(*)
+# Test: Wildcard patterns with (.)* and combined with literals
+[safe:quantifier:group7] (()*)
+[safe:quantifier:group7] ((.)+)
+[safe:quantifier:group7] (()*)\.txt
+[safe:quantifier:group7] file(()*)
 
 # ============================================================================
 # GROUP 8: Edge Cases
@@ -144,7 +144,7 @@
 # ============================================================================
 # GROUP 11: Literal Plus Quantifier (Extended)
 # ============================================================================
-# Test: Extended p+ tests
+# Test: Extended (p)+ tests
 [safe:quantifier:group11] (p)+
 [safe:quantifier:group11] p(p)+
 [safe:quantifier:group11] pp(p)+
@@ -160,7 +160,7 @@
 [safe:quantifier:group12] ((ALPHA))+
 [safe:quantifier:group12] ((digit))+
 [safe:quantifier:group12] ((ALPHA))|((alpha))*
-[safe:quantifier:group12] ((ALPHA))|((alpha))|((digit))|_+
+[safe:quantifier:group12] ((ALPHA))|((alpha))|((digit))|(_)+
 
 # ============================================================================
 # GROUP 13: Nested Quantifiers

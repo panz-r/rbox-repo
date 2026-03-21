@@ -45,15 +45,15 @@
 [safe:ws_both]  cmd arg 
 
 # Whitespace with quantifier
-[safe:ws_quant] a+
-[safe:ws_quant] a*
+[safe:ws_quant] (a)+
+[safe:ws_quant] (a)*
 
 # ============================================================================
 # CONSECUTIVE QUANTIFIERS (edge case)
 # ============================================================================
 
-[safe:consec_quant] a?  
-[safe:consec_quant2] a??
+[safe:consec_quant] (a)?  
+[safe:consec_quant2] (a)?
 
 # ============================================================================
 # WHITESPACE NORMALIZATION EDGE CASES

@@ -39,8 +39,8 @@
 
 # Pattern 12 and 13: Test with quantifiers
 # These create more complex NFA structures
-[safe] a+b
-[safe] c+b
+[safe] (a)+b
+[safe] (c)+b
 
 # Pattern 14 and 15: Test with alternations
 [safe] (x|y)z

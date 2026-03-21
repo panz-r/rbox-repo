@@ -30,9 +30,9 @@
 [safe:ov3c] foo qux
 
 # Prefix with quantifier variations
-[safe:ov4a] test+
-[safe:ov4b] test*
-[safe:ov4c] test?
+[safe:ov4a] tes(t)+
+[safe:ov4b] tes(t)*
+[safe:ov4c] tes(t)?
 
 # Prefix with alternation
 [safe:ov5a] (a|b)c

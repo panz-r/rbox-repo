@@ -41,7 +41,7 @@
 [fragment:digit] 0|1|2|3|4|5|6|7|8|9
 
 # ============================================================================
-# GROUP 1: Plus Quantifier (+) - Fragment-based
+# GROUP 1: Plus Quantifier (()+) - Fragment-based
 # ============================================================================
 # Test: Fragment-based + quantifier (one or more)
 [safe] a((TQ::B))+
@@ -50,7 +50,7 @@
 [safe] abc((TQ::B))+
 
 # ============================================================================
-# GROUP 2: Star Quantifier (*) - Fragment-based
+# GROUP 2: Star Quantifier (()*) - Fragment-based
 # ============================================================================
 # Test: Fragment-based * quantifier (zero or more)
 [safe] a((TQ::B))*
@@ -58,7 +58,7 @@
 [safe] abc((TQ::B))*
 
 # ============================================================================
-# GROUP 3: Question Mark Quantifier (?) - Fragment-based
+# GROUP 3: Question Mark Quantifier (()?) - Fragment-based
 # ============================================================================
 # Test: Fragment-based ? quantifier (zero or one)
 [safe] git((TQ::B))?
@@ -97,12 +97,12 @@
 # ============================================================================
 # GROUP 7: Wildcards - Use caution category to avoid interfering with tests
 # ============================================================================
-# Test: Wildcard patterns with .* and combined with literals
+# Test: Wildcard patterns with (.)* and combined with literals
 # NOTE: Moved to caution category so they don't match everything in safe tests
-[caution:wildcard:test] (*)
-[caution:wildcard:test] (.+)
-[caution:wildcard:test] (*)\.txt
-[caution:wildcard:test] file(*)
+[caution:wildcard:test] (()*)
+[caution:wildcard:test] ((.)+)
+[caution:wildcard:test] (()*)\.txt
+[caution:wildcard:test] file(()*)
 
 # ============================================================================
 # GROUP 8: Edge Cases - Simple patterns only (no broad POSIX classes)
@@ -110,13 +110,13 @@
 # Test: Single chars and combined patterns
 [safe] a
 [safe] abc
-# NOTE: POSIX classes like [[:alpha:]]+ removed - they match anything and
+# NOTE: POSIX classes like [[:alpha:](])+ removed - they match anything and
 # interfere with specific quantifier tests
 
 # ============================================================================
 # GROUP 11: Literal Plus Quantifier (Extended)
 # ============================================================================
-# Test: Extended p+ tests
+# Test: Extended (p)+ tests
 [safe] (p)+
 [safe] p(p)+
 [safe] pp(p)+
@@ -130,7 +130,7 @@
 [caution:classes:test] ((ALPHA))+
 [caution:classes:test] ((digit))+
 [caution:classes:test] ((ALPHA))|((alpha))*
-[caution:classes:test] ((ALPHA))|((alpha))|((digit))|_+
+[caution:classes:test] ((ALPHA))|((alpha))|((digit))|(_)+
 
 # ============================================================================
 # GROUP 13: Nested Quantifiers

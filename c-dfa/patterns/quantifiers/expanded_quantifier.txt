@@ -12,7 +12,7 @@
 # ============================================================================
 # Pattern File for Quantifier Edge Cases Tests
 # ============================================================================
-# Tests: a+, aa+, abc+, test123+, xyz((abc))+, a?, a*
+# Tests: (a)+, a(a)+, ab(c)+, test12(3)+, xyz((abc))+, (a)?, (a)*
 # ============================================================================
 
 [fragment:a] a
@@ -21,6 +21,7 @@
 [fragment:x] x
 [fragment:y] y
 [fragment:z] z
+[fragment:abc] a|b|c
 
 # Single char quantifier patterns
 [safe:quantifier] (a)+

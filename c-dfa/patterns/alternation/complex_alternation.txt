@@ -55,4 +55,4 @@
 # Complex mixed
 [safe:altmix1] (a|b|c)+
 [safe:altmix2] (a|ab|abc)+
-[safe:altmix3] (a+|b+|c+)
+[safe:altmix3] ((a)+|(b)+|(c)+)
