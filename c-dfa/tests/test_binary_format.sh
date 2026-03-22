@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_binary_format.sh - Edge case tests for v8 binary format
+# test_binary_format.sh - Edge case tests for v9 binary format
 # Tests: compact states, char boundaries, packed encoding, version, identifier
 set -e
 
@@ -50,7 +50,7 @@ CEEOF
     "$BUILD/test_eval_bin"
 }
 
-echo "Binary Format Tests (v8)"
+echo "Binary Format Tests (v9)"
 echo "========================"
 echo ""
 
@@ -94,14 +94,17 @@ cat > "$BUILD/test_id.c" << 'CEOF'
 #include "dfa.h"
 #include "dfa_format.h"
 int main(void) {
-    // Build a minimal valid DFA with identifier "test_id"
+    // Build a minimal valid DFA with identifier "test_id" (V9 format)
     int enc = dfa_make_enc(DFA_W2, 0, 0);
     const char* id = "test_id";
     int id_len = strlen(id);
     size_t hs = DFA_HEADER_SIZE(enc, id_len);
     int ss = DFA_STATE_SIZE(enc);
     int css = DFA_STATE_SIZE_COMPACT(enc);
-    size_t total = hs + ss + css;
+    // V9: Add EOS section (empty)
+    size_t eos_off = hs + ss + css;
+    size_t eos_size = 4;  // Just header with 0 counts
+    size_t total = eos_off + eos_size;
     
     uint8_t buf[256];
     memset(buf, 0, sizeof(buf));
@@ -112,12 +115,17 @@ int main(void) {
     dfa_fmt_set_id_len(buf, id_len);
     dfa_fmt_set_initial_state(buf, enc, hs);
     dfa_fmt_set_meta_offset(buf, enc, 0);
+    dfa_fmt_set_eos_offset(buf, enc, (uint32_t)eos_off);  // V9: EOS section offset
     memcpy(buf + hs - id_len, id, id_len);
     
     // State 0: full, accepting
     dfa_fmt_set_st_tc(buf, hs, enc, 0);
     dfa_fmt_set_st_flags(buf, hs, enc, DFA_STATE_ACCEPTING);
-    dfa_fmt_set_st_eos_t(buf, hs, enc, 0);
+    // V9: EOS data is in separate section, not in state header
+    
+    // Initialize EOS section (empty)
+    dfa_fmt_set_eos_target_count(buf + eos_off, 0);
+    dfa_fmt_set_eos_marker_count(buf + eos_off, 0);
     
     // Test validation
     int ok1 = dfa_eval_validate_id(buf, total, "test_id");

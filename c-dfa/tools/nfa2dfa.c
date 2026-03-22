@@ -28,6 +28,7 @@ void nfa_init(void);
 
 static char pattern_identifier[256] = "";
 static bool flag_verbose = false;
+static bool flag_chain = false;  /* Enable chain encoding detection */
 
 #define DEBUG_PRINT(...) do { if (flag_verbose) fprintf(stderr, __VA_ARGS__); } while (0)
 
@@ -971,6 +972,151 @@ void flatten_dfa(nfa2dfa_context_t* ctx) {
 
 typedef struct { uint8_t type, d1, d2, d3; int target_state_index; } intermediate_rule_t;
 
+/* ============================================================================
+ * Chain Encoding Detection
+ *
+ * Detects states where multiple outgoing transitions form chains that can be
+ * compressed into multi-character literal sequences.
+ *
+ * Example: State S has 'l'→T1 and 's'→T2 where:
+ *   T1 has 'o'→T1a, T1a has 'g'→accepting  (chain: "log")
+ *   T2 has 't'→T2a, T2a has 'a'→T2b, ...    (chain: "status")
+ *
+ * Instead of 6 intermediate states, we encode 2 chains from S.
+ * ============================================================================ */
+
+#define MAX_CHAIN_LEN 64
+#define MAX_CHAINS_PER_STATE 256
+
+typedef struct {
+    uint8_t bytes[MAX_CHAIN_LEN];
+    uint16_t length;
+    int final_target_idx;  // DFA state index after chain completes
+    uint32_t markers;      // Marker offset (0 = none)
+} chain_entry_t;
+
+/**
+ * Follow a chain of single-literal transitions from a given state.
+ * Returns the chain length and records the bytes and final target.
+ *
+ * A chain is a sequence of states where each state has exactly one
+ * outgoing literal transition (0-255).
+ *
+ * @param start_char  The first character that starts the chain
+ * @param start_target  The DFA state index after consuming start_char
+ * @param out_chain  Output: chain entry with bytes, length, final target
+ * @return true if a chain of length >= 2 was found
+ */
+static bool follow_chain(int start_char, int start_target, chain_entry_t* out_chain) {
+    if (start_target < 0 || start_target >= dfa_state_count) return false;
+    
+    out_chain->bytes[0] = (uint8_t)start_char;
+    out_chain->length = 1;
+    out_chain->markers = 0;
+    
+    int cur = start_target;
+    
+    while (out_chain->length < MAX_CHAIN_LEN) {
+        // Count outgoing literal transitions from cur
+        int outgoing_count = 0;
+        int outgoing_char = -1;
+        int outgoing_target = -1;
+        
+        for (int c = 0; c < 256; c++) {
+            if (dfa[cur]->transitions[c] >= 0) {
+                outgoing_count++;
+                outgoing_char = c;
+                outgoing_target = dfa[cur]->transitions[c];
+            }
+        }
+        
+        // Chain continues only if exactly 1 outgoing transition
+        // Also stop if state is accepting (has category) or has EOS target
+        bool is_accepting = (dfa[cur]->flags & DFA_STATE_ACCEPTING) != 0;
+        bool has_eos = (dfa[cur]->eos_target != 0);
+        
+        if (outgoing_count != 1 || is_accepting || has_eos) {
+            // Chain ends here
+            out_chain->final_target_idx = cur;
+            return out_chain->length >= 2;
+        }
+        
+        // Continue the chain
+        out_chain->bytes[out_chain->length] = (uint8_t)outgoing_char;
+        out_chain->length++;
+        cur = outgoing_target;
+    }
+    
+    // Reached max chain length
+    out_chain->final_target_idx = cur;
+    return out_chain->length >= 2;
+}
+
+/**
+ * Detect chains for a state and compute potential savings.
+ *
+ * @param state_idx  DFA state index
+ * @param chains  Output array for detected chains
+ * @param max_chains  Maximum chains to detect
+ * @param total_savings  Output: total bytes saved by using chain encoding
+ * @return Number of chains detected (0 if chain encoding not beneficial)
+ */
+static int detect_state_chains(int state_idx, chain_entry_t* chains, int max_chains,
+                                int* total_savings, int enc_ow) {
+    if (state_idx < 0 || state_idx >= dfa_state_count) return 0;
+    
+    // Skip states with markers (chain encoding doesn't support markers yet)
+    if (dfa[state_idx]->eos_marker_offset != 0) return 0;
+    for (int c = 0; c < 256; c++) {
+        if (dfa[state_idx]->marker_offsets[c] != 0) return 0;
+    }
+    
+    // Count outgoing literal transitions
+    int outgoing[256];
+    int n_outgoing = 0;
+    for (int c = 0; c < 256; c++) {
+        if (dfa[state_idx]->transitions[c] >= 0) {
+            outgoing[n_outgoing++] = c;
+        }
+    }
+    
+    // Need at least 2 outgoing transitions to benefit from chains
+    if (n_outgoing < 2) return 0;
+    
+    // Try to form chains for each outgoing transition
+    int n_chains = 0;
+    int savings = 0;
+    
+    for (int i = 0; i < n_outgoing && n_chains < max_chains; i++) {
+        int ch = outgoing[i];
+        int target = dfa[state_idx]->transitions[ch];
+        
+        chain_entry_t chain;
+        if (follow_chain(ch, target, &chain)) {
+            // Calculate savings:
+            // Normal: 1 state header per intermediate state + 1 rule per state
+            //   Each state: state_size (CW + OW + 2 + PW + OW + 4 + PW) = ~12-20 bytes
+            //   Each rule: rule_size (8 + OW) = ~10-12 bytes
+            // Chain: 2 + chain_len + OW + 4 bytes per chain entry
+            
+            int intermediate_states = chain.length - 1;  // States saved
+            int state_size = DFA_STATE_SIZE(DFA_W4);  // Worst case
+            int rule_size = DFA_RULE_SIZE(DFA_W4);
+            int normal_cost = intermediate_states * (state_size + rule_size);
+            int chain_cost = (int)DFA_CHAIN_ENTRY_SIZE(DFA_W4, chain.length);
+            
+            // Only use chain if it actually saves space
+            if (normal_cost > chain_cost) {
+                chains[n_chains++] = chain;
+                savings += (normal_cost - chain_cost);
+            }
+        }
+    }
+    
+    if (total_savings) *total_savings = savings;
+    return (n_chains >= 2) ? n_chains : 0;  // Need at least 2 chains to be useful
+}
+
 int compress_state_rules(int sidx, intermediate_rule_t* out) {
     int rc = 0, ct = -1, sc = -1;
     // Compress only literal byte transitions (0-255)
@@ -1234,6 +1380,16 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     size_t* packed_data_offset = malloc(dfa_state_count * sizeof(size_t));
     size_t packed_data_used = 0;
     
+    // Chain encoding data
+    chain_entry_t* state_chains = NULL;
+    int* chain_counts = NULL;
+    size_t* chain_sizes = NULL;
+    if (flag_chain) {
+        state_chains = calloc(dfa_state_count * MAX_CHAINS_PER_STATE, sizeof(chain_entry_t));
+        chain_counts = calloc(dfa_state_count, sizeof(int));
+        chain_sizes = calloc(dfa_state_count, sizeof(size_t));
+    }
+    
     for (int i = 0; i < dfa_state_count; i++) {
         if (rule_counts[i] == 0) {
             n_entries[i] = 0;
@@ -1261,6 +1417,70 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
             n_entries[i] = rule_counts[i];
             continue;
         }
+        
+        // Count actual transitions (including ranges)
+        int actual_transitions = 0;
+        for (int r = 0; r < rule_counts[i]; r++) {
+            intermediate_rule_t* rule = &all_rules[i * MAX_SYMBOLS + r];
+            if (rule->type == DFA_RULE_LITERAL) actual_transitions++;
+            else if (rule->type == DFA_RULE_RANGE) actual_transitions += (rule->d2 - rule->d1 + 1);
+            else if (rule->type == DFA_RULE_LITERAL_2) actual_transitions += 2;
+            else if (rule->type == DFA_RULE_LITERAL_3) actual_transitions += 3;
+            else if (rule->type == DFA_RULE_RANGE_LITERAL) actual_transitions += (rule->d2 - rule->d1 + 2);
+            else if (rule->type == DFA_RULE_DEFAULT) actual_transitions = 256;
+            else if (rule->type == DFA_RULE_NOT_LITERAL) actual_transitions += 255;
+            else if (rule->type == DFA_RULE_NOT_RANGE) actual_transitions += (256 - (rule->d2 - rule->d1 + 1));
+        }
+        
+        // Use bitmask encoding for states with many transitions (character classes)
+        // Bitmask is 1 + 32 + OW + 4 = ~39 bytes per unique target
+        // Packed is ~3-4 bytes per RULE (not per transition - ranges are compact!)
+        // So bitmask is only better when we have MANY rules with few unique targets
+        int bitmask_rule_size = 1 + 32 + dfa_owb(enc) + 4;
+        
+        // Group rules by unique target first
+        int unique_targets = 0;
+        int target_list[MAX_SYMBOLS];
+        for (int r = 0; r < rule_counts[i]; r++) {
+            int tidx = all_rules[i * MAX_SYMBOLS + r].target_state_index;
+            bool found = false;
+            for (int t = 0; t < unique_targets; t++) {
+                if (target_list[t] == tidx) { found = true; break; }
+            }
+            if (!found) target_list[unique_targets++] = tidx;
+        }
+        
+        // Calculate packed size based on actual rules (not transitions)
+        size_t pbs_actual = 0;
+        for (int r = 0; r < rule_counts[i]; r++) {
+            intermediate_rule_t* rule = &all_rules[i * MAX_SYMBOLS + r];
+            if (rule->type == DFA_RULE_LITERAL || rule->type == DFA_RULE_NOT_LITERAL) {
+                pbs_actual += lit_size;
+            } else if (rule->type == DFA_RULE_RANGE || rule->type == DFA_RULE_NOT_RANGE) {
+                pbs_actual += rng_size;
+            } else if (rule->type == DFA_RULE_LITERAL_2) {
+                pbs_actual += 2 * lit_size;
+            } else if (rule->type == DFA_RULE_LITERAL_3) {
+                pbs_actual += 3 * lit_size;
+            } else if (rule->type == DFA_RULE_RANGE_LITERAL) {
+                pbs_actual += rng_size + lit_size;
+            } else if (rule->type == DFA_RULE_DEFAULT) {
+                pbs_actual += lit_size;  // Default is one entry
+            }
+        }
+        
+        size_t bms = (size_t)unique_targets * bitmask_rule_size;
+        
+        // Only use bitmask if it's actually smaller than packed
+        if (bms < pbs_actual) {
+            rule_encoding[i] = DFA_RULE_ENC_BITMASK;
+            packed_sizes[i] = 0;
+            packed_data_offset[i] = 0;
+            n_entries[i] = unique_targets;
+            // Store unique target count for bitmask rules
+            rule_counts[i] = unique_targets;
+            continue;
+        }
         int ne = compute_packed_entries(i, &all_rules[i * MAX_SYMBOLS],
                                          rule_counts[i], tmp_entries, MAX_SYMBOLS);
         // Compute exact byte size matching how entries will be written
@@ -1283,6 +1503,49 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         packed_sizes[i] = pbs;
         packed_data_offset[i] = packed_data_used;
         packed_data_used += pbs;
+    }
+    
+    // Chain encoding detection (if enabled)
+    // Override packed encoding with chain encoding for states that benefit
+    int chain_states = 0;
+    size_t chain_total_savings = 0;
+    if (flag_chain) {
+        for (int i = 0; i < dfa_state_count; i++) {
+            // Only consider states currently set to packed encoding
+            if (rule_encoding[i] != DFA_RULE_ENC_PACKED) continue;
+            if (rule_counts[i] < 2) continue;  // Need at least 2 transitions
+            
+            int savings = 0;
+            int nc = detect_state_chains(i, &state_chains[i * MAX_CHAINS_PER_STATE],
+                                          MAX_CHAINS_PER_STATE, &savings, dfa_owb(enc));
+            if (nc >= 2) {
+                // Compute actual chain data size
+                size_t csz = 0;
+                for (int c = 0; c < nc; c++) {
+                    csz += DFA_CHAIN_ENTRY_SIZE(enc, state_chains[i * MAX_CHAINS_PER_STATE + c].length);
+                }
+                csz += DFA_CHAIN_DEFAULT_SIZE(enc);  // Default target
+                
+                // Compare chain size vs packed size - only use chain if actually smaller
+                if (csz < packed_sizes[i]) {
+                    chain_counts[i] = nc;
+                    rule_encoding[i] = DFA_RULE_ENC_CHAIN;
+                    n_entries[i] = nc;
+                    chain_sizes[i] = csz;
+                    
+                    size_t saved = packed_sizes[i] - csz;
+                    packed_sizes[i] = 0;  // Not using packed anymore
+                    packed_data_offset[i] = 0;
+                    
+                    chain_states++;
+                    chain_total_savings += saved;
+                }
+            }
+        }
+        if (flag_verbose && chain_states > 0) {
+            fprintf(stderr, "Chain encoding: %d states, %zu bytes saved\n",
+                    chain_states, chain_total_savings);
+        }
     }
     
     // Compute state offsets with cache-line alignment
@@ -1337,6 +1600,19 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
             cur += (size_t)rule_counts[i] * (size_t)rule_size;
             continue;
         }
+        if (rule_encoding[i] == DFA_RULE_ENC_BITMASK) {
+            // Bitmask encoding: one bitmask rule per target
+            int bms = DFA_RULE_BITMASK_SIZE(enc);
+            rule_offset[i] = cur;
+            cur += (size_t)rule_counts[i] * bms;
+            continue;
+        }
+        if (rule_encoding[i] == DFA_RULE_ENC_CHAIN) {
+            // Chain encoding: variable-size chain entries + default target
+            rule_offset[i] = cur;
+            cur += chain_sizes[i];
+            continue;
+        }
         if (packed_sizes[i] == 0) {
             rule_offset[i] = cur;
             continue;
@@ -1358,7 +1634,53 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
             cur += packed_sizes[i];
         }
     }
-    size_t metadata_offset = cur;
+    
+    // Collect EOS data for separate EOS section (V9)
+    // Each entry: state_offset + target_or_marker
+    typedef struct { uint32_t state_off; uint32_t value; } eos_entry_t;
+    eos_entry_t* eos_targets = malloc(dfa_state_count * sizeof(eos_entry_t));
+    eos_entry_t* eos_markers = malloc(dfa_state_count * sizeof(eos_entry_t));
+    int eos_target_count = 0;
+    int eos_marker_count = 0;
+    
+    for (int i = 0; i < dfa_state_count; i++) {
+        if (dfa[i]->eos_target > 0 && dfa[i]->eos_target < dfa_state_count) {
+            eos_targets[eos_target_count].state_off = (uint32_t)state_offset[i];
+            eos_targets[eos_target_count].value = (uint32_t)state_offset[dfa[i]->eos_target];
+            eos_target_count++;
+        }
+        if (dfa[i]->eos_marker_offset != 0) {
+            eos_markers[eos_marker_count].state_off = (uint32_t)state_offset[i];
+            eos_markers[eos_marker_count].value = dfa[i]->eos_marker_offset;
+            eos_marker_count++;
+        }
+    }
+    
+    // Sort EOS entries by state_off (simple insertion sort - entries are mostly sorted)
+    for (int i = 1; i < eos_target_count; i++) {
+        eos_entry_t tmp = eos_targets[i];
+        int j = i - 1;
+        while (j >= 0 && eos_targets[j].state_off > tmp.state_off) {
+            eos_targets[j + 1] = eos_targets[j];
+            j--;
+        }
+        eos_targets[j + 1] = tmp;
+    }
+    for (int i = 1; i < eos_marker_count; i++) {
+        eos_entry_t tmp = eos_markers[i];
+        int j = i - 1;
+        while (j >= 0 && eos_markers[j].state_off > tmp.state_off) {
+            eos_markers[j + 1] = eos_markers[j];
+            j--;
+        }
+        eos_markers[j + 1] = tmp;
+    }
+    
+    // Compute EOS section size
+    size_t eos_section_size = DFA_EOS_SECTION_SIZE(eos_target_count, eos_marker_count, enc);
+    size_t eos_offset = cur;  // EOS section starts after rules
+    
+    size_t metadata_offset = cur + eos_section_size;
     size_t total_size = metadata_offset + marker_data_size;
     
     /* ====================================================================
@@ -1376,6 +1698,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     dfa_fmt_set_id_len(raw, (uint8_t)id_len);
     dfa_fmt_set_initial_state(raw, enc, (uint32_t)state_offset[0]);
     dfa_fmt_set_meta_offset(raw, enc, 0);
+    dfa_fmt_set_eos_offset(raw, enc, (uint32_t)eos_offset);  // V9: EOS section offset
     memcpy(raw + DFA_HEADER_SIZE(enc, (uint8_t)id_len) - id_len, pattern_identifier, id_len);
     
     // States (compact for empty, full for active)
@@ -1388,22 +1711,18 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
             DFA_SET_RULE_ENC(flags, rule_encoding[i]);
             dfa_fmt_set_st_flags(raw, so, enc, flags);
             dfa_fmt_set_st_pid(raw, so, enc, dfa[i]->accepting_pattern_id);
-            dfa_fmt_set_st_eos_m(raw, so, enc, 0);
-            dfa_fmt_set_st_eos_t(raw, so, enc,
-                dfa[i]->eos_target ? (uint32_t)state_offset[dfa[i]->eos_target] : 0);
+            /* EOS data moved to separate section in V9 */
             dfa_fmt_set_st_first(raw, so, enc, (uint16_t)n_entries[i]);
         } else {
             int cof = dfa_st_off_flags_c(enc);
             dfa_w16(raw, so + cof, dfa[i]->flags);
             dfa_wwp(raw, so + cof + 2, enc, dfa[i]->accepting_pattern_id);
-            dfa_wow(raw, so + cof + 2 + dfa_pwb(enc), enc,
-                dfa[i]->eos_target ? (uint32_t)state_offset[dfa[i]->eos_target] : 0);
-            dfa_w32(raw, so + cof + 2 + dfa_pwb(enc) + dfa_owb(enc), 0);
-            dfa_wwp(raw, so + cof + 2 + dfa_pwb(enc) + dfa_owb(enc) + 4, enc, 0);
+            /* EOS data moved to separate section in V9 */
+            dfa_wwp(raw, so + cof + 2 + dfa_pwb(enc), enc, 0);  /* first */
         }
     }
     
-    // Rules (packed or normal per state)
+    // Rules (packed, chain, or normal per state)
     for (int i = 0; i < dfa_state_count; i++) {
         if (rule_counts[i] == 0) continue;
         if (rule_encoding[i] == DFA_RULE_ENC_PACKED) {
@@ -1432,6 +1751,91 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
                     }
                 }
             }
+        } else if (rule_encoding[i] == DFA_RULE_ENC_BITMASK) {
+            // Bitmask encoding: group rules by target, write one bitmask per unique target
+            int bms = DFA_RULE_BITMASK_SIZE(enc);
+            
+            // Collect unique targets and their bitmasks
+            int unique_targets = 0;
+            int target_list[MAX_SYMBOLS];
+            uint8_t target_masks[MAX_SYMBOLS][32];
+            memset(target_masks, 0, sizeof(target_masks));
+            
+            for (int r = 0; r < rule_counts[i]; r++) {
+                intermediate_rule_t* rule = &all_rules[i * MAX_SYMBOLS + r];
+                int tidx = rule->target_state_index;
+                
+                // Find or create target entry
+                int target_idx = -1;
+                for (int t = 0; t < unique_targets; t++) {
+                    if (target_list[t] == tidx) { target_idx = t; break; }
+                }
+                if (target_idx < 0) {
+                    target_idx = unique_targets++;
+                    target_list[target_idx] = tidx;
+                }
+                
+                // Add characters to bitmask
+                uint8_t* mask = target_masks[target_idx];
+                if (rule->type == DFA_RULE_LITERAL) {
+                    mask[rule->d1 / 8] |= (1 << (rule->d1 % 8));
+                } else if (rule->type == DFA_RULE_RANGE) {
+                    for (int ch = rule->d1; ch <= rule->d2; ch++) {
+                        mask[ch / 8] |= (1 << (ch % 8));
+                    }
+                } else if (rule->type == DFA_RULE_LITERAL_2) {
+                    mask[rule->d1 / 8] |= (1 << (rule->d1 % 8));
+                    mask[rule->d2 / 8] |= (1 << (rule->d2 % 8));
+                } else if (rule->type == DFA_RULE_LITERAL_3) {
+                    mask[rule->d1 / 8] |= (1 << (rule->d1 % 8));
+                    mask[rule->d2 / 8] |= (1 << (rule->d2 % 8));
+                    mask[rule->d3 / 8] |= (1 << (rule->d3 % 8));
+                } else if (rule->type == DFA_RULE_RANGE_LITERAL) {
+                    for (int ch = rule->d1; ch <= rule->d2; ch++) {
+                        mask[ch / 8] |= (1 << (ch % 8));
+                    }
+                    mask[rule->d3 / 8] |= (1 << (rule->d3 % 8));
+                } else if (rule->type == DFA_RULE_DEFAULT) {
+                    memset(mask, 0xFF, 32);
+                } else if (rule->type == DFA_RULE_NOT_LITERAL) {
+                    memset(mask, 0xFF, 32);
+                    mask[rule->d1 / 8] &= ~(1 << (rule->d1 % 8));
+                } else if (rule->type == DFA_RULE_NOT_RANGE) {
+                    memset(mask, 0xFF, 32);
+                    for (int ch = rule->d1; ch <= rule->d2; ch++) {
+                        mask[ch / 8] &= ~(1 << (ch % 8));
+                    }
+                }
+            }
+            
+            // Write bitmask rules
+            for (int t = 0; t < unique_targets; t++) {
+                size_t ro = rule_offset[i] + (size_t)t * bms;
+                int tidx = target_list[t];
+                if (tidx < 0 || tidx >= dfa_state_count) {
+                    FATAL("State %d bitmask target %d out of bounds", i, tidx);
+                    exit(EXIT_FAILURE);
+                }
+                
+                dfa_fmt_set_rl_type(raw, ro, DFA_RULE_BITMASK);
+                memcpy(raw + ro + DFA_BM_OFF_MASK, target_masks[t], 32);
+                dfa_wow(raw, ro + DFA_BM_OFF_TARGET, enc, (uint32_t)state_offset[tidx]);
+                dfa_w32(raw, ro + DFA_BM_OFF_TARGET + dfa_owb(enc), 0);  // markers = 0
+            }
+        } else if (rule_encoding[i] == DFA_RULE_ENC_CHAIN && flag_chain) {
+            // Chain encoding: write chain entries followed by default target
+            size_t off = 0;
+            int nc = chain_counts[i];
+            for (int c = 0; c < nc; c++) {
+                chain_entry_t* ce = &state_chains[i * MAX_CHAINS_PER_STATE + c];
+                uint32_t target = (uint32_t)state_offset[ce->final_target_idx];
+                dfa_chain_write(raw + rule_offset[i] + off,
+                               ce->bytes, ce->length, enc, target, ce->markers);
+                off += dfa_chain_entry_size(raw + rule_offset[i] + off, enc);
+            }
+            // Write default target (0 = no match for unmatched chars)
+            // For now, set to 0 (fail if no chain matches)
+            dfa_chain_write_default(raw + rule_offset[i] + off, enc, 0);
         } else {
             for (int r = 0; r < rule_counts[i]; r++) {
                 size_t ro = rule_offset[i] + (size_t)r * rule_size;
@@ -1450,6 +1854,29 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         }
     }
     free(write_entries);
+    
+    // EOS Section (V9) - write sparse EOS data
+    {
+        uint8_t* eos_base = raw + eos_offset;
+        dfa_fmt_set_eos_target_count(eos_base, (uint16_t)eos_target_count);
+        dfa_fmt_set_eos_marker_count(eos_base, (uint16_t)eos_marker_count);
+        
+        // Write EOS targets
+        uint8_t* eos_tgt = eos_base + DFA_EOS_HEADER_SIZE;
+        for (int i = 0; i < eos_target_count; i++) {
+            dfa_fmt_set_eos_target_entry(eos_tgt, eos_targets[i].state_off, eos_targets[i].value, enc);
+            eos_tgt += DFA_EOS_TARGET_ENTRY_SIZE(enc);
+        }
+        
+        // Write EOS markers
+        uint8_t* eos_mkr = eos_tgt;
+        for (int i = 0; i < eos_marker_count; i++) {
+            dfa_fmt_set_eos_marker_entry(eos_mkr, eos_markers[i].state_off, eos_markers[i].value, enc);
+            eos_mkr += DFA_EOS_MARKER_ENTRY_SIZE(enc);
+        }
+    }
+    free(eos_targets);
+    free(eos_markers);
     
     // Markers
     if (marker_list_count > 0) {
@@ -1493,6 +1920,9 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     fclose(file); free(raw); free(all_rules);
     free(rule_counts); free(state_offset); free(rule_offset);
     free(rule_encoding); free(n_entries); free(packed_sizes); free(tmp_entries);
+    if (flag_chain) {
+        free(state_chains); free(chain_counts); free(chain_sizes);
+    }
 }
 
 void load_nfa_file(nfa2dfa_context_t* ctx, const char* filename) {
@@ -1618,6 +2048,7 @@ int main(int argc, char* argv[]) {
             else if (strcmp(argv[i], "--minimize-brzozowski") == 0) dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
             else if (strcmp(argv[i], "--minimize-sat") == 0) dfa_minimize_set_algorithm(DFA_MIN_SAT);
             else if (strcmp(argv[i], "--compress-sat") == 0) compress_sat = true;
+            else if (strcmp(argv[i], "--chain") == 0) flag_chain = true;
         } else {
             if (input_file == NULL) input_file = argv[i];
             else output_file = argv[i];

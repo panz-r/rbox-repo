@@ -90,12 +90,18 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint32_t init = dfa_fmt_initial_state(d);
     if ((size_t)init + DFA_STATE_SIZE_TC(enc, 0) > sz) return false;  // min state size
 
+    /* Get EOS section pointer (V9+) */
+    uint32_t eos_off = dfa_fmt_eos_offset(d);
+    const uint8_t* eos_section = (eos_off > 0 && eos_off < sz) ? d + eos_off : NULL;
+
     /* Empty input: check initial state and EOS */
     if (!len) {
         uint16_t tc0 = dfa_fmt_st_tc(d, init, enc);
         uint16_t fl = dfa_fmt_st_flags_tc(d, init, enc, tc0);
         uint8_t cat = DFA_GET_CATEGORY_MASK(fl);
-        uint32_t eos = dfa_fmt_st_eos_t_tc(d, init, enc, tc0);
+        /* Look up EOS target from EOS section */
+        uint16_t init_state_idx = 0;  /* Initial state is state 0 */
+        uint32_t eos = dfa_fmt_eos_lookup_target(eos_section, enc, init_state_idx);
         if (eos) {
             uint16_t eosc = dfa_fmt_st_tc(d, eos, enc);
             if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz)
@@ -167,6 +173,52 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                     nxt = tgt; found = true; break;
                 }
             }
+        } else if (renc == DFA_RULE_ENC_CHAIN) {
+            // Chain encoding: match multi-character literal sequences
+            // Format: [chain_0]...[chain_{n-1}][default_target: OW]
+            // Each chain: [len:2][bytes...][target:OW][markers:4]
+            uint16_t n_chains = dfa_fmt_st_first_tc(d, cur, enc, tc);
+            const uint8_t* chain = d + rl;
+            for (uint16_t i = 0; i < n_chains && !found; i++) {
+                if ((size_t)(chain - d) >= sz) break;
+                uint16_t chain_len = dfa_chain_len(chain);
+                const uint8_t* chain_bytes = dfa_chain_bytes(chain);
+                
+                // Check bounds
+                if ((size_t)(chain + DFA_CHAIN_HEADER_SIZE + chain_len + DFA_CHAIN_TRAILER_SIZE(enc) - d) > sz) break;
+                
+                // Check if remaining input matches chain
+                if (pos + chain_len > len) {
+                    chain = dfa_chain_next(chain, enc);
+                    continue;
+                }
+                
+                bool chain_match = true;
+                for (uint16_t j = 0; j < chain_len; j++) {
+                    if ((unsigned char)in[pos + j] != chain_bytes[j]) {
+                        chain_match = false;
+                        break;
+                    }
+                }
+                
+                if (chain_match) {
+                    uint32_t tgt = dfa_chain_target(chain, enc);
+                    if (tgt >= sz) return false;
+                    pos += chain_len - 1;  // -1 because pos++ happens after loop
+                    nxt = tgt;
+                    found = true;
+                    break;
+                }
+                chain = dfa_chain_next(chain, enc);
+            }
+            // If no chain matched, check for default target
+            if (!found) {
+                uint32_t default_tgt = dfa_chain_default_target(chain, enc);
+                if (default_tgt > 0 && default_tgt < sz) {
+                    nxt = default_tgt;
+                    found = true;
+                }
+            }
         } else {
             // Normal fixed-stride rules
             for (uint16_t i = 0; i < tc; i++) {
@@ -200,7 +252,8 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint8_t src_cat = DFA_GET_CATEGORY_MASK(src_fl);
     uint16_t wpid = dfa_fmt_st_pid_tc(d, cur, enc, cur_tc);
 
-    uint32_t eos = dfa_fmt_st_eos_t_tc(d, cur, enc, cur_tc);
+    /* Look up EOS target from EOS section */
+    uint32_t eos = dfa_fmt_eos_lookup_target(eos_section, enc, cur);
     if (eos) {
         uint16_t eosc = dfa_fmt_st_tc(d, eos, enc);
         if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz) {
@@ -250,6 +303,20 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                             break;
                         }
                     }
+                } else if (frenc == DFA_RULE_ENC_CHAIN) {
+                    // Chain encoding: find which chain was taken
+                    uint16_t n_chains = dfa_fmt_st_first_tc(d, fo, enc, ftc);
+                    const uint8_t* chain = d + frl;
+                    for (uint16_t i = 0; i < n_chains; i++) {
+                        if ((size_t)(chain - d) >= sz) break;
+                        if (dfa_chain_target(chain, enc) == to) {
+                            uint32_t mk = dfa_chain_markers(chain, enc);
+                            if (mk && meta && mk+4 <= sz)
+                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res);
+                            break;
+                        }
+                        chain = dfa_chain_next(chain, enc);
+                    }
                 } else {
                     // Normal encoding: iterate fixed-stride rules
                     for (uint16_t i = 0; i < ftc; i++) {
@@ -263,7 +330,8 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                     }
                 }
             }
-            uint32_t em = dfa_fmt_st_eos_m_tc(d, cur, enc, cur_tc);
+            /* Look up EOS marker from EOS section */
+            uint32_t em = dfa_fmt_eos_lookup_marker(eos_section, enc, cur);
             if (em && meta && em+4 <= sz)
                 proc_markers(d, sz, em, pos, wpid, cat, stk, &sd, res);
         }

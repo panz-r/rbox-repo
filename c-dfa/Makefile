@@ -41,7 +41,7 @@ CADICAL_DIR = vendor/cadical
 CADICAL_LIB = $(CADICAL_DIR)/build/libcadical.a
 CADICAL_INC = -I$(CADICAL_DIR)/src
 
-TOOLS = $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TOOLS_DIR)/dfa_eval_wrapper $(TOOLS_DIR)/dfa2c_array
+TOOLS = $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TOOLS_DIR)/dfa_eval_wrapper $(TOOLS_DIR)/dfa2c_array $(TOOLS_DIR)/dfa_chain_stats
 TEST = dfa_test
 
 # NFA builder module objects (for both standalone and nfa2dfa_advanced)
@@ -139,6 +139,9 @@ $(TOOLS_DIR)/dfa_eval_wrapper: $(TOOLS_DIR)/dfa_eval_wrapper.c $(SRC_DIR)/dfa_ev
 # DFA binary to C array converter
 $(TOOLS_DIR)/dfa2c_array: $(TOOLS_DIR)/dfa2c_array.c $(INCLUDE_DIR)/dfa_errors.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/dfa2c_array.c $(LDFLAGS)
+
+$(TOOLS_DIR)/dfa_chain_stats: $(TOOLS_DIR)/dfa_chain_stats.c $(INCLUDE_DIR)/dfa_types.h $(INCLUDE_DIR)/dfa_format.h
+	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/dfa_chain_stats.c $(LDFLAGS)
 
 # CLI version of nfa2dfa.o (includes main)
 $(TOOLS_DIR)/nfa2dfa_cli.o: $(TOOLS_DIR)/nfa2dfa.c $(INCLUDE_DIR)/*.h
