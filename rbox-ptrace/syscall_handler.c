@@ -170,7 +170,12 @@ static int consume_allowance(pid_t parent_pid, const char *subcommand) {
     return result;
 }
 
-static const char * strip_wrapper_prefix(const char *full_command) {
+/* Returns a pointer to the first non‑whitespace character after a known
+ * prefix wrapper (e.g., "timeout "), or NULL if the string does not start
+ * with any known wrapper. It strips only the outermost wrapper, not all
+ * nested wrappers. The remainder may itself start with another wrapper,
+ * which will be handled in the next execve. */
+static const char * strip_outermost_wrapper_prefix(const char *full_command) {
     if (!full_command) return NULL;
     const size_t full_command_len = strlen(full_command);
     /* Try each known wrapper */
@@ -219,6 +224,7 @@ static int consume_wrapper_chain(pid_t parent_pid, const char *subcommand) {
     for (int i = 0; i < MAX_WRAPPER_CHAINS; i++) {
         if (g_wrapper_chains[i].parent_pid == 0) {
             continue;  /* Empty slot */
+            /* this is so stupid, just find the allowances from the parent pid entry */
         }
 
         /* Check timeout - discard chains older than 10 minutes */
@@ -237,41 +243,42 @@ static int consume_wrapper_chain(pid_t parent_pid, const char *subcommand) {
         if (g_wrapper_chains[i].parent_pid == parent_pid) {
             const char *remaining_suffix = g_wrapper_chains[i].wrapper_command + g_wrapper_chains[i].wrapper_offset;
 
-            /* Check if execve command begins with a known wrapper */
-            const char *csuffix = strip_wrapper_prefix(remaining_suffix);
+            /* Check if it matches the remaining suffix exactly, then advance/consume. */
+            if (strcmp(remaining_suffix, subcommand) == 0) {
 
-            if (csuffix != NULL) {
-                /* Execve is a wrappee with wrapper prefix (e.g., "timeout ls").
-                 * Advance offset past the first wrapper word. */
-                g_wrapper_chains[i].wrapper_offset += csuffix - remaining_suffix;
+                /* Check if execve command begins with a known wrapper */
+                const char *csuffix = strip_outermost_wrapper_prefix(remaining_suffix);
 
-                DEBUG_PRINT("WRAPPER_CHAIN: wrappee '%s' starts with wrapper, advanced offset to '%s' for parent %d\n",
-                           subcommand,
-                           g_wrapper_chains[i].wrapper_command + g_wrapper_chains[i].wrapper_offset,
-                           parent_pid);
-                result = 1;
-                /* If we've consumed the entire wrapper chain (only wrappers, no wrappee), clear it */
-                if (g_wrapper_chains[i].wrapper_command[g_wrapper_chains[i].wrapper_offset] == '\0') {
-                    DEBUG_PRINT("WRAPPER_CHAIN: only wrappers consumed, clearing for parent %d\n", parent_pid);
+                if (csuffix != NULL) {
+                    /* Execve is a wrappee with wrapper prefix (e.g., "timeout ls").
+                     * Advance offset past the first wrapper word. */
+                    g_wrapper_chains[i].wrapper_offset += csuffix - remaining_suffix;
+
+                    DEBUG_PRINT("WRAPPER_CHAIN: wrappee '%s' starts with wrapper, advanced offset to '%s' for parent %d\n",
+                               subcommand,
+                               g_wrapper_chains[i].wrapper_command + g_wrapper_chains[i].wrapper_offset,
+                               parent_pid);
+                    result = 1;
+                    /* If we've consumed the entire wrapper chain (only wrappers, no wrappee), clear it */
+                    if (g_wrapper_chains[i].wrapper_command[g_wrapper_chains[i].wrapper_offset] == '\0') {
+                        DEBUG_PRINT("WRAPPER_CHAIN: only wrappers consumed, clearing for parent %d\n", parent_pid);
+                        free(g_wrapper_chains[i].wrapper_command);
+                        g_wrapper_chains[i].wrapper_command = NULL;
+                        g_wrapper_chains[i].wrapper_offset = 0;
+                        g_wrapper_chains[i].parent_pid = 0;
+                    }
+                    break;
+                } else {
+
+                    DEBUG_PRINT("WRAPPER_CHAIN: base wrappee '%s' matches, consuming for parent %d\n",
+                            subcommand, parent_pid);
                     free(g_wrapper_chains[i].wrapper_command);
                     g_wrapper_chains[i].wrapper_command = NULL;
                     g_wrapper_chains[i].wrapper_offset = 0;
                     g_wrapper_chains[i].parent_pid = 0;
+                    result = 1;
+                    break;
                 }
-                break;
-            }
-
-            /* Execve command does not start with a wrapper (base wrappee like "ls").
-             * Check if it matches the remaining suffix exactly, then consume. */
-            if (strcmp(remaining_suffix, subcommand) == 0) {
-                DEBUG_PRINT("WRAPPER_CHAIN: base wrappee '%s' matches, consuming for parent %d\n",
-                           subcommand, parent_pid);
-                free(g_wrapper_chains[i].wrapper_command);
-                g_wrapper_chains[i].wrapper_command = NULL;
-                g_wrapper_chains[i].wrapper_offset = 0;
-                g_wrapper_chains[i].parent_pid = 0;
-                result = 1;
-                break;
             }
             /* If first word is NOT a wrapper and doesn't match suffix, this exec is not allowed */
         }
@@ -303,7 +310,7 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
 
     /* If full command begins with a known wrapper, setup a chain allowance for the wrapped. */
     if (result.count <= 1) {
-        const char *suffix = strip_wrapper_prefix(full_command);
+        const char *suffix = strip_outermost_wrapper_prefix(full_command);
 
         if (!suffix) {
             DEBUG_PRINT("ALLOWANCE: single subcommand (full command), no allowances to store\n");

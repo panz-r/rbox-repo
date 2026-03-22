@@ -38,6 +38,7 @@
 #include "pkexec.h"
 #include "judge.h"
 #include "privilege.h"
+#include "sandbox.h"
 
 #include "env_screener.h"
 
@@ -92,6 +93,10 @@ static void print_usage(void) {
     fprintf(stderr, "  --keep-env           Keep original environment (default)\n");
     fprintf(stderr, "  --clean-env          Clear environment before execution\n");
     fprintf(stderr, "  --env VAR=value      Set environment variable for command\n");
+    fprintf(stderr, "  --memory-limit <n>   Set memory limit (e.g., 256M, 1G)\n");
+    fprintf(stderr, "  --landlock-paths <p> Landlock allowed paths (path:mode,...)\n");
+    fprintf(stderr, "                       Modes: ro (read), rx (read/exec), rw, rwx\n");
+    fprintf(stderr, "  --no-network         Block network access\n");
     fprintf(stderr, "  -h, --help           Show this help\n");
     fprintf(stderr, "  -v, --version        Show version\n");
     fprintf(stderr, "\n");
@@ -344,6 +349,10 @@ int main(int argc, char *argv[]) {
         /* Socket path options */
         {"system-socket", no_argument, 0, 259},
         {"user-socket", no_argument, 0, 260},
+        /* Sandbox options */
+        {"memory-limit", required_argument, 0, 261},
+        {"landlock-paths", required_argument, 0, 262},
+        {"no-network", no_argument, 0, 263},
         {0, 0, 0, 0}
     };
 
@@ -437,6 +446,24 @@ int main(int argc, char *argv[]) {
             case 260:
                 /* Use user socket (XDG_RUNTIME_DIR) */
                 validation_set_user_mode();
+                break;
+            case 261:
+                /* Set memory limit via environment variable */
+                if (setenv("READONLYBOX_MEMORY_LIMIT", optarg, 1) != 0) {
+                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_MEMORY_LIMIT\n", g_progname);
+                }
+                break;
+            case 262:
+                /* Set landlock paths via environment variable */
+                if (setenv("READONLYBOX_LANDLOCK_PATHS", optarg, 1) != 0) {
+                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_LANDLOCK_PATHS\n", g_progname);
+                }
+                break;
+            case 263:
+                /* Block network access via environment variable */
+                if (setenv("READONLYBOX_NO_NETWORK", "1", 1) != 0) {
+                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_NO_NETWORK\n", g_progname);
+                }
                 break;
             default:
                 print_usage();
@@ -612,6 +639,11 @@ int main(int argc, char *argv[]) {
             _exit(1);
         }
         raise(SIGSTOP);
+        /* Apply sandbox restrictions before dropping privileges.
+         * This must be done while we still have CAP_SYS_ADMIN.
+         * Landlock and seccomp restrictions will be inherited by the execved process.
+         * Configuration is read from environment variables set by CLI options. */
+        apply_sandboxing();
         drop_privileges_and_apply_env();
         char cmd_path_copy[PATH_MAX];
         strncpy(cmd_path_copy, cmd_path, PATH_MAX - 1);

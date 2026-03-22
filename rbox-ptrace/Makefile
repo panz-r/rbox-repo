@@ -25,6 +25,7 @@ SRCS = main.c \
        validation.c \
        dfa.c \
        privilege.c \
+       sandbox.c \
        env.c \
        pkexec.c \
        judge.c \
