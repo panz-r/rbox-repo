@@ -161,13 +161,18 @@ static int get_single_target(const uint8_t* d, size_t sz, int enc, size_t so, ui
  * Check if a state is accepting (has category or pattern_id)
  */
 static bool is_accepting(const uint8_t* d, size_t sz, int enc, size_t so, uint16_t tc) {
-    (void)sz;
+    (void)sz; (void)tc;
     uint16_t flags = dfa_fmt_st_flags_tc(d, so, enc, tc);
     uint8_t cat = DFA_GET_CATEGORY_MASK(flags);
     if (cat != 0) return true;
     
-    uint16_t pid = dfa_fmt_st_pid_tc(d, so, enc, tc);
-    if (pid != 0 && pid != UINT16_MAX) return true;
+    /* Look up pattern_id from Pattern ID section (V10) */
+    uint32_t pid_off = dfa_fmt_pid_offset(d);
+    if (pid_off > 0 && pid_off < sz) {
+        const uint8_t* pid = d + pid_off;
+        uint16_t pattern_id = dfa_fmt_pid_lookup(pid, enc, (uint32_t)so);
+        if (pattern_id != 0 && pattern_id != UINT16_MAX) return true;
+    }
     
     return false;
 }

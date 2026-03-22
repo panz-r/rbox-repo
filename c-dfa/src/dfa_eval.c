@@ -94,6 +94,10 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint32_t eos_off = dfa_fmt_eos_offset(d);
     const uint8_t* eos_section = (eos_off > 0 && eos_off < sz) ? d + eos_off : NULL;
 
+    /* Get Pattern ID section pointer (V10+) */
+    uint32_t pid_off = dfa_fmt_pid_offset(d);
+    const uint8_t* pid_section = (pid_off > 0 && pid_off < sz) ? d + pid_off : NULL;
+
     /* Empty input: check initial state and EOS */
     if (!len) {
         uint16_t tc0 = dfa_fmt_st_tc(d, init, enc);
@@ -250,7 +254,8 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint16_t cur_tc = dfa_fmt_st_tc(d, cur, enc);
     uint16_t src_fl = dfa_fmt_st_flags_tc(d, cur, enc, cur_tc);
     uint8_t src_cat = DFA_GET_CATEGORY_MASK(src_fl);
-    uint16_t wpid = dfa_fmt_st_pid_tc(d, cur, enc, cur_tc);
+    /* Look up pattern_id from Pattern ID section (V10) */
+    uint16_t wpid = dfa_fmt_pid_lookup(pid_section, enc, cur);
 
     /* Look up EOS target from EOS section */
     uint32_t eos = dfa_fmt_eos_lookup_target(eos_section, enc, cur);
@@ -259,7 +264,8 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz) {
             cur = eos; cur_tc = eosc;
             if (td < MAX_TRACE) tr[td++] = cur;
-            wpid = dfa_fmt_st_pid_tc(d, cur, enc, cur_tc);
+            /* Look up pattern_id for new state */
+            wpid = dfa_fmt_pid_lookup(pid_section, enc, cur);
         }
     }
 

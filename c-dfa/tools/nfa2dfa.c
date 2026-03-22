@@ -1635,6 +1635,31 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         }
     }
     
+    // Collect Pattern ID data for separate section (V10)
+    // Each entry: state_offset + pattern_id
+    typedef struct { uint32_t state_off; uint16_t pid; } pid_entry_t;
+    pid_entry_t* pid_entries = malloc(dfa_state_count * sizeof(pid_entry_t));
+    int pid_count = 0;
+    
+    for (int i = 0; i < dfa_state_count; i++) {
+        if (dfa[i]->accepting_pattern_id != 0 && dfa[i]->accepting_pattern_id != UINT16_MAX) {
+            pid_entries[pid_count].state_off = (uint32_t)state_offset[i];
+            pid_entries[pid_count].pid = dfa[i]->accepting_pattern_id;
+            pid_count++;
+        }
+    }
+    
+    // Sort Pattern ID entries by state_off
+    for (int i = 1; i < pid_count; i++) {
+        pid_entry_t tmp = pid_entries[i];
+        int j = i - 1;
+        while (j >= 0 && pid_entries[j].state_off > tmp.state_off) {
+            pid_entries[j + 1] = pid_entries[j];
+            j--;
+        }
+        pid_entries[j + 1] = tmp;
+    }
+    
     // Collect EOS data for separate EOS section (V9)
     // Each entry: state_offset + target_or_marker
     typedef struct { uint32_t state_off; uint32_t value; } eos_entry_t;
@@ -1676,11 +1701,13 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         eos_markers[j + 1] = tmp;
     }
     
-    // Compute EOS section size
+    // Compute section sizes
+    size_t pid_section_size = DFA_PID_SECTION_SIZE(pid_count, enc);
     size_t eos_section_size = DFA_EOS_SECTION_SIZE(eos_target_count, eos_marker_count, enc);
-    size_t eos_offset = cur;  // EOS section starts after rules
+    size_t pid_offset = cur;  // Pattern ID section starts after rules
+    size_t eos_offset = cur + pid_section_size;  // EOS section after PID section
     
-    size_t metadata_offset = cur + eos_section_size;
+    size_t metadata_offset = cur + pid_section_size + eos_section_size;
     size_t total_size = metadata_offset + marker_data_size;
     
     /* ====================================================================
@@ -1699,6 +1726,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     dfa_fmt_set_initial_state(raw, enc, (uint32_t)state_offset[0]);
     dfa_fmt_set_meta_offset(raw, enc, 0);
     dfa_fmt_set_eos_offset(raw, enc, (uint32_t)eos_offset);  // V9: EOS section offset
+    dfa_fmt_set_pid_offset(raw, enc, (uint32_t)pid_offset);  // V10: Pattern ID section offset
     memcpy(raw + DFA_HEADER_SIZE(enc, (uint8_t)id_len) - id_len, pattern_identifier, id_len);
     
     // States (compact for empty, full for active)
@@ -1710,15 +1738,15 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
             uint16_t flags = dfa[i]->flags;
             DFA_SET_RULE_ENC(flags, rule_encoding[i]);
             dfa_fmt_set_st_flags(raw, so, enc, flags);
-            dfa_fmt_set_st_pid(raw, so, enc, dfa[i]->accepting_pattern_id);
+            /* Pattern ID moved to Pattern ID section in V10 */
             /* EOS data moved to separate section in V9 */
             dfa_fmt_set_st_first(raw, so, enc, (uint16_t)n_entries[i]);
         } else {
             int cof = dfa_st_off_flags_c(enc);
             dfa_w16(raw, so + cof, dfa[i]->flags);
-            dfa_wwp(raw, so + cof + 2, enc, dfa[i]->accepting_pattern_id);
+            /* Pattern ID moved to Pattern ID section in V10 */
             /* EOS data moved to separate section in V9 */
-            dfa_wwp(raw, so + cof + 2 + dfa_pwb(enc), enc, 0);  /* first */
+            dfa_wwp(raw, so + cof + 2, enc, 0);  /* first */
         }
     }
     
@@ -1854,6 +1882,20 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
         }
     }
     free(write_entries);
+    
+    // Pattern ID Section (V10) - write sparse pattern_id data
+    {
+        uint8_t* pid_base = raw + pid_offset;
+        dfa_fmt_set_pid_count(pid_base, (uint16_t)pid_count);
+        
+        // Write Pattern ID entries
+        uint8_t* pid_ent = pid_base + DFA_PID_HEADER_SIZE;
+        for (int i = 0; i < pid_count; i++) {
+            dfa_fmt_set_pid_entry(pid_ent, pid_entries[i].state_off, pid_entries[i].pid, enc);
+            pid_ent += DFA_PID_ENTRY_SIZE(enc);
+        }
+    }
+    free(pid_entries);
     
     // EOS Section (V9) - write sparse EOS data
     {

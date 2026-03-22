@@ -1,5 +1,5 @@
 /**
- * dfa_format.h - DFA Binary Format Definition (v9, separate EOS section)
+ * dfa_format.h - DFA Binary Format Definition (v10, separate PID section)
  *
  * SINGLE SOURCE OF TRUTH for the DFA binary format.
  * Writer (nfa2dfa.c) and reader (dfa_eval.c, dfa_loader.c) both use these.
@@ -8,6 +8,7 @@
  * V7: encoding byte selects field widths. No struct casts.
  * V8: capture-end deferral
  * V9: separate EOS section - reduces state header size by 6 bytes
+ * V10: separate Pattern ID section - reduces state header by 1 byte
  */
 
 #ifndef DFA_FORMAT_H
@@ -79,7 +80,8 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
  * 10: initial_state  (OW bytes)
  * 10+OW: meta_offset (OW bytes)
  * 10+2*OW: eos_offset (OW bytes) - V9: offset to EOS section
- * 10+3*OW: identifier (id_len bytes)
+ * 10+3*OW: pid_offset (OW bytes) - V10: offset to Pattern ID section
+ * 10+4*OW: identifier (id_len bytes)
  * ============================================================================ */
 
 #define DFA_OFF_MAGIC          0
@@ -91,14 +93,14 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
 #define DFA_HEADER_FIXED      10
 
 #define DFA_HEADER_SIZE(enc, id_len) \
-    (DFA_HEADER_FIXED + 3 * dfa_owb(enc) + (id_len))
+    (DFA_HEADER_FIXED + 4 * dfa_owb(enc) + (id_len))
 
 /* ============================================================================
  * Constants
  * ============================================================================ */
 
 #define DFA_MAGIC          0xDFA1DFA1
-#define DFA_VERSION        9
+#define DFA_VERSION        10
 
 #define DFA_RULE_LITERAL       0
 #define DFA_RULE_RANGE         1
@@ -187,6 +189,27 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
      (n_markers) * DFA_EOS_MARKER_ENTRY_SIZE(enc))
 
 /* ============================================================================
+ * Pattern ID Section Format (V10)
+ *
+ * Pattern IDs are stored in a separate section to reduce state header size.
+ * Pattern IDs are only needed when a match is found, not during traversal.
+ *
+ * Layout (sorted by state_offset for binary search):
+ *   [pid_count: 2 bytes]
+ *   [pid_entries: count × (state_offset: OW + pattern_id: PW)]
+ * ============================================================================ */
+
+#define DFA_PID_OFF_COUNT          0   /* 2 bytes: number of entries */
+#define DFA_PID_HEADER_SIZE        2   /* Total header size */
+
+/* Entry size: state_offset + pattern_id */
+#define DFA_PID_ENTRY_SIZE(enc)    (dfa_owb(enc) + dfa_pwb(enc))
+
+/* Compute Pattern ID section size */
+#define DFA_PID_SECTION_SIZE(n_entries, enc) \
+    (DFA_PID_HEADER_SIZE + (n_entries) * DFA_PID_ENTRY_SIZE(enc))
+
+/* ============================================================================
  * Packed encoding (DFA_RULE_ENC_PACKED = 2)
  *
  * Variable-stride entries WITHOUT marker slots.
@@ -246,20 +269,20 @@ static inline int dfa_bm_off_markers(int enc) { return 33 + dfa_owb(enc); }
  * State layout (V9 - EOS data moved to separate section):
  *
  * Full (tc > 0, has rules):
- *   [tc: CW] [rules: OW] [flags: 2] [pid: PW] [first: PW]
+ *   [tc: CW] [rules: OW] [flags: 2] [first: PW]
  *
  * Compact (tc=0, no rules):
- *   [tc: CW] [flags: 2] [pid: PW] [first: PW]
+ *   [tc: CW] [flags: 2] [first: PW]
  *
- * EOS data (eos_target, eos_marker) is stored in a separate section.
+ * Pattern ID and EOS data are stored in separate sections.
  * ============================================================================ */
 
 #define DFA_STATE_SIZE(enc) \
-    (dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc) + dfa_pwb(enc))
+    (dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc))
 
 /* Compact state: skip rules_offset (saves OW bytes per empty state) */
 #define DFA_STATE_SIZE_COMPACT(enc) \
-    (dfa_cwb(enc) + 2 + dfa_pwb(enc) + dfa_pwb(enc))
+    (dfa_cwb(enc) + 2 + dfa_pwb(enc))
 
 /* State size based on whether it has rules */
 #define DFA_STATE_SIZE_TC(enc, tc) \
@@ -271,9 +294,9 @@ static inline int dfa_st_off_flags(int enc) { return dfa_cwb(enc) + dfa_owb(enc)
 
 /* Compact state field offsets (tc == 0, no rules_offset) */
 static inline int dfa_st_off_flags_c(int enc) { return dfa_cwb(enc); }
-static inline int dfa_st_off_pid(int enc)   { return dfa_cwb(enc) + dfa_owb(enc) + 2; }
-/* eos_target and eos_marker removed from state header in V9 */
-static inline int dfa_st_off_first(int enc) { return dfa_cwb(enc) + dfa_owb(enc) + 2 + dfa_pwb(enc); }
+/* pattern_id removed from state header in V10 - now in Pattern ID section */
+/* eos_target and eos_marker removed from state header in V9 - now in EOS section */
+static inline int dfa_st_off_first(int enc) { return dfa_cwb(enc) + dfa_owb(enc) + 2; }
 
 /* ============================================================================
  * Rule layout size and field offsets
@@ -380,8 +403,12 @@ static inline uint32_t dfa_fmt_eos_offset(const uint8_t* d) {
     int e = dfa_fmt_encoding(d);
     return dfa_row(d, DFA_OFF_INIT_STATE + 2 * dfa_owb(e), e);
 }
+static inline uint32_t dfa_fmt_pid_offset(const uint8_t* d) {
+    int e = dfa_fmt_encoding(d);
+    return dfa_row(d, DFA_OFF_INIT_STATE + 3 * dfa_owb(e), e);
+}
 static inline const uint8_t* dfa_fmt_identifier(const uint8_t* d) {
-    return d + DFA_OFF_INIT_STATE + 3 * dfa_owb(dfa_fmt_encoding(d));
+    return d + DFA_OFF_INIT_STATE + 4 * dfa_owb(dfa_fmt_encoding(d));
 }
 
 /* ============================================================================
@@ -402,6 +429,9 @@ static inline void dfa_fmt_set_meta_offset(uint8_t* d, int enc, uint32_t v) {
 static inline void dfa_fmt_set_eos_offset(uint8_t* d, int enc, uint32_t v) {
     dfa_wow(d, DFA_OFF_INIT_STATE + 2 * dfa_owb(enc), enc, v);
 }
+static inline void dfa_fmt_set_pid_offset(uint8_t* d, int enc, uint32_t v) {
+    dfa_wow(d, DFA_OFF_INIT_STATE + 3 * dfa_owb(enc), enc, v);
+}
 
 /* ============================================================================
  * State accessors (read)
@@ -410,7 +440,7 @@ static inline void dfa_fmt_set_eos_offset(uint8_t* d, int enc, uint32_t v) {
 static inline uint16_t dfa_fmt_st_tc(const uint8_t* d, size_t so, int enc)    { return dfa_rcw(d, so, enc); }
 static inline uint32_t dfa_fmt_st_rules(const uint8_t* d, size_t so, int enc) { return dfa_row(d, so + dfa_st_off_rules(enc), enc); }
 static inline uint16_t dfa_fmt_st_flags(const uint8_t* d, size_t so, int enc) { return dfa_r16(d, so + dfa_st_off_flags(enc)); }
-static inline uint16_t dfa_fmt_st_pid(const uint8_t* d, size_t so, int enc)   { return dfa_rpw(d, so + dfa_st_off_pid(enc), enc); }
+/* pattern_id moved to separate Pattern ID section in V10 */
 /* eos_target and eos_marker moved to separate EOS section in V9 */
 static inline uint16_t dfa_fmt_st_first(const uint8_t* d, size_t so, int enc) { return dfa_rpw(d, so + dfa_st_off_first(enc), enc); }
 
@@ -418,24 +448,65 @@ static inline uint16_t dfa_fmt_st_first(const uint8_t* d, size_t so, int enc) { 
 static inline int dfa_st_foff_flags(int enc, uint16_t tc) {
     return dfa_cwb(enc) + (tc > 0 ? dfa_owb(enc) : 0);
 }
-static inline int dfa_st_foff_pid(int enc, uint16_t tc) {
-    return dfa_st_foff_flags(enc, tc) + 2;
-}
-/* eos_target and eos_marker removed from state header in V9 */
+/* pattern_id removed from state header in V10 - now in Pattern ID section */
+/* eos_target and eos_marker removed from state header in V9 - now in EOS section */
 static inline int dfa_st_foff_first(int enc, uint16_t tc) {
-    return dfa_st_foff_pid(enc, tc) + dfa_pwb(enc);
+    return dfa_st_foff_flags(enc, tc) + 2;
 }
 
 /* TC-aware state readers: automatically use compact or full layout */
 static inline uint16_t dfa_fmt_st_flags_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
     return dfa_r16(d, so + dfa_st_foff_flags(enc, tc));
 }
-static inline uint16_t dfa_fmt_st_pid_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
-    return dfa_rpw(d, so + dfa_st_foff_pid(enc, tc), enc);
-}
+/* pattern_id moved to Pattern ID section in V10 */
 /* eos_target and eos_marker moved to EOS section in V9 */
 static inline uint16_t dfa_fmt_st_first_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
     return dfa_rpw(d, so + dfa_st_foff_first(enc, tc), enc);
+}
+
+/* ============================================================================
+ * Pattern ID Section accessors (V10)
+ * ============================================================================ */
+
+/* Read Pattern ID section header */
+static inline uint16_t dfa_fmt_pid_count(const uint8_t* pid) { return dfa_r16(pid, DFA_PID_OFF_COUNT); }
+
+/* Get pointer to Pattern ID entries */
+static inline const uint8_t* dfa_fmt_pid_entries(const uint8_t* pid) { return pid + DFA_PID_HEADER_SIZE; }
+
+/* Read Pattern ID entry - uses byte offsets */
+static inline uint32_t dfa_fmt_pid_entry_state_off(const uint8_t* entry, int enc) { return dfa_row(entry, 0, enc); }
+static inline uint16_t dfa_fmt_pid_entry_pid(const uint8_t* entry, int enc) { return dfa_rpw(entry, dfa_owb(enc), enc); }
+
+/* Write Pattern ID section header */
+static inline void dfa_fmt_set_pid_count(uint8_t* pid, uint16_t v) { dfa_w16(pid, DFA_PID_OFF_COUNT, v); }
+
+/* Write Pattern ID entry */
+static inline void dfa_fmt_set_pid_entry(uint8_t* entry, uint32_t state_off, uint16_t pid, int enc) {
+    dfa_wow(entry, 0, enc, state_off);
+    dfa_wwp(entry, dfa_owb(enc), enc, pid);
+}
+
+/* Pattern ID lookup - binary search for state byte offset */
+static inline uint16_t dfa_fmt_pid_lookup(const uint8_t* pid, int enc, uint32_t state_off) {
+    if (!pid) return 0;
+    uint16_t count = dfa_fmt_pid_count(pid);
+    if (count == 0) return 0;
+    
+    const uint8_t* entries = dfa_fmt_pid_entries(pid);
+    int entry_size = DFA_PID_ENTRY_SIZE(enc);
+    
+    /* Binary search */
+    int lo = 0, hi = count - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        const uint8_t* entry = entries + mid * entry_size;
+        uint32_t off = dfa_fmt_pid_entry_state_off(entry, enc);
+        if (off == state_off) return dfa_fmt_pid_entry_pid(entry, enc);
+        if (off < state_off) lo = mid + 1;
+        else hi = mid - 1;
+    }
+    return 0;
 }
 
 /* ============================================================================
@@ -445,7 +516,7 @@ static inline uint16_t dfa_fmt_st_first_tc(const uint8_t* d, size_t so, int enc,
 static inline void dfa_fmt_set_st_tc(uint8_t* d, size_t so, int enc, uint16_t v)    { dfa_wwc(d, so, enc, v); }
 static inline void dfa_fmt_set_st_rules(uint8_t* d, size_t so, int enc, uint32_t v) { dfa_wow(d, so + dfa_st_off_rules(enc), enc, v); }
 static inline void dfa_fmt_set_st_flags(uint8_t* d, size_t so, int enc, uint16_t v) { dfa_w16(d, so + dfa_st_off_flags(enc), v); }
-static inline void dfa_fmt_set_st_pid(uint8_t* d, size_t so, int enc, uint16_t v)   { dfa_wwp(d, so + dfa_st_off_pid(enc), enc, v); }
+/* pattern_id moved to Pattern ID section in V10 */
 /* eos_target and eos_marker moved to EOS section in V9 */
 static inline void dfa_fmt_set_st_first(uint8_t* d, size_t so, int enc, uint16_t v) { dfa_wwp(d, so + dfa_st_off_first(enc), enc, v); }
 
