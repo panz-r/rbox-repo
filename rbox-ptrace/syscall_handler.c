@@ -27,69 +27,8 @@
 #include "judge.h"
 #include <shell_tokenizer.h>
 
-/* Signal safety: block signals during critical sections that access g_allowances */
-static sigset_t g_blocked_signals;
-static bool g_signals_initialized = false;
-
-static void init_signal_blocking(void) {
-    if (g_signals_initialized) return;
-    sigemptyset(&g_blocked_signals);
-    sigaddset(&g_blocked_signals, SIGCHLD);
-    sigaddset(&g_blocked_signals, SIGTERM);
-    sigaddset(&g_blocked_signals, SIGINT);
-    g_signals_initialized = true;
-}
-
-static void block_signals(void) {
-    init_signal_blocking();
-    pthread_sigmask(SIG_BLOCK, &g_blocked_signals, NULL);
-}
-
-static void unblock_signals(void) {
-    init_signal_blocking();
-    pthread_sigmask(SIG_UNBLOCK, &g_blocked_signals, NULL);
-}
-
 /* Forward declarations */
 static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs);
-
-/* Allowance table for tracking validated commands */
-Allowance g_allowances[MAX_ALLOWANCES];
-
-/* Wrapper chain table for tracking prefix-wrapper commands */
-WrapperChain g_wrapper_chains[MAX_WRAPPER_CHAINS];
-
-/* Clear all allowances for a specific PID */
-static void clear_allowances_for_pid(pid_t pid) {
-    block_signals();
-    for (int i = 0; i < MAX_ALLOWANCES; i++) {
-        if (g_allowances[i].parent_pid == pid) {
-            DEBUG_PRINT("ALLOWANCE: clearing allowances for exited parent %d\n", pid);
-            for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
-                free(g_allowances[i].subcommands[j]);
-                g_allowances[i].subcommands[j] = NULL;
-            }
-            g_allowances[i].subcommand_count = 0;
-            g_allowances[i].parent_pid = 0;
-        }
-    }
-    unblock_signals();
-}
-
-/* Clear all wrapper chains for a specific PID */
-static void clear_wrapper_chains_for_pid(pid_t pid) {
-    block_signals();
-    for (int i = 0; i < MAX_WRAPPER_CHAINS; i++) {
-        if (g_wrapper_chains[i].parent_pid == pid) {
-            DEBUG_PRINT("WRAPPER_CHAIN: clearing for exited parent %d\n", pid);
-            free(g_wrapper_chains[i].wrapper_command);
-            g_wrapper_chains[i].wrapper_command = NULL;
-            g_wrapper_chains[i].wrapper_offset = 0;
-            g_wrapper_chains[i].parent_pid = 0;
-        }
-    }
-    unblock_signals();
-}
 
 /* Known prefix wrappers that can prefix any command.
  * These are safe, non-breaking commands that modify behavior but don't write files.
@@ -108,66 +47,100 @@ static const char *KNOWN_PREFIX_WRAPPERS[] = {
     NULL
 };
 
-/* Check if a parent PID has a valid allowance for a specific subcommand */
-static int consume_allowance(pid_t parent_pid, const char *subcommand) {
+/* Helper to expire old allowance sets and clear empty ones from a given set */
+static void expire_allowance_set(AllowanceSet *set) {
+    if (!set || set->subcommand_count == 0) return;
+
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
-    int result = 0;  /* Default: no match */
-
-    block_signals();
-    for (int i = 0; i < MAX_ALLOWANCES; i++) {
-        if (g_allowances[i].parent_pid == 0) {
-            continue;  /* Empty slot */
+    double age_seconds = (now.tv_sec - set->timestamp.tv_sec) +
+                        (now.tv_nsec - set->timestamp.tv_nsec) / 1e9;
+    if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
+        DEBUG_PRINT("ALLOWANCE: expired allowance set for pid\n");
+        for (int j = 0; j < set->subcommand_count; j++) {
+            free(set->subcommands[j]);
+            set->subcommands[j] = NULL;
         }
+        set->subcommand_count = 0;
+        memset(set->used_mask, 0, sizeof(set->used_mask));
+    }
+}
 
-        /* Check timeout - discard allowances older than 10 minutes */
-        double age_seconds = (now.tv_sec - g_allowances[i].timestamp.tv_sec) +
-                            (now.tv_nsec - g_allowances[i].timestamp.tv_nsec) / 1e9;
-        if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
-            DEBUG_PRINT("ALLOWANCE: expired allowance for parent %d\n", parent_pid);
-            for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
-                free(g_allowances[i].subcommands[j]);
+/* Check if a process has a valid allowance for a specific subcommand.
+ * Iterates through all allowance sets (inline + spillover). */
+static int consume_allowance(ProcessState *state, const char *subcommand) {
+    if (!state) return 0;
+
+    /* Check inline sets */
+    for (int i = 0; i < INLINE_ALLOWANCE_SETS; i++) {
+        AllowanceSet *set = &state->allowances.inline_sets[i];
+
+        /* Skip empty sets */
+        if (set->subcommand_count == 0) continue;
+
+        /* Check timeout and expire if needed */
+        expire_allowance_set(set);
+        if (set->subcommand_count == 0) continue;
+
+        /* Look for matching subcommand */
+        for (int j = 0; j < set->subcommand_count; j++) {
+            int word_idx = j / 32;
+            int bit_idx = j % 32;
+
+            /* Already used? */
+            if (set->used_mask[word_idx] & (1 << bit_idx)) {
+                continue;
             }
-            g_allowances[i].subcommand_count = 0;
-            g_allowances[i].parent_pid = 0;
-            memset(g_allowances[i].used_mask, 0, sizeof(g_allowances[i].used_mask));
-            continue;
-        }
 
-        /* Check if this allowance matches the parent */
-        if (g_allowances[i].parent_pid == parent_pid) {
-            /* Look for matching subcommand (full string match) */
-            for (int j = 0; j < g_allowances[i].subcommand_count; j++) {
-                int word_idx = j / 32;
-                int bit_idx = j % 32;
+            /* Full string match */
+            if (set->subcommands[j] &&
+                strcmp(set->subcommands[j], subcommand) == 0) {
 
-                /* Already used? */
-                if (g_allowances[i].used_mask[word_idx] & (1 << bit_idx)) {
-                    continue;
-                }
+                /* Mark as used */
+                set->used_mask[word_idx] |= (1 << bit_idx);
 
-                /* Full string match: incoming command must match stored subcommand exactly */
-                if (g_allowances[i].subcommands[j] &&
-                    strcmp(g_allowances[i].subcommands[j], subcommand) == 0) {
-
-                    /* Mark as used */
-                    g_allowances[i].used_mask[word_idx] |= (1 << bit_idx);
-
-                    DEBUG_PRINT("ALLOWANCE: using allowance for parent %d, subcommand '%s'\n",
-                               parent_pid, subcommand);
-                    result = 1;  /* Found match */
-                    break;       /* Exit inner loop */
-                }
-            }
-            if (result == 1) {
-                break;  /* Exit outer loop if we found a match */
+                DEBUG_PRINT("ALLOWANCE: using allowance set %d, subcommand '%s'\n",
+                           i, subcommand);
+                return 1;
             }
         }
     }
-    unblock_signals();
 
-    return result;
+    /* Check spillover sets */
+    AllowanceSpillover *node = state->allowances.spillover;
+    while (node) {
+        for (int i = 0; i < SPILLOVER_ALLOWANCE_SETS; i++) {
+            AllowanceSet *set = &node->sets[i];
+
+            if (set->subcommand_count == 0) continue;
+
+            expire_allowance_set(set);
+            if (set->subcommand_count == 0) continue;
+
+            for (int j = 0; j < set->subcommand_count; j++) {
+                int word_idx = j / 32;
+                int bit_idx = j % 32;
+
+                if (set->used_mask[word_idx] & (1 << bit_idx)) {
+                    continue;
+                }
+
+                if (set->subcommands[j] &&
+                    strcmp(set->subcommands[j], subcommand) == 0) {
+
+                    set->used_mask[word_idx] |= (1 << bit_idx);
+
+                    DEBUG_PRINT("ALLOWANCE: using spillover set %d, subcommand '%s'\n",
+                               i, subcommand);
+                    return 1;
+                }
+            }
+        }
+        node = node->next;
+    }
+
+    return 0;
 }
 
 /* Returns a pointer to the first non‑whitespace character after a known
@@ -179,7 +152,6 @@ static const char * strip_outermost_wrapper_prefix(const char *full_command) {
     if (!full_command) return NULL;
     const size_t full_command_len = strlen(full_command);
     /* Try each known wrapper */
-    /* This is stupid, but fine for now. */
     for (int i = 0; KNOWN_PREFIX_WRAPPERS[i]; i++) {
         const char *wrapper = KNOWN_PREFIX_WRAPPERS[i];
         size_t wrapper_len = strlen(wrapper);
@@ -200,7 +172,7 @@ static const char * strip_outermost_wrapper_prefix(const char *full_command) {
     return NULL;
 }
 
-/* Check and consume a wrapper chain for a parent PID.
+/* Check and consume a wrapper chain for a process.
  * Returns 1 if the execve should be allowed.
  *
  * Grammar: wrappee = wrapper wrappee | wrappee (base)
@@ -214,85 +186,76 @@ static const char * strip_outermost_wrapper_prefix(const char *full_command) {
  * - If first word of execve is NOT a wrapper (base wrappee): consume chain (allow)
  * - If execve matches remaining suffix AND first word is NOT a wrapper: consume
  */
-static int consume_wrapper_chain(pid_t parent_pid, const char *subcommand) {
+static int consume_wrapper_chain(ProcessState *state, const char *subcommand) {
+    if (!state) return 0;
+
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
-    int result = 0;  /* Default: no match */
+    /* No wrapper chain if wrapper_command is NULL */
+    if (!state->wrapper_chain.wrapper_command) {
+        return 0;
+    }
 
-    block_signals();
-    for (int i = 0; i < MAX_WRAPPER_CHAINS; i++) {
-        if (g_wrapper_chains[i].parent_pid == 0) {
-            continue;  /* Empty slot */
-            /* this is so stupid, just find the allowances from the parent pid entry */
-        }
+    /* Check timeout - discard chains older than 10 minutes */
+    double age_seconds = (now.tv_sec - state->wrapper_chain.timestamp.tv_sec) +
+                        (now.tv_nsec - state->wrapper_chain.timestamp.tv_nsec) / 1e9;
+    if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
+        DEBUG_PRINT("WRAPPER_CHAIN: expired for pid %d\n", state->pid);
+        free(state->wrapper_chain.wrapper_command);
+        state->wrapper_chain.wrapper_command = NULL;
+        state->wrapper_chain.wrapper_offset = 0;
+        return 0;
+    }
 
-        /* Check timeout - discard chains older than 10 minutes */
-        double age_seconds = (now.tv_sec - g_wrapper_chains[i].timestamp.tv_sec) +
-                            (now.tv_nsec - g_wrapper_chains[i].timestamp.tv_nsec) / 1e9;
-        if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
-            DEBUG_PRINT("WRAPPER_CHAIN: expired for parent %d\n", parent_pid);
-            free(g_wrapper_chains[i].wrapper_command);
-            g_wrapper_chains[i].wrapper_command = NULL;
-            g_wrapper_chains[i].wrapper_offset = 0;
-            g_wrapper_chains[i].parent_pid = 0;
-            continue;
-        }
+    const char *remaining_suffix = state->wrapper_chain.wrapper_command + state->wrapper_chain.wrapper_offset;
 
-        /* Check if this wrapper chain matches the parent */
-        if (g_wrapper_chains[i].parent_pid == parent_pid) {
-            const char *remaining_suffix = g_wrapper_chains[i].wrapper_command + g_wrapper_chains[i].wrapper_offset;
+    /* Check if it matches the remaining suffix exactly, then advance/consume. */
+    if (strcmp(remaining_suffix, subcommand) == 0) {
 
-            /* Check if it matches the remaining suffix exactly, then advance/consume. */
-            if (strcmp(remaining_suffix, subcommand) == 0) {
+        /* Check if execve command begins with a known wrapper */
+        const char *csuffix = strip_outermost_wrapper_prefix(remaining_suffix);
 
-                /* Check if execve command begins with a known wrapper */
-                const char *csuffix = strip_outermost_wrapper_prefix(remaining_suffix);
+        if (csuffix != NULL) {
+            /* Execve is a wrappee with wrapper prefix (e.g., "timeout ls").
+             * Advance offset past the first wrapper word. */
+            state->wrapper_chain.wrapper_offset += csuffix - remaining_suffix;
 
-                if (csuffix != NULL) {
-                    /* Execve is a wrappee with wrapper prefix (e.g., "timeout ls").
-                     * Advance offset past the first wrapper word. */
-                    g_wrapper_chains[i].wrapper_offset += csuffix - remaining_suffix;
-
-                    DEBUG_PRINT("WRAPPER_CHAIN: wrappee '%s' starts with wrapper, advanced offset to '%s' for parent %d\n",
-                               subcommand,
-                               g_wrapper_chains[i].wrapper_command + g_wrapper_chains[i].wrapper_offset,
-                               parent_pid);
-                    result = 1;
-                    /* If we've consumed the entire wrapper chain (only wrappers, no wrappee), clear it */
-                    if (g_wrapper_chains[i].wrapper_command[g_wrapper_chains[i].wrapper_offset] == '\0') {
-                        DEBUG_PRINT("WRAPPER_CHAIN: only wrappers consumed, clearing for parent %d\n", parent_pid);
-                        free(g_wrapper_chains[i].wrapper_command);
-                        g_wrapper_chains[i].wrapper_command = NULL;
-                        g_wrapper_chains[i].wrapper_offset = 0;
-                        g_wrapper_chains[i].parent_pid = 0;
-                    }
-                    break;
-                } else {
-
-                    DEBUG_PRINT("WRAPPER_CHAIN: base wrappee '%s' matches, consuming for parent %d\n",
-                            subcommand, parent_pid);
-                    free(g_wrapper_chains[i].wrapper_command);
-                    g_wrapper_chains[i].wrapper_command = NULL;
-                    g_wrapper_chains[i].wrapper_offset = 0;
-                    g_wrapper_chains[i].parent_pid = 0;
-                    result = 1;
-                    break;
-                }
+            DEBUG_PRINT("WRAPPER_CHAIN: wrappee '%s' starts with wrapper, advanced offset to '%s' for pid %d\n",
+                       subcommand,
+                       state->wrapper_chain.wrapper_command + state->wrapper_chain.wrapper_offset,
+                       state->pid);
+            /* If we've consumed the entire wrapper chain (only wrappers, no wrappee), clear it */
+            if (state->wrapper_chain.wrapper_command[state->wrapper_chain.wrapper_offset] == '\0') {
+                DEBUG_PRINT("WRAPPER_CHAIN: only wrappers consumed, clearing for pid %d\n", state->pid);
+                free(state->wrapper_chain.wrapper_command);
+                state->wrapper_chain.wrapper_command = NULL;
+                state->wrapper_chain.wrapper_offset = 0;
             }
-            /* If first word is NOT a wrapper and doesn't match suffix, this exec is not allowed */
+            return 1;
+        } else {
+
+            DEBUG_PRINT("WRAPPER_CHAIN: base wrappee '%s' matches, consuming for pid %d\n",
+                    subcommand, state->pid);
+            free(state->wrapper_chain.wrapper_command);
+            state->wrapper_chain.wrapper_command = NULL;
+            state->wrapper_chain.wrapper_offset = 0;
+            return 1;
         }
     }
-    unblock_signals();
+    /* If first word is NOT a wrapper and doesn't match suffix, this exec is not allowed */
 
-    return result;
+    return 0;
 }
 
 
 
 
- /* Grant allowances to a parent PID based on the full command */
-static void grant_allowance(pid_t parent_pid, const char *full_command) {
+/* Grant allowances to a process based on the full command.
+ * Finds an empty slot (or allocates spillover) to preserve existing allowances. */
+static void grant_allowance(ProcessState *state, const char *full_command) {
+    if (!state) return;
+
     shell_parse_result_t result;
     shell_error_t err;
 
@@ -318,69 +281,103 @@ static void grant_allowance(pid_t parent_pid, const char *full_command) {
         }
 
         /* Store the suffix as a wrapper-chain allowance */
-        block_signals();
-        /* Find empty slot */
-        int slot = -1;
-        for (int i = 0; i < MAX_WRAPPER_CHAINS; i++) {
-            if (g_wrapper_chains[i].parent_pid == 0 && g_wrapper_chains[i].wrapper_command == NULL) {
-                slot = i;
-                break;
-            }
+        /* Clear any existing wrapper chain */
+        free(state->wrapper_chain.wrapper_command);
+        state->wrapper_chain.wrapper_command = strdup(suffix);
+        if (!state->wrapper_chain.wrapper_command) {
+            DEBUG_PRINT("WRAPPER_CHAIN: failed to allocate memory for '%s'\n", suffix);
+            return;
         }
-
-        if (slot < 0) {
-            /* No empty slot - use first one and replace */
-            slot = 0;
-            free(g_wrapper_chains[slot].wrapper_command);
-        }
-
-        g_wrapper_chains[slot].parent_pid = parent_pid;
-        clock_gettime(CLOCK_MONOTONIC, &g_wrapper_chains[slot].timestamp);
-        g_wrapper_chains[slot].wrapper_command = strdup(suffix);
-        g_wrapper_chains[slot].wrapper_offset = 0;
-        unblock_signals();
-        DEBUG_PRINT("WRAPPER_CHAIN: stored '%s' for parent %d\n", suffix, parent_pid);
+        state->wrapper_chain.wrapper_offset = 0;
+        clock_gettime(CLOCK_MONOTONIC, &state->wrapper_chain.timestamp);
+        DEBUG_PRINT("WRAPPER_CHAIN: stored '%s' for pid %d\n", suffix, state->pid);
         return;
     }
 
-    /* Multiple subcommands - store in the subcommand allowance table */
-    block_signals();
-    /* Find empty slot */
-    int slot = -1;
-    for (int i = 0; i < MAX_ALLOWANCES; i++) {
-        if (g_allowances[i].parent_pid == 0 && g_allowances[i].subcommand_count == 0) {
-            slot = i;
+    /* Multiple subcommands - find an empty slot for the new allowance.
+     * We don't clear existing allowances - children may still be using them. */
+    AllowanceSet *slot = NULL;
+
+    /* First try inline sets - find one with subcommand_count == 0 (empty) */
+    for (int i = 0; i < INLINE_ALLOWANCE_SETS; i++) {
+        expire_allowance_set(&state->allowances.inline_sets[i]);
+        if (state->allowances.inline_sets[i].subcommand_count == 0) {
+            slot = &state->allowances.inline_sets[i];
+            DEBUG_PRINT("ALLOWANCE: using inline slot %d for pid %d\n", i, state->pid);
             break;
         }
     }
 
-    if (slot < 0) {
-        /* No empty slot - use first one and replace */
-        slot = 0;
-        for (int j = 0; j < g_allowances[0].subcommand_count; j++) {
-            free(g_allowances[0].subcommands[j]);
+    /* If no inline slot available, check/allocate spillover */
+    if (!slot) {
+        AllowanceSpillover **node_ptr = &state->allowances.spillover;
+        while (*node_ptr) {
+            /* First expire old sets in this node */
+            for (int i = 0; i < SPILLOVER_ALLOWANCE_SETS; i++) {
+                expire_allowance_set(&(*node_ptr)->sets[i]);
+                if ((*node_ptr)->sets[i].subcommand_count == 0) {
+                    slot = &(*node_ptr)->sets[i];
+                    DEBUG_PRINT("ALLOWANCE: using existing spillover slot %d for pid %d\n", i, state->pid);
+                    break;
+                }
+            }
+            if (slot) break;
+            node_ptr = &(*node_ptr)->next;
+        }
+
+        /* If still no slot, allocate new spillover node (with limit check) */
+        if (!slot) {
+            /* Count existing spillover nodes */
+            int node_count = 0;
+            AllowanceSpillover *count_node = state->allowances.spillover;
+            while (count_node) {
+                node_count++;
+                count_node = count_node->next;
+            }
+
+            if (node_count >= MAX_SPILLOVER_NODES) {
+                DEBUG_PRINT("ALLOWANCE: max spillover nodes (%d) reached for pid %d, skipping\n",
+                           MAX_SPILLOVER_NODES, state->pid);
+                return;
+            }
+
+            *node_ptr = calloc(1, sizeof(AllowanceSpillover));
+            if (*node_ptr) {
+                slot = &(*node_ptr)->sets[0];
+                DEBUG_PRINT("ALLOWANCE: allocated new spillover node %d, using slot 0 for pid %d\n",
+                           node_count + 1, state->pid);
+            } else {
+                DEBUG_PRINT("ALLOWANCE: failed to allocate spillover node\n");
+                return;
+            }
         }
     }
 
-    /* Store allowances for each subcommand */
-    g_allowances[slot].parent_pid = parent_pid;
-    clock_gettime(CLOCK_MONOTONIC, &g_allowances[slot].timestamp);
-    g_allowances[slot].subcommand_count = 0;
-    memset(g_allowances[slot].used_mask, 0, sizeof(g_allowances[slot].used_mask));
+    /* Populate the slot */
+    clock_gettime(CLOCK_MONOTONIC, &slot->timestamp);
+    slot->subcommand_count = 0;
+    memset(slot->used_mask, 0, sizeof(slot->used_mask));
 
     for (uint32_t i = 0; i < result.count && i < SHELL_MAX_SUBCOMMANDS; i++) {
-        /* Get length of this subcommand */
         uint32_t subcmd_len;
         const char *subcmd_ptr = shell_get_subcommand(full_command, &result.cmds[i], &subcmd_len);
 
         if (subcmd_len > 0) {
-            g_allowances[slot].subcommands[g_allowances[slot].subcommand_count] = strndup(subcmd_ptr, subcmd_len);
-            g_allowances[slot].subcommand_count++;
-            DEBUG_PRINT("ALLOWANCE: granted subcommand '%.*s' to parent %d\n",
-                       subcmd_len, subcmd_ptr, parent_pid);
+            slot->subcommands[slot->subcommand_count] = strndup(subcmd_ptr, subcmd_len);
+            if (!slot->subcommands[slot->subcommand_count]) {
+                DEBUG_PRINT("ALLOWANCE: failed to allocate memory for subcommand %d\n", i);
+                /* Free already-allocated subcommands */
+                for (int j = 0; j < slot->subcommand_count; j++) {
+                    free(slot->subcommands[j]);
+                }
+                slot->subcommand_count = 0;
+                return;
+            }
+            slot->subcommand_count++;
+            DEBUG_PRINT("ALLOWANCE: granted subcommand '%.*s' to pid %d\n",
+                       subcmd_len, subcmd_ptr, state->pid);
         }
     }
-    unblock_signals();
 }
 
 /* Process state table (simple hash map).
@@ -401,6 +398,41 @@ static int pid_hash(pid_t pid) {
     return pid % MAX_PROCESSES;
 }
 
+/* Free all resources in a process state (allowances, wrapper chain, execve data) */
+static void free_process_state(ProcessState *p) {
+    if (!p) return;
+
+    /* Free inline allowance sets */
+    for (int j = 0; j < INLINE_ALLOWANCE_SETS; j++) {
+        for (int k = 0; k < p->allowances.inline_sets[j].subcommand_count; k++) {
+            free(p->allowances.inline_sets[j].subcommands[k]);
+        }
+    }
+
+    /* Free spillover linked list */
+    AllowanceSpillover *node = p->allowances.spillover;
+    while (node) {
+        for (int j = 0; j < SPILLOVER_ALLOWANCE_SETS; j++) {
+            for (int k = 0; k < node->sets[j].subcommand_count; k++) {
+                free(node->sets[j].subcommands[k]);
+            }
+        }
+        AllowanceSpillover *next = node->next;
+        free(node);
+        node = next;
+    }
+
+    /* Free wrapper chain */
+    free(p->wrapper_chain.wrapper_command);
+
+    /* Free execve data */
+    free(p->execve_pathname);
+    memory_free_string_array(p->execve_argv);
+    memory_free_string_array(p->execve_envp);
+    memory_free_ulong_array(p->execve_envp_addrs);
+    free(p->last_validated_cmd);
+}
+
 /* Set the main process PID */
 void syscall_set_main_process(pid_t pid) {
     g_main_process_pid = pid;
@@ -417,11 +449,7 @@ int syscall_handler_init(void) {
 void syscall_handler_cleanup(void) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (g_process_table[i]) {
-            free(g_process_table[i]->execve_pathname);
-            memory_free_string_array(g_process_table[i]->execve_argv);
-            memory_free_string_array(g_process_table[i]->execve_envp);
-            memory_free_ulong_array(g_process_table[i]->execve_envp_addrs);
-            free(g_process_table[i]->last_validated_cmd);
+            free_process_state(g_process_table[i]);
             free(g_process_table[i]);
             g_process_table[i] = NULL;
         }
@@ -473,15 +501,7 @@ void syscall_remove_process_state(pid_t pid) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         int probe = (idx + i) % MAX_PROCESSES;
         if (g_process_table[probe] && g_process_table[probe]->pid == pid) {
-            /* Clear any allowances and wrapper chains associated with this PID */
-            clear_allowances_for_pid(pid);
-            clear_wrapper_chains_for_pid(pid);
-
-            free(g_process_table[probe]->execve_pathname);
-            memory_free_string_array(g_process_table[probe]->execve_argv);
-            memory_free_string_array(g_process_table[probe]->execve_envp);
-            memory_free_ulong_array(g_process_table[probe]->execve_envp_addrs);
-            free(g_process_table[probe]->last_validated_cmd);
+            free_process_state(g_process_table[probe]);
             free(g_process_table[probe]);
             g_process_table[probe] = NULL;
             return;
@@ -741,21 +761,25 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
         /* Check if parent has an allowance for this subcommand */
         if (parent_pid > 0) {
-            /* First check wrapper chain - if first word is a wrapper, advance offset.
-             * If first word is NOT a wrapper, consume the wrapper chain.
-             * Then check subcommand allowances. */
-            if (consume_wrapper_chain(parent_pid, command)) {
-                DEBUG_PRINT("HANDLER: pid=%d has wrapper-chain from parent %d for '%s', allowing\n",
-                           pid, parent_pid, command);
-                state->validated = 1;
-                return 0;
-            }
-            /* Check subcommand allowances */
-            if (consume_allowance(parent_pid, command)) {
-                DEBUG_PRINT("HANDLER: pid=%d has allowance from parent %d for '%s', allowing\n",
-                           pid, parent_pid, command);
-                state->validated = 1;
-                return 0;
+            /* Look up parent's process state */
+            ProcessState *parent_state = syscall_find_process_state(parent_pid);
+            if (parent_state) {
+                /* First check wrapper chain - if first word is a wrapper, advance offset.
+                 * If first word is NOT a wrapper, consume the wrapper chain.
+                 * Then check subcommand allowances. */
+                if (consume_wrapper_chain(parent_state, command)) {
+                    DEBUG_PRINT("HANDLER: pid=%d has wrapper-chain from parent %d for '%s', allowing\n",
+                               pid, parent_pid, command);
+                    state->validated = 1;
+                    return 0;
+                }
+                /* Check subcommand allowances */
+                if (consume_allowance(parent_state, command)) {
+                    DEBUG_PRINT("HANDLER: pid=%d has allowance from parent %d for '%s', allowing\n",
+                               pid, parent_pid, command);
+                    state->validated = 1;
+                    return 0;
+                }
             }
         }
 
@@ -832,7 +856,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
         /* Grant allowances to this process for subcommands of the allowed command.
          * Child processes will be able to exec subcommands without new server requests. */
-        grant_allowance(pid, command);
+        grant_allowance(state, command);
 
         /* Track this validated command to prevent duplicates on retry */
         free(state->last_validated_cmd);
