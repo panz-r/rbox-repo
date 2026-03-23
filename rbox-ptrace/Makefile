@@ -75,7 +75,7 @@ clean:
 	rm -f $(TARGET) $(OBJS) *.o $(NFA_FILE) $(DFA_FILE) $(DFA_DATA_C)
 
 # Debug build
-debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -DDEBUG
+debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -I../rbox-protocol/include -DDEBUG -DRELATIVE_ENTROPY_NO_MAIN
 debug: $(TARGET)
 
 # Test targets - delegate to tests subdirectory

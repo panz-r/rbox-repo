@@ -41,6 +41,15 @@ static int tests_failed = 0;
     } \
 } while(0)
 
+#define SKIP_IF_NO_SERVER do { \
+    if (access("./readonlybox-server", X_OK) != 0 && \
+        access("../readonlybox-server/readonlybox-server", X_OK) != 0 && \
+        access("readonlybox-server", X_OK) != 0) { \
+        printf("SKIPPED: server binary not found\n"); \
+        return; \
+    } \
+} while(0)
+
 #define ASSERT_EQ(a, b) ASSERT((a) == (b))
 #define ASSERT_NE(a, b) ASSERT((a) != (b))
 #define ASSERT_NOT_NULL(p) ASSERT((p) != NULL)
@@ -50,6 +59,7 @@ typedef struct {
     pid_t pid;
     int auto_deny;
     int debug_tui;
+    char *logfile;  /* If set, redirect output to this file */
 } ServerInfo;
 
 /* Start the readonlybox-server in headless mode */
@@ -82,16 +92,26 @@ static int start_server(ServerInfo *info) {
         }
         if (info->debug_tui) {
             args[arg_idx++] = "-debug-tui";
+            args[arg_idx++] = "-v";  /* verbose for logging */
         }
 
         args[arg_idx] = NULL;
 
-        /* Redirect output to /dev/null */
-        int dev_null = open("/dev/null", O_WRONLY);
-        if (dev_null >= 0) {
-            dup2(dev_null, STDOUT_FILENO);
-            dup2(dev_null, STDERR_FILENO);
-            close(dev_null);
+        /* Redirect output to logfile or /dev/null */
+        if (info->logfile) {
+            FILE *f = fopen(info->logfile, "w");
+            if (f) {
+                dup2(fileno(f), STDOUT_FILENO);
+                dup2(fileno(f), STDERR_FILENO);
+                fclose(f);
+            }
+        } else {
+            int dev_null = open("/dev/null", O_WRONLY);
+            if (dev_null >= 0) {
+                dup2(dev_null, STDOUT_FILENO);
+                dup2(dev_null, STDERR_FILENO);
+                close(dev_null);
+            }
         }
 
         execvp(server_path, args);
@@ -102,6 +122,20 @@ static int start_server(ServerInfo *info) {
     info->pid = pid;
     usleep(500000);  /* Wait 500ms for server to start */
     return 0;
+}
+
+/* Count server requests in logfile (lines containing "ALLOW" or "DENY") */
+static int count_server_requests(const char *logfile) {
+    FILE *f = fopen(logfile, "r");
+    if (!f) return -1;
+    int count = 0;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, "ALLOW") || strstr(line, "DENY"))
+            count++;
+    }
+    fclose(f);
+    return count;
 }
 
 /* Stop the server */
@@ -131,17 +165,18 @@ static int run_ptrace_command(const char *cmd, char *const argv[], int *exit_cod
 
     if (pid == 0) {
         /* Child - run ptrace client */
-        /* Build arguments: readonlybox-ptrace wrap <cmd> [args...] */
+        /* Build arguments: readonlybox-ptrace wrap --no-pkexec <cmd> [args...] */
         int arg_count = 0;
         while (argv[arg_count]) arg_count++;
 
-        char **new_argv = malloc((arg_count + 3) * sizeof(char *));
+        char **new_argv = malloc((arg_count + 4) * sizeof(char *));
         new_argv[0] = (char *)ptrace_path;
         new_argv[1] = "wrap";
+        new_argv[2] = "--no-pkexec";
         for (int i = 0; i < arg_count; i++) {
-            new_argv[i + 2] = argv[i];
+            new_argv[i + 3] = argv[i];
         }
-        new_argv[arg_count + 2] = NULL;
+        new_argv[arg_count + 3] = NULL;
 
         execvp(ptrace_path, new_argv);
         _exit(127);  /* Command not found */
@@ -393,6 +428,120 @@ TEST(nonexistent_command) {
 }
 
 /*
+ * Test simple wrapper chain: timeout 2 ls
+ * Should result in 1 server request (for timeout 2 ls), then ls allowed via chain.
+ */
+TEST(wrapper_chain_simple) {
+    char logfile[] = "/tmp/robox-e2e-wrapper-simple.log.XXXXXX";
+    int fd = mkstemp(logfile);
+    close(fd);
+
+    ServerInfo server = {0, .debug_tui = 1, .logfile = logfile};
+    ASSERT_EQ(start_server(&server), 0);
+
+    char *args[] = {"timeout", "2", "ls", "/tmp", NULL};
+    int exit_code;
+    ASSERT_EQ(run_ptrace_command("timeout", args, &exit_code), 0);
+    ASSERT_EQ(exit_code, 0);
+
+    stop_server(&server);
+    int reqs = count_server_requests(logfile);
+    unlink(logfile);
+    ASSERT_EQ(reqs, 1);
+}
+
+/*
+ * Test nested wrapper chain: timeout 2 sh -c 'timeout 1 ls'
+ * Should result in 1 server request for the initial command.
+ */
+TEST(wrapper_chain_nested_sh_c) {
+    char logfile[] = "/tmp/robox-e2e-wrapper-nested.log.XXXXXX";
+    int fd = mkstemp(logfile);
+    close(fd);
+
+    ServerInfo server = {0, .debug_tui = 1, .logfile = logfile};
+    ASSERT_EQ(start_server(&server), 0);
+
+    char *args[] = {"timeout", "2", "sh", "-c", "timeout 1 ls /tmp", NULL};
+    int exit_code;
+    ASSERT_EQ(run_ptrace_command("timeout", args, &exit_code), 0);
+    ASSERT_EQ(exit_code, 0);
+
+    stop_server(&server);
+    int reqs = count_server_requests(logfile);
+    unlink(logfile);
+    ASSERT_EQ(reqs, 1);
+}
+
+/*
+ * Test deep nested wrapper chain: timeout 2 timeout 1 timeout 1 ls
+ * Should result in 1 server request.
+ */
+TEST(wrapper_chain_deep) {
+    char logfile[] = "/tmp/robox-e2e-wrapper-deep.log.XXXXXX";
+    int fd = mkstemp(logfile);
+    close(fd);
+
+    ServerInfo server = {0, .debug_tui = 1, .logfile = logfile};
+    ASSERT_EQ(start_server(&server), 0);
+
+    char *args[] = {"timeout", "2", "timeout", "1", "timeout", "1", "ls", "/tmp", NULL};
+    int exit_code;
+    ASSERT_EQ(run_ptrace_command("timeout", args, &exit_code), 0);
+    ASSERT_EQ(exit_code, 0);
+
+    stop_server(&server);
+    int reqs = count_server_requests(logfile);
+    unlink(logfile);
+    ASSERT_EQ(reqs, 1);
+}
+
+/*
+ * Test safe command via DFA - should result in 0 server requests.
+ */
+TEST(safe_command_via_dfa) {
+    char logfile[] = "/tmp/robox-e2e-dfa.log.XXXXXX";
+    int fd = mkstemp(logfile);
+    close(fd);
+
+    ServerInfo server = {0, .debug_tui = 1, .logfile = logfile};
+    ASSERT_EQ(start_server(&server), 0);
+
+    char *args[] = {"ls", "/tmp", NULL};
+    int exit_code;
+    ASSERT_EQ(run_ptrace_command("ls", args, &exit_code), 0);
+    ASSERT_EQ(exit_code, 0);
+
+    stop_server(&server);
+    int reqs = count_server_requests(logfile);
+    unlink(logfile);
+    ASSERT_EQ(reqs, 0);
+}
+
+/*
+ * Test sh -c with echo (wrapper chain)
+ * Should result in 1 server request.
+ */
+TEST(wrapper_chain_sh_c_echo) {
+    char logfile[] = "/tmp/robox-e2e-shc-echo.log.XXXXXX";
+    int fd = mkstemp(logfile);
+    close(fd);
+
+    ServerInfo server = {0, .debug_tui = 1, .logfile = logfile};
+    ASSERT_EQ(start_server(&server), 0);
+
+    char *args[] = {"sh", "-c", "echo hello", NULL};
+    int exit_code;
+    ASSERT_EQ(run_ptrace_command("sh", args, &exit_code), 0);
+    ASSERT_EQ(exit_code, 0);
+
+    stop_server(&server);
+    int reqs = count_server_requests(logfile);
+    unlink(logfile);
+    ASSERT_EQ(reqs, 1);
+}
+
+/*
  * Run all end-to-end tests
  */
 void run_e2e_tests(void) {
@@ -419,6 +568,13 @@ void run_e2e_tests(void) {
     RUN_TEST(multiple_safe_commands);
     RUN_TEST(command_with_arguments);
     RUN_TEST(nonexistent_command);
+
+    /* Wrapper chain tests */
+    RUN_TEST(wrapper_chain_simple);
+    RUN_TEST(wrapper_chain_nested_sh_c);
+    RUN_TEST(wrapper_chain_deep);
+    RUN_TEST(safe_command_via_dfa);
+    RUN_TEST(wrapper_chain_sh_c_echo);
 }
 
 /*

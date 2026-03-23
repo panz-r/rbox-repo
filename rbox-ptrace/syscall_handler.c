@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include <time.h>
 #include <unistd.h>
 #include <errno.h>
@@ -30,22 +31,116 @@
 /* Forward declarations */
 static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs);
 
-/* Known prefix wrappers that can prefix any command.
- * These are safe, non-breaking commands that modify behavior but don't write files.
- * "sh -c" is special: after "sh -c" comes a shell command string, not another command. */
-static const char *KNOWN_PREFIX_WRAPPERS[] = {
-    "sh -c",
-    "timeout",
-    "strace",
-    "nice",
-    "env",
-    "time",
-    "xargs",
-    "setarch",
-    "chroot",
-    "envoy",
-    NULL
+/*
+ * Wrapper specification with remainder extraction.
+ * Each wrapper has a name and a function that extracts the remainder
+ * (the command that will be executed after the wrapper).
+ * Extractors receive a modifiable string and may modify it in place.
+ */
+typedef char* (*WrapperExtractFunc)(char *cmd);
+
+/* Strip surrounding quotes from a string (modifies in place).
+ * Handles both single quotes ('...') and double quotes ("...").
+ * Returns pointer to the unquoted content (inside the original string).
+ * If no surrounding quotes, returns original pointer. */
+static char* strip_quotes(char *str) {
+    if (!str) return NULL;
+    char *end = str + strlen(str) - 1;
+    if ((str[0] == '\'' && end[0] == '\'') ||
+        (str[0] == '"' && end[0] == '"')) {
+        /* Strip surrounding quotes by shifting content left */
+        memmove(str, str + 1, end - str);
+        str[end - str] = '\0';
+    }
+    return str;
+}
+
+/* Skip n tokens (words) and return pointer past them, or NULL if not enough tokens */
+static char* skip_tokens(char *s, int n) {
+    while (n > 0 && *s) {
+        /* Skip current token (any non-whitespace) */
+        while (*s && !isspace((unsigned char)*s)) s++;
+        if (*s == '\0') return NULL;  /* reached end before n tokens */
+        /* Skip whitespace to next token */
+        while (*s && isspace((unsigned char)*s)) s++;
+        n--;
+    }
+    return s;  /* points to start of next token or end */
+}
+
+/* Generic extractor: skip n tokens and return the rest */
+static char* extract_skip_n(char *cmd, int tokens_to_skip) {
+    char *p = skip_tokens(cmd, tokens_to_skip);
+    if (!p || *p == '\0') return NULL;
+    return p;
+}
+
+/* Extract remainder for "timeout": skip one token (the duration) and return the rest.
+ * After wrapper name is stripped, cmd is "1 ls", so we skip 1 token to get "ls". */
+static char* extract_timeout(char *cmd) {
+    return extract_skip_n(cmd, 1);  /* skip duration, return remainder */
+}
+
+/* Extract remainder for "sh -c": return everything after "sh -c ", with quotes stripped.
+ * For sh -c, the rest of the string IS the command to execute. */
+static char* extract_sh_c(char *cmd) {
+    if (!cmd || *cmd == '\0') return NULL;
+    return strip_quotes(cmd);
+}
+
+/* Extract remainder for wrappers that pass entire remainder through (nice, strace, env, etc.)
+ * These wrappers parse their own arguments and pass the rest to the child. */
+static char* extract_rest(char *cmd) {
+    return cmd;  /* pass through unchanged */
+}
+
+/* Wrapper specifications - ordered by specificity (longer names first) */
+static const struct {
+    const char *name;
+    WrapperExtractFunc extract;
+} WRAPPER_SPECS[] = {
+    /* "sh -c" must come before "sh" to match correctly */
+    {"sh -c",    extract_sh_c},
+    /* timeout takes one argument (duration) */
+    {"timeout",  extract_timeout},
+    /* These pass the entire remainder through to the child */
+    {"nice",     extract_rest},     /* nice [-n level] <cmd> → child gets entire remainder */
+    {"strace",   extract_rest},     /* strace <options> <cmd> → child gets entire remainder */
+    {"env",      extract_rest},      /* env [VAR=value...] <cmd> → child gets entire remainder */
+    {"time",     extract_rest},     /* time <cmd> → child gets entire remainder */
+    {"xargs",    extract_rest},     /* xargs <cmd> → child gets entire remainder */
+    {"setarch",  extract_rest},     /* setarch <arch> <cmd> → child gets entire remainder */
+    {"chroot",   extract_rest},     /* chroot <dir> <cmd> → child gets entire remainder */
+    {"envoy",    extract_rest},      /* envoy <cmd> → child gets entire remainder */
+    {NULL, NULL}
 };
+
+/* Returns the number of characters consumed by the outermost wrapper
+ * (including the wrapper name, its arguments, and any following whitespace),
+ * or 0 if the string does not start with a known wrapper.
+ * This operates entirely within the provided buffer - callers must ensure
+ * the buffer is large enough. */
+static size_t wrapper_prefix_len(char *cmd) {
+    if (!cmd) return 0;
+
+    for (int i = 0; WRAPPER_SPECS[i].name; i++) {
+        const char *wrapper_name = WRAPPER_SPECS[i].name;
+        size_t name_len = strlen(wrapper_name);
+        if (strncmp(cmd, wrapper_name, name_len) != 0) continue;
+
+        char *after_name = cmd + name_len;
+        if (*after_name != ' ' && *after_name != '\t' && *after_name != '\0')
+            continue;
+        while (*after_name == ' ' || *after_name == '\t') after_name++;
+
+        char *remainder = WRAPPER_SPECS[i].extract(after_name);
+        if (remainder) {
+            /* remainder points into cmd (the extractor works on the same buffer) */
+            return (size_t)(remainder - cmd);
+        }
+    }
+    return 0;
+}
 
 /* Helper to expire old allowance sets and clear empty ones from a given set */
 static void expire_allowance_set(AllowanceSet *set) {
@@ -143,32 +238,60 @@ static int consume_allowance(ProcessState *state, const char *subcommand) {
     return 0;
 }
 
-/* Returns a pointer to the first non‑whitespace character after a known
- * prefix wrapper (e.g., "timeout "), or NULL if the string does not start
- * with any known wrapper. It strips only the outermost wrapper, not all
- * nested wrappers. The remainder may itself start with another wrapper,
- * which will be handled in the next execve. */
-static const char * strip_outermost_wrapper_prefix(const char *full_command) {
-    if (!full_command) return NULL;
-    const size_t full_command_len = strlen(full_command);
+/* Strip outermost wrapper from command, storing result in dst.
+ * Returns pointer to result in dst on success, NULL on failure.
+ * If dst is too small (command + null > dst_size), returns NULL with errno=ERANGE.
+ * Caller may pass a 4KB buffer initially, and retry with a larger buffer
+ * (e.g., malloc(strlen(full_command) + 1)) if ERANGE is returned.
+ *
+ * The extractor function handles wrapper-specific argument parsing:
+ * - "timeout 1 ls" → returns "ls" (skips wrapper + duration)
+ * - "sh -c 'echo hi'" → returns "echo hi" (with quotes stripped)
+ * - "nice -n 5 ls" → returns "ls" (skips wrapper + level)
+ */
+static const char *strip_outermost_wrapper_prefix(const char *full_command,
+                                                    char *dst, size_t dst_size) {
+    if (!full_command || !dst || dst_size < 2) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    size_t cmd_len = strlen(full_command);
+    if (cmd_len + 1 > dst_size) {
+        errno = ERANGE;
+        return NULL;
+    }
+
+    /* Copy input to destination where extractors can modify in place */
+    memcpy(dst, full_command, cmd_len + 1);
+
     /* Try each known wrapper */
-    for (int i = 0; KNOWN_PREFIX_WRAPPERS[i]; i++) {
-        const char *wrapper = KNOWN_PREFIX_WRAPPERS[i];
-        size_t wrapper_len = strlen(wrapper);
-        if (full_command_len > wrapper_len + 1u) {
-            /* Check if command starts with this wrapper */
-            if (strncmp(full_command, wrapper, wrapper_len) == 0) {
-                const char *pos = full_command + wrapper_len;
-                /* After wrapper must be whitespace AND not end of string */
-                if (*pos == ' ' || *pos == '\t') {
-                    ++pos;
-                    /* Skip whitespace to get to wrappee */
-                    while (*pos == ' ' || *pos == '\t') pos++;
-                    return pos;
-                }
-            }
+    for (int i = 0; WRAPPER_SPECS[i].name; i++) {
+        const char *wrapper_name = WRAPPER_SPECS[i].name;
+        size_t name_len = strlen(wrapper_name);
+
+        /* Check if command starts with this wrapper name */
+        if (strncmp(dst, wrapper_name, name_len) != 0) {
+            continue;
+        }
+
+        /* Ensure there's whitespace or end-of-string after the wrapper name */
+        char *after_name = dst + name_len;
+        if (*after_name != ' ' && *after_name != '\t' && *after_name != '\0') {
+            continue;  /* e.g., "timeout1" doesn't match "timeout" */
+        }
+
+        /* Skip whitespace to get to what comes after the wrapper */
+        while (*after_name == ' ' || *after_name == '\t') after_name++;
+
+        /* Call the extractor to get the remainder after wrapper-specific args */
+        char *remainder = WRAPPER_SPECS[i].extract(after_name);
+        if (remainder) {
+            DEBUG_PRINT("WRAPPER: matched '%s', remainder '%s'\n", wrapper_name, remainder);
+            return remainder;
         }
     }
+
     return NULL;
 }
 
@@ -182,70 +305,123 @@ static const char * strip_outermost_wrapper_prefix(const char *full_command) {
  *   → wrappee="ls" (base case)
  *
  * Logic:
- * - If first word of execve IS a wrapper: advance offset past it (allow, don't consume)
+ * - If first word of execve IS a wrapper: advance offset past it, transfer remaining to child
  * - If first word of execve is NOT a wrapper (base wrappee): consume chain (allow)
  * - If execve matches remaining suffix AND first word is NOT a wrapper: consume
+ *
+ * When a wrapper prefix is detected (case 1), the remaining suffix is copied to the
+ * child's wrapper_chain so nested wrappers like "npx tsx script.ts" can continue
+ * propagating through multiple exec levels.
  */
-static int consume_wrapper_chain(ProcessState *state, const char *subcommand) {
-    if (!state) return 0;
+static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child_state, const char *subcommand) {
+    if (!parent_state) return 0;
 
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
 
     /* No wrapper chain if wrapper_command is NULL */
-    if (!state->wrapper_chain.wrapper_command) {
+    if (!parent_state->wrapper_chain.wrapper_command) {
         return 0;
     }
 
     /* Check timeout - discard chains older than 10 minutes */
-    double age_seconds = (now.tv_sec - state->wrapper_chain.timestamp.tv_sec) +
-                        (now.tv_nsec - state->wrapper_chain.timestamp.tv_nsec) / 1e9;
+    double age_seconds = (now.tv_sec - parent_state->wrapper_chain.timestamp.tv_sec) +
+                        (now.tv_nsec - parent_state->wrapper_chain.timestamp.tv_nsec) / 1e9;
     if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
-        DEBUG_PRINT("WRAPPER_CHAIN: expired for pid %d\n", state->pid);
-        free(state->wrapper_chain.wrapper_command);
-        state->wrapper_chain.wrapper_command = NULL;
-        state->wrapper_chain.wrapper_offset = 0;
+        DEBUG_PRINT("WRAPPER_CHAIN: expired for pid %d\n", parent_state->pid);
+        free(parent_state->wrapper_chain.wrapper_command);
+        parent_state->wrapper_chain.wrapper_command = NULL;
+        parent_state->wrapper_chain.wrapper_offset = 0;
         return 0;
     }
 
-    const char *remaining_suffix = state->wrapper_chain.wrapper_command + state->wrapper_chain.wrapper_offset;
+    const char *remaining_suffix = parent_state->wrapper_chain.wrapper_command + parent_state->wrapper_chain.wrapper_offset;
 
-    /* Check if it matches the remaining suffix exactly, then advance/consume. */
-    if (strcmp(remaining_suffix, subcommand) == 0) {
+    /* Create a copy of the original suffix for length calculation (local_suffix).
+     * wrapper_prefix_len must be called on the original since it returns a byte
+     * offset into the string. */
+    char local_suffix[4096];
+    size_t copy_len = strlen(remaining_suffix);
+    if (copy_len >= sizeof(local_suffix)) copy_len = sizeof(local_suffix) - 1;
+    memcpy(local_suffix, remaining_suffix, copy_len);
+    local_suffix[copy_len] = '\0';
 
-        /* Check if execve command begins with a known wrapper */
-        const char *csuffix = strip_outermost_wrapper_prefix(remaining_suffix);
+    /* Create a separate buffer for comparison (normalized), with quotes stripped
+     * for sh -c so we can match against child's argv (which has no quotes). */
+    char normalized[4096];
+    strncpy(normalized, local_suffix, sizeof(normalized) - 1);
+    normalized[sizeof(normalized) - 1] = '\0';
 
-        if (csuffix != NULL) {
-            /* Execve is a wrappee with wrapper prefix (e.g., "timeout ls").
-             * Advance offset past the first wrapper word. */
-            state->wrapper_chain.wrapper_offset += csuffix - remaining_suffix;
-
-            DEBUG_PRINT("WRAPPER_CHAIN: wrappee '%s' starts with wrapper, advanced offset to '%s' for pid %d\n",
-                       subcommand,
-                       state->wrapper_chain.wrapper_command + state->wrapper_chain.wrapper_offset,
-                       state->pid);
-            /* If we've consumed the entire wrapper chain (only wrappers, no wrappee), clear it */
-            if (state->wrapper_chain.wrapper_command[state->wrapper_chain.wrapper_offset] == '\0') {
-                DEBUG_PRINT("WRAPPER_CHAIN: only wrappers consumed, clearing for pid %d\n", state->pid);
-                free(state->wrapper_chain.wrapper_command);
-                state->wrapper_chain.wrapper_command = NULL;
-                state->wrapper_chain.wrapper_offset = 0;
-            }
-            return 1;
-        } else {
-
-            DEBUG_PRINT("WRAPPER_CHAIN: base wrappee '%s' matches, consuming for pid %d\n",
-                    subcommand, state->pid);
-            free(state->wrapper_chain.wrapper_command);
-            state->wrapper_chain.wrapper_command = NULL;
-            state->wrapper_chain.wrapper_offset = 0;
-            return 1;
+    /* For sh -c: strip quotes from the argument after -c in the normalized buffer only */
+    if (strncmp(normalized, "sh -c", 5) == 0) {
+        char *ptr = strstr(normalized, "-c");
+        if (ptr) {
+            ptr += 2;
+            while (*ptr == ' ' || *ptr == '\t') ptr++;
+            strip_quotes(ptr);
         }
     }
-    /* If first word is NOT a wrapper and doesn't match suffix, this exec is not allowed */
 
-    return 0;
+    /* Compare normalized suffix with child command */
+    if (strcmp(normalized, subcommand) != 0) {
+        return 0;   /* No match */
+    }
+
+    /* Match found. Use the original local_suffix (not normalized) for offset calculation */
+    DEBUG_PRINT("WRAPPER_CHAIN: child '%s' matches parent's suffix '%s'\n",
+                subcommand, remaining_suffix);
+
+    size_t consumed = wrapper_prefix_len(local_suffix);
+    if (consumed > 0) {
+        /* Compute canonical remainder by stripping the wrapper from the child's command */
+        char child_remainder[4096];
+        strncpy(child_remainder, subcommand, sizeof(child_remainder)-1);
+        child_remainder[sizeof(child_remainder)-1] = '\0';
+        const char *canonical = strip_outermost_wrapper_prefix(child_remainder, child_remainder, sizeof(child_remainder));
+        if (canonical && *canonical) {
+            /* Update parent's chain to the canonical remainder (no quotes) */
+            free(parent_state->wrapper_chain.wrapper_command);
+            parent_state->wrapper_chain.wrapper_command = strdup(canonical);
+            parent_state->wrapper_chain.wrapper_offset = 0;
+            clock_gettime(CLOCK_MONOTONIC, &parent_state->wrapper_chain.timestamp);
+            DEBUG_PRINT("WRAPPER_CHAIN: parent chain updated to '%s'\n", canonical);
+
+            /* Set child's chain to the same canonical remainder */
+            free(child_state->wrapper_chain.wrapper_command);
+            child_state->wrapper_chain.wrapper_command = strdup(canonical);
+            if (child_state->wrapper_chain.wrapper_command) {
+                child_state->wrapper_chain.wrapper_offset = 0;
+                clock_gettime(CLOCK_MONOTONIC, &child_state->wrapper_chain.timestamp);
+                DEBUG_PRINT("WRAPPER_CHAIN: transferred chain '%s' to child pid %d\n",
+                            canonical, child_state->pid);
+            }
+        } else {
+            /* No further wrapper: clear both chains */
+            free(parent_state->wrapper_chain.wrapper_command);
+            parent_state->wrapper_chain.wrapper_command = NULL;
+            parent_state->wrapper_chain.wrapper_offset = 0;
+            free(child_state->wrapper_chain.wrapper_command);
+            child_state->wrapper_chain.wrapper_command = NULL;
+            child_state->wrapper_chain.wrapper_offset = 0;
+        }
+        /* Mark command as validated to prevent repeated execve detections */
+        free(child_state->last_validated_cmd);
+        child_state->last_validated_cmd = strdup(subcommand);
+        return 1;
+    } else {
+        /* Base wrappee: child has no wrapper. Consume entire parent chain and clear child's chain. */
+        free(parent_state->wrapper_chain.wrapper_command);
+        parent_state->wrapper_chain.wrapper_command = NULL;
+        parent_state->wrapper_chain.wrapper_offset = 0;
+        free(child_state->wrapper_chain.wrapper_command);
+        child_state->wrapper_chain.wrapper_command = NULL;
+        child_state->wrapper_chain.wrapper_offset = 0;
+        /* Mark command as validated to prevent repeated execve detections */
+        free(child_state->last_validated_cmd);
+        child_state->last_validated_cmd = strdup(subcommand);
+        DEBUG_PRINT("WRAPPER_CHAIN: base wrappee matched, chain consumed\n");
+        return 1;
+    }
 }
 
 
@@ -273,10 +449,22 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
 
     /* If full command begins with a known wrapper, setup a chain allowance for the wrapped. */
     if (result.count <= 1) {
-        const char *suffix = strip_outermost_wrapper_prefix(full_command);
+        char suffix_buf[4096];
+        char *large_buf = NULL;
+        const char *suffix = strip_outermost_wrapper_prefix(full_command, suffix_buf, sizeof(suffix_buf));
+
+        if (!suffix && errno == ERANGE) {
+            /* Buffer too small - allocate based on actual command length */
+            size_t cmd_len = strlen(full_command);
+            large_buf = malloc(cmd_len + 1);
+            if (large_buf) {
+                suffix = strip_outermost_wrapper_prefix(full_command, large_buf, cmd_len + 1);
+            }
+        }
 
         if (!suffix) {
             DEBUG_PRINT("ALLOWANCE: single subcommand (full command), no allowances to store\n");
+            free(large_buf);
             return;
         }
 
@@ -284,6 +472,7 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
         /* Clear any existing wrapper chain */
         free(state->wrapper_chain.wrapper_command);
         state->wrapper_chain.wrapper_command = strdup(suffix);
+        free(large_buf);
         if (!state->wrapper_chain.wrapper_command) {
             DEBUG_PRINT("WRAPPER_CHAIN: failed to allocate memory for '%s'\n", suffix);
             return;
@@ -728,15 +917,6 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             state->initial_execve = 1;
         }
 
-        /* Check if this is the same command we just validated for this process.
-         * This prevents duplicate requests when a process retries exec while we're waiting. */
-        if (state->last_validated_cmd && strcmp(state->last_validated_cmd, command) == 0) {
-            DEBUG_PRINT("HANDLER: pid=%d command '%s' already validated, allowing\n", pid, command);
-            free(command);
-            state->validated = 1;
-            return 0;
-        }
-
         /* Get parent PID to check for allowances */
         char proc_status[64];
         snprintf(proc_status, sizeof(proc_status), "/proc/%d/status", pid);
@@ -767,7 +947,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 /* First check wrapper chain - if first word is a wrapper, advance offset.
                  * If first word is NOT a wrapper, consume the wrapper chain.
                  * Then check subcommand allowances. */
-                if (consume_wrapper_chain(parent_state, command)) {
+                if (consume_wrapper_chain(parent_state, state, command)) {
                     DEBUG_PRINT("HANDLER: pid=%d has wrapper-chain from parent %d for '%s', allowing\n",
                                pid, parent_pid, command);
                     state->validated = 1;
@@ -781,6 +961,16 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     return 0;
                 }
             }
+        }
+
+        /* Check if this is the same command we just validated for this process.
+         * This prevents duplicate requests when a process retries exec while we're waiting.
+         * Must come after wrapper chain to allow chain propagation first. */
+        if (state->last_validated_cmd && strcmp(state->last_validated_cmd, command) == 0) {
+            DEBUG_PRINT("HANDLER: pid=%d command '%s' already validated, allowing\n", pid, command);
+            free(command);
+            state->validated = 1;
+            return 0;
         }
 
         /* For subsequent execves (commands run by bash), validate with server */

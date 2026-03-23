@@ -10,6 +10,8 @@
 #include <pwd.h>
 #include <grp.h>
 #include <sys/prctl.h>
+#include <sys/wait.h>
+#include <sys/ptrace.h>
 #include <stdbool.h>
 
 /* Original user information */
@@ -48,10 +50,24 @@ void privilege_init(uid_t provided_uid, const char *provided_cwd) {
 
 /* Check if we have ptrace capability */
 bool privilege_has_ptrace_capability(void) {
-    if (geteuid() == 0) {
-        return true;
+    if (geteuid() == 0) return true;
+
+    FILE *f = fopen("/proc/self/status", "r");
+    if (!f) return false;
+
+    char line[256];
+    bool found = false;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "CapEff:", 7) == 0) {
+            unsigned long long caps = 0;
+            sscanf(line + 7, "%llx", &caps);
+            // CAP_SYS_PTRACE is bit 19 (0-based)
+            found = (caps >> 19) & 1;
+            break;
+        }
     }
-    return false;
+    fclose(f);
+    return found;
 }
 
 /* Drop privileges to the original user */

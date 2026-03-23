@@ -63,6 +63,7 @@ void debug_init(void) {
 
 static const char *g_progname = "readonlybox-ptrace";
 static bool g_keep_env = true;  /* Keep environment by default */
+static bool g_skip_pkexec = false;  /* Skip pkexec even if no ptrace capability */
 static char **g_extra_env = NULL;
 static int g_extra_env_count = 0;
 
@@ -353,11 +354,32 @@ int main(int argc, char *argv[]) {
         {"memory-limit", required_argument, 0, 261},
         {"landlock-paths", required_argument, 0, 262},
         {"no-network", no_argument, 0, 263},
+        /* Skip pkexec even if no ptrace capability */
+        {"no-pkexec", no_argument, 0, 264},
         {0, 0, 0, 0}
     };
 
     /* Parse options until we see -- or a non-option argument */
     /* Use + to stop at first non-option (for -- separator support) */
+    /* Skip "wrap" keyword and handle --no-pkexec if present */
+    if (argc > 1 && strcmp(argv[1], "wrap") == 0) {
+        /* If next arg is --no-pkexec, set the flag and shift args */
+        if (argc > 2 && strcmp(argv[2], "--no-pkexec") == 0) {
+            g_skip_pkexec = true;
+            /* Shift remaining args left to overwrite --no-pkexec */
+            for (int i = 2; i < argc; i++) {
+                argv[i] = argv[i + 1];
+            }
+            argc--;
+        }
+        /* Shift to skip "wrap" */
+        for (int i = 1; i < argc; i++) {
+            argv[i] = argv[i + 1];
+        }
+        argc--;
+        optind = 1;
+    }
+
     while ((opt = getopt_long(argc, argv, "+hvu:c:m:p:ke:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
@@ -465,6 +487,10 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "%s: Warning: failed to set READONLYBOX_NO_NETWORK\n", g_progname);
                 }
                 break;
+            case 264:
+                /* Skip pkexec even if no ptrace capability */
+                g_skip_pkexec = true;
+                break;
             default:
                 print_usage();
                 return 1;
@@ -524,7 +550,7 @@ int main(int argc, char *argv[]) {
         env_screen();
     }
 
-    if (attach_pid == 0 && provided_uid == 0 && !privilege_has_ptrace_capability()) {
+    if (!g_skip_pkexec && attach_pid == 0 && provided_uid == 0 && !privilege_has_ptrace_capability()) {
         fprintf(stderr, "%s: Requesting elevated privileges...\n", g_progname);
         pkexec_set_progname(g_progname);
         int ret = pkexec_launch(argc, argv, cmd_path);
