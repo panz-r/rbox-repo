@@ -48,7 +48,7 @@ void privilege_init(uid_t provided_uid, const char *provided_cwd) {
     }
 }
 
-/* Check if we have ptrace capability */
+/* Check if we have all required capabilities (ptrace + admin for sandbox) */
 bool privilege_has_ptrace_capability(void) {
     if (geteuid() == 0) return true;
 
@@ -56,18 +56,21 @@ bool privilege_has_ptrace_capability(void) {
     if (!f) return false;
 
     char line[256];
-    bool found = false;
+    unsigned long long caps = 0;
     while (fgets(line, sizeof(line), f)) {
         if (strncmp(line, "CapEff:", 7) == 0) {
-            unsigned long long caps = 0;
             sscanf(line + 7, "%llx", &caps);
-            // CAP_SYS_PTRACE is bit 19 (0-based)
-            found = (caps >> 19) & 1;
             break;
         }
     }
     fclose(f);
-    return found;
+
+    // CAP_SYS_PTRACE is bit 19, CAP_SYS_ADMIN is bit 21
+    // Both are needed: ptrace for tracing, admin for Landlock/seccomp
+    int has_ptrace = (caps >> 19) & 1;
+    int has_admin = (caps >> 21) & 1;
+
+    return has_ptrace && has_admin;
 }
 
 /* Drop privileges to the original user */
