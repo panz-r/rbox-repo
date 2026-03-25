@@ -1,29 +1,47 @@
 # LibFuzzer harness Makefile for rbox-protocol
-# Requires: libfuzzer (clang with fuzzing support)
+# Requires: clang++ with LibFuzzer support (e.g., clang 10+)
+#
+# Usage:
+#   make           # Build fuzzer + run quick fuzz test
+#   make run-1h    # Run 1-hour fuzz test
+#   make replay-crashes CRASHES="crash1 crash2"  # Replay specific crashes
+#   make clean     # Remove fuzzer binaries
 
+# Compiler
 CXX = clang++
 CC = clang
 
-# Base flags
+# Flags
 SHELL_INCLUDE = -I../../shellsplit/include
 CFLAGS = -fsanitize=fuzzer -I../include $(SHELL_INCLUDE) -g -O1 -fno-omit-frame-pointer
 
-# Use existing library and shellsplit
+# Libraries and Objects
 LIB = ../librbox_protocol.a
 SHELLSPLIT_OBJ = ../../shellsplit/src/shell_tokenizer.o
 
+# Fuzzer targets
 FUZZERS = protocol_fuzzer
 
 # Default target
 all: setup-dirs $(FUZZERS)
 
+.PHONY: all clean run run-10m run-1h run-4h minimize replay-crashes replay-all-crashes \
+        list-crashes setup-dirs clean-crashes create-seed-corpus help check-prereqs show-options
+
 # Set up required directories
 setup-dirs:
 	@mkdir -p crashes corpus/interesting
+	$(warning Created directories: crashes/ corpus/interesting)
 
 # Build protocol fuzzer - compile as C and link
 protocol_fuzzer: protocol_fuzzer.c $(LIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) -lm
+
+# Create a seed corpus from a sample input
+create-seed-corpus:
+	@mkdir -p corpus/seed
+	@echo "Sample input" > corpus/seed/sample.txt
+	$(warning Created seed corpus: corpus/seed/sample.txt)
 
 # Run fuzzing with memory limits (cgroup, 30 min default)
 run-fuzz-cgroup:
@@ -70,11 +88,11 @@ minimize: protocol_fuzzer
 
 # Clean generated files
 clean:
-	rm -f $(FUZZERS)
+	$(RM) $(FUZZERS)
 
 # Clear crash artifacts
 clean-crashes:
-	rm -rf crashes/*
+	$(RM) -r crashes/*
 
 # Replay crashes - useful for regression testing
 replay-crashes: protocol_fuzzer
@@ -102,4 +120,29 @@ replay-all-crashes: protocol_fuzzer
 list-crashes:
 	@echo "Crash files:"; ls -1 crashes/ 2>/dev/null | wc -l
 
-.PHONY: all clean run run-10m run-1h run-4h minimize replay-crashes replay-all-crashes list-crashes setup-dirs
+# Show LibFuzzer options
+show-options:
+	./protocol_fuzzer -help=1
+
+# Check prerequisites
+check-prereqs:
+ifneq ($(shell $(CC) --version 2>/dev/null | grep -q "clang" && echo 1 || echo 0),1)
+	$(error LibFuzzer requires clang++ with fuzzing support)
+endif
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all             - Build fuzzer + run quick fuzz test (default)"
+	@echo "  setup-dirs      - Set up required directories (crashes/, corpus/)"
+	@echo "  create-seed-corpus - Create a seed corpus"
+	@echo "  run-quick       - Run quick fuzz test (1 minute)"
+	@echo "  run-10m         - Run 10-minute fuzz test"
+	@echo "  run-1h          - Run 1-hour fuzz test"
+	@echo "  run-4h          - Run 4-hour fuzz test"
+	@echo "  minimize        - Minimize corpus"
+	@echo "  replay-crashes  - Replay specific crashes (CRASHES='file1 file2 ...')"
+	@echo "  replay-all-crashes - Replay all crashes found"
+	@echo "  list-crashes    - List crashes found"
+	@echo "  clean           - Remove fuzzer binaries"
+	@echo "  clean-crashes   - Clear crash artifacts"

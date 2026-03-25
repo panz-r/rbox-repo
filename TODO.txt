@@ -1,1 +1,0 @@
-understand that >/dev/null is a nop

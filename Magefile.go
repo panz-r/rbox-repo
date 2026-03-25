@@ -29,6 +29,9 @@ const (
 
 	socketDir        = "/run/readonlybox"
 	socketPath       = socketDir + "/readonlybox.sock"
+
+	// Version string
+	VersionStr       = "readonlybox build system 1.0.0"
 )
 
 // Default target
@@ -78,13 +81,15 @@ Validation:
 
 // Version returns version string
 func Version() string {
-	return "readonlybox build system 1.0.0"
+	return VersionStr
 }
 
 // BuildDependencies builds base C libraries
 func BuildDependencies() error {
 	wd, _ := os.Getwd()
+	oldCGO := os.Getenv("CGO_ENABLED")
 	os.Setenv("CGO_ENABLED", "1")
+	defer os.Setenv("CGO_ENABLED", oldCGO)
 	os.MkdirAll(binDir, 0755)
 
 	// Build c-dfa FIRST (produces tools needed for pattern validation)
@@ -142,6 +147,7 @@ func needsRebuild(output string, inputs ...string) bool {
 	for _, input := range inputs {
 		inStat, err := os.Stat(input)
 		if err != nil {
+			fmt.Printf("Warning: input %s missing, rebuilding\n", input)
 			return true // input missing, rebuild to get proper error
 		}
 		if inStat.ModTime().After(outStat.ModTime()) {
@@ -280,6 +286,17 @@ func BuildDFA() error {
 	return nil
 }
 
+// forceRebuildIfNewer removes target if dependency is newer
+func forceRebuildIfNewer(target, dependency string) {
+	if depStat, err := os.Stat(dependency); err == nil {
+		if targetStat, err := os.Stat(target); err == nil {
+			if depStat.ModTime().After(targetStat.ModTime()) {
+				os.RemoveAll(target)
+			}
+		}
+	}
+}
+
 // BuildBinaries builds the main binaries
 func BuildBinaries() error {
 	mg.Deps(BuildDFA)
@@ -292,29 +309,19 @@ func BuildBinaries() error {
 		cc = "gcc"
 	}
 
-	// Force rebuild if DFA .c file is newer than .so
+	// Force rebuild checks
 	dfaC := filepath.Join(wd, clientDir, "readonlybox_dfa.c")
 	dfaSo := filepath.Join(wd, binDir, "libreadonlybox_client.so")
-	dfaStat, err := os.Stat(dfaC)
-	if err == nil {
-		if soStat, err := os.Stat(dfaSo); err == nil {
-			if dfaStat.ModTime().After(soStat.ModTime()) {
-				// DFA is newer, force rebuild of .so
-				os.RemoveAll(dfaSo)
-			}
-		}
+	forceRebuildIfNewer(dfaSo, dfaC)
+
+	for _, bin := range []string{"readonlybox-ptrace"} {
+		binPath := filepath.Join(wd, binDir, bin)
+		forceRebuildIfNewer(binPath, dfaSo)
 	}
 
-	// Force rebuild if .so is newer than binary
-	soStat, err := os.Stat(dfaSo)
-	if err == nil {
-		for _, bin := range []string{"readonlybox-ptrace"} {
-			binPath := filepath.Join(wd, binDir, bin)
-			if binStat, err := os.Stat(binPath); err == nil && soStat.ModTime().After(binStat.ModTime()) {
-				os.RemoveAll(binPath)
-			}
-		}
-	}
+	protoLib := filepath.Join(wd, rboxProtocolDir, "librbox_protocol.a")
+	serverBin := filepath.Join(wd, binDir, "readonlybox-server")
+	forceRebuildIfNewer(serverBin, protoLib)
 
 	// rbox-wrap (LD_PRELOAD client)
 	if err := runMakeWithCC(filepath.Join(wd, rboxWrapDir), cc); err != nil {
@@ -324,17 +331,6 @@ func BuildBinaries() error {
 	if err := copyFile(filepath.Join(wd, rboxWrapDir, "rbox-wrap"),
 		filepath.Join(wd, binDir, "rbox-wrap")); err != nil {
 		return fmt.Errorf("copying rbox-wrap failed: %w", err)
-	}
-
-	// Force rebuild if rbox-protocol library is newer than binary
-	protoLib := filepath.Join(wd, rboxProtocolDir, "librbox_protocol.a")
-	serverBin := filepath.Join(wd, binDir, "readonlybox-server")
-	if libStat, err := os.Stat(protoLib); err == nil {
-		if binStat, err := os.Stat(serverBin); err == nil {
-			if libStat.ModTime().After(binStat.ModTime()) {
-				os.RemoveAll(serverBin)
-			}
-		}
 	}
 
 	// rbox-server (Go with C library)
@@ -466,8 +462,11 @@ func ValidatePatterns() error {
 	fmt.Println("Validating patterns...")
 	wd, _ := os.Getwd()
 
-	// nfa_builder is already built by make c-dfa
+	// Check that nfa_builder exists before trying to use it
 	nfaBuilder := filepath.Join(wd, cDfaToolsDir, "nfa_builder")
+	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
+		return fmt.Errorf("nfa_builder not found: %s (run 'mage deps' first)", nfaBuilder)
+	}
 
 	cmd := exec.Command(nfaBuilder, "--validate-only",
 		filepath.Join(wd, clientDir, "rbox_client_safe_commands.txt"))
@@ -546,22 +545,51 @@ func Install() error {
 	if err := capCmd.Run(); err != nil {
 		return fmt.Errorf("setting capabilities on readonlybox-ptrace failed: %w", err)
 	}
+	// Verify the binary was installed correctly
+	if _, err := os.Stat(ptraceBinary); err != nil {
+		return fmt.Errorf("readonlybox-ptrace not found after installation: %w", err)
+	}
 	fmt.Printf("  Set %s on readonlybox-ptrace\n", capStr)
 
-	// Create socket directory
+	// Install PolicyKit policy file for custom authentication dialog (optional)
+	policySrc := filepath.Join(wd, rboxPtraceDir, "readonlybox-ptrace.policy")
+	policyDst := "/usr/share/polkit-1/actions/org.freedesktop.policykit.pkexec.readonlybox-ptrace.policy"
+	if _, err := os.Stat(policySrc); err == nil {
+		fmt.Printf("  Installing PolicyKit policy file...\n")
+		var policyCmd *exec.Cmd
+		if sudo != "" {
+			policyCmd = exec.Command(sudo, "cp", policySrc, policyDst)
+		} else {
+			policyCmd = exec.Command("cp", policySrc, policyDst)
+		}
+		policyCmd.Stdout = os.Stdout
+		policyCmd.Stderr = os.Stderr
+		if err := policyCmd.Run(); err != nil {
+			fmt.Printf("  Warning: could not install PolicyKit policy: %v\n", err)
+		} else {
+			fmt.Printf("  Installed PolicyKit policy to %s\n", policyDst)
+		}
+	}
+
+	// Create socket directory (required for server to work)
 	if sudo != "" {
 		cmd := exec.Command(sudo, "mkdir", "-p", socketDir)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			fmt.Printf("  Warning: could not create %s: %v\n", socketDir, err)
-		} else {
-			cmd = exec.Command(sudo, "chmod", "755", socketDir)
-			cmd.Run()
-			fmt.Printf("  Created socket directory %s\n", socketDir)
+			return fmt.Errorf("could not create socket directory %s: %w", socketDir, err)
 		}
+		cmd = exec.Command(sudo, "chmod", "755", socketDir)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("could not chmod socket directory %s: %w", socketDir, err)
+		}
+		fmt.Printf("  Created socket directory %s\n", socketDir)
 	} else {
-		os.MkdirAll(socketDir, 0755)
+		if err := os.MkdirAll(socketDir, 0755); err != nil {
+			return fmt.Errorf("could not create socket directory %s: %w", socketDir, err)
+		}
 		fmt.Printf("  Created socket directory %s\n", socketDir)
 	}
 
@@ -575,7 +603,10 @@ func runMakeClean(dir string) error {
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to clean %s: %w", dir, err)
+	}
+	return nil
 }
 
 // runMake runs make in a directory with optional parallel build
@@ -605,7 +636,10 @@ func runMakeTest(dir string) error {
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("tests failed in %s: %w\n  See output above for details", dir, err)
+	}
+	return nil
 }
 
 // runMakeWithCC runs make with a specific C compiler

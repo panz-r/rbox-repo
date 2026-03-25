@@ -22,3 +22,5 @@ rbox-ptrace/readonlybox-ptrace
 rbox-ptrace/tests/test_runner
 rbox-ptrace/compile_commands.json
 rbox-ptrace/.cache/
+# kilo telemetry
+telemetry-id

@@ -1,18 +1,29 @@
 # Makefile for readonlybox-ptrace
+# Builds the readonlybox-ptrace binary and its DFA data from pattern files.
+# Usage:
+#   make          # Build readonlybox-ptrace (default)
+#   make debug    # Build with debug symbols
+#   make clean    # Remove all build artifacts
+#   make test     # Run all tests
+#   make coverage # Generate coverage report
 
+.DELETE_ON_ERROR:
+.SECONDARY:
+
+# Compiler
 CC = gcc
 CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -I../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
 LDFLAGS = -lpthread -lm
 
-# Add rbox-protocol library
+# Libraries
 LDFLAGS += ../rbox-protocol/librbox_protocol.a
 
-# DFA build tools
+# DFA Tools
 NFA_BUILDER = ../c-dfa/tools/nfa_builder
 NFA2DFA = ../c-dfa/tools/nfa2dfa_advanced
 DFA2C = ../c-dfa/tools/dfa2c_array
 
-# Pattern file and output files
+# Pattern and DFA files
 PATTERN_FILE = rbox_ptrace_embedded_commands.txt
 NFA_FILE = rbox_ptrace.nfa
 DFA_FILE = rbox_ptrace.dfa
@@ -41,17 +52,23 @@ OBJS = $(SRCS:.c=.o)
 # Target binary
 TARGET = readonlybox-ptrace
 
-.PHONY: all clean test test-e2e test-memory test-syscall test-validation test-integration test-verbose list debug coverage cppcheck valgrind dfa
-
-all: dfa $(TARGET)
+.PHONY: all clean debug test test-e2e test-memory test-syscall test-validation test-integration test-verbose list coverage cppcheck valgrind dfa help check-prereqs
 
 # Allow parallel builds with -j
-ifneq ($(MAKECMDGOALS),)
-  ifeq ($(findstring -j,$(MAKEFLAGS)),)
-    NPROCS := $(shell nproc 2>/dev/null || echo 1)
-    export MAKEFLAGS += -j$(NPROCS)
-  endif
+ifeq ($(filter -j%,$(MAKEFLAGS)),)
+MAKEFLAGS += -j$(shell nproc 2>/dev/null || echo 1)
 endif
+
+# Validate prerequisites
+check-prereqs:
+	@which $(CC) > /dev/null 2>&1 || (echo "ERROR: $(CC) not found"; exit 1)
+	@test -x $(NFA_BUILDER) || (echo "ERROR: nfa_builder not found (run 'make deps' in ../c-dfa first)"; exit 1)
+	@test -x $(NFA2DFA) || (echo "ERROR: nfa2dfa_advanced not found (run 'make deps' in ../c-dfa first)"; exit 1)
+	@test -x $(DFA2C) || (echo "ERROR: dfa2c_array not found (run 'make deps' in ../c-dfa first)"; exit 1)
+	@which valgrind > /dev/null 2>&1 || echo "WARNING: valgrind not installed (valgrind target will be skipped)"
+	@which cppcheck > /dev/null 2>&1 || echo "WARNING: cppcheck not installed (cppcheck target will be skipped)"
+
+all: check-prereqs dfa $(TARGET)
 
 # Build DFA from pattern file
 dfa: $(DFA_DATA_C)
@@ -75,12 +92,32 @@ $(TARGET): $(OBJS)
 ../c-dfa/src/%.o: ../c-dfa/src/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-clean:
-	rm -f $(TARGET) $(OBJS) *.o $(NFA_FILE) $(DFA_FILE) $(DFA_DATA_C)
-
 # Debug build
-debug: CFLAGS = -Wall -Wextra -std=gnu11 -g -O0 -I. -I../c-dfa/include -I../internal/client -I../shellsplit/include -I../rbox-protocol/include -DDEBUG -DRELATIVE_ENTROPY_NO_MAIN
+debug: CFLAGS += -g -O0 -DDEBUG
 debug: $(TARGET)
+
+clean:
+	$(RM) $(TARGET) $(OBJS) *.o $(NFA_FILE) $(DFA_FILE) $(DFA_DATA_C)
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all          - Build readonlybox-ptrace (default)"
+	@echo "  debug        - Build with debug symbols"
+	@echo "  clean        - Remove all build artifacts"
+	@echo "  test         - Run all tests"
+	@echo "  test-e2e     - Run end-to-end tests"
+	@echo "  test-memory  - Run memory tests"
+	@echo "  test-syscall - Run syscall tests"
+	@echo "  test-validation - Run validation tests"
+	@echo "  test-integration - Run integration tests"
+	@echo "  test-verbose - Run verbose tests"
+	@echo "  list         - List test cases"
+	@echo "  coverage     - Generate coverage report"
+	@echo "  cppcheck     - Run cppcheck static analysis"
+	@echo "  valgrind     - Run valgrind memory checker"
+	@echo "  dfa          - Build DFA data"
+	@echo "  check-prereqs - Verify required tools exist"
 
 # Test targets - delegate to tests subdirectory
 test: $(TARGET)

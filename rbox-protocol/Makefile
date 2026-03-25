@@ -1,7 +1,16 @@
 # Makefile for rbox-protocol
+# Builds the rbox-protocol static and shared libraries, and runs tests.
+# Usage:
+#   make           # Build static and shared libraries + run tests (default)
+#   make build-all # Build static and shared libraries only
+#   make test      # Run all tests
+#   make clean     # Remove all build artifacts
 
+# Compiler
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -g -pthread \
+# -fPIC is required because socket.c uses thread-local storage (g_rand_seed)
+# and the objects are used in both static and shared libraries
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -g -pthread -fPIC \
          -I./include \
          -I../shellsplit/include
 LDFLAGS = -lpthread -lm -z noexecstack
@@ -14,6 +23,10 @@ ASAN_LDFLAGS = -fsanitize=address
 CFLAGS += $(ASAN_CFLAGS)
 LDFLAGS += $(ASAN_LDFLAGS)
 endif
+# Libraries
+LIB = librbox_protocol.a
+SHLIB = librbox_protocol.so
+SHLIB_LDFLAGS = -shared -fPIC -lpthread -lm
 
 # Shellsplit
 SHELLSPLIT_SRC = ../shellsplit/src/shell_tokenizer.c
@@ -32,16 +45,7 @@ SRCS = src/socket_io.c \
        src/packet.c \
        src/parser.c \
        src/server.c
-
-# Object files
 OBJS = $(SRCS:.c=.o)
-
-# Static library
-LIB = librbox_protocol.a
-
-# Shared library (for Go cgo)
-SHLIB = librbox_protocol.so
-SHLIB_LDFLAGS = -shared -fPIC -lpthread -lm
 
 # Tests
 TEST_BASIC_SRC = tests/test_protocol.c
@@ -65,27 +69,29 @@ TEST_STRESS_BIN = test_stress
 
 all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
 
-# Allow parallel builds with -j
-ifneq ($(MAKECMDGOALS),)
-  ifeq ($(findstring -j,$(MAKEFLAGS)),)
-    NPROCS := $(shell nproc 2>/dev/null || echo 1)
-    export MAKEFLAGS += -j$(NPROCS)
-  endif
+build-all: $(LIB) $(SHLIB)
+	@echo "Static and shared libraries built."
+
+# Parallel build setup
+ifneq ($(filter -j%,$(MAKEFLAGS)),)
+$(warning Parallel build enabled: $(shell nproc 2>/dev/null || echo 1) jobs)
+else
+MAKEFLAGS += -j$(shell nproc 2>/dev/null || echo 1)
 endif
 
+# Static library
 $(LIB): $(OBJS)
 	ar rcs $@ $^
 
-# Build shared library for Go cgo
+# Shared library for Go cgo
 $(SHLIB): $(OBJS) $(SHELLSPLIT_OBJ)
 	$(CC) $(SHLIB_LDFLAGS) -o $@ $(OBJS) $(SHELLSPLIT_OBJ)
 
-# Build both static and shared
-build-all: $(LIB) $(SHLIB)
-
+# Object files (pattern rule)
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Shellsplit object
 $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
@@ -116,15 +122,6 @@ test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(T
 	@echo "=== Running stress tests ==="
 	./$(TEST_STRESS_BIN)
 
-# Run only unit tests
-test-unit: $(TEST_BASIC_BIN)
-	./$(TEST_BASIC_BIN)
-
-# Run only integration tests
-test-integration: $(TEST_INTEG_BIN)
-	./$(TEST_INTEG_BIN)
-
-# Build and run fuzz tests
 test-fuzz:
 	cd fuzz && make run-10m
 
@@ -134,15 +131,7 @@ test-fuzz-1h:
 test-fuzz-4h:
 	cd fuzz && make run-4h
 
-test-full: $(TEST_FULL_BIN)
-	./$(TEST_FULL_BIN)
-
-test-blocking: $(TEST_BLOCK_BIN)
-	./$(TEST_BLOCK_BIN)
-
-test-persistent: $(TEST_PERSIST_BIN)
-	./$(TEST_PERSIST_BIN)
-
+# Targets for tests (ensure rebuilds when sources change)
 $(TEST_BASIC_BIN): $(TEST_BASIC_SRC) $(LIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
 
@@ -168,4 +157,16 @@ $(TEST_STRESS_BIN): $(TEST_STRESS_SRC) $(LIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
 
 clean:
-	rm -f $(OBJS) $(LIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
+	$(RM) $(OBJS) $(LIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
+	-$(RM) fuzz/*.log
+
+help:
+	@echo "Available targets:"
+	@echo "  all         - Build static and shared libraries + run tests (default)"
+	@echo "  build-all   - Build static and shared libraries only"
+	@echo "  test        - Run all tests"
+	@echo "  test-unit   - Run unit tests only"
+	@echo "  test-full   - Run full protocol tests"
+	@echo "  test-integration - Run integration tests"
+	@echo "  test-blocking - Run blocking server tests"
+	@echo "  clean       - Remove all build artifacts"

@@ -1,6 +1,14 @@
-# Generated files
+# Generated DFA files
 rbox_ptrace.nfa
 rbox_ptrace.dfa
 rbox_ptrace_dfa_data.c
+rbox_ptrace_dfa_data.o
 
+# Object files
 *.o
+
+# Binary
+readonlybox-ptrace
+
+# Build artifacts
+compile_commands.json

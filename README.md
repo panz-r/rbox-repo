@@ -134,9 +134,17 @@ readonlybox cat /etc/passwd
 
 ### Build System
 
+This project uses [Mage](https://magefile.org/) as the primary build orchestrator for the Go components, with Make for C subprojects.
+
 ```bash
 # Build all tools (including TUI server and LD_PRELOAD client)
 mage build
+
+# Build DFA tools only (nfa_builder, nfa2dfa_advanced, dfa2c_array)
+mage deps
+
+# Validate command pattern files
+mage validate
 
 # Clean build artifacts
 mage clean
@@ -147,8 +155,29 @@ mage test
 # Install to /usr/local/bin
 mage install
 
-# Uninstall
-make uninstall
+# Show help
+mage -h
+```
+
+### Subprojects
+
+The project consists of several C subprojects built with Make:
+
+| Subproject | Purpose |
+|------------|---------|
+| **c-dfa** | Deterministic Finite Automata for fast command validation |
+| **shellsplit** | Shell command tokenizer and processor |
+| **rbox-protocol** | Binary protocol for client-server communication |
+| **rbox-wrap** | LD_PRELOAD client library |
+| **rbox-ptrace** | ptrace-based command wrapper with DFA |
+| **rbox-server** | Go server with TUI for policy decisions |
+
+Each subproject can be built/tested individually:
+
+```bash
+cd c-dfa && make        # Build c-dfa tools
+cd shellsplit && make   # Build shellsplit library
+cd rbox-protocol && make test  # Run protocol tests
 ```
 
 ---
