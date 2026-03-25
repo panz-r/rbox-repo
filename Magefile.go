@@ -359,6 +359,12 @@ func Clean() error {
 	if err := runMakeClean(filepath.Join(wd, "rbox-ptrace")); err != nil {
 		return fmt.Errorf("rbox-ptrace clean failed: %w", err)
 	}
+	if err := runMakeClean(filepath.Join(wd, "rbox-wrap")); err != nil {
+		return fmt.Errorf("rbox-wrap clean failed: %w", err)
+	}
+	if err := runMakeClean(filepath.Join(wd, "rbox-server")); err != nil {
+		return fmt.Errorf("rbox-server clean failed: %w", err)
+	}
 
 	// Clean generated DFA files
 	os.RemoveAll(filepath.Join(wd, "internal/client/readonlybox.nfa"))
@@ -385,16 +391,37 @@ func Clean() error {
 func Test() error {
 	mg.Deps(Build)
 
+	// Run c-dfa tests
+	fmt.Println("=== Running c-dfa tests ===")
+	if err := runMakeTest(filepath.Join("c-dfa")); err != nil {
+		return fmt.Errorf("c-dfa tests failed: %w", err)
+	}
+
+	// Run shellsplit tests
+	fmt.Println("=== Running shellsplit tests ===")
+	if err := runMakeTest(filepath.Join("shellsplit")); err != nil {
+		return fmt.Errorf("shellsplit tests failed: %w", err)
+	}
+
 	// Run rbox-protocol tests
-	if err := runMake("rbox-protocol", false); err != nil {
+	fmt.Println("=== Running rbox-protocol tests ===")
+	if err := runMakeTest(filepath.Join("rbox-protocol")); err != nil {
 		return fmt.Errorf("rbox-protocol tests failed: %w", err)
 	}
 
 	// Run rbox-wrap tests
-	if err := runMake("rbox-wrap", false); err != nil {
+	fmt.Println("=== Running rbox-wrap tests ===")
+	if err := runMakeTest(filepath.Join("rbox-wrap")); err != nil {
 		return fmt.Errorf("rbox-wrap tests failed: %w", err)
 	}
 
+	// Run rbox-ptrace tests
+	fmt.Println("=== Running rbox-ptrace tests ===")
+	if err := runMakeTest(filepath.Join("rbox-ptrace")); err != nil {
+		return fmt.Errorf("rbox-ptrace tests failed: %w", err)
+	}
+
+	fmt.Println("=== All tests passed ===")
 	return nil
 }
 
@@ -521,6 +548,15 @@ func runMake(dir string, parallel bool) error {
 	args = append(args, "all")
 
 	cmd := exec.Command("make", args...)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// runMakeTest runs make test in a directory
+func runMakeTest(dir string) error {
+	cmd := exec.Command("make", "test")
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

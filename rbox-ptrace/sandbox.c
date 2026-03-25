@@ -211,7 +211,13 @@ static void apply_landlock(void) {
         snprintf(linkbuf, sizeof(linkbuf), "/proc/self/fd/%d", dir_fd);
         ssize_t len = readlink(linkbuf, resolved, sizeof(resolved) - 1);
         if (len > 0) {
-            resolved[len] = '\0';
+            /* Ensure null-termination - readlink doesn't guarantee it if buffer is too small */
+            if (len < (ssize_t)sizeof(resolved)) {
+                resolved[len] = '\0';
+            } else {
+                /* Truncated - cap at buffer size minus 1 and null-terminate */
+                resolved[sizeof(resolved) - 1] = '\0';
+            }
         } else {
             strncpy(resolved, path_info[i].path, sizeof(resolved) - 1);
             resolved[sizeof(resolved) - 1] = '\0';

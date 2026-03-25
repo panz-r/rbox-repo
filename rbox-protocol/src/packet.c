@@ -23,6 +23,19 @@
 #include "rbox_protocol.h"
 #include "socket.h"
 
+/* Thread-local seed for rand_r() - initialized on first use per thread */
+static __thread uint32_t g_rand_seed = 0;
+
+/* Initialize the thread-local seed if not yet initialized */
+static void ensure_rand_seed_init(void) {
+    if (g_rand_seed == 0) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        uintptr_t tid = (uintptr_t)pthread_self();
+        g_rand_seed = (uint32_t)((uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 32) ^ tid);
+    }
+}
+
 /* Forward declarations for layered encoding functions */
 static int rbox_decode_request_body(const char *body_buf, size_t body_len,
                             rbox_request_t *request);
@@ -30,6 +43,7 @@ static int rbox_decode_request_body(const char *body_buf, size_t body_len,
 static int rbox_decode_request_body(const char *body_buf, size_t body_len,
                             rbox_request_t *request) {
     if (!body_buf || !request) return -1;
+    if (body_len == 0) return -1;
 
     memset(request, 0, sizeof(*request));
     request->data = malloc(body_len + 1);  /* +1 for null terminator */
@@ -43,23 +57,33 @@ static int rbox_decode_request_body(const char *body_buf, size_t body_len,
     char *p = request->data;
     size_t remaining = body_len;
 
-    /* command */
+    /* command - must have at least 1 byte + null terminator */
+    if (remaining < 2) goto parse_error;
     request->command = p;
     size_t token_len = strlen(p);
+    if (token_len + 1 > remaining) goto parse_error;
     p += token_len + 1;
     remaining -= token_len + 1;
 
-    /* caller (skip) */
-    if (remaining > 0 && p[0] != '\0') {
-        p += strlen(p) + 1;
+    /* caller (skip) - must have at least 1 byte + null terminator */
+    if (remaining < 1) goto parse_error;
+    if (p[0] != '\0') {
+        token_len = strlen(p);
+        if (token_len + 1 > remaining) goto parse_error;
+        p += token_len + 1;
+        remaining -= token_len + 1;
     } else {
         p++;
         remaining--;
     }
 
-    /* syscall (skip) */
-    if (remaining > 0 && p[0] != '\0') {
-        p += strlen(p) + 1;
+    /* syscall (skip) - must have at least 1 byte + null terminator */
+    if (remaining < 1) goto parse_error;
+    if (p[0] != '\0') {
+        token_len = strlen(p);
+        if (token_len + 1 > remaining) goto parse_error;
+        p += token_len + 1;
+        remaining -= token_len + 1;
     } else {
         p++;
         remaining--;
@@ -69,11 +93,15 @@ static int rbox_decode_request_body(const char *body_buf, size_t body_len,
     char *argv_start = p;
     int argc = 0;
     while (remaining > 0 && p[0] != '\0') {
-        size_t tok_len = strlen(p);
-        p += tok_len + 1;
-        remaining -= tok_len + 1;
+        token_len = strlen(p);
+        if (token_len + 1 > remaining) goto parse_error;
+        p += token_len + 1;
+        remaining -= token_len + 1;
         argc++;
     }
+
+    /* Skip final \0 - need at least 1 byte */
+    if (remaining < 1) goto parse_error;
     p++;  /* Skip final \0 */
     remaining--;
 
@@ -94,6 +122,13 @@ static int rbox_decode_request_body(const char *body_buf, size_t body_len,
     request->argv[argc] = NULL;
 
     return 0;
+
+parse_error:
+    /* Clean up on parse error */
+    if (request->data) free(request->data);
+    if (request->argv) free(request->argv);
+    memset(request, 0, sizeof(*request));
+    return -1;
 }
 
 /* ============================================================
@@ -1087,13 +1122,15 @@ void rbox_free_env_decisions(rbox_env_decisions_t *env_decisions) {
 static void generate_request_id(uint8_t *id_out) {
     if (!id_out) return;
 
+    ensure_rand_seed_init();
+
     /* Use current time + random to generate unique ID */
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
 
     /* Mix bits for uniqueness */
     uint64_t a = (uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 32);
-    uint64_t b = (uint64_t)rand() ^ ((uint64_t)getpid() << 32);
+    uint64_t b = (uint64_t)rand_r(&g_rand_seed) ^ ((uint64_t)getpid() << 32);
 
     memcpy(id_out, &a, 8);
     memcpy(id_out + 8, &b, 8);
@@ -1102,6 +1139,8 @@ static void generate_request_id(uint8_t *id_out) {
 /* Generate client ID using pid + ppid + random
  * Client ID should be consistent for a process across requests (generated once) */
 static void init_client_id_once(void) {
+    ensure_rand_seed_init();
+
     pid_t pid = getpid();
     pid_t ppid = getppid();
 
@@ -1111,7 +1150,7 @@ static void init_client_id_once(void) {
     /* Last 8 bytes: random + timestamp */
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    uint64_t random_part = ((uint64_t)rand() << 32) ^ (uint64_t)ts.tv_nsec;
+    uint64_t random_part = ((uint64_t)rand_r(&g_rand_seed) << 32) ^ (uint64_t)ts.tv_nsec;
 
     memcpy(g_client_id, &id_part1, 8);
     memcpy(g_client_id + 8, &random_part, 8);
@@ -1354,13 +1393,15 @@ static uint32_t calc_retry_delay(rbox_session_t *session) {
     uint32_t base = session->base_delay_ms;
     if (base == 0) return 0;
 
+    ensure_rand_seed_init();
+
     uint32_t max_delay = base * 64;
     uint32_t exp = base;
     for (uint32_t i = 1; i < session->retry_attempt && exp < UINT32_MAX / 2; i++) {
         exp *= 2;
     }
 
-    uint32_t jitter = (uint32_t)((double)base * rand() / (RAND_MAX + 1.0));
+    uint32_t jitter = (uint32_t)((double)base * rand_r(&g_rand_seed) / (RAND_MAX + 1.0));
     uint32_t delay = exp + jitter;
     if (delay > max_delay) delay = max_delay;
 

@@ -1162,12 +1162,11 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
 
     /* Allocate new envp */
     char **new_envp = calloc(env_count + 1, sizeof(char *));
-    unsigned long *new_env_addrs = calloc(env_count + 1, sizeof(unsigned long));
     if (!new_envp) {
-        free(new_env_addrs);
         DEBUG_PRINT("FILTER: failed to allocate new_envp\n");
         return -1;
     }
+    unsigned long *new_env_addrs = calloc(env_count + 1, sizeof(unsigned long));
     if (!new_env_addrs) {
         free(new_envp);
         DEBUG_PRINT("FILTER: failed to allocate new_env_addrs\n");

@@ -248,8 +248,8 @@ rbox_server_t *rbox_server_new(const char *socket_path) {
 
     /* Note: keep listen socket blocking - we use poll in accept() to add timeout */
 
-    /* Remove existing socket file */
-    unlink(socket_path);
+    /* Remove existing socket file - use the truncated path stored in server struct */
+    unlink(server->socket_path);
 
     /* Bind */
     struct sockaddr_un addr;
