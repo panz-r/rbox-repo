@@ -41,7 +41,7 @@ OBJS = $(SRCS:.c=.o)
 # Target binary
 TARGET = readonlybox-ptrace
 
-.PHONY: all clean test test-e2e test-memory test-syscall test-validation test-integration test-verbose list debug coverage cppcheck valgrind compile_commands dfa
+.PHONY: all clean test test-e2e test-memory test-syscall test-validation test-integration test-verbose list debug coverage cppcheck valgrind dfa
 
 all: dfa $(TARGET)
 
@@ -64,10 +64,6 @@ $(DFA_FILE): $(NFA_FILE)
 
 $(DFA_DATA_C): $(DFA_FILE) $(DFA2C)
 	$(DFA2C) $(DFA_FILE) $(DFA_DATA_C) rbox_ptrace_dfa_data
-
-# Generate compile_commands.json using bear
-compile_commands:
-	bear -- $(MAKE) clean all 2>/dev/null || true
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
