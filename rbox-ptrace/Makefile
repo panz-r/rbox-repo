@@ -45,6 +45,14 @@ TARGET = readonlybox-ptrace
 
 all: dfa $(TARGET)
 
+# Allow parallel builds with -j
+ifneq ($(MAKECMDGOALS),)
+  ifeq ($(findstring -j,$(MAKEFLAGS)),)
+    NPROCS := $(shell nproc 2>/dev/null || echo 1)
+    export MAKEFLAGS += -j$(NPROCS)
+  endif
+endif
+
 # Build DFA from pattern file
 dfa: $(DFA_DATA_C)
 

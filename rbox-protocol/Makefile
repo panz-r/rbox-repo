@@ -40,6 +40,14 @@ TEST_BLOCK_BIN = test_blocking_server
 
 all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN)
 
+# Allow parallel builds with -j
+ifneq ($(MAKECMDGOALS),)
+  ifeq ($(findstring -j,$(MAKEFLAGS)),)
+    NPROCS := $(shell nproc 2>/dev/null || echo 1)
+    export MAKEFLAGS += -j$(NPROCS)
+  endif
+endif
+
 $(LIB): $(OBJS)
 	ar rcs $@ $^
 

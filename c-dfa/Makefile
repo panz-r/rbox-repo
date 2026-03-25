@@ -59,6 +59,15 @@ NFA_BUILDER_MODULES = $(TOOLS_DIR)/nfa_construct.o \
 # Default target: build everything (MUST be first rule)
 all: $(TOOLS) $(TEST) $(LIB) $(EVAL_LIB)
 
+# Allow parallel builds with -j
+ifneq ($(MAKECMDGOALS),)
+  # Only add -j if not already specified
+  ifeq ($(findstring -j,$(MAKEFLAGS)),)
+    NPROCS := $(shell nproc 2>/dev/null || echo 1)
+    export MAKEFLAGS += -j$(NPROCS)
+  endif
+endif
+
 LIB = libreadonlybox_dfa.a
 
 LIB_OBJS = lib/pipeline.o \

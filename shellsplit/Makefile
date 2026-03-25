@@ -20,6 +20,14 @@ TESTS_DIR = tests
 # Default target: build tokenizer_test
 all: $(TESTS_DIR)/tokenizer_test $(TESTS_DIR)/entropy_test
 
+# Allow parallel builds with -j
+ifneq ($(MAKECMDGOALS),)
+  ifeq ($(findstring -j,$(MAKEFLAGS)),)
+    NPROCS := $(shell nproc 2>/dev/null || echo 1)
+    export MAKEFLAGS += -j$(NPROCS)
+  endif
+endif
+
 # Generate compile_commands.json using bear
 # First compile all source files, then use bear to capture the commands
 compile_commands.json: $(SRC_DIR)/shell_tokenizer.c $(SRC_DIR)/shell_processor.c $(SRC_DIR)/shell_transform.c $(SRC_DIR)/shell_tokenizer_full.c $(SRC_DIR)/shell_ast.c $(SRC_DIR)/shell_ast_generator.c $(SRC_DIR)/shell_abstract.c
