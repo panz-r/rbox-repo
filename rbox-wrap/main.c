@@ -1,7 +1,7 @@
 #define _GNU_SOURCE
 /*
  * rbox-wrap.c - ReadOnlyBox wrapper for executing read-only commands
- * 
+ *
  * This is a thin wrapper that:
  * 1. Checks embedded DFA for fast-path approval
  * 2. Queries the server for a decision on a command
@@ -107,7 +107,6 @@ static char *get_socket_path(const char *cmd_socket, int force_system, int force
     /* 6. System default */
     return strdup(DEFAULT_SOCKET);
 }
-#define ENV_UID         "READONLYBOX_UID"
 
 #define EXIT_ALLOW  0
 #define EXIT_DENY   9
@@ -156,10 +155,10 @@ static int init_embedded_dfa(void) {
     if (g_dfa_validated) {
         return 0;
     }
-    
+
     g_dfa_data = rbox_wrap_dfa_data;
     g_dfa_size = rbox_wrap_dfa_data_size;
-    
+
     /* Validate identifier */
     if (!dfa_eval_validate_id(g_dfa_data, g_dfa_size, EXPECTED_IDENTIFIER)) {
         if (!dfa_eval_validate_id(g_dfa_data, g_dfa_size, "rbox-wrap")) {
@@ -168,7 +167,7 @@ static int init_embedded_dfa(void) {
             return -1;
         }
     }
-    
+
     g_dfa_validated = 1;
     return 0;
 }
@@ -181,12 +180,12 @@ static char *build_command_string_alloc(const char *const *argv) {
     for (int i = 0; argv[i]; i++) {
         total_len += strlen(argv[i]) + 1;
     }
-    
+
     if (total_len == 0) return NULL;
-    
+
     char *buf = malloc(total_len + 1);
     if (!buf) return NULL;
-    
+
     char *p = buf;
     for (int i = 0; argv[i]; i++) {
         if (i > 0) {
@@ -197,7 +196,7 @@ static char *build_command_string_alloc(const char *const *argv) {
         p += len;
     }
     *p = '\0';
-    
+
     return buf;
 }
 
@@ -207,7 +206,7 @@ static char *build_command_string_alloc(const char *const *argv) {
 static int parse_flagged_envs(const char *env_str, char ***out_names, float **out_scores) {
     if (out_names) *out_names = NULL;
     if (out_scores) *out_scores = NULL;
-    
+
     if (!env_str || !*env_str) {
         return 0;
     }
@@ -276,15 +275,15 @@ static void free_flagged_envs(int count, char **names) {
 
 /* Apply environment filtering based on server response
  * Removes environment variables that the server marked as denied */
-static void apply_env_filter(int flagged_count, char **flagged_names, 
+static void apply_env_filter(int flagged_count, char **flagged_names,
                             rbox_env_decisions_t *env_decisions) {
     if (!env_decisions || !env_decisions->valid || !env_decisions->bitmap) {
         return;
     }
-    
+
     for (int i = 0; i < flagged_count && i < env_decisions->env_count; i++) {
         if (!flagged_names[i]) continue;
-        
+
         int bit = (env_decisions->bitmap[i / 8] >> (i % 8)) & 1;
         if (bit == 1) {
             unsetenv(flagged_names[i]);
@@ -296,34 +295,34 @@ static void apply_env_filter(int flagged_count, char **flagged_names,
  * Returns: 1 if allowed, 0 if not, -1 on error/unavailable */
 static int check_dfa(int argc, const char *const *args) {
     (void)argc;
-    
+
     /* Only use embedded DFA */
     if (init_embedded_dfa() != 0) {
         return -1;
     }
-    
+
     if (!g_dfa_data) {
         return -1;
     }
-    
+
     char *cmd_str = build_command_string_alloc(args);
     if (!cmd_str) {
         return -1;
     }
-    
+
     dfa_result_t result;
     bool eval_ok = dfa_eval(g_dfa_data, g_dfa_size, cmd_str, strlen(cmd_str), &result);
-    
+
     free(cmd_str);
-    
+
     if (!eval_ok) {
         return -1;
     }
-    
+
     if (result.matched && (result.category_mask & CAT_MASK_AUTOALLOW)) {
         return 1;
     }
-    
+
     return 0;
 }
 
@@ -332,7 +331,7 @@ static uid_t get_target_uid(const char *uid_str) {
     const char *env_uid = getenv(ENV_UID);
     const char *src = uid_str ? uid_str : (env_uid ? env_uid : NULL);
     if (!src) return (uid_t)-1;
-    
+
     char *end;
     unsigned long val = strtoul(src, &end, 10);
     if (end == src || *end != '\0' || val > 65534) {
@@ -364,79 +363,67 @@ static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clea
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "%s: fork: %s\n", program_name, strerror(errno));
-        return -1;
+        return EXIT_ERROR;
     }
-    
+
     if (pid == 0) {
-        /* Child process */
-        
-        /* Request parent death signal */
         prctl(PR_SET_PDEATHSIG, SIGTERM);
-        
-        /* Determine target user info for environment */
+
+        struct passwd *pw = NULL;
         const char *home = "/root";
         const char *user = "root";
+
         if (target_uid != (uid_t)-1) {
-            struct passwd *pw = getpwuid(target_uid);
-            if (pw) {
-                home = pw->pw_dir ? pw->pw_dir : "/root";
-                user = pw->pw_name ? pw->pw_name : "root";
+            pw = getpwuid(target_uid);
+            if (!pw) {
+                fprintf(stderr, "%s: target user %lu does not exist\n",
+                        program_name, (unsigned long)target_uid);
+                _exit(1);
             }
+            home = pw->pw_dir ? pw->pw_dir : "/root";
+            user = pw->pw_name ? pw->pw_name : "root";
         }
-        
-        /* Handle clean environment option */
+
         if (clear_env) {
             clearenv();
             setenv("PATH", "/usr/local/bin:/usr/bin:/bin", 1);
             setenv("HOME", home, 1);
             setenv("USER", user, 1);
         }
-        
-        /* Drop privileges if requested */
-        if (target_uid != (uid_t)-1) {
-            struct passwd *pw = getpwuid(target_uid);
-            if (pw) {
-                if (setgid(pw->pw_gid) != 0 || setuid(pw->pw_uid) != 0) {
-                    fprintf(stderr, "%s: failed to drop privileges: %s\n", 
-                            program_name, strerror(errno));
-                    _exit(1);
-                }
+
+        if (target_uid != (uid_t)-1 && pw) {
+            if (setgid(pw->pw_gid) != 0 || setuid(pw->pw_uid) != 0) {
+                fprintf(stderr, "%s: failed to drop privileges to user %s: %s\n",
+                        program_name, pw->pw_name, strerror(errno));
+                _exit(1);
             }
         }
-        
-        /* Execute command */
+
         execvp(cmd, argv);
         fprintf(stderr, "%s: %s: %s\n", program_name, cmd, strerror(errno));
         _exit(127);
     }
-    
-    /* Parent: wait for child */
+
     int status;
     while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) {
-            return -1;
-        }
+        if (errno != EINTR) return EXIT_ERROR;
     }
-    
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
-    }
-    if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
-    }
-    return -1;
+
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return EXIT_ERROR;
 }
 
 /* Handle --run mode with environment filtering
  * Uses binary protocol to get env decisions from server */
-static int run_with_filter(const char *socket_path, const char *command, 
+static int run_with_filter(const char *socket_path, const char *command,
                           int cmd_argc, const char **args,
                           const char *caller, const char *syscall,
                           int flagged_count, char **flagged_names, float *flagged_scores,
                           uid_t target_uid, int clear_env) {
     char *packet = NULL;
     size_t pkt_len = 0;
-    
+
     rbox_error_t err = rbox_blocking_request_raw(
         socket_path,
         command,
@@ -452,37 +439,37 @@ static int run_with_filter(const char *socket_path, const char *command,
         100,
         3
     );
-    
+
     if (err != RBOX_OK || !packet) {
-        fprintf(stderr, "%s: server request failed: %s\n", 
-                program_name, rbox_strerror(err));
+        fprintf(stderr, "%s: server request failed for command '%s': %s\n",
+                program_name, command, rbox_strerror(err));
         return EXIT_ERROR;
     }
-    
+
     /* Decode the response */
     rbox_decoded_header_t header;
     rbox_decode_header(packet, pkt_len, &header);
-    
+
     if (!header.valid) {
         fprintf(stderr, "%s: invalid response header\n", program_name);
         free(packet);
         return EXIT_ERROR;
     }
-    
+
     rbox_response_details_t details;
     rbox_decode_response_details(&header, packet, pkt_len, &details);
-    
+
     rbox_env_decisions_t env_decisions;
     rbox_decode_env_decisions(&header, &details, packet, pkt_len, &env_decisions);
-    
+
     /* Apply environment filtering unless clear_env is set */
     if (!clear_env && env_decisions.valid) {
         apply_env_filter(flagged_count, flagged_names, &env_decisions);
     }
-    
+
     /* Free decoded data */
     rbox_free_env_decisions(&env_decisions);
-    
+
     /* Check decision */
     if (!details.valid || details.decision != RBOX_DECISION_ALLOW) {
         if (details.valid && details.decision == RBOX_DECISION_DENY) {
@@ -494,7 +481,7 @@ static int run_with_filter(const char *socket_path, const char *command,
         free(packet);
         return EXIT_ERROR;
     }
-    
+
     /* Execute the command */
     int result = run_command(command, (char **)args, target_uid, clear_env);
     free(packet);
@@ -511,9 +498,9 @@ int main(int argc, char *argv[]) {
     int mode_relay = 0;
     int mode_clear_env = 0;
     const char *uid_str = NULL;
-    
+
     program_name = argv[0];
-    
+
     static struct option long_options[] = {
         {"judge",        no_argument,       0, 'j'},
         {"run",          no_argument,       0, 'r'},
@@ -528,10 +515,10 @@ int main(int argc, char *argv[]) {
         {"version",      no_argument,       0, 'v'},
         {0, 0, 0, 0}
     };
-    
+
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "s:u:hrbclv", 
+    while ((opt = getopt_long(argc, argv, "s:u:hrbclv",
                               long_options, &option_index)) != -1) {
         switch (opt) {
             case 'h':
@@ -572,20 +559,8 @@ int main(int argc, char *argv[]) {
                 return 1;
         }
     }
-    
-    /* Resolve socket path after option parsing */
-    socket_path = get_socket_path(cmd_socket, force_system, force_user);
-    if (!socket_path) {
-        fprintf(stderr, "%s: failed to determine socket path\n", argv[0]);
-        return EXIT_ERROR;
-    }
-    if (strlen(socket_path) >= UNIX_PATH_MAX) {
-        fprintf(stderr, "%s: socket path too long (max %d): %s\n",
-                program_name, UNIX_PATH_MAX, socket_path);
-        free(socket_path);
-        return EXIT_ERROR;
-    }
-    
+
+
     /* Check for -- separator */
     int cmd_start = optind;
     for (int i = optind; i < argc; i++) {
@@ -594,34 +569,34 @@ int main(int argc, char *argv[]) {
             break;
         }
     }
-    
+
     if (cmd_start >= argc) {
         fprintf(stderr, "Error: No command specified\n");
         usage(argv[0]);
         return EXIT_ERROR;
     }
-    
+
     const char *command = argv[cmd_start];
     int cmd_argc = argc - cmd_start;
     char **cmd_argv = &argv[cmd_start];
     const char **args = (const char **)cmd_argv;
-    
+
     uid_t target_uid = get_target_uid(uid_str);
-    
+
     /* Initialize protocol library */
     rbox_init();
-    
+
     /* Determine caller from environment or mode */
     const char *caller_env = getenv(ENV_CALLER);
     const char *caller = caller_env ? caller_env : (mode_run ? "run" : "judge");
     const char *syscall = "execve";
-    
+
     /* Check DFA first for fast-path (unless --relay) */
     int dfa_result = -1;
     if (!mode_relay) {
         dfa_result = check_dfa(cmd_argc, args);
     }
-    
+
     /* Handle DFA fast-path */
     if (dfa_result == 1) {
         if (mode_bin) {
@@ -649,7 +624,7 @@ int main(int argc, char *argv[]) {
             return EXIT_ALLOW;
         }
     }
-    
+
     /* Parse flagged environment variables */
     char **flagged_names = NULL;
     float *flagged_scores = NULL;
@@ -662,7 +637,20 @@ int main(int argc, char *argv[]) {
             return EXIT_ERROR;
         }
     }
-    
+
+    /* Resolve socket path after dfa fast-path */
+    socket_path = get_socket_path(cmd_socket, force_system, force_user);
+    if (!socket_path) {
+        fprintf(stderr, "%s: failed to determine socket path\n", argv[0]);
+        return EXIT_ERROR;
+    }
+    if (strlen(socket_path) >= UNIX_PATH_MAX) {
+        fprintf(stderr, "%s: socket path too long (max %d): %s\n",
+                program_name, UNIX_PATH_MAX, socket_path);
+        free(socket_path);
+        return EXIT_ERROR;
+    }
+
     /* Handle --run mode with environment filtering */
     if (mode_run) {
         int ret = run_with_filter(socket_path, command, cmd_argc, args,
@@ -670,9 +658,10 @@ int main(int argc, char *argv[]) {
                              target_uid, mode_clear_env);
         free_flagged_envs(flagged_count, flagged_names);
         free(flagged_scores);
+        free(socket_path);
         return ret;
     }
-    
+
     /* Handle --bin mode (binary protocol, no execution) */
     if (mode_bin) {
         char *packet = NULL;
@@ -692,15 +681,16 @@ int main(int argc, char *argv[]) {
             100,
             3
         );
-        
+
         free_flagged_envs(flagged_count, flagged_names);
         free(flagged_scores);
-        
+        free(socket_path);
+
         if (err != RBOX_OK || !packet) {
             fprintf(stderr, "%s: %s\n", program_name, rbox_strerror(err));
             return EXIT_ERROR;
         }
-        
+
         if (write_all(STDOUT_FILENO, packet, pkt_len) != 0) {
             fprintf(stderr, "%s: failed to write packet\n", program_name);
             free(packet);
@@ -709,7 +699,7 @@ int main(int argc, char *argv[]) {
         free(packet);
         return EXIT_ALLOW;
     }
-    
+
     /* Default: text mode query to server (judge mode) */
     rbox_response_t response;
     rbox_error_t err = rbox_blocking_request(
@@ -726,15 +716,16 @@ int main(int argc, char *argv[]) {
         100,
         3
     );
-    
+
     free_flagged_envs(flagged_count, flagged_names);
     free(flagged_scores);
-    
+    free(socket_path);
+
     if (err != RBOX_OK) {
         fprintf(stderr, "%s: %s\n", program_name, rbox_strerror(err));
         return EXIT_ERROR;
     }
-    
+
     if (response.decision == RBOX_DECISION_ALLOW) {
         printf("ALLOW %s\n", response.reason[0] ? response.reason : "");
         return EXIT_ALLOW;

@@ -1,54 +1,53 @@
 # Makefile for rbox-wrap
 
+# Variables
 CC ?= gcc
 CFLAGS ?= -Wall -Wextra -std=gnu11 -O2 -g
 CFLAGS += -I../rbox-protocol/include -I../shellsplit/include -I../c-dfa/include
 CFLAGS += -DDEFAULT_SOCKET=\"/run/readonlybox/readonlybox.sock\"
 LDFLAGS ?= -lpthread -lm
 
-# Paths to libraries
+# Paths
 RBOX_PROTOCOL = ../rbox-protocol
 SHELLSPLIT = ../shellsplit
 C_DFA = ../c-dfa
 
-# Static library from rbox-protocol
+# Libraries
 RBOX_LIB = $(RBOX_PROTOCOL)/librbox_protocol.a
 SHELLSPLIT_LIB = $(SHELLSPLIT)/libshellsplit.a
-
-# DFA eval library (new API - just evaluation, no loader)
 DFA_EVAL_LIB = $(C_DFA)/libdfa_eval.a
 
-# DFA build tools
+# Tools
 NFA_BUILDER = $(C_DFA)/tools/nfa_builder
 NFA2DFA = $(C_DFA)/tools/nfa2dfa_advanced
 DFA2C = $(C_DFA)/tools/dfa2c_array
 
-# Pattern file and output files for embedded DFA
-PATTERN_FILE = rbox_wrap_commands.txt
+# Pattern file and outputs
+PATTERN_FILE ?= rbox_wrap_commands.txt
 NFA_FILE = rbox_wrap.nfa
 DFA_FILE = rbox_wrap.dfa
 DFA_DATA_C = rbox_wrap_dfa_data.c
 DFA_DATA_OBJ = rbox_wrap_dfa_data.o
 
-# Target
+# Targets
 TARGET = rbox-wrap
 SRC = main.c
-
-# Test
 TEST_BIN = test_wrap
 TEST_SRC = tests/test.c
+DECODE_PACKET = tests/decode_packet
 
-.PHONY: all clean test dfa
+.PHONY: all clean test dfa \
+        $(TARGET) $(TEST_BIN) $(DECODE_PACKET) \
+        $(RBOX_LIB) $(DFA_EVAL_LIB) $(SHELLSPLIT_LIB)
 
-all: dfa $(TARGET)
-
-# Allow parallel builds with -j
-ifneq ($(MAKECMDGOALS),)
-  ifeq ($(findstring -j,$(MAKEFLAGS)),)
+# Enable parallel builds
+ifneq ($(filter-out --%,$(MAKECMDGOALS)),)
     NPROCS := $(shell nproc 2>/dev/null || echo 1)
-    export MAKEFLAGS += -j$(NPROCS)
-  endif
+    MAKEFLAGS += -j$(NPROCS) -k
 endif
+
+# Default target
+all: dfa $(TARGET)
 
 # Build DFA from pattern file
 dfa: $(DFA_DATA_C)
@@ -78,18 +77,15 @@ $(SHELLSPLIT_LIB):
 	$(MAKE) -C $(SHELLSPLIT) libshellsplit.a
 
 # Test targets
-DECODE_PACKET = tests/decode_packet
-test: dfa $(TARGET) $(TEST_BIN) $(DECODE_PACKET)
-	./$(TEST_BIN)
-	@echo ""
-	@echo "Running shell integration tests..."
-	@cd tests && bash run_tests.sh
-
 $(TEST_BIN): $(TEST_SRC) $(RBOX_LIB)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(RBOX_LIB) $(LDFLAGS)
 
 $(DECODE_PACKET): tests/decode_packet.c $(RBOX_LIB) $(SHELLSPLIT_LIB)
 	$(CC) $(CFLAGS) -o $@ tests/decode_packet.c $(RBOX_LIB) $(SHELLSPLIT_LIB) $(LDFLAGS)
+
+test: dfa $(TARGET) $(TEST_BIN) $(DECODE_PACKET)
+	@echo "Running C unit tests and shell integration tests..."
+	bash tests/run_tests.sh
 
 clean:
 	rm -f $(TARGET) $(TEST_BIN) tests/decode_packet

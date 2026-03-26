@@ -2,17 +2,25 @@
 #
 # rbox-wrap test suite with server
 
-cd "$(dirname "$0")/.." || exit 1
+# Get the directory where the script is located
+# When run via 'make -C tests' or 'bash tests/run_tests.sh', this correctly finds rbox-wrap
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$PROJECT_DIR" || exit 1
 
 WRAPPER="./rbox-wrap"
-SERVER="../rbox-server/rbox-server"
-SOCKET="/tmp/rbox-wrap-test.sock"
+SERVER="$PROJECT_DIR/../bin/readonlybox-server"
+SOCKET="$(mktemp /tmp/rbox-wrap-test.XXXXXX.sock)"
+export SOCKET
+export READONLYBOX_SOCKET="$SOCKET"
+export LD_LIBRARY_PATH="$PROJECT_DIR/../rbox-protocol:$LD_LIBRARY_PATH"
 PASS=0
 FAIL=0
 SKIP=0
 
 cleanup() {
-    pkill -f "rbox-server.*$SOCKET" 2>/dev/null || true
+    pkill -f "readonlybox-server.*$SOCKET" 2>/dev/null || true
     rm -f "$SOCKET"
 }
 trap cleanup EXIT
@@ -33,7 +41,7 @@ skip() {
 }
 
 start_server() {
-    pkill -f "rbox-server.*$SOCKET" 2>/dev/null || true
+    pkill -f "readonlybox-server.*$SOCKET" 2>/dev/null || true
     rm -f "$SOCKET"
     $SERVER -socket "$SOCKET" -auto-deny >/dev/null 2>&1 &
     wait_for_server
@@ -56,7 +64,7 @@ start_server_with_env_deny() {
     local env_deny="$1"
     local max_requests="${2:-1}"
     
-    pkill -f "rbox-server.*$SOCKET" 2>/dev/null || true
+    pkill -f "readonlybox-server.*$SOCKET" 2>/dev/null || true
     rm -f "$SOCKET"
     
     local args="-socket $SOCKET -test-env-deny $env_deny"
@@ -66,22 +74,40 @@ start_server_with_env_deny() {
 }
 
 start_server_auto_deny() {
-    pkill -f "rbox-server.*$SOCKET" 2>/dev/null || true
+    pkill -f "readonlybox-server.*$SOCKET" 2>/dev/null || true
     rm -f "$SOCKET"
     $SERVER -socket "$SOCKET" -auto-deny >/dev/null 2>&1 &
     wait_for_server
 }
 
 start_server_auto_allow() {
-    pkill -f "rbox-server.*$SOCKET" 2>/dev/null || true
+    pkill -f "readonlybox-server.*$SOCKET" 2>/dev/null || true
     rm -f "$SOCKET"
-    $SERVER -socket "$SOCKET" >/dev/null 2>&1 &
+    env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" "$SERVER" -socket "$SOCKET" &
     wait_for_server
 }
 
 echo "========================================"
 echo "rbox-wrap Test Suite"
 echo "========================================"
+echo ""
+
+#========================================
+# Start server for tests that need it
+#========================================
+echo "Starting private test server..."
+start_server_auto_allow
+
+#========================================
+# Run C Unit Tests
+#========================================
+echo "Running C unit tests..."
+echo ""
+if ! ./test_wrap; then
+    echo "C unit tests failed"
+    exit 1
+fi
+
 echo ""
 
 #========================================
@@ -159,6 +185,41 @@ if [ $? -eq 0 ]; then
     pass "--bin runs without crash"
 else
     fail "--bin runs without crash"
+fi
+
+
+echo ""
+
+#========================================
+# DFA Fast-Path (Not Auto-Allow)
+#========================================
+echo "DFA Fast-Path (Not Auto-Allow)"
+echo "--------------------------------"
+
+# Start server for commands that need server (rm, mv, cp not in DFA fast-path)
+start_server_auto_allow
+
+# rm, mv, cp are NOT in the DFA autoallow list
+# They should NOT use DFA fast-path (will go to server instead)
+output=$($WRAPPER --socket "$SOCKET" --judge -- rm 2>&1)
+if echo "$output" | grep -vq "ALLOW DFA fast-path"; then
+    pass "'rm' does not use DFA fast-path"
+else
+    fail "'rm' should not use DFA fast-path"
+fi
+
+output=$($WRAPPER --socket "$SOCKET" --judge -- mv 2>&1)
+if echo "$output" | grep -vq "ALLOW DFA fast-path"; then
+    pass "'mv' does not use DFA fast-path"
+else
+    fail "'mv' should not use DFA fast-path"
+fi
+
+output=$($WRAPPER --socket "$SOCKET" --judge -- cp 2>&1)
+if echo "$output" | grep -vq "ALLOW DFA fast-path"; then
+    pass "'cp' does not use DFA fast-path"
+else
+    fail "'cp' should not use DFA fast-path"
 fi
 
 echo ""
@@ -414,18 +475,29 @@ echo ""
 echo "Privilege Dropping"
 echo "------------------"
 
+# Test --uid with non-existent UID (within valid range)
+# UID 65000 is > 65534 is rejected by get_target_uid, so use 6500
+# Use 'true' which is in DFA so no server needed
+output=$($WRAPPER -u 65000 --run -- true 2>&1)
+if echo "$output" | grep -q "does not exist"; then
+    pass "Non-existent UID (65000) shows error"
+else
+    fail "Non-existent UID should show error"
+fi
+
+# Test --uid with valid UID (requires sudo for privilege dropping)
 if command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
     # Test --uid flag - verify UID actually changes to 1000
-    output=$(sudo $WRAPPER --uid 1000 --run id -u 2>&1 | tr -d '\n')
+    output=$(sudo $WRAPPER --uid 1000 --run -- id -u 2>&1 | tr -d '\n')
     if [ "$output" = "1000" ]; then
         pass "Privilege dropping via --uid works"
     else
         fail "Privilege dropping via --uid (got: $output)"
     fi
-    
+
     # Test READONLYBOX_UID - verify UID actually changes
     export READONLYBOX_UID=1000
-    output=$(sudo $WRAPPER --run id -u 2>&1 | tr -d '\n')
+    output=$(sudo $WRAPPER --run -- id -u 2>&1 | tr -d '\n')
     if [ "$output" = "1000" ]; then
         pass "Privilege dropping via READONLYBOX_UID works"
     else

@@ -191,21 +191,74 @@ static int test_decisions(void) {
 /* Test 8: Header size constant */
 static int test_header_size(void) {
     TEST("header size RBOX_HEADER_SIZE == 127");
-    
+
     if (RBOX_HEADER_SIZE != 127) {
         FAIL("RBOX_HEADER_SIZE should be 127");
     }
-    
+
     PASS();
     return 0;
 }
 
+/* Test 9: Privilege dropping with non-existent UID */
+static int test_priv_drop_invalid_uid(void) {
+    TEST("privilege dropping rejects non-existent UID");
+
+    /* UID 65000 is within valid range (<= 65534) but doesn't exist */
+    char output[256];
+    int status = run_cmd("./rbox-wrap -u 65000 --run -- id -u 2>&1", output, sizeof(output));
+
+    if (strstr(output, "does not exist") != NULL) {
+        PASS();
+        return 0;
+    }
+
+    printf("  Got: %s\n", output);
+    FAIL("should report non-existent UID");
+}
+
+/* Test 10: Privilege dropping with valid UID */
+static int test_priv_drop_valid_uid(void) {
+    TEST("privilege dropping accepts valid UID 1000");
+
+    /* UID 1000 should exist on most systems */
+    char output[256];
+    int status = run_cmd("./rbox-wrap -u 1000 --run -- id -u 2>&1", output, sizeof(output));
+
+    if (strstr(output, "1000") != NULL) {
+        PASS();
+        return 0;
+    }
+
+    printf("  Got: %s\n", output);
+    FAIL("should run as UID 1000");
+}
+
+/* Test 11: DFA does NOT fast-path dangerous commands */
+static int test_dfa_does_not_fast_path_dangerous(void) {
+    TEST("DFA does not fast-path 'rm' (goes to server)");
+
+    char output[256];
+
+    /* rm is NOT in the DFA autoallow list, so it should NOT say "ALLOW DFA fast-path" */
+    int status = run_cmd("./rbox-wrap --judge -- rm 2>&1", output, sizeof(output));
+
+    /* Should NOT match DFA fast-path */
+    if (strstr(output, "ALLOW DFA fast-path") == NULL) {
+        PASS();
+        return 0;
+    }
+
+    printf("  Got: %s\n", output);
+    FAIL("'rm' should not use DFA fast-path");
+}
+
 int main(void) {
     printf("=== rbox-wrap tests ===\n\n");
-    
+
     /* Build tests */
     int failed = 0;
-    
+
     failed |= test_help();
     failed |= test_no_command();
     failed |= test_unknown_option();
@@ -214,6 +267,9 @@ int main(void) {
     failed |= test_version();
     failed |= test_decisions();
     failed |= test_header_size();
+    failed |= test_priv_drop_invalid_uid();
+    failed |= test_priv_drop_valid_uid();
+    failed |= test_dfa_does_not_fast_path_dangerous();
     
     printf("\n=== Results: %d/%d tests passed ===\n", pass_count, test_count);
     

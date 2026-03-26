@@ -2,3 +2,4 @@ rbox-wrap
 test_dfa
 test_wrap
 rbox_wrap_dfa_data.c
+tests/decode_packet
