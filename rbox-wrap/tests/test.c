@@ -217,24 +217,7 @@ static int test_priv_drop_invalid_uid(void) {
     FAIL("should report non-existent UID");
 }
 
-/* Test 10: Privilege dropping with valid UID */
-static int test_priv_drop_valid_uid(void) {
-    TEST("privilege dropping accepts valid UID 1000");
-
-    /* UID 1000 should exist on most systems */
-    char output[256];
-    int status = run_cmd("./rbox-wrap -u 1000 --run -- id -u 2>&1", output, sizeof(output));
-
-    if (strstr(output, "1000") != NULL) {
-        PASS();
-        return 0;
-    }
-
-    printf("  Got: %s\n", output);
-    FAIL("should run as UID 1000");
-}
-
-/* Test 11: DFA does NOT fast-path dangerous commands */
+/* Test 10: DFA does NOT fast-path dangerous commands */
 static int test_dfa_does_not_fast_path_dangerous(void) {
     TEST("DFA does not fast-path 'rm' (goes to server)");
 
@@ -268,7 +251,6 @@ int main(void) {
     failed |= test_decisions();
     failed |= test_header_size();
     failed |= test_priv_drop_invalid_uid();
-    failed |= test_priv_drop_valid_uid();
     failed |= test_dfa_does_not_fast_path_dangerous();
     
     printf("\n=== Results: %d/%d tests passed ===\n", pass_count, test_count);

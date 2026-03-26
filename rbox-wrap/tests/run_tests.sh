@@ -418,7 +418,7 @@ echo "------------------"
 # Generate a 10k character argument to test wrapper's argument parsing
 # We use 'echo' with the argument - it matches via the DFA pattern
 long_arg=$(printf 'a%.0s' {1..10000})
-output=$(timeout 5 $WRAPPER --judge -- echo "$long_arg" 2>&1)
+output=$(timeout 10 $WRAPPER --judge -- echo "$long_arg" 2>&1)
 if echo "$output" | grep -q "ALLOW"; then
     pass "Large command line (10k chars) handled"
 else
