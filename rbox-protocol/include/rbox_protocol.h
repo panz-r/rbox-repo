@@ -333,6 +333,11 @@ char *rbox_server_request_env_var_name(const rbox_server_request_t *req, int ind
 //export rbox_server_request_env_var_score
 float rbox_server_request_env_var_score(const rbox_server_request_t *req, int index);
 
+/* Free a server request without sending a response
+ * This closes the client socket and frees all request resources.
+ * Use this if you want to discard the request without responding. */
+void rbox_server_request_free(rbox_server_request_t *req);
+
 /*
  * Send decision to client and free request buffers
  *
@@ -717,6 +722,7 @@ typedef struct rbox_parse_result {
     uint32_t count;           /* Number of subcommands */
     uint32_t has_variables;   /* Contains variables like $VAR */
     uint32_t truncated;        /* Hit limits, may have more */
+    size_t cmd_len;          /* Original command length (for bounds checking) */
 } rbox_parse_result_t;
 
 /* Parse command into subcommands (zero-copy) */

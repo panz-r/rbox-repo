@@ -54,6 +54,7 @@ typedef struct rbox_server_send_entry {
     int fd;                        /* Socket to send to */
     char *data;                    /* Response packet data */
     size_t len;                    /* Response length */
+    size_t offset;
     struct rbox_server_send_entry *next;
     rbox_server_request_t *request;  /* Associated request to free after send */
 } rbox_server_send_entry_t;
@@ -84,11 +85,22 @@ struct rbox_server_request {
     float *env_var_scores;
     uint32_t fenv_hash;
 
+    /* Body reading state for non-blocking reads */
+    int reading_body;               /* 1 if waiting for body data */
+    size_t body_expected;          /* Total body bytes expected */
+    size_t body_received;           /* Bytes received so far */
+
     /* Queue link */
     struct rbox_server_request *next;
 };
 
 typedef struct rbox_server_request rbox_server_request_t;
+
+/* Client fd list entry */
+typedef struct rbox_client_fd_entry {
+    int fd;
+    struct rbox_client_fd_entry *next;
+} rbox_client_fd_entry_t;
 
 /* Server handle */
 struct rbox_server_handle {
@@ -125,6 +137,13 @@ struct rbox_server_handle {
     rbox_server_decision_t *decision_queue;  /* Queue head */
     rbox_server_decision_t *decision_tail;   /* Queue tail */
     int decision_count;
+
+    pthread_mutex_t client_fd_mutex;
+    rbox_client_fd_entry_t *client_fds;
+    int active_client_count; /* Number of active clients */
+
+    /* Pending request being read (for non-blocking body reads) */
+    rbox_server_request_t *pending_request;  /* Non-null when reading body */
 };
 
 #endif /* RBOX_SERVER_INTERNAL_H */

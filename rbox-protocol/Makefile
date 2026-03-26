@@ -10,8 +10,17 @@ LDFLAGS = -lpthread -lm -z noexecstack
 SHELLSPLIT_SRC = ../shellsplit/src/shell_tokenizer.c
 SHELLSPLIT_OBJ = ../shellsplit/src/shell_tokenizer.o
 
-# Source files
-SRCS = src/socket.c \
+# Source files - reorganized layers
+SRCS = src/socket_io.c \
+       src/protocol.c \
+       src/runtime.c \
+       src/session.c \
+       src/packet_stream.c \
+       src/server_client.c \
+       src/server_request.c \
+       src/server_response.c \
+       src/server_cache.c \
+       src/socket.c \
        src/packet.c \
        src/parser.c \
        src/server.c
@@ -35,10 +44,14 @@ TEST_INTEG_SRC = tests/test_integration.c
 TEST_INTEG_BIN = test_integration
 TEST_BLOCK_SRC = tests/test_blocking_server.c
 TEST_BLOCK_BIN = test_blocking_server
+TEST_PERSIST_SRC = tests/test_persistent.c
+TEST_PERSIST_BIN = test_persistent
+TEST_STREAM_SRC = tests/test_streaming.c
+TEST_STREAM_BIN = test_streaming
 
-.PHONY: all clean test test-unit test-full test-integration test-blocking test-fuzz test-fuzz-1h test-fuzz-4h
+.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-streaming test-fuzz test-fuzz-1h test-fuzz-4h
 
-all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN)
+all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN)
 
 # Allow parallel builds with -j
 ifneq ($(MAKECMDGOALS),)
@@ -65,7 +78,7 @@ $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
 # Run both unit tests and integration tests
-test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN)
+test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
 	./$(TEST_BASIC_BIN)
@@ -78,6 +91,12 @@ test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN)
 	@echo ""
 	@echo "=== Running blocking server tests ==="
 	./$(TEST_BLOCK_BIN)
+	@echo ""
+	@echo "=== Running persistent connection tests ==="
+	./$(TEST_PERSIST_BIN)
+	@echo ""
+	@echo "=== Running streaming tests ==="
+	./$(TEST_STREAM_BIN)
 
 # Run only unit tests
 test-unit: $(TEST_BASIC_BIN)
@@ -100,6 +119,12 @@ test-fuzz-4h:
 test-full: $(TEST_FULL_BIN)
 	./$(TEST_FULL_BIN)
 
+test-blocking: $(TEST_BLOCK_BIN)
+	./$(TEST_BLOCK_BIN)
+
+test-persistent: $(TEST_PERSIST_BIN)
+	./$(TEST_PERSIST_BIN)
+
 $(TEST_BASIC_BIN): $(TEST_BASIC_SRC) $(LIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
 
@@ -112,5 +137,11 @@ $(TEST_INTEG_BIN): $(TEST_INTEG_SRC) $(LIB) $(SHELLSPLIT_OBJ)
 $(TEST_BLOCK_BIN): $(TEST_BLOCK_SRC) $(LIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
 
+$(TEST_PERSIST_BIN): $(TEST_PERSIST_SRC) $(LIB) $(SHELLSPLIT_OBJ)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
+
+$(TEST_STREAM_BIN): $(TEST_STREAM_SRC) $(LIB) $(SHELLSPLIT_OBJ)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
+
 clean:
-	rm -f $(OBJS) $(LIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN)
+	rm -f $(OBJS) $(LIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN)

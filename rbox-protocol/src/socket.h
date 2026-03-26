@@ -7,8 +7,8 @@
 
 #include <sys/types.h>
 
-/* Server read timeout - prevents indefinite blocking from malicious clients (5 seconds) */
-#define RBOX_SERVER_READ_TIMEOUT 5000
+/* Server read timeout - prevents indefinite blocking from malicious clients (100 ms) */
+#define RBOX_SERVER_READ_TIMEOUT 100
 
 /* Maximum delay cap for usleep (1000 seconds) to prevent overflow */
 #define RBOX_MAX_SLEEP_DELAY_MS 1000000

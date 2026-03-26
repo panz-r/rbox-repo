@@ -23,3 +23,6 @@ fuzz/test_link.cpp
 # Backup files
 *~
 *.swp
+
+# compile_commands.json
+compile_commands.json

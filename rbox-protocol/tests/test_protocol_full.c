@@ -235,8 +235,6 @@ static int test_accept_loop(void) {
     PASS();
 }
 
-
-
 /* ============================================================
  * SHELLSPLIT PARSING TESTS
  * ============================================================ */
@@ -384,7 +382,7 @@ static void corrupt_data(char *data, size_t len, corruption_params_t *params) {
 
 /* Handle one client connection - forwards bidirectionally with corruption */
 static void *handle_proxy_client(void *arg) {
-    
+
     /* arg is a struct with client_fd, target_socket, and corruption params */
     struct client_info {
         int client_fd;
@@ -405,13 +403,13 @@ static void *handle_proxy_client(void *arg) {
     free(arg);
     arg = NULL;
 
-    
-     
+
+
 
     /* Connect to target server via Unix socket */
     int target_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (target_fd < 0) {
-        
+
         close(client_fd);
         return NULL;
     }
@@ -424,13 +422,13 @@ static void *handle_proxy_client(void *arg) {
     target_addr.sun_path[path_len] = '\0';
 
     if (connect(target_fd, (struct sockaddr *)&target_addr, sizeof(target_addr)) < 0) {
-        
+
         close(target_fd);
         close(client_fd);
         return NULL;
     }
-    
-     
+
+
 
     /* Bidirectional forwarding using poll */
     char buffer[8192];
@@ -487,7 +485,7 @@ static void *handle_proxy_client(void *arg) {
 
     close(target_fd);
     close(client_fd);
-    
+
     return NULL;
 }
 
@@ -495,8 +493,8 @@ static void *handle_proxy_client(void *arg) {
 static void *proxy_thread_func(void *arg) {
     proxy_t *proxy = (proxy_t *)arg;
 
-    
-     
+
+
 
     while (atomic_load(&proxy->running)) {
         struct pollfd pfd = { .fd = proxy->listen_fd, .events = POLLIN, .revents = 0 };
@@ -523,8 +521,8 @@ static void *proxy_thread_func(void *arg) {
             }
             info->client_fd = client_fd;
             snprintf(info->target_socket, sizeof(info->target_socket), "%s", proxy->target_socket);
-            
-             
+
+
             memcpy(&info->c2s, &proxy->client_to_server, sizeof(corruption_params_t));
             memcpy(&info->s2c, &proxy->server_to_client, sizeof(corruption_params_t));
             pthread_t tid;
@@ -661,44 +659,22 @@ static int run_proxy_test(const char *server_socket, const char *proxy_socket,
     usleep(100000);
 
     int success = 0;
-    int connect_failures = 0;
     for (int i = 0; i < num_requests; i++) {
-        /* Connect to proxy via Unix socket */
-        int client_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (client_fd < 0) continue;
+        /* Connect to proxy via rbox_client (uses high-level API) */
+        rbox_client_t *client = rbox_client_connect(proxy_socket);
+        if (!client) continue;
 
-        struct sockaddr_un proxy_addr = {0};
-        proxy_addr.sun_family = AF_UNIX;
-        snprintf(proxy_addr.sun_path, sizeof(proxy_addr.sun_path), "%s", proxy_socket);
-
-        if (connect(client_fd, (struct sockaddr *)&proxy_addr, sizeof(proxy_addr)) < 0) {
-            close(client_fd);
-            connect_failures++;
-            continue;
+        char *cmd = "ls";
+        const char *args[] = { cmd };
+        rbox_response_t resp;
+        rbox_error_t err = rbox_client_send_request(client, cmd, NULL, NULL, 1, args, 0, NULL, NULL, &resp);
+        if (err == RBOX_OK && resp.decision == expected_decision) {
+            success++;
         }
-
-        char packet[4096];
-        size_t pkt_len;
-        const char *args[] = {"ls"};
-        rbox_build_request(packet, sizeof(packet), &pkt_len, "ls", NULL, NULL, 1, args, 0, NULL, NULL);
-        
-        ssize_t sent = write(client_fd, packet, pkt_len);
-        if (sent == (ssize_t)pkt_len) {
-            /* Use poll with timeout for read */
-            struct pollfd pfd = { .fd = client_fd, .events = POLLIN };
-            if (poll(&pfd, 1, 2000) > 0 && (pfd.revents & POLLIN)) {
-                char resp[512];
-                ssize_t n = read(client_fd, resp, sizeof(resp));
-                /* v9 response: decision is at RBOX_HEADER_SIZE (127) */
-                if (n > RBOX_HEADER_SIZE && resp[RBOX_HEADER_SIZE] == expected_decision) {
-                    success++;
-                }
-            }
-        }
-        close(client_fd);
+        rbox_client_close(client);
         usleep(5000);  /* 5ms delay between requests */
     }
-    
+
     proxy_destroy(proxy);
     /* Stop the server - this will cause get_request to return NULL */
     if (thread_arg.server) {
@@ -720,24 +696,17 @@ static int test_proxy_direct(void) {
     pthread_create(&server_tid, NULL, rbox_server_thread, &thread_arg);
     usleep(100000);  /* Wait for server to start */
 
-    /* Client connects directly to server via Unix socket */
     int success = 0;
     for (int i = 0; i < 35; i++) {
         rbox_client_t *client = rbox_client_connect(server_sock);
         if (!client) continue;
 
-        char packet[4096];
-        size_t pkt_len;
-        const char *args[] = {"ls"};
-        rbox_error_t err = rbox_build_request(packet, sizeof(packet), &pkt_len, "ls", NULL, NULL, 1, args, 0, NULL, NULL);
-        if (err != RBOX_OK) { rbox_client_close(client); continue; }
-
-        ssize_t sent = rbox_write(rbox_client_fd(client), packet, pkt_len);
-        if (sent == (ssize_t)pkt_len) {
-            char resp[512];
-            ssize_t n = rbox_read(rbox_client_fd(client), resp, sizeof(resp));
-            /* v9 response: decision is at RBOX_HEADER_SIZE (127) */
-            if (n > RBOX_HEADER_SIZE && resp[RBOX_HEADER_SIZE] == RBOX_DECISION_ALLOW) success++;
+        char *cmd = "ls";
+        const char *args[] = { cmd };
+        rbox_response_t resp;
+        rbox_error_t err = rbox_client_send_request(client, cmd, NULL, NULL, 1, args, 0, NULL, NULL, &resp);
+        if (err == RBOX_OK && resp.decision == RBOX_DECISION_ALLOW) {
+            success++;
         }
         rbox_client_close(client);
     }
@@ -880,7 +849,6 @@ static int test_proxy_bidi_massive(void) {
      * a pass/fail criterion. */
     PASS();
 }
-
 
 /* ============================================================
  * MAIN

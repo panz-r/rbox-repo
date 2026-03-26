@@ -17,6 +17,9 @@
  *
  * The request structure will hold pointers into the original data buffer.
  * This avoids any string copies.
+ *
+ * The resulting rbox_parse_result_t contains references into the original
+ * command buffer; the buffer must remain valid as long as the result is used.
  */
 rbox_error_t rbox_command_parse(const char *command, size_t cmd_len,
                                 rbox_parse_result_t *result) {
@@ -32,12 +35,16 @@ rbox_error_t rbox_command_parse(const char *command, size_t cmd_len,
     shell_parse_result_t parse_result;
     shell_error_t err = shell_parse_fast(command, cmd_len, NULL, &parse_result);
 
-    if (err == SHELL_EINPUT) {
-        return RBOX_ERR_INVALID;
-    }
-
-    if (err == SHELL_EPARSE) {
-        return RBOX_ERR_INVALID;
+    /* Map shellsplit errors to rbox errors */
+    switch (err) {
+        case SHELL_OK:
+            break;
+        case SHELL_EINPUT:
+            return RBOX_ERR_INVALID;
+        case SHELL_EPARSE:
+            return RBOX_ERR_INVALID;
+        default:
+            return RBOX_ERR_INVALID;
     }
 
     /* Determine how many subcommands we can copy */
@@ -78,6 +85,8 @@ rbox_error_t rbox_command_parse(const char *command, size_t cmd_len,
     /* Convert shellsplit result to our format - cap count to what we copied */
     result->count = copy_count;
     result->truncated = ((parse_result.status & SHELL_STATUS_TRUNCATED) != 0) || truncated_by_limit;
+    /* Store the original command length for potential use by higher layers */
+    result->cmd_len = cmd_len;
 
     for (uint32_t i = 0; i < copy_count; i++) {
         result->subcommands[i].start = parse_result.cmds[i].start;
@@ -97,12 +106,14 @@ const char *rbox_get_subcommand(const char *command,
         return NULL;
     }
 
-    /* Robust check: validate bounds even in release builds */
-    if (sub->len > 16384) {
-        return NULL;  /* Max reasonable subcommand length exceeded */
+    /* Basic integrity checks */
+    if (sub->len == 0) {
+        return NULL;
     }
+
+    /* Check for overflow (but we don't have the original buffer length here) */
     if (sub->start + sub->len < sub->start) {
-        return NULL;  /* Overflow check */
+        return NULL;  /* Overflow */
     }
 
     *out_len = sub->len;
@@ -115,12 +126,9 @@ char *rbox_dup_subcommand(const char *command, const rbox_subcommand_t *sub) {
         return NULL;
     }
 
-    /* Robust check: validate bounds even in release builds */
-    if (sub->len > 16384) {
-        return NULL;  /* Max reasonable subcommand length exceeded */
-    }
+    /* Basic integrity checks */
     if (sub->start + sub->len < sub->start) {
-        return NULL;  /* Overflow check */
+        return NULL;  /* Overflow */
     }
 
     char *result = malloc(sub->len + 1);
@@ -144,6 +152,6 @@ const char *rbox_get_command_name(const char *command,
     /* First subcommand is the command name */
     const rbox_subcommand_t *sub = &parse->subcommands[0];
 
-    /* Return pointer to start - caller handles truncation if needed */
+    /* Return pointer to start - caller should use sub->len for length */
     return command + sub->start;
 }
