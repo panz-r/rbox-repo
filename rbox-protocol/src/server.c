@@ -526,6 +526,56 @@ static int epoll_del(int epoll_fd, int fd) {
 }
 
 /* ============================================================
+ * LOCK-FREE DECISION QUEUE (Michael & Scott MPSC)
+ * ============================================================ */
+
+static int decision_queue_push(rbox_server_handle_t *server, rbox_server_decision_t *dec) {
+    rbox_decision_queue_t *q = &server->decision_queue;
+    rbox_decision_node_t *node = malloc(sizeof(*node));
+    if (!node) return RBOX_ERR_MEMORY;
+    node->decision = dec;
+    atomic_store_explicit(&node->next, NULL, memory_order_relaxed);
+
+    rbox_decision_node_t *tail, *next;
+    while (1) {
+        tail = atomic_load_explicit(&q->tail, memory_order_acquire);
+        next = atomic_load_explicit(&tail->next, memory_order_acquire);
+        if (next == NULL) {
+            if (atomic_compare_exchange_weak_explicit(&tail->next, &next, node,
+                                                      memory_order_release, memory_order_relaxed)) {
+                atomic_compare_exchange_strong_explicit(&q->tail, &tail, node,
+                                                        memory_order_release, memory_order_relaxed);
+                break;
+            }
+        } else {
+            atomic_compare_exchange_weak_explicit(&q->tail, &tail, next,
+                                                  memory_order_release, memory_order_relaxed);
+        }
+    }
+    return RBOX_OK;
+}
+
+static rbox_server_decision_t *decision_queue_pop(rbox_server_handle_t *server) {
+    rbox_decision_queue_t *q = &server->decision_queue;
+    rbox_decision_node_t *head, *next;
+
+    while (1) {
+        head = atomic_load_explicit(&q->head, memory_order_acquire);
+        next = atomic_load_explicit(&head->next, memory_order_acquire);
+        if (next == NULL) {
+            return NULL;
+        }
+        if (atomic_compare_exchange_weak_explicit(&q->head, &head, next,
+                                                  memory_order_acquire, memory_order_relaxed)) {
+            rbox_server_decision_t *dec = next->decision;
+            next->decision = NULL;
+            free(head);
+            return dec;
+        }
+    }
+}
+
+/* ============================================================
  * SERVER THREAD
  * ============================================================ */
 
@@ -562,55 +612,42 @@ static void *server_thread_func(void *arg) {
         DBG("server->request_count = %d", server->request_count);
         DBG("active clients = %d", server->active_client_count);
 
-        /* Process pending decisions */
-        pthread_mutex_lock(&server->decision_mutex);
-        DBG("decision_mutex locked, decision_queue=%p", (void*)server->decision_queue);
-        while (server->decision_queue && server->decision_queue->ready) {
-            rbox_server_decision_t *dec = server->decision_queue;
-            server->decision_queue = (void*)dec->next;
-            if (!server->decision_queue) server->decision_tail = NULL;
-            server->decision_count--;
-            pthread_mutex_unlock(&server->decision_mutex);
+        /* Process pending decisions (lock-free pop) */
+        while (1) {
+            rbox_server_decision_t *dec = decision_queue_pop(server);
+            if (!dec) break;
             DBG("Processing decision for fd %d", dec->request ? dec->request->fd : -1);
 
-            if (!dec || !dec->request) {
+            if (!dec->request) {
                 free(dec);
-                pthread_mutex_lock(&server->decision_mutex);
                 continue;
             }
 
             rbox_server_request_t *req = dec->request;
-            if (req) {
-                size_t resp_len;
-                uint32_t cmd_hash = req->cmd_hash;
-                uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
-                uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
-                rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
-                                      cmd_hash, cmd_hash2, dec->fenv_hash, dec->decision, dec->reason, dec->duration);
-                char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
-                    dec->decision, dec->reason, dec->duration,
-                    dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
-                if (resp) {
-                    DBG("Built response of size %zu for fd %d", resp_len, req->fd);
-                    if (send_queue_add(server, req->fd, resp, resp_len, req) != 0) {
-                        DBG("send_queue_add failed for fd %d", req->fd);
-                        resp = NULL;
-                        req = NULL;
-                    }
-                } else {
-                    DBG("Failed to build response for fd %d", req->fd);
+            size_t resp_len;
+            uint32_t cmd_hash = req->cmd_hash;
+            uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
+            uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
+            rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
+                                  cmd_hash, cmd_hash2, dec->fenv_hash, dec->decision, dec->reason, dec->duration);
+            char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
+                dec->decision, dec->reason, dec->duration,
+                dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
+            if (resp) {
+                DBG("Built response of size %zu for fd %d", resp_len, req->fd);
+                if (send_queue_add(server, req->fd, resp, resp_len, req) != 0) {
+                    DBG("send_queue_add failed for fd %d", req->fd);
                 }
-                if (dec->env_decision_names) {
-                    for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
-                    free(dec->env_decision_names);
-                }
-                free(dec->env_decisions);
+            } else {
+                DBG("Failed to build response for fd %d", req->fd);
             }
+            if (dec->env_decision_names) {
+                for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
+                free(dec->env_decision_names);
+            }
+            free(dec->env_decisions);
             free(dec);
-            pthread_mutex_lock(&server->decision_mutex);
         }
-        pthread_mutex_unlock(&server->decision_mutex);
-        DBG("decision_mutex unlocked");
 
         /* If shutdown requested, check if we can exit */
         if (!atomic_load(&server->running)) {
@@ -955,54 +992,42 @@ static void *server_thread_func(void *arg) {
             }
         }
 
-        /* After event processing, handle decisions again (in case they were added) */
-        pthread_mutex_lock(&server->decision_mutex);
-        while (server->decision_queue && server->decision_queue->ready) {
-            rbox_server_decision_t *dec = server->decision_queue;
-            server->decision_queue = (void*)dec->next;
-            if (!server->decision_queue) server->decision_tail = NULL;
-            server->decision_count--;
-            pthread_mutex_unlock(&server->decision_mutex);
+        /* After event processing, handle decisions again (lock-free pop) */
+        while (1) {
+            rbox_server_decision_t *dec = decision_queue_pop(server);
+            if (!dec) break;
             DBG("Processing decision for fd %d (after events)", dec->request ? dec->request->fd : -1);
 
-            if (!dec || !dec->request) {
+            if (!dec->request) {
                 free(dec);
-                pthread_mutex_lock(&server->decision_mutex);
                 continue;
             }
 
             rbox_server_request_t *req = dec->request;
-            if (req) {
-                size_t resp_len;
-                uint32_t cmd_hash = req->cmd_hash;
-                uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
-                uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
-                rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
-                                      cmd_hash, cmd_hash2, dec->fenv_hash, dec->decision, dec->reason, dec->duration);
-                char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
-                    dec->decision, dec->reason, dec->duration,
-                    dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
-                if (resp) {
-                    DBG("Built response of size %zu for fd %d", resp_len, req->fd);
-                    if (send_queue_add(server, req->fd, resp, resp_len, req) != 0) {
-                        DBG("send_queue_add failed for fd %d", req->fd);
-                        resp = NULL;
-                        req = NULL;
-                    }
-                } else {
-                    DBG("Failed to build response for fd %d", req->fd);
+            size_t resp_len;
+            uint32_t cmd_hash = req->cmd_hash;
+            uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
+            uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
+            rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
+                                  cmd_hash, cmd_hash2, dec->fenv_hash, dec->decision, dec->reason, dec->duration);
+            char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
+                dec->decision, dec->reason, dec->duration,
+                dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
+            if (resp) {
+                DBG("Built response of size %zu for fd %d", resp_len, req->fd);
+                if (send_queue_add(server, req->fd, resp, resp_len, req) != 0) {
+                    DBG("send_queue_add failed for fd %d", req->fd);
                 }
-                if (dec->env_decision_names) {
-                    for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
-                    free(dec->env_decision_names);
-                }
-                free(dec->env_decisions);
+            } else {
+                DBG("Failed to build response for fd %d", req->fd);
             }
+            if (dec->env_decision_names) {
+                for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
+                free(dec->env_decision_names);
+            }
+            free(dec->env_decisions);
             free(dec);
-            pthread_mutex_lock(&server->decision_mutex);
         }
-        pthread_mutex_unlock(&server->decision_mutex);
-        DBG("decision_mutex unlocked (after events)");
     }
 
     /* Final cleanup: close any remaining client fds (should be none) */
@@ -1033,8 +1058,6 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     }
     pthread_mutex_init(&srv->mutex, NULL);
     pthread_cond_init(&srv->cond, NULL);
-    pthread_mutex_init(&srv->decision_mutex, NULL);
-    pthread_cond_init(&srv->decision_cond, NULL);
     pthread_mutex_init(&srv->cache_mutex, NULL);
     pthread_mutex_init(&srv->send_mutex, NULL);
     pthread_mutex_init(&srv->client_fd_mutex, NULL);
@@ -1042,6 +1065,23 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     srv->client_fds = NULL;
     srv->active_client_count = 0;
     rbox_server_cache_init(srv);
+
+    rbox_decision_node_t *dummy = malloc(sizeof(*dummy));
+    if (!dummy) {
+        pthread_mutex_destroy(&srv->mutex);
+        pthread_cond_destroy(&srv->cond);
+        pthread_mutex_destroy(&srv->cache_mutex);
+        pthread_mutex_destroy(&srv->send_mutex);
+        pthread_mutex_destroy(&srv->client_fd_mutex);
+        close(srv->listen_fd);
+        free(srv);
+        return NULL;
+    }
+    dummy->decision = NULL;
+    atomic_store_explicit(&dummy->next, NULL, memory_order_relaxed);
+    atomic_store_explicit(&srv->decision_queue.head, dummy, memory_order_relaxed);
+    atomic_store_explicit(&srv->decision_queue.tail, dummy, memory_order_relaxed);
+
     srv->wake_fd = eventfd(0, EFD_NONBLOCK);
     if (srv->wake_fd < 0) srv->wake_fd = -1;
     return srv;
@@ -1094,10 +1134,17 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
     }
     pthread_mutex_unlock(&server->client_fd_mutex);
 
+    /* Drain the lock-free decision queue */
+    rbox_decision_node_t *node = atomic_load_explicit(&server->decision_queue.head, memory_order_acquire);
+    while (node) {
+        rbox_decision_node_t *next = atomic_load_explicit(&node->next, memory_order_acquire);
+        if (node->decision) free(node->decision);
+        free(node);
+        node = next;
+    }
+
     pthread_mutex_destroy(&server->mutex);
     pthread_cond_destroy(&server->cond);
-    pthread_mutex_destroy(&server->decision_mutex);
-    pthread_cond_destroy(&server->decision_cond);
     pthread_mutex_destroy(&server->cache_mutex);
     pthread_mutex_destroy(&server->send_mutex);
     pthread_mutex_destroy(&server->client_fd_mutex);
@@ -1181,13 +1228,15 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
         }
     }
 
-    pthread_mutex_lock(&server->decision_mutex);
-    if (server->decision_tail) server->decision_tail->next = (void*)dec;
-    else server->decision_queue = dec;
-    server->decision_tail = dec;
-    server->decision_count++;
-    pthread_cond_signal(&server->decision_cond);
-    pthread_mutex_unlock(&server->decision_mutex);
+    if (decision_queue_push(server, dec) != RBOX_OK) {
+        if (dec->env_decision_names) {
+            for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
+            free(dec->env_decision_names);
+        }
+        free(dec->env_decisions);
+        free(dec);
+        return RBOX_ERR_MEMORY;
+    }
 
     if (server->wake_fd >= 0) {
         uint64_t val = 1;
