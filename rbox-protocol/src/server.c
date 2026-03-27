@@ -44,7 +44,7 @@ static void try_send_pending(rbox_server_handle_t *server, int fd);
 static void client_fd_add(rbox_server_handle_t *server, int fd);
 static void client_fd_remove(rbox_server_handle_t *server, int fd);
 static void client_fd_close_all(rbox_server_handle_t *server);
-static rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);
+rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);
 
 /* ============================================================
  * CLIENT FD TRACKING
@@ -57,8 +57,14 @@ static void client_fd_add(rbox_server_handle_t *server, int fd) {
     entry->pending_request = NULL;
     entry->header_start_time = 0;
     entry->waiting_for_header = 0;
+    entry->prev = NULL;
+    entry->send_queue_head = NULL;
+    entry->send_queue_tail = NULL;
     pthread_mutex_lock(&server->client_fd_mutex);
     entry->next = server->client_fds;
+    if (server->client_fds) {
+        server->client_fds->prev = entry;
+    }
     server->client_fds = entry;
     server->active_client_count++;
     pthread_mutex_unlock(&server->client_fd_mutex);
@@ -66,16 +72,21 @@ static void client_fd_add(rbox_server_handle_t *server, int fd) {
 
 static void client_fd_remove(rbox_server_handle_t *server, int fd) {
     pthread_mutex_lock(&server->client_fd_mutex);
-    rbox_client_fd_entry_t **prev = &server->client_fds;
     rbox_client_fd_entry_t *entry = server->client_fds;
     while (entry) {
         if (entry->fd == fd) {
-            *prev = entry->next;
+            if (entry->prev) {
+                entry->prev->next = entry->next;
+            } else {
+                server->client_fds = entry->next;
+            }
+            if (entry->next) {
+                entry->next->prev = entry->prev;
+            }
             free(entry);
             server->active_client_count--;
             break;
         }
-        prev = &entry->next;
         entry = entry->next;
     }
     pthread_mutex_unlock(&server->client_fd_mutex);
@@ -99,41 +110,36 @@ static void client_fd_close_all(rbox_server_handle_t *server) {
  * SEND QUEUE - For non-blocking responses
  * ============================================================ */
 
-/* Clean up any send queue entries for a closed fd */
+/* Clean up any send queue entries for a closed fd - uses per-client queue */
 static void cleanup_pending_sends(rbox_server_handle_t *server, int fd) {
+    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
+    if (!entry) return;
+
     pthread_mutex_lock(&server->send_mutex);
-    rbox_server_send_entry_t **prev = &server->send_queue;
-    rbox_server_send_entry_t *entry = server->send_queue;
-    while (entry) {
-        if (entry->fd == fd) {
-            *prev = entry->next;
-            if (!entry->next) server->send_tail = *prev;
-            server->send_count--;
-            free(entry->data);
-            if (entry->request) {
-                entry->request->fd = -1;
-                server_request_free(entry->request);
-            }
-            free(entry);
-            entry = *prev;
-        } else {
-            prev = &entry->next;
-            entry = entry->next;
+    rbox_server_send_entry_t *send_entry = entry->send_queue_head;
+    while (send_entry) {
+        rbox_server_send_entry_t *next = send_entry->next;
+        free(send_entry->data);
+        if (send_entry->request) {
+            send_entry->request->fd = -1;
+            server_request_free(send_entry->request);
         }
+        free(send_entry);
+        send_entry = next;
     }
+    entry->send_queue_head = NULL;
+    entry->send_queue_tail = NULL;
     pthread_mutex_unlock(&server->send_mutex);
-    rbox_client_fd_entry_t *client_entry = client_fd_find(server, fd);
-    if (client_entry) {
-        client_entry->waiting_for_header = 0;
-        client_entry->header_start_time = 0;
-    }
+
+    entry->waiting_for_header = 0;
+    entry->header_start_time = 0;
 }
 
 /* ============================================================
  * CLIENT FD LOOKUP - For non‑blocking body reads and timeout
  * ============================================================ */
 
-static rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd) {
+rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd) {
     pthread_mutex_lock(&server->client_fd_mutex);
     rbox_client_fd_entry_t *entry = server->client_fds;
     while (entry) {
@@ -341,65 +347,60 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
 /* Try to send as much data as possible from the queue for a given fd.
  * Caller must hold send_mutex when calling this. */
 static void send_pending_locked(rbox_server_handle_t *server, int fd) {
-    rbox_server_send_entry_t **prev = &server->send_queue;
-    rbox_server_send_entry_t *entry = server->send_queue;
+    rbox_client_fd_entry_t *client_entry = client_fd_find(server, fd);
+    if (!client_entry) return;
+
+    rbox_server_send_entry_t **prev = &client_entry->send_queue_head;
+    rbox_server_send_entry_t *entry = client_entry->send_queue_head;
     while (entry) {
-        if (entry->fd == fd) {
-            size_t remaining = entry->len - entry->offset;
-            ssize_t w = write(entry->fd, entry->data + entry->offset, remaining);
-            if (w < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    DBG("send_pending_locked: write would block on fd %d", entry->fd);
-                    break;
-                }
-                DBG("send_pending_locked: write failed on fd %d: %s", entry->fd, strerror(errno));
-                *prev = entry->next;
-                if (!entry->next) server->send_tail = *prev;
-                server->send_count--;
-                if (entry->request) {
-                    entry->request->fd = -1;
-                    server_request_free(entry->request);
-                }
-                free(entry->data);
-                free(entry);
-                entry = *prev;
-                continue;
-            } else if (w == 0) {
-                DBG("send_pending_locked: write returned 0 on fd %d", entry->fd);
-                *prev = entry->next;
-                if (!entry->next) server->send_tail = *prev;
-                server->send_count--;
-                if (entry->request) {
-                    entry->request->fd = -1;
-                    server_request_free(entry->request);
-                }
-                free(entry->data);
-                free(entry);
-                entry = *prev;
-                continue;
-            } else {
-                entry->offset += w;
-                DBG("send_pending_locked: wrote %zd bytes on fd %d, offset now %zu/%zu", w, entry->fd, entry->offset, entry->len);
-                if (entry->offset == entry->len) {
-                    DBG("send_pending_locked: fully sent response for fd %d", entry->fd);
-                    *prev = entry->next;
-                    if (!entry->next) server->send_tail = *prev;
-                    server->send_count--;
-                    if (entry->request) {
-                        entry->request->fd = -1;
-                        server_request_free(entry->request);
-                    }
-                    free(entry->data);
-                    free(entry);
-                    entry = *prev;
-                } else {
-                    /* Partial write, stop trying to send more on this fd (socket buffer full) */
-                    break;
-                }
+        size_t remaining = entry->len - entry->offset;
+        ssize_t w = write(entry->fd, entry->data + entry->offset, remaining);
+        if (w < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                DBG("send_pending_locked: write would block on fd %d", entry->fd);
+                break;
             }
+            DBG("send_pending_locked: write failed on fd %d: %s", entry->fd, strerror(errno));
+            *prev = entry->next;
+            if (!entry->next) client_entry->send_queue_tail = *prev;
+            if (entry->request) {
+                entry->request->fd = -1;
+                server_request_free(entry->request);
+            }
+            free(entry->data);
+            free(entry);
+            entry = *prev;
+            continue;
+        } else if (w == 0) {
+            DBG("send_pending_locked: write returned 0 on fd %d", entry->fd);
+            *prev = entry->next;
+            if (!entry->next) client_entry->send_queue_tail = *prev;
+            if (entry->request) {
+                entry->request->fd = -1;
+                server_request_free(entry->request);
+            }
+            free(entry->data);
+            free(entry);
+            entry = *prev;
+            continue;
         } else {
-            prev = &entry->next;
-            entry = entry->next;
+            entry->offset += w;
+            DBG("send_pending_locked: wrote %zd bytes on fd %d, offset now %zu/%zu", w, entry->fd, entry->offset, entry->len);
+            if (entry->offset == entry->len) {
+                DBG("send_pending_locked: fully sent response for fd %d", entry->fd);
+                *prev = entry->next;
+                if (!entry->next) client_entry->send_queue_tail = *prev;
+                if (entry->request) {
+                    entry->request->fd = -1;
+                    server_request_free(entry->request);
+                }
+                free(entry->data);
+                free(entry);
+                entry = *prev;
+            } else {
+                /* Partial write, stop trying to send more on this fd (socket buffer full) */
+                break;
+            }
         }
     }
 }
@@ -424,17 +425,24 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
     entry->len = len;
     entry->request = req;
     entry->offset = 0;
+    entry->next = NULL;
+
+    rbox_client_fd_entry_t *client_entry = client_fd_find(server, fd);
+    if (!client_entry) {
+        free(entry);
+        free(data);
+        if (req) server_request_free(req);
+        return -1;
+    }
 
     pthread_mutex_lock(&server->send_mutex);
-    entry->next = NULL;
-    if (server->send_tail) {
-        server->send_tail->next = entry;
-        server->send_tail = entry;
+    if (client_entry->send_queue_tail) {
+        client_entry->send_queue_tail->next = entry;
+        client_entry->send_queue_tail = entry;
     } else {
-        server->send_queue = entry;
-        server->send_tail = entry;
+        client_entry->send_queue_head = entry;
+        client_entry->send_queue_tail = entry;
     }
-    server->send_count++;
     pthread_mutex_unlock(&server->send_mutex);
 
     DBG("send_queue_add: added response for fd %d", fd);
@@ -743,9 +751,17 @@ static void *server_thread_func(void *arg) {
         /* If shutdown requested, check if we can exit */
         if (!atomic_load(&server->running)) {
             int pending_sends = 0;
-            pthread_mutex_lock(&server->send_mutex);
-            pending_sends = server->send_count;
-            pthread_mutex_unlock(&server->send_mutex);
+            pthread_mutex_lock(&server->client_fd_mutex);
+            rbox_client_fd_entry_t *entry = server->client_fds;
+            while (entry) {
+                rbox_server_send_entry_t *se = entry->send_queue_head;
+                while (se) {
+                    pending_sends++;
+                    se = se->next;
+                }
+                entry = entry->next;
+            }
+            pthread_mutex_unlock(&server->client_fd_mutex);
             if (pending_sends == 0 && server->active_client_count == 0) {
                 DBG("No pending sends and no active clients, exiting");
                 break;
@@ -825,9 +841,10 @@ static void *server_thread_func(void *arg) {
                         }
                         flags = fcntl(cl_fd, F_GETFL, 0);
                         fcntl(cl_fd, F_SETFL, flags | O_NONBLOCK);
-                         struct epoll_event cev = { .events = EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, .data.fd = cl_fd };
-                        epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, cl_fd, &cev);
                         client_fd_add(server, cl_fd);
+                        rbox_client_fd_entry_t *new_entry = server->client_fds;
+                        struct epoll_event cev = { .events = EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, .data.ptr = new_entry };
+                        epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, cl_fd, &cev);
                         DBG("Accepted fd %d", cl_fd);
                     }
                     continue;
@@ -841,8 +858,9 @@ static void *server_thread_func(void *arg) {
                     continue;
                 }
 
-                int cl_fd = ev->data.fd;
-                if (cl_fd < 0) continue;
+                rbox_client_fd_entry_t *entry = (rbox_client_fd_entry_t *)ev->data.ptr;
+                if (!entry) continue;
+                int cl_fd = entry->fd;
 
                 int closed = 0;
 
@@ -1159,8 +1177,6 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     atomic_flag_clear(&srv->stop_flag);
     srv->client_fds = NULL;
     srv->active_client_count = 0;
-    srv->send_queue = srv->send_tail = NULL;
-    srv->send_count = 0;
     rbox_server_cache_init(srv);
     srv->wake_fd = eventfd(0, EFD_NONBLOCK);
     if (srv->wake_fd < 0) srv->wake_fd = -1;

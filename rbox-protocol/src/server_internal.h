@@ -13,25 +13,45 @@
 #include <stdatomic.h>
 #include <time.h>
 
-/* Response cache entry type - must be defined before use */
-#define RBOX_RESPONSE_CACHE_SIZE 128
+/* Response cache configuration */
+#define RBOX_RESPONSE_CACHE_SIZE 256
+#define RBOX_CACHE_SLOT_EMPTY 0
+#define RBOX_CACHE_SLOT_OCCUPIED 1
+#define RBOX_CACHE_SLOT_TOMBSTONE 2
 
-/* Server response cache entry */
-typedef struct {
-    uint8_t request_id[16];       /* Request ID from client */
-    uint8_t client_id[16];         /* Client ID */
-    uint32_t packet_checksum;      /* Full packet checksum for once decisions */
-    uint32_t cmd_hash;             /* Command hash for verification */
-    uint64_t cmd_hash2;            /* Second command hash for verification */
-    uint32_t fenv_hash;            /* Hash of flagged env var names */
-    uint64_t fenv_hash2;           /* Second hash of flagged env vars */
-    uint8_t decision;             /* ALLOW/DENY/ERROR */
-    char reason[256];              /* Reason string */
-    uint32_t duration;             /* Duration in seconds */
-    time_t timestamp;             /* When cached */
-    time_t expires_at;            /* When this entry expires (0 = never) */
-    int valid;                     /* 1 if entry is valid */
+/* Server response cache entry - used in open-addressing hash table with LRU */
+typedef struct rbox_response_cache_entry {
+    /* key fields */
+    uint8_t client_id[16];
+    uint8_t request_id[16];
+    uint32_t packet_checksum;
+    uint32_t cmd_hash;
+    uint64_t cmd_hash2;
+    uint32_t fenv_hash;
+    uint64_t fenv_hash2;
+    uint32_t key_hash;            /* precomputed for quick lookup */
+
+    /* value fields */
+    uint8_t decision;
+    char reason[256];
+    uint32_t duration;
+    time_t timestamp;
+    time_t expires_at;
+
+    /* LRU list pointers */
+    struct rbox_response_cache_entry *lru_prev;
+    struct rbox_response_cache_entry *lru_next;
 } rbox_response_cache_entry_t;
+
+/* Hash table cache structure with LRU eviction */
+typedef struct {
+    rbox_response_cache_entry_t *slots[RBOX_RESPONSE_CACHE_SIZE];
+    uint8_t slot_state[RBOX_RESPONSE_CACHE_SIZE];
+    int tombstone_count;
+    rbox_response_cache_entry_t *lru_head;
+    rbox_response_cache_entry_t *lru_tail;
+    int count;
+} rbox_response_cache_t;
 
 /* Decision queue for thread-safe decision passing */
 typedef struct rbox_server_decision {
@@ -110,8 +130,14 @@ typedef struct rbox_client_fd_entry {
     rbox_server_request_t *pending_request;  /* Non-null if body is being read */
     time_t header_start_time;                /* When we started waiting for header */
     int waiting_for_header;                 /* 1 if we are in header read timeout state */
-    struct rbox_client_fd_entry *next;
+    struct rbox_client_fd_entry *prev;       /* Previous entry in doubly-linked list */
+    struct rbox_client_fd_entry *next;       /* Next entry in doubly-linked list */
+    rbox_server_send_entry_t *send_queue_head; /* Per-client send queue head */
+    rbox_server_send_entry_t *send_queue_tail; /* Per-client send queue tail */
 } rbox_client_fd_entry_t;
+
+/* Find client fd entry by fd (used by server_response.c) */
+rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);
 
 /* Server handle */
 struct rbox_server_handle {
@@ -125,15 +151,11 @@ struct rbox_server_handle {
     atomic_flag stop_flag;         /* Atomic flag - only one stop() wins */
     int wake_fd;                   /* eventfd to wake epoll thread */
 
-    /* Send queue for outgoing responses (mutex protected) */
+    /* Send queue mutex (for thread-safe access to per-client queues) */
     pthread_mutex_t send_mutex;
-    rbox_server_send_entry_t *send_queue;  /* Queue head */
-    rbox_server_send_entry_t *send_tail;   /* Queue tail */
-    int send_count;
 
-    /* Response cache (fixed 128 entries) */
-    rbox_response_cache_entry_t response_cache[RBOX_RESPONSE_CACHE_SIZE];
-    int response_cache_next;       /* Next index to replace (round-robin) */
+    /* Response cache (hash table with LRU) */
+    rbox_response_cache_t cache;
     pthread_mutex_t cache_mutex;   /* Protects response cache */
 
     /* Request queue (mutex protected) */

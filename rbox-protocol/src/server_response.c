@@ -92,59 +92,54 @@ int rbox_server_enable_epollout(rbox_server_handle_t *server, int fd) {
 }
 
 static void send_pending_locked(rbox_server_handle_t *server, int fd) {
-    rbox_server_send_entry_t **prev = &server->send_queue;
-    rbox_server_send_entry_t *entry = server->send_queue;
+    rbox_client_fd_entry_t *client = client_fd_find(server, fd);
+    if (!client) return;
+
+    rbox_server_send_entry_t **prev = &client->send_queue_head;
+    rbox_server_send_entry_t *entry = client->send_queue_head;
     while (entry) {
-        if (entry->fd == fd) {
-            size_t remaining = entry->len - entry->offset;
-            ssize_t w = write(entry->fd, entry->data + entry->offset, remaining);
-            if (w < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    break;
-                }
-                *prev = entry->next;
-                if (!entry->next) server->send_tail = *prev;
-                server->send_count--;
-                if (entry->request) {
-                    entry->request->fd = -1;
-                    rbox_server_request_free(entry->request);
-                }
-                free(entry->data);
-                free(entry);
-                entry = *prev;
-                continue;
-            } else if (w == 0) {
-                *prev = entry->next;
-                if (!entry->next) server->send_tail = *prev;
-                server->send_count--;
-                if (entry->request) {
-                    entry->request->fd = -1;
-                    rbox_server_request_free(entry->request);
-                }
-                free(entry->data);
-                free(entry);
-                entry = *prev;
-                continue;
-            } else {
-                entry->offset += w;
-                if (entry->offset == entry->len) {
-                    *prev = entry->next;
-                    if (!entry->next) server->send_tail = *prev;
-                    server->send_count--;
-                    if (entry->request) {
-                        entry->request->fd = -1;
-                        rbox_server_request_free(entry->request);
-                    }
-                    free(entry->data);
-                    free(entry);
-                    entry = *prev;
-                } else {
-                    break;
-                }
+        size_t remaining = entry->len - entry->offset;
+        ssize_t w = write(entry->fd, entry->data + entry->offset, remaining);
+        if (w < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break;
             }
+            *prev = entry->next;
+            if (!entry->next) client->send_queue_tail = *prev;
+            if (entry->request) {
+                entry->request->fd = -1;
+                rbox_server_request_free(entry->request);
+            }
+            free(entry->data);
+            free(entry);
+            entry = *prev;
+            continue;
+        } else if (w == 0) {
+            *prev = entry->next;
+            if (!entry->next) client->send_queue_tail = *prev;
+            if (entry->request) {
+                entry->request->fd = -1;
+                rbox_server_request_free(entry->request);
+            }
+            free(entry->data);
+            free(entry);
+            entry = *prev;
+            continue;
         } else {
-            prev = &entry->next;
-            entry = entry->next;
+            entry->offset += w;
+            if (entry->offset == entry->len) {
+                *prev = entry->next;
+                if (!entry->next) client->send_queue_tail = *prev;
+                if (entry->request) {
+                    entry->request->fd = -1;
+                    rbox_server_request_free(entry->request);
+                }
+                free(entry->data);
+                free(entry);
+                entry = *prev;
+            } else {
+                break;
+            }
         }
     }
 }
@@ -159,24 +154,25 @@ void rbox_server_try_send(rbox_server_handle_t *server, int fd) {
 void rbox_server_cleanup_pending(rbox_server_handle_t *server, int fd) {
     if (!server || fd < 0) return;
     pthread_mutex_lock(&server->send_mutex);
-    rbox_server_send_entry_t **prev = &server->send_queue;
-    rbox_server_send_entry_t *entry = server->send_queue;
+
+    rbox_client_fd_entry_t *client = client_fd_find(server, fd);
+    if (!client) {
+        pthread_mutex_unlock(&server->send_mutex);
+        return;
+    }
+
+    rbox_server_send_entry_t **prev = &client->send_queue_head;
+    rbox_server_send_entry_t *entry = client->send_queue_head;
     while (entry) {
-        if (entry->fd == fd) {
-            *prev = entry->next;
-            if (!entry->next) server->send_tail = *prev;
-            server->send_count--;
-            if (entry->request) {
-                entry->request->fd = -1;
-                rbox_server_request_free(entry->request);
-            }
-            free(entry->data);
-            free(entry);
-            entry = *prev;
-        } else {
-            prev = &entry->next;
-            entry = entry->next;
+        *prev = entry->next;
+        if (!entry->next) client->send_queue_tail = *prev;
+        if (entry->request) {
+            entry->request->fd = -1;
+            rbox_server_request_free(entry->request);
         }
+        free(entry->data);
+        free(entry);
+        entry = *prev;
     }
     pthread_mutex_unlock(&server->send_mutex);
 }
@@ -197,15 +193,24 @@ int rbox_server_send_response(rbox_server_handle_t *server, int fd, char *data, 
     entry->offset = 0;
 
     pthread_mutex_lock(&server->send_mutex);
-    entry->next = NULL;
-    if (server->send_tail) {
-        server->send_tail->next = entry;
-        server->send_tail = entry;
-    } else {
-        server->send_queue = entry;
-        server->send_tail = entry;
+
+    rbox_client_fd_entry_t *client = client_fd_find(server, fd);
+    if (!client) {
+        pthread_mutex_unlock(&server->send_mutex);
+        free(entry->data);
+        free(entry);
+        if (req) rbox_server_request_free(req);
+        return -1;
     }
-    server->send_count++;
+
+    entry->next = NULL;
+    if (client->send_queue_tail) {
+        client->send_queue_tail->next = entry;
+        client->send_queue_tail = entry;
+    } else {
+        client->send_queue_head = entry;
+        client->send_queue_tail = entry;
+    }
     pthread_mutex_unlock(&server->send_mutex);
 
     rbox_server_try_send(server, fd);
