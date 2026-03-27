@@ -682,7 +682,11 @@ static void *server_thread_func(void *arg) {
                                     req->env_var_names = calloc(req->env_var_count, sizeof(char *));
                                     req->env_var_scores = calloc(req->env_var_count, sizeof(float));
                                     p = args_end;
-                                    remaining = cmd_len - (p - cmd_data);
+                                    if (p >= cmd_data + cmd_len) {
+                                        remaining = 0;
+                                    } else {
+                                        remaining = cmd_data + cmd_len - p;
+                                    }
                                     int idx = 0;
                                     while (remaining > 5 && idx < req->env_var_count) {
                                         size_t name_len = strlen(p);
@@ -978,6 +982,13 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
 
 void rbox_server_stop(rbox_server_handle_t *server) {
     if (!server) return;
+
+    /* Use atomic flag to ensure only one caller wins the shutdown */
+    if (atomic_flag_test_and_set(&server->stop_flag)) {
+        /* Already set - another thread already called stop */
+        return;
+    }
+
     server->running = 0;
     pthread_mutex_lock(&server->mutex);
     pthread_cond_signal(&server->cond);
@@ -987,7 +998,10 @@ void rbox_server_stop(rbox_server_handle_t *server) {
         ssize_t n = write(server->wake_fd, &val, sizeof(val));
         (void)n;
     }
-    if (server->thread) pthread_join(server->thread, NULL);
+    if (server->thread) {
+        pthread_join(server->thread, NULL);
+        server->thread = 0;
+    }
 }
 
 /* ============================================================

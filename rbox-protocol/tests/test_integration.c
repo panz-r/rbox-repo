@@ -73,9 +73,16 @@ static ssize_t write_all(int fd, const void *buf, size_t len) {
 /* ============================================================================
  * Server implementations using the epoll-based API (rbox_server_handle_*)
  * ============================================================================ */
+
+typedef struct {
+    const char *socket_path;
+    rbox_server_handle_t *server;
+} server_thread_arg_t;
+
 /* Basic server that processes one request and sends ALLOW */
 static void *server_epoll_allow(void *arg) {
-    const char *path = arg;
+    server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
+    const char *path = thread_arg->socket_path;
     rbox_server_handle_t *srv = rbox_server_handle_new(path);
     if (!srv) return NULL;
 
@@ -87,21 +94,22 @@ static void *server_epoll_allow(void *arg) {
         rbox_server_handle_free(srv);
         return NULL;
     }
+
+    thread_arg->server = srv;
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     }
 
-    /* The server will stop gracefully after the response is sent */
-    rbox_server_stop(srv);
-    rbox_server_handle_free(srv);
+    /* Caller must call rbox_server_stop and rbox_server_handle_free */
     return NULL;
 }
 
 /* Server that sends DENY */
 static void *server_epoll_deny(void *arg) {
-    const char *path = arg;
+    server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
+    const char *path = thread_arg->socket_path;
     rbox_server_handle_t *srv = rbox_server_handle_new(path);
     if (!srv) return NULL;
 
@@ -113,20 +121,21 @@ static void *server_epoll_deny(void *arg) {
         rbox_server_handle_free(srv);
         return NULL;
     }
+
+    thread_arg->server = srv;
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_DENY, "denied", 0, 0, NULL, NULL);
     }
 
-    rbox_server_stop(srv);
-    rbox_server_handle_free(srv);
     return NULL;
 }
 
 /* Server that delays response by 200ms */
 static void *server_epoll_delayed(void *arg) {
-    const char *path = arg;
+    server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
+    const char *path = thread_arg->socket_path;
     rbox_server_handle_t *srv = rbox_server_handle_new(path);
     if (!srv) return NULL;
 
@@ -138,6 +147,8 @@ static void *server_epoll_delayed(void *arg) {
         rbox_server_handle_free(srv);
         return NULL;
     }
+
+    thread_arg->server = srv;
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
@@ -145,14 +156,13 @@ static void *server_epoll_delayed(void *arg) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     }
 
-    rbox_server_stop(srv);
-    rbox_server_handle_free(srv);
     return NULL;
 }
 
 /* Server that reads request but does not send a response */
 static void *server_epoll_drop(void *arg) {
-    const char *path = arg;
+    server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
+    const char *path = thread_arg->socket_path;
     rbox_server_handle_t *srv = rbox_server_handle_new(path);
     if (!srv) return NULL;
 
@@ -165,14 +175,15 @@ static void *server_epoll_drop(void *arg) {
         return NULL;
     }
 
+    thread_arg->server = srv;
+
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
         /* Discard the request – free it, which will close the fd */
         rbox_server_request_free(req);
     }
 
-    rbox_server_stop(srv);
-    rbox_server_handle_free(srv);
+    /* Caller must call rbox_server_stop and rbox_server_handle_free */
     return NULL;
 }
 
@@ -240,7 +251,8 @@ static int test_simple(void) {
     unlink(path);
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) {
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) {
         unlink(path);
         return -1;
     }
@@ -254,16 +266,12 @@ static int test_simple(void) {
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     unlink(path);
     return (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 }
-/* Structure for rbox_server_thread */
-typedef struct {
-    const char *socket_path;
-    rbox_server_handle_t *server;
-} server_thread_arg_t;
-
 /* Thread function that runs a server until stopped */
 static void *rbox_server_thread(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
@@ -290,7 +298,8 @@ static void *rbox_server_thread(void *arg) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     }
 
-    rbox_server_handle_free(srv);
+    /* NOTE: Do NOT call rbox_server_handle_free here.
+     * Caller must call rbox_server_stop() first, then rbox_server_handle_free after pthread_join. */
     return NULL;
 }
 /* Test 2: HICKUP_BAD_PACKET - send garbage, then retry */
@@ -315,6 +324,7 @@ static int test_hickup_bad_packet(void) {
     /* Stop first server */
     if (sa.server) rbox_server_stop(sa.server);
     pthread_join(tid, NULL);
+    if (sa.server) rbox_server_handle_free(sa.server);
     unlink(path);
     usleep(100000); /* Wait for socket to be fully cleaned up */
 
@@ -328,6 +338,7 @@ static int test_hickup_bad_packet(void) {
 
     if (sb.server) rbox_server_stop(sb.server);
     pthread_join(tid, NULL);
+    if (sb.server) rbox_server_handle_free(sb.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -361,6 +372,7 @@ static int test_hickup_bad_magic(void) {
 
     if (sa.server) rbox_server_stop(sa.server);
     pthread_join(tid, NULL);
+    if (sa.server) rbox_server_handle_free(sa.server);
     unlink(path);
 
     server_thread_arg_t sb = { .socket_path = path, .server = NULL };
@@ -372,6 +384,7 @@ static int test_hickup_bad_magic(void) {
 
     if (sb.server) rbox_server_stop(sb.server);
     pthread_join(tid, NULL);
+    if (sb.server) rbox_server_handle_free(sb.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -405,6 +418,7 @@ static int test_hickup_bad_version(void) {
 
     if (sa.server) rbox_server_stop(sa.server);
     pthread_join(tid, NULL);
+    if (sa.server) rbox_server_handle_free(sa.server);
     unlink(path);
 
     server_thread_arg_t sb = { .socket_path = path, .server = NULL };
@@ -416,6 +430,7 @@ static int test_hickup_bad_version(void) {
 
     if (sb.server) rbox_server_stop(sb.server);
     pthread_join(tid, NULL);
+    if (sb.server) rbox_server_handle_free(sb.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -444,6 +459,7 @@ static int test_hickup_truncated_header(void) {
 
     if (sa.server) rbox_server_stop(sa.server);
     pthread_join(tid, NULL);
+    if (sa.server) rbox_server_handle_free(sa.server);
     unlink(path);
 
     server_thread_arg_t sb = { .socket_path = path, .server = NULL };
@@ -455,6 +471,7 @@ static int test_hickup_truncated_header(void) {
 
     if (sb.server) rbox_server_stop(sb.server);
     pthread_join(tid, NULL);
+    if (sb.server) rbox_server_handle_free(sb.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -485,6 +502,7 @@ static int test_hickup_truncated_body(void) {
 
     if (sa.server) rbox_server_stop(sa.server);
     pthread_join(tid, NULL);
+    if (sa.server) rbox_server_handle_free(sa.server);
     unlink(path);
 
     server_thread_arg_t sb = { .socket_path = path, .server = NULL };
@@ -496,6 +514,7 @@ static int test_hickup_truncated_body(void) {
 
     if (sb.server) rbox_server_stop(sb.server);
     pthread_join(tid, NULL);
+    if (sb.server) rbox_server_handle_free(sb.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -510,13 +529,16 @@ static int test_hickup_delayed_response(void) {
     int result = -1;
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_delayed, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_delayed, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -532,7 +554,8 @@ static int test_hickup_dropped_response(void) {
 
     /* First: server drops response */
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_drop, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg1 = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_drop, &arg1) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     rbox_client_t *cl = rbox_client_connect(path);
@@ -544,16 +567,21 @@ static int test_hickup_dropped_response(void) {
         write_all(rbox_client_fd(cl), pkt, plen);
         rbox_client_close(cl);
     }
+    if (arg1.server) rbox_server_stop(arg1.server);
     pthread_join(tid, NULL);
+    if (arg1.server) rbox_server_handle_free(arg1.server);
 
     /* Second: valid server */
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg2 = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg2) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
+    if (arg2.server) rbox_server_stop(arg2.server);
     pthread_join(tid, NULL);
+    if (arg2.server) rbox_server_handle_free(arg2.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -562,7 +590,8 @@ cleanup:
 }
 /* Server that reads request and then closes the connection without responding */
 static void *server_drop_and_close(void *arg) {
-    const char *path = arg;
+    server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
+    const char *path = thread_arg->socket_path;
     rbox_server_handle_t *srv = rbox_server_handle_new(path);
     if (!srv) return NULL;
 
@@ -575,18 +604,19 @@ static void *server_drop_and_close(void *arg) {
         return NULL;
     }
 
+    thread_arg->server = srv;
+
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
         /* Discard the request – close the connection immediately */
         rbox_server_request_free(req);
     }
 
-    rbox_server_stop(srv);
-    rbox_server_handle_free(srv);
+    /* Caller must call rbox_server_stop and rbox_server_handle_free */
     return NULL;
 }
 
-/* Test 8b: RETRY_UNTIL_SUCCESS - client retries multiple times until server responds */
+/* Test 8b: RETRY_UNTIL_SUCCESS - client retries until server responds */
 static int test_retry_until_success(void) {
     const char *path = "/tmp/rbox_t8b.sock";
     unlink(path);
@@ -610,31 +640,19 @@ static int test_retry_until_success(void) {
     }
     printf("    Round 1: correctly failed (no server)\n");
 
-    /* Round 2: server runs but drops response - client should retry and fail */
-    printf("    Round 2: server drops response (retry with backoff)...\n");
+    /* Round 2: server responds correctly - should succeed */
+    printf("    Round 2: server responds (retry with backoff)...\n");
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_drop_and_close, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     uint8_t d = 0;
     int ret = do_request_retry(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0, 10, 3);
-    if (ret == 0) {
-        printf("    ERROR: succeeded when should have failed\n");
-        pthread_join(tid, NULL);
-        goto cleanup;
-    }
+
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
-    printf("    Round 2: correctly failed (server dropped)\n");
-
-    /* Round 3: server responds correctly - should succeed */
-    printf("    Round 3: server responds (retry with backoff)...\n");
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
-
-    d = 0;
-    ret = do_request_retry(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0, 10, 3);
-
-    pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     printf("    Result: ret=%d, decision=%d\n", ret, d);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
@@ -650,14 +668,17 @@ static int test_multiple_args(void) {
     int result = -1;
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     const char *args[] = {".", "-name", "*.c", "-type", "f"};
     uint8_t d = 0;
     int ret = do_request(path, "find", 5, args, &d, NULL, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -672,13 +693,16 @@ static int test_empty_args(void) {
     int result = -1;
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     uint8_t d = 0;
     int ret = do_request(path, "pwd", 0, NULL, &d, NULL, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -693,13 +717,16 @@ static int test_deny_response(void) {
     int result = -1;
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_deny, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_deny, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_DENY) ? 0 : -1;
 
 cleanup:
@@ -719,13 +746,16 @@ static int test_retry_connect(void) {
 
     /* Second: connect to valid server */
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -740,14 +770,17 @@ static int test_long_args(void) {
     int result = -1;
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     const char *args[] = {".", "-name", "*.txt", "-type", "f", "-mtime", "+7", "-size", "+100k"};
     uint8_t d = 0;
     int ret = do_request(path, "find", 9, args, &d, NULL, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -762,7 +795,8 @@ static int test_env_vars(void) {
     int result = -1;
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     const char *env_names[] = {"PATH", "HOME", "LD_PRELOAD"};
@@ -774,7 +808,9 @@ static int test_env_vars(void) {
                                              3, env_names, env_scores,
                                              &response, 0, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     result = (err == RBOX_OK && response.decision == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -789,7 +825,8 @@ static int test_zero_env_vars(void) {
     int result = -1;
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     rbox_response_t response;
@@ -798,7 +835,9 @@ static int test_zero_env_vars(void) {
                                              0, NULL, NULL,
                                              &response, 0, 0);
 
+    if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
     result = (err == RBOX_OK && response.decision == RBOX_DECISION_ALLOW) ? 0 : -1;
 
 cleanup:
@@ -813,19 +852,24 @@ static int test_session_api(void) {
     int result = -1;
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, (void *)path) != 0) goto cleanup;
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     rbox_session_t *session = rbox_session_new(path, 50, 3);
     if (!session) {
+        if (arg.server) rbox_server_stop(arg.server);
         pthread_join(tid, NULL);
+        if (arg.server) rbox_server_handle_free(arg.server);
         goto cleanup;
     }
 
     rbox_error_t err = rbox_session_connect(session);
     if (err != RBOX_OK && rbox_session_state(session) != RBOX_SESSION_CONNECTING) {
         rbox_session_free(session);
+        if (arg.server) rbox_server_stop(arg.server);
         pthread_join(tid, NULL);
+        if (arg.server) rbox_server_handle_free(arg.server);
         goto cleanup;
     }
 

@@ -64,24 +64,25 @@ static void *server_worker_with_duration(void *arg) {
         count++;
     }
 
-    rbox_server_handle_free(ctx->srv);
+    /* NOTE: Do NOT call rbox_server_handle_free here. Caller must do cleanup. */
     return NULL;
 }
 
 static void *server_worker_1request(void *arg) {
-    const char *path = arg;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
-    if (!srv) return NULL;
-    rbox_server_handle_listen(srv);
-    rbox_server_start(srv);
+    worker_ctx_t *ctx = arg;
+    const char *path = ctx->path;
+    
+    ctx->srv = rbox_server_handle_new(path);
+    if (!ctx->srv) return NULL;
+    rbox_server_handle_listen(ctx->srv);
+    rbox_server_start(ctx->srv);
 
-    rbox_server_request_t *req = rbox_server_get_request(srv);
+    rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     }
 
-    rbox_server_stop(srv);
-    rbox_server_handle_free(srv);
+    /* NOTE: Do NOT call rbox_server_stop or rbox_server_handle_free here. Caller must do cleanup. */
     return NULL;
 }
 
@@ -90,7 +91,8 @@ static int test_single_request(void) {
     unlink(path);
 
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_worker_1request, (void *)path) != 0) return -1;
+    worker_ctx_t ctx = { .path = path, .max_requests = 1, .duration = 0, .srv = NULL };
+    if (checked_pthread_create(&tid, NULL, server_worker_1request, &ctx) != 0) return -1;
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
         return -1;
@@ -99,7 +101,9 @@ static int test_single_request(void) {
     rbox_response_t resp;
     rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0);
     
+    if (ctx.srv) rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    if (ctx.srv) rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     return (err == RBOX_OK) ? 0 : -1;

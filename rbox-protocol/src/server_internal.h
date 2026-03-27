@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <time.h>
 
 /* Response cache entry type - must be defined before use */
@@ -111,6 +112,7 @@ struct rbox_server_handle {
     /* Background thread */
     pthread_t thread;
     volatile int running;          /* Flag to signal shutdown */
+    atomic_flag stop_flag;         /* Atomic flag - only one stop() wins */
     int wake_fd;                   /* eventfd to wake epoll thread */
 
     /* Send queue for outgoing responses (mutex protected) */

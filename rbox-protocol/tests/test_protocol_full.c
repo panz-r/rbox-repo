@@ -337,6 +337,7 @@ typedef struct proxy {
     corruption_params_t server_to_client;  /* Corruption for server->client */
     _Atomic int running;       /* Is proxy active */
     _Atomic int connections;   /* Total connections handled */
+    pthread_t thread;          /* Proxy thread handle for join */
     pthread_mutex_t lock;
 } proxy_t;
 
@@ -582,13 +583,24 @@ static void proxy_set_corruption(proxy_t *proxy, double c2s_bit, double c2s_byte
     pthread_mutex_unlock(&proxy->lock);
 }
 
-static int proxy_start(proxy_t *proxy) { pthread_t tid; return pthread_create(&tid, NULL, proxy_thread_func, proxy) == 0 ? 0 : -1; }
+static int proxy_start(proxy_t *proxy) {
+    return pthread_create(&proxy->thread, NULL, proxy_thread_func, proxy) == 0 ? 0 : -1;
+}
 static void proxy_stop(proxy_t *proxy) {
     atomic_store(&proxy->running, 0);
     if (proxy->listen_fd >= 0) close(proxy->listen_fd);
     unlink(proxy->listen_socket);
 }
-static void proxy_destroy(proxy_t *proxy) { if (proxy) { proxy_stop(proxy); pthread_mutex_destroy(&proxy->lock); free(proxy); } }
+static void proxy_destroy(proxy_t *proxy) {
+    if (proxy) {
+        proxy_stop(proxy);
+        if (proxy->thread) {
+            pthread_join(proxy->thread, NULL);
+        }
+        pthread_mutex_destroy(&proxy->lock);
+        free(proxy);
+    }
+}
 
 /* Server thread: calls blocking get_request in a loop until stopped
  * Returns server handle via out_server pointer */
@@ -638,7 +650,9 @@ static void *rbox_server_thread(void *arg) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
     }
 
-    rbox_server_handle_free(server);
+    /* NOTE: Do NOT call rbox_server_handle_free here.
+     * rbox_server_stop() must be called by the main thread first,
+     * then rbox_server_handle_free after pthread_join. */
     return NULL;
 }
 
@@ -682,6 +696,9 @@ static int run_proxy_test(const char *server_socket, const char *proxy_socket,
         rbox_server_stop(thread_arg.server);
     }
     pthread_join(server_tid, NULL);
+    if (thread_arg.server) {
+        rbox_server_handle_free(thread_arg.server);
+    }
     return success;
 }
 
@@ -717,6 +734,9 @@ static int test_proxy_direct(void) {
         rbox_server_stop(thread_arg.server);
     }
     pthread_join(server_tid, NULL);
+    if (thread_arg.server) {
+        rbox_server_handle_free(thread_arg.server);
+    }
     unlink(server_sock);
 
     printf("    %d/35 requests succeeded with correct ALLOW decision\n", success);
