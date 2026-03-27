@@ -83,7 +83,7 @@ start_server_auto_deny() {
 start_server_auto_allow() {
     pkill -f "readonlybox-server.*$SOCKET" 2>/dev/null || true
     rm -f "$SOCKET"
-    env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" "$SERVER" -socket "$SOCKET" &
+    env LD_LIBRARY_PATH="$LD_LIBRARY_PATH" "$SERVER" -socket "$SOCKET" >/dev/null 2>&1 &
     wait_for_server
 }
 
@@ -613,12 +613,23 @@ echo ""
 echo "Signal Propagation"
 echo "------------------"
 
+# Start a server for this test (sh is not DFA auto-allowed)
+start_server_auto_allow
+
+# Wait for server to be ready (bear can cause slow socket initialization)
+for i in 1 2 3 4 5; do
+    $WRAPPER --socket "$SOCKET" --judge -- true 2>/dev/null && break
+    sleep 0.2
+done
+
 # Test SIGTERM propagation - run a command that kills itself with SIGTERM
 # We use a sh -c that gets its own PID and kills itself
 # This tests that the wrapper correctly propagates signal exit codes
-result=$($WRAPPER --run -- sh -c 'kill -TERM $$' 2>/dev/null || echo $?)
+# Use --relay to bypass DFA and ensure server contact (DFA may auto-allow sh under bear)
+$WRAPPER --socket "$SOCKET" --relay --run -- sh -c 'kill -TERM $$' 2>/dev/null
+result=$?
 # The sh process killed by SIGTERM returns 143 (128+15)
-if [ "$result" = "143" ]; then
+if [ "$result" -eq 143 ]; then
     pass "SIGTERM exit code propagated correctly (143)"
 else
     fail "SIGTERM exit code: expected 143, got $result"

@@ -274,9 +274,7 @@ static int parse_flagged_envs(const char *env_str, char ***out_names, float **ou
     free(env_copy);
 
     if (out_names) *out_names = names;
-    else free(names);
     if (out_scores) *out_scores = scores;
-    else free(scores);
     return idx;
 }
 
@@ -387,7 +385,6 @@ static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clea
         prctl(PR_SET_PDEATHSIG, SIGTERM);
 
         struct passwd *pw = NULL;
-        struct passwd *current_user = NULL;
         const char *home = "/root";
         const char *user = "root";
 
@@ -402,10 +399,10 @@ static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clea
             user = pw->pw_name ? pw->pw_name : "root";
         } else if (clear_env) {
             /* When clear_env without target_uid, use current user's home */
-            current_user = getpwuid(getuid());
-            if (current_user) {
-                home = current_user->pw_dir ? current_user->pw_dir : "/root";
-                user = current_user->pw_name ? current_user->pw_name : "root";
+            pw = getpwuid(getuid());
+            if (pw) {
+                home = pw->pw_dir ? pw->pw_dir : "/root";
+                user = pw->pw_name ? pw->pw_name : "root";
             }
         }
 
