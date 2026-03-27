@@ -112,6 +112,10 @@ static char *get_socket_path(const char *cmd_socket, int force_system, int force
 #define EXIT_DENY   9
 #define EXIT_ERROR  1
 
+/* Retry parameters for server communication */
+#define RBOX_RETRY_BASE_DELAY_MS  100
+#define RBOX_RETRY_MAX_RETRIES    3
+
 /* Global DFA state */
 static const void *g_dfa_data = NULL;
 static size_t g_dfa_size = 0;
@@ -222,13 +226,13 @@ static int parse_flagged_envs(const char *env_str, char ***out_names, float **ou
     /* Only allocate arrays if corresponding output pointers are non-NULL */
     if (out_names) {
         names = calloc(count, sizeof(char *));
-        if (!names) return 0;
+        if (!names) return -1;
     }
     if (out_scores) {
         scores = calloc(count, sizeof(float));
         if (!scores) {
             free(names);
-            return 0;
+            return -1;
         }
     }
 
@@ -236,11 +240,12 @@ static int parse_flagged_envs(const char *env_str, char ***out_names, float **ou
     if (!env_copy) {
         free(names);
         free(scores);
-        return 0;
+        return -1;
     }
 
     int idx = 0;
-    char *token = strtok(env_copy, ",");
+    char *saveptr = NULL;
+    char *token = strtok_r(env_copy, ",", &saveptr);
     while (token && idx < count) {
         if (scores) {
             char *colon = strchr(token, ':');
@@ -264,7 +269,7 @@ static int parse_flagged_envs(const char *env_str, char ***out_names, float **ou
             }
         }
         idx++;
-        token = strtok(NULL, ",");
+        token = strtok_r(NULL, ",", &saveptr);
     }
     free(env_copy);
 
@@ -409,6 +414,7 @@ static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clea
             setenv("PATH", "/usr/local/bin:/usr/bin:/bin", 1);
             setenv("HOME", home, 1);
             setenv("USER", user, 1);
+            setenv("LOGNAME", user, 1);
         }
 
         if (target_uid != (uid_t)-1 && pw) {
@@ -456,8 +462,8 @@ static int run_with_filter(const char *socket_path, const char *command,
         flagged_scores,
         &packet,
         &pkt_len,
-        100,
-        3
+        RBOX_RETRY_BASE_DELAY_MS,
+        RBOX_RETRY_MAX_RETRIES
     );
 
     if (err != RBOX_OK || !packet) {
@@ -698,8 +704,8 @@ int main(int argc, char *argv[]) {
             flagged_scores,
             &packet,
             &pkt_len,
-            100,
-            3
+            RBOX_RETRY_BASE_DELAY_MS,
+            RBOX_RETRY_MAX_RETRIES
         );
 
         free_flagged_envs(flagged_count, flagged_names);
@@ -733,8 +739,8 @@ int main(int argc, char *argv[]) {
         (const char **)flagged_names,
         flagged_scores,
         &response,
-        100,
-        3
+        RBOX_RETRY_BASE_DELAY_MS,
+        RBOX_RETRY_MAX_RETRIES
     );
 
     free_flagged_envs(flagged_count, flagged_names);
