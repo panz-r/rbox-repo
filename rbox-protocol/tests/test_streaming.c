@@ -53,7 +53,7 @@ static void *server_worker_streaming(void *arg) {
         count++;
     }
 
-    rbox_server_handle_free(ctx->srv);
+    /* NOTE: Do NOT call rbox_server_handle_free here. Caller must do cleanup. */
     return NULL;
 }
 
@@ -94,6 +94,7 @@ static int test_chunked_large_payload(void) {
     if (!cl) {
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -102,6 +103,7 @@ static int test_chunked_large_payload(void) {
         rbox_client_close(cl);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -123,6 +125,7 @@ static int test_chunked_large_payload(void) {
             rbox_client_close(cl);
             rbox_server_stop(ctx.srv);
             pthread_join(tid, NULL);
+            rbox_server_handle_free(ctx.srv);
             return -1;
         }
         memset(chunk, 'A' + (sent / to_send) % 26, to_send);
@@ -136,6 +139,7 @@ static int test_chunked_large_payload(void) {
             rbox_client_close(cl);
             rbox_server_stop(ctx.srv);
             pthread_join(tid, NULL);
+            rbox_server_handle_free(ctx.srv);
             return -1;
         }
 
@@ -152,6 +156,7 @@ static int test_chunked_large_payload(void) {
         rbox_client_close(cl);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -161,6 +166,7 @@ static int test_chunked_large_payload(void) {
         rbox_client_close(cl);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -168,6 +174,7 @@ static int test_chunked_large_payload(void) {
     rbox_client_close(cl);
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     return 0;
@@ -195,6 +202,7 @@ static int test_chunked_malicious_scan(void) {
     if (!cl) {
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -203,6 +211,7 @@ static int test_chunked_malicious_scan(void) {
         rbox_client_close(cl);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -234,6 +243,7 @@ static int test_chunked_malicious_scan(void) {
             rbox_client_close(cl);
             rbox_server_stop(ctx.srv);
             pthread_join(tid, NULL);
+            rbox_server_handle_free(ctx.srv);
             return -1;
         }
 
@@ -251,6 +261,7 @@ static int test_chunked_malicious_scan(void) {
         rbox_client_close(cl);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -258,6 +269,7 @@ static int test_chunked_malicious_scan(void) {
     rbox_client_close(cl);
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     return 0;

@@ -111,7 +111,7 @@ struct rbox_server_handle {
 
     /* Background thread */
     pthread_t thread;
-    volatile int running;          /* Flag to signal shutdown */
+    atomic_int running;            /* Atomic flag to signal shutdown */
     atomic_flag stop_flag;         /* Atomic flag - only one stop() wins */
     int wake_fd;                   /* eventfd to wake epoll thread */
 

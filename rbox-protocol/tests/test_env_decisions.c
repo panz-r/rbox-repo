@@ -59,7 +59,7 @@ static void *server_worker_env_decisions(void *arg) {
                           ctx->env_decision_count, ctx->env_decision_names, ctx->env_decisions);
     }
 
-    rbox_server_handle_free(ctx->srv);
+    /* NOTE: Do NOT call rbox_server_handle_free here. Caller must do cleanup. */
     return NULL;
 }
 
@@ -96,6 +96,7 @@ static int test_basic_env_decisions(void) {
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     if (err != RBOX_OK) {
@@ -152,6 +153,7 @@ static int test_all_allow(void) {
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     if (err != RBOX_OK) return -1;
@@ -193,6 +195,7 @@ static int test_all_deny(void) {
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     if (err != RBOX_OK) return -1;
@@ -234,6 +237,7 @@ static int test_mixed_decisions(void) {
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     if (err != RBOX_OK) return -1;
@@ -272,6 +276,7 @@ static int test_zero_env_decisions(void) {
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     if (err != RBOX_OK) return -1;

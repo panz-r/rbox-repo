@@ -322,7 +322,8 @@ static char *read_body_chunks(int fd, uint32_t first_chunk_len, uint64_t total_l
     /* Allocate buffer for total_len if known, otherwise use dynamic growth */
     size_t buf_capacity = (total_len > 0 && total_len <= 1024 * 1024) ? total_len : first_chunk_len;
     if (buf_capacity == 0) buf_capacity = 4096;
-    char *buffer = malloc(buf_capacity);
+    /* +1 for null terminator */
+    char *buffer = malloc(buf_capacity + 1);
     if (!buffer) return NULL;
     
     size_t buf_len = 0;
@@ -337,7 +338,7 @@ static char *read_body_chunks(int fd, uint32_t first_chunk_len, uint64_t total_l
         }
         if (buf_len + first_chunk_len > buf_capacity) {
             buf_capacity = buf_len + first_chunk_len;
-            char *new_buf = realloc(buffer, buf_capacity);
+            char *new_buf = realloc(buffer, buf_capacity + 1);
             if (!new_buf) {
                 free(chunk);
                 free(buffer);
@@ -402,7 +403,7 @@ static char *read_body_chunks(int fd, uint32_t first_chunk_len, uint64_t total_l
             
             if (buf_len + chunk_len > buf_capacity) {
                 buf_capacity = buf_len + chunk_len;
-                char *new_buf = realloc(buffer, buf_capacity);
+                char *new_buf = realloc(buffer, buf_capacity + 1);
                 if (!new_buf) {
                     free(chunk);
                     free(buffer);
@@ -417,6 +418,8 @@ static char *read_body_chunks(int fd, uint32_t first_chunk_len, uint64_t total_l
     }
     
     if (out_total_len) *out_total_len = buf_len;
+    /* Null-terminate the buffer for safe string parsing */
+    buffer[buf_len] = '\0';
     return buffer;
 }
 
@@ -459,7 +462,7 @@ static void *server_thread_func(void *arg) {
     while (1) {
         loop_count++;
         DBG("=== Top of loop (count=%d) ===", loop_count);
-        DBG("server->running = %d", server->running);
+        DBG("server->running = %d", atomic_load(&server->running));
         DBG("server->request_count = %d", server->request_count);
         DBG("active clients = %d", server->active_client_count);
 
@@ -514,7 +517,7 @@ static void *server_thread_func(void *arg) {
         DBG("decision_mutex unlocked");
 
         /* If shutdown requested, check if we can exit */
-        if (!server->running) {
+        if (!atomic_load(&server->running)) {
             int pending_sends = 0;
             pthread_mutex_lock(&server->send_mutex);
             pending_sends = server->send_count;
@@ -555,7 +558,7 @@ static void *server_thread_func(void *arg) {
 
                 /* Listen socket – accept new connections only if still running */
                 if (ev->data.fd == server->listen_fd) {
-                    if (!server->running) {
+                    if (!atomic_load(&server->running)) {
                         /* Shutdown: ignore new connections */
                         continue;
                     }
@@ -823,7 +826,7 @@ static void *server_thread_func(void *arg) {
 
     /* Final cleanup: close any remaining client fds (should be none) */
     client_fd_close_all(server);
-    DBG("Exiting server thread (running=%d)", server->running);
+    DBG("Exiting server thread (running=%d)", atomic_load(&server->running));
     close(server->epoll_fd);
     return NULL;
 }
@@ -854,6 +857,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     pthread_mutex_init(&srv->cache_mutex, NULL);
     pthread_mutex_init(&srv->send_mutex, NULL);
     pthread_mutex_init(&srv->client_fd_mutex, NULL);
+    atomic_flag_clear(&srv->stop_flag);
     srv->client_fds = NULL;
     srv->active_client_count = 0;
     srv->send_queue = srv->send_tail = NULL;
@@ -872,6 +876,27 @@ rbox_error_t rbox_server_handle_listen(rbox_server_handle_t *server) {
 
 void rbox_server_handle_free(rbox_server_handle_t *server) {
     if (!server) return;
+
+    /* Drain and free any pending requests in the queue */
+    pthread_mutex_lock(&server->mutex);
+    rbox_server_request_t *req = server->request_queue;
+    while (req) {
+        rbox_server_request_t *next = req->next;
+        /* cmd_data is owned by request, free it */
+        free(req->command_data);
+        /* Free env var names and scores if present */
+        if (req->env_var_names) {
+            for (int i = 0; i < req->env_var_count; i++) free(req->env_var_names[i]);
+            free(req->env_var_names);
+            free(req->env_var_scores);
+        }
+        free(req);
+        req = next;
+    }
+    server->request_queue = server->request_tail = NULL;
+    server->request_count = 0;
+    pthread_mutex_unlock(&server->mutex);
+
     if (server->listen_fd >= 0) {
         close(server->listen_fd);
         unlink(server->socket_path);
@@ -889,11 +914,11 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
 
 rbox_error_t rbox_server_start(rbox_server_handle_t *server) {
     if (!server) return RBOX_ERR_INVALID;
-    server->running = 1;
+    atomic_store(&server->running, 1);
     server->request_queue = server->request_tail = NULL;
     server->request_count = 0;
     if (pthread_create(&server->thread, NULL, server_thread_func, server) != 0) {
-        server->running = 0;
+        atomic_store(&server->running, 0);
         return RBOX_ERR_IO;
     }
     return RBOX_OK;
@@ -902,10 +927,10 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server) {
 rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server) {
     if (!server) return NULL;
     pthread_mutex_lock(&server->mutex);
-    while (server->running && server->request_count == 0) {
+    while (atomic_load(&server->running) && server->request_count == 0) {
         pthread_cond_wait(&server->cond, &server->mutex);
     }
-    if (!server->running) {
+    if (!atomic_load(&server->running)) {
         pthread_mutex_unlock(&server->mutex);
         return NULL;
     }
@@ -919,7 +944,7 @@ rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server) {
 }
 
 int rbox_server_is_running(rbox_server_handle_t *server) {
-    return server ? server->running : 0;
+    return server ? atomic_load(&server->running) : 0;
 }
 
 rbox_error_t rbox_server_decide(rbox_server_request_t *req,
@@ -989,7 +1014,7 @@ void rbox_server_stop(rbox_server_handle_t *server) {
         return;
     }
 
-    server->running = 0;
+    atomic_store(&server->running, 0);
     pthread_mutex_lock(&server->mutex);
     pthread_cond_signal(&server->cond);
     pthread_mutex_unlock(&server->mutex);

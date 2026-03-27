@@ -132,12 +132,16 @@ static int test_three_requests(void) {
         rbox_response_t resp;
         rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0);
         if (err != RBOX_OK) {
+            if (ctx.srv) rbox_server_stop(ctx.srv);
             pthread_join(tid, NULL);
+            if (ctx.srv) rbox_server_handle_free(ctx.srv);
             return -1;
         }
     }
     
+    if (ctx.srv) rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    if (ctx.srv) rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     return 0;
@@ -207,6 +211,7 @@ static int test_duration_decision(void) {
     rbox_server_stop(ctx.srv);
 
     pthread_join(tid, NULL);
+    if (ctx.srv) rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     return 0;
@@ -262,8 +267,9 @@ static int test_cache_hit(void) {
                                               0, NULL, NULL, &resp1, 0, 0);
     if (err1 != RBOX_OK) {
         TEST_ERROR("first request failed: %d", err1);
-        rbox_server_stop(ctx.srv);
+        if (ctx.srv) rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        if (ctx.srv) rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -276,8 +282,9 @@ static int test_cache_hit(void) {
                                               0, NULL, NULL, &resp2, 0, 0);
     if (err2 != RBOX_OK) {
         TEST_ERROR("second request failed: %d", err2);
-        rbox_server_stop(ctx.srv);
+        if (ctx.srv) rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        if (ctx.srv) rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -287,6 +294,7 @@ static int test_cache_hit(void) {
     /* Now stop server and check decision count */
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    if (ctx.srv) rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     /* Verify decision_count is 1 (not 2) - second was from cache */

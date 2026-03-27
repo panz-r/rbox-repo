@@ -57,7 +57,7 @@ static void *server_worker_stress(void *arg) {
         count++;
     }
 
-    rbox_server_handle_free(ctx->srv);
+    /* NOTE: Do NOT call rbox_server_handle_free here. Caller must do cleanup. */
     return NULL;
 }
 
@@ -104,6 +104,7 @@ static int test_100_clients_persistent(void) {
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     int expected = num_clients * requests_per_client;
@@ -139,6 +140,7 @@ static int test_edge_triggered_burst(void) {
     if (!cl) {
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -156,6 +158,7 @@ static int test_edge_triggered_burst(void) {
     rbox_client_close(cl);
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     if (err1 != RBOX_OK || err2 != RBOX_OK) {
@@ -192,6 +195,7 @@ static int test_server_timeout_partial(void) {
     if (!cl) {
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -206,6 +210,7 @@ static int test_server_timeout_partial(void) {
     rbox_client_close(cl);
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     return 0;
@@ -317,6 +322,7 @@ static int test_rapid_connect_disconnect(void) {
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     if (success < 40) {
@@ -353,6 +359,7 @@ static int test_session_sequential(void) {
     if (!sess) {
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -362,6 +369,7 @@ static int test_session_sequential(void) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -378,6 +386,7 @@ static int test_session_sequential(void) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -389,6 +398,7 @@ static int test_session_sequential(void) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -408,6 +418,7 @@ static int test_session_sequential(void) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -417,6 +428,7 @@ static int test_session_sequential(void) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
     rbox_session_reset(sess);
@@ -429,6 +441,7 @@ static int test_session_sequential(void) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -448,6 +461,7 @@ static int test_session_sequential(void) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -457,12 +471,14 @@ static int test_session_sequential(void) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
     rbox_session_free(sess);
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     return 0;
@@ -512,6 +528,7 @@ static int test_graceful_shutdown_with_pending(void) {
     /* Call stop while responses may still be pending */
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     if (success != 5) {
@@ -548,6 +565,7 @@ static int test_partial_header_timeout(void) {
     if (sock < 0) {
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -560,6 +578,7 @@ static int test_partial_header_timeout(void) {
         close(sock);
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
+        rbox_server_handle_free(ctx.srv);
         return -1;
     }
 
@@ -579,6 +598,7 @@ static int test_partial_header_timeout(void) {
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
+    rbox_server_handle_free(ctx.srv);
     unlink(path);
 
     return 0;  /* If we get here without hanging, test passed */
