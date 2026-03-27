@@ -6,6 +6,15 @@ CFLAGS = -Wall -Wextra -std=gnu11 -O2 -g -pthread \
          -I../shellsplit/include
 LDFLAGS = -lpthread -lm -z noexecstack
 
+# ASAN (AddressSanitizer) support
+# Use ASAN=1 make test to run tests with ASAN enabled
+ifdef ASAN
+ASAN_CFLAGS = -fsanitize=address -g -O1
+ASAN_LDFLAGS = -fsanitize=address
+CFLAGS += $(ASAN_CFLAGS)
+LDFLAGS += $(ASAN_LDFLAGS)
+endif
+
 # Shellsplit
 SHELLSPLIT_SRC = ../shellsplit/src/shell_tokenizer.c
 SHELLSPLIT_OBJ = ../shellsplit/src/shell_tokenizer.o
@@ -48,10 +57,14 @@ TEST_PERSIST_SRC = tests/test_persistent.c
 TEST_PERSIST_BIN = test_persistent
 TEST_STREAM_SRC = tests/test_streaming.c
 TEST_STREAM_BIN = test_streaming
+TEST_ENV_SRC = tests/test_env_decisions.c
+TEST_ENV_BIN = test_env_decisions
+TEST_STRESS_SRC = tests/test_stress.c
+TEST_STRESS_BIN = test_stress
 
-.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-streaming test-fuzz test-fuzz-1h test-fuzz-4h
+.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-streaming test-env test-stress test-fuzz test-fuzz-1h test-fuzz-4h
 
-all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN)
+all: $(LIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
 
 # Allow parallel builds with -j
 ifneq ($(MAKECMDGOALS),)
@@ -78,7 +91,7 @@ $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
 # Run both unit tests and integration tests
-test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN)
+test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
 	./$(TEST_BASIC_BIN)
@@ -97,6 +110,12 @@ test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(T
 	@echo ""
 	@echo "=== Running streaming tests ==="
 	./$(TEST_STREAM_BIN)
+	@echo ""
+	@echo "=== Running env decision tests ==="
+	./$(TEST_ENV_BIN)
+	@echo ""
+	@echo "=== Running stress tests ==="
+	./$(TEST_STRESS_BIN)
 
 # Run only unit tests
 test-unit: $(TEST_BASIC_BIN)
@@ -143,5 +162,11 @@ $(TEST_PERSIST_BIN): $(TEST_PERSIST_SRC) $(LIB) $(SHELLSPLIT_OBJ)
 $(TEST_STREAM_BIN): $(TEST_STREAM_SRC) $(LIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
 
+$(TEST_ENV_BIN): $(TEST_ENV_SRC) $(LIB) $(SHELLSPLIT_OBJ)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
+
+$(TEST_STRESS_BIN): $(TEST_STRESS_SRC) $(LIB) $(SHELLSPLIT_OBJ)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
+
 clean:
-	rm -f $(OBJS) $(LIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN)
+	rm -f $(OBJS) $(LIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)

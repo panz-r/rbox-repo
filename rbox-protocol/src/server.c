@@ -247,7 +247,7 @@ static void server_request_free(rbox_server_request_t *req) {
 static int server_read_header(int fd, uint8_t *client_id, uint8_t *request_id, uint32_t *cmd_hash,
                                uint32_t *fenv_hash,
                                char *caller, size_t caller_len, char *syscall, size_t syscall_len,
-                               uint32_t *chunk_len) {
+                               uint32_t *chunk_len, uint32_t *flags, uint64_t *total_len) {
     char header[RBOX_HEADER_SIZE];
     ssize_t n = rbox_read_nonblocking(fd, header, RBOX_HEADER_SIZE);
     if (n == 0) {
@@ -283,6 +283,8 @@ static int server_read_header(int fd, uint8_t *client_id, uint8_t *request_id, u
     }
     *chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
     if (*chunk_len > 1024 * 1024) return -1;
+    *flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
+    *total_len = *(uint64_t *)(header + RBOX_HEADER_OFFSET_TOTAL_LEN);
     return 0;
 }
 
@@ -307,6 +309,115 @@ static char *read_body(int fd, uint32_t chunk_len) {
     }
     data[chunk_len] = '\0';
     return data;
+}
+
+/* Read and accumulate chunks until RBOX_FLAG_LAST is received
+ * Returns malloc'd buffer with all chunks concatenated, or NULL on error
+ * Sets out_total_len to total bytes accumulated */
+static char *read_body_chunks(int fd, uint32_t first_chunk_len, uint64_t total_len,
+                               uint32_t first_flags, size_t *out_total_len,
+                               const uint8_t *client_id, const uint8_t *request_id) {
+    if (out_total_len) *out_total_len = 0;
+    
+    /* Allocate buffer for total_len if known, otherwise use dynamic growth */
+    size_t buf_capacity = (total_len > 0 && total_len <= 1024 * 1024) ? total_len : first_chunk_len;
+    if (buf_capacity == 0) buf_capacity = 4096;
+    char *buffer = malloc(buf_capacity);
+    if (!buffer) return NULL;
+    
+    size_t buf_len = 0;
+    uint32_t flags = first_flags;
+    
+    /* Read first chunk */
+    if (first_chunk_len > 0) {
+        char *chunk = read_body(fd, first_chunk_len);
+        if (!chunk) {
+            free(buffer);
+            return NULL;
+        }
+        if (buf_len + first_chunk_len > buf_capacity) {
+            buf_capacity = buf_len + first_chunk_len;
+            char *new_buf = realloc(buffer, buf_capacity);
+            if (!new_buf) {
+                free(chunk);
+                free(buffer);
+                return NULL;
+            }
+            buffer = new_buf;
+        }
+        memcpy(buffer + buf_len, chunk, first_chunk_len);
+        buf_len += first_chunk_len;
+        free(chunk);
+    }
+    
+    /* If FIRST and LAST are both set, this was a single-chunk transfer */
+    if ((flags & (RBOX_FLAG_FIRST | RBOX_FLAG_LAST)) == (RBOX_FLAG_FIRST | RBOX_FLAG_LAST)) {
+        if (out_total_len) *out_total_len = buf_len;
+        return buffer;
+    }
+    
+    /* Continue reading chunks until RBOX_FLAG_LAST is set */
+    while (!(flags & RBOX_FLAG_LAST)) {
+        char header[RBOX_HEADER_SIZE];
+        ssize_t n = rbox_read_nonblocking(fd, header, RBOX_HEADER_SIZE);
+        if (n == 0) {
+            /* No data yet - wait a bit and retry */
+            usleep(1000);
+            continue;
+        } else if (n < 0) {
+            /* Error or no data (EAGAIN) - wait and retry */
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                usleep(1000);
+                continue;
+            }
+            free(buffer);
+            return NULL;
+        } else if (n != RBOX_HEADER_SIZE) {
+            free(buffer);
+            return NULL;
+        }
+        
+        uint32_t magic = *(uint32_t *)header;
+        uint32_t version = *(uint32_t *)(header + 4);
+        if (magic != RBOX_MAGIC || version != RBOX_VERSION) {
+            free(buffer);
+            return NULL;
+        }
+        
+        flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
+        uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
+        
+        if (chunk_len > 1024 * 1024) {
+            free(buffer);
+            return NULL;
+        }
+        
+        /* Read chunk data */
+        if (chunk_len > 0) {
+            char *chunk = read_body(fd, chunk_len);
+            if (!chunk) {
+                free(buffer);
+                return NULL;
+            }
+            
+            if (buf_len + chunk_len > buf_capacity) {
+                buf_capacity = buf_len + chunk_len;
+                char *new_buf = realloc(buffer, buf_capacity);
+                if (!new_buf) {
+                    free(chunk);
+                    free(buffer);
+                    return NULL;
+                }
+                buffer = new_buf;
+            }
+            memcpy(buffer + buf_len, chunk, chunk_len);
+            buf_len += chunk_len;
+            free(chunk);
+        }
+    }
+    
+    if (out_total_len) *out_total_len = buf_len;
+    return buffer;
 }
 
 /* Remove from epoll */
@@ -482,24 +593,35 @@ static void *server_thread_func(void *arg) {
 
                 /* Handle EPOLLIN first – read data before close */
                 if (ev->events & EPOLLIN) {
-                    DBG("EPOLLIN for fd %d", cl_fd);
                     uint8_t client_id[16], request_id[16];
-                    uint32_t cmd_hash, fenv_hash, chunk_len;
+                    uint32_t cmd_hash, fenv_hash, chunk_len, flags;
+                    uint64_t total_len;
                     char caller[RBOX_MAX_CALLER_LEN + 1];
                     char syscall[RBOX_MAX_SYSCALL_LEN + 1];
 
                     int hdr_result = server_read_header(cl_fd, client_id, request_id, &cmd_hash, &fenv_hash,
-                        caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len);
+                        caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len, &flags, &total_len);
                     if (hdr_result == 1) {
                         /* No data available yet – skip further processing for this event */
                         DBG("No data available on fd %d, skipping", cl_fd);
                         goto next_event;
                     } else if (hdr_result == 0) {
-                        char *cmd_data = read_body(cl_fd, chunk_len);
+                        /* Read body - either single chunk or accumulated chunks */
+                        size_t cmd_len;
+                        char *cmd_data;
+                        if ((flags & RBOX_FLAG_FIRST) && chunk_len < total_len) {
+                            /* This is a multi-chunk transfer - read all chunks
+                             * FIRST is set and chunk_len < total_len means more chunks coming */
+                            cmd_data = read_body_chunks(cl_fd, chunk_len, total_len, flags, &cmd_len, client_id, request_id);
+                        } else {
+                            /* Single chunk transfer */
+                            cmd_data = read_body(cl_fd, chunk_len);
+                            cmd_len = chunk_len;
+                        }
                         if (cmd_data) {
                             /* Check response cache before creating request */
-                            uint32_t packet_checksum = (chunk_len > 0) ? rbox_calculate_checksum_crc32(0, cmd_data, chunk_len) : 0;
-                            uint64_t cmd_hash2 = (chunk_len > 0) ? rbox_hash64(cmd_data, chunk_len) : 0;
+                            uint32_t packet_checksum = (cmd_len > 0) ? rbox_calculate_checksum_crc32(0, cmd_data, cmd_len) : 0;
+                            uint64_t cmd_hash2 = (cmd_len > 0) ? rbox_hash64(cmd_data, cmd_len) : 0;
                             uint8_t cached_decision;
                             char cached_reason[256];
                             uint32_t cached_duration;
@@ -527,17 +649,17 @@ static void *server_thread_func(void *arg) {
                                 req->cmd_hash = cmd_hash;
                                 req->server = server;
                                 req->command_data = cmd_data;
-                                req->command_len = chunk_len;
+                                req->command_len = cmd_len;
                                 strncpy(req->caller, caller, RBOX_MAX_CALLER_LEN);
                                 req->caller[RBOX_MAX_CALLER_LEN] = '\0';
                                 strncpy(req->syscall, syscall, RBOX_MAX_SYSCALL_LEN);
                                 req->syscall[RBOX_MAX_SYSCALL_LEN] = '\0';
-                                rbox_command_parse(cmd_data, chunk_len, &req->parse);
+                                rbox_command_parse(cmd_data, cmd_len, &req->parse);
 
                                 /* Parse env vars (simplified) */
                                 const char *p = cmd_data;
                                 const char *args_end = cmd_data;
-                                while (p < cmd_data + chunk_len) {
+                                while (p < cmd_data + cmd_len) {
                                     if (*p == '\0') {
                                         if (p == args_end || *(p-1) == '\0') {
                                             args_end = p + 1;
@@ -548,7 +670,7 @@ static void *server_thread_func(void *arg) {
                                     p++;
                                 }
                                 p = args_end;
-                                size_t remaining = chunk_len - (p - cmd_data);
+                                size_t remaining = cmd_len - (p - cmd_data);
                                 while (remaining > 5) {
                                     size_t name_len = strlen(p);
                                     if (name_len == 0 || name_len > remaining - 4) break;
@@ -560,7 +682,7 @@ static void *server_thread_func(void *arg) {
                                     req->env_var_names = calloc(req->env_var_count, sizeof(char *));
                                     req->env_var_scores = calloc(req->env_var_count, sizeof(float));
                                     p = args_end;
-                                    remaining = chunk_len - (p - cmd_data);
+                                    remaining = cmd_len - (p - cmd_data);
                                     int idx = 0;
                                     while (remaining > 5 && idx < req->env_var_count) {
                                         size_t name_len = strlen(p);

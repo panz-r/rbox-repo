@@ -121,8 +121,6 @@ rbox_error_t rbox_stream_send_chunk(rbox_client_t *client, rbox_stream_t *stream
     pos += 8;
 
     uint32_t checksum = rbox_protocol_checksum_crc32(0, buffer, RBOX_HEADER_OFFSET_CHECKSUM);
-    checksum = rbox_protocol_checksum_crc32(checksum, buffer + RBOX_HEADER_OFFSET_CHECKSUM + 4,
-                                              RBOX_HEADER_SIZE + len - (RBOX_HEADER_OFFSET_CHECKSUM + 4));
     memcpy(buffer + RBOX_HEADER_OFFSET_CHECKSUM, &checksum, 4);
     pos += 4;
 

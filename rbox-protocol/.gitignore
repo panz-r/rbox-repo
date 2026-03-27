@@ -7,6 +7,10 @@ test_protocol
 test_integration
 test_protocol_full
 test_blocking_server
+test_env_decisions
+test_streaming
+test_persistent
+test_stress
 
 # Fuzzer
 fuzz/*.o
