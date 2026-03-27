@@ -230,8 +230,8 @@ echo ""
 echo "Server Communication"
 echo "--------------------"
 
+# Test server allows 'ls' (read-only command)
 start_server_auto_allow
-
 output=$($WRAPPER --socket "$SOCKET" --judge -- ls 2>&1)
 if echo "$output" | grep -q "ALLOW"; then
     pass "Server allows 'ls'"
@@ -239,6 +239,8 @@ else
     fail "Server allows 'ls'"
 fi
 
+# Test server denies 'rm' - use auto_deny server to be explicit
+start_server_auto_deny
 output=$($WRAPPER --socket "$SOCKET" --judge -- rm 2>&1 || true)
 if echo "$output" | grep -q "DENY"; then
     pass "Server denies 'rm'"
@@ -382,6 +384,24 @@ else
     fail "Server did not start with --test-env-deny"
 fi
 unset READONLYBOX_FLAGGED_ENVS
+
+# Test end-to-end environment filtering: verify flagged vars are filtered
+# Generate realistic high-entropy values that get flagged by ptrace client
+KEY1_VAL=$(openssl rand -base64 24 | tr -d '=+/' | head -c 32)
+KEY2_VAL=$(openssl rand -base64 24 | tr -d '=+/' | head -c 32)
+export KEY1="$KEY1_VAL"
+export KEY2="$KEY2_VAL"
+# ptrace client sets READONLYBOX_FLAGGED_ENVS with high scores
+export READONLYBOX_FLAGGED_ENVS="KEY1:0.95,KEY2:0.95"
+# Server denies flagged vars with score >= 0.8 (use "0,1" to explicitly deny both)
+start_server_with_env_deny "0,1"
+output=$($WRAPPER --socket "$SOCKET" --relay --run env 2>&1)
+unset KEY1 KEY2 READONLYBOX_FLAGGED_ENVS
+if ! echo "$output" | grep -q "KEY1=$KEY1_VAL" && ! echo "$output" | grep -q "KEY2=$KEY2_VAL"; then
+    pass "Environment filtering: high-entropy vars filtered end-to-end"
+else
+    fail "Environment filtering: high-entropy vars not filtered"
+fi
 
 echo ""
 

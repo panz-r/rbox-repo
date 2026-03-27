@@ -209,10 +209,14 @@ func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, env
 	if len(envDecisions) > 0 {
 		envCount = C.int(len(envDecisions))
 		envNames := make([]*C.char, len(envDecisions))
-		envDecs := make([]C.uint8_t, len(envDecisions))
+		// Pack decisions into bitmap (bit-packed, not individual bytes)
+		bitmapSize := (len(envDecisions) + 7) / 8
+		envDecs := make([]C.uint8_t, bitmapSize)
 		for i, e := range envDecisions {
 			envNames[i] = C.CString(e.Name)
-			envDecs[i] = C.uint8_t(e.Decision)
+			if e.Decision == 1 {
+				envDecs[i/8] |= (1 << (i % 8))
+			}
 			defer C.free(unsafe.Pointer(envNames[i]))
 		}
 		cEnvNames = &envNames[0]
