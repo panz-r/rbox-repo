@@ -19,6 +19,7 @@
 #include <sys/time.h>
 
 #include "rbox_protocol.h"
+#include "test_common.h"
 
 /* Include internal headers */
 #include "../src/socket.h"
@@ -857,8 +858,11 @@ static int test_proxy_bidi_massive(void) {
 int main(void) {
     printf("=== rbox-protocol comprehensive tests ===\n\n");
 
-    /* Seed random for corruption tests */
-    srand(time(NULL));
+    /* Seed random for corruption tests
+     * Use RBOX_TEST_FIXED_SEED env var for deterministic behavior */
+    unsigned int seed = get_test_seed();
+    printf("Using random seed: %u\n", seed);
+    srand(seed);
 
     /* Header tests */
     printf("Header tests:\n");

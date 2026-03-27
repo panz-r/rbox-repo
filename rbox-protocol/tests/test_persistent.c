@@ -5,7 +5,8 @@
  * 1. Single request - basic server/client interaction
  * 2. Three sequential requests - multiple requests to same server
  * 3. Cache timed duplicate - same command within duration window (cache hit)
- */
+ * 4. Cache hit verification - verifies cache is hit when same command sent twice
+ * */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,44 +21,10 @@
 #include <time.h>
 
 #include "rbox_protocol.h"
+#include "test_common.h"
 
-static int pass_count = 0;
-static int test_count = 0;
-
-#define RUN_TEST(fn, name) do { \
-    test_count++; \
-    printf("  Testing: %s...\n", name); \
-    fflush(stdout); \
-    if (fn() == 0) { printf("    PASS\n"); pass_count++; } \
-    else { printf("    FAIL\n"); } \
-    fflush(stdout); \
-} while(0)
-
-#define TEST_ERROR(fmt, ...) fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
-
-static int wait_for_server(const char *path, int timeout_ms) {
-    int interval = 50;
-    int elapsed = 0;
-    while (elapsed < timeout_ms) {
-        struct stat st;
-        if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) {
-            return 0;
-        }
-        usleep(interval * 1000);
-        elapsed += interval;
-    }
-    return -1;
-}
-
-static int checked_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
-                                  void *(*start_routine)(void *), void *arg) {
-    int err = pthread_create(thread, attr, start_routine, arg);
-    if (err != 0) {
-        TEST_ERROR("pthread_create failed: %s", strerror(err));
-        return -1;
-    }
-    return 0;
-}
+int g_pass_count = 0;
+int g_test_count = 0;
 
 typedef struct {
     const char *path;
@@ -66,6 +33,8 @@ typedef struct {
     rbox_server_handle_t *srv;
     pthread_mutex_t mutex;
     int server_ready;
+    int decision_count;  /* Number of times rbox_server_decide was called */
+    pthread_mutex_t count_mutex;
 } worker_ctx_t;
 
 static void *server_worker_with_duration(void *arg) {
@@ -87,6 +56,11 @@ static void *server_worker_with_duration(void *arg) {
         rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
         if (!req) break;  /* Server stopped, exit loop */
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", ctx->duration, 0, NULL, NULL);
+        
+        pthread_mutex_lock(&ctx->count_mutex);
+        ctx->decision_count++;
+        pthread_mutex_unlock(&ctx->count_mutex);
+        
         count++;
     }
 
@@ -234,6 +208,96 @@ static int test_duration_decision(void) {
     return 0;
 }
 
+/* Test cache hit with duration > 0.
+ * 
+ * With duration > 0, the cache matches on cmd_hash (not request_id).
+ * This means the same command from any client within the duration window
+ * gets a cache hit.
+ * 
+ * This test:
+ * 1. Sends the SAME command twice (same cmd_hash)
+ * 2. Server has duration=5 (cache enabled)
+ * 3. Verifies decision_count is 1 (second request was served from cache) */
+static int test_cache_hit(void) {
+    const char *path = "/tmp/rbox_test_cache_hit.sock";
+    unlink(path);
+
+    worker_ctx_t ctx = { 
+        .path = path, 
+        .max_requests = 2,  /* Expect 2, but only 1 will reach worker due to cache */
+        .duration = 5,     /* Cache decisions for 5 seconds */
+        .srv = NULL,
+        .mutex = PTHREAD_MUTEX_INITIALIZER,
+        .server_ready = 0,
+        .decision_count = 0,
+        .count_mutex = PTHREAD_MUTEX_INITIALIZER
+    };
+    pthread_t tid;
+    if (checked_pthread_create(&tid, NULL, server_worker_with_duration, &ctx) != 0) return -1;
+    if (wait_for_server(path, 2000) != 0) {
+        pthread_join(tid, NULL);
+        return -1;
+    }
+
+    /* Wait for server to be ready */
+    pthread_mutex_lock(&ctx.mutex);
+    while (!ctx.server_ready) {
+        pthread_mutex_unlock(&ctx.mutex);
+        usleep(1000);
+        pthread_mutex_lock(&ctx.mutex);
+    }
+    pthread_mutex_unlock(&ctx.mutex);
+
+    /* Send SAME command twice - should trigger cache hit on second */
+    const char *cmd = "identical_command";
+    const char *argv1[] = {cmd};
+    
+    /* First request - will be cache miss */
+    rbox_response_t resp1;
+    rbox_error_t err1 = rbox_blocking_request(path, cmd, 1, argv1, "test", "execve",
+                                              0, NULL, NULL, &resp1, 0, 0);
+    if (err1 != RBOX_OK) {
+        TEST_ERROR("first request failed: %d", err1);
+        rbox_server_stop(ctx.srv);
+        pthread_join(tid, NULL);
+        return -1;
+    }
+
+    /* Small delay to ensure first request is processed */
+    usleep(50000);
+
+    /* Second request - SAME command, should be cache HIT */
+    rbox_response_t resp2;
+    rbox_error_t err2 = rbox_blocking_request(path, cmd, 1, argv1, "test", "execve",
+                                              0, NULL, NULL, &resp2, 0, 0);
+    if (err2 != RBOX_OK) {
+        TEST_ERROR("second request failed: %d", err2);
+        rbox_server_stop(ctx.srv);
+        pthread_join(tid, NULL);
+        return -1;
+    }
+
+    /* Small delay to ensure cache hit is processed */
+    usleep(50000);
+
+    /* Now stop server and check decision count */
+    rbox_server_stop(ctx.srv);
+    pthread_join(tid, NULL);
+    unlink(path);
+
+    /* Verify decision_count is 1 (not 2) - second was from cache */
+    pthread_mutex_lock(&ctx.count_mutex);
+    int count = ctx.decision_count;
+    pthread_mutex_unlock(&ctx.count_mutex);
+
+    if (count != 1) {
+        TEST_ERROR("expected 1 decision (cache hit), got %d", count);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(void) {
     rbox_init();
 
@@ -243,13 +307,15 @@ int main(void) {
     RUN_TEST(test_single_request, "single request");
     RUN_TEST(test_three_requests, "three sequential requests");
     RUN_TEST(test_duration_decision, "duration decision with stop");
+    RUN_TEST(test_cache_hit, "cache hit verification");
 
-    printf("\n=== Results: %d/%d tests passed ===\n", pass_count, test_count);
+    printf("\n=== Results: %d/%d tests passed ===\n", g_pass_count, g_test_count);
     fflush(stdout);
 
     unlink("/tmp/rbox_test_single.sock");
     unlink("/tmp/rbox_test_three.sock");
-    unlink("/tmp/rbox_test_cache_dup.sock");
+    unlink("/tmp/rbox_test_duration.sock");
+    unlink("/tmp/rbox_test_cache_hit.sock");
 
-    return (pass_count == test_count) ? 0 : 1;
+    return (g_pass_count == g_test_count) ? 0 : 1;
 }

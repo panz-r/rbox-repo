@@ -24,34 +24,10 @@
 #include <errno.h>
 
 #include "rbox_protocol.h"
+#include "test_common.h"
 
-static int pass_count = 0;
-static int test_count = 0;
-
-#define RUN_TEST(fn, name) do { \
-    test_count++; \
-    printf("  Testing: %s...\n", name); \
-    fflush(stdout); \
-    if (fn() == 0) { printf("    PASS\n"); pass_count++; } \
-    else { printf("    FAIL\n"); } \
-    fflush(stdout); \
-} while(0)
-
-#define TEST_ERROR(fmt, ...) fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
-
-static int wait_for_server(const char *path, int timeout_ms) {
-    int interval = 50;
-    int elapsed = 0;
-    while (elapsed < timeout_ms) {
-        struct stat st;
-        if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) {
-            return 0;
-        }
-        usleep(interval * 1000);
-        elapsed += interval;
-    }
-    return -1;
-}
+int g_pass_count = 0;
+int g_test_count = 0;
 
 typedef struct {
     const char *path;
@@ -316,7 +292,7 @@ int main(void) {
     RUN_TEST(test_mixed_decisions, "mixed decisions");
     RUN_TEST(test_zero_env_decisions, "zero env decisions");
 
-    printf("\n=== Results: %d/%d tests passed ===\n", pass_count, test_count);
+    printf("\n=== Results: %d/%d tests passed ===\n", g_pass_count, g_test_count);
     fflush(stdout);
 
     unlink("/tmp/rbox_test_env_basic.sock");
@@ -325,5 +301,5 @@ int main(void) {
     unlink("/tmp/rbox_test_env_mixed.sock");
     unlink("/tmp/rbox_test_env_zero.sock");
 
-    return (pass_count == test_count) ? 0 : 1;
+    return (g_pass_count == g_test_count) ? 0 : 1;
 }

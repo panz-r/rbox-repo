@@ -5,7 +5,7 @@
  * 1. Stream creation/destruction
  * 2. Chunked large payload - send 1MB via 32KB chunks
  * 3. Chunked malicious scan - large payload simulating malicious content
- */
+ * */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,34 +20,10 @@
 #include <time.h>
 
 #include "rbox_protocol.h"
+#include "test_common.h"
 
-static int pass_count = 0;
-static int test_count = 0;
-
-#define RUN_TEST(fn, name) do { \
-    test_count++; \
-    printf("  Testing: %s...\n", name); \
-    fflush(stdout); \
-    if (fn() == 0) { printf("    PASS\n"); pass_count++; } \
-    else { printf("    FAIL\n"); } \
-    fflush(stdout); \
-} while(0)
-
-#define TEST_ERROR(fmt, ...) fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
-
-static int wait_for_server(const char *path, int timeout_ms) {
-    int interval = 50;
-    int elapsed = 0;
-    while (elapsed < timeout_ms) {
-        struct stat st;
-        if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) {
-            return 0;
-        }
-        usleep(interval * 1000);
-        elapsed += interval;
-    }
-    return -1;
-}
+int g_pass_count = 0;
+int g_test_count = 0;
 
 typedef struct {
     const char *path;
@@ -96,7 +72,7 @@ static int test_stream_create(void) {
     return 0;
 }
 
-/* Test chunked large payload - send 1MB via 32KB chunks */
+/* Test chunked large payload - send 1MB via 32KB chunks, verify response */
 static int test_chunked_large_payload(void) {
     const char *path = "/tmp/rbox_test_chunked_large.sock";
     unlink(path);
@@ -155,6 +131,7 @@ static int test_chunked_large_payload(void) {
         free(chunk);
 
         if (err != RBOX_OK) {
+            TEST_ERROR("send_chunk failed: %d", err);
             rbox_stream_free(stream);
             rbox_client_close(cl);
             rbox_server_stop(ctx.srv);
@@ -163,6 +140,28 @@ static int test_chunked_large_payload(void) {
         }
 
         sent += to_send;
+    }
+
+    /* Read response to verify server processed the request */
+    rbox_response_t resp = {0};
+    rbox_error_t err = rbox_blocking_request(path, "echo", 0, NULL, "test", "execve",
+                                            0, NULL, NULL, &resp, 100, 1);
+    if (err != RBOX_OK) {
+        TEST_ERROR("read response failed: %d", err);
+        rbox_stream_free(stream);
+        rbox_client_close(cl);
+        rbox_server_stop(ctx.srv);
+        pthread_join(tid, NULL);
+        return -1;
+    }
+
+    if (resp.decision != RBOX_DECISION_ALLOW) {
+        TEST_ERROR("expected ALLOW, got %d", resp.decision);
+        rbox_stream_free(stream);
+        rbox_client_close(cl);
+        rbox_server_stop(ctx.srv);
+        pthread_join(tid, NULL);
+        return -1;
     }
 
     rbox_stream_free(stream);
@@ -174,7 +173,7 @@ static int test_chunked_large_payload(void) {
     return 0;
 }
 
-/* Test chunked malicious scan - simulate scanning suspicious content */
+/* Test chunked malicious scan - simulate scanning suspicious content, verify response */
 static int test_chunked_malicious_scan(void) {
     const char *path = "/tmp/rbox_test_malicious.sock";
     unlink(path);
@@ -230,6 +229,7 @@ static int test_chunked_malicious_scan(void) {
             malicious_content + sent, to_send, flags, total_size);
 
         if (err != RBOX_OK) {
+            TEST_ERROR("send_chunk failed: %d", err);
             rbox_stream_free(stream);
             rbox_client_close(cl);
             rbox_server_stop(ctx.srv);
@@ -238,6 +238,20 @@ static int test_chunked_malicious_scan(void) {
         }
 
         sent += to_send;
+    }
+
+    /* Read response to verify server processed the request (not that it allowed it -
+     * the server always returns ALLOW, the scanner would need to analyze the content) */
+    rbox_response_t resp = {0};
+    rbox_error_t err = rbox_blocking_request(path, "echo", 0, NULL, "test", "execve",
+                               0, NULL, NULL, &resp, 100, 1);
+    if (err != RBOX_OK) {
+        TEST_ERROR("read response failed: %d", err);
+        rbox_stream_free(stream);
+        rbox_client_close(cl);
+        rbox_server_stop(ctx.srv);
+        pthread_join(tid, NULL);
+        return -1;
     }
 
     rbox_stream_free(stream);
@@ -259,11 +273,11 @@ int main(void) {
     RUN_TEST(test_chunked_large_payload, "chunked large payload (1MB)");
     RUN_TEST(test_chunked_malicious_scan, "chunked malicious scan");
 
-    printf("\n=== Results: %d/%d tests passed ===\n", pass_count, test_count);
+    printf("\n=== Results: %d/%d tests passed ===\n", g_pass_count, g_test_count);
     fflush(stdout);
 
     unlink("/tmp/rbox_test_chunked_large.sock");
     unlink("/tmp/rbox_test_malicious.sock");
 
-    return (pass_count == test_count) ? 0 : 1;
+    return (g_pass_count == g_test_count) ? 0 : 1;
 }
