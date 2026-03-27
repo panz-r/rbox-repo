@@ -363,10 +363,11 @@ echo ""
 echo "Environment Filtering"
 echo "--------------------"
 
-# Test that the server accepts -test-env-deny flag and wrapper can parse flagged envs
-# Note: Full end-to-end test (running env and checking filtered vars) requires server
-# contact for 'env' command, which causes hangs in test environment. This test verifies
-# the --test-env-deny flag works and wrapper parsing is correct.
+# Test that the server accepts -test-env-deny flag and wrapper correctly parses
+# and sends flagged envs. Note: Full end-to-end filtering (env var removed from
+# output) requires --clear-env, but --clear-env skips parsing READONLYBOX_FLAGGED_ENVS
+# (they're not sent to server). This test verifies the wrapper doesn't crash when
+# parsing flagged envs and contacting the server with --test-env-deny.
 export READONLYBOX_FLAGGED_ENVS="KEY1:0.5,KEY2:0.8,KEY3:0.3"
 start_server_with_env_deny "1"
 if [ -S "$SOCKET" ]; then
@@ -550,6 +551,24 @@ fi
 echo ""
 
 #========================================
+# --clear-env with DFA Fast-Path
+#========================================
+echo "--clear-env with DFA Fast-Path"
+echo "-------------------------------"
+
+# Test --clear-env with a DFA fast-path command (env is always allowed)
+export TESTVAR=should_not_appear
+output=$($WRAPPER --clear-env --run env 2>&1)
+unset TESTVAR
+if echo "$output" | grep -q "TESTVAR="; then
+    fail "--clear-env did not clear TESTVAR"
+else
+    pass "--clear-env clears environment (DFA fast-path)"
+fi
+
+echo ""
+
+#========================================
 # --clear-env with Server
 #========================================
 echo "--clear-env with Server"
@@ -582,12 +601,7 @@ result=$($WRAPPER --run -- sh -c 'kill -TERM $$' 2>/dev/null || echo $?)
 if [ "$result" = "143" ]; then
     pass "SIGTERM exit code propagated correctly (143)"
 else
-    # Accept if the wrapper returned 0 due to signal handling nuances
-    if [ "$result" = "0" ] || [ "$result" = "1" ]; then
-        pass "SIGTERM handled (wrapper exit $result)"
-    else
-        fail "SIGTERM exit code: expected 143, got $result"
-    fi
+    fail "SIGTERM exit code: expected 143, got $result"
 fi
 
 echo ""

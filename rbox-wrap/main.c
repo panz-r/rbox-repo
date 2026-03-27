@@ -129,7 +129,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "\nOptions:\n");
     fprintf(stderr, "  --judge       Query server for decision, print result (default)\n");
     fprintf(stderr, "  --run         Query server and execute if allowed\n");
-    fprintf(stderr, "  --clear-env   Run with clean environment (no server env filtering)\n");
+    fprintf(stderr, "  --clear-env   Run with minimal clean environment (no inherited env vars)\n");
     fprintf(stderr, "  --bin         Output raw response packet to stdout\n");
     fprintf(stderr, "  --relay       Skip DFA, always contact server\n");
     fprintf(stderr, "  --socket      Unix socket path (overrides env and defaults)\n");
