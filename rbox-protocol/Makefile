@@ -26,7 +26,6 @@ SRCS = src/socket_io.c \
        src/session.c \
        src/packet_stream.c \
        src/server_client.c \
-       src/server_request.c \
        src/server_response.c \
        src/server_cache.c \
        src/socket.c \

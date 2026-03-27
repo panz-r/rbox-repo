@@ -12,7 +12,6 @@
 #include "rbox_protocol.h"
 #include "protocol.h"
 #include "server_internal.h"
-#include "server_request.h"
 #include "server_response.h"
 
 char *rbox_server_build_response(
@@ -108,7 +107,7 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
             if (!entry->next) client->send_queue_tail = *prev;
             if (entry->request) {
                 entry->request->fd = -1;
-                rbox_server_request_free(entry->request);
+                server_request_free(entry->request);
             }
             free(entry->data);
             free(entry);
@@ -119,7 +118,7 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
             if (!entry->next) client->send_queue_tail = *prev;
             if (entry->request) {
                 entry->request->fd = -1;
-                rbox_server_request_free(entry->request);
+                server_request_free(entry->request);
             }
             free(entry->data);
             free(entry);
@@ -132,7 +131,7 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
                 if (!entry->next) client->send_queue_tail = *prev;
                 if (entry->request) {
                     entry->request->fd = -1;
-                    rbox_server_request_free(entry->request);
+                    server_request_free(entry->request);
                 }
                 free(entry->data);
                 free(entry);
@@ -168,7 +167,7 @@ void rbox_server_cleanup_pending(rbox_server_handle_t *server, int fd) {
         if (!entry->next) client->send_queue_tail = *prev;
         if (entry->request) {
             entry->request->fd = -1;
-            rbox_server_request_free(entry->request);
+            server_request_free(entry->request);
         }
         free(entry->data);
         free(entry);
@@ -183,7 +182,7 @@ int rbox_server_send_response(rbox_server_handle_t *server, int fd, char *data, 
     rbox_server_send_entry_t *entry = calloc(1, sizeof(*entry));
     if (!entry) {
         free(data);
-        if (req) rbox_server_request_free(req);
+        if (req) server_request_free(req);
         return -1;
     }
     entry->fd = fd;
@@ -199,7 +198,7 @@ int rbox_server_send_response(rbox_server_handle_t *server, int fd, char *data, 
         pthread_mutex_unlock(&server->send_mutex);
         free(entry->data);
         free(entry);
-        if (req) rbox_server_request_free(req);
+        if (req) server_request_free(req);
         return -1;
     }
 

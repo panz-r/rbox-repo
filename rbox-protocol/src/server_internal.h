@@ -83,6 +83,23 @@ typedef struct rbox_server_send_entry {
 /* Forward declaration */
 typedef struct rbox_server_handle rbox_server_handle_t;
 
+/*
+ * Zero-Copy Request Body Design:
+ * --------------------------------
+ * The server reads request bodies directly into the final `command_data` buffer
+ * without any intermediate copies:
+ *
+ * - For single-chunk requests: command_data is allocated with exact size needed
+ *   (malloc(chunk_len + 1)), and data is read directly into it via rbox_read_nonblocking().
+ *
+ * - For chunked requests: command_data is allocated upfront with total_len + 1 bytes
+ *   (validated against RBOX_MAX_TOTAL_SIZE), and each chunk is read directly into
+ *   the appropriate offset within command_data.
+ *
+ * The buffer is freed only when the request is processed (via server_request_free()).
+ * No temporary buffers or intermediate copies are used in the production code path.
+ */
+
 /* Server request handle */
 struct rbox_server_request {
     int fd;                         /* Client socket fd */
@@ -135,6 +152,9 @@ typedef struct rbox_client_fd_entry {
     rbox_server_send_entry_t *send_queue_head; /* Per-client send queue head */
     rbox_server_send_entry_t *send_queue_tail; /* Per-client send queue tail */
 } rbox_client_fd_entry_t;
+
+/* Free server request (used by server_response.c) */
+void server_request_free(rbox_server_request_t *req);
 
 /* Find client fd entry by fd (used by server_response.c) */
 rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);

@@ -39,7 +39,6 @@
  * FORWARD DECLARATIONS
  * ============================================================ */
 static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size_t len, rbox_server_request_t *req);
-static void server_request_free(rbox_server_request_t *req);
 static void try_send_pending(rbox_server_handle_t *server, int fd);
 static void client_fd_add(rbox_server_handle_t *server, int fd);
 static void client_fd_remove(rbox_server_handle_t *server, int fd);
@@ -454,7 +453,7 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
  * REQUEST HELPERS
  * ============================================================ */
 
-static void server_request_free(rbox_server_request_t *req) {
+void server_request_free(rbox_server_request_t *req) {
     if (!req) return;
     if (req->fd >= 0) {
         client_fd_remove(req->server, req->fd);
@@ -518,141 +517,6 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
     *flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
     *total_len = *(uint64_t *)(header + RBOX_HEADER_OFFSET_TOTAL_LEN);
     return 0;
-}
-
-/* Read request body – loops until all data is received */
-static char *read_body(int fd, uint32_t chunk_len) {
-    if (chunk_len == 0) {
-        char *empty = malloc(1);
-        if (empty) empty[0] = '\0';
-        return empty;
-    }
-    char *data = malloc(chunk_len + 1);
-    if (!data) return NULL;
-
-    size_t total_read = 0;
-    while (total_read < chunk_len) {
-        ssize_t n = rbox_read(fd, data + total_read, chunk_len - total_read);
-        if (n <= 0) {
-            free(data);
-            return NULL;
-        }
-        total_read += n;
-    }
-    data[chunk_len] = '\0';
-    return data;
-}
-
-/* Read and accumulate chunks until RBOX_FLAG_LAST is received
- * Returns malloc'd buffer with all chunks concatenated, or NULL on error
- * Sets out_total_len to total bytes accumulated */
-static char *read_body_chunks(int fd, uint32_t first_chunk_len, uint64_t total_len,
-                               uint32_t first_flags, size_t *out_total_len,
-                               const uint8_t *client_id, const uint8_t *request_id) {
-    if (out_total_len) *out_total_len = 0;
-    
-    /* Allocate buffer for total_len if known, otherwise use dynamic growth */
-    size_t buf_capacity = (total_len > 0 && total_len <= 1024 * 1024) ? total_len : first_chunk_len;
-    if (buf_capacity == 0) buf_capacity = 4096;
-    /* +1 for null terminator */
-    char *buffer = malloc(buf_capacity + 1);
-    if (!buffer) return NULL;
-    
-    size_t buf_len = 0;
-    uint32_t flags = first_flags;
-    
-    /* Read first chunk */
-    if (first_chunk_len > 0) {
-        char *chunk = read_body(fd, first_chunk_len);
-        if (!chunk) {
-            free(buffer);
-            return NULL;
-        }
-        if (buf_len + first_chunk_len > buf_capacity) {
-            buf_capacity = buf_len + first_chunk_len;
-            char *new_buf = realloc(buffer, buf_capacity + 1);
-            if (!new_buf) {
-                free(chunk);
-                free(buffer);
-                return NULL;
-            }
-            buffer = new_buf;
-        }
-        memcpy(buffer + buf_len, chunk, first_chunk_len);
-        buf_len += first_chunk_len;
-        free(chunk);
-    }
-    
-    /* If FIRST and LAST are both set, this was a single-chunk transfer */
-    if ((flags & (RBOX_FLAG_FIRST | RBOX_FLAG_LAST)) == (RBOX_FLAG_FIRST | RBOX_FLAG_LAST)) {
-        if (out_total_len) *out_total_len = buf_len;
-        return buffer;
-    }
-    
-    /* Continue reading chunks until RBOX_FLAG_LAST is set */
-    while (!(flags & RBOX_FLAG_LAST)) {
-        char header[RBOX_HEADER_SIZE];
-        ssize_t n = rbox_read_nonblocking(fd, header, RBOX_HEADER_SIZE);
-        if (n == 0) {
-            /* No data yet - wait a bit and retry */
-            usleep(1000);
-            continue;
-        } else if (n < 0) {
-            /* Error or no data (EAGAIN) - wait and retry */
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                usleep(1000);
-                continue;
-            }
-            free(buffer);
-            return NULL;
-        } else if (n != RBOX_HEADER_SIZE) {
-            free(buffer);
-            return NULL;
-        }
-        
-        uint32_t magic = *(uint32_t *)header;
-        uint32_t version = *(uint32_t *)(header + 4);
-        if (magic != RBOX_MAGIC || version != RBOX_VERSION) {
-            free(buffer);
-            return NULL;
-        }
-        
-        flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
-        uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
-        
-        if (chunk_len > 1024 * 1024) {
-            free(buffer);
-            return NULL;
-        }
-        
-        /* Read chunk data */
-        if (chunk_len > 0) {
-            char *chunk = read_body(fd, chunk_len);
-            if (!chunk) {
-                free(buffer);
-                return NULL;
-            }
-            
-            if (buf_len + chunk_len > buf_capacity) {
-                buf_capacity = buf_len + chunk_len;
-                char *new_buf = realloc(buffer, buf_capacity + 1);
-                if (!new_buf) {
-                    free(chunk);
-                    free(buffer);
-                    return NULL;
-                }
-                buffer = new_buf;
-            }
-            memcpy(buffer + buf_len, chunk, chunk_len);
-            buf_len += chunk_len;
-            free(chunk);
-        }
-    }
-    
-    if (out_total_len) *out_total_len = buf_len;
-    /* Null-terminate the buffer for safe string parsing */
-    buffer[buf_len] = '\0';
-    return buffer;
 }
 
 /* Remove from epoll */

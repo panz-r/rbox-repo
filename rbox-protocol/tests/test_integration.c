@@ -179,8 +179,7 @@ static void *server_epoll_drop(void *arg) {
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
-        /* Discard the request – free it, which will close the fd */
-        rbox_server_request_free(req);
+        /* Discard the request – server is stopping, cleanup will happen automatically */
     }
 
     /* Caller must call rbox_server_stop and rbox_server_handle_free */
@@ -608,8 +607,7 @@ static void *server_drop_and_close(void *arg) {
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
-        /* Discard the request – close the connection immediately */
-        rbox_server_request_free(req);
+        /* Discard the request – server is stopping, cleanup will happen automatically */
     }
 
     /* Caller must call rbox_server_stop and rbox_server_handle_free */
