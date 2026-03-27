@@ -44,6 +44,7 @@ static void try_send_pending(rbox_server_handle_t *server, int fd);
 static void client_fd_add(rbox_server_handle_t *server, int fd);
 static void client_fd_remove(rbox_server_handle_t *server, int fd);
 static void client_fd_close_all(rbox_server_handle_t *server);
+static rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);
 
 /* ============================================================
  * CLIENT FD TRACKING
@@ -53,6 +54,9 @@ static void client_fd_add(rbox_server_handle_t *server, int fd) {
     rbox_client_fd_entry_t *entry = malloc(sizeof(*entry));
     if (!entry) return;
     entry->fd = fd;
+    entry->pending_request = NULL;
+    entry->header_start_time = 0;
+    entry->waiting_for_header = 0;
     pthread_mutex_lock(&server->client_fd_mutex);
     entry->next = server->client_fds;
     server->client_fds = entry;
@@ -118,6 +122,220 @@ static void cleanup_pending_sends(rbox_server_handle_t *server, int fd) {
         }
     }
     pthread_mutex_unlock(&server->send_mutex);
+    rbox_client_fd_entry_t *client_entry = client_fd_find(server, fd);
+    if (client_entry) {
+        client_entry->waiting_for_header = 0;
+        client_entry->header_start_time = 0;
+    }
+}
+
+/* ============================================================
+ * CLIENT FD LOOKUP - For non‑blocking body reads and timeout
+ * ============================================================ */
+
+static rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd) {
+    pthread_mutex_lock(&server->client_fd_mutex);
+    rbox_client_fd_entry_t *entry = server->client_fds;
+    while (entry) {
+        if (entry->fd == fd) {
+            pthread_mutex_unlock(&server->client_fd_mutex);
+            return entry;
+        }
+        entry = entry->next;
+    }
+    pthread_mutex_unlock(&server->client_fd_mutex);
+    return NULL;
+}
+
+static void pending_request_set(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
+    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
+    if (entry) {
+        entry->pending_request = req;
+    }
+}
+
+static rbox_server_request_t *pending_request_get(rbox_server_handle_t *server, int fd) {
+    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
+    return entry ? entry->pending_request : NULL;
+}
+
+static void pending_request_remove(rbox_server_handle_t *server, int fd) {
+    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
+    if (entry) {
+        entry->pending_request = NULL;
+    }
+}
+
+static int cleanup_pending_request(rbox_server_handle_t *server, int fd) {
+    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
+    if (entry && entry->pending_request) {
+        server_request_free(entry->pending_request);
+        entry->pending_request = NULL;
+        return 1;
+    }
+    return 0;
+}
+
+/* Attempt to read body data for a pending request.
+ * Returns:
+ *   1 - body fully read
+ *   0 - still pending (EAGAIN or partial read)
+ *  -1 - error (EOF or other error)
+ */
+static int read_body_nonblocking(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
+    (void)server;
+    size_t remaining = req->body_expected - req->body_received;
+    if (remaining == 0) return 1;
+
+    ssize_t n = rbox_read_nonblocking(fd, req->command_data + req->body_received, remaining);
+    if (n == -2) {
+        DBG("read_body_nonblocking: EOF on fd %d", fd);
+        return -1;
+    }
+    if (n < 0) {
+        DBG("read_body_nonblocking: error on fd %d: %s", fd, strerror(errno));
+        return -1;
+    }
+    if (n == 0) {
+        return 0;
+    }
+    req->body_received += n;
+    DBG("read_body_nonblocking: read %zd bytes, total now %zu/%zu", n, req->body_received, req->body_expected);
+    return (req->body_received == req->body_expected) ? 1 : 0;
+}
+
+/* Attempt to read chunked body data for a pending request.
+ * Returns:
+ *   1 - all chunks fully read (request complete)
+ *   0 - still pending (EAGAIN or partial read)
+ *  -1 - error (EOF or other error)
+ */
+static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
+    (void)server;
+    while (1) {
+        if (req->reading_chunk_header) {
+            char header[RBOX_HEADER_SIZE];
+            ssize_t n = rbox_read_nonblocking(fd, header, RBOX_HEADER_SIZE);
+            if (n == 0) return 0;
+            if (n == -2) return -1;
+            if (n < 0) return -1;
+            if (n != RBOX_HEADER_SIZE) return -1;
+            uint32_t magic = *(uint32_t *)header;
+            uint32_t version = *(uint32_t *)(header + 4);
+            if (magic != RBOX_MAGIC || version != RBOX_VERSION) return -1;
+            uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
+            uint32_t flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
+            if (chunk_len > RBOX_CHUNK_MAX) return -1;
+            req->current_chunk_len = chunk_len;
+            req->current_chunk_received = 0;
+            req->last_flags = flags;
+            req->reading_chunk_header = 0;
+            if (chunk_len == 0) {
+                req->reading_chunk_header = 1;
+                continue;
+            }
+        }
+        size_t remaining = req->current_chunk_len - req->current_chunk_received;
+        ssize_t n = rbox_read_nonblocking(fd, req->command_data + req->body_received, remaining);
+        if (n == -2) return -1;
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+            return -1;
+        }
+        if (n == 0) return 0;
+        req->current_chunk_received += n;
+        req->body_received += n;
+        if (req->current_chunk_received == req->current_chunk_len) {
+            req->reading_chunk_header = 1;
+            if (req->last_flags & RBOX_FLAG_LAST) {
+                req->command_data[req->body_received] = '\0';
+                return 1;
+            }
+            continue;
+        } else {
+            return 0;
+        }
+    }
+}
+
+/* Process a completed request: check cache, parse env vars, queue request */
+static void process_completed_request(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
+    uint32_t packet_checksum = (req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
+    uint64_t cmd_hash2 = (req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
+    uint8_t cached_decision;
+    char cached_reason[256];
+    uint32_t cached_duration;
+    if (rbox_server_cache_lookup(server, req->client_id, req->request_id, packet_checksum,
+                                req->cmd_hash, cmd_hash2, req->fenv_hash,
+                                &cached_decision, cached_reason, &cached_duration)) {
+        DBG("Cache hit for request on fd %d", fd);
+        size_t resp_len;
+        char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
+            cached_decision, cached_reason, cached_duration,
+            req->fenv_hash, 0, NULL, &resp_len);
+        if (resp) {
+            send_queue_add(server, fd, resp, resp_len, NULL);
+        }
+        server_request_free(req);
+        return;
+    }
+
+    rbox_command_parse(req->command_data, req->command_len, &req->parse);
+
+    const char *p = req->command_data;
+    const char *args_end = req->command_data;
+    while (p < req->command_data + req->command_len) {
+        if (*p == '\0') {
+            if (p == args_end || *(p-1) == '\0') {
+                args_end = p + 1;
+                break;
+            }
+            args_end = p + 1;
+        }
+        p++;
+    }
+    p = args_end;
+    size_t remaining = req->command_len - (p - req->command_data);
+    while (remaining > 5) {
+        size_t name_len = strlen(p);
+        if (name_len == 0 || name_len > remaining - 4) break;
+        req->env_var_count++;
+        p += name_len + 1 + 4;
+        remaining -= name_len + 1 + 4;
+    }
+    if (req->env_var_count > 0) {
+        req->env_var_names = calloc(req->env_var_count, sizeof(char *));
+        req->env_var_scores = calloc(req->env_var_count, sizeof(float));
+        p = args_end;
+        remaining = req->command_len - (p - req->command_data);
+        int idx = 0;
+        while (remaining > 5 && idx < req->env_var_count) {
+            size_t name_len = strlen(p);
+            req->env_var_names[idx] = strndup(p, name_len);
+            memcpy(&req->env_var_scores[idx], p + name_len + 1, 4);
+            const char *s = req->env_var_names[idx];
+            uint32_t h = 5381;
+            while (*s) h = ((h << 5) + h) + (uint32_t)(unsigned char)*s++;
+            req->fenv_hash ^= h;
+            p += name_len + 1 + 4;
+            remaining -= name_len + 1 + 4;
+            idx++;
+        }
+    }
+
+    pthread_mutex_lock(&server->mutex);
+    req->next = NULL;
+    if (server->request_tail) {
+        server->request_tail->next = req;
+        server->request_tail = req;
+    } else {
+        server->request_queue = req;
+        server->request_tail = req;
+    }
+    server->request_count++;
+    DBG("Queued request for fd %d (count=%d), signaling", fd, server->request_count);
+    pthread_cond_signal(&server->cond);
+    pthread_mutex_unlock(&server->mutex);
 }
 
 /* Try to send as much data as possible from the queue for a given fd.
@@ -244,22 +462,28 @@ static void server_request_free(rbox_server_request_t *req) {
 }
 
 /* Read header from client (v9 protocol) – non‑blocking version */
-static int server_read_header(int fd, uint8_t *client_id, uint8_t *request_id, uint32_t *cmd_hash,
+static int server_read_header(rbox_server_handle_t *server, int fd,
+                               uint8_t *client_id, uint8_t *request_id, uint32_t *cmd_hash,
                                uint32_t *fenv_hash,
                                char *caller, size_t caller_len, char *syscall, size_t syscall_len,
                                uint32_t *chunk_len, uint32_t *flags, uint64_t *total_len) {
     char header[RBOX_HEADER_SIZE];
+    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
     ssize_t n = rbox_read_nonblocking(fd, header, RBOX_HEADER_SIZE);
     if (n == 0) {
-        /* No data available yet – don't close the connection */
-        DBG("server_read_header: no data available on fd %d", fd);
-        return 1; /* Indicate no data available */
+        if (entry && !entry->waiting_for_header) {
+            entry->waiting_for_header = 1;
+            entry->header_start_time = time(NULL);
+            DBG("server_read_header: started header wait for fd %d", fd);
+        }
+        return 1;
     } else if (n != RBOX_HEADER_SIZE) {
-        /* Error or EOF – close the connection */
+        if (entry) entry->waiting_for_header = 0;
         if (n == -2) DBG("server_read_header: EOF on fd %d", fd);
         else DBG("server_read_header: error on fd %d", fd);
         return -1;
     }
+    if (entry) entry->waiting_for_header = 0;
     uint32_t magic = *(uint32_t *)header;
     uint32_t version = *(uint32_t *)(header + 4);
     if (magic != RBOX_MAGIC || version != RBOX_VERSION) return -1;
@@ -551,6 +775,34 @@ static void *server_thread_func(void *arg) {
             break;
         }
 
+        /* Check for header read timeouts before processing events */
+        time_t now = time(NULL);
+        pthread_mutex_lock(&server->client_fd_mutex);
+        rbox_client_fd_entry_t *tentry = server->client_fds;
+        while (tentry) {
+            rbox_client_fd_entry_t *next = tentry->next;
+            if (tentry->waiting_for_header && tentry->header_start_time > 0) {
+                if (difftime(now, tentry->header_start_time) > 5.0) {
+                    int fd = tentry->fd;
+                    DBG("Header read timeout on fd %d, closing", fd);
+                    if (tentry->pending_request) {
+                        server_request_free(tentry->pending_request);
+                        tentry->pending_request = NULL;
+                    }
+                    pthread_mutex_unlock(&server->client_fd_mutex);
+                    cleanup_pending_sends(server, fd);
+                    epoll_del(server->epoll_fd, fd);
+                    close(fd);
+                    pthread_mutex_lock(&server->client_fd_mutex);
+                    client_fd_remove(server, fd);
+                    tentry = server->client_fds;
+                    continue;
+                }
+            }
+            tentry = next;
+        }
+        pthread_mutex_unlock(&server->client_fd_mutex);
+
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 struct epoll_event *ev = &events[i];
@@ -596,144 +848,188 @@ static void *server_thread_func(void *arg) {
 
                 /* Handle EPOLLIN first – read data before close */
                 if (ev->events & EPOLLIN) {
+                    DBG("EPOLLIN for fd %d", cl_fd);
+
+                    /* Check for pending request */
+                    rbox_server_request_t *pending = pending_request_get(server, cl_fd);
+                    if (pending) {
+                        int result;
+                        if (pending->is_chunked) {
+                            result = read_body_chunks_nonblocking(server, cl_fd, pending);
+                        } else {
+                            result = read_body_nonblocking(server, cl_fd, pending);
+                        }
+                        if (result == 1) {
+                            DBG("Body fully read for pending request on fd %d", cl_fd);
+                            pending->reading_body = 0;
+                            pending_request_remove(server, cl_fd);
+                            process_completed_request(server, cl_fd, pending);
+                        } else if (result == -1) {
+                            DBG("Body read error for pending request on fd %d", cl_fd);
+                            cleanup_pending_request(server, cl_fd);
+                            cleanup_pending_sends(server, cl_fd);
+                            client_fd_remove(server, cl_fd);
+                            epoll_del(server->epoll_fd, cl_fd);
+                            /* fd closed by cleanup_pending_request */
+                            closed = 1;
+                        }
+                        /* else result == 0, still pending – do nothing */
+                        goto next_event;
+                    }
+
+                    /* No pending request – read header */
                     uint8_t client_id[16], request_id[16];
                     uint32_t cmd_hash, fenv_hash, chunk_len, flags;
                     uint64_t total_len;
                     char caller[RBOX_MAX_CALLER_LEN + 1];
                     char syscall[RBOX_MAX_SYSCALL_LEN + 1];
 
-                    int hdr_result = server_read_header(cl_fd, client_id, request_id, &cmd_hash, &fenv_hash,
+                    int hdr_result = server_read_header(server, cl_fd, client_id, request_id, &cmd_hash, &fenv_hash,
                         caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len, &flags, &total_len);
                     if (hdr_result == 1) {
-                        /* No data available yet – skip further processing for this event */
                         DBG("No data available on fd %d, skipping", cl_fd);
                         goto next_event;
-                    } else if (hdr_result == 0) {
-                        /* Read body - either single chunk or accumulated chunks */
-                        size_t cmd_len;
-                        char *cmd_data;
-                        if ((flags & RBOX_FLAG_FIRST) && chunk_len < total_len) {
-                            /* This is a multi-chunk transfer - read all chunks
-                             * FIRST is set and chunk_len < total_len means more chunks coming */
-                            cmd_data = read_body_chunks(cl_fd, chunk_len, total_len, flags, &cmd_len, client_id, request_id);
-                        } else {
-                            /* Single chunk transfer */
-                            cmd_data = read_body(cl_fd, chunk_len);
-                            cmd_len = chunk_len;
-                        }
-                        if (cmd_data) {
-                            /* Check response cache before creating request */
-                            uint32_t packet_checksum = (cmd_len > 0) ? rbox_calculate_checksum_crc32(0, cmd_data, cmd_len) : 0;
-                            uint64_t cmd_hash2 = (cmd_len > 0) ? rbox_hash64(cmd_data, cmd_len) : 0;
-                            uint8_t cached_decision;
-                            char cached_reason[256];
-                            uint32_t cached_duration;
-                            if (rbox_server_cache_lookup(server, client_id, request_id, packet_checksum,
-                                                        cmd_hash, cmd_hash2, fenv_hash,
-                                                        &cached_decision, cached_reason, &cached_duration)) {
-                                /* Cache hit - send cached response */
-                                DBG("Cache hit for request, sending cached response");
-                                size_t resp_len;
-                                char *resp = rbox_server_build_response(client_id, request_id, cmd_hash,
-                                    cached_decision, cached_reason, cached_duration,
-                                    fenv_hash, 0, NULL, &resp_len);
-                                if (resp) {
-                                    send_queue_add(server, cl_fd, resp, resp_len, NULL);
-                                }
-                                free(cmd_data);
-                                goto next_event;
-                            }
-                            /* Cache miss - proceed with normal request handling */
-                            rbox_server_request_t *req = calloc(1, sizeof(*req));
-                            if (req) {
-                                req->fd = cl_fd;
-                                memcpy(req->client_id, client_id, 16);
-                                memcpy(req->request_id, request_id, 16);
-                                req->cmd_hash = cmd_hash;
-                                req->server = server;
-                                req->command_data = cmd_data;
-                                req->command_len = cmd_len;
-                                strncpy(req->caller, caller, RBOX_MAX_CALLER_LEN);
-                                req->caller[RBOX_MAX_CALLER_LEN] = '\0';
-                                strncpy(req->syscall, syscall, RBOX_MAX_SYSCALL_LEN);
-                                req->syscall[RBOX_MAX_SYSCALL_LEN] = '\0';
-                                rbox_command_parse(cmd_data, cmd_len, &req->parse);
-
-                                /* Parse env vars (simplified) */
-                                const char *p = cmd_data;
-                                const char *args_end = cmd_data;
-                                while (p < cmd_data + cmd_len) {
-                                    if (*p == '\0') {
-                                        if (p == args_end || *(p-1) == '\0') {
-                                            args_end = p + 1;
-                                            break;
-                                        }
-                                        args_end = p + 1;
-                                    }
-                                    p++;
-                                }
-                                p = args_end;
-                                size_t remaining = cmd_len - (p - cmd_data);
-                                while (remaining > 5) {
-                                    size_t name_len = strlen(p);
-                                    if (name_len == 0 || name_len > remaining - 4) break;
-                                    req->env_var_count++;
-                                    p += name_len + 1 + 4;
-                                    remaining -= name_len + 1 + 4;
-                                }
-                                if (req->env_var_count > 0) {
-                                    req->env_var_names = calloc(req->env_var_count, sizeof(char *));
-                                    req->env_var_scores = calloc(req->env_var_count, sizeof(float));
-                                    p = args_end;
-                                    if (p >= cmd_data + cmd_len) {
-                                        remaining = 0;
-                                    } else {
-                                        remaining = cmd_data + cmd_len - p;
-                                    }
-                                    int idx = 0;
-                                    while (remaining > 5 && idx < req->env_var_count) {
-                                        size_t name_len = strlen(p);
-                                        req->env_var_names[idx] = strndup(p, name_len);
-                                        memcpy(&req->env_var_scores[idx], p + name_len + 1, 4);
-                                        const char *s = req->env_var_names[idx];
-                                        uint32_t h = 5381;
-                                        while (*s) h = ((h << 5) + h) + (uint32_t)(unsigned char)*s++;
-                                        req->fenv_hash ^= h;
-                                        p += name_len + 1 + 4;
-                                        remaining -= name_len + 1 + 4;
-                                        idx++;
-                                    }
-                                }
-
-                                pthread_mutex_lock(&server->mutex);
-                                req->next = NULL;
-                                if (server->request_tail) {
-                                    server->request_tail->next = req;
-                                    server->request_tail = req;
-                                } else {
-                                    server->request_queue = req;
-                                    server->request_tail = req;
-                                }
-                                server->request_count++;
-                                DBG("Queued request for fd %d (count=%d), signaling", cl_fd, server->request_count);
-                                pthread_cond_signal(&server->cond);
-                                pthread_mutex_unlock(&server->mutex);
-                                /* We read a request and queued it, skip further handling for this event */
-                                goto next_event;
-                            }
-                            free(cmd_data);
-                        }
-                    } else {
+                    } else if (hdr_result == -1) {
                         DBG("Header read failed on fd %d, cleaning up", cl_fd);
+                        int req_freed = cleanup_pending_request(server, cl_fd);
+                        cleanup_pending_sends(server, cl_fd);
+                        epoll_del(server->epoll_fd, cl_fd);
+                        if (!req_freed) close(cl_fd);
+                        client_fd_remove(server, cl_fd);
+                        closed = 1;
+                        goto next_event;
                     }
 
-                    /* Read failed – clean up and close */
-                    cleanup_pending_sends(server, cl_fd);
-                    client_fd_remove(server, cl_fd);
-                    epoll_del(server->epoll_fd, cl_fd);
-                    close(cl_fd);
-                    DBG("Closed fd %d", cl_fd);
-                    closed = 1;
+                    /* Check if this is a chunked transfer */
+                    int is_chunked = (flags & RBOX_FLAG_FIRST) && chunk_len < total_len;
+
+                    if (is_chunked) {
+                        rbox_server_request_t *req = calloc(1, sizeof(*req));
+                        if (!req) {
+                            DBG("Failed to allocate request for chunked request on fd %d", cl_fd);
+                            int req_freed = cleanup_pending_request(server, cl_fd);
+                            cleanup_pending_sends(server, cl_fd);
+                            epoll_del(server->epoll_fd, cl_fd);
+                            if (!req_freed) close(cl_fd);
+                            client_fd_remove(server, cl_fd);
+                            closed = 1;
+                            goto next_event;
+                        }
+                        req->fd = cl_fd;
+                        memcpy(req->client_id, client_id, 16);
+                        memcpy(req->request_id, request_id, 16);
+                        req->cmd_hash = cmd_hash;
+                        req->server = server;
+                        req->fenv_hash = fenv_hash;
+                        strncpy(req->caller, caller, RBOX_MAX_CALLER_LEN);
+                        req->caller[RBOX_MAX_CALLER_LEN] = '\0';
+                        strncpy(req->syscall, syscall, RBOX_MAX_SYSCALL_LEN);
+                        req->syscall[RBOX_MAX_SYSCALL_LEN] = '\0';
+                        req->command_data = malloc(total_len + 1);
+                        if (!req->command_data) {
+                            free(req);
+                            DBG("Failed to allocate command_data for chunked request on fd %d", cl_fd);
+                            int req_freed = cleanup_pending_request(server, cl_fd);
+                            cleanup_pending_sends(server, cl_fd);
+                            epoll_del(server->epoll_fd, cl_fd);
+                            if (!req_freed) close(cl_fd);
+                            client_fd_remove(server, cl_fd);
+                            closed = 1;
+                            goto next_event;
+                        }
+                        req->command_len = total_len;
+                        req->body_expected = total_len;
+                        req->body_received = 0;
+                        req->reading_body = 1;
+                        req->is_chunked = 1;
+                        req->reading_chunk_header = 0;
+                        req->current_chunk_len = chunk_len;
+                        req->current_chunk_received = 0;
+                        req->last_flags = flags;
+
+                        int result = read_body_chunks_nonblocking(server, cl_fd, req);
+                        if (result == 1) {
+                            req->reading_body = 0;
+                            pending_request_remove(server, cl_fd);
+                            process_completed_request(server, cl_fd, req);
+                        } else if (result == 0) {
+                            pending_request_set(server, cl_fd, req);
+                            DBG("Pending chunked request for fd %d", cl_fd);
+                        } else {
+                            DBG("Error reading first chunk for fd %d", cl_fd);
+                            free(req->command_data);
+                            free(req);
+                            cleanup_pending_sends(server, cl_fd);
+                            epoll_del(server->epoll_fd, cl_fd);
+                            close(cl_fd);
+                            client_fd_remove(server, cl_fd);
+                            closed = 1;
+                        }
+                        goto next_event;
+                    }
+
+                    /* Single-chunk request – use non‑blocking */
+                    rbox_server_request_t *req = calloc(1, sizeof(*req));
+                    if (!req) {
+                        DBG("Failed to allocate request for fd %d", cl_fd);
+                        int req_freed = cleanup_pending_request(server, cl_fd);
+                        cleanup_pending_sends(server, cl_fd);
+                        epoll_del(server->epoll_fd, cl_fd);
+                        if (!req_freed) close(cl_fd);
+                        client_fd_remove(server, cl_fd);
+                        closed = 1;
+                        goto next_event;
+                    }
+                    req->fd = cl_fd;
+                    memcpy(req->client_id, client_id, 16);
+                    memcpy(req->request_id, request_id, 16);
+                    req->cmd_hash = cmd_hash;
+                    req->server = server;
+                    req->fenv_hash = fenv_hash;
+                    strncpy(req->caller, caller, RBOX_MAX_CALLER_LEN);
+                    req->caller[RBOX_MAX_CALLER_LEN] = '\0';
+                    strncpy(req->syscall, syscall, RBOX_MAX_SYSCALL_LEN);
+                    req->syscall[RBOX_MAX_SYSCALL_LEN] = '\0';
+
+                    req->command_data = malloc(chunk_len + 1);
+                    if (!req->command_data) {
+                        free(req);
+                        int req_freed = cleanup_pending_request(server, cl_fd);
+                        cleanup_pending_sends(server, cl_fd);
+                        epoll_del(server->epoll_fd, cl_fd);
+                        if (!req_freed) close(cl_fd);
+                        client_fd_remove(server, cl_fd);
+                        closed = 1;
+                        goto next_event;
+                    }
+                    req->command_len = chunk_len;
+
+                    /* Set up body reading state */
+                    req->reading_body = 1;
+                    req->body_expected = chunk_len;
+                    req->body_received = 0;
+                    req->is_chunked = 0;
+                    req->reading_chunk_header = 0;
+                    req->current_chunk_len = 0;
+                    req->current_chunk_received = 0;
+
+                    /* Attempt to read body non‑blocking */
+                    int read_result = read_body_nonblocking(server, cl_fd, req);
+                    if (read_result == 1) {
+                        req->reading_body = 0;
+                        process_completed_request(server, cl_fd, req);
+                    } else if (read_result == 0) {
+                        pending_request_set(server, cl_fd, req);
+                        DBG("Pending request for fd %d (body %zu/%zu)", cl_fd, req->body_received, req->body_expected);
+                    } else {
+                        DBG("Error reading body for fd %d", cl_fd);
+                        server_request_free(req);
+                        cleanup_pending_sends(server, cl_fd);
+                        epoll_del(server->epoll_fd, cl_fd);
+                        client_fd_remove(server, cl_fd);
+                        closed = 1;
+                    }
+                    goto next_event;
                 }
 
                 /* Handle EPOLLOUT after EPOLLIN */
@@ -746,16 +1042,18 @@ static void *server_thread_func(void *arg) {
                     if (r == 0) {
                         DBG("EPOLLOUT: detected EOF on fd %d, cleaning up", cl_fd);
                         cleanup_pending_sends(server, cl_fd);
+                        cleanup_pending_request(server, cl_fd);
                         client_fd_remove(server, cl_fd);
                         epoll_del(server->epoll_fd, cl_fd);
-                        close(cl_fd);
+                        /* close(cl_fd) is called by cleanup_pending_request via server_request_free */
                         closed = 1;
                     } else if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                         DBG("EPOLLOUT: recv peek error on fd %d: %s", cl_fd, strerror(errno));
                         cleanup_pending_sends(server, cl_fd);
+                        cleanup_pending_request(server, cl_fd);
                         client_fd_remove(server, cl_fd);
                         epoll_del(server->epoll_fd, cl_fd);
-                        close(cl_fd);
+                        /* close(cl_fd) is called by cleanup_pending_request via server_request_free */
                         closed = 1;
                     }
                 }
@@ -764,9 +1062,10 @@ static void *server_thread_func(void *arg) {
                 if (!closed && (ev->events & (EPOLLERR | EPOLLHUP))) {
                     DBG("EPOLLHUP/ERR on fd %d, cleaning up", cl_fd);
                     cleanup_pending_sends(server, cl_fd);
+                    cleanup_pending_request(server, cl_fd);
                     client_fd_remove(server, cl_fd);
                     epoll_del(server->epoll_fd, cl_fd);
-                    close(cl_fd);
+                    /* close(cl_fd) is called by cleanup_pending_request via server_request_free */
                     DBG("Closed fd %d", cl_fd);
                 }
 
@@ -902,6 +1201,19 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
         unlink(server->socket_path);
     }
     if (server->wake_fd >= 0) close(server->wake_fd);
+
+    /* Free any pending requests from client list */
+    pthread_mutex_lock(&server->client_fd_mutex);
+    rbox_client_fd_entry_t *entry = server->client_fds;
+    while (entry) {
+        if (entry->pending_request) {
+            server_request_free(entry->pending_request);
+            entry->pending_request = NULL;
+        }
+        entry = entry->next;
+    }
+    pthread_mutex_unlock(&server->client_fd_mutex);
+
     pthread_mutex_destroy(&server->mutex);
     pthread_cond_destroy(&server->cond);
     pthread_mutex_destroy(&server->decision_mutex);

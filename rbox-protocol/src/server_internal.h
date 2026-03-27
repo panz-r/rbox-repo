@@ -91,6 +91,13 @@ struct rbox_server_request {
     size_t body_expected;          /* Total body bytes expected */
     size_t body_received;           /* Bytes received so far */
 
+    /* Chunked transfer state */
+    int is_chunked;                 /* 1 if this is a chunked transfer */
+    int reading_chunk_header;       /* 1 if expecting a chunk header (for chunked) */
+    uint32_t current_chunk_len;     /* Size of the current chunk being read */
+    uint32_t current_chunk_received;/* Bytes of current chunk already read */
+    uint32_t last_flags;            /* Flags from most recent chunk header (RBOX_FLAG_LAST) */
+
     /* Queue link */
     struct rbox_server_request *next;
 };
@@ -100,6 +107,9 @@ typedef struct rbox_server_request rbox_server_request_t;
 /* Client fd list entry */
 typedef struct rbox_client_fd_entry {
     int fd;
+    rbox_server_request_t *pending_request;  /* Non-null if body is being read */
+    time_t header_start_time;                /* When we started waiting for header */
+    int waiting_for_header;                 /* 1 if we are in header read timeout state */
     struct rbox_client_fd_entry *next;
 } rbox_client_fd_entry_t;
 
@@ -143,9 +153,6 @@ struct rbox_server_handle {
     pthread_mutex_t client_fd_mutex;
     rbox_client_fd_entry_t *client_fds;
     int active_client_count; /* Number of active clients */
-
-    /* Pending request being read (for non-blocking body reads) */
-    rbox_server_request_t *pending_request;  /* Non-null when reading body */
 };
 
 #endif /* RBOX_SERVER_INTERNAL_H */
