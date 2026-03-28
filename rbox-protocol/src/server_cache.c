@@ -3,11 +3,14 @@
  *
  * Layer 8: Response caching with O(1) hash table lookup and LRU eviction
  *
- * Key design:
- * - Two key types: one-shot (duration==0) and timed (duration>0)
- * - One-shot: key is (client_id, request_id, packet_checksum), probe uses full hash
- * - Timed: key is (cmd_hash, cmd_hash2, fenv_hash), probe uses command-only hash
- * - Entry's key_hash is computed appropriately based on duration
+ * Unified hash design:
+ * - All entries use the same hash function based on command fields only:
+ *   (cmd_hash, cmd_hash2, fenv_hash)
+ * - During lookup, we probe from the command hash index
+ * - For one-shot entries (duration==0): compare full key (client_id, request_id, packet_checksum)
+ * - For timed entries (duration>0): compare command fields and check expiration
+ * - This ensures one-shot entries are always found, even if a timed entry with the
+ *   same command hash was inserted first
  * - Linear probing with tombstones and LRU eviction
  */
 
@@ -59,40 +62,16 @@ static void cache_lru_remove(rbox_response_cache_t *cache, rbox_response_cache_e
     if (cache->lru_tail == entry) cache->lru_tail = entry->lru_prev;
 }
 
-/* Hash for one-shot entries (duration==0) - includes all key fields */
-static uint32_t compute_cache_key_hash_full(const uint8_t *client_id,
-                                           const uint8_t *request_id,
-                                           uint32_t packet_checksum,
-                                           uint32_t cmd_hash,
-                                           uint64_t cmd_hash2,
-                                           uint32_t fenv_hash) {
-    uint32_t h = 5381;
-    for (int i = 0; i < 16; i++) {
-        h = ((h << 5) + h) + client_id[i];
-    }
-    for (int i = 0; i < 16; i++) {
-        h = ((h << 5) + h) + request_id[i];
-    }
-    h = ((h << 5) + h) + packet_checksum;
-    h = ((h << 5) + h) + cmd_hash;
-    h = ((h << 5) + h) + (uint32_t)(cmd_hash2 & 0xFFFFFFFF);
-    h = ((h << 5) + h) + (uint32_t)((cmd_hash2 >> 32) & 0xFFFFFFFF);
-    h = ((h << 5) + h) + fenv_hash;
-    h ^= h >> 16;
-    h *= 0x85EBCA6B;
-    h ^= h >> 13;
-    h *= 0xC2B2AE35;
-    h ^= h >> 16;
-    return h;
-}
-
-/* Hash for timed entries (duration>0) - command semantics only, no request identity */
-static uint32_t compute_cache_key_hash_timed(uint32_t cmd_hash, uint64_t cmd_hash2, uint32_t fenv_hash) {
+/* Unified hash function for all cache entries.
+ * Uses only command fields (cmd_hash, cmd_hash2, fenv_hash) which are the
+ * common denominator for both one-shot and timed entries. */
+static uint32_t compute_cache_key_hash(uint32_t cmd_hash, uint64_t cmd_hash2, uint32_t fenv_hash) {
     uint32_t h = 5381;
     h = ((h << 5) + h) + cmd_hash;
     h = ((h << 5) + h) + (uint32_t)(cmd_hash2 & 0xFFFFFFFF);
     h = ((h << 5) + h) + (uint32_t)((cmd_hash2 >> 32) & 0xFFFFFFFF);
     h = ((h << 5) + h) + fenv_hash;
+    /* final avalanche */
     h ^= h >> 16;
     h *= 0x85EBCA6B;
     h ^= h >> 13;
@@ -166,10 +145,8 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
     rbox_response_cache_t *cache = &server->cache;
     time_t now = time(NULL);
 
-    uint32_t full_hash = compute_cache_key_hash_full(client_id, request_id, packet_checksum,
-                                                     cmd_hash, cmd_hash2, fenv_hash);
-    uint32_t timed_hash = compute_cache_key_hash_timed(cmd_hash, cmd_hash2, fenv_hash);
-    uint32_t index = timed_hash % RBOX_RESPONSE_CACHE_SIZE;
+    uint32_t key_hash = compute_cache_key_hash(cmd_hash, cmd_hash2, fenv_hash);
+    uint32_t index = key_hash % RBOX_RESPONSE_CACHE_SIZE;
     uint32_t start = index;
 
     do {
@@ -181,7 +158,7 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
             rbox_response_cache_entry_t *entry = cache->slots[index];
 
             if (entry->duration == 0) {
-                if (entry->key_hash == full_hash &&
+                if (entry->key_hash == key_hash &&
                     memcmp(entry->client_id, client_id, 16) == 0 &&
                     memcmp(entry->request_id, request_id, 16) == 0 &&
                     entry->packet_checksum == packet_checksum) {
@@ -198,7 +175,7 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                     pthread_mutex_unlock(&server->cache_mutex);
                     return 0;
                 }
-                if (entry->key_hash == timed_hash &&
+                if (entry->key_hash == key_hash &&
                     entry->cmd_hash == cmd_hash &&
                     entry->cmd_hash2 == cmd_hash2 &&
                     entry->fenv_hash == fenv_hash) {
@@ -255,12 +232,8 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
     entry->timestamp = time(NULL);
     entry->expires_at = (duration > 0) ? entry->timestamp + duration : 0;
 
-    if (duration > 0) {
-        entry->key_hash = compute_cache_key_hash_timed(cmd_hash, cmd_hash2, fenv_hash);
-    } else {
-        entry->key_hash = compute_cache_key_hash_full(client_id, request_id, packet_checksum,
-                                                       cmd_hash, cmd_hash2, fenv_hash);
-    }
+    /* Unified hash for all entries - command fields only */
+    entry->key_hash = compute_cache_key_hash(cmd_hash, cmd_hash2, fenv_hash);
 
     uint32_t index = entry->key_hash % RBOX_RESPONSE_CACHE_SIZE;
     while (cache->slot_state[index] == RBOX_CACHE_SLOT_OCCUPIED) {
