@@ -98,6 +98,7 @@ rbox_server_request_t *request_pool_get(rbox_server_handle_t *server) {
             head->last_flags = 0;
             head->using_internal_buf = 1;
             head->command_data = head->internal_buf;
+            memset(head->internal_buf, 0, sizeof(head->internal_buf));
             head->next = NULL;
             return head;
         }
@@ -195,6 +196,7 @@ rbox_server_send_entry_t *send_pool_get(rbox_server_handle_t *server) {
             head->offset = 0;
             head->request = NULL;
             head->using_internal_buf = 0;
+            memset(head->internal_buf, 0, sizeof(head->internal_buf));
             head->next = NULL;
             return head;
         }
@@ -866,7 +868,10 @@ static void *server_thread_func(void *arg) {
                         }
                         flags = fcntl(cl_fd, F_GETFL, 0);
                         fcntl(cl_fd, F_SETFL, flags | O_NONBLOCK);
-                        client_fd_add(server, cl_fd);
+                        if (client_fd_add(server, cl_fd) != 0) {
+                            close(cl_fd);
+                            break;
+                        }
                         rbox_client_fd_entry_t *new_entry = server->client_fds;
                         struct epoll_event cev = { .events = EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, .data.ptr = new_entry };
                         epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, cl_fd, &cev);
@@ -1362,7 +1367,6 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     dec->decision = decision;
     strncpy(dec->reason, reason ? reason : "", sizeof(dec->reason) - 1);
     dec->duration = duration;
-    dec->ready = 1;
 
     if (env_decision_count > 0 && env_decision_names && env_decisions) {
         dec->env_decision_count = env_decision_count;

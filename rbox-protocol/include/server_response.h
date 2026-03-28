@@ -31,17 +31,4 @@ char *rbox_server_build_response(
     uint8_t *env_decisions,
     size_t *out_len);
 
-/* Add response to send queue
- * Returns: 0 on success, -1 on error */
-int rbox_server_send_response(rbox_server_handle_t *server, int fd, char *data, size_t len, rbox_server_request_t *req);
-
-/* Try to send pending data for a client fd */
-void rbox_server_try_send(rbox_server_handle_t *server, int fd);
-
-/* Cleanup pending sends for a client fd (e.g., on disconnect) */
-void rbox_server_cleanup_pending(rbox_server_handle_t *server, int fd);
-
-/* Enable EPOLLOUT for a client fd */
-int rbox_server_enable_epollout(rbox_server_handle_t *server, int fd);
-
 #endif /* RBOX_SERVER_RESPONSE_H */

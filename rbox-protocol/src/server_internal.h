@@ -65,7 +65,6 @@ typedef struct rbox_server_decision {
     uint8_t decision;
     char reason[256];
     uint32_t duration;
-    int ready;  /* 1 if decision is ready */
 
     /* Env decisions (v9) */
     uint32_t fenv_hash;

@@ -18,8 +18,8 @@ typedef struct rbox_server_handle rbox_server_handle_t;
 typedef struct rbox_client_fd_entry rbox_client_fd_entry_t;
 typedef struct rbox_server_send_entry rbox_server_send_entry_t;
 
-/* Add a client fd to the tracked list */
-void client_fd_add(rbox_server_handle_t *server, int fd);
+/* Add a client fd to the tracked list. Returns 0 on success, -1 on failure (fd is closed on error). */
+int client_fd_add(rbox_server_handle_t *server, int fd);
 
 /* Remove a client fd from the tracked list */
 void client_fd_remove(rbox_server_handle_t *server, int fd);

@@ -26,9 +26,12 @@ extern int epoll_del(int epoll_fd, int fd);
  * CLIENT FD TRACKING
  * ============================================================ */
 
-void client_fd_add(rbox_server_handle_t *server, int fd) {
+int client_fd_add(rbox_server_handle_t *server, int fd) {
     rbox_client_fd_entry_t *entry = malloc(sizeof(*entry));
-    if (!entry) return;
+    if (!entry) {
+        close(fd);
+        return -1;
+    }
     entry->fd = fd;
     entry->pending_request = NULL;
     entry->header_start_time = 0;
@@ -39,7 +42,8 @@ void client_fd_add(rbox_server_handle_t *server, int fd) {
     rbox_send_node_t *dummy = malloc(sizeof(*dummy));
     if (!dummy) {
         free(entry);
-        return;
+        close(fd);
+        return -1;
     }
     dummy->entry = NULL;
     atomic_store_explicit(&dummy->next, NULL, memory_order_relaxed);
@@ -54,6 +58,7 @@ void client_fd_add(rbox_server_handle_t *server, int fd) {
     server->client_fds = entry;
     server->active_client_count++;
     pthread_mutex_unlock(&server->client_fd_mutex);
+    return 0;
 }
 
 void client_fd_remove(rbox_server_handle_t *server, int fd) {
