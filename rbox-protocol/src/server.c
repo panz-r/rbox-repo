@@ -745,6 +745,7 @@ static void *server_thread_func(void *arg) {
                 }
             } else {
                 DBG("Failed to build response for fd %d", req->fd);
+                server_request_free(req);
             }
             if (dec->env_decision_names) {
                 for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
@@ -1100,6 +1101,7 @@ static void *server_thread_func(void *arg) {
                 }
             } else {
                 DBG("Failed to build response for fd %d", req->fd);
+                server_request_free(req);
             }
             if (dec->env_decision_names) {
                 for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
