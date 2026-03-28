@@ -221,6 +221,9 @@ void send_pool_destroy(rbox_server_handle_t *server);
 int send_queue_enqueue(rbox_client_fd_entry_t *client, rbox_server_send_entry_t *entry);
 rbox_server_send_entry_t *send_queue_dequeue(rbox_client_fd_entry_t *client);
 
+/* Epoll helper (used by server_client.c) */
+int epoll_del(int epoll_fd, int fd);
+
 /* Free server request - returns to pool if from pool, otherwise frees */
 void server_request_free(rbox_server_request_t *req);
 

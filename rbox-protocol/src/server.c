@@ -478,6 +478,10 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
                 DBG("send_pending_locked: write would block on fd %d", entry->fd);
                 return;
             }
+            if (errno == EINTR) {
+                DBG("send_pending_locked: write interrupted, retrying");
+                continue;
+            }
             DBG("send_pending_locked: write failed on fd %d: %s", entry->fd, strerror(errno));
             send_queue_dequeue(client_entry);
             if (entry->request) {
@@ -781,49 +785,7 @@ static void *server_thread_func(void *arg) {
             break;
         }
 
-        /* Check for timeouts before processing events */
-        time_t now = time(NULL);
-        pthread_mutex_lock(&server->client_fd_mutex);
-        rbox_client_fd_entry_t *tentry = server->client_fds;
-        while (tentry) {
-            rbox_client_fd_entry_t *next = tentry->next;
-            int should_close = 0;
-            int close_reason = 0;
-
-            if (server->request_timeout > 0) {
-                if (tentry->waiting_for_header && tentry->header_start_time > 0) {
-                    if (difftime(now, tentry->header_start_time) > (double)server->request_timeout) {
-                        should_close = 1;
-                        close_reason = 1;
-                    }
-                } else if (tentry->pending_request && tentry->pending_request->reading_body) {
-                    if (difftime(now, tentry->header_start_time) > (double)server->request_timeout) {
-                        should_close = 1;
-                        close_reason = 2;
-                    }
-                }
-            }
-
-            if (!should_close && server->client_idle_timeout > 0 && !tentry->pending_request) {
-                if (difftime(now, tentry->last_activity) > (double)server->client_idle_timeout) {
-                    should_close = 1;
-                    close_reason = 3;
-                }
-            }
-
-            if (should_close) {
-                int fd = tentry->fd;
-                DBG("Timeout check: fd %d reason %d, closing", fd, close_reason);
-                pthread_mutex_unlock(&server->client_fd_mutex);
-                client_connection_close(server, fd);
-                pthread_mutex_lock(&server->client_fd_mutex);
-                tentry = server->client_fds;
-                continue;
-            }
-            tentry = next;
-        }
-        pthread_mutex_unlock(&server->client_fd_mutex);
-
+        /* Process events first */
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 struct epoll_event *ev = &events[i];
@@ -1065,6 +1027,50 @@ static void *server_thread_func(void *arg) {
                 next_event: ;
             }
         }
+
+        /* Check for timeouts AFTER processing events to avoid use-after-free
+         * (events array may contain fds that were closed in a previous iteration) */
+        time_t now = time(NULL);
+        pthread_mutex_lock(&server->client_fd_mutex);
+        rbox_client_fd_entry_t *tentry = server->client_fds;
+        while (tentry) {
+            rbox_client_fd_entry_t *next = tentry->next;
+            int should_close = 0;
+            int close_reason = 0;
+
+            if (server->request_timeout > 0) {
+                if (tentry->waiting_for_header && tentry->header_start_time > 0) {
+                    if (difftime(now, tentry->header_start_time) > (double)server->request_timeout) {
+                        should_close = 1;
+                        close_reason = 1;
+                    }
+                } else if (tentry->pending_request && tentry->pending_request->reading_body) {
+                    if (difftime(now, tentry->header_start_time) > (double)server->request_timeout) {
+                        should_close = 1;
+                        close_reason = 2;
+                    }
+                }
+            }
+
+            if (!should_close && server->client_idle_timeout > 0 && !tentry->pending_request) {
+                if (difftime(now, tentry->last_activity) > (double)server->client_idle_timeout) {
+                    should_close = 1;
+                    close_reason = 3;
+                }
+            }
+
+            if (should_close) {
+                int fd = tentry->fd;
+                DBG("Timeout check: fd %d reason %d, closing", fd, close_reason);
+                pthread_mutex_unlock(&server->client_fd_mutex);
+                client_connection_close(server, fd);
+                pthread_mutex_lock(&server->client_fd_mutex);
+                tentry = server->client_fds;
+                continue;
+            }
+            tentry = next;
+        }
+        pthread_mutex_unlock(&server->client_fd_mutex);
 
         /* After event processing, handle decisions again (lock-free pop) */
         while (1) {

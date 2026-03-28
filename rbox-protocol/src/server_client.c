@@ -19,11 +19,8 @@
 #include "server_internal.h"
 #include "server_client.h"
 
-/* epoll helper */
-static int epoll_del(int epoll_fd, int fd) {
-    struct epoll_event ev = {0};
-    return epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &ev);
-}
+/* epoll helper - defined in server.c, declared in server_internal.h */
+extern int epoll_del(int epoll_fd, int fd);
 
 /* ============================================================
  * CLIENT FD TRACKING
