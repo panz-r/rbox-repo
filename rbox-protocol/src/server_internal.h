@@ -28,8 +28,7 @@ typedef struct rbox_response_cache_entry {
     uint32_t cmd_hash;
     uint64_t cmd_hash2;
     uint32_t fenv_hash;
-    uint64_t fenv_hash2;
-    uint32_t key_hash;            /* precomputed for quick lookup */
+    uint32_t key_hash;            /* precomputed hash for quick mismatch detection */
 
     /* value fields */
     uint8_t decision;
