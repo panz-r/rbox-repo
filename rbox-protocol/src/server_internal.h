@@ -88,6 +88,18 @@ typedef struct {
     _Atomic(rbox_decision_node_t *) tail;
 } rbox_decision_queue_t;
 
+/* Lock-free MPSC request queue node (Michael & Scott algorithm) */
+typedef struct rbox_request_node {
+    rbox_server_request_t *request;
+    _Atomic(struct rbox_request_node *) next;
+} rbox_request_node_t;
+
+/* Lock-free MPSC request queue structure */
+typedef struct {
+    _Atomic(rbox_request_node_t *) head;
+    _Atomic(rbox_request_node_t *) tail;
+} rbox_request_queue_t;
+
 /* Send queue entry - for outgoing responses */
 typedef struct rbox_server_send_entry {
     int fd;                        /* Socket to send to */
@@ -246,12 +258,9 @@ struct rbox_server_handle {
     rbox_response_cache_t cache;
     pthread_mutex_t cache_mutex;   /* Protects response cache */
 
-    /* Request queue (mutex protected) */
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-    rbox_server_request_t *request_queue;  /* Queue head */
-    rbox_server_request_t *request_tail;   /* Queue tail */
-    int request_count;
+    /* Request queue - lock-free MPSC (Michael & Scott) */
+    rbox_request_queue_t request_queue;
+    int request_wake_fd;          /* eventfd to wake consumers */
 
     /* Decision queue - lock-free MPSC (Michael & Scott) */
     rbox_decision_queue_t decision_queue;

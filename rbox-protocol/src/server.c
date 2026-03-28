@@ -369,6 +369,9 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
     }
 }
 
+/* Forward declaration for request queue push */
+static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_t *req);
+
 /* Process a completed request: check cache, parse env vars, queue request */
 static void process_completed_request(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
     uint32_t packet_checksum = (req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
@@ -445,19 +448,16 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         }
     }
 
-    pthread_mutex_lock(&server->mutex);
-    req->next = NULL;
-    if (server->request_tail) {
-        server->request_tail->next = req;
-        server->request_tail = req;
-    } else {
-        server->request_queue = req;
-        server->request_tail = req;
+    if (request_queue_push(server, req) != 0) {
+        DBG("Failed to push request to queue for fd %d", fd);
+        server_request_free(req);
+        return;
     }
-    server->request_count++;
-    DBG("Queued request for fd %d (count=%d), signaling", fd, server->request_count);
-    pthread_cond_signal(&server->cond);
-    pthread_mutex_unlock(&server->mutex);
+    if (server->request_wake_fd >= 0) {
+        uint64_t val = 1;
+        ssize_t w = write(server->request_wake_fd, &val, sizeof(val));
+        (void)w;
+    }
 }
 
 /* Try to send as much data as possible from the queue for a given fd.
@@ -676,6 +676,58 @@ static rbox_server_decision_t *decision_queue_pop(rbox_server_handle_t *server) 
             next->decision = NULL;
             free(head);
             return dec;
+        }
+    }
+}
+
+/* ============================================================
+ * LOCK-FREE REQUEST QUEUE (Michael & Scott MPSC)
+ * ============================================================ */
+
+/* Lock-free enqueue for request queue */
+static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_t *req) {
+    rbox_request_queue_t *q = &server->request_queue;
+    rbox_request_node_t *node = malloc(sizeof(*node));
+    if (!node) return -1;
+    node->request = req;
+    atomic_store_explicit(&node->next, NULL, memory_order_relaxed);
+
+    rbox_request_node_t *tail, *next;
+    while (1) {
+        tail = atomic_load_explicit(&q->tail, memory_order_acquire);
+        next = atomic_load_explicit(&tail->next, memory_order_acquire);
+        if (next == NULL) {
+            if (atomic_compare_exchange_weak_explicit(&tail->next, &next, node,
+                                                      memory_order_release, memory_order_relaxed)) {
+                atomic_compare_exchange_strong_explicit(&q->tail, &tail, node,
+                                                        memory_order_release, memory_order_relaxed);
+                break;
+            }
+        } else {
+            atomic_compare_exchange_weak_explicit(&q->tail, &tail, next,
+                                                  memory_order_release, memory_order_relaxed);
+        }
+    }
+    return 0;
+}
+
+/* Lock-free dequeue for request queue - consumer side only */
+static rbox_server_request_t *request_queue_pop(rbox_server_handle_t *server) {
+    rbox_request_queue_t *q = &server->request_queue;
+    rbox_request_node_t *head, *next;
+
+    while (1) {
+        head = atomic_load_explicit(&q->head, memory_order_acquire);
+        next = atomic_load_explicit(&head->next, memory_order_acquire);
+        if (next == NULL) {
+            return NULL;
+        }
+        if (atomic_compare_exchange_weak_explicit(&q->head, &head, next,
+                                                  memory_order_acquire, memory_order_relaxed)) {
+            rbox_server_request_t *req = next->request;
+            next->request = NULL;
+            free(head);
+            return req;
         }
     }
 }
@@ -1138,8 +1190,6 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         free(srv);
         return NULL;
     }
-    pthread_mutex_init(&srv->mutex, NULL);
-    pthread_cond_init(&srv->cond, NULL);
     pthread_mutex_init(&srv->cache_mutex, NULL);
     pthread_mutex_init(&srv->client_fd_mutex, NULL);
     atomic_flag_clear(&srv->stop_flag);
@@ -1153,12 +1203,30 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         fprintf(stderr, "Warning: send pool init failed, will use malloc\n");
     }
 
+    /* Initialize lock-free request queue with dummy node */
+    rbox_request_node_t *req_dummy = malloc(sizeof(*req_dummy));
+    if (!req_dummy) {
+        request_pool_destroy(srv);
+        send_pool_destroy(srv);
+        pthread_mutex_destroy(&srv->cache_mutex);
+        pthread_mutex_destroy(&srv->client_fd_mutex);
+        close(srv->listen_fd);
+        free(srv);
+        return NULL;
+    }
+    req_dummy->request = NULL;
+    atomic_store_explicit(&req_dummy->next, NULL, memory_order_relaxed);
+    atomic_store_explicit(&srv->request_queue.head, req_dummy, memory_order_relaxed);
+    atomic_store_explicit(&srv->request_queue.tail, req_dummy, memory_order_relaxed);
+    srv->request_wake_fd = eventfd(0, EFD_NONBLOCK);
+    if (srv->request_wake_fd < 0) srv->request_wake_fd = -1;
+
     rbox_decision_node_t *dummy = malloc(sizeof(*dummy));
     if (!dummy) {
         request_pool_destroy(srv);
         send_pool_destroy(srv);
-        pthread_mutex_destroy(&srv->mutex);
-        pthread_cond_destroy(&srv->cond);
+        if (srv->request_wake_fd >= 0) close(srv->request_wake_fd);
+        free(req_dummy);
         pthread_mutex_destroy(&srv->cache_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
         close(srv->listen_fd);
@@ -1184,23 +1252,21 @@ rbox_error_t rbox_server_handle_listen(rbox_server_handle_t *server) {
 void rbox_server_handle_free(rbox_server_handle_t *server) {
     if (!server) return;
 
-    /* Drain and free any pending requests in the queue */
-    pthread_mutex_lock(&server->mutex);
-    rbox_server_request_t *req = server->request_queue;
-    while (req) {
-        rbox_server_request_t *next = req->next;
-        server_request_free(req);
-        req = next;
+    /* Drain and free any pending requests in the lock-free queue */
+    rbox_request_node_t *req_node = atomic_load_explicit(&server->request_queue.head, memory_order_acquire);
+    while (req_node) {
+        rbox_request_node_t *next = atomic_load_explicit(&req_node->next, memory_order_acquire);
+        if (req_node->request) server_request_free(req_node->request);
+        free(req_node);
+        req_node = next;
     }
-    server->request_queue = server->request_tail = NULL;
-    server->request_count = 0;
-    pthread_mutex_unlock(&server->mutex);
 
     if (server->listen_fd >= 0) {
         close(server->listen_fd);
         unlink(server->socket_path);
     }
     if (server->wake_fd >= 0) close(server->wake_fd);
+    if (server->request_wake_fd >= 0) close(server->request_wake_fd);
 
     /* Close all client connections and drain send queues - must be called
      * after server thread has exited to avoid races with epoll operations */
@@ -1236,8 +1302,6 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
     /* Destroy response cache */
     rbox_server_cache_destroy(server);
 
-    pthread_mutex_destroy(&server->mutex);
-    pthread_cond_destroy(&server->cond);
     pthread_mutex_destroy(&server->cache_mutex);
     pthread_mutex_destroy(&server->client_fd_mutex);
     free(server);
@@ -1253,8 +1317,6 @@ void rbox_server_set_limits(rbox_server_handle_t *server, int max_clients, int i
 rbox_error_t rbox_server_start(rbox_server_handle_t *server) {
     if (!server) return RBOX_ERR_INVALID;
     atomic_store(&server->running, 1);
-    server->request_queue = server->request_tail = NULL;
-    server->request_count = 0;
     if (pthread_create(&server->thread, NULL, server_thread_func, server) != 0) {
         atomic_store(&server->running, 0);
         return RBOX_ERR_IO;
@@ -1264,21 +1326,23 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server) {
 
 rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server) {
     if (!server) return NULL;
-    pthread_mutex_lock(&server->mutex);
-    while (atomic_load(&server->running) && server->request_count == 0) {
-        pthread_cond_wait(&server->cond, &server->mutex);
+    while (atomic_load(&server->running)) {
+        rbox_server_request_t *req = request_queue_pop(server);
+        if (req) return req;
+
+        /* Wait for wakeup */
+        struct pollfd pfd = { .fd = server->request_wake_fd, .events = POLLIN };
+        if (poll(&pfd, 1, -1) < 0) {
+            if (errno == EINTR) continue;
+            return NULL;
+        }
+        /* Drain the eventfd */
+        uint64_t val;
+        ssize_t r = read(server->request_wake_fd, &val, sizeof(val));
+        (void)r;
     }
-    if (!atomic_load(&server->running)) {
-        pthread_mutex_unlock(&server->mutex);
-        return NULL;
-    }
-    rbox_server_request_t *req = server->request_queue;
-    server->request_queue = req->next;
-    if (!server->request_queue) server->request_tail = NULL;
-    req->next = NULL;
-    server->request_count--;
-    pthread_mutex_unlock(&server->mutex);
-    return req;
+    /* Server stopped - drain queue one more time */
+    return request_queue_pop(server);
 }
 
 int rbox_server_is_running(rbox_server_handle_t *server) {
@@ -1355,9 +1419,11 @@ void rbox_server_stop(rbox_server_handle_t *server) {
     }
 
     atomic_store(&server->running, 0);
-    pthread_mutex_lock(&server->mutex);
-    pthread_cond_signal(&server->cond);
-    pthread_mutex_unlock(&server->mutex);
+    if (server->request_wake_fd >= 0) {
+        uint64_t val = 1;
+        ssize_t n = write(server->request_wake_fd, &val, sizeof(val));
+        (void)n;
+    }
     if (server->wake_fd >= 0) {
         uint64_t val = 1;
         ssize_t n = write(server->wake_fd, &val, sizeof(val));
