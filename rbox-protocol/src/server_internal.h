@@ -128,9 +128,9 @@ struct rbox_server_request {
     size_t command_len;
     rbox_parse_result_t parse;
 
-    /* Flagged env vars */
+    /* Flagged env vars - pointers into command_data, no copies */
     int env_var_count;
-    char **env_var_names;
+    const char **env_var_names;
     float *env_var_scores;
     uint32_t fenv_hash;
 

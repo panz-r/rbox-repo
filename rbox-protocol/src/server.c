@@ -317,14 +317,14 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         remaining -= name_len + 1 + 4;
     }
     if (req->env_var_count > 0) {
-        req->env_var_names = calloc(req->env_var_count, sizeof(char *));
+        req->env_var_names = calloc(req->env_var_count, sizeof(const char *));
         req->env_var_scores = calloc(req->env_var_count, sizeof(float));
         p = args_end;
         remaining = req->command_len - (p - req->command_data);
         int idx = 0;
         while (remaining > 5 && idx < req->env_var_count) {
             size_t name_len = strlen(p);
-            req->env_var_names[idx] = strndup(p, name_len);
+            req->env_var_names[idx] = p;  /* pointer into command_data, no copy */
             memcpy(&req->env_var_scores[idx], p + name_len + 1, 4);
             const char *s = req->env_var_names[idx];
             uint32_t h = 5381;
@@ -464,10 +464,7 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
 void server_request_free(rbox_server_request_t *req) {
     if (!req) return;
     free(req->command_data);
-    if (req->env_var_names) {
-        for (int i = 0; i < req->env_var_count; i++) free(req->env_var_names[i]);
-        free(req->env_var_names);
-    }
+    free(req->env_var_names);   /* array of pointers into command_data, no strdup */
     free(req->env_var_scores);
     free(req);
 }
