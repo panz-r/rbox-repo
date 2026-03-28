@@ -44,6 +44,7 @@ static void client_fd_add(rbox_server_handle_t *server, int fd);
 static void client_fd_remove(rbox_server_handle_t *server, int fd);
 static void client_fd_close_all(rbox_server_handle_t *server);
 rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);
+static int epoll_del(int epoll_fd, int fd);
 
 /* ============================================================
  * CLIENT FD TRACKING
@@ -134,6 +135,23 @@ static void cleanup_pending_sends(rbox_server_handle_t *server, int fd) {
     entry->header_start_time = 0;
 }
 
+/* Centralized function to close a client connection and free all associated resources */
+static void client_connection_close(rbox_server_handle_t *server, int fd) {
+    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
+    if (!entry) return;
+
+    if (entry->pending_request) {
+        server_request_free(entry->pending_request);
+        entry->pending_request = NULL;
+    }
+
+    cleanup_pending_sends(server, fd);
+
+    epoll_del(server->epoll_fd, fd);
+    close(fd);
+    client_fd_remove(server, fd);
+}
+
 /* ============================================================
  * CLIENT FD LOOKUP - For non‑blocking body reads and timeout
  * ============================================================ */
@@ -169,16 +187,6 @@ static void pending_request_remove(rbox_server_handle_t *server, int fd) {
     if (entry) {
         entry->pending_request = NULL;
     }
-}
-
-static int cleanup_pending_request(rbox_server_handle_t *server, int fd) {
-    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
-    if (entry && entry->pending_request) {
-        server_request_free(entry->pending_request);
-        entry->pending_request = NULL;
-        return 1;
-    }
-    return 0;
 }
 
 /* Attempt to read body data for a pending request.
@@ -455,10 +463,6 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
 
 void server_request_free(rbox_server_request_t *req) {
     if (!req) return;
-    if (req->fd >= 0) {
-        client_fd_remove(req->server, req->fd);
-        close(req->fd);
-    }
     free(req->command_data);
     if (req->env_var_names) {
         for (int i = 0; i < req->env_var_count; i++) free(req->env_var_names[i]);
@@ -520,7 +524,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
 }
 
 /* Remove from epoll */
-static int epoll_del(int epoll_fd, int fd) {
+int epoll_del(int epoll_fd, int fd) {
     struct epoll_event ev = {0};
     return epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &ev);
 }
@@ -702,16 +706,9 @@ static void *server_thread_func(void *arg) {
                 if (difftime(now, tentry->header_start_time) > 5.0) {
                     int fd = tentry->fd;
                     DBG("Header read timeout on fd %d, closing", fd);
-                    if (tentry->pending_request) {
-                        server_request_free(tentry->pending_request);
-                        tentry->pending_request = NULL;
-                    }
                     pthread_mutex_unlock(&server->client_fd_mutex);
-                    cleanup_pending_sends(server, fd);
-                    epoll_del(server->epoll_fd, fd);
-                    close(fd);
+                    client_connection_close(server, fd);
                     pthread_mutex_lock(&server->client_fd_mutex);
-                    client_fd_remove(server, fd);
                     tentry = server->client_fds;
                     continue;
                 }
@@ -785,11 +782,7 @@ static void *server_thread_func(void *arg) {
                             process_completed_request(server, cl_fd, pending);
                         } else if (result == -1) {
                             DBG("Body read error for pending request on fd %d", cl_fd);
-                            cleanup_pending_request(server, cl_fd);
-                            cleanup_pending_sends(server, cl_fd);
-                            client_fd_remove(server, cl_fd);
-                            epoll_del(server->epoll_fd, cl_fd);
-                            /* fd closed by cleanup_pending_request */
+                            client_connection_close(server, cl_fd);
                             closed = 1;
                         }
                         /* else result == 0, still pending – do nothing */
@@ -810,11 +803,7 @@ static void *server_thread_func(void *arg) {
                         goto next_event;
                     } else if (hdr_result == -1) {
                         DBG("Header read failed on fd %d, cleaning up", cl_fd);
-                        int req_freed = cleanup_pending_request(server, cl_fd);
-                        cleanup_pending_sends(server, cl_fd);
-                        epoll_del(server->epoll_fd, cl_fd);
-                        if (!req_freed) close(cl_fd);
-                        client_fd_remove(server, cl_fd);
+                        client_connection_close(server, cl_fd);
                         closed = 1;
                         goto next_event;
                     }
@@ -826,11 +815,7 @@ static void *server_thread_func(void *arg) {
                         rbox_server_request_t *req = calloc(1, sizeof(*req));
                         if (!req) {
                             DBG("Failed to allocate request for chunked request on fd %d", cl_fd);
-                            int req_freed = cleanup_pending_request(server, cl_fd);
-                            cleanup_pending_sends(server, cl_fd);
-                            epoll_del(server->epoll_fd, cl_fd);
-                            if (!req_freed) close(cl_fd);
-                            client_fd_remove(server, cl_fd);
+                            client_connection_close(server, cl_fd);
                             closed = 1;
                             goto next_event;
                         }
@@ -848,11 +833,7 @@ static void *server_thread_func(void *arg) {
                         if (!req->command_data) {
                             free(req);
                             DBG("Failed to allocate command_data for chunked request on fd %d", cl_fd);
-                            int req_freed = cleanup_pending_request(server, cl_fd);
-                            cleanup_pending_sends(server, cl_fd);
-                            epoll_del(server->epoll_fd, cl_fd);
-                            if (!req_freed) close(cl_fd);
-                            client_fd_remove(server, cl_fd);
+                            client_connection_close(server, cl_fd);
                             closed = 1;
                             goto next_event;
                         }
@@ -876,12 +857,8 @@ static void *server_thread_func(void *arg) {
                             DBG("Pending chunked request for fd %d", cl_fd);
                         } else {
                             DBG("Error reading first chunk for fd %d", cl_fd);
-                            free(req->command_data);
-                            free(req);
-                            cleanup_pending_sends(server, cl_fd);
-                            epoll_del(server->epoll_fd, cl_fd);
-                            close(cl_fd);
-                            client_fd_remove(server, cl_fd);
+                            server_request_free(req);
+                            client_connection_close(server, cl_fd);
                             closed = 1;
                         }
                         goto next_event;
@@ -891,11 +868,7 @@ static void *server_thread_func(void *arg) {
                     rbox_server_request_t *req = calloc(1, sizeof(*req));
                     if (!req) {
                         DBG("Failed to allocate request for fd %d", cl_fd);
-                        int req_freed = cleanup_pending_request(server, cl_fd);
-                        cleanup_pending_sends(server, cl_fd);
-                        epoll_del(server->epoll_fd, cl_fd);
-                        if (!req_freed) close(cl_fd);
-                        client_fd_remove(server, cl_fd);
+                        client_connection_close(server, cl_fd);
                         closed = 1;
                         goto next_event;
                     }
@@ -913,11 +886,7 @@ static void *server_thread_func(void *arg) {
                     req->command_data = malloc(chunk_len + 1);
                     if (!req->command_data) {
                         free(req);
-                        int req_freed = cleanup_pending_request(server, cl_fd);
-                        cleanup_pending_sends(server, cl_fd);
-                        epoll_del(server->epoll_fd, cl_fd);
-                        if (!req_freed) close(cl_fd);
-                        client_fd_remove(server, cl_fd);
+                        client_connection_close(server, cl_fd);
                         closed = 1;
                         goto next_event;
                     }
@@ -943,15 +912,13 @@ static void *server_thread_func(void *arg) {
                     } else {
                         DBG("Error reading body for fd %d", cl_fd);
                         server_request_free(req);
-                        cleanup_pending_sends(server, cl_fd);
-                        epoll_del(server->epoll_fd, cl_fd);
-                        client_fd_remove(server, cl_fd);
+                        client_connection_close(server, cl_fd);
                         closed = 1;
                     }
                     goto next_event;
                 }
 
-                /* Handle EPOLLOUT after EPOLLIN */
+                    /* Handle EPOLLOUT after EPOLLIN */
                 if (!closed && (ev->events & EPOLLOUT)) {
                     DBG("EPOLLOUT for fd %d", cl_fd);
                     try_send_pending(server, cl_fd);
@@ -960,19 +927,11 @@ static void *server_thread_func(void *arg) {
                     ssize_t r = recv(cl_fd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
                     if (r == 0) {
                         DBG("EPOLLOUT: detected EOF on fd %d, cleaning up", cl_fd);
-                        cleanup_pending_sends(server, cl_fd);
-                        cleanup_pending_request(server, cl_fd);
-                        client_fd_remove(server, cl_fd);
-                        epoll_del(server->epoll_fd, cl_fd);
-                        /* close(cl_fd) is called by cleanup_pending_request via server_request_free */
+                        client_connection_close(server, cl_fd);
                         closed = 1;
                     } else if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                         DBG("EPOLLOUT: recv peek error on fd %d: %s", cl_fd, strerror(errno));
-                        cleanup_pending_sends(server, cl_fd);
-                        cleanup_pending_request(server, cl_fd);
-                        client_fd_remove(server, cl_fd);
-                        epoll_del(server->epoll_fd, cl_fd);
-                        /* close(cl_fd) is called by cleanup_pending_request via server_request_free */
+                        client_connection_close(server, cl_fd);
                         closed = 1;
                     }
                 }
@@ -980,11 +939,7 @@ static void *server_thread_func(void *arg) {
                 /* If we get here, no EPOLLIN, so handle errors/hangup */
                 if (!closed && (ev->events & (EPOLLERR | EPOLLHUP))) {
                     DBG("EPOLLHUP/ERR on fd %d, cleaning up", cl_fd);
-                    cleanup_pending_sends(server, cl_fd);
-                    cleanup_pending_request(server, cl_fd);
-                    client_fd_remove(server, cl_fd);
-                    epoll_del(server->epoll_fd, cl_fd);
-                    /* close(cl_fd) is called by cleanup_pending_request via server_request_free */
+                    client_connection_close(server, cl_fd);
                     DBG("Closed fd %d", cl_fd);
                 }
 
@@ -1142,6 +1097,9 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
         free(node);
         node = next;
     }
+
+    /* Destroy response cache */
+    rbox_server_cache_destroy(server);
 
     pthread_mutex_destroy(&server->mutex);
     pthread_cond_destroy(&server->cond);

@@ -18,6 +18,9 @@ typedef struct rbox_server_handle rbox_server_handle_t;
 /* Initialize cache */
 void rbox_server_cache_init(rbox_server_handle_t *server);
 
+/* Destroy cache - frees all entries */
+void rbox_server_cache_destroy(rbox_server_handle_t *server);
+
 /* Lookup cache entry
  * Returns: 1 if found (out params populated), 0 if not found */
 int rbox_server_cache_lookup(rbox_server_handle_t *server,

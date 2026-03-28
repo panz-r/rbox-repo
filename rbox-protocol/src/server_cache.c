@@ -27,6 +27,17 @@ void rbox_server_cache_init(rbox_server_handle_t *server) {
     memset(&server->cache, 0, sizeof(server->cache));
 }
 
+void rbox_server_cache_destroy(rbox_server_handle_t *server) {
+    if (!server) return;
+    rbox_response_cache_t *cache = &server->cache;
+    for (int i = 0; i < RBOX_RESPONSE_CACHE_SIZE; i++) {
+        if (cache->slot_state[i] == RBOX_CACHE_SLOT_OCCUPIED && cache->slots[i]) {
+            free(cache->slots[i]);
+        }
+    }
+    memset(cache, 0, sizeof(*cache));
+}
+
 static void cache_lru_move_to_head(rbox_response_cache_t *cache, rbox_response_cache_entry_t *entry) {
     if (cache->lru_head == entry) return;
 
