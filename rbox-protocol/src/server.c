@@ -768,7 +768,6 @@ static void *server_thread_func(void *arg) {
         loop_count++;
         DBG("=== Top of loop (count=%d) ===", loop_count);
         DBG("server->running = %d", atomic_load(&server->running));
-        DBG("server->request_count = %d", server->request_count);
         DBG("active clients = %d", server->active_client_count);
 
         /* Process pending decisions (lock-free pop) */
@@ -1129,44 +1128,6 @@ static void *server_thread_func(void *arg) {
             tentry = next;
         }
         pthread_mutex_unlock(&server->client_fd_mutex);
-
-        /* After event processing, handle decisions again (lock-free pop) */
-        while (1) {
-            rbox_server_decision_t *dec = decision_queue_pop(server);
-            if (!dec) break;
-            DBG("Processing decision for fd %d (after events)", dec->request ? dec->request->fd : -1);
-
-            if (!dec->request) {
-                free(dec);
-                continue;
-            }
-
-            rbox_server_request_t *req = dec->request;
-            size_t resp_len;
-            uint32_t cmd_hash = req->cmd_hash;
-            uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
-            uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
-            rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
-                                  cmd_hash, cmd_hash2, dec->fenv_hash, dec->decision, dec->reason, dec->duration);
-            char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
-                dec->decision, dec->reason, dec->duration,
-                dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
-            if (resp) {
-                DBG("Built response of size %zu for fd %d", resp_len, req->fd);
-                if (send_queue_add(server, req->fd, resp, resp_len, req) != 0) {
-                    DBG("send_queue_add failed for fd %d", req->fd);
-                }
-            } else {
-                DBG("Failed to build response for fd %d", req->fd);
-                server_request_free(req);
-            }
-            if (dec->env_decision_names) {
-                for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
-                free(dec->env_decision_names);
-            }
-            free(dec->env_decisions);
-            free(dec);
-        }
     }
 
     /* Final cleanup: close any remaining client fds (should be none) */
