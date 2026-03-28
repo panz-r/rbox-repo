@@ -23,6 +23,7 @@
 #include "server.h"
 #include "server_cache.h"
 #include "server_response.h"
+#include "server_client.h"
 
 /* Debug flag – set to 1 to enable verbose tracing */
 #ifndef RBOX_SERVER_DEBUG
@@ -40,11 +41,6 @@
  * ============================================================ */
 static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size_t len, rbox_server_request_t *req);
 static void try_send_pending(rbox_server_handle_t *server, int fd);
-static void client_fd_add(rbox_server_handle_t *server, int fd);
-static void client_fd_remove(rbox_server_handle_t *server, int fd);
-static void client_fd_close_all(rbox_server_handle_t *server);
-rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);
-static int epoll_del(int epoll_fd, int fd);
 
 /* ============================================================
  * REQUEST POOL - Lock-free free list (Treiber stack)
@@ -253,184 +249,20 @@ void send_pool_destroy(rbox_server_handle_t *server) {
 
 /* ============================================================
  * CLIENT FD TRACKING
+ * These functions are now in server_client.c
  * ============================================================ */
 
-static void client_fd_add(rbox_server_handle_t *server, int fd) {
-    rbox_client_fd_entry_t *entry = malloc(sizeof(*entry));
-    if (!entry) return;
-    entry->fd = fd;
-    entry->pending_request = NULL;
-    entry->header_start_time = 0;
-    entry->waiting_for_header = 0;
-    entry->last_activity = time(NULL);
-    entry->prev = NULL;
-
-    rbox_send_node_t *dummy = malloc(sizeof(*dummy));
-    if (dummy) {
-        dummy->entry = NULL;
-        atomic_store_explicit(&dummy->next, NULL, memory_order_relaxed);
-        atomic_store_explicit(&entry->send_queue.head, dummy, memory_order_relaxed);
-        atomic_store_explicit(&entry->send_queue.tail, dummy, memory_order_relaxed);
-    }
-
-    pthread_mutex_lock(&server->client_fd_mutex);
-    entry->next = server->client_fds;
-    if (server->client_fds) {
-        server->client_fds->prev = entry;
-    }
-    server->client_fds = entry;
-    server->active_client_count++;
-    pthread_mutex_unlock(&server->client_fd_mutex);
-}
-
-static void client_fd_remove(rbox_server_handle_t *server, int fd) {
-    pthread_mutex_lock(&server->client_fd_mutex);
-    rbox_client_fd_entry_t *entry = server->client_fds;
-    while (entry) {
-        if (entry->fd == fd) {
-            if (entry->prev) {
-                entry->prev->next = entry->next;
-            } else {
-                server->client_fds = entry->next;
-            }
-            if (entry->next) {
-                entry->next->prev = entry->prev;
-            }
-            free(entry);
-            server->active_client_count--;
-            break;
-        }
-        entry = entry->next;
-    }
-    pthread_mutex_unlock(&server->client_fd_mutex);
-}
-
-static void client_fd_close_all(rbox_server_handle_t *server) {
-    pthread_mutex_lock(&server->client_fd_mutex);
-    rbox_client_fd_entry_t *entry = server->client_fds;
-    while (entry) {
-        if (entry->pending_request) {
-            server_request_free(entry->pending_request);
-            entry->pending_request = NULL;
-        }
-        rbox_server_send_entry_t *send_entry;
-        while ((send_entry = send_queue_dequeue(entry)) != NULL) {
-            if (send_entry->request) {
-                send_entry->request->fd = -1;
-                server_request_free(send_entry->request);
-            }
-            send_pool_put(server, send_entry);
-        }
-        close(entry->fd);
-        rbox_client_fd_entry_t *next = entry->next;
-        free(entry);
-        entry = next;
-    }
-    server->client_fds = NULL;
-    server->active_client_count = 0;
-    pthread_mutex_unlock(&server->client_fd_mutex);
-}
-
-/* ============================================================
- * SEND QUEUE - Lock-free MPSC per-client queues
- * ============================================================ */
-
-/* Lock-free enqueue for per-client send queue (Michael & Scott MPSC) */
-int send_queue_enqueue(rbox_client_fd_entry_t *client, rbox_server_send_entry_t *entry) {
-    rbox_send_node_t *node = malloc(sizeof(*node));
-    if (!node) return -1;
-    node->entry = entry;
-    atomic_store_explicit(&node->next, NULL, memory_order_relaxed);
-
-    rbox_send_node_t *tail, *next;
-    while (1) {
-        tail = atomic_load_explicit(&client->send_queue.tail, memory_order_acquire);
-        next = atomic_load_explicit(&tail->next, memory_order_acquire);
-        if (next == NULL) {
-            if (atomic_compare_exchange_weak_explicit(&tail->next, &next, node,
-                                                      memory_order_release, memory_order_relaxed)) {
-                atomic_compare_exchange_strong_explicit(&client->send_queue.tail, &tail, node,
-                                                        memory_order_release, memory_order_relaxed);
-                break;
-            }
-        } else {
-            atomic_compare_exchange_weak_explicit(&client->send_queue.tail, &tail, next,
-                                                  memory_order_release, memory_order_relaxed);
-        }
-    }
-    return 0;
-}
-
-/* Lock-free dequeue for per-client send queue - consumer (server thread) only */
-rbox_server_send_entry_t *send_queue_dequeue(rbox_client_fd_entry_t *client) {
-    rbox_send_node_t *head, *next;
-    while (1) {
-        head = atomic_load_explicit(&client->send_queue.head, memory_order_acquire);
-        next = atomic_load_explicit(&head->next, memory_order_acquire);
-        if (next == NULL) {
-            return NULL;
-        }
-        if (atomic_compare_exchange_weak_explicit(&client->send_queue.head, &head, next,
-                                                  memory_order_acquire, memory_order_relaxed)) {
-            rbox_server_send_entry_t *entry = next->entry;
-            free(head);
-            return entry;
-        }
-    }
-}
-
-/* Clean up any send queue entries for a closed fd - drain the lock-free queue */
-static void cleanup_pending_sends(rbox_server_handle_t *server, int fd) {
-    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
-    if (!entry) return;
-
-    rbox_server_send_entry_t *send_entry;
-    while ((send_entry = send_queue_dequeue(entry)) != NULL) {
-        if (send_entry->request) {
-            send_entry->request->fd = -1;
-            server_request_free(send_entry->request);
-        }
-        send_pool_put(server, send_entry);
-    }
-
-    entry->waiting_for_header = 0;
-    entry->header_start_time = 0;
-}
-
-/* Centralized function to close a client connection and free all associated resources */
-static void client_connection_close(rbox_server_handle_t *server, int fd) {
-    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
-    if (!entry) return;
-
-    if (entry->pending_request) {
-        server_request_free(entry->pending_request);
-        entry->pending_request = NULL;
-    }
-
-    cleanup_pending_sends(server, fd);
-
-    epoll_del(server->epoll_fd, fd);
-    close(fd);
-    client_fd_remove(server, fd);
-}
-
-/* ============================================================
- * CLIENT FD LOOKUP - For non‑blocking body reads and timeout
- * ============================================================ */
-
-rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd) {
-    pthread_mutex_lock(&server->client_fd_mutex);
-    rbox_client_fd_entry_t *entry = server->client_fds;
-    while (entry) {
-        if (entry->fd == fd) {
-            pthread_mutex_unlock(&server->client_fd_mutex);
-            return entry;
-        }
-        entry = entry->next;
-    }
-    pthread_mutex_unlock(&server->client_fd_mutex);
-    return NULL;
-}
+/* Functions moved to server_client.c:
+ * - client_fd_add
+ * - client_fd_remove
+ * - client_fd_close_all
+ * - client_fd_find
+ * - cleanup_pending_sends
+ * - client_connection_close
+ * - send_queue_enqueue
+ * - send_queue_dequeue
+ * - send_queue_peek
+ */
 
 static void pending_request_set(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
@@ -559,7 +391,18 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         return;
     }
 
-    rbox_command_parse(req->command_data, req->command_len, &req->parse);
+    if (rbox_command_parse(req->command_data, req->command_len, &req->parse) != RBOX_OK) {
+        DBG("Failed to parse command from fd %d", fd);
+        size_t resp_len;
+        char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
+            RBOX_DECISION_DENY, "parse error", 0,
+            req->fenv_hash, 0, NULL, &resp_len);
+        if (resp) {
+            send_queue_add(server, fd, resp, resp_len, NULL);
+        }
+        server_request_free(req);
+        return;
+    }
 
     const char *p = req->command_data;
     const char *args_end = req->command_data;
@@ -618,26 +461,25 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
 }
 
 /* Try to send as much data as possible from the queue for a given fd.
- * Uses lock-free dequeue - no mutex needed (single consumer). */
+ * Uses peek-first approach to avoid losing entries on EAGAIN.
+ * Entry is only dequeued after write completes or on permanent failure. */
 static void send_pending_locked(rbox_server_handle_t *server, int fd) {
     rbox_client_fd_entry_t *client_entry = client_fd_find(server, fd);
     if (!client_entry) return;
 
-    rbox_server_send_entry_t *entry;
-    while ((entry = send_queue_dequeue(client_entry)) != NULL) {
+    while (1) {
+        rbox_server_send_entry_t *entry = send_queue_peek(client_entry);
+        if (!entry) break;
+
         size_t remaining = entry->len - entry->offset;
         ssize_t w = write(entry->fd, entry->data + entry->offset, remaining);
         if (w < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 DBG("send_pending_locked: write would block on fd %d", entry->fd);
-                if (entry->request) {
-                    entry->request->fd = -1;
-                    server_request_free(entry->request);
-                }
-                send_pool_put(server, entry);
-                break;
+                return;
             }
             DBG("send_pending_locked: write failed on fd %d: %s", entry->fd, strerror(errno));
+            send_queue_dequeue(client_entry);
             if (entry->request) {
                 entry->request->fd = -1;
                 server_request_free(entry->request);
@@ -646,6 +488,7 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
             continue;
         } else if (w == 0) {
             DBG("send_pending_locked: write returned 0 on fd %d", entry->fd);
+            send_queue_dequeue(client_entry);
             if (entry->request) {
                 entry->request->fd = -1;
                 server_request_free(entry->request);
@@ -658,18 +501,12 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
             DBG("send_pending_locked: wrote %zd bytes on fd %d, offset now %zu/%zu", w, entry->fd, entry->offset, entry->len);
             if (entry->offset == entry->len) {
                 DBG("send_pending_locked: fully sent response for fd %d", entry->fd);
+                send_queue_dequeue(client_entry);
                 if (entry->request) {
                     entry->request->fd = -1;
                     server_request_free(entry->request);
                 }
                 send_pool_put(server, entry);
-            } else {
-                if (entry->request) {
-                    entry->request->fd = -1;
-                    server_request_free(entry->request);
-                }
-                send_pool_put(server, entry);
-                break;
             }
         }
     }
@@ -921,12 +758,12 @@ static void *server_thread_func(void *arg) {
             }
             if (shutdown_start == 0) shutdown_start = time(NULL);
             if (time(NULL) - shutdown_start > 2) {
-                DBG("Shutdown timeout reached, exiting with %d pending sends, %d active clients",
-                    pending_sends, server->active_client_count);
+                DBG("Shutdown timeout reached, exiting with %d active clients",
+                    server->active_client_count);
                 break;
             }
-            DBG("Shutdown in progress, %d pending sends, %d active clients",
-                pending_sends, server->active_client_count);
+            DBG("Shutdown in progress, %d active clients",
+                server->active_client_count);
         } else {
             shutdown_start = 0;
         }
@@ -1301,8 +1138,12 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     srv->client_fds = NULL;
     srv->active_client_count = 0;
     rbox_server_cache_init(srv);
-    request_pool_init(srv, RBOX_REQUEST_POOL_SIZE);
-    send_pool_init(srv, RBOX_SEND_POOL_SIZE);
+    if (request_pool_init(srv, RBOX_REQUEST_POOL_SIZE) != 0) {
+        fprintf(stderr, "Warning: request pool init failed, will use malloc\n");
+    }
+    if (send_pool_init(srv, RBOX_SEND_POOL_SIZE) != 0) {
+        fprintf(stderr, "Warning: send pool init failed, will use malloc\n");
+    }
 
     rbox_decision_node_t *dummy = malloc(sizeof(*dummy));
     if (!dummy) {
