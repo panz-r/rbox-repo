@@ -12,6 +12,13 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <time.h>
+#include "rbox_protocol_defs.h"
+#include "protocol.h"
+#include "rbox_protocol.h"
+
+/* Forward declaration */
+typedef struct rbox_server_request rbox_server_request_t;
+typedef struct rbox_server_handle rbox_server_handle_t;
 
 /* Response cache configuration */
 #define RBOX_RESPONSE_CACHE_SIZE 256
@@ -84,12 +91,26 @@ typedef struct {
 /* Send queue entry - for outgoing responses */
 typedef struct rbox_server_send_entry {
     int fd;                        /* Socket to send to */
-    char *data;                    /* Response packet data */
+    char *data;                    /* Response packet data (points to internal_buf or malloc'd) */
     size_t len;                    /* Response length */
     size_t offset;
-    struct rbox_server_send_entry *next;
     rbox_server_request_t *request;  /* Associated request to free after send */
+    char internal_buf[512];        /* Inline buffer for small responses */
+    int using_internal_buf;        /* 1 if data points to internal_buf */
+    struct rbox_server_send_entry *next; /* Free list link */
 } rbox_server_send_entry_t;
+
+/* Lock-free MPSC send queue node (Michael & Scott algorithm) */
+typedef struct rbox_send_node {
+    rbox_server_send_entry_t *entry;
+    _Atomic(struct rbox_send_node *) next;
+} rbox_send_node_t;
+
+/* Lock-free MPSC send queue structure */
+typedef struct {
+    _Atomic(rbox_send_node_t *) head;
+    _Atomic(rbox_send_node_t *) tail;
+} rbox_send_queue_t;
 
 /* Forward declaration */
 typedef struct rbox_server_handle rbox_server_handle_t;
@@ -146,7 +167,11 @@ struct rbox_server_request {
     uint32_t current_chunk_received;/* Bytes of current chunk already read */
     uint32_t last_flags;            /* Flags from most recent chunk header (RBOX_FLAG_LAST) */
 
-    /* Queue link */
+    /* Internal buffer for small requests (reduces allocation overhead) */
+    char internal_buf[4096];
+    int using_internal_buf;         /* 1 if command_data points to internal_buf */
+
+    /* Queue link / free list link */
     struct rbox_server_request *next;
 };
 
@@ -158,13 +183,45 @@ typedef struct rbox_client_fd_entry {
     rbox_server_request_t *pending_request;  /* Non-null if body is being read */
     time_t header_start_time;                /* When we started waiting for header */
     int waiting_for_header;                 /* 1 if we are in header read timeout state */
+    time_t last_activity;                   /* Last read/write activity time */
     struct rbox_client_fd_entry *prev;       /* Previous entry in doubly-linked list */
     struct rbox_client_fd_entry *next;       /* Next entry in doubly-linked list */
-    rbox_server_send_entry_t *send_queue_head; /* Per-client send queue head */
-    rbox_server_send_entry_t *send_queue_tail; /* Per-client send queue tail */
+    rbox_send_queue_t send_queue;           /* Lock-free MPSC send queue */
 } rbox_client_fd_entry_t;
 
-/* Free server request (used by server_response.c) */
+/* Request pool - lock-free free list (Treiber stack) */
+#define RBOX_REQUEST_POOL_SIZE 256
+typedef struct rbox_request_pool {
+    _Atomic(rbox_server_request_t *) free_list;
+    _Atomic(size_t) available;
+    size_t max_requests;
+} rbox_request_pool_t;
+
+/* Request pool functions */
+int request_pool_init(rbox_server_handle_t *server, size_t max_requests);
+rbox_server_request_t *request_pool_get(rbox_server_handle_t *server);
+void request_pool_put(rbox_server_handle_t *server, rbox_server_request_t *req);
+void request_pool_destroy(rbox_server_handle_t *server);
+
+/* Send entry pool - lock-free free list (Treiber stack) */
+#define RBOX_SEND_POOL_SIZE 1024
+typedef struct rbox_send_pool {
+    _Atomic(rbox_server_send_entry_t *) free_list;
+    _Atomic(size_t) available;
+    size_t max_entries;
+} rbox_send_pool_t;
+
+/* Send pool functions */
+int send_pool_init(rbox_server_handle_t *server, size_t max_entries);
+rbox_server_send_entry_t *send_pool_get(rbox_server_handle_t *server);
+void send_pool_put(rbox_server_handle_t *server, rbox_server_send_entry_t *entry);
+void send_pool_destroy(rbox_server_handle_t *server);
+
+/* Lock-free send queue functions */
+int send_queue_enqueue(rbox_client_fd_entry_t *client, rbox_server_send_entry_t *entry);
+rbox_server_send_entry_t *send_queue_dequeue(rbox_client_fd_entry_t *client);
+
+/* Free server request - returns to pool if from pool, otherwise frees */
 void server_request_free(rbox_server_request_t *req);
 
 /* Find client fd entry by fd (used by server_response.c) */
@@ -182,9 +239,6 @@ struct rbox_server_handle {
     atomic_flag stop_flag;         /* Atomic flag - only one stop() wins */
     int wake_fd;                   /* eventfd to wake epoll thread */
 
-    /* Send queue mutex (for thread-safe access to per-client queues) */
-    pthread_mutex_t send_mutex;
-
     /* Response cache (hash table with LRU) */
     rbox_response_cache_t cache;
     pthread_mutex_t cache_mutex;   /* Protects response cache */
@@ -199,9 +253,20 @@ struct rbox_server_handle {
     /* Decision queue - lock-free MPSC (Michael & Scott) */
     rbox_decision_queue_t decision_queue;
 
+    /* Request pool - lock-free free list for reduced allocation overhead */
+    rbox_request_pool_t request_pool;
+
+    /* Send entry pool - lock-free free list for reduced allocation overhead */
+    rbox_send_pool_t send_pool;
+
     pthread_mutex_t client_fd_mutex;
     rbox_client_fd_entry_t *client_fds;
     int active_client_count; /* Number of active clients */
+
+    /* Connection limits and timeouts */
+    int max_clients;               /* 0 = unlimited */
+    int client_idle_timeout;       /* seconds, 0 = disabled */
+    int request_timeout;           /* seconds, 0 = disabled */
 };
 
 #endif /* RBOX_SERVER_INTERNAL_H */
