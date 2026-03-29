@@ -43,7 +43,7 @@ static void apply_memory_limit(void) {
     unsigned long long val = strtoull(limit_str, &endptr, 10);
 
     if (endptr == limit_str) {
-        fprintf(stderr, "readonlybox-ptrace: Invalid memory limit format: %s\n", limit_str);
+        LOG_ERROR("Invalid memory limit format: %s", limit_str);
         return;
     }
 
@@ -72,7 +72,7 @@ static void apply_memory_limit(void) {
     limit = (rlim_t)val;
     struct rlimit rlim = {limit, limit};
     if (setrlimit(RLIMIT_AS, &rlim) != 0) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to set memory limit: %s\n", strerror(errno));
+        LOG_ERRNO("Failed to set memory limit");
     } else {
         DEBUG_PRINT("SANDBOX: Memory limit set to %llu bytes\n", (unsigned long long)limit);
     }
@@ -112,8 +112,7 @@ static int deny_compare(const void *a, const void *b) {
 struct allowed_entry *sandbox_parse_allow_list(const char *env_value, int *out_count,
                                               sandbox_path_validator_t validator, void *ctx) {
     if (!validator) {
-        fprintf(stderr, "sandbox_parse_allow_list: NULL validator\n");
-        exit(1);
+        LOG_FATAL("sandbox_parse_allow_list: NULL validator");
     }
     if (!env_value || !*env_value) {
         *out_count = 0;
@@ -151,13 +150,13 @@ struct allowed_entry *sandbox_parse_allow_list(const char *env_value, int *out_c
 
         char *resolved = realpath(path, NULL);
         if (!resolved) {
-            fprintf(stderr, "readonlybox-ptrace: hard-allow: cannot resolve path '%s': %s\n", path, strerror(errno));
+            LOG_FATAL("hard-allow: cannot resolve path '%s': %s", path, strerror(errno));
             free(path);
             exit(1);
         }
 
         if (!validator(resolved, ctx)) {
-            fprintf(stderr, "readonlybox-ptrace: hard-allow: '%s' is not a directory\n", resolved);
+            LOG_FATAL("hard-allow: '%s' is not a directory", resolved);
             free(resolved);
             free(path);
             exit(1);
@@ -191,8 +190,7 @@ struct allowed_entry *sandbox_parse_allow_list(const char *env_value, int *out_c
 struct denied_entry *sandbox_parse_deny_list(const char *env_value, int *out_count,
                                             sandbox_path_validator_t validator, void *ctx) {
     if (!validator) {
-        fprintf(stderr, "sandbox_parse_deny_list: NULL validator\n");
-        exit(1);
+        LOG_FATAL("sandbox_parse_deny_list: NULL validator");
     }
     if (!env_value || !*env_value) {
         *out_count = 0;
@@ -220,13 +218,13 @@ struct denied_entry *sandbox_parse_deny_list(const char *env_value, int *out_cou
 
         char *resolved = realpath(path, NULL);
         if (!resolved) {
-            fprintf(stderr, "readonlybox-ptrace: hard-deny: cannot resolve path '%s': %s\n", path, strerror(errno));
+            LOG_FATAL("hard-deny: cannot resolve path '%s': %s", path, strerror(errno));
             free(path);
             exit(1);
         }
 
         if (!validator(resolved, ctx)) {
-            fprintf(stderr, "readonlybox-ptrace: hard-deny: '%s' is not a directory\n", resolved);
+            LOG_FATAL("hard-deny: '%s' is not a directory", resolved);
             free(resolved);
             free(path);
             exit(1);
@@ -418,7 +416,7 @@ static void apply_landlock(void) {
 
     int abi = syscall(__NR_landlock_create_ruleset, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
     if (abi < 1) {
-        fprintf(stderr, "readonlybox-ptrace: Landlock not supported (ABI version %d)\n", abi);
+        LOG_ERROR("Landlock not supported (ABI version %d)", abi);
         return;
     }
 
@@ -458,21 +456,21 @@ static void apply_landlock(void) {
 
     int ruleset_fd = syscall(__NR_landlock_create_ruleset, &attr, sizeof(attr), 0);
     if (ruleset_fd < 0) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to create Landlock ruleset: %s\n", strerror(errno));
+        LOG_ERRNO("Failed to create Landlock ruleset");
         goto cleanup;
     }
 
     for (int i = 0; i < deny_count; i++) {
         int dir_fd = open(deny_entries[i].resolved, O_NOFOLLOW | O_PATH | O_CLOEXEC);
         if (dir_fd < 0) {
-            fprintf(stderr, "readonlybox-ptrace: Landlock: cannot open deny path '%s': %s\n",
+            LOG_ERROR("Landlock: cannot open deny path '%s': %s",
                     deny_entries[i].resolved, strerror(errno));
             continue;
         }
 
         struct stat st;
         if (fstat(dir_fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
-            fprintf(stderr, "readonlybox-ptrace: Landlock: deny path '%s' is not a directory\n",
+            LOG_ERROR("Landlock: deny path '%s' is not a directory",
                     deny_entries[i].resolved);
             close(dir_fd);
             continue;
@@ -485,7 +483,7 @@ static void apply_landlock(void) {
 
         if (syscall(__NR_landlock_add_rule, ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
                     &path_attr, 0) != 0) {
-            fprintf(stderr, "readonlybox-ptrace: Landlock: failed to add deny rule for '%s': %s\n",
+            LOG_ERROR("Landlock: failed to add deny rule for '%s': %s",
                     deny_entries[i].resolved, strerror(errno));
         } else {
             DEBUG_PRINT("SANDBOX: Landlock deny rule for '%s'\n", deny_entries[i].resolved);
@@ -496,14 +494,14 @@ static void apply_landlock(void) {
     for (int i = 0; i < allow_count; i++) {
         int dir_fd = open(allow_entries[i].resolved, O_NOFOLLOW | O_PATH | O_CLOEXEC);
         if (dir_fd < 0) {
-            fprintf(stderr, "readonlybox-ptrace: Landlock: cannot open allow path '%s': %s\n",
+            LOG_ERROR("Landlock: cannot open allow path '%s': %s",
                     allow_entries[i].resolved, strerror(errno));
             continue;
         }
 
         struct stat st;
         if (fstat(dir_fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
-            fprintf(stderr, "readonlybox-ptrace: Landlock: allow path '%s' is not a directory\n",
+            LOG_ERROR("Landlock: allow path '%s' is not a directory",
                     allow_entries[i].resolved);
             close(dir_fd);
             continue;
@@ -516,7 +514,7 @@ static void apply_landlock(void) {
 
         if (syscall(__NR_landlock_add_rule, ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
                     &path_attr, 0) != 0) {
-            fprintf(stderr, "readonlybox-ptrace: Landlock: failed to add allow rule for '%s' (access 0x%llx): %s\n",
+            LOG_ERROR("Landlock: failed to add allow rule for '%s' (access 0x%llx): %s",
                     allow_entries[i].resolved, (unsigned long long)allow_entries[i].access, strerror(errno));
         } else {
             DEBUG_PRINT("SANDBOX: Landlock allow rule for '%s' (access 0x%llx)\n",
@@ -526,7 +524,7 @@ static void apply_landlock(void) {
     }
 
     if (syscall(__NR_landlock_restrict_self, ruleset_fd, 0) != 0) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to enforce Landlock ruleset: %s\n", strerror(errno));
+        LOG_ERRNO("Failed to enforce Landlock ruleset");
     } else {
         DEBUG_PRINT("SANDBOX: Landlock enforced\n");
     }
@@ -537,9 +535,10 @@ cleanup:
     if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
 }
 
-/* Seccomp filter for blocking network syscalls */
-static void apply_no_network(void) {
-    if (!getenv("READONLYBOX_NO_NETWORK")) return;
+/* Seccomp filter for blocking network syscalls.
+ * Returns 0 on success, -1 on failure. */
+static int apply_no_network(void) {
+    if (!getenv("READONLYBOX_NO_NETWORK")) return 0;
 
     /* BPF filter program to block network syscalls.
      * Uses __NR_* syscall numbers for portability across architectures. */
@@ -634,10 +633,11 @@ static void apply_no_network(void) {
 
     /* Install seccomp filter */
     if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) < 0) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to install seccomp filter: %s\n", strerror(errno));
-    } else {
-        DEBUG_PRINT("SANDBOX: Seccomp network filter applied\n");
+        LOG_ERRNO("Failed to install seccomp filter");
+        return -1;
     }
+    DEBUG_PRINT("SANDBOX: Seccomp network filter applied\n");
+    return 0;
 }
 
 /* Apply all sandbox restrictions as defined by environment variables.
@@ -646,5 +646,7 @@ static void apply_no_network(void) {
 void apply_sandboxing(void) {
     apply_memory_limit();
     apply_landlock();
-    apply_no_network();
+    if (getenv("READONLYBOX_NO_NETWORK") && apply_no_network() != 0) {
+        LOG_FATAL("--no-network requested but seccomp failed to apply. Cannot enforce network restriction.");
+    }
 }

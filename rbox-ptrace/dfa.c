@@ -3,6 +3,8 @@
 #include <string.h>
 #include <pthread.h>
 
+#include "debug.h"
+
 extern const unsigned char rbox_ptrace_dfa[];
 extern const size_t rbox_ptrace_dfa_size;
 
@@ -14,7 +16,7 @@ static bool g_dfa_initialized = false;
 
 static void dfa_init_once_wrapper(void) {
     if (!dfa_eval_validate_id(rbox_ptrace_dfa, rbox_ptrace_dfa_size, EXPECTED_IDENTIFIER)) {
-        fprintf(stderr, "DFA initialization failed: identifier mismatch\n");
+        LOG_ERROR("DFA initialization failed: identifier mismatch");
         return;
     }
     g_dfa_initialized = true;
@@ -68,7 +70,7 @@ void dfa_debug(const char* cmd) {
     pthread_once(&dfa_init_once, dfa_init_once_wrapper);
 
     if (!g_dfa_initialized) {
-        fprintf(stderr, "DFA not initialized\n");
+        LOG_ERROR("DFA not initialized");
         return;
     }
 

@@ -14,6 +14,8 @@
 #include <sys/ptrace.h>
 #include <stdbool.h>
 
+#include "debug.h"
+
 /* Original user information */
 static uid_t g_original_uid = 0;
 static gid_t g_original_gid = 0;
@@ -97,26 +99,25 @@ void privilege_drop(void) {
             perror("setuid");
         }
         if (geteuid() != g_original_uid) {
-            fprintf(stderr, "ERROR: Failed to drop privileges\n");
-            _exit(1);
+            LOG_FATAL("Failed to drop privileges");
         }
 
         /* Prevent gaining new privileges via execve (e.g., setuid binaries) */
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-            fprintf(stderr, "Warning: failed to set PR_SET_NO_NEW_PRIVS\n");
+            LOG_WARN("failed to set PR_SET_NO_NEW_PRIVS");
         }
 
         if (setenv("HOME", home, 1) != 0) {
-            fprintf(stderr, "Warning: failed to set HOME\n");
+            LOG_WARN("failed to set HOME");
         }
         if (setenv("USER", username, 1) != 0) {
-            fprintf(stderr, "Warning: failed to set USER\n");
+            LOG_WARN("failed to set USER");
         }
         if (setenv("LOGNAME", username, 1) != 0) {
-            fprintf(stderr, "Warning: failed to set LOGNAME\n");
+            LOG_WARN("failed to set LOGNAME");
         }
         if (setenv("SHELL", shell, 1) != 0) {
-            fprintf(stderr, "Warning: failed to set SHELL\n");
+            LOG_WARN("failed to set SHELL");
         }
         unsetenv("PKEXEC_UID");
         unsetenv("PKEXEC_AGENT");
@@ -128,7 +129,7 @@ void privilege_drop(void) {
          * Use portable implementation for non-glibc systems (e.g., musl). */
 #if HAVE_CLEARENV
         if (clearenv() != 0) {
-            fprintf(stderr, "Warning: clearenv() failed\n");
+            LOG_WARN("clearenv() failed");
         }
 #else
         extern char **environ;

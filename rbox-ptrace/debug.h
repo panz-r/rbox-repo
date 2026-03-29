@@ -6,8 +6,37 @@
 #define DEBUG_H
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
 #include <time.h>
 #include <stdbool.h>
+#include <string.h>
+
+#ifndef PROGRAM_NAME
+#define PROGRAM_NAME "readonlybox-ptrace"
+#endif
+
+#define LOG_ERROR(fmt, ...) do { \
+        fprintf(stderr, "%s: ERROR: " fmt "\n", PROGRAM_NAME, ##__VA_ARGS__); \
+    } while(0)
+
+#define LOG_WARN(fmt, ...) do { \
+        fprintf(stderr, "%s: Warning: " fmt "\n", PROGRAM_NAME, ##__VA_ARGS__); \
+    } while(0)
+
+#define LOG_FATAL(fmt, ...) do { \
+        fprintf(stderr, "%s: FATAL: " fmt "\n", PROGRAM_NAME, ##__VA_ARGS__); \
+        exit(1); \
+    } while(0)
+
+#define LOG_ERRNO(msg) do { \
+        fprintf(stderr, "%s: ERROR: %s: %s\n", PROGRAM_NAME, msg, strerror(errno)); \
+    } while(0)
+
+#define LOG_FATAL_ERRNO(msg) do { \
+        fprintf(stderr, "%s: FATAL: %s: %s\n", PROGRAM_NAME, msg, strerror(errno)); \
+        exit(1); \
+    } while(0)
 
 #ifdef DEBUG
 /* Debug file pointer - defined in main.c */

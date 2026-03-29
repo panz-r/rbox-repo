@@ -765,7 +765,7 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
 
     /* Initialize memory context */
     if (memory_init(&mem_ctx, pid, REG_SP(regs)) < 0) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to init memory context for block\n");
+        LOG_ERROR("Failed to init memory context for block");
         return -1;
     }
 
@@ -780,7 +780,7 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
     unsigned long cmd_addr = memory_write_string(&mem_ctx, message_cmd);
 
     if (!sh_addr || !dash_c_addr || !cmd_addr) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to write shell command strings\n");
+        LOG_ERROR("Failed to write shell command strings");
         return -1;
     }
 
@@ -793,7 +793,7 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
 
     unsigned long new_argv = memory_write_pointer_array(&mem_ctx, argv_ptrs, 3);
     if (!new_argv) {
-        fprintf(stderr, "readonlybox-ptrace: Failed to write argv for shell\n");
+        LOG_ERROR("Failed to write argv for shell");
         return -1;
     }
 

@@ -116,7 +116,7 @@ static void drop_privileges_and_apply_env(void) {
         if (eq) {
             *eq = '\0';
             if (setenv(g_extra_env[i], eq + 1, 1) != 0) {
-                fprintf(stderr, "Warning: failed to set env var %s\n", g_extra_env[i]);
+                LOG_WARN("failed to set env var %s", g_extra_env[i]);
             }
             *eq = '=';
         } else {
@@ -141,7 +141,8 @@ static int trace_process(pid_t initial_pid) {
                PTRACE_O_TRACEEXEC |
                PTRACE_O_TRACECLONE |
                PTRACE_O_TRACEFORK |
-               PTRACE_O_TRACEVFORK) < 0) {
+               PTRACE_O_TRACEVFORK |
+               PTRACE_O_EXITKILL) < 0) {
         perror("ptrace(SETOPTIONS)");
         return 1;
     }
@@ -249,7 +250,8 @@ static int trace_process(pid_t initial_pid) {
                            PTRACE_O_TRACEEXEC |
                            PTRACE_O_TRACECLONE |
                            PTRACE_O_TRACEFORK |
-                           PTRACE_O_TRACEVFORK) < 0) {
+                           PTRACE_O_TRACEVFORK |
+                           PTRACE_O_EXITKILL) < 0) {
                     DEBUG_PRINT("PARENT: child %d SETOPTIONS failed: %s\n", (int)child_pid, strerror(errno));
                 }
                 /* Resume child - it will stop at next syscall */
@@ -281,7 +283,7 @@ static int trace_process(pid_t initial_pid) {
                 ProcessState *state = syscall_get_process_state(pid);
                 if (!state) {
                     /* Process table full - detach and block to prevent untracked execves */
-                    fprintf(stderr, "%s: CRITICAL: Process table full, detaching from pid %d - execve will not be validated!\n", g_progname, pid);
+                    LOG_ERROR("Process table full, detaching from pid %d - execve will not be validated!", pid);
                     syslog(LOG_CRIT, "readonlybox-ptrace: CRITICAL: Process table full, detaching from pid %d - execve will not be validated!", pid);
                     ptrace(PTRACE_DETACH, pid, 0, 0);
                     continue;
@@ -403,7 +405,7 @@ int main(int argc, char *argv[]) {
             case 'p':
                 attach_pid = atoi(optarg);
                 if (attach_pid <= 0) {
-                    fprintf(stderr, "%s: Invalid PID: %s\n", g_progname, optarg);
+                    LOG_ERROR("Invalid PID: %s", optarg);
                     return 1;
                 }
                 break;
@@ -413,7 +415,7 @@ int main(int argc, char *argv[]) {
             case 'e': {
                 char **new_env = realloc(g_extra_env, (g_extra_env_count + 1) * sizeof(char *));
                 if (!new_env) {
-                    fprintf(stderr, "Failed to allocate memory for --env\n");
+                    LOG_ERROR("Failed to allocate memory for --env");
                     return 1;
                 }
                 g_extra_env = new_env;
@@ -434,7 +436,7 @@ int main(int argc, char *argv[]) {
                  * The file is in /dev/shm (memory-backed tmpfs) and is unlinked after reading. */
                 FILE *f = fopen(optarg, "r");
                 if (!f) {
-                    fprintf(stderr, "Error: cannot open environment file %s: %s\n", optarg, strerror(errno));
+                    LOG_ERROR("cannot open environment file %s: %s", optarg, strerror(errno));
                     return 1;
                 }
                 char *line = NULL;
@@ -446,14 +448,14 @@ int main(int argc, char *argv[]) {
                     /* putenv expects the string to remain valid; strdup copies it */
                     char *env_entry = strdup(line);
                     if (!env_entry) {
-                        fprintf(stderr, "Error: out of memory restoring environment\n");
+                        LOG_ERROR("out of memory restoring environment");
                         free(line);
                         fclose(f);
                         unlink(optarg);
                         return 1;
                     }
                     if (putenv(env_entry) != 0) {
-                        fprintf(stderr, "Warning: putenv failed for '%s'\n", env_entry);
+                        LOG_WARN("putenv failed for '%s'", env_entry);
                         free(env_entry);
                     }
                     /* Note: putenv does not copy the string on success,
@@ -475,19 +477,19 @@ int main(int argc, char *argv[]) {
             case 261:
                 /* Set memory limit via environment variable */
                 if (setenv("READONLYBOX_MEMORY_LIMIT", optarg, 1) != 0) {
-                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_MEMORY_LIMIT\n", g_progname);
+                    LOG_WARN("failed to set READONLYBOX_MEMORY_LIMIT");
                 }
                 break;
             case 262:
                 /* Set landlock paths via environment variable (legacy) or hard-allow */
                 if (setenv("READONLYBOX_HARD_ALLOW", optarg, 1) != 0) {
-                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_HARD_ALLOW\n", g_progname);
+                    LOG_WARN("failed to set READONLYBOX_HARD_ALLOW");
                 }
                 break;
             case 263:
                 /* Block network access via environment variable */
                 if (setenv("READONLYBOX_NO_NETWORK", "1", 1) != 0) {
-                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_NO_NETWORK\n", g_progname);
+                    LOG_WARN("failed to set READONLYBOX_NO_NETWORK");
                 }
                 break;
             case 264:
@@ -497,7 +499,7 @@ int main(int argc, char *argv[]) {
             case 265:
                 /* Set hard deny paths via environment variable */
                 if (setenv("READONLYBOX_HARD_DENY", optarg, 1) != 0) {
-                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_HARD_DENY\n", g_progname);
+                    LOG_WARN("failed to set READONLYBOX_HARD_DENY");
                 }
                 break;
             default:
@@ -516,7 +518,7 @@ int main(int argc, char *argv[]) {
             cmd_start++;
         }
         if (cmd_start < argc) {
-            fprintf(stderr, "%s: Error: Cannot specify both -p/--attach and a command\n", g_progname);
+            LOG_ERROR("Cannot specify both -p/--attach and a command");
             print_usage();
             return 1;
         }
@@ -543,7 +545,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (!cmd_path) {
-            fprintf(stderr, "%s: Command not found: %s\n", g_progname, argv[cmd_start]);
+            LOG_ERROR("Command not found: %s", argv[cmd_start]);
             return 1;
         }
     }
@@ -574,13 +576,13 @@ int main(int argc, char *argv[]) {
     }
 
     if (validation_init() < 0) {
-        fprintf(stderr, "%s: Failed to initialize validation\n", g_progname);
+        LOG_ERROR("Failed to initialize validation");
         free(cmd_path);
         return 1;
     }
 
     if (syscall_handler_init() < 0) {
-        fprintf(stderr, "%s: Failed to initialize syscall handler\n", g_progname);
+        LOG_ERROR("Failed to initialize syscall handler");
         validation_shutdown();
         free(cmd_path);
         return 1;
@@ -594,12 +596,12 @@ int main(int argc, char *argv[]) {
         /* Send PTRACE_ATTACH to the target process */
         if (ptrace(PTRACE_ATTACH, attach_pid, NULL, NULL) < 0) {
             if (errno == EPERM) {
-                fprintf(stderr, "%s: ptrace attach denied for pid %d.\n", g_progname, attach_pid);
+                LOG_ERROR("ptrace attach denied for pid %d", attach_pid);
                 fprintf(stderr, "This may be due to Yama LSM (/proc/sys/kernel/yama/ptrace_scope).\n");
                 fprintf(stderr, "Try: echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope\n");
                 fprintf(stderr, "Or run as root.\n");
             } else {
-                perror("ptrace(ATTACH)");
+                LOG_ERRNO("ptrace(ATTACH)");
             }
             syscall_handler_cleanup();
             validation_shutdown();
@@ -610,7 +612,7 @@ int main(int argc, char *argv[]) {
         /* Wait for the process to stop */
         int status;
         if (waitpid(attach_pid, &status, 0) < 0) {
-            perror("waitpid");
+            LOG_ERRNO("waitpid");
             syscall_handler_cleanup();
             validation_shutdown();
             free(cmd_path);
@@ -618,7 +620,7 @@ int main(int argc, char *argv[]) {
         }
         
         if (!WIFSTOPPED(status)) {
-            fprintf(stderr, "%s: Process %d did not stop as expected\n", g_progname, attach_pid);
+            LOG_ERROR("Process %d did not stop as expected", attach_pid);
             syscall_handler_cleanup();
             validation_shutdown();
             free(cmd_path);
@@ -631,8 +633,9 @@ int main(int argc, char *argv[]) {
                    PTRACE_O_TRACEEXEC |
                    PTRACE_O_TRACECLONE |
                    PTRACE_O_TRACEFORK |
-                   PTRACE_O_TRACEVFORK) < 0) {
-            perror("ptrace(SETOPTIONS)");
+                   PTRACE_O_TRACEVFORK |
+                   PTRACE_O_EXITKILL) < 0) {
+            LOG_ERRNO("ptrace(SETOPTIONS)");
             syscall_handler_cleanup();
             validation_shutdown();
             free(cmd_path);
@@ -641,7 +644,7 @@ int main(int argc, char *argv[]) {
         
         /* Resume the process with PTRACE_SYSCALL to trap syscall entries/exits */
         if (ptrace(PTRACE_SYSCALL, attach_pid, NULL, NULL) < 0) {
-            perror("ptrace(SYSCALL)");
+            LOG_ERRNO("ptrace(SYSCALL)");
             syscall_handler_cleanup();
             validation_shutdown();
             free(cmd_path);
@@ -690,7 +693,7 @@ int main(int argc, char *argv[]) {
         strncpy(cmd_path_copy, cmd_path, PATH_MAX - 1);
         cmd_path_copy[PATH_MAX - 1] = '\0';
         execv(cmd_path_copy, &argv[cmd_start]);
-        fprintf(stderr, "%s: execv failed for %s: %s\n", g_progname, cmd_path_copy, strerror(errno));
+        LOG_ERROR("execv failed for %s: %s", cmd_path_copy, strerror(errno));
         _exit(1);
     }
 
