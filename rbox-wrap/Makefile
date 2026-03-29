@@ -49,21 +49,15 @@ endif
 # Default target
 all: dfa $(TARGET)
 
-# Check that required tools exist
+# Build required tools from c-dfa if they don't exist
 $(NFA_BUILDER):
-	@echo "Error: nfa_builder not found. Run 'make' in the c-dfa directory first." >&2
-	@echo "  cd ../c-dfa && make" >&2
-	@exit 1
+	$(MAKE) -C $(C_DFA) tools/nfa_builder
 
 $(NFA2DFA): $(NFA_BUILDER)
-	@echo "Error: nfa2dfa_advanced not found. Run 'make' in the c-dfa directory first." >&2
-	@echo "  cd ../c-dfa && make" >&2
-	@exit 1
+	$(MAKE) -C $(C_DFA) tools/nfa2dfa_advanced
 
 $(DFA2C): $(NFA2DFA)
-	@echo "Error: dfa2c_array not found. Run 'make' in the c-dfa directory first." >&2
-	@echo "  cd ../c-dfa && make" >&2
-	@exit 1
+	$(MAKE) -C $(C_DFA) tools/dfa2c_array
 
 # Build DFA from pattern file
 dfa: $(DFA_DATA_C)

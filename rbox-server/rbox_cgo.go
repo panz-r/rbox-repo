@@ -12,7 +12,7 @@ package main
 
 /*
 #cgo LDFLAGS: -lpthread -lm
-#cgo CFLAGS:
+#cgo CFLAGS: -I../rbox-protocol/include -I../shellsplit/include
 
 #include <rbox_protocol.h>
 #include <stdlib.h>

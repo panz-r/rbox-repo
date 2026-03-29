@@ -309,6 +309,16 @@ func BuildBinaries() error {
 		cc = "gcc"
 	}
 
+	// Ensure c-dfa tools are fully built before rbox-wrap (which needs dfa2c_array)
+	// Build c-dfa tools explicitly using the 'tools' target
+	cmd := exec.Command("make", "tools")
+	cmd.Dir = filepath.Join(wd, cDfaDir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("c-dfa tools build failed: %w", err)
+	}
+
 	// Force rebuild checks
 	dfaC := filepath.Join(wd, clientDir, "readonlybox_dfa.c")
 	dfaSo := filepath.Join(wd, binDir, "libreadonlybox_client.so")
@@ -337,7 +347,7 @@ func BuildBinaries() error {
 	fmt.Println("=== Building readonlybox-server ===")
 	rboxProto := filepath.Join(wd, rboxProtocolDir)
 	shellSplit := filepath.Join(wd, shellsplitDir)
-	cmd := exec.Command("go", "build", "-tags", "cgo",
+	cmd = exec.Command("go", "build", "-tags", "cgo",
 		"-o", filepath.Join(wd, binDir, "readonlybox-server"))
 	cmd.Dir = filepath.Join(wd, rboxServerDir)
 	cmd.Stdout = os.Stdout

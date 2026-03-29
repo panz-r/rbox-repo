@@ -24,3 +24,5 @@ rbox-ptrace/compile_commands.json
 rbox-ptrace/.cache/
 # kilo telemetry
 telemetry-id
+# compile_commands.json
+compile_commands.json
