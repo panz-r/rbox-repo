@@ -15,9 +15,8 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../c-dfa/include -I../rbox-preload -I../shellsplit/include -I../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
 LDFLAGS = -lpthread -lm
 
-# Libraries
-LDFLAGS += ../rbox-protocol/librbox_protocol.a
-LDFLAGS += ../shellsplit/libshellsplit.a
+# Libraries (use shared library - rbox-protocol includes shellsplit in .so)
+LDFLAGS += -L../rbox-protocol -lrbox_protocol
 LDFLAGS += ../c-dfa/libdfa_eval.a
 
 # DFA Tools

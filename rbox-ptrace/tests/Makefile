@@ -10,7 +10,6 @@ LDFLAGS = -lpthread -lm
 
 # Pre-built libraries
 LIBS = ../../c-dfa/libdfa_eval.a \
-       ../../shellsplit/libshellsplit.a \
        ../../rbox-protocol/librbox_protocol.a
 
 # Test source files

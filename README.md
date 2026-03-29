@@ -25,6 +25,9 @@ Perfect for:
 git clone https://github.com/panz-r/rbox-repo.git
 cd rbox-repo
 
+# Initialize git submodules (cadical SAT solver)
+git submodule update --init
+
 # Build all tools (ptrace client, rbox-server TUI)
 mage build
 

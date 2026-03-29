@@ -27,7 +27,7 @@ build: all
 libs:
 	$(MAKE) -C $(C_DFA) libdfa_eval.a
 	$(MAKE) -C $(SHELLSPLIT) libshellsplit.a
-	$(MAKE) -C $(RBOX_PROTO) librbox_protocol.a
+	$(MAKE) -C $(RBOX_PROTO) librbox_protocol.so
 
 rbox-server: go.mod go.sum *.go libs
 	$(GO) build $(GOFLAGS) -o rbox-server .
