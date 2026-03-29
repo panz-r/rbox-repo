@@ -17,6 +17,8 @@ LDFLAGS = -lpthread -lm
 
 # Libraries
 LDFLAGS += ../rbox-protocol/librbox_protocol.a
+LDFLAGS += ../shellsplit/libshellsplit.a
+LDFLAGS += ../c-dfa/libdfa_eval.a
 
 # DFA Tools
 NFA_BUILDER = ../c-dfa/tools/nfa_builder
@@ -44,10 +46,8 @@ SRCS = main.c \
        pkexec.c \
        judge.c \
        $(DFA_DATA_C) \
-       ../c-dfa/src/dfa_eval.c \
        ../shellsplit/src/env_screener.c \
-       ../shellsplit/src/relative_permutation_entropy.c \
-       ../shellsplit/src/shell_tokenizer.c
+       ../shellsplit/src/relative_permutation_entropy.c
 
 # Object files
 OBJS = $(SRCS:.c=.o)
@@ -105,6 +105,7 @@ debug: $(TARGET)
 clean:
 	rm -f $(TARGET) $(OBJS) *.o
 	rm -rf $(BUILD_DIR)
+	rm -f ../c-dfa/src/dfa_eval.o ../shellsplit/src/env_screener.o ../shellsplit/src/relative_permutation_entropy.o ../shellsplit/src/shell_tokenizer.o
 
 # Help target
 help:
