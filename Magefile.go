@@ -658,6 +658,104 @@ func Install() error {
 	return nil
 }
 
+// Uninstall removes binaries and libraries from system
+func Uninstall() error {
+	// Use sudo if not running as root
+	sudo := ""
+	if os.Getuid() != 0 {
+		sudo = "sudo"
+	}
+
+	fmt.Printf("Uninstalling from /usr/local (%sinstall)\n", sudo)
+
+	// Remove executables from /usr/local/bin
+	executables := []string{
+		"/usr/local/bin/readonlybox-server",
+		"/usr/local/bin/readonlybox-ptrace",
+		"/usr/local/bin/rbox-wrap",
+	}
+	for _, bin := range executables {
+		base := filepath.Base(bin)
+		var cmd *exec.Cmd
+		if sudo != "" {
+			cmd = exec.Command(sudo, "rm", "-f", bin)
+		} else {
+			cmd = exec.Command("rm", "-f", bin)
+		}
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("  Warning: removing %s failed: %v\n", base, err)
+		} else {
+			fmt.Printf("  Removed %s\n", bin)
+		}
+	}
+
+	// Remove shared library
+	libSrc := "/usr/local/lib/librbox_protocol.so"
+	var libCmd *exec.Cmd
+	if sudo != "" {
+		libCmd = exec.Command(sudo, "rm", "-f", libSrc)
+	} else {
+		libCmd = exec.Command("rm", "-f", libSrc)
+	}
+	libCmd.Stdout = os.Stdout
+	libCmd.Stderr = os.Stderr
+	if err := libCmd.Run(); err != nil {
+		fmt.Printf("  Warning: removing %s failed: %v\n", libSrc, err)
+	} else {
+		fmt.Printf("  Removed %s\n", libSrc)
+	}
+
+	// Run ldconfig to update library cache
+	fmt.Printf("  Running ldconfig...\n")
+	var ldconfigCmd *exec.Cmd
+	if sudo != "" {
+		ldconfigCmd = exec.Command(sudo, "ldconfig")
+	} else {
+		ldconfigCmd = exec.Command("ldconfig")
+	}
+	ldconfigCmd.Stdout = os.Stdout
+	ldconfigCmd.Stderr = os.Stderr
+	if err := ldconfigCmd.Run(); err != nil {
+		fmt.Printf("  Warning: ldconfig failed: %v\n", err)
+	}
+
+	// Remove PolicyKit policy file
+	policyDst := "/usr/share/polkit-1/actions/org.freedesktop.policykit.pkexec.readonlybox-ptrace.policy"
+	var policyCmd *exec.Cmd
+	if sudo != "" {
+		policyCmd = exec.Command(sudo, "rm", "-f", policyDst)
+	} else {
+		policyCmd = exec.Command("rm", "-f", policyDst)
+	}
+	policyCmd.Stdout = os.Stdout
+	policyCmd.Stderr = os.Stderr
+	if err := policyCmd.Run(); err != nil {
+		fmt.Printf("  Warning: removing PolicyKit policy failed: %v\n", err)
+	} else {
+		fmt.Printf("  Removed %s\n", policyDst)
+	}
+
+	// Remove socket directory
+	var socketCmd *exec.Cmd
+	if sudo != "" {
+		socketCmd = exec.Command(sudo, "rm", "-rf", socketDir)
+	} else {
+		socketCmd = exec.Command("rm", "-rf", socketDir)
+	}
+	socketCmd.Stdout = os.Stdout
+	socketCmd.Stderr = os.Stderr
+	if err := socketCmd.Run(); err != nil {
+		fmt.Printf("  Warning: removing socket directory failed: %v\n", err)
+	} else {
+		fmt.Printf("  Removed %s\n", socketDir)
+	}
+
+	fmt.Println("Uninstallation complete")
+	return nil
+}
+
 // runMakeClean runs make clean in a directory
 func runMakeClean(dir string) error {
 	cmd := exec.Command("make", "clean")
