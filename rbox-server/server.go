@@ -198,7 +198,7 @@ func main() {
 		}
 
 		// Make decision
-		decision, reason := makeNoninteractiveDecision(cmd, args)
+		decision, reason := makeNoninteractiveDecision(cmd, args, *autoDeny)
 
 		// Make env decisions: auto-deny high-score env vars (score >= 0.8)
 		envDecisions := makeEnvDecisions(req)
@@ -232,7 +232,7 @@ func main() {
 
 // makeNoninteractiveDecision determines if a command should be allowed or denied
 // This is ONLY used in non-interactive (non-TUI) mode for automatic decisions
-func makeNoninteractiveDecision(cmd string, args []string) (uint8, string) {
+func makeNoninteractiveDecision(cmd string, args []string, autoDeny bool) (uint8, string) {
 	// Empty command
 	if cmd == "" {
 		return DecisionDeny, "empty command"
@@ -272,7 +272,7 @@ func makeNoninteractiveDecision(cmd string, args []string) (uint8, string) {
 	}
 
 	// Auto-deny unknown commands if flag is set
-	if *autoDeny {
+	if autoDeny {
 		return DecisionDeny, "unknown command"
 	}
 

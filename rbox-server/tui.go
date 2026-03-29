@@ -739,6 +739,18 @@ func minInt(a, b int) int {
 	return b
 }
 
+// clampScrollY ensures scrollY is within valid bounds for the given content height
+func clampScrollY(scrollY, maxHeight, totalItems int) int {
+	maxScrollY := maxInt(0, totalItems-maxHeight)
+	if scrollY > maxScrollY {
+		return maxScrollY
+	}
+	if scrollY < 0 {
+		return 0
+	}
+	return scrollY
+}
+
 // extractBaseName returns the basename of a path or command name
 func extractBaseName(path string) string {
 	if path == "" {
@@ -1055,29 +1067,16 @@ func (m *Model) View() string {
 func (m *Model) renderHistoryList(sb *strings.Builder, maxHeight int) {
 	// maxHeight is the available height for history items
 
-	// Calculate maximum valid scrollY to keep header visible
-	// scrollY can never exceed (total items - available height for items)
-	maxScrollY := len(m.commands) - maxHeight
-	if maxScrollY < 0 {
-		maxScrollY = 0
-	}
-
-	// Hard clamp scrollY - THIS IS THE CRITICAL FIX
-	// scrollY must never push header off screen
-	if m.scrollY > maxScrollY {
-		m.scrollY = maxScrollY
-	}
-	if m.scrollY < 0 {
-		m.scrollY = 0
-	}
-
 	// Ensure selectedIdx is visible
 	if m.selectedIdx < m.scrollY {
 		m.scrollY = m.selectedIdx
 	}
 	if m.selectedIdx >= m.scrollY+maxHeight {
-		m.scrollY = max(0, m.selectedIdx-maxHeight+1)
+		m.scrollY = maxInt(0, m.selectedIdx-maxHeight+1)
 	}
+
+	// Clamp scrollY to valid range
+	m.scrollY = clampScrollY(m.scrollY, maxHeight, len(m.commands))
 
 	visibleStart := m.scrollY
 	visibleEnd := m.scrollY + maxHeight
