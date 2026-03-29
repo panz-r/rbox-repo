@@ -201,28 +201,29 @@ func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, env
 	cReason := C.CString(reason)
 	defer C.free(unsafe.Pointer(cReason))
 
-	// Convert env decisions
 	var envCount C.int = 0
 	var cEnvNames **C.char = nil
 	var cEnvDecisions *C.uint8_t = nil
 
 	if len(envDecisions) > 0 {
 		envCount = C.int(len(envDecisions))
+
 		envNames := make([]*C.char, len(envDecisions))
-		// Pack decisions into bitmap (bit-packed, not individual bytes)
+		for i, e := range envDecisions {
+			envNames[i] = C.CString(e.Name)
+			defer func(idx int) {
+				C.free(unsafe.Pointer(envNames[idx]))
+			}(i)
+		}
+		cEnvNames = &envNames[0]
+
 		bitmapSize := (len(envDecisions) + 7) / 8
 		envDecs := make([]C.uint8_t, bitmapSize)
 		for i, e := range envDecisions {
-			envNames[i] = C.CString(e.Name)
 			if e.Decision == 1 {
 				envDecs[i/8] |= (1 << (i % 8))
 			}
-			// Free immediately after use (not deferred in loop to avoid double-free)
-			_ = C.GoString(envNames[i])
-			C.free(unsafe.Pointer(envNames[i]))
-			envNames[i] = nil
 		}
-		cEnvNames = &envNames[0]
 		cEnvDecisions = &envDecs[0]
 	}
 
@@ -232,7 +233,6 @@ func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, env
 		return fmt.Errorf("decide failed: %s", C.GoString(C.rbox_strerror(err)))
 	}
 
-	// Note: C library frees the request after decide
 	r.cRequest = nil
 
 	return nil

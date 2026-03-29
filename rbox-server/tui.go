@@ -846,7 +846,6 @@ func (m *Model) retryPendingDecisions() {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()
 
-	// Check for too many pending (user should restart server)
 	if len(pendingRequests) >= 100 {
 		fmt.Fprintf(os.Stderr, "ERROR: Too many pending decisions (%d), please restart server\n", len(pendingRequests))
 		os.Exit(1)
@@ -855,25 +854,20 @@ func (m *Model) retryPendingDecisions() {
 	for id, cmd := range m.pendingRetry {
 		req, ok := pendingRequests[id]
 		if !ok {
-			// Request already processed or removed
 			delete(m.pendingRetry, id)
 			continue
 		}
 
-		// Reconstruct decision
 		decision := DecisionAllow
 		if cmd.Decision == "DENY" {
 			decision = DecisionDeny
 		}
 
-		// Try to resend with full details
 		err := req.Decide(decision, cmd.Reason, cmd.Duration, cmd.EnvDecisions)
 		if err != nil {
-			// Still failing - keep for next retry
 			continue
 		}
 
-		// Success - remove from pending and retry map
 		delete(pendingRequests, id)
 		delete(m.pendingRetry, id)
 	}
