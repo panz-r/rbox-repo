@@ -463,10 +463,18 @@ static void apply_landlock(void) {
     }
 
     for (int i = 0; i < deny_count; i++) {
-        int dir_fd = open(deny_entries[i].resolved, O_PATH | O_CLOEXEC);
+        int dir_fd = open(deny_entries[i].resolved, O_NOFOLLOW | O_PATH | O_CLOEXEC);
         if (dir_fd < 0) {
             fprintf(stderr, "readonlybox-ptrace: Landlock: cannot open deny path '%s': %s\n",
                     deny_entries[i].resolved, strerror(errno));
+            continue;
+        }
+
+        struct stat st;
+        if (fstat(dir_fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "readonlybox-ptrace: Landlock: deny path '%s' is not a directory\n",
+                    deny_entries[i].resolved);
+            close(dir_fd);
             continue;
         }
 
@@ -486,10 +494,18 @@ static void apply_landlock(void) {
     }
 
     for (int i = 0; i < allow_count; i++) {
-        int dir_fd = open(allow_entries[i].resolved, O_PATH | O_CLOEXEC);
+        int dir_fd = open(allow_entries[i].resolved, O_NOFOLLOW | O_PATH | O_CLOEXEC);
         if (dir_fd < 0) {
             fprintf(stderr, "readonlybox-ptrace: Landlock: cannot open allow path '%s': %s\n",
                     allow_entries[i].resolved, strerror(errno));
+            continue;
+        }
+
+        struct stat st;
+        if (fstat(dir_fd, &st) != 0 || !S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "readonlybox-ptrace: Landlock: allow path '%s' is not a directory\n",
+                    allow_entries[i].resolved);
+            close(dir_fd);
             continue;
         }
 

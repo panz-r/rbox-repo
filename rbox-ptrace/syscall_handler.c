@@ -251,6 +251,7 @@ static int consume_allowance(ProcessState *state, const char *subcommand) {
  */
 static const char *strip_outermost_wrapper_prefix(const char *full_command,
                                                     char *dst, size_t dst_size) {
+    errno = 0;
     if (!full_command || !dst || dst_size < 2) {
         errno = EINVAL;
         return NULL;
@@ -263,7 +264,7 @@ static const char *strip_outermost_wrapper_prefix(const char *full_command,
     }
 
     /* Copy input to destination where extractors can modify in place */
-    memcpy(dst, full_command, cmd_len + 1);
+    memmove(dst, full_command, cmd_len + 1);
 
     /* Try each known wrapper */
     for (int i = 0; WRAPPER_SPECS[i].name; i++) {

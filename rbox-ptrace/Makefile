@@ -62,6 +62,9 @@ ifeq ($(filter -j%,$(MAKEFLAGS)),)
 MAKEFLAGS += -j$(shell nproc 2>/dev/null || echo 1)
 endif
 
+all: check-prereqs dfa
+	$(MAKE) $(TARGET)
+
 # Validate prerequisites
 check-prereqs:
 	@which $(CC) > /dev/null 2>&1 || (echo "ERROR: $(CC) not found"; exit 1)
@@ -70,8 +73,6 @@ check-prereqs:
 	@test -x $(DFA2C) || (echo "ERROR: dfa2c_array not found (run 'make deps' in ../c-dfa first)"; exit 1)
 	@which valgrind > /dev/null 2>&1 || echo "WARNING: valgrind not installed (valgrind target will be skipped)"
 	@which cppcheck > /dev/null 2>&1 || echo "WARNING: cppcheck not installed (cppcheck target will be skipped)"
-
-all: check-prereqs dfa $(TARGET)
 
 # Build DFA from pattern file
 dfa: $(BUILD_DIR) $(DFA_DATA_C)
