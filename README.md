@@ -36,9 +36,9 @@ readonlybox-server --auto-deny
 ### Run Commands Through Interceptor
 
 ```bash
-readonlybox-ptrace -- /bin/ls -la
-readonlybox-ptrace -- git status
-readonlybox-ptrace -- find /home -name "*.txt"
+# Restricted shell: no network, 1GB memory, read-only /etc, read-write /tmp
+readonlybox-ptrace --no-network --memory-limit 1G \
+    --hard-allow /w:rwx,/usr/bin:rx,/lib64:rx,/usr/lib:rx,/etc:ro,/tmp:rw,/proc:ro -- bash
 ```
 
 ### Server Options
@@ -55,15 +55,6 @@ readonlybox-ptrace -- find /home -name "*.txt"
 ```bash
 # Custom socket path
 READONLYBOX_SOCKET=/var/run/readonlybox.sock readonlybox-ptrace -- vim
-```
-
-### Policy File
-
-Policies are saved to `/tmp/readonlybox_policies.conf` when using timed allow/deny:
-
-```
-2026-01-15 15:04:05 allow command=python3 args="print(1)" # risk=MEDIUM
-2026-01-15 15:04:10 deny command=rm args="/tmp/test" # risk=CRITICAL
 ```
 
 ## License
