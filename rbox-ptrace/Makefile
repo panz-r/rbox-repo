@@ -23,11 +23,14 @@ NFA_BUILDER = ../c-dfa/tools/nfa_builder
 NFA2DFA = ../c-dfa/tools/nfa2dfa_advanced
 DFA2C = ../c-dfa/tools/dfa2c_array
 
+# Build directory for generated files
+BUILD_DIR = build
+
 # Pattern and DFA files
 PATTERN_FILE = rbox_ptrace_embedded_commands.txt
-NFA_FILE = rbox_ptrace.nfa
-DFA_FILE = rbox_ptrace.dfa
-DFA_DATA_C = rbox_ptrace_dfa_data.c
+NFA_FILE = $(BUILD_DIR)/rbox_ptrace.nfa
+DFA_FILE = $(BUILD_DIR)/rbox_ptrace.dfa
+DFA_DATA_C = $(BUILD_DIR)/rbox_ptrace_dfa_data.c
 
 # Source files
 SRCS = main.c \
@@ -71,9 +74,12 @@ check-prereqs:
 all: check-prereqs dfa $(TARGET)
 
 # Build DFA from pattern file
-dfa: $(DFA_DATA_C)
+dfa: $(BUILD_DIR) $(DFA_DATA_C)
 
-$(NFA_FILE): $(PATTERN_FILE)
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+$(NFA_FILE): $(PATTERN_FILE) | $(BUILD_DIR)
 	$(NFA_BUILDER) $(PATTERN_FILE) $(NFA_FILE)
 
 $(DFA_FILE): $(NFA_FILE)
@@ -97,7 +103,8 @@ debug: CFLAGS += -g -O0 -DDEBUG
 debug: $(TARGET)
 
 clean:
-	$(RM) $(TARGET) $(OBJS) *.o $(NFA_FILE) $(DFA_FILE) $(DFA_DATA_C)
+	rm -f $(TARGET) $(OBJS) *.o
+	rm -rf $(BUILD_DIR)
 
 # Help target
 help:
