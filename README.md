@@ -2,6 +2,7 @@
 
 **A ptrace-based command interceptor for user-decided execution**
 
+[![C](https://img.shields.io/badge/C-C11-555?style=for-the-badge&logo=c)](https://en.cppreference.com/w/c/11)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
