@@ -843,7 +843,18 @@ func (m *Model) executeDecision() {
 		envDecisions = m.expandedCmd.EnvDecisions
 	}
 
-	MakeDecision(m.expandedCmd.RequestID, allow, reason, duration, envDecisions)
+	err := MakeDecision(m.expandedCmd.RequestID, allow, reason, duration, envDecisions)
+	if err != nil {
+		// Decision failed - request remains pending for potential retry
+		// Log error but keep UI state showing pending request
+		fmt.Fprintf(os.Stderr, "Error sending decision: %v\n", err)
+		m.expandedCmd.Decision = "ERROR"
+		m.expandedCmd.Reason = err.Error()
+		m.lastDecision = "ERROR"
+		m.lastTime = time.Now()
+		m.flashTimer = FlashTimerSeconds
+		return
+	}
 
 	// Log decision to user_log.xml if marked
 	if m.logDecision {
@@ -856,7 +867,7 @@ func (m *Model) executeDecision() {
 	m.expandedCmd.Reason = reason
 	m.lastDecision = decision
 	m.lastTime = time.Now()
-	m.flashTimer = 3
+	m.flashTimer = FlashTimerSeconds
 
 	// Update stats only if command was previously pending
 	if oldDecision == "PENDING" {

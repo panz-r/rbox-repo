@@ -41,14 +41,14 @@ func ParseCommand(cmd string) ([]Subcommand, error) {
 		// Get type
 		cType := C.shell_interop_subcommand_type(cIdx)
 		cTypeStr := C.shell_interop_type_str(cType)
-		defer C.shell_interop_free_str(cTypeStr)
 		typeStr := C.GoString(cTypeStr)
+		C.shell_interop_free_str(cTypeStr)
 
 		// Get features
 		cFeatures := C.shell_interop_subcommand_features(cIdx)
 		cFeaturesStr := C.shell_interop_features_str(cFeatures)
-		defer C.shell_interop_free_str(cFeaturesStr)
 		featuresStr := C.GoString(cFeaturesStr)
+		C.shell_interop_free_str(cFeaturesStr)
 
 		// Get position
 		start := int(C.shell_interop_subcommand_start(cIdx))
@@ -56,8 +56,8 @@ func ParseCommand(cmd string) ([]Subcommand, error) {
 
 		// Get text
 		cText := C.shell_interop_subcommand_str(cIdx)
-		defer C.shell_interop_free_str(cText)
 		textStr := C.GoString(cText)
+		C.shell_interop_free_str(cText)
 
 		subcommands[i] = Subcommand{
 			Index:    i,

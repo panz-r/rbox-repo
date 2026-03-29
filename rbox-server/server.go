@@ -357,6 +357,8 @@ func MakeDecision(id int, allowed bool, reason string, duration uint32, envDecis
 	}
 
 	err := req.Decide(decision, reason, duration, envDecisions)
-	delete(pendingRequests, id)
+	if err == nil {
+		delete(pendingRequests, id)
+	}
 	return err
 }
