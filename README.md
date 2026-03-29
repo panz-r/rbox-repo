@@ -193,21 +193,6 @@ cd rbox-protocol && make test  # Run protocol tests
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Protocol
-
-The server uses Protocol v3, a binary protocol over Unix socket with UUID-based request matching:
-
-| Field | Size | Description |
-|-------|------|-------------|
-| Magic | 4 bytes | `0x524F424F` ("ROBO") |
-| Version | 4 bytes | Protocol version (3) |
-| Client UUID | 16 bytes | Unique client identifier |
-| Request UUID | 16 bytes | Per-request identifier (incremented) |
-| Server UUID | 16 bytes | Server identifier (for cache validation) |
-| Message ID | 4 bytes | `0`=LOG, `1`=REQUEST |
-| argc/envc | 4 bytes each | Argument/environment counts |
-| Payload | Variable | Command, args, env vars |
-
 ### Server Options
 
 ```bash
@@ -380,58 +365,6 @@ READONLYBOX_SOCKET=/var/run/readonlybox.sock readonlybox-ptrace -- vim
 | `-p <port>` | Also listen on TCP port (0=disabled) |
 | `--tui` | Run in interactive TUI mode |
 
-### Protocol
-
-The server uses Protocol v3, a binary protocol over Unix socket with UUID-based request matching:
-
-**Message Types (ID field):**
-| ID | Type | Purpose |
-|----|------|---------|
-| 0 | `ROBO_MSG_LOG` | Client debug/status logs |
-| 1 | `ROBO_MSG_REQ` | Command execution requests |
-
-**Request Packet Structure (Protocol v3):**
-```
-[magic:4][version:4][client_uuid:16][request_uuid:16][server_uuid:16][id:4][argc:4][envc:4][cmd\0][arg0\0]...[env0\0]...
-```
-
-| Field | Size | Description |
-|-------|------|-------------|
-| magic | 4 bytes | `0x524F424F` ("ROBO") |
-| version | 4 bytes | Protocol version (3) |
-| client_uuid | 16 bytes | Unique client identifier (generated on library load) |
-| request_uuid | 16 bytes | Per-request identifier (incremented for each request) |
-| server_uuid | 16 bytes | Server identifier (filled by server, used for cache validation) |
-| id | 4 bytes | Message type (0=LOG, 1=REQ) |
-| argc | 4 bytes | Argument count |
-| envc | 4 bytes | Environment variable count |
-| cmd | N+1 bytes | Null-terminated command string |
-| args | ... | Null-terminated argument strings |
-| env | ... | Null-terminated environment strings |
-
-**Response Packet:**
-```
-[magic:4][version:4][client_uuid:16][request_uuid:16][server_uuid:16][id:4][decision:1][padding:3][reason_len:4][reason\0]
-```
-
-| Field | Size | Description |
-|-------|------|-------------|
-| decision | 1 byte | `2`=ALLOW, `3`=DENY, `4`=ERROR |
-| reason_len | 4 bytes | Reason string length |
-| reason | N bytes | Null-terminated reason (e.g., "ALLOW:4h", "DENY:15m") |
-
-**Time-Limited Decision Reasons:**
-| Reason | Meaning |
-|--------|---------|
-| `ALLOW` | Allow once (no caching) |
-| `ALLOW:4h` | Allow for 4 hours |
-| `ALLOW:1h` | Allow for 1 hour |
-| `ALLOW:15m` | Allow for 15 minutes |
-| `DENY` | Deny once (no caching) |
-| `DENY:4h` | Deny for 4 hours |
-| `DENY:1h` | Deny for 1 hour |
-| `DENY:15m` | Deny for 15 minutes |
-
 ### Client Configuration
 
 The client library uses environment variables for configuration:
@@ -460,23 +393,6 @@ Test the ptrace system:
 # Terminal 2: Run client
 readonlybox-ptrace -- vim --version
 ```
-
-### Recovery Scenarios
-
-The system handles various failure scenarios:
-
-| Scenario | Behavior |
-|----------|----------|
-| Server unavailable | Client retries with exponential backoff (50ms → 120s) |
-| Server restart | UUID-based request matching ensures correct response |
-| Socket timeout | Client retries request after reconnect |
-| Suspend/resume | CLOCK_BOOTTIME ensures cache validity |
-
-**UUID Request Matching:**
-- Each client generates a unique Client UUID on library load
-- Each request has a unique Request UUID (incremented per request)
-- Server stores recent requests by UUID
-- If client reconnects after server restart, server can match UUIDs
 
 ## 📚 Architecture
 
