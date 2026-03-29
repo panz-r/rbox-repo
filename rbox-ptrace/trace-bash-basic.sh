@@ -17,6 +17,6 @@ fi
 exec "$PTRACE" \
     --no-network \
     --memory-limit 1G \
-    --landlock-paths /w:rwx,/usr/bin:rx,/lib64:rx,/usr/lib:rx,/etc:ro,/tmp:rw,/proc:ro,/dev/null:rw \
+    --hard-allow /w:rwx,/usr/bin:rx,/lib64:rx,/usr/lib:rx,/etc:ro,/tmp:rw,/proc:ro \
     -- \
     bash "$@"

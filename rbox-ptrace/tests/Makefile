@@ -20,6 +20,7 @@ TEST_SRCS = test_main.c \
             test_validation.c \
             test_integration.c \
             test_e2e.c \
+            test_sandbox.c \
             debug.c
 
 # Source files from parent directory (excluding main.c)
@@ -28,6 +29,7 @@ SRCS = ../memory.c \
        ../validation.c \
        ../dfa.c \
        ../privilege.c \
+       ../sandbox.c \
        ../env.c \
        ../pkexec.c \
        ../judge.c \

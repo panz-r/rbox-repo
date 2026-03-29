@@ -95,8 +95,9 @@ static void print_usage(void) {
     fprintf(stderr, "  --clean-env          Clear environment before execution\n");
     fprintf(stderr, "  --env VAR=value      Set environment variable for command\n");
     fprintf(stderr, "  --memory-limit <n>   Set memory limit (e.g., 256M, 1G)\n");
-    fprintf(stderr, "  --landlock-paths <p> Landlock allowed paths (path:mode,...)\n");
+    fprintf(stderr, "  --hard-allow <p>    Allow directory with mode (path:mode,...)\n");
     fprintf(stderr, "                       Modes: ro (read), rx (read/exec), rw, rwx\n");
+    fprintf(stderr, "  --hard-deny <p>     Deny directory access\n");
     fprintf(stderr, "  --no-network         Block network access\n");
     fprintf(stderr, "  -h, --help           Show this help\n");
     fprintf(stderr, "  -v, --version        Show version\n");
@@ -353,6 +354,8 @@ int main(int argc, char *argv[]) {
         /* Sandbox options */
         {"memory-limit", required_argument, 0, 261},
         {"landlock-paths", required_argument, 0, 262},
+        {"hard-allow", required_argument, 0, 262},
+        {"hard-deny", required_argument, 0, 265},
         {"no-network", no_argument, 0, 263},
         /* Skip pkexec even if no ptrace capability */
         {"no-pkexec", no_argument, 0, 264},
@@ -476,9 +479,9 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case 262:
-                /* Set landlock paths via environment variable */
-                if (setenv("READONLYBOX_LANDLOCK_PATHS", optarg, 1) != 0) {
-                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_LANDLOCK_PATHS\n", g_progname);
+                /* Set landlock paths via environment variable (legacy) or hard-allow */
+                if (setenv("READONLYBOX_HARD_ALLOW", optarg, 1) != 0) {
+                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_HARD_ALLOW\n", g_progname);
                 }
                 break;
             case 263:
@@ -490,6 +493,12 @@ int main(int argc, char *argv[]) {
             case 264:
                 /* Skip pkexec even if no ptrace capability */
                 g_skip_pkexec = true;
+                break;
+            case 265:
+                /* Set hard deny paths via environment variable */
+                if (setenv("READONLYBOX_HARD_DENY", optarg, 1) != 0) {
+                    fprintf(stderr, "%s: Warning: failed to set READONLYBOX_HARD_DENY\n", g_progname);
+                }
                 break;
             default:
                 print_usage();
@@ -537,6 +546,12 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "%s: Command not found: %s\n", g_progname, argv[cmd_start]);
             return 1;
         }
+    }
+
+    /* Validate Landlock paths before requesting auth.
+     * This ensures paths are valid directories before pkexec prompt. */
+    if (validate_landlock_paths() != 0) {
+        return 1;
     }
 
     /* Screen environment for potential secrets before launching.

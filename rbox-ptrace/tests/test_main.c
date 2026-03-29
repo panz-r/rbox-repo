@@ -29,6 +29,10 @@ extern void run_e2e_tests(void);
 extern void get_e2e_test_stats(int *run, int *passed, int *failed);
 extern void reset_e2e_test_stats(void);
 
+extern void run_sandbox_tests(void);
+extern void get_sandbox_test_stats(int *run, int *passed, int *failed);
+extern void reset_sandbox_test_stats(void);
+
 /* Print test banner */
 static void print_banner(void) {
     printf("\n");
@@ -74,6 +78,7 @@ static void print_usage(const char *progname) {
     printf("  validation     Run validation tests\n");
     printf("  integration    Run integration tests\n");
     printf("  e2e            Run end-to-end tests\n");
+    printf("  sandbox        Run sandbox rule-building tests\n");
     printf("  all            Run all tests (default)\n");
     printf("\n");
     printf("Examples:\n");
@@ -92,6 +97,7 @@ static void list_suites(void) {
     printf("  validation   - Validation and protocol tests\n");
     printf("  integration  - Integration tests\n");
     printf("  e2e          - End-to-end tests (requires server)\n");
+    printf("  sandbox      - Sandbox rule-building tests\n");
     printf("  all          - All test suites (default)\n");
     printf("\n");
 }
@@ -104,6 +110,7 @@ int main(int argc, char *argv[]) {
     int run_validation = 0;
     int run_integration = 0;
     int run_e2e = 0;
+    int run_sandbox = 0;
     int run_all = 1;
 
     /* Parse command line arguments */
@@ -145,6 +152,11 @@ int main(int argc, char *argv[]) {
             run_all = 0;
             continue;
         }
+        if (strcmp(argv[i], "sandbox") == 0) {
+            run_sandbox = 1;
+            run_all = 0;
+            continue;
+        }
         if (strcmp(argv[i], "all") == 0) {
             run_all = 1;
             continue;
@@ -160,6 +172,7 @@ int main(int argc, char *argv[]) {
         run_syscall = 1;
         run_validation = 1;
         run_integration = 1;
+        run_sandbox = 1;
         /* Don't run e2e by default as it requires server binary */
     }
 
@@ -235,6 +248,16 @@ int main(int argc, char *argv[]) {
         reset_e2e_test_stats();
         run_e2e_tests();
         get_e2e_test_stats(&run, &passed, &failed);
+        total_run += run;
+        total_passed += passed;
+        total_failed += failed;
+    }
+
+    /* Run sandbox tests */
+    if (run_sandbox) {
+        reset_sandbox_test_stats();
+        run_sandbox_tests();
+        get_sandbox_test_stats(&run, &passed, &failed);
         total_run += run;
         total_passed += passed;
         total_failed += failed;

@@ -86,7 +86,7 @@ $(DFA_FILE): $(NFA_FILE)
 	$(NFA2DFA) $(NFA_FILE) $(DFA_FILE)
 
 $(DFA_DATA_C): $(DFA_FILE) $(DFA2C)
-	$(DFA2C) $(DFA_FILE) $(DFA_DATA_C) rbox_ptrace_dfa_data
+	$(DFA2C) $(DFA_FILE) $(DFA_DATA_C) rbox_ptrace_dfa
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
