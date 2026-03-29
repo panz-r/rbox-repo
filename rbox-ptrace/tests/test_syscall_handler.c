@@ -18,21 +18,24 @@ static int tests_passed = 0;
 static int tests_failed = 0;
 
 /* Test macro */
-#define TEST(name) static void test_##name(void)
+#define TEST(name) static int test_##name(void)
 #define RUN_TEST(name) do { \
     printf("  Running %s... ", #name); \
     fflush(stdout); \
     tests_run++; \
-    test_##name(); \
-    printf("PASSED\n"); \
-    tests_passed++; \
+    if (test_##name() == 0) { \
+        printf("PASSED\n"); \
+        tests_passed++; \
+    } else { \
+        printf("FAILED\n"); \
+        tests_failed++; \
+    } \
 } while(0)
 
 #define ASSERT(cond) do { \
     if (!(cond)) { \
         printf("FAILED\n    Assertion failed: %s at line %d\n", #cond, __LINE__); \
-        tests_failed++; \
-        return; \
+        return 1; \
     } \
 } while(0)
 
@@ -51,6 +54,7 @@ TEST(syscall_handler_init_basic) {
 
     /* Cleanup */
     syscall_handler_cleanup();
+    return 0;
 }
 
 /*
@@ -60,6 +64,7 @@ TEST(syscall_handler_cleanup_no_init) {
     /* Should not crash even without init */
     syscall_handler_cleanup();
     ASSERT(1);  /* If we get here, test passed */
+    return 0;
 }
 
 /*
@@ -72,6 +77,7 @@ TEST(syscall_handler_init_cleanup_cycle) {
         syscall_handler_cleanup();
     }
     ASSERT(1);  /* If we get here, all cycles passed */
+    return 0;
 }
 
 /*
@@ -89,11 +95,9 @@ TEST(syscall_is_execve_execve) {
 
     int result = syscall_is_execve(&regs);
     ASSERT_EQ(result, 1);
+    return 0;
 }
 
-/*
- * Test syscall_is_execve with non-execve syscall
- */
 TEST(syscall_is_execve_non_execve) {
     USER_REGS regs;
     memset(&regs, 0, sizeof(regs));
@@ -106,6 +110,7 @@ TEST(syscall_is_execve_non_execve) {
 
     int result = syscall_is_execve(&regs);
     ASSERT_EQ(result, 0);
+    return 0;
 }
 
 /*
@@ -124,11 +129,9 @@ TEST(syscall_is_execve_execveat) {
     int result = syscall_is_execve(&regs);
     /* execveat IS now detected as execve-like (returns 1) */
     ASSERT_EQ(result, 1);  
+    return 0;
 }
 
-/*
- * Test syscall_is_fork with clone syscall
- */
 TEST(syscall_is_fork_clone) {
     USER_REGS regs;
     memset(&regs, 0, sizeof(regs));
@@ -141,11 +144,9 @@ TEST(syscall_is_fork_clone) {
 
     int result = syscall_is_fork(&regs);
     ASSERT_EQ(result, 1);
+    return 0;
 }
 
-/*
- * Test syscall_is_fork with fork syscall
- */
 TEST(syscall_is_fork_fork) {
     USER_REGS regs;
     memset(&regs, 0, sizeof(regs));
@@ -158,6 +159,7 @@ TEST(syscall_is_fork_fork) {
 
     int result = syscall_is_fork(&regs);
     ASSERT_EQ(result, 1);
+    return 0;
 }
 
 /*
@@ -175,11 +177,9 @@ TEST(syscall_is_fork_vfork) {
 
     int result = syscall_is_fork(&regs);
     ASSERT_EQ(result, 1);
+    return 0;
 }
 
-/*
- * Test syscall_is_fork with non-fork syscall
- */
 TEST(syscall_is_fork_non_fork) {
     USER_REGS regs;
     memset(&regs, 0, sizeof(regs));
@@ -192,11 +192,9 @@ TEST(syscall_is_fork_non_fork) {
 
     int result = syscall_is_fork(&regs);
     ASSERT_EQ(result, 0);
+    return 0;
 }
 
-/*
- * Test syscall_get_process_state with new pid
- */
 TEST(syscall_get_process_state_new_pid) {
     syscall_handler_init();
 
@@ -214,11 +212,9 @@ TEST(syscall_get_process_state_new_pid) {
     /* Cleanup */
     syscall_remove_process_state(fake_pid);
     syscall_handler_cleanup();
+    return 0;
 }
 
-/*
- * Test syscall_get_process_state with same pid returns same state
- */
 TEST(syscall_get_process_state_same_pid) {
     syscall_handler_init();
 
@@ -234,6 +230,7 @@ TEST(syscall_get_process_state_same_pid) {
     /* Cleanup */
     syscall_remove_process_state(fake_pid);
     syscall_handler_cleanup();
+    return 0;
 }
 
 /*
@@ -259,11 +256,9 @@ TEST(syscall_remove_process_state_basic) {
     /* Cleanup */
     syscall_remove_process_state(fake_pid);
     syscall_handler_cleanup();
+    return 0;
 }
 
-/*
- * Test syscall_remove_process_state with non-existent pid
- */
 TEST(syscall_remove_process_state_nonexistent) {
     syscall_handler_init();
 
@@ -272,11 +267,9 @@ TEST(syscall_remove_process_state_nonexistent) {
     ASSERT(1);  /* If we get here, test passed */
 
     syscall_handler_cleanup();
+    return 0;
 }
 
-/*
- * Test ProcessState manipulation
- */
 TEST(process_state_manipulation) {
     syscall_handler_init();
 
@@ -295,11 +288,9 @@ TEST(process_state_manipulation) {
     /* Cleanup - syscall_remove_process_state frees the pathname */
     syscall_remove_process_state(fake_pid);
     syscall_handler_cleanup();
+    return 0;
 }
 
-/*
- * Test multiple process states
- */
 TEST(multiple_process_states) {
     syscall_handler_init();
 
@@ -330,6 +321,7 @@ TEST(multiple_process_states) {
     syscall_remove_process_state(pid2);
     syscall_remove_process_state(pid3);
     syscall_handler_cleanup();
+    return 0;
 }
 
 /*
@@ -354,11 +346,9 @@ TEST(syscall_numbers_defined) {
     /* Unsupported architecture - skip */
     ASSERT(1);
 #endif
+    return 0;
 }
 
-/*
- * Test REG_SYSCALL macro
- */
 TEST(reg_syscall_macro) {
     USER_REGS regs;
     memset(&regs, 0, sizeof(regs));
@@ -372,11 +362,9 @@ TEST(reg_syscall_macro) {
 #else
     ASSERT(1);
 #endif
+    return 0;
 }
 
-/*
- * Test REG_ARG macros
- */
 TEST(reg_arg_macros) {
     USER_REGS regs;
     memset(&regs, 0, sizeof(regs));
@@ -402,6 +390,7 @@ TEST(reg_arg_macros) {
 #else
     ASSERT(1);
 #endif
+    return 0;
 }
 
 /*

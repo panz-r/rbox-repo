@@ -20,21 +20,24 @@ static int tests_passed = 0;
 static int tests_failed = 0;
 
 /* Test macro */
-#define TEST(name) static void test_##name(void)
+#define TEST(name) static int test_##name(void)
 #define RUN_TEST(name) do { \
     printf("  Running %s... ", #name); \
     fflush(stdout); \
     tests_run++; \
-    test_##name(); \
-    printf("PASSED\n"); \
-    tests_passed++; \
+    if (test_##name() == 0) { \
+        printf("PASSED\n"); \
+        tests_passed++; \
+    } else { \
+        printf("FAILED\n"); \
+        tests_failed++; \
+    } \
 } while(0)
 
 #define ASSERT(cond) do { \
     if (!(cond)) { \
         printf("FAILED\n    Assertion failed: %s at line %d\n", #cond, __LINE__); \
-        tests_failed++; \
-        return; \
+        return 1; \
     } \
 } while(0)
 
@@ -58,6 +61,7 @@ TEST(memory_init_valid) {
     ASSERT_EQ(ctx.pid, pid);
     ASSERT_EQ(ctx.stack_base, stack_ptr);
     ASSERT_EQ(ctx.free_addr, stack_ptr - 8192);
+    return 0;
 }
 
 /*
@@ -66,6 +70,7 @@ TEST(memory_init_valid) {
 TEST(memory_init_null_context) {
     int result = memory_init(NULL, getpid(), 0x7fff0000);
     ASSERT_EQ(result, -1);
+    return 0;
 }
 
 /*
@@ -74,14 +79,13 @@ TEST(memory_init_null_context) {
 TEST(memory_read_string_null_addr) {
     char *result = memory_read_string(getpid(), 0);
     ASSERT_NULL(result);
+    return 0;
 }
 
-/*
- * Test memory_read_string_array with NULL address
- */
 TEST(memory_read_string_array_null_addr) {
     char **result = memory_read_string_array(getpid(), 0);
     ASSERT_NULL(result);
+    return 0;
 }
 
 /*
@@ -90,42 +94,34 @@ TEST(memory_read_string_array_null_addr) {
 TEST(memory_write_string_null_context) {
     unsigned long result = memory_write_string(NULL, "test");
     ASSERT_EQ(result, 0);
+    return 0;
 }
 
-/*
- * Test memory_write_string with NULL string
- */
 TEST(memory_write_string_null_string) {
     MemoryContext ctx;
     memory_init(&ctx, getpid(), 0x7fff0000);
 
     unsigned long result = memory_write_string(&ctx, NULL);
     ASSERT_EQ(result, 0);
+    return 0;
 }
 
-/*
- * Test memory_write_pointer_array with NULL context
- */
 TEST(memory_write_pointer_array_null_context) {
     unsigned long pointers[] = {0x1000, 0x2000};
     unsigned long result = memory_write_pointer_array(NULL, pointers, 2);
     ASSERT_EQ(result, 0);
+    return 0;
 }
 
-/*
- * Test memory_write_pointer_array with NULL pointers
- */
 TEST(memory_write_pointer_array_null_pointers) {
     MemoryContext ctx;
     memory_init(&ctx, getpid(), 0x7fff0000);
 
     unsigned long result = memory_write_pointer_array(&ctx, NULL, 2);
     ASSERT_EQ(result, 0);
+    return 0;
 }
 
-/*
- * Test memory_write_pointer_array with negative count
- */
 TEST(memory_write_pointer_array_negative_count) {
     MemoryContext ctx;
     memory_init(&ctx, getpid(), 0x7fff0000);
@@ -133,6 +129,7 @@ TEST(memory_write_pointer_array_negative_count) {
     unsigned long pointers[] = {0x1000, 0x2000};
     unsigned long result = memory_write_pointer_array(&ctx, pointers, -1);
     ASSERT_EQ(result, 0);
+    return 0;
 }
 
 /*
@@ -142,20 +139,16 @@ TEST(memory_free_string_null) {
     /* Should not crash */
     memory_free_string(NULL);
     ASSERT(1);  /* If we get here, test passed */
+    return 0;
 }
 
-/*
- * Test memory_free_string_array with NULL
- */
 TEST(memory_free_string_array_null) {
     /* Should not crash */
     memory_free_string_array(NULL);
     ASSERT(1);  /* If we get here, test passed */
+    return 0;
 }
 
-/*
- * Test memory_free_string_array with empty array
- */
 TEST(memory_free_string_array_empty) {
     char **array = calloc(1, sizeof(char *));
     ASSERT_NOT_NULL(array);
@@ -163,11 +156,9 @@ TEST(memory_free_string_array_empty) {
     /* Should not crash */
     memory_free_string_array(array);
     ASSERT(1);  /* If we get here, test passed */
+    return 0;
 }
 
-/*
- * Test memory_free_string_array with valid array
- */
 TEST(memory_free_string_array_valid) {
     char **array = malloc(3 * sizeof(char *));
     ASSERT_NOT_NULL(array);
@@ -179,11 +170,9 @@ TEST(memory_free_string_array_valid) {
     /* Should not crash */
     memory_free_string_array(array);
     ASSERT(1);  /* If we get here, test passed */
+    return 0;
 }
 
-/*
- * Test complete memory context lifecycle
- */
 TEST(memory_context_lifecycle) {
     MemoryContext ctx;
     pid_t pid = getpid();
@@ -197,6 +186,7 @@ TEST(memory_context_lifecycle) {
     ASSERT_EQ(ctx.pid, pid);
     ASSERT_EQ(ctx.stack_base, stack_ptr);
     ASSERT_EQ(ctx.free_addr, stack_ptr - 8192);
+    return 0;
 }
 
 /*

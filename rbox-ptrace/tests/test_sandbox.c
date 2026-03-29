@@ -28,6 +28,7 @@ static int tests_failed = 0;
         tests_passed++; \
     } else { \
         printf("FAILED\n"); \
+        tests_failed++; \
     } \
 } while(0)
 

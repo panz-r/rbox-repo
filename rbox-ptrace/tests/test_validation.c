@@ -20,21 +20,24 @@ static int tests_passed = 0;
 static int tests_failed = 0;
 
 /* Test macro */
-#define TEST(name) static void test_##name(void)
+#define TEST(name) static int test_##name(void)
 #define RUN_TEST(name) do { \
     printf("  Running %s... ", #name); \
     fflush(stdout); \
     tests_run++; \
-    test_##name(); \
-    printf("PASSED\n"); \
-    tests_passed++; \
+    if (test_##name() == 0) { \
+        printf("PASSED\n"); \
+        tests_passed++; \
+    } else { \
+        printf("FAILED\n"); \
+        tests_failed++; \
+    } \
 } while(0)
 
 #define ASSERT(cond) do { \
     if (!(cond)) { \
         printf("FAILED\n    Assertion failed: %s at line %d\n", #cond, __LINE__); \
-        tests_failed++; \
-        return; \
+        return 1; \
     } \
 } while(0)
 
@@ -53,6 +56,9 @@ TEST(validation_init_basic) {
 
     /* Cleanup */
     validation_shutdown();
+    return 0;
+
+    return 0;
 }
 
 /*
@@ -62,6 +68,8 @@ TEST(validation_shutdown_no_init) {
     /* Should not crash */
     validation_shutdown();
     ASSERT(1);  /* If we get here, test passed */
+
+    return 0;
 }
 
 /*
@@ -72,13 +80,13 @@ TEST(validation_init_shutdown_cycle) {
         int result = validation_init();
         ASSERT_EQ(result, 0);
         validation_shutdown();
-    }
+    
+    return 0;
+}
     ASSERT(1);  /* If we get here, all cycles passed */
+    return 0;
 }
 
-/*
- * Test validation_get_socket_path default
- */
 TEST(validation_get_socket_path_default) {
     /* Unset XDG_RUNTIME_DIR to test pure default behavior */
     unsetenv("XDG_RUNTIME_DIR");
@@ -89,6 +97,9 @@ TEST(validation_get_socket_path_default) {
     ASSERT_STR_EQ(path, "/run/readonlybox/readonlybox.sock");
 
     validation_shutdown();
+    return 0;
+
+    return 0;
 }
 
 /*
@@ -108,6 +119,9 @@ TEST(validation_get_socket_path_env) {
 
     /* Clean up environment */
     unsetenv(ROBO_ENV_SOCKET);
+    return 0;
+
+    return 0;
 }
 
 /*
@@ -131,11 +145,11 @@ TEST(validation_get_socket_path_system) {
 
     /* Clean up environment */
     unsetenv("XDG_RUNTIME_DIR");
+    return 0;
+
+    return 0;
 }
 
-/*
- * Test validation_get_socket_path with --user-socket flag
- */
 TEST(validation_get_socket_path_user) {
     /* Set XDG_RUNTIME_DIR to a custom path */
     setenv("XDG_RUNTIME_DIR", "/custom/xdg/path", 1);
@@ -154,6 +168,8 @@ TEST(validation_get_socket_path_user) {
 
     /* Clean up environment */
     unsetenv("XDG_RUNTIME_DIR");
+
+    return 0;
 }
 
 /*
@@ -174,6 +190,8 @@ TEST(validation_get_socket_path_user_no_xdg) {
     ASSERT_STR_EQ(path, "/run/readonlybox/readonlybox.sock");
 
     validation_shutdown();
+
+    return 0;
 }
 
 /*
@@ -186,6 +204,8 @@ TEST(validation_check_dfa_null) {
     ASSERT_EQ(result, VALIDATION_DENY);
 
     validation_shutdown();
+
+    return 0;
 }
 
 /*
@@ -198,6 +218,8 @@ TEST(validation_check_dfa_empty) {
     ASSERT_EQ(result, VALIDATION_DENY);
 
     validation_shutdown();
+
+    return 0;
 }
 
 /*
@@ -212,6 +234,8 @@ TEST(validation_check_dfa_simple_command) {
     ASSERT(result == VALIDATION_ALLOW || result == VALIDATION_DENY || result == VALIDATION_ASK);
 
     validation_shutdown();
+
+    return 0;
 }
 
 /*
@@ -226,6 +250,8 @@ TEST(validation_check_dfa_complex_command) {
     ASSERT(result == VALIDATION_ALLOW || result == VALIDATION_DENY || result == VALIDATION_ASK);
 
     validation_shutdown();
+
+    return 0;
 }
 
 /*
@@ -235,6 +261,8 @@ TEST(validation_constants) {
     ASSERT_EQ(VALIDATION_ALLOW, 0);
     ASSERT_EQ(VALIDATION_DENY, 1);
     ASSERT_EQ(VALIDATION_ASK, 2);
+
+    return 0;
 }
 
 /*
@@ -249,6 +277,8 @@ TEST(protocol_constants) {
     ASSERT_EQ(ROBO_DECISION_ALLOW, 2);
     ASSERT_EQ(ROBO_DECISION_DENY, 3);
     ASSERT_EQ(ROBO_DECISION_ERROR, 4);
+
+    return 0;
 }
 
 /*
@@ -263,6 +293,8 @@ TEST(protocol_limits) {
     ASSERT_EQ(ROBO_MAX_ARGS, 128);
     ASSERT_EQ(ROBO_MAX_ENV, 256);
     ASSERT_EQ(ROBO_MAX_PATH, 1024);
+
+    return 0;
 }
 
 /*
@@ -270,6 +302,8 @@ TEST(protocol_limits) {
  */
 TEST(default_socket_path) {
     ASSERT_STR_EQ(ROBO_DEFAULT_SOCKET, "/run/readonlybox/readonlybox.sock");
+
+    return 0;
 }
 
 /*
@@ -280,6 +314,8 @@ TEST(environment_variable_names) {
     ASSERT_STR_EQ(ROBO_ENV_CALLER, "READONLYBOX_CALLER");
     ASSERT_STR_EQ(ROBO_ENV_SYSCALL, "READONLYBOX_SYSCALL");
     ASSERT_STR_EQ(ROBO_ENV_CWD, "READONLYBOX_CWD");
+
+    return 0;
 }
 
 /*
@@ -294,11 +330,12 @@ TEST(validation_check_dfa_long_command) {
     for (int i = 0; i < 100; i++) {
         strcat(long_cmd, "a");
     }
-
+    
     int result = validation_check_dfa(long_cmd);
     ASSERT(result == VALIDATION_ALLOW || result == VALIDATION_DENY || result == VALIDATION_ASK);
 
     validation_shutdown();
+    return 0;
 }
 
 /*
@@ -317,6 +354,8 @@ TEST(validation_check_dfa_special_chars) {
     ASSERT(result == VALIDATION_ALLOW || result == VALIDATION_DENY || result == VALIDATION_ASK);
 
     validation_shutdown();
+
+    return 0;
 }
 
 /*
@@ -335,6 +374,8 @@ TEST(validation_check_dfa_path_commands) {
     ASSERT(result == VALIDATION_ALLOW || result == VALIDATION_DENY || result == VALIDATION_ASK);
 
     validation_shutdown();
+
+    return 0;
 }
 
 /*
@@ -350,6 +391,8 @@ TEST(validation_check_dfa_piped_commands) {
     ASSERT(result == VALIDATION_ALLOW || result == VALIDATION_DENY || result == VALIDATION_ASK);
 
     validation_shutdown();
+
+    return 0;
 }
 
 /*
@@ -365,6 +408,7 @@ TEST(validation_check_dfa_env_var) {
     ASSERT(result == VALIDATION_ALLOW || result == VALIDATION_DENY || result == VALIDATION_ASK);
 
     validation_shutdown();
+    return 0;
 }
 
 /*
