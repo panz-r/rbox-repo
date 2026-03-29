@@ -1,14 +1,14 @@
-# generaqted files
-internal/client/readonlybox_dfa.c 
+# generated files
+rbox-preload/readonlybox_dfa.c 
 
 bin/
 *.so
 *.o
 */*.so
 c-dfa/tools/readonlybox_dfa.c
-internal/client/readonlybox_dfa.c
-internal/client/dfa_static_data.c
-internal/client/test_dfa
+rbox-preload/readonlybox_dfa.c
+rbox-preload/dfa_static_data.c
+rbox-preload/test_dfa
 c-dfa/tools/dfa2c
 c-dfa/tools/nfa2dfa
 c-dfa/test_debug

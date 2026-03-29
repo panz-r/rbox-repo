@@ -5,7 +5,7 @@
 
 # Compiler and Flags
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../internal/client -I../../shellsplit/include -I../../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../rbox-preload -I../../shellsplit/include -I../../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
 LDFLAGS = -lpthread -lm
 
 # Pre-built libraries
@@ -158,7 +158,7 @@ coverage: clean $(TARGET)
 # Static analysis with cppcheck (if available)
 cppcheck:
 	@which cppcheck > /dev/null 2>&1 && cppcheck --enable=all --suppress=missingIncludeSystem \
-		-I.. -I../../c-dfa/include -I../../internal/client \
+		-I.. -I../../c-dfa/include -I../../rbox-preload \
 		$(TEST_SRCS) $(SRCS) || echo "cppcheck not installed (skipping)"
 
 # Valgrind memory check (if available)

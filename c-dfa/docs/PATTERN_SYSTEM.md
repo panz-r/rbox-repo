@@ -313,32 +313,22 @@ dfa_test my.dfa "cat (*)"
 ```
 Command String
       ↓
-[C DFA Layer] - Fast validation (90%+ coverage)
+[C DFA Layer] - Fast validation (ptrace interceptor)
       ↓
-[Go Parsers] - Detailed semantic analysis (10%)
+[rbox-server] - User decision via TUI
       ↓
-Decision: Allow / Caution / Block / Audit
+Decision: Allow / Deny
 ```
+
+### How It Works
+1. **ptrace interceptor** validates commands using the DFA
+2. **Fast path**: Safe commands execute directly
+3. **Server path**: Unknown commands sent to rbox-server for user decision
 
 ### Benefits
-1. **Performance**: C layer handles most common commands
-2. **Safety**: DFA provides 100% safe validation
-3. **Efficiency**: Reduces Go parser load
-4. **Maintainability**: Easy to update patterns
-
-### Example Integration
-```go
-// In Go code
-func validateCommand(command string) (bool, string) {
-    // Fast C layer check
-    if result := dfaCheck(command); result != DFA_UNKNOWN {
-        return handleDFAResult(result)
-    }
-
-    // Detailed Go analysis
-    return goParserCheck(command)
-}
-```
+1. **Performance**: C DFA provides fast pattern matching
+2. **Safety**: Commands can be categorized and validated against patterns
+3. **Flexibility**: Pattern files can be updated without recompiling
 
 ## Future Enhancements
 

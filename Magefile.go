@@ -16,7 +16,7 @@ import (
 // Constants for paths used throughout the build
 const (
 	binDir          = "bin"
-	clientDir       = "internal/client"
+	clientDir       = "rbox-preload"
 	cDfaDir         = "c-dfa"
 	cDfaToolsDir    = cDfaDir + "/tools"
 	cDfaSrcDir      = cDfaDir + "/src"

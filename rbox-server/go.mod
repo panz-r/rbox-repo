@@ -1,4 +1,4 @@
-module github.com/panz/openroutertest/cmd/readonlybox-server
+module github.com/panz-r/rbox-repo/rbox-server
 
 go 1.24.0
 

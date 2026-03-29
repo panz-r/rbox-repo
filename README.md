@@ -1,21 +1,20 @@
 # ReadOnlyBox 🔒
 
-**A BusyBox-like read-only toolbox for secure system exploration**
+**A ptrace-based command interceptor for secure system exploration**
 
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-[![Security](https://img.shields.io/badge/Security-ReadOnly-green.svg?style=for-the-badge)](https://github.com/panz/openroutertest)
 
 ## 🚀 Overview
 
-ReadOnlyBox is a **single binary** that provides **26+ read-only command wrappers** for safe system exploration. Inspired by BusyBox, ReadOnlyBox consolidates essential Linux commands into one executable while **preventing all write operations**.
+ReadOnlyBox intercepts commands via ptrace and sends them to rbox-server for user decisions. The rbox-server TUI presents each command to the user, who can allow or deny execution with various time-limited permissions.
 
 Perfect for:
-- **Security audits** - Explore systems without risk
-- **Forensic analysis** - Examine files and processes safely
-- **Restricted environments** - Provide read-only access
-- **Education** - Learn system commands safely
-- **Container security** - Limit container capabilities
+- **Security audits** - Inspect commands before execution
+- **Forensic analysis** - Review all attempted commands
+- **Restricted environments** - Control what commands can run
+- **Learning** - Understand what commands applications attempt
+- **Container security** - Intercept commands in containers
 
 ## 📦 Installation
 
@@ -23,19 +22,15 @@ Perfect for:
 
 ```bash
 # Clone the repository
-git clone https://github.com/panz/openroutertest.git
-cd openroutertest
+git clone https://github.com/panz-r/rbox-repo.git
+cd rbox-repo
 
-# Build all tools (including LD_PRELOAD client and TUI server)
+# Build all tools (ptrace client, rbox-server TUI)
 mage build
 
 # Install to /usr/local/bin
 mage install
 ```
-
-### Pre-built Binaries
-
-Download pre-built binaries from the [Releases](https://github.com/panz/openroutertest/releases) page.
 
 ### Package Managers (Coming Soon)
 
@@ -52,83 +47,52 @@ brew install readonlybox
 
 ## 🎯 Usage
 
-ReadOnlyBox follows a BusyBox-like interface:
+ReadOnlyBox uses ptrace to intercept commands and presents a TUI for user decisions.
+
+### Starting the Server
 
 ```bash
-readonlybox <command> [arguments...]
+# Start the rbox-server TUI (in one terminal)
+readonlybox-server
+
+# Or run rbox-server with auto-deny for unknown commands
+readonlybox-server --auto-deny
 ```
 
-### Basic Usage
+### Running Commands Through the Interceptor
 
 ```bash
-# Show help and available commands
-readonlybox
+# Run commands through ptrace interceptor (from another terminal)
+readonlybox-ptrace -- /bin/ls -la
 
-# List files (read-only ls)
-readonlybox ls -la
+# Intercept git commands
+readonlybox-ptrace -- git status
+readonlybox-ptrace -- git log --oneline
 
-# View file contents (read-only cat)
-readonlybox cat /etc/passwd
+# View files
+readonlybox-ptrace -- cat /etc/passwd
 
-# Search for files (read-only find)
-readonlybox find /home -name "*.txt"
-
-# Check process status (read-only ps)
-readonlybox ps aux
-
-# Check disk usage (read-only df)
-readonlybox df -h
-
-# View git history (read-only git)
-readonlybox git log --oneline
+# Search for files
+readonlybox-ptrace -- find /home -name "*.txt"
 ```
 
-### Available Commands
+## 🔒 How It Works
 
-| Category | Commands |
-|----------|----------|
-| **System Info** | `ps`, `df`, `du`, `uname`, `wc` |
-| **File Operations** | `ls`, `cat`, `grep`, `head`, `tail`, `touch`, `dd` |
-| **Version Control** | `git` (read-only operations) |
-| **Search** | `find`, `grep` |
-| **Text Processing** | `sed`, `sort`, `echo` |
-| **System Tools** | `date`, `timeout`, `ulimit`, `cd`, `bash` |
-| **File Management** | `chmod`, `chown`, `mkdir`, `rmdir`, `ln`, `mv`, `cp`, `rm` |
+1. **Intercept**: `readonlybox-ptrace` uses ptrace to intercept command execution
+2. **Analyze**: Commands are validated against DFA patterns and analyzed for danger
+3. **Decide**: rbox-server TUI presents the command for user approval
+4. **Execute**: User allows or denies - the command proceeds or is blocked
 
-**Total: 26+ read-only commands!**
+### User Decisions
 
-## 🔒 Security Features
+In the rbox-server TUI, each command shows:
+- Full command with arguments
+- Caller and syscall information (when available)
+- Flagged environment variables (v8 protocol)
 
-ReadOnlyBox **blocks all write operations** while allowing safe read-only exploration:
-
-### 🛡️ Protected Operations
-
-| Command | Blocked Operations |
-|---------|-------------------|
-| **git** | `add`, `commit`, `push`, `pull`, `merge`, `rebase`, `reset`, etc. |
-| **find** | `-exec`, `-delete`, `-ok` |
-| **ls/cat/grep** | File redirection (`>`, `>>`) |
-| **All commands** | Command injection (`\``, `$`), long arguments (50+ chars) |
-
-### 🚨 Security Examples
-
-```bash
-# ❌ BLOCKED - Write operations
-readonlybox git add .
-# Error: write operation not allowed
-
-readonlybox git commit -m "test"
-# Error: write operation not allowed
-
-readonlybox find . -exec rm {} \;
-# Error: can execute commands
-
-# ✅ ALLOWED - Read-only operations
-readonlybox git log
-readonlybox git show
-readonlybox find . -name "*.go"
-readonlybox cat /etc/passwd
-```
+User can:
+- **Allow/Deny** with duration: Once, 15m, 1h, 4h, or session
+- **Pattern rules**: Auto-allow/deny similar commands
 
 ## 🔧 Development
 
@@ -137,7 +101,7 @@ readonlybox cat /etc/passwd
 This project uses [Mage](https://magefile.org/) as the primary build orchestrator for the Go components, with Make for C subprojects.
 
 ```bash
-# Build all tools (including TUI server and LD_PRELOAD client)
+# Build all tools (rbox-ptrace, rbox-server)
 mage build
 
 # Build DFA tools only (nfa_builder, nfa2dfa_advanced, dfa2c_array)
@@ -161,18 +125,18 @@ mage -h
 
 ### Subprojects
 
-The project consists of several C subprojects built with Make:
+The project consists of several subprojects:
 
 | Subproject | Purpose |
 |------------|---------|
-| **c-dfa** | Deterministic Finite Automata for fast command validation |
-| **shellsplit** | Shell command tokenizer and processor |
+| **rbox-ptrace** | ptrace-based command interceptor |
+| **rbox-server** | TUI server for user decisions |
+| **rbox-preload** | LD_PRELOAD client with DFA validation |
+| **c-dfa** | Deterministic Finite Automata for fast validation |
+| **shellsplit** | Shell command tokenizer |
 | **rbox-protocol** | Binary protocol for client-server communication |
-| **rbox-wrap** | LD_PRELOAD client library |
-| **rbox-ptrace** | ptrace-based command wrapper with DFA |
-| **rbox-server** | Go server with TUI for policy decisions |
 
-Each subproject can be built/tested individually:
+Each can be built/tested individually:
 
 ```bash
 cd c-dfa && make        # Build c-dfa tools
@@ -182,33 +146,26 @@ cd rbox-protocol && make test  # Run protocol tests
 
 ---
 
-## 🖥️ LD_PRELOAD Server & Client
-
-The LD_PRELOAD server provides real-time command interception and policy enforcement over a Unix socket.
-
-### Architecture
+## 🖥️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           System Process                             │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ Shell (sh, bash, etc.)                                        │  │
-│  │ LD_PRELOAD=libreadonlybox_client.so                           │  │
+│  │ Shell                                                          │  │
+│  │ readonlybox-ptrace -- /bin/ls -la                             │  │
 │  │                                                               │  │
-│  │  execve("/bin/ls", ...)  →  fast allow (execute directly)    │  │
-│  │  execve("/bin/vim", ...) →  send to server                   │  │
+│  │  ptrace(TRACEME) → execve intercepted                        │  │
 │  │                           ↓                                   │  │
 │  │  ┌─────────────────────────────────────────────────────────┐ │  │
-│  │  │           Time-Limited Decision Cache                   │ │  │
-│  │  │     (CLOCK_BOOTTIME - survives suspend/resume)          │ │  │
-│  │  │                                                          │ │  │
-│  │  │  Cache hit? → Return cached decision immediately         │ │  │
-│  │  │  Cache miss → Send to server                             │ │  │
+│  │  │           DFA Validation                                 │ │  │
+│  │  │   Fast path: safe commands execute directly              │ │  │
+│  │  │   Slow path: send to server for decision                 │ │  │
 │  │  └─────────────────────────────────────────────────────────┘ │  │
 │  │                           ↓                                   │  │
 │  │              ┌──────────────────────────┐                    │  │
 │  │              │   Unix Socket            │                    │  │
-│  │              │ /tmp/readonlybox.sock    │                    │  │
+│  │              │ /run/readonlybox/readonlybox.sock            │  │
 │  │              └───────────┬──────────────┘                    │  │
 │  └──────────────────────────┼───────────────────────────────────┘  │
 │                             │                                          │
@@ -218,32 +175,24 @@ The LD_PRELOAD server provides real-time command interception and policy enforce
 │              │    (Go + Bubble Tea TUI)      │                        │
 │              │                               │                        │
 │              │  ┌─────────────────────────┐  │                        │
-│              │  │   Protocol v3 Handler   │  │                        │
-│              │  │   - Client UUID         │  │                        │
-│              │  │   - Request UUID        │  │                        │
-│              │  │   - Server UUID         │  │                        │
+│              │  │   Command Display       │  │                        │
+│              │  │   - Full command       │  │                        │
+│              │  │   - Caller/syscall    │  │                        │
+│              │  │   - Env vars          │  │                        │
 │              │  └─────────────────────────┘  │                        │
 │              │              ↓                │                        │
 │              │  ┌─────────────────────────┐  │                        │
-│              │  │   Policy Engine         │  │                        │
-│              │  │   - Auto-deny           │  │                        │
-│              │  │   - TUI decisions       │  │                        │
-│              │  │   - Policy file         │  │                        │
-│              │  └─────────────────────────┘  │                        │
-│              │              ↓                │                        │
-│              │  ┌─────────────────────────┐  │                        │
-│              │  │   Time-Limited Response │  │                        │
-│              │  │   ALLOW:4h, DENY:15m    │  │                        │
-│              │  │   (durations: 1x,15m,1h,4h)  │                    │
+│              │  │   User Decision         │  │                        │
+│              │  │   Allow/Deny + Duration│  │                        │
 │              │  └─────────────────────────┘  │                        │
 │              └───────────────────────────────┘                        │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Protocol v3 (UUID-Based Request Matching)
+### Protocol
 
-The protocol uses UUIDs for robust request/response matching across reconnects:
+The server uses Protocol v3, a binary protocol over Unix socket with UUID-based request matching:
 
 | Field | Size | Description |
 |-------|------|-------------|
@@ -256,59 +205,7 @@ The protocol uses UUIDs for robust request/response matching across reconnects:
 | argc/envc | 4 bytes each | Argument/environment counts |
 | Payload | Variable | Command, args, env vars |
 
-**Time-Limited Decision Format:**
-```
-ALLOW           - Allow once (no caching)
-ALLOW:15m       - Allow for 15 minutes
-ALLOW:1h        - Allow for 1 hour
-ALLOW:4h        - Allow for 4 hours
-DENY            - Deny once (no caching)
-DENY:15m        - Deny for 15 minutes
-DENY:1h         - Deny for 1 hour
-DENY:4h         - Deny for 4 hours
-```
-
-### Time-Limited Decision Cache
-
-The client implements a time-limited decision cache using `CLOCK_BOOTTIME` which correctly handles system suspend/resume cycles:
-
-| Feature | Description |
-|---------|-------------|
-| **Clock Source** | `CLOCK_BOOTTIME` (includes suspend time) |
-| **Cache Size** | 128 entries |
-| **Cache Key** | Full command string (cmd + args) |
-| **Expiry** | Per-decision duration (1x, 15m, 1h, 4h) |
-| **Cleanup** | Opportunistic (on cache access) |
-
-### Fast Allow Commands
-
-Commands in this list are executed directly without server consultation:
-
-| Category | Commands |
-|----------|----------|
-| **File Ops** | `ls`, `cat`, `head`, `tail`, `wc`, `stat`, `file` |
-| **Text Proc** | `sort`, `uniq`, `grep`, `tr`, `cut`, `join`, `paste`, `diff`, `comm`, `nl`, `od` |
-| **System** | `date`, `pwd`, `hostname`, `uname`, `whoami`, `id`, `who`, `last`, `uptime` |
-| **Utils** | `echo`, `printenv`, `sleep`, `expr`, `timeout`, `basename`, `dirname`, `readlink`, `which`, `test`, `[` |
-| **Search** | `find`, `xargs` |
-| **Other** | `true`, `false`, `null`, `base64`, `strings` |
-
-**All other commands** (`rm`, `mv`, `cp`, `mkdir`, `chmod`, `chown`, `vim`, `git`, `ssh`, etc.) are sent to the server for policy decision.
-
-### Build Server and Client
-
-The `mage build` command builds both the TUI server and the LD_PRELOAD client:
-
-```bash
-# Build everything (tools, server, client)
-mage build
-
-# Build outputs are in bin/ and internal/client/:
-# - bin/readonlybox-server        (TUI server)
-# - internal/client/libreadonlybox_client.so  (LD_PRELOAD client)
-```
-
-### Run the Server
+### Server Options
 
 ```bash
 # Quiet mode (blocked commands only)
@@ -317,32 +214,30 @@ mage build
 # Verbose mode (show all commands)
 ./bin/readonlybox-server -v
 
-# TUI mode (interactive terminal UI - REQUIRES TERMINAL)
+# TUI mode (interactive terminal UI)
 ./bin/readonlybox-server --tui
 
-# Debug TUI mode (auto-allow after 500ms for testing)
-./bin/readonlybox-server --debug-tui
-
-# Auto-deny mode (deny all unknown commands - for testing)
+# Auto-deny mode (deny all unknown commands)
 ./bin/readonlybox-server --auto-deny
+
+# Use system socket path
+./bin/readonlybox-server --system-socket
 ```
 
-### Test with LD_PRELOAD Client
+### Test with ptrace Client
 
 ```bash
-# Start server
+# Start server in one terminal
 ./bin/readonlybox-server --auto-deny &
 
-# Test blocked command
-READONLYBOX_SOCKET=/tmp/readonlybox.sock \
-LD_PRELOAD=internal/client/libreadonlybox_client.so \
-vim --version
+# Test command in another terminal
+./bin/readonlybox-ptrace -- vim --version
 
 # Cleanup
 pkill -f readonlybox-server
 ```
 
-> **Note**: TUI mode requires an interactive terminal. Run in a real terminal (not SSH without -t, not in VS Code terminal that doesn't support full screen).
+> **Note**: TUI mode requires an interactive terminal.
 
 ### TUI Mode
 
@@ -464,18 +359,18 @@ For testing without a terminal, use `--debug-tui` to simulate TUI decisions:
 
 Unknown commands will wait 30 seconds for a (simulated) decision, then auto-allow.
 
-By default, the server listens on `/tmp/readonlybox.sock`. Use environment variable to customize:
+By default, the server listens on `/run/readonlybox/readonlybox.sock`. Use environment variable to customize:
 
 ```bash
 # Custom socket path
-READONLYBOX_SOCKET=/var/run/readonlybox.sock LD_PRELOAD=... sh -c 'rm /tmp/testfile'
+READONLYBOX_SOCKET=/var/run/readonlybox.sock readonlybox-ptrace -- vim
 ```
 
 ### Server Flags
 
 | Flag | Description |
 |------|-------------|
-| `-socket <path>` | Unix socket path (default: /tmp/readonlybox.sock) |
+| `-socket <path>` | Unix socket path (default: /run/readonlybox/readonlybox.sock) |
 | `-q` | Quiet mode: show blocked commands only |
 | `-v` | Verbose mode: show all commands |
 | `-vv` | Very verbose mode: show commands + client logs |
@@ -540,44 +435,27 @@ The client library uses environment variables for configuration:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `READONLYBOX_SOCKET` | Unix socket path | `/tmp/readonlybox.sock` |
+| `READONLYBOX_SOCKET` | Unix socket path | `/run/readonlybox/readonlybox.sock` |
 
 **Usage:**
 ```bash
 # Start server with custom socket
 ./readonlybox-server -socket /var/run/readonlybox.sock
 
-# Client connects to custom socket
-READONLYBOX_SOCKET=/var/run/readonlybox.sock LD_PRELOAD=libreadonlybox_client.so vim
+# Client uses custom socket
+READONLYBOX_SOCKET=/var/run/readonlybox.sock readonlybox-ptrace -- vim
 ```
 
 ### Testing
 
-Test the LD_PRELOAD system:
+Test the ptrace system:
 
 ```bash
 # Terminal 1: Start server
 ./readonlybox-server -v
 
 # Terminal 2: Run client
-READONLYBOX_SOCKET=/tmp/readonlybox.sock \
-LD_PRELOAD=bin/libreadonlybox_client.so \
-vim --version
-
-# Or use a simple test program
-cat > /tmp/test_block.c << 'EOF'
-#include <unistd.h>
-int main() {
-    char *args[] = {"vim", "--version", NULL};
-    execve("/usr/bin/vim", args, NULL);
-    return 1;
-}
-EOF
-gcc -o /tmp/test_block /tmp/test_block.c
-
-READONLYBOX_SOCKET=/tmp/readonlybox.sock \
-LD_PRELOAD=bin/libreadonlybox_client.so \
-/tmp/test_block
+readonlybox-ptrace -- vim --version
 ```
 
 ### Recovery Scenarios
@@ -597,56 +475,27 @@ The system handles various failure scenarios:
 - Server stores recent requests by UUID
 - If client reconnects after server restart, server can match UUIDs
 
-### Adding New Commands
-
-To add a new read-only wrapper:
-
-1. **Create security module** in `internal/ro<command>/`
-2. **Add command handler** in `internal/readonlybox/commands.go`
-3. **Register command** in the `CommandRegistry`
-4. **Add tests** following existing patterns
-
-Example structure:
-```
-cmd/ro<command>/main.go          # Individual wrapper (legacy)
-internal/ro<command>/<command>.go # Security validation
-internal/ro<command>/<command>_test.go # Unit tests
-```
-
 ## 📚 Architecture
 
-### Single Binary Design
+The project consists of several components:
+
+| Component | Purpose |
+|-----------|---------|
+| **rbox-ptrace** | ptrace-based command interceptor |
+| **rbox-server** | TUI server for user decisions |
+| **c-dfa** | DFA for fast command validation |
+| **shellsplit** | Shell command tokenizer |
+| **rbox-protocol** | Binary protocol for client-server communication |
+
+### Components Built
 
 ```
-readonlybox (single binary)
-├── Command Registry (26+ commands)
-├── Security Validation Modules
-│   ├── rogit (git security)
-│   ├── rofind (find security)
-│   ├── rops (ps security)
-│   └── ... (all other commands)
-└── Unified Execution Engine
+bin/
+├── readonlybox-server   # TUI server
+└── readonlybox-ptrace  # ptrace interceptor
 ```
 
-### Security Validation Flow
-
-```
-User Input → Command Parsing → Security Check → Safe Execution
-                     ↓
-               (Block if dangerous)
-```
-
-## 🤝 Contributing
-
-Contributions are welcome! Please follow these guidelines:
-
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/new-command`
-3. **Commit changes**: `git commit -am 'Add new command'`
-4. **Push to branch**: `git push origin feature/new-command`
-5. **Create a Pull Request**
-
-### Development Requirements
+## Development Requirements
 
 - Go 1.21+
 - Make
@@ -656,18 +505,10 @@ Contributions are welcome! Please follow these guidelines:
 
 MIT License - See [LICENSE](LICENSE) for details.
 
-## 🙏 Acknowledgments
-
-- Inspired by BusyBox architecture
-- Built with Go for security and performance
-- Designed for system administrators and security professionals
-
 ## 📬 Contact
 
-- **Project**: [github.com/panz/openroutertest](https://github.com/panz/openroutertest)
-- **Issues**: [GitHub Issues](https://github.com/panz/openroutertest/issues)
-- **Contributing**: See [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Project**: [github.com/panz-r/rbox-repo](https://github.com/panz-r/rbox-repo)
 
 ---
 
-**ReadOnlyBox - Safe system exploration, one command at a time! 🔒**
+**ReadOnlyBox - Intercept, inspect, decide. 🔒**

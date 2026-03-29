@@ -1,6 +1,6 @@
 # rbox-wrap
 
-LD_PRELOAD client library for ReadOnlyBox. This wrapper validates commands against a DFA before contacting the server, providing fast-path execution for safe commands.
+Internal LD_PRELOAD helper library used by rbox-ptrace. Provides DFA-based command validation before contacting the server.
 
 ## Usage
 

@@ -1,4 +1,4 @@
-module github.com/panz/openroutertest
+module github.com/panz-r/rbox-repo
 
 go 1.21
 

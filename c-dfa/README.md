@@ -1,6 +1,6 @@
 # ReadOnlyBox C DFA Layer
 
-A high-performance C implementation of a Deterministic Finite Automata (DFA) for fast validation of read-only commands.
+A high-performance C implementation of a Deterministic Finite Automata (DFA) for fast command validation.
 
 ## Quick Start
 
@@ -260,14 +260,6 @@ Key documentation files in `docs/`:
 | [docs/LAYOUT_OPTIMIZATION.md](docs/LAYOUT_OPTIMIZATION.md) | SCC-based cache optimization |
 | [docs/TRANSITION_COMPRESSION.md](docs/TRANSITION_COMPRESSION.md) | Rule compression |
 | [docs/GLOSSARY.md](docs/GLOSSARY.md) | Terminology definitions |
-
-## Integration
-
-The C DFA layer is the first line of defense in ReadOnlyBox:
-
-1. **C DFA** - Fast validation of safe commands (90%+ of cases)
-2. **Go Parsers** - Detailed semantic analysis
-3. **Fallback** - Conservative blocking for unknown commands
 
 ## Fuzzing
 
