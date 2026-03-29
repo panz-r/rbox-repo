@@ -15,23 +15,23 @@ import (
 
 // Constants for paths used throughout the build
 const (
-	binDir           = "bin"
-	clientDir        = "internal/client"
-	cDfaDir          = "c-dfa"
-	cDfaToolsDir     = cDfaDir + "/tools"
-	cDfaSrcDir       = cDfaDir + "/src"
-	cDfaIncludeDir   = cDfaDir + "/include"
-	shellsplitDir    = "shellsplit"
-	rboxProtocolDir  = "rbox-protocol"
-	rboxWrapDir      = "rbox-wrap"
-	rboxPtraceDir    = "rbox-ptrace"
-	rboxServerDir    = "rbox-server"
+	binDir          = "bin"
+	clientDir       = "internal/client"
+	cDfaDir         = "c-dfa"
+	cDfaToolsDir    = cDfaDir + "/tools"
+	cDfaSrcDir      = cDfaDir + "/src"
+	cDfaIncludeDir  = cDfaDir + "/include"
+	shellsplitDir   = "shellsplit"
+	rboxProtocolDir = "rbox-protocol"
+	rboxWrapDir     = "rbox-wrap"
+	rboxPtraceDir   = "rbox-ptrace"
+	rboxServerDir   = "rbox-server"
 
-	socketDir        = "/run/readonlybox"
-	socketPath       = socketDir + "/readonlybox.sock"
+	socketDir  = "/run/readonlybox"
+	socketPath = socketDir + "/readonlybox.sock"
 
 	// Version string
-	VersionStr       = "readonlybox build system 1.0.0"
+	VersionStr = "readonlybox build system 1.0.0"
 )
 
 // Default target
@@ -503,6 +503,57 @@ func Install() error {
 	}
 
 	fmt.Printf("Installing to /usr/local (%sinstall)\n", sudo)
+
+	// Build shared library if it doesn't exist
+	fmt.Printf("  Building shared library...\n")
+	// rbox-protocol: use build-all to get shared library
+	cmd := exec.Command("make", "build-all")
+	cmd.Dir = filepath.Join(wd, rboxProtocolDir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rbox-protocol build failed: %w", err)
+	}
+
+	// Install shared library to /usr/local/lib
+	libs := []struct {
+		src  string
+		dst  string
+		name string
+	}{
+		{filepath.Join(wd, rboxProtocolDir, "librbox_protocol.so"), "/usr/local/lib/librbox_protocol.so", "librbox_protocol.so"},
+	}
+	for _, lib := range libs {
+		if _, err := os.Stat(lib.src); os.IsNotExist(err) {
+			return fmt.Errorf("shared library not found: %s (build may have failed)", lib.src)
+		}
+		var cmd *exec.Cmd
+		if sudo != "" {
+			cmd = exec.Command(sudo, "cp", lib.src, lib.dst)
+		} else {
+			cmd = exec.Command("cp", lib.src, lib.dst)
+		}
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("installing %s failed: %w", lib.name, err)
+		}
+		fmt.Printf("  Installed %s\n", lib.dst)
+	}
+
+	// Run ldconfig to update library cache
+	fmt.Printf("  Running ldconfig...\n")
+	var ldconfigCmd *exec.Cmd
+	if sudo != "" {
+		ldconfigCmd = exec.Command(sudo, "ldconfig")
+	} else {
+		ldconfigCmd = exec.Command("ldconfig")
+	}
+	ldconfigCmd.Stdout = os.Stdout
+	ldconfigCmd.Stderr = os.Stderr
+	if err := ldconfigCmd.Run(); err != nil {
+		fmt.Printf("  Warning: ldconfig failed: %v\n", err)
+	}
 
 	installCmd := func(src, dst string) error {
 		var cmd *exec.Cmd
