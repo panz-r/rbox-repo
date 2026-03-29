@@ -205,7 +205,7 @@ func main() {
 		}
 
 		// Make decision
-		decision, reason := makeDecision(cmd, args)
+		decision, reason := makeNoninteractiveDecision(cmd, args)
 
 		// Make env decisions: auto-deny high-score env vars (score >= 0.8)
 		envDecisions := makeEnvDecisions(req)
@@ -233,8 +233,13 @@ func main() {
 	}
 }
 
-// makeDecision determines if a command should be allowed or denied
-func makeDecision(cmd string, args []string) (uint8, string) {
+// ========================================================================
+// NON-INTERACTIVE MODE FUNCTIONS
+// ========================================================================
+
+// makeNoninteractiveDecision determines if a command should be allowed or denied
+// This is ONLY used in non-interactive (non-TUI) mode for automatic decisions
+func makeNoninteractiveDecision(cmd string, args []string) (uint8, string) {
 	// Empty command
 	if cmd == "" {
 		return DecisionDeny, "empty command"
@@ -281,10 +286,6 @@ func makeDecision(cmd string, args []string) (uint8, string) {
 	// Default: allow unknown commands (they'll fail at execution if unsafe)
 	return DecisionAllow, "unknown command"
 }
-
-// SetDecisionWithAllowance is used by the TUI
-var pendingRequests = make(map[int]*RBoxRequest)
-var pendingMu sync.RWMutex
 
 // makeEnvDecisions creates env decisions based on flagged env vars from request
 // If testEnvDeny flag is set, use that bitmap to deny specific indices
@@ -333,6 +334,15 @@ func makeEnvDecisions(req *RBoxRequest) []EnvVarDecision {
 	}
 	return decisions
 }
+
+// ========================================================================
+// TUI MODE FUNCTIONS
+// ========================================================================
+
+// pendingRequests stores requests for TUI decision
+// These are accessed by MakeDecision() when user responds in TUI
+var pendingRequests = make(map[int]*RBoxRequest)
+var pendingMu sync.RWMutex
 
 // StoreRequest stores a request for later decision
 func StoreRequest(id int, req *RBoxRequest) {
