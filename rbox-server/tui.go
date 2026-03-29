@@ -258,6 +258,7 @@ type CommandLog struct {
 	Caller       string
 	Syscall      string
 	Reason       string
+	Duration     uint32 // Duration choice for retry
 	ClientID     string
 	RequestID    int
 	Cwd          string
@@ -386,27 +387,29 @@ type Model struct {
 	lastTime      time.Time
 	flashTimer    int
 	eventChan     chan Event
-	step          int         // 1 = history list, 2 = duration selection
-	cursor        int         // position in history list or duration selection
-	allowChosen   bool        // true = Allow chosen in step 2, false = Deny chosen
-	selectedIdx   int         // currently selected command in history (for expansion)
-	focus         string      // "history" or "actions"
-	detailsScroll int         // scroll position in details view
-	expandedCmd   *CommandLog // currently expanded command
-	decisionReqID int         // request ID being decided - prevents switching to different request
-	logDecision   bool        // true = mark decision for logging to user_log.txt
-	envVarCursor  int         // -1 = command selected, 0+ = index of selected env var
+	step          int                 // 1 = history list, 2 = duration selection
+	cursor        int                 // position in history list or duration selection
+	allowChosen   bool                // true = Allow chosen in step 2, false = Deny chosen
+	selectedIdx   int                 // currently selected command in history (for expansion)
+	focus         string              // "history" or "actions"
+	detailsScroll int                 // scroll position in details view
+	expandedCmd   *CommandLog         // currently expanded command
+	decisionReqID int                 // request ID being decided - prevents switching to different request
+	logDecision   bool                // true = mark decision for logging to user_log.txt
+	envVarCursor  int                 // -1 = command selected, 0+ = index of selected env var
+	pendingRetry  map[int]*CommandLog // requests that failed and need retry
 }
 
 func NewModel() *Model {
 	return &Model{
-		commands:  make([]*CommandLog, 0),
-		logs:      make([]string, 0),
-		stats:     Stats{},
-		eventChan: make(chan Event, EventChanBufferSize),
-		step:      1,
-		cursor:    0,
-		focus:     "history",
+		commands:     make([]*CommandLog, 0),
+		logs:         make([]string, 0),
+		stats:        Stats{},
+		eventChan:    make(chan Event, EventChanBufferSize),
+		step:         1,
+		cursor:       0,
+		focus:        "history",
+		pendingRetry: make(map[int]*CommandLog),
 	}
 }
 
@@ -827,7 +830,47 @@ func durationToReason(allow bool, choice int) (decision, reason string, duration
 	return
 }
 
+func (m *Model) retryPendingDecisions() {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+
+	// Check for too many pending (user should restart server)
+	if len(pendingRequests) >= 100 {
+		fmt.Fprintf(os.Stderr, "ERROR: Too many pending decisions (%d), please restart server\n", len(pendingRequests))
+		os.Exit(1)
+	}
+
+	for id, cmd := range m.pendingRetry {
+		req, ok := pendingRequests[id]
+		if !ok {
+			// Request already processed or removed
+			delete(m.pendingRetry, id)
+			continue
+		}
+
+		// Reconstruct decision
+		decision := DecisionAllow
+		if cmd.Decision == "DENY" {
+			decision = DecisionDeny
+		}
+
+		// Try to resend with full details
+		err := req.Decide(decision, cmd.Reason, cmd.Duration, cmd.EnvDecisions)
+		if err != nil {
+			// Still failing - keep for next retry
+			continue
+		}
+
+		// Success - remove from pending and retry map
+		delete(pendingRequests, id)
+		delete(m.pendingRetry, id)
+	}
+}
+
 func (m *Model) executeDecision() {
+	// Try to resend any pending failed decisions first (transparent to user)
+	m.retryPendingDecisions()
+
 	if m.expandedCmd == nil || m.step != 2 {
 		return
 	}
@@ -845,14 +888,17 @@ func (m *Model) executeDecision() {
 
 	err := MakeDecision(m.expandedCmd.RequestID, allow, reason, duration, envDecisions)
 	if err != nil {
-		// Decision failed - request remains pending for potential retry
-		// Log error but keep UI state showing pending request
-		fmt.Fprintf(os.Stderr, "Error sending decision: %v\n", err)
-		m.expandedCmd.Decision = "ERROR"
+		// Decision failed - store for retry with full details
+		fmt.Fprintf(os.Stderr, "Decision failed: %v (will retry)\n", err)
+		m.expandedCmd.Decision = "RETRY"
 		m.expandedCmd.Reason = err.Error()
-		m.lastDecision = "ERROR"
+		m.expandedCmd.Duration = duration
+		m.expandedCmd.EnvDecisions = envDecisions
+		m.pendingRetry[m.expandedCmd.RequestID] = m.expandedCmd
+		m.lastDecision = "RETRY"
 		m.lastTime = time.Now()
 		m.flashTimer = FlashTimerSeconds
+		// Don't clear expandedCmd - user moves on to next request
 		return
 	}
 
@@ -947,6 +993,13 @@ func (m *Model) View() string {
 		infoStyle.Render("●"),
 		m.stats.totalUnknown,
 		total)
+
+	// Add pending retry count if any
+	pendingCount := len(m.pendingRetry)
+	if pendingCount > 0 {
+		pendingStr := fmt.Sprintf("  %s %d pending", infoStyle.Render("●"), pendingCount)
+		statsStr += pendingStr
+	}
 
 	padding := m.width - len(statsStr)
 	if m.width == 0 {

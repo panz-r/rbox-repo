@@ -154,35 +154,28 @@ func main() {
 	}()
 
 	// Process requests in a loop
-	fmt.Println("Server: Entering request loop...")
 	for {
-		fmt.Println("Server: Calling GetRequest...")
 		req := server.GetRequest()
-		fmt.Printf("Server: GetRequest returned %v\n", req)
 		if req == nil {
 			// Server stopped
-			fmt.Println("Server: GetRequest returned nil, exiting loop")
 			break
 		}
 
 		// Check for stop request
 		if req.IsStop() {
-			fmt.Println("\nShutting down...")
 			break
 		}
 
-		fmt.Println("Server: Got request!")
-
 		cmd := req.GetCommand()
 		caller := req.GetCaller()
-		syscall := req.GetSyscall()
+		syscallName := req.GetSyscall()
 
 		// Log caller info if present
 		callerInfo := ""
 		if caller != "" {
 			callerInfo = " [caller: " + caller
-			if syscall != "" {
-				callerInfo += ", syscall: " + syscall
+			if syscallName != "" {
+				callerInfo += ", syscall: " + syscallName
 			}
 			callerInfo += "]"
 		}

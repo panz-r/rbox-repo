@@ -217,7 +217,10 @@ func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, env
 			if e.Decision == 1 {
 				envDecs[i/8] |= (1 << (i % 8))
 			}
-			defer C.free(unsafe.Pointer(envNames[i]))
+			// Free immediately after use (not deferred in loop to avoid double-free)
+			_ = C.GoString(envNames[i])
+			C.free(unsafe.Pointer(envNames[i]))
+			envNames[i] = nil
 		}
 		cEnvNames = &envNames[0]
 		cEnvDecisions = &envDecs[0]
