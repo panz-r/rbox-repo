@@ -13,7 +13,6 @@ import (
 	"syscall"
 )
 
-// Logger for server output
 type Logger struct {
 	file     *os.File
 	logLevel int
@@ -190,7 +189,6 @@ func main() {
 		// Log request if verbose
 		if *verbose || *veryVerbose {
 			fmt.Printf("Request: %s%s", cmd, callerInfo)
-			// Skip args[0] since it's the command itself (shellsplit includes command as first arg)
 			for _, arg := range args[1:] {
 				fmt.Printf(" %s", arg)
 			}
@@ -233,7 +231,6 @@ func main() {
 // makeNoninteractiveDecision determines if a command should be allowed or denied
 // This is ONLY used in non-interactive (non-TUI) mode for automatic decisions
 func makeNoninteractiveDecision(cmd string, args []string, autoDeny bool) (uint8, string) {
-	// Empty command
 	if cmd == "" {
 		return DecisionDeny, "empty command"
 	}
@@ -276,7 +273,6 @@ func makeNoninteractiveDecision(cmd string, args []string, autoDeny bool) (uint8
 		return DecisionDeny, "unknown command"
 	}
 
-	// Default: allow unknown commands (they'll fail at execution if unsafe)
 	return DecisionAllow, "unknown command"
 }
 

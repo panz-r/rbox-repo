@@ -266,7 +266,6 @@ type CommandLog struct {
 	EnvDecisions []EnvVarDecision // User's decisions on env vars
 }
 
-// EnvVarInfo holds info about a flagged env var
 type EnvVarInfo struct {
 	Name  string
 	Score float32
@@ -554,7 +553,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "tab":
-			// Toggle focus between history and actions
 			if m.step == 2 {
 				if m.focus == "actions" {
 					m.focus = "details"
@@ -595,10 +593,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.step == 2 && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
 				// Set env var to allow
 				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
-					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 0 // allow
+					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 0
 				}
 			} else if m.step == 2 {
-				// Switch to Allow mode
 				m.allowChosen = true
 				m.cursor = 0
 				m.focus = "actions"
@@ -739,7 +736,6 @@ func minInt(a, b int) int {
 	return b
 }
 
-// clampScrollY ensures scrollY is within valid bounds for the given content height
 func clampScrollY(scrollY, maxHeight, totalItems int) int {
 	maxScrollY := maxInt(0, totalItems-maxHeight)
 	if scrollY > maxScrollY {
@@ -1022,7 +1018,6 @@ func (m *Model) View() string {
 	sb.WriteString("\n")
 
 	if m.step == 1 {
-		// HISTORY LIST VIEW
 		// Each item takes 3 lines (top border + content + bottom border), total lines = 3*N + 5 = height, so N = (height - 5) / 3
 		historyAvailable := (m.height - 5) / 3
 		if historyAvailable < 1 {
@@ -1030,7 +1025,6 @@ func (m *Model) View() string {
 		}
 		m.renderHistoryList(&sb, historyAvailable)
 	} else {
-		// DETAILS & ACTIONS VIEW
 		// Reserve space for actions palette at bottom
 		detailsAvailable := m.height - 10 // header + details + actions + footer
 		if detailsAvailable < 5 {
@@ -1742,7 +1736,6 @@ func RunTUIMode() {
 			for i := 0; i < argc; i++ {
 				args[i] = req.GetArg(i)
 			}
-			// Skip args[0] since it's the command itself (shellsplit includes command as first arg)
 			argsStr := ""
 			if len(args) > 1 {
 				argsStr = strings.Join(args[1:], " ")
