@@ -599,17 +599,11 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx) {
         // Skip state 0 - it's the bootstrap and should never contribute to acceptance
         if (ns == 0) continue;
         
-        // CRITICAL: For initial DFA state, don't use is_eos_target for acceptance
-        // This prevents patterns like (a)+ from incorrectly accepting empty when
-        // combined with patterns like (x)* in the same NFA
-        // BUT include is_eos_target states that have pattern_id set (like (E)? which should match empty)
-        
-        // CRITICAL: For initial DFA state, don't use is_eos_target for acceptance
-        // This prevents patterns like (a)+ from incorrectly accepting empty when
-        // combined with patterns like (x)* in the same NFA
+        // For initial DFA state: don't use is_eos_target for acceptance
+        // (prevents patterns like (a)+ from incorrectly accepting empty when
+        // combined with (x)*). Include is_eos_target states that have pattern_id set.
         
         // Category from states that are either accepting (pattern_id) or EOS targets
-        // BUT for initial state, exclude EOS-only states
         if ((nfa[ns].pattern_id != 0 || (nfa[ns].is_eos_target && !is_initial_state)) && nfa[ns].category_mask != 0) {
             // fprintf(stderr, "DEBUG: adding cat 0x%02x from state %d\n", nfa[ns].category_mask, ns);
             im |= nfa[ns].category_mask;
@@ -660,10 +654,8 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx) {
         }
     }
     DEBUG_PRINT("before collect_fork_categories, im=0x%02x\n", im);
-    // QUANTIFIER FIX: Do NOT collect fork categories for initial state
-    // The initial state should NOT get categories from is_eos_target states
-    // because patterns with + quantifier should NOT match empty strings
-    // This was incorrectly re-adding categories that were excluded at line 597
+    // Don't collect fork categories for initial state - patterns with +
+    // quantifier should not match empty strings via fork state categories
     uint8_t fork_cats = collect_fork_categories(temp, tc, false);
     DEBUG_PRINT("after collect_fork_categories, fork_cats=0x%02x\n", fork_cats);
     im |= fork_cats;
@@ -1398,10 +1390,8 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
             rule_encoding[i] = DFA_RULE_ENC_NORMAL;
             continue;
         }
-        // Check if any transition from this state carries markers.
-        // Packed entries have no marker slot, so states with markers
-        // MUST use normal encoding to preserve capture data.
-        // Also check eos_marker_offset for EOS markers.
+        // States with markers must use normal encoding (packed format has no marker slot)
+        // Check both marker_offsets and eos_marker_offset for markers.
         bool has_markers = false;
         if (dfa[i]->eos_marker_offset != 0) has_markers = true;
         for (int r = 0; r < rule_counts[i] && !has_markers; r++) {
