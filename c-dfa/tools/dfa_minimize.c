@@ -89,7 +89,6 @@ build_dfa_state_t* dfa_arena_alloc(dfa_state_arena_t* arena) {
             sizeof(build_dfa_state_t*) * new_capacity);
         if (!new_states) return NULL;
 
-        // Zero-initialize new portion
         memset(new_states + arena->capacity, 0,
                sizeof(build_dfa_state_t*) * (new_capacity - arena->capacity));
 
@@ -349,8 +348,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
 }
 
 // ============================================================================
-// Shared: Partition Equivalence logic - NOTE: are_properties_equivalent was
-// removed as it was dead code (never called from anywhere)
+// Shared: Partition Equivalence logic
 // ============================================================================
 
 static bool are_transitions_equivalent(const build_dfa_state_t* s1, const build_dfa_state_t* s2, const int* partition_map) {

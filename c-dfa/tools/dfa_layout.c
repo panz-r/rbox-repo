@@ -157,7 +157,6 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
         }
     }
     
-    // Initialize
     for (int i = 0; i < state_count; i++) {
         depths[i] = -1;
         if (dfa[i]->flags & DFA_STATE_ACCEPTING) {
@@ -241,7 +240,6 @@ static int* find_sccs_tarjan(
         scc_id[i] = -1;  // Mark as unvisited
     }
     
-    // Initialize SCC info
     for (int i = 0; i < MAX_SCCS; i++) {
         scc_info[i].states = NULL;
         scc_info[i].count = 0;
@@ -336,7 +334,6 @@ static int* find_sccs_tarjan(
                     // Found an SCC
                     if (scc_count >= MAX_SCCS) break;
                     
-                    // Initialize SCC info
                     int initial_cap = 64;
                     scc_info[scc_count].states = malloc(initial_cap * sizeof(int));
                     if (!scc_info[scc_count].states) {
@@ -458,7 +455,6 @@ static int* topo_sort_condensation(int** cond, int scc_count) {
         return NULL;
     }
     
-    // Compute in-degrees
     for (int i = 0; i < scc_count; i++) {
         for (int j = 0; j < scc_count; j++) {
             if (cond[j][i] > 0) {
@@ -952,7 +948,6 @@ static void reorder_states(build_dfa_state_t** dfa, int state_count, const int* 
         }
     }
     
-    // Copy back
     memcpy(dfa, temp, state_count * sizeof(build_dfa_state_t*));
     
     free(temp);
@@ -982,7 +977,6 @@ int* optimize_dfa_layout(
     int* order = build_state_order_bfs(dfa, state_count);
     if (!order) return NULL;
     
-    // Apply reordering
     reorder_states(dfa, state_count, order);
     
     return order;
