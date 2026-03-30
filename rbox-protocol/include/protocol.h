@@ -17,17 +17,13 @@
  * CHECKSUM
  * ============================================================ */
 
-/* Initialize CRC32 table (called automatically) */
-void rbox_protocol_init_crc32(void);
-
 /* Calculate CRC32 checksum - composable, prev_crc=0 for fresh start */
 uint32_t rbox_protocol_checksum_crc32(uint32_t prev_crc, const void *data, size_t len);
 
-/* 64-bit command hash - two-step hash for time-limited decisions */
+/* Two-step 64-bit hash for time-limited decisions */
 uint64_t rbox_protocol_hash64(const char *str, size_t len);
 
-/* Server-side 64-bit hash - FNV-1a + DJB2 mix
- * Used for command hash verification (different from rbox_protocol_hash64) */
+/* FNV-1a + DJB2 mix for server-side command hash verification */
 uint64_t rbox_server_hash64(const char *str, size_t len);
 
 /* ============================================================

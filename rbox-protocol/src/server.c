@@ -36,9 +36,6 @@
 #define DBG(fmt, ...) ((void)0)
 #endif
 
-/* ============================================================
- * FORWARD DECLARATIONS
- * ============================================================ */
 static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size_t len, rbox_server_request_t *req);
 static void try_send_pending(rbox_server_handle_t *server, int fd);
 
@@ -626,7 +623,6 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
     return 0;
 }
 
-/* Remove from epoll */
 int epoll_del(int epoll_fd, int fd) {
     struct epoll_event ev = {0};
     return epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &ev);

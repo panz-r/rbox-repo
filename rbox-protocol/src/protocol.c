@@ -37,8 +37,7 @@ uint64_t rbox_protocol_hash64(const char *str, size_t len) {
     return h1 ^ (h2 << 32);
 }
 
-/* Server-side 64-bit hash - FNV-1a + DJB2 mix
- * Used for command hash verification (different from rbox_protocol_hash64) */
+/* FNV-1a + DJB2 mix for server-side command hash verification */
 uint64_t rbox_server_hash64(const char *str, size_t len) {
     if (!str || len == 0) return 0;
 
@@ -56,16 +55,6 @@ uint64_t rbox_server_hash64(const char *str, size_t len) {
     return hash ^ (hash2 + 0x9e3779b97f4a7c15ULL);
 }
 
-/* ============================================================
- * WRAPPER FOR RUNTIME FUNCTIONS
- * ============================================================ */
-
-/* Initialize CRC32 table - now just calls runtime init (runtime auto-inits) */
-void rbox_protocol_init_crc32(void) {
-    /* CRC32 table is now initialized automatically by runtime constructor */
-}
-
-/* CRC32 checksum - delegates to runtime */
 uint32_t rbox_protocol_checksum_crc32(uint32_t prev_crc, const void *data, size_t len) {
     return rbox_runtime_crc32(prev_crc, data, len);
 }

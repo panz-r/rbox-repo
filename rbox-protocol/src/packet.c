@@ -614,24 +614,6 @@ rbox_error_t validate_response(const char *packet, size_t len,
     return RBOX_OK;
 }
 
-/* ============================================================
- * LAYERED DECODE UTILITIES (v9)
- * ============================================================ */
-
-/* Compute checksum for header verification */
-/* Note: Currently unused - kept for potential future use */
-static __attribute__((unused)) uint32_t compute_header_checksum(const char *packet, size_t len) {
-    if (!packet || len < RBOX_HEADER_SIZE) return 0;
-    uint32_t sum = 0;
-    for (size_t i = 0; i < RBOX_HEADER_OFFSET_CHECKSUM; i++) {
-        sum ^= (uint32_t)(unsigned char)packet[i];
-    }
-    for (size_t i = RBOX_HEADER_OFFSET_CHECKSUM + 4; i < RBOX_HEADER_SIZE && i < len; i++) {
-        sum ^= (uint32_t)(unsigned char)packet[i];
-    }
-    return sum;
-}
-
 /* Decode header from packet - verifies magic, version, checksum
  * Returns: header struct with valid=1 if successful */
 //export rbox_decode_header
