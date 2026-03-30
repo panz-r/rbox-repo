@@ -393,6 +393,54 @@ TEST(reg_arg_macros) {
     return 0;
 }
 
+TEST(process_table_dynamic_scaling) {
+    ASSERT_EQ(syscall_handler_init(), 0);
+
+    const size_t num_processes = 10000;
+    ProcessState *states[10000];
+
+    for (size_t i = 0; i < num_processes; i++) {
+        pid_t pid = 1000 + (pid_t)i;
+        states[i] = syscall_get_process_state(pid);
+        ASSERT_NOT_NULL(states[i]);
+        ASSERT_EQ(states[i]->pid, pid);
+    }
+
+    for (size_t i = 0; i < num_processes; i++) {
+        pid_t pid = 1000 + (pid_t)i;
+        ProcessState *found = syscall_find_process_state(pid);
+        ASSERT_NOT_NULL(found);
+        ASSERT_EQ(found->pid, pid);
+    }
+
+    for (size_t i = 0; i < num_processes / 2; i++) {
+        pid_t pid = 1000 + (pid_t)i;
+        syscall_remove_process_state(pid);
+    }
+
+    for (size_t i = 0; i < num_processes / 2; i++) {
+        pid_t pid = 1000 + (pid_t)i;
+        ProcessState *found = syscall_find_process_state(pid);
+        ASSERT_NULL(found);
+    }
+
+    for (size_t i = num_processes / 2; i < num_processes; i++) {
+        pid_t pid = 1000 + (pid_t)i;
+        ProcessState *found = syscall_find_process_state(pid);
+        ASSERT_NOT_NULL(found);
+    }
+
+    for (size_t i = num_processes / 2; i < num_processes; i++) {
+        pid_t pid = 1000 + (pid_t)i;
+        syscall_remove_process_state(pid);
+    }
+
+    ASSERT_EQ(syscall_find_process_state(9999), NULL);
+
+    syscall_handler_cleanup();
+    return 0;
+}
+
 /*
  * Run all syscall handler tests
  */
@@ -415,6 +463,7 @@ void run_syscall_handler_tests(void) {
     RUN_TEST(syscall_remove_process_state_nonexistent);
     RUN_TEST(process_state_manipulation);
     RUN_TEST(multiple_process_states);
+    RUN_TEST(process_table_dynamic_scaling);
     RUN_TEST(syscall_numbers_defined);
     RUN_TEST(reg_syscall_macro);
     RUN_TEST(reg_arg_macros);

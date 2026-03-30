@@ -578,14 +578,67 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
  * traced simultaneously. For long-running shells that spawn many
  * commands over time, this is sufficient because each command process
  * exits and frees its table entry.
+ *
+ * The table is dynamically resizing - it starts with INITIAL_CAPACITY
+ * and grows when the load factor exceeds 0.75, to handle arbitrary
+ * numbers of concurrent processes without hitting a fixed limit.
  */
-#define MAX_PROCESSES 4096
-static ProcessState *g_process_table[MAX_PROCESSES];
+#define INITIAL_PROCESS_TABLE_CAPACITY 64
+#define PROCESS_TABLE_LOAD_FACTOR_THRESHOLD 0.75
+
+typedef struct {
+    ProcessState **entries;
+    size_t capacity;
+    size_t count;
+} ProcessTable;
+
+static ProcessTable g_process_table = {NULL, 0, 0};
 static pid_t g_main_process_pid = 0;
 
 /* Get hash index for pid */
-static int pid_hash(pid_t pid) {
-    return pid % MAX_PROCESSES;
+static size_t pid_hash(pid_t pid, size_t capacity) {
+    return ((size_t)pid * 2654435761U) % capacity;  /* Knuth's multiplicative hash */
+}
+
+/* Resize the process table */
+static int resize_process_table(size_t new_capacity) {
+    ProcessState **new_entries = calloc(new_capacity, sizeof(ProcessState *));
+    if (!new_entries) {
+        return -1;
+    }
+
+    /* Rehash existing entries */
+    for (size_t i = 0; i < g_process_table.capacity; i++) {
+        if (g_process_table.entries[i]) {
+            ProcessState *p = g_process_table.entries[i];
+            size_t idx = pid_hash(p->pid, new_capacity);
+
+            /* Linear probe for empty slot - keep probing until we find one */
+            size_t probe = idx;
+            bool placed = false;
+            for (size_t j = 0; j < new_capacity; j++) {
+                if (!new_entries[probe]) {
+                    new_entries[probe] = p;
+                    placed = true;
+                    break;
+                }
+                probe = (probe + 1) % new_capacity;
+            }
+            /* With proper load factor management, we should ALWAYS find a slot.
+             * If we don't, it's a critical error - entries would be lost. */
+            if (!placed) {
+                LOG_ERROR("CRITICAL: hash table resize failed to place entry - table corrupted");
+                free(new_entries);
+                return -1;
+            }
+        }
+    }
+
+    free(g_process_table.entries);
+    g_process_table.entries = new_entries;
+    g_process_table.capacity = new_capacity;
+
+    return 0;
 }
 
 /* Free all resources in a process state (allowances, wrapper chain, execve data) */
@@ -630,54 +683,82 @@ void syscall_set_main_process(pid_t pid) {
 
 /* Initialize syscall handler */
 int syscall_handler_init(void) {
-    memset(g_process_table, 0, sizeof(g_process_table));
+    g_process_table.entries = calloc(INITIAL_PROCESS_TABLE_CAPACITY, sizeof(ProcessState *));
+    if (!g_process_table.entries) {
+        return -1;
+    }
+    g_process_table.capacity = INITIAL_PROCESS_TABLE_CAPACITY;
+    g_process_table.count = 0;
     g_main_process_pid = 0;
     return 0;
 }
 
 /* Cleanup syscall handler */
 void syscall_handler_cleanup(void) {
-    for (int i = 0; i < MAX_PROCESSES; i++) {
-        if (g_process_table[i]) {
-            free_process_state(g_process_table[i]);
-            free(g_process_table[i]);
-            g_process_table[i] = NULL;
+    if (g_process_table.entries) {
+        for (size_t i = 0; i < g_process_table.capacity; i++) {
+            if (g_process_table.entries[i]) {
+                free_process_state(g_process_table.entries[i]);
+                free(g_process_table.entries[i]);
+            }
         }
+        free(g_process_table.entries);
+        g_process_table.entries = NULL;
+        g_process_table.capacity = 0;
+        g_process_table.count = 0;
     }
 }
 
 /* Get process state (create if needed) */
 ProcessState *syscall_get_process_state(pid_t pid) {
-    int idx = pid_hash(pid);
+    if (!g_process_table.entries) {
+        return NULL;
+    }
 
-    /* Search for existing entry */
-    for (int i = 0; i < MAX_PROCESSES; i++) {
-        int probe = (idx + i) % MAX_PROCESSES;
-        if (g_process_table[probe] && g_process_table[probe]->pid == pid) {
-            return g_process_table[probe];
-        }
-        if (!g_process_table[probe]) {
-            /* Create new entry */
-            g_process_table[probe] = calloc(1, sizeof(ProcessState));
-            if (g_process_table[probe]) {
-                g_process_table[probe]->pid = pid;
-            }
-            return g_process_table[probe];
+    /* Check if resize needed */
+    if (g_process_table.count > 0 &&
+        (double)g_process_table.count / g_process_table.capacity > PROCESS_TABLE_LOAD_FACTOR_THRESHOLD) {
+        size_t new_capacity = g_process_table.capacity * 2;
+        if (resize_process_table(new_capacity) != 0) {
+            return NULL;
         }
     }
 
-    return NULL;  /* Table full */
+    size_t idx = pid_hash(pid, g_process_table.capacity);
+
+    /* Search for existing entry */
+    for (size_t i = 0; i < g_process_table.capacity; i++) {
+        size_t probe = (idx + i) % g_process_table.capacity;
+        if (g_process_table.entries[probe] && g_process_table.entries[probe]->pid == pid) {
+            return g_process_table.entries[probe];
+        }
+        if (!g_process_table.entries[probe]) {
+            /* Create new entry */
+            g_process_table.entries[probe] = calloc(1, sizeof(ProcessState));
+            if (g_process_table.entries[probe]) {
+                g_process_table.entries[probe]->pid = pid;
+                g_process_table.count++;
+            }
+            return g_process_table.entries[probe];
+        }
+    }
+
+    return NULL;  /* Should not reach here with dynamic resizing */
 }
 
 /* Find process state without creating - returns NULL if not found */
 ProcessState *syscall_find_process_state(pid_t pid) {
-    int idx = pid_hash(pid);
+    if (!g_process_table.entries) {
+        return NULL;
+    }
+
+    size_t idx = pid_hash(pid, g_process_table.capacity);
 
     /* Search for existing entry */
-    for (int i = 0; i < MAX_PROCESSES; i++) {
-        int probe = (idx + i) % MAX_PROCESSES;
-        if (g_process_table[probe] && g_process_table[probe]->pid == pid) {
-            return g_process_table[probe];
+    for (size_t i = 0; i < g_process_table.capacity; i++) {
+        size_t probe = (idx + i) % g_process_table.capacity;
+        if (g_process_table.entries[probe] && g_process_table.entries[probe]->pid == pid) {
+            return g_process_table.entries[probe];
         }
     }
 
@@ -686,14 +767,19 @@ ProcessState *syscall_find_process_state(pid_t pid) {
 
 /* Remove process state */
 void syscall_remove_process_state(pid_t pid) {
-    int idx = pid_hash(pid);
+    if (!g_process_table.entries) {
+        return;
+    }
 
-    for (int i = 0; i < MAX_PROCESSES; i++) {
-        int probe = (idx + i) % MAX_PROCESSES;
-        if (g_process_table[probe] && g_process_table[probe]->pid == pid) {
-            free_process_state(g_process_table[probe]);
-            free(g_process_table[probe]);
-            g_process_table[probe] = NULL;
+    size_t idx = pid_hash(pid, g_process_table.capacity);
+
+    for (size_t i = 0; i < g_process_table.capacity; i++) {
+        size_t probe = (idx + i) % g_process_table.capacity;
+        if (g_process_table.entries[probe] && g_process_table.entries[probe]->pid == pid) {
+            free_process_state(g_process_table.entries[probe]);
+            free(g_process_table.entries[probe]);
+            g_process_table.entries[probe] = NULL;
+            g_process_table.count--;
             return;
         }
     }

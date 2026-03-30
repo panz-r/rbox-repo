@@ -127,15 +127,10 @@ typedef struct AllowanceSpillover {
  * - Allowances for validated subcommands
  * - Wrapper chain state for prefix-wrapper commands
  *
- * LIMITS:
- * - MAX_PROCESSES (4096): Maximum simultaneous traced processes
- *   When full, new processes bypass validation (security tradeoff)
- * - Process table is a simple hash map indexed by PID
- * - When a process exits, its entry is freed for reuse
- *
- * The 4096 limit applies to simultaneous processes. Long-running shells
- * that spawn many sequential commands are fine because each command
- * process exits and frees its table entry.
+ * The process table is a dynamic hash table that grows automatically
+ * when the load factor exceeds 0.75. It starts at 64 entries and
+ * doubles in size as needed, handling arbitrary numbers of concurrent
+ * processes without hitting a fixed limit.
  */
 typedef struct {
     pid_t pid;
