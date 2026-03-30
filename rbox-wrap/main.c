@@ -116,7 +116,6 @@ static char *get_socket_path(const char *cmd_socket, int force_system, int force
 #define RBOX_RETRY_BASE_DELAY_MS  100
 #define RBOX_RETRY_MAX_RETRIES    3
 
-/* Global DFA state */
 static const void *g_dfa_data = NULL;
 static size_t g_dfa_size = 0;
 static int g_dfa_validated = 0;
@@ -154,7 +153,6 @@ static void version_info(void) {
     fprintf(stderr, "ReadOnlyBox wrapper for executing read-only commands\n");
 }
 
-/* Initialize embedded DFA */
 static int init_embedded_dfa(void) {
     if (g_dfa_validated) {
         return 0;
@@ -278,7 +276,6 @@ static int parse_flagged_envs(const char *env_str, char ***out_names, float **ou
     return idx;
 }
 
-/* Free flagged environment names */
 static void free_flagged_envs(int count, char **names) {
     if (names) {
         for (int i = 0; i < count; i++) {
@@ -584,7 +581,6 @@ int main(int argc, char *argv[]) {
     }
 
 
-    /* Check for -- separator */
     int cmd_start = optind;
     for (int i = optind; i < argc; i++) {
         if (strcmp(argv[i], "--") == 0) {
@@ -620,7 +616,6 @@ int main(int argc, char *argv[]) {
         dfa_result = check_dfa(cmd_argc, args);
     }
 
-    /* Handle DFA fast-path */
     if (dfa_result == 1) {
         if (mode_bin) {
             char *packet = NULL;
@@ -648,7 +643,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* Parse flagged environment variables */
     char **flagged_names = NULL;
     float *flagged_scores = NULL;
     int flagged_count = 0;
