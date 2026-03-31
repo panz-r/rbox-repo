@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <limits.h>
@@ -17,9 +18,17 @@
 
 #include "judge.h"
 #include "env.h"
+#include "validation.h"
+#include "debug.h"
 #include "protocol.h"
 #include <rbox_protocol_defs.h>
 #include <rbox_protocol.h>
+
+static int server_socket_exists(void) {
+    const char *path = validation_get_socket_path();
+    struct stat st;
+    return (stat(path, &st) == 0 && S_ISSOCK(st.st_mode));
+}
 
 /* Get path to readonlybox binary */
 const char *judge_get_readonlybox_path(void) {
@@ -91,268 +100,283 @@ const char *judge_get_readonlybox_path(void) {
  * Returns: 0 = ALLOW, 9 = DENY, -1 = error
  */
 int judge_run(const char *command, const char *caller_info) {
-    int pipefd[2];
-    pid_t pid;
-
-    /* Dynamic buffer for server response - grows as needed */
-    size_t cap = 4096;
-    char *buffer = malloc(cap);
-    if (!buffer) {
-        return -1;
-    }
-    size_t bytes_read = 0;
-
-    /* Clear any stale environment variables from previous decisions
-     * This prevents stale values from being used if a later execve is
-     * allowed by DFA (bypassing server call) */
-    unsetenv("READONLYBOX_ENV_DECISIONS");
-    unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
-
-    /* Create pipe for reading output */
-    if (pipe(pipefd) < 0) {
-        free(buffer);
-        return -1;
-    }
-
-    pid = fork();
-    if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        free(buffer);
-        return -1;
-    }
-
-    if (pid == 0) {
-        /* Child process - will exec rbox-wrap for server decision */
-        /* Note: We don't call PTRACE_DETACH here - the parent will handle detaching
-         * this process after fork/clone events are detected */
-
-        /* Child: exec readonlybox --bin --judge for binary protocol */
-        close(pipefd[0]);
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[1]);
-
-        /* Set caller info as environment variable for the server request */
-        if (caller_info) {
-            setenv("READONLYBOX_CALLER", caller_info, 1);
+    while (1) {
+        /* Wait for socket to appear */
+        while (!server_socket_exists()) {
+            DEBUG_PRINT("JUDGE: waiting for server socket...\n");
+            sleep(1);
         }
 
-        /* Set flagged env vars so server can make decisions about them */
-        /* This must be set BEFORE exec so the Go server can read it */
-        /* Format: NAME1:score1,NAME2:score2,... */
-        int flagged_count = env_get_flagged_count();
-        if (flagged_count > 0) {
-            /* 16KB buffer - enough for ~256 flagged vars with typical name lengths */
-            char env_buf[16384] = {0};
-            char *p = env_buf;
-            size_t rem = sizeof(env_buf) - 1;
-            int truncated = 0;
+        int pipefd[2];
+        pid_t pid;
 
-            for (int i = 0; i < flagged_count && rem > 1; i++) {
-                const char *name = env_get_flagged_name(i);
-                if (name) {
-                    /* Use the actual score stored during screening */
-                    double score = env_get_flagged_score(i);
+        /* Dynamic buffer for server response - grows as needed */
+        size_t cap = 4096;
+        char *buffer = malloc(cap);
+        if (!buffer) {
+            return -1;
+        }
+        size_t bytes_read = 0;
 
-                    size_t len = strlen(name);
-                    /* Format: name:score (7 chars for :score + potential comma) */
-                    size_t needed = len + 8;
+        /* Clear any stale environment variables from previous decisions
+         * This prevents stale values from being used if a later execve is
+         * allowed by DFA (bypassing server call) */
+        unsetenv("READONLYBOX_ENV_DECISIONS");
+        unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
 
-                    if (rem >= needed) {
-                        /* Format: name:score */
-                        memcpy(p, name, len);
-                        p += len;
-                        rem -= len;
+        /* Create pipe for reading output */
+        if (pipe(pipefd) < 0) {
+            free(buffer);
+            return -1;
+        }
 
-                        /* Add score */
-                        int n = snprintf(p, rem, ":%.2f", score);
-                        if (n > 0 && (size_t)n < rem) {
-                            p += n;
-                            rem -= n;
+        pid = fork();
+        if (pid < 0) {
+            close(pipefd[0]);
+            close(pipefd[1]);
+            free(buffer);
+            return -1;
+        }
+
+        if (pid == 0) {
+            /* Child process - will exec rbox-wrap for server decision */
+            /* Note: We don't call PTRACE_DETACH here - the parent will handle detaching
+             * this process after fork/clone events are detected */
+
+            /* Child: exec readonlybox --bin --judge for binary protocol */
+            close(pipefd[0]);
+            dup2(pipefd[1], STDOUT_FILENO);
+            dup2(pipefd[1], STDERR_FILENO);
+            close(pipefd[1]);
+
+            /* Set caller info as environment variable for the server request */
+            if (caller_info) {
+                setenv("READONLYBOX_CALLER", caller_info, 1);
+            }
+
+            /* Set flagged env vars so server can make decisions about them */
+            /* This must be set BEFORE exec so the Go server can read it */
+            /* Format: NAME1:score1,NAME2:score2,... */
+            int flagged_count = env_get_flagged_count();
+            if (flagged_count > 0) {
+                /* 16KB buffer - enough for ~256 flagged vars with typical name lengths */
+                char env_buf[16384] = {0};
+                char *p = env_buf;
+                size_t rem = sizeof(env_buf) - 1;
+                int truncated = 0;
+
+                for (int i = 0; i < flagged_count && rem > 1; i++) {
+                    const char *name = env_get_flagged_name(i);
+                    if (name) {
+                        /* Use the actual score stored during screening */
+                        double score = env_get_flagged_score(i);
+
+                        size_t len = strlen(name);
+                        /* Format: name:score (7 chars for :score + potential comma) */
+                        size_t needed = len + 8;
+
+                        if (rem >= needed) {
+                            /* Format: name:score */
+                            memcpy(p, name, len);
+                            p += len;
+                            rem -= len;
+
+                            /* Add score */
+                            int n = snprintf(p, rem, ":%.2f", score);
+                            if (n > 0 && (size_t)n < rem) {
+                                p += n;
+                                rem -= n;
+                            }
+
+                            if (rem > 1 && i < flagged_count - 1) {
+                                *p++ = ',';
+                                rem--;
+                            }
+                        } else {
+                            truncated = 1;
                         }
-
-                        if (rem > 1 && i < flagged_count - 1) {
-                            *p++ = ',';
-                            rem--;
-                        }
-                    } else {
-                        truncated = 1;
                     }
+                }
+
+                if (env_buf[0]) {
+                    setenv("READONLYBOX_FLAGGED_ENVS", env_buf, 1);
+                }
+                if (truncated) {
+                    fprintf(stderr, "Warning: READONLYBOX_FLAGGED_ENVS was truncated\n");
                 }
             }
 
-            if (env_buf[0]) {
-                setenv("READONLYBOX_FLAGGED_ENVS", env_buf, 1);
-            }
-            if (truncated) {
-                fprintf(stderr, "Warning: READONLYBOX_FLAGGED_ENVS was truncated\n");
-            }
-        }
+            /* Find rbox-wrap binary */
+            const char *readonlybox_path = judge_get_readonlybox_path();
 
-        /* Find rbox-wrap binary */
-        const char *readonlybox_path = judge_get_readonlybox_path();
+            if (!readonlybox_path) {
+                _exit(1);
+            }
 
-        if (!readonlybox_path) {
+            /* Use binary mode for v8 protocol */
+            execl(readonlybox_path, "rbox-wrap", "--bin", "--judge", command, NULL);
+            /* If we get here, execl failed */
             _exit(1);
         }
 
-        /* Use binary mode for v8 protocol */
-        execl(readonlybox_path, "rbox-wrap", "--bin", "--judge", command, NULL);
-        /* If we get here, execl failed */
-        _exit(1);
-    }
+        /* Parent: read binary output */
+        /* Read the binary packet from the pipe while the child is running.
+         * This avoids potential deadlock if the child writes more than the pipe buffer can hold. */
 
-    /* Parent: read binary output */
-    /* Read the binary packet from the pipe while the child is running.
-     * This avoids potential deadlock if the child writes more than the pipe buffer can hold. */
+        /* Close parent's write end - child only needs to write */
+        close(pipefd[1]);
 
-    /* Close parent's write end - child only needs to write */
-    close(pipefd[1]);
-
-    /* Read with dynamically growing buffer (max 64KB for protocol response) */
+        /* Read with dynamically growing buffer (max 64KB for protocol response) */
 #define MAX_RESPONSE_SIZE 65536
-    ssize_t n;
-    while ((n = read(pipefd[0], buffer + bytes_read, cap - bytes_read)) > 0) {
-        bytes_read += n;
-        if ((size_t)bytes_read == cap) {
-            if (cap >= MAX_RESPONSE_SIZE) {
-                /* Response too large - reject to prevent memory exhaustion */
-                kill(pid, SIGKILL);
-                close(pipefd[0]);
-                waitpid(pid, NULL, 0);
-                free(buffer);
-                return -1;
-            }
-            /* Grow buffer */
-            size_t new_cap = cap * 2;
-            if (new_cap > MAX_RESPONSE_SIZE) new_cap = MAX_RESPONSE_SIZE;
-            char *new_buf = realloc(buffer, new_cap);
-            if (!new_buf) {
-                /* Realloc failed - kill child and cleanup */
-                kill(pid, SIGKILL);
-                close(pipefd[0]);
-                waitpid(pid, NULL, 0);
-                free(buffer);
-                return -1;
-            }
-            buffer = new_buf;
-            cap = new_cap;
-        }
-    }
-    close(pipefd[0]);
-    /* pipefd[1] already closed by parent before reading */
-
-    /* Wait for child to finish */
-    int status;
-    waitpid(pid, &status, 0);
-
-    if (bytes_read <= 0) {
-        free(buffer);
-        return -1;
-    }
-
-    /* Do NOT null-terminate - this is binary protocol data */
-
-    /* Check if child exited normally or was killed by signal */
-    int exit_code;
-    if (WIFEXITED(status)) {
-        exit_code = WEXITSTATUS(status);
-    } else if (WIFSIGNALED(status)) {
-        exit_code = -WTERMSIG(status);  /* Treat signal as error */
-    } else {
-        exit_code = -1;
-    }
-
-    /* Use v8 protocol decode utilities to parse binary response */
-    rbox_decoded_header_t header;
-    rbox_response_details_t details;
-    rbox_env_decisions_t env_decisions;
-    memset(&env_decisions, 0, sizeof(env_decisions));
-
-    /* Decode header */
-    rbox_decode_header(buffer, bytes_read, &header);
-    if (!header.valid) {
-        /* Fall back to exit code */
-        free(buffer);
-        if (exit_code == 0) return 0;
-        if (exit_code == 9) return 9;
-        return -1;
-    }
-
-    /* Decode env decisions FIRST - apply them regardless of allow/deny decision */
-    rbox_decode_env_decisions(&header, &details, buffer, bytes_read, &env_decisions);
-    if (env_decisions.valid && env_decisions.env_count > 0 && env_decisions.bitmap) {
-        /* Build env_decisions string with index:decision format */
-        char env_decisions_buf[4096] = {0};
-        char *p = env_decisions_buf;
-        size_t remaining = sizeof(env_decisions_buf) - 1;
-
-        for (int i = 0; i < env_decisions.env_count && remaining > 1; i++) {
-            uint8_t bit = (env_decisions.bitmap[i / 8] >> (i % 8)) & 1;
-            int n = snprintf(p, remaining, "%d:%d", i, bit);
-            if (n > 0 && (size_t)n < remaining) {
-                p += n;
-                remaining -= n;
-                if (remaining > 1 && i < env_decisions.env_count - 1) {
-                    *p++ = ',';
-                    remaining--;
+        ssize_t n;
+        while ((n = read(pipefd[0], buffer + bytes_read, cap - bytes_read)) > 0) {
+            bytes_read += n;
+            if ((size_t)bytes_read == cap) {
+                if (cap >= MAX_RESPONSE_SIZE) {
+                    /* Response too large - reject to prevent memory exhaustion */
+                    kill(pid, SIGKILL);
+                    close(pipefd[0]);
+                    waitpid(pid, NULL, 0);
+                    free(buffer);
+                    return -1;
                 }
+                /* Grow buffer */
+                size_t new_cap = cap * 2;
+                if (new_cap > MAX_RESPONSE_SIZE) new_cap = MAX_RESPONSE_SIZE;
+                char *new_buf = realloc(buffer, new_cap);
+                if (!new_buf) {
+                    /* Realloc failed - kill child and cleanup */
+                    kill(pid, SIGKILL);
+                    close(pipefd[0]);
+                    waitpid(pid, NULL, 0);
+                    free(buffer);
+                    return -1;
+                }
+                buffer = new_buf;
+                cap = new_cap;
             }
         }
+        close(pipefd[0]);
+        /* pipefd[1] already closed by parent before reading */
 
-        if (env_decisions_buf[0]) {
-            setenv("READONLYBOX_ENV_DECISIONS", env_decisions_buf, 1);
+        /* Wait for child to finish */
+        int status;
+        waitpid(pid, &status, 0);
+
+        if (bytes_read <= 0) {
+            free(buffer);
+            DEBUG_PRINT("JUDGE: server communication failed (no output), retrying...\n");
+            sleep(1);
+            continue;
         }
 
-        /* Also set the flagged env var names so child can filter */
-        int flagged_count = env_get_flagged_count();
-        if (flagged_count > 0) {
-            char env_names_buf[4096] = {0};
-            char *p = env_names_buf;
-            size_t rem = sizeof(env_names_buf) - 1;
+        /* Do NOT null-terminate - this is binary protocol data */
 
-            for (int i = 0; i < flagged_count && i < env_decisions.env_count && rem > 1; i++) {
-                const char *name = env_get_flagged_name(i);
-                if (name) {
-                    size_t len = strlen(name);
-                    if (len < rem) {
-                        memcpy(p, name, len);
-                        p += len;
-                        rem -= len;
-                        if (rem > 1 && i < flagged_count - 1) {
-                            *p++ = ',';
-                            rem--;
-                        }
+        /* Check if child exited normally or was killed by signal */
+        int exit_code;
+        if (WIFEXITED(status)) {
+            exit_code = WEXITSTATUS(status);
+        } else if (WIFSIGNALED(status)) {
+            exit_code = -WTERMSIG(status);  /* Treat signal as error */
+        } else {
+            exit_code = -1;
+        }
+
+        /* Use v8 protocol decode utilities to parse binary response */
+        rbox_decoded_header_t header;
+        rbox_response_details_t details;
+        rbox_env_decisions_t env_decisions;
+        memset(&env_decisions, 0, sizeof(env_decisions));
+
+        /* Decode header */
+        rbox_decode_header(buffer, bytes_read, &header);
+        if (!header.valid) {
+            /* Fall back to exit code */
+            free(buffer);
+            if (exit_code == 0) return 0;
+            if (exit_code == 9) return 9;
+            DEBUG_PRINT("JUDGE: server communication failed (invalid header), retrying...\n");
+            sleep(1);
+            continue;
+        }
+
+        /* Decode env decisions FIRST - apply them regardless of allow/deny decision */
+        rbox_decode_env_decisions(&header, &details, buffer, bytes_read, &env_decisions);
+        if (env_decisions.valid && env_decisions.env_count > 0 && env_decisions.bitmap) {
+            /* Build env_decisions string with index:decision format */
+            char env_decisions_buf[4096] = {0};
+            char *p = env_decisions_buf;
+            size_t remaining = sizeof(env_decisions_buf) - 1;
+
+            for (int i = 0; i < env_decisions.env_count && remaining > 1; i++) {
+                uint8_t bit = (env_decisions.bitmap[i / 8] >> (i % 8)) & 1;
+                int n = snprintf(p, remaining, "%d:%d", i, bit);
+                if (n > 0 && (size_t)n < remaining) {
+                    p += n;
+                    remaining -= n;
+                    if (remaining > 1 && i < env_decisions.env_count - 1) {
+                        *p++ = ',';
+                        remaining--;
                     }
                 }
             }
 
-            if (env_names_buf[0]) {
-                setenv("READONLYBOX_FLAGGED_ENV_NAMES", env_names_buf, 1);
+            if (env_decisions_buf[0]) {
+                setenv("READONLYBOX_ENV_DECISIONS", env_decisions_buf, 1);
+            }
+
+            /* Also set the flagged env var names so child can filter */
+            int flagged_count = env_get_flagged_count();
+            if (flagged_count > 0) {
+                char env_names_buf[4096] = {0};
+                char *p = env_names_buf;
+                size_t rem = sizeof(env_names_buf) - 1;
+
+                for (int i = 0; i < flagged_count && i < env_decisions.env_count && rem > 1; i++) {
+                    const char *name = env_get_flagged_name(i);
+                    if (name) {
+                        size_t len = strlen(name);
+                        if (len < rem) {
+                            memcpy(p, name, len);
+                            p += len;
+                            rem -= len;
+                            if (rem > 1 && i < flagged_count - 1) {
+                                *p++ = ',';
+                                rem--;
+                            }
+                        }
+                    }
+                }
+
+                if (env_names_buf[0]) {
+                    setenv("READONLYBOX_FLAGGED_ENV_NAMES", env_names_buf, 1);
+                }
+            }
+
+            /* Free bitmap */
+            free(env_decisions.bitmap);
+        }
+
+        /* Decode response details */
+        rbox_decode_response_details(&header, buffer, bytes_read, &details);
+        if (details.valid) {
+            /* Use decision from response packet - this is the authoritative source */
+            /* Decision: RBOX_DECISION_ALLOW=2 means allow, anything else is deny */
+            free(buffer);
+            if (details.decision == RBOX_DECISION_ALLOW) {
+                return 0;  /* Allowed */
+            } else {
+                return 9;  /* Denied */
             }
         }
 
-        /* Free bitmap */
-        free(env_decisions.bitmap);
-    }
-
-    /* Decode response details */
-    rbox_decode_response_details(&header, buffer, bytes_read, &details);
-    if (details.valid) {
-        /* Use decision from response packet - this is the authoritative source */
-        /* Decision: RBOX_DECISION_ALLOW=2 means allow, anything else is deny */
+        /* Fallback to exit code if details not valid */
         free(buffer);
-        if (details.decision == RBOX_DECISION_ALLOW) {
-            return 0;  /* Allowed */
-        } else {
-            return 9;  /* Denied */
-        }
-    }
+        if (exit_code == 0) return 0;
+        if (exit_code == 9) return 9;
 
-    /* Fallback to exit code if details not valid */
-    free(buffer);
-    if (exit_code == 0) return 0;
-    if (exit_code == 9) return 9;
-    return -1;
+        /* Child did not return 0 or 9 – likely server not ready or error */
+        DEBUG_PRINT("JUDGE: server communication failed (exit_code=%d), retrying...\n", exit_code);
+        sleep(1);
+    }
 }

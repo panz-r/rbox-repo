@@ -16,6 +16,17 @@
 
 #include "debug.h"
 
+static ssize_t write_full(int fd, const void *buf, size_t count) {
+    const char *p = buf;
+    while (count > 0) {
+        ssize_t written = write(fd, p, count);
+        if (written < 0) return -1;
+        count -= (size_t)written;
+        p += written;
+    }
+    return 0;
+}
+
 /* Program name for error messages */
 static const char *g_pkexec_progname = "readonlybox-ptrace";
 
@@ -46,7 +57,6 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
     int result = 1;
     char env_file_template[64] = "";
     int env_fd = -1;
-    FILE *env_file = NULL;
     char **new_argv = NULL;
     char **allocated_strings = NULL;
     int allocated_count = 0;
@@ -68,29 +78,19 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
         }
     }
 
-    /* Unlink immediately to prevent leak if process crashes.
-     * The file descriptor remains open and usable.
-     * The file content persists in kernel memory until the fd is closed. */
-    unlink(env_file_template);
-
-    /* Write the screened environment to the temp file */
+    /* Write the screened environment to the temp file.
+     * The file will be unlinked by pkexec's child after reading it.
+     * If execve fails, the cleanup handler will unlink it.
+     * We use write_full() to handle partial writes. */
     extern char **environ;
-    env_file = fdopen(env_fd, "w");
-    if (!env_file) {
-        LOG_ERRNO("fdopen");
-        goto cleanup;
-    }
     for (char **e = environ; *e; e++) {
-        fprintf(env_file, "%s\n", *e);
+        size_t len = strlen(*e);
+        if (write_full(env_fd, *e, len) < 0 ||
+            write_full(env_fd, "\n", 1) < 0) {
+            LOG_ERROR("Error writing environment to temp file");
+            goto cleanup;
+        }
     }
-    /* Check for write errors before closing */
-    if (fflush(env_file) != 0 || ferror(env_file)) {
-        LOG_ERROR("Error writing environment to temp file");
-        goto cleanup;
-    }
-    fclose(env_file);
-    env_file = NULL;
-    env_fd = -1;
 
     /* Allocate argv: pkexec + our options + args + NULL */
     /* pkexec args: 12 fixed (pkexec, --disable-internal-agent, argv[0], --uid, uid_str, --cwd, cwd, --cmd, cmd_path, --env-file, env_file, --internal-screened) + user args */
@@ -157,23 +157,18 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
     }
     new_argv[idx] = NULL;
 
-    /* Execute pkexec. The env file was unlinked immediately after creation,
-     * so no cleanup is needed here. The file content persists in kernel memory
-     * (via the open fd) until pkexec reads it and the fd is closed. */
+    /* Execute pkexec. The env file will be read and unlinked by main.c
+     * after pkexec passes it through. The file persists on disk (in /dev/shm)
+     * until main.c unlinks it after reading. */
     execve("/usr/bin/pkexec", new_argv, environ);
 
-    /* If we get here, execve failed - but file is already unlinked */
+    /* If we get here, execve failed - cleanup will close and unlink */
     LOG_ERROR("Failed to execute pkexec: %s", strerror(errno));
     goto cleanup;
 
 cleanup:
-    if (env_file) {
-        fclose(env_file);
-    }
     if (env_fd >= 0) {
         close(env_fd);
-    }
-    if (env_file_template[0]) {
         unlink(env_file_template);
     }
     if (allocated_strings) {

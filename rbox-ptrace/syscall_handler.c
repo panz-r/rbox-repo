@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <sys/user.h>
 #include <sys/fcntl.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -585,14 +586,18 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
  */
 #define INITIAL_PROCESS_TABLE_CAPACITY 64
 #define PROCESS_TABLE_LOAD_FACTOR_THRESHOLD 0.75
+#define TOMBSTONE_THRESHOLD 0.5
+
+#define TOMBSTONE ((ProcessState *)-1)
 
 typedef struct {
     ProcessState **entries;
     size_t capacity;
     size_t count;
+    size_t tombstone_count;
 } ProcessTable;
 
-static ProcessTable g_process_table = {NULL, 0, 0};
+static ProcessTable g_process_table = {NULL, 0, 0, 0};
 static pid_t g_main_process_pid = 0;
 
 /* Get hash index for pid */
@@ -600,16 +605,16 @@ static size_t pid_hash(pid_t pid, size_t capacity) {
     return ((size_t)pid * 2654435761U) % capacity;  /* Knuth's multiplicative hash */
 }
 
-/* Resize the process table */
+/* Resize the process table - only rehashes live entries, skips tombstones */
 static int resize_process_table(size_t new_capacity) {
     ProcessState **new_entries = calloc(new_capacity, sizeof(ProcessState *));
     if (!new_entries) {
         return -1;
     }
 
-    /* Rehash existing entries */
+    /* Rehash existing live entries only (skip tombstones) */
     for (size_t i = 0; i < g_process_table.capacity; i++) {
-        if (g_process_table.entries[i]) {
+        if (g_process_table.entries[i] && g_process_table.entries[i] != TOMBSTONE) {
             ProcessState *p = g_process_table.entries[i];
             size_t idx = pid_hash(p->pid, new_capacity);
 
@@ -637,6 +642,7 @@ static int resize_process_table(size_t new_capacity) {
     free(g_process_table.entries);
     g_process_table.entries = new_entries;
     g_process_table.capacity = new_capacity;
+    g_process_table.tombstone_count = 0;
 
     return 0;
 }
@@ -689,6 +695,7 @@ int syscall_handler_init(void) {
     }
     g_process_table.capacity = INITIAL_PROCESS_TABLE_CAPACITY;
     g_process_table.count = 0;
+    g_process_table.tombstone_count = 0;
     g_main_process_pid = 0;
     return 0;
 }
@@ -697,15 +704,17 @@ int syscall_handler_init(void) {
 void syscall_handler_cleanup(void) {
     if (g_process_table.entries) {
         for (size_t i = 0; i < g_process_table.capacity; i++) {
-            if (g_process_table.entries[i]) {
-                free_process_state(g_process_table.entries[i]);
-                free(g_process_table.entries[i]);
+            ProcessState *entry = g_process_table.entries[i];
+            if (entry && entry != TOMBSTONE) {
+                free_process_state(entry);
+                free(entry);
             }
         }
         free(g_process_table.entries);
         g_process_table.entries = NULL;
         g_process_table.capacity = 0;
         g_process_table.count = 0;
+        g_process_table.tombstone_count = 0;
     }
 }
 
@@ -713,6 +722,14 @@ void syscall_handler_cleanup(void) {
 ProcessState *syscall_get_process_state(pid_t pid) {
     if (!g_process_table.entries) {
         return NULL;
+    }
+
+    /* Check if tombstone cleanup needed */
+    if (g_process_table.capacity > INITIAL_PROCESS_TABLE_CAPACITY &&
+        (double)g_process_table.tombstone_count / g_process_table.capacity > TOMBSTONE_THRESHOLD) {
+        if (resize_process_table(g_process_table.capacity) != 0) {
+            return NULL;
+        }
     }
 
     /* Check if resize needed */
@@ -725,22 +742,48 @@ ProcessState *syscall_get_process_state(pid_t pid) {
     }
 
     size_t idx = pid_hash(pid, g_process_table.capacity);
+    size_t first_tombstone = SIZE_MAX;
 
     /* Search for existing entry */
     for (size_t i = 0; i < g_process_table.capacity; i++) {
         size_t probe = (idx + i) % g_process_table.capacity;
-        if (g_process_table.entries[probe] && g_process_table.entries[probe]->pid == pid) {
-            return g_process_table.entries[probe];
-        }
-        if (!g_process_table.entries[probe]) {
-            /* Create new entry */
-            g_process_table.entries[probe] = calloc(1, sizeof(ProcessState));
-            if (g_process_table.entries[probe]) {
-                g_process_table.entries[probe]->pid = pid;
-                g_process_table.count++;
+        ProcessState *entry = g_process_table.entries[probe];
+
+        if (entry == TOMBSTONE) {
+            if (first_tombstone == SIZE_MAX) {
+                first_tombstone = probe;
             }
-            return g_process_table.entries[probe];
+            continue;
         }
+        if (!entry) {
+            /* Found empty slot - use first tombstone if found, otherwise this slot */
+            size_t insert_at = (first_tombstone != SIZE_MAX) ? first_tombstone : probe;
+
+            /* Create new entry at insert_at */
+            g_process_table.entries[insert_at] = calloc(1, sizeof(ProcessState));
+            if (g_process_table.entries[insert_at]) {
+                g_process_table.entries[insert_at]->pid = pid;
+                g_process_table.count++;
+                if (first_tombstone != SIZE_MAX) {
+                    g_process_table.tombstone_count--;
+                }
+            }
+            return g_process_table.entries[insert_at];
+        }
+        if (entry->pid == pid) {
+            return entry;
+        }
+    }
+
+    /* No NULL slot found - reuse first tombstone if available */
+    if (first_tombstone != SIZE_MAX) {
+        g_process_table.entries[first_tombstone] = calloc(1, sizeof(ProcessState));
+        if (g_process_table.entries[first_tombstone]) {
+            g_process_table.entries[first_tombstone]->pid = pid;
+            g_process_table.count++;
+            g_process_table.tombstone_count--;
+        }
+        return g_process_table.entries[first_tombstone];
     }
 
     return NULL;  /* Should not reach here with dynamic resizing */
@@ -757,8 +800,15 @@ ProcessState *syscall_find_process_state(pid_t pid) {
     /* Search for existing entry */
     for (size_t i = 0; i < g_process_table.capacity; i++) {
         size_t probe = (idx + i) % g_process_table.capacity;
-        if (g_process_table.entries[probe] && g_process_table.entries[probe]->pid == pid) {
-            return g_process_table.entries[probe];
+        ProcessState *entry = g_process_table.entries[probe];
+        if (entry == TOMBSTONE) {
+            continue;
+        }
+        if (!entry) {
+            return NULL;
+        }
+        if (entry->pid == pid) {
+            return entry;
         }
     }
 
@@ -775,11 +825,19 @@ void syscall_remove_process_state(pid_t pid) {
 
     for (size_t i = 0; i < g_process_table.capacity; i++) {
         size_t probe = (idx + i) % g_process_table.capacity;
-        if (g_process_table.entries[probe] && g_process_table.entries[probe]->pid == pid) {
-            free_process_state(g_process_table.entries[probe]);
-            free(g_process_table.entries[probe]);
-            g_process_table.entries[probe] = NULL;
+        ProcessState *entry = g_process_table.entries[probe];
+        if (entry == TOMBSTONE) {
+            continue;
+        }
+        if (!entry) {
+            return;
+        }
+        if (entry->pid == pid) {
+            free_process_state(entry);
+            free(entry);
+            g_process_table.entries[probe] = TOMBSTONE;
             g_process_table.count--;
+            g_process_table.tombstone_count++;
             return;
         }
     }
@@ -1112,13 +1170,13 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         }
 
         /* Ask server for decision via readonlybox --judge
-         * This reuses all the server communication code from the main binary */
+         * judge_run now waits indefinitely for server availability */
         int decision = judge_run(command, caller_info);
 
         DEBUG_PRINT("JUDGE: pid=%d command='%s' decision=%d\n", pid, command, decision);
 
         if (decision != 0) {
-            /* Server denied (exit 9) or error - block the command */
+            /* Server denied (exit 9) or timeout after retries - block the command */
             DEBUG_PRINT("HANDLER: pid=%d server denied command '%s', blocking\n", pid, command);
             if (block_execve(pid, regs) < 0) {
                 kill(pid, SIGKILL);
