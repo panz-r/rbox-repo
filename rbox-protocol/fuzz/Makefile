@@ -15,9 +15,8 @@ CC = clang
 SHELL_INCLUDE = -I../../shellsplit/include
 CFLAGS = -fsanitize=fuzzer -I../include $(SHELL_INCLUDE) -g -O1 -fno-omit-frame-pointer
 
-# Libraries and Objects
-LIB = ../librbox_protocol.a
-SHELLSPLIT_OBJ = ../../shellsplit/src/shell_tokenizer.o
+# Libraries (protocol.so includes shellsplit statically)
+LIB = ../librbox_protocol.so
 
 # Fuzzer targets
 FUZZERS = protocol_fuzzer
@@ -34,8 +33,8 @@ setup-dirs:
 	$(warning Created directories: crashes/ corpus/interesting)
 
 # Build protocol fuzzer - compile as C and link
-protocol_fuzzer: protocol_fuzzer.c $(LIB) $(SHELLSPLIT_OBJ)
-	$(CC) $(CFLAGS) -o $@ $< $(LIB) $(SHELLSPLIT_OBJ) -lm
+protocol_fuzzer: protocol_fuzzer.c $(LIB)
+	$(CC) $(CFLAGS) -o $@ $< $(LIB) -lm
 
 # Create a seed corpus from a sample input
 create-seed-corpus:

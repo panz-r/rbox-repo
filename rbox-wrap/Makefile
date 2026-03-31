@@ -9,12 +9,10 @@ LDFLAGS ?= -lpthread -lm
 
 # Paths
 RBOX_PROTOCOL = ../rbox-protocol
-SHELLSPLIT = ../shellsplit
 C_DFA = ../c-dfa
 
-# Libraries
-RBOX_LIB = $(RBOX_PROTOCOL)/librbox_protocol.a
-SHELLSPLIT_LIB = $(SHELLSPLIT)/libshellsplit.a
+# Libraries (protocol.so includes shellsplit statically)
+RBOX_LIB = $(RBOX_PROTOCOL)/librbox_protocol.so
 DFA_EVAL_LIB = $(C_DFA)/libdfa_eval.a
 
 # Tools
@@ -38,7 +36,7 @@ DECODE_PACKET = tests/decode_packet
 
 .PHONY: all clean test dfa \
         $(TARGET) $(TEST_BIN) $(DECODE_PACKET) \
-        $(RBOX_LIB) $(DFA_EVAL_LIB) $(SHELLSPLIT_LIB)
+        $(RBOX_LIB) $(DFA_EVAL_LIB)
 
 # Enable parallel builds
 ifneq ($(filter-out --%,$(MAKECMDGOALS)),)
@@ -74,8 +72,8 @@ $(DFA_DATA_C): $(DFA_FILE) $(DFA2C)
 $(DFA_DATA_OBJ): $(DFA_DATA_C)
 	$(CC) $(CFLAGS) -c -o $@ $(DFA_DATA_C)
 
-$(TARGET): $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(SHELLSPLIT_LIB) $(DFA_DATA_OBJ)
-	$(CC) $(CFLAGS) -o $@ $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(SHELLSPLIT_LIB) $(DFA_DATA_OBJ) $(LDFLAGS)
+$(TARGET): $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(DFA_DATA_OBJ)
+	$(CC) $(CFLAGS) -o $@ $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(DFA_DATA_OBJ) $(LDFLAGS)
 
 $(RBOX_LIB):
 	$(MAKE) -C $(RBOX_PROTOCOL)
@@ -83,15 +81,12 @@ $(RBOX_LIB):
 $(DFA_EVAL_LIB):
 	$(MAKE) -C $(C_DFA) libdfa_eval.a
 
-$(SHELLSPLIT_LIB):
-	$(MAKE) -C $(SHELLSPLIT) libshellsplit.a
-
 # Test targets
 $(TEST_BIN): $(TEST_SRC) $(RBOX_LIB)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(RBOX_LIB) $(LDFLAGS)
 
-$(DECODE_PACKET): tests/decode_packet.c $(RBOX_LIB) $(SHELLSPLIT_LIB)
-	$(CC) $(CFLAGS) -o $@ tests/decode_packet.c $(RBOX_LIB) $(SHELLSPLIT_LIB) $(LDFLAGS)
+$(DECODE_PACKET): tests/decode_packet.c $(RBOX_LIB)
+	$(CC) $(CFLAGS) -o $@ tests/decode_packet.c $(RBOX_LIB) $(LDFLAGS)
 
 test: dfa $(TARGET) $(TEST_BIN) $(DECODE_PACKET)
 	@echo "Running C unit tests and shell integration tests..."

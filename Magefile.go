@@ -329,7 +329,7 @@ func BuildBinaries() error {
 		forceRebuildIfNewer(binPath, dfaSo)
 	}
 
-	protoLib := filepath.Join(wd, rboxProtocolDir, "librbox_protocol.a")
+	protoLib := filepath.Join(wd, rboxProtocolDir, "librbox_protocol.so")
 	serverBin := filepath.Join(wd, binDir, "readonlybox-server")
 	forceRebuildIfNewer(serverBin, protoLib)
 
