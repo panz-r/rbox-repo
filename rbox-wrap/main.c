@@ -223,11 +223,11 @@ static int parse_flagged_envs(const char *env_str, char ***out_names, float **ou
 
     /* Only allocate arrays if corresponding output pointers are non-NULL */
     if (out_names) {
-        names = calloc(count, sizeof(char *));
+        names = calloc(count + 1, sizeof(char *));  // +1 for NULL terminator
         if (!names) return -1;
     }
     if (out_scores) {
-        scores = calloc(count, sizeof(float));
+        scores = calloc(count + 1, sizeof(float));  // +1 for extra slot
         if (!scores) {
             free(names);
             return -1;
@@ -270,6 +270,11 @@ static int parse_flagged_envs(const char *env_str, char ***out_names, float **ou
         token = strtok_r(NULL, ",", &saveptr);
     }
     free(env_copy);
+
+    // NULL-terminate the names array for safety
+    if (names) {
+        names[idx] = NULL;
+    }
 
     if (out_names) *out_names = names;
     if (out_scores) *out_scores = scores;
