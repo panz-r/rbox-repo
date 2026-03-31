@@ -251,19 +251,21 @@ func (g *GrepParser) ParseArguments(args []string) (interface{}, error) {
 }
 
 type CommandLog struct {
-	Timestamp    time.Time
-	Decision     string
-	Command      string
-	Args         string
-	Caller       string
-	Syscall      string
-	Reason       string
-	Duration     uint32 // Duration choice for retry
-	ClientID     string
-	RequestID    int
-	Cwd          string
-	EnvVars      []EnvVarInfo     // Flagged env vars from request
-	EnvDecisions []EnvVarDecision // User's decisions on env vars
+	Timestamp        time.Time
+	Decision         string
+	Command          string
+	Args             string
+	Caller           string
+	Syscall          string
+	Reason           string
+	Duration         uint32 // Duration choice for retry
+	ClientID         string
+	RequestID        int
+	Cwd              string
+	EnvVars          []EnvVarInfo     // Flagged env vars from request
+	EnvDecisions     []EnvVarDecision // User's decisions on env vars
+	IntendedDecision string           // "ALLOW" or "DENY" for retries
+	OriginalReason   string           // original reason (e.g., "once") for retries
 }
 
 type EnvVarInfo struct {
@@ -397,6 +399,7 @@ type Model struct {
 	logDecision   bool                // true = mark decision for logging to user_log.txt
 	envVarCursor  int                 // -1 = command selected, 0+ = index of selected env var
 	pendingRetry  map[int]*CommandLog // requests that failed and need retry
+	viewOnly      bool                // true when viewing details of a decided command (no decision allowed)
 }
 
 func NewModel() *Model {
@@ -409,6 +412,7 @@ func NewModel() *Model {
 		cursor:       0,
 		focus:        "history",
 		pendingRetry: make(map[int]*CommandLog),
+		viewOnly:     false,
 	}
 }
 
@@ -485,14 +489,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == 1 && m.selectedIdx > 0 {
 				m.selectedIdx--
 			} else if m.step == 2 {
-				// If focused on details, navigate between command and env vars
-				if m.focus == "details" && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
+				if m.focus == "details" && !m.viewOnly && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
 					m.envVarCursor--
 					if m.envVarCursor < -1 {
-						m.envVarCursor = -1 // Go back to command
+						m.envVarCursor = -1
 					}
-				} else {
-					// Scroll details up
+				} else if m.viewOnly || m.focus == "details" {
 					if m.detailsScroll > 0 {
 						m.detailsScroll--
 					}
@@ -502,14 +504,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == 1 && m.selectedIdx < len(m.commands)-1 {
 				m.selectedIdx++
 			} else if m.step == 2 {
-				// If focused on details, navigate between command and env vars
-				if m.focus == "details" && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
+				if m.focus == "details" && !m.viewOnly && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
 					maxEnv := len(m.expandedCmd.EnvVars) - 1
 					if m.envVarCursor < maxEnv {
 						m.envVarCursor++
 					}
-				} else {
-					// Scroll details down
+				} else if m.viewOnly || m.focus == "details" {
 					m.detailsScroll++
 				}
 			}
@@ -527,7 +527,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailsScroll = 0
 			}
 		case "left":
-			if m.step == 2 && m.focus == "actions" {
+			if m.step == 2 && !m.viewOnly && m.focus == "actions" {
 				if m.cursor <= 3 {
 					m.cursor--
 					if m.cursor < 0 {
@@ -540,7 +540,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "right":
-			if m.step == 2 && m.focus == "actions" {
+			if m.step == 2 && !m.viewOnly && m.focus == "actions" {
 				if m.cursor <= 3 {
 					m.cursor++
 					if m.cursor > 3 {
@@ -553,7 +553,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "tab":
-			if m.step == 2 {
+			if m.step == 2 && !m.viewOnly {
 				if m.focus == "actions" {
 					m.focus = "details"
 				} else {
@@ -562,134 +562,159 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.step == 1 && len(m.commands) > 0 {
-				// Expand selected command
-				if m.expandedCmd != nil && m.selectedIdx >= 0 {
-					m.step = 2
-					m.cursor = 0
-					m.allowChosen = true
-					m.focus = "actions"
-					// Track which request we're deciding (prevents switching on new requests)
-					if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
-						m.expandedCmd = m.commands[m.selectedIdx]
-						m.decisionReqID = m.commands[m.selectedIdx].RequestID
+				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
+					selectedCmd := m.commands[m.selectedIdx]
+					if selectedCmd.Decision == "PENDING" {
+						m.step = 2
+						m.cursor = 0
+						m.allowChosen = true
+						m.focus = "actions"
+						m.viewOnly = false
+						m.expandedCmd = selectedCmd
+						m.decisionReqID = selectedCmd.RequestID
+						m.envVarCursor = -1
+					} else {
+						m.step = 2
+						m.viewOnly = true
+						m.focus = "details"
+						m.expandedCmd = selectedCmd
+						m.decisionReqID = 0
+						m.envVarCursor = -1
 					}
 				}
 			} else if m.step == 2 {
 				m.executeDecision()
 			}
 		case "a", "A":
-			if m.step == 1 && len(m.commands) > 0 {
-				// Enter decision mode with Allow preselected
-				m.step = 2
-				m.cursor = 0
-				m.allowChosen = true
-				m.focus = "actions"
-				// Track which request we're deciding (prevents switching on new requests)
-				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
-					m.expandedCmd = m.commands[m.selectedIdx]
-					m.decisionReqID = m.commands[m.selectedIdx].RequestID
-					m.envVarCursor = -1 // Reset to command selection
+			if m.step == 1 && len(m.commands) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
+				selectedCmd := m.commands[m.selectedIdx]
+				if selectedCmd.Decision == "PENDING" {
+					m.step = 2
+					m.cursor = 0
+					m.allowChosen = true
+					m.focus = "actions"
+					m.viewOnly = false
+					m.expandedCmd = selectedCmd
+					m.decisionReqID = selectedCmd.RequestID
+					m.envVarCursor = -1
+				} else {
+					m.step = 2
+					m.viewOnly = true
+					m.focus = "details"
+					m.expandedCmd = selectedCmd
+					m.decisionReqID = 0
+					m.envVarCursor = -1
 				}
-			} else if m.step == 2 && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
-				// Set env var to allow
+			} else if m.step == 2 && !m.viewOnly && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
 				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
 					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 0
 				}
-			} else if m.step == 2 {
+			} else if m.step == 2 && !m.viewOnly {
 				m.allowChosen = true
 				m.cursor = 0
 				m.focus = "actions"
 			}
 		case "d", "D":
-			if m.step == 1 && len(m.commands) > 0 {
-				// Enter decision mode with Deny preselected
-				m.step = 2
-				m.cursor = 0
-				m.allowChosen = false
-				m.focus = "actions"
-				// Track which request we're deciding (prevents switching on new requests)
-				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
-					m.expandedCmd = m.commands[m.selectedIdx]
-					m.decisionReqID = m.commands[m.selectedIdx].RequestID
-					m.envVarCursor = -1 // Reset to command selection
+			if m.step == 1 && len(m.commands) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
+				selectedCmd := m.commands[m.selectedIdx]
+				if selectedCmd.Decision == "PENDING" {
+					m.step = 2
+					m.cursor = 0
+					m.allowChosen = false
+					m.focus = "actions"
+					m.viewOnly = false
+					m.expandedCmd = selectedCmd
+					m.decisionReqID = selectedCmd.RequestID
+					m.envVarCursor = -1
+				} else {
+					m.step = 2
+					m.viewOnly = true
+					m.focus = "details"
+					m.expandedCmd = selectedCmd
+					m.decisionReqID = 0
+					m.envVarCursor = -1
 				}
-			} else if m.step == 2 && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
-				// Set env var to deny
+			} else if m.step == 2 && !m.viewOnly && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
 				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
-					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 1 // deny
+					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 1
 				}
-			} else if m.step == 2 {
-				// Switch to Deny mode
+			} else if m.step == 2 && !m.viewOnly {
 				m.allowChosen = false
 				m.cursor = 0
 				m.focus = "actions"
 			}
 		case "l", "L":
-			if m.step == 2 {
-				// Toggle logging for this decision
+			if m.step == 2 && !m.viewOnly {
 				m.logDecision = !m.logDecision
 			}
 		case "1":
-			if m.step == 2 && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
+			if m.step == 2 && !m.viewOnly && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
 				m.cursor = 0
 				m.executeDecision()
-			} else if m.step == 2 {
-				// Also work if focused on details
+			} else if m.step == 2 && !m.viewOnly {
 				m.cursor = 0
 				m.focus = "actions"
 				m.executeDecision()
 			}
 		case "2":
-			if m.step == 2 && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
+			if m.step == 2 && !m.viewOnly && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
 				m.cursor = 1
 				m.executeDecision()
-			} else if m.step == 2 {
+			} else if m.step == 2 && !m.viewOnly {
 				m.cursor = 1
 				m.focus = "actions"
 				m.executeDecision()
 			}
 		case "3":
-			if m.step == 2 && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
+			if m.step == 2 && !m.viewOnly && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
 				m.cursor = 2
 				m.executeDecision()
-			} else if m.step == 2 {
+			} else if m.step == 2 && !m.viewOnly {
 				m.cursor = 2
 				m.focus = "actions"
 				m.executeDecision()
 			}
 		case "4":
-			if m.step == 2 && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
+			if m.step == 2 && !m.viewOnly && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
 				m.cursor = 3
 				m.executeDecision()
-			} else if m.step == 2 {
+			} else if m.step == 2 && !m.viewOnly {
 				m.cursor = 3
 				m.focus = "actions"
 				m.executeDecision()
 			}
 		case "=":
-			if m.step == 2 && m.focus == "actions" {
+			if m.step == 2 && !m.viewOnly && m.focus == "actions" {
 				m.cursor = 4
 				m.executeDecision()
-			} else if m.step == 2 {
+			} else if m.step == 2 && !m.viewOnly {
 				m.cursor = 4
 				m.focus = "actions"
 				m.executeDecision()
 			}
 		case "+":
-			if m.step == 2 && m.focus == "actions" {
+			if m.step == 2 && !m.viewOnly && m.focus == "actions" {
 				m.cursor = 5
 				m.executeDecision()
-			} else if m.step == 2 {
+			} else if m.step == 2 && !m.viewOnly {
 				m.cursor = 5
 				m.focus = "actions"
 				m.executeDecision()
 			}
 		case "esc":
 			if m.step == 2 {
+				if m.viewOnly {
+					m.step = 1
+					m.viewOnly = false
+					m.cursor = 0
+					m.focus = "history"
+					m.decisionReqID = 0
+					return m, nil
+				}
 				m.step = 1
 				m.cursor = 0
 				m.focus = "history"
-				m.decisionReqID = 0 // Clear decision mode tracking
+				m.decisionReqID = 0
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -855,27 +880,43 @@ func (m *Model) retryPendingDecisions() {
 		}
 
 		decision := DecisionAllow
-		if cmd.Decision == "DENY" {
+		if cmd.IntendedDecision == "DENY" {
 			decision = DecisionDeny
 		}
 
-		err := req.Decide(decision, cmd.Reason, cmd.Duration, cmd.EnvDecisions)
+		err := req.Decide(decision, cmd.OriginalReason, cmd.Duration, cmd.EnvDecisions)
 		if err != nil {
 			continue
 		}
 
+		// Successful retry - update command log
 		delete(pendingRequests, id)
 		delete(m.pendingRetry, id)
+
+		cmd.Decision = cmd.IntendedDecision
+		cmd.Reason = cmd.OriginalReason
+		m.lastDecision = cmd.Decision
+		m.lastTime = time.Now()
+		m.flashTimer = FlashTimerSeconds
+
+		// Update stats - this was previously a PENDING/RETRY command
+		m.stats.totalUnknown--
+		switch cmd.IntendedDecision {
+		case "ALLOW":
+			m.stats.totalAllowed++
+		case "DENY":
+			m.stats.totalDenied++
+		}
 	}
 }
 
 func (m *Model) executeDecision() {
-	// Try to resend any pending failed decisions first (transparent to user)
-	m.retryPendingDecisions()
-
-	if m.expandedCmd == nil || m.step != 2 {
+	if m.viewOnly || m.expandedCmd == nil || m.step != 2 || m.expandedCmd.Decision != "PENDING" {
 		return
 	}
+
+	// Try to resend any pending failed decisions first (transparent to user)
+	m.retryPendingDecisions()
 
 	allow := m.allowChosen
 	decision, reason, duration := durationToReason(allow, m.cursor)
@@ -893,7 +934,8 @@ func (m *Model) executeDecision() {
 		// Decision failed - store for retry with full details
 		fmt.Fprintf(os.Stderr, "Decision failed: %v (will retry)\n", err)
 		m.expandedCmd.Decision = "RETRY"
-		m.expandedCmd.Reason = err.Error()
+		m.expandedCmd.IntendedDecision = decision
+		m.expandedCmd.OriginalReason = reason
 		m.expandedCmd.Duration = duration
 		m.expandedCmd.EnvDecisions = envDecisions
 		m.pendingRetry[m.expandedCmd.RequestID] = m.expandedCmd
@@ -1037,6 +1079,8 @@ func (m *Model) View() string {
 	var controls string
 	if m.step == 1 {
 		controls = "↑↓ navigate  Enter/A/D expand  q/ctrl+c quit"
+	} else if m.viewOnly {
+		controls = "↑↓ scroll  Esc back"
 	} else {
 		controls = "A/D decision  1-4 duration  Esc back"
 	}
@@ -1585,105 +1629,116 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		sb.WriteString("\n")
 	}
 
-	// ACTIONS PALETTE (always fully visible)
-	sb.WriteString("\n")
+	// ACTIONS PALETTE
+	if !m.viewOnly && cmd.Decision == "PENDING" {
+		sb.WriteString("\n")
 
-	// Step 1: Allow/Deny selection
-	var allowStr, denyStr string
-	if m.focus == "actions" {
-		if m.allowChosen {
-			allowStr = allowSelectedStyle.Render(" [A] Allow")
-			denyStr = denyStyle.Render(" [D] Deny")
+		// Step 1: Allow/Deny selection
+		var allowStr, denyStr string
+		if m.focus == "actions" {
+			if m.allowChosen {
+				allowStr = allowSelectedStyle.Render(" [A] Allow")
+				denyStr = denyStyle.Render(" [D] Deny")
+			} else {
+				allowStr = allowStyle.Render(" [A] Allow")
+				denyStr = denySelectedStyle.Render(" [D] Deny")
+			}
 		} else {
 			allowStr = allowStyle.Render(" [A] Allow")
-			denyStr = denySelectedStyle.Render(" [D] Deny")
+			denyStr = denyStyle.Render(" [D] Deny")
 		}
-	} else {
-		allowStr = allowStyle.Render(" [A] Allow")
-		denyStr = denyStyle.Render(" [D] Deny")
-	}
 
-	backStr := dimStyle.Render("[Esc] Back")
-	paddingLen := m.width - 50
-	if m.width == 0 || paddingLen < 0 {
-		paddingLen = 20
-	}
-	padding := strings.Repeat(" ", paddingLen)
-	sb.WriteString(fmt.Sprintf("  %s  %s%s%s\n", allowStr, denyStr, padding, backStr))
-	sb.WriteString("\n")
+		backStr := dimStyle.Render("[Esc] Back")
+		paddingLen := m.width - 50
+		if m.width == 0 || paddingLen < 0 {
+			paddingLen = 20
+		}
+		padding := strings.Repeat(" ", paddingLen)
+		sb.WriteString(fmt.Sprintf("  %s  %s%s%s\n", allowStr, denyStr, padding, backStr))
+		sb.WriteString("\n")
 
-	// Step 2: Duration selection
-	durations := []struct {
-		num  int
-		text string
-	}{
-		{0, "[1] Once"},
-		{1, "[2] 15m"},
-		{2, "[3] 1h"},
-		{3, "[4] 4h"},
-	}
+		// Step 2: Duration selection
+		durations := []struct {
+			num  int
+			text string
+		}{
+			{0, "[1] Once"},
+			{1, "[2] 15m"},
+			{2, "[3] 1h"},
+			{3, "[4] 4h"},
+		}
 
-	var durationStyle lipgloss.Style
-	if m.focus == "actions" {
-		if m.allowChosen {
-			durationStyle = allowStyle
+		var durationStyle lipgloss.Style
+		if m.focus == "actions" {
+			if m.allowChosen {
+				durationStyle = allowStyle
+			} else {
+				durationStyle = denyStyle
+			}
 		} else {
-			durationStyle = denyStyle
+			durationStyle = dimStyle
 		}
-	} else {
-		durationStyle = dimStyle
-	}
 
-	sb.WriteString("           ")
-	for _, d := range durations {
-		prefix := "  "
-		if m.focus == "actions" && m.cursor == d.num {
-			prefix = "> "
+		sb.WriteString("           ")
+		for _, d := range durations {
+			prefix := "  "
+			if m.focus == "actions" && m.cursor == d.num {
+				prefix = "> "
+			}
+			sb.WriteString(prefix + durationStyle.Render(d.text) + "  ")
 		}
-		sb.WriteString(prefix + durationStyle.Render(d.text) + "  ")
-	}
-	sb.WriteString("\n")
+		sb.WriteString("\n")
 
-	// Policy rows (= and +)
-	equalsPrefix := "  "
-	plusPrefix := "  "
-	if m.focus == "actions" {
-		if m.cursor == 4 {
-			equalsPrefix = "> "
-		} else if m.cursor == 5 {
-			plusPrefix = "> "
+		// Policy rows (= and +)
+		equalsPrefix := "  "
+		plusPrefix := "  "
+		if m.focus == "actions" {
+			if m.cursor == 4 {
+				equalsPrefix = "> "
+			} else if m.cursor == 5 {
+				plusPrefix = "> "
+			}
 		}
-	}
-	cmdSuggestion := cmd.Command
-	equalsContent := "[=] " + truncateString(cmdSuggestion, TruncateWidth)
-	plusContent := "[+] session"
+		cmdSuggestion := cmd.Command
+		equalsContent := "[=] " + truncateString(cmdSuggestion, TruncateWidth)
+		plusContent := "[+] session"
 
-	if m.focus == "actions" {
-		sb.WriteString("           " + equalsPrefix + durationStyle.Render(equalsContent) + "\n")
-		sb.WriteString("           " + plusPrefix + durationStyle.Render(plusContent) + "\n")
-	} else {
-		sb.WriteString("           " + equalsPrefix + dimStyle.Render(equalsContent) + "\n")
-		sb.WriteString("           " + plusPrefix + dimStyle.Render(plusContent) + "\n")
-	}
-
-	// Log toggle indicator
-	if m.step == 2 {
-		if m.logDecision {
-			logStr := infoStyle.Render("[L] Log to user_log.xml")
-			sb.WriteString(fmt.Sprintf("           %s\n", logStr))
+		if m.focus == "actions" {
+			sb.WriteString("           " + equalsPrefix + durationStyle.Render(equalsContent) + "\n")
+			sb.WriteString("           " + plusPrefix + durationStyle.Render(plusContent) + "\n")
 		} else {
-			logStr := dimStyle.Render("[L] Log to user_log.xml")
-			sb.WriteString(fmt.Sprintf("           %s\n", logStr))
+			sb.WriteString("           " + equalsPrefix + dimStyle.Render(equalsContent) + "\n")
+			sb.WriteString("           " + plusPrefix + dimStyle.Render(plusContent) + "\n")
 		}
-	}
 
-	// Focus indicator
-	if m.focus == "details" {
-		sb.WriteString(dimStyle.Render("  (Tab to Actions)"))
+		// Log toggle indicator
+		if m.step == 2 {
+			if m.logDecision {
+				logStr := infoStyle.Render("[L] Log to user_log.xml")
+				sb.WriteString(fmt.Sprintf("           %s\n", logStr))
+			} else {
+				logStr := dimStyle.Render("[L] Log to user_log.xml")
+				sb.WriteString(fmt.Sprintf("           %s\n", logStr))
+			}
+		}
+
+		// Focus indicator
+		if m.focus == "details" {
+			sb.WriteString(dimStyle.Render("  (Tab to Actions)"))
+		} else {
+			sb.WriteString(dimStyle.Render("  (Tab to Details)"))
+		}
+		sb.WriteString("\n")
 	} else {
-		sb.WriteString(dimStyle.Render("  (Tab to Details)"))
+		sb.WriteString("\n")
+		sb.WriteString(dimStyle.Render("  This command has already been " + decisionStr))
+		sb.WriteString("\n")
+		if cmd.Reason != "" {
+			sb.WriteString(dimStyle.Render("  Reason: " + cmd.Reason))
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
 	}
-	sb.WriteString("\n")
 }
 
 func RunTUIMode() {
