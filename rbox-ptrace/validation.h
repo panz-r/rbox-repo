@@ -34,4 +34,7 @@ void validation_set_system_mode(void);
 /* Set user socket mode - uses $XDG_RUNTIME_DIR/readonlybox.sock if set, else falls back to system */
 void validation_set_user_mode(void);
 
+/* Get wrap binary path - resolved once at startup */
+const char *validation_get_wrap_path(void);
+
 #endif /* READONLYBOX_PTRACE_VALIDATION_H */

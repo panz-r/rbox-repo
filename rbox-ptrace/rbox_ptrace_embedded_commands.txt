@@ -42,16 +42,6 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 #   subcategory - Optional secondary categorization
 #   operations  - Optional operations string (comma or dot-separated)
 #
-# Categories (8-bit bitmask):
-#   safe        - 0x01 - Completely read-only, no side effects
-#   caution     - 0x02 - May have minor side effects, use with care
-#   modifying   - 0x04 - Modifies files or state
-#   dangerous   - 0x08 - Potentially harmful operations
-#   network     - 0x10 - Network operations
-#   admin       - 0x20 - Administrative operations
-#   build       - 0x40 - Build/CI operations
-#   container   - 0x80 - Container-related operations
-#
 # ============================================================================
 # PATTERN SYNTAX
 # ============================================================================
@@ -95,6 +85,10 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 # ============================================================================
 # SAFE COMMAND PATTERNS
 # ============================================================================
+
+# Shell commands
+[autoallow:shell:builtin] (true|false)
+[autoallow:shell:builtin] (/usr/libexec/)?vte-urlencode-cwd  
 
 # Git read-only commands
 [autoallow:readonly:git] git status

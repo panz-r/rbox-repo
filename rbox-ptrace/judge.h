@@ -10,7 +10,4 @@
  */
 int judge_run(const char *command, const char *caller_info);
 
-/* Get path to readonlybox binary */
-const char *judge_get_readonlybox_path(void);
-
 #endif /* JUDGE_H */

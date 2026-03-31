@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <time.h>
 #include <sys/fcntl.h>
+#include <limits.h>
+#include <libgen.h>
 
 #include "validation.h"
 #include "protocol.h"
@@ -32,6 +34,9 @@ static char g_socket_path[1024] = "";
 static int g_socket_explicitly_set = 0;  /* --socket PATH provided */
 static int g_force_system = 0;            /* --system-socket flag */
 static int g_force_user = 0;              /* --user-socket flag */
+
+/* Wrap binary path - resolved once at startup */
+static char g_wrap_path[PATH_MAX] = "";
 
 /* Set socket path explicitly (from --socket PATH) - highest priority */
 void validation_set_socket_path(const char *path) {
@@ -54,6 +59,69 @@ void validation_set_user_mode(void) {
 
 /* Initialize validation subsystem */
 int validation_init(void) {
+    /* Resolve wrap path FIRST (before any socket path early returns) */
+    if (g_wrap_path[0] == '\0') {
+        const char *env_path = getenv("READONLYBOX_WRAP_PATH");
+        if (env_path && env_path[0] && access(env_path, X_OK) == 0) {
+            strncpy(g_wrap_path, env_path, sizeof(g_wrap_path) - 1);
+            g_wrap_path[sizeof(g_wrap_path) - 1] = '\0';
+        } else {
+            char self_path[PATH_MAX];
+            ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+            if (len > 0) {
+                self_path[len] = '\0';
+                char *dir = strdup(self_path);
+                if (dir) {
+                    char *d = dirname(dir);
+                    char candidate[PATH_MAX];
+
+                    snprintf(candidate, sizeof(candidate), "%s/rbox-wrap", d);
+                    if (access(candidate, X_OK) == 0) {
+                        strncpy(g_wrap_path, candidate, sizeof(g_wrap_path) - 1);
+                        free(dir);
+                    } else {
+                        snprintf(candidate, sizeof(candidate), "%s/../rbox-wrap/rbox-wrap", d);
+                        if (access(candidate, X_OK) == 0) {
+                            strncpy(g_wrap_path, candidate, sizeof(g_wrap_path) - 1);
+                            free(dir);
+                        } else {
+                            snprintf(candidate, sizeof(candidate), "%s/../../rbox-wrap/rbox-wrap", d);
+                            if (access(candidate, X_OK) == 0) {
+                                strncpy(g_wrap_path, candidate, sizeof(g_wrap_path) - 1);
+                                free(dir);
+                            } else {
+                                free(dir);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (g_wrap_path[0] == '\0' && access("./rbox-wrap/rbox-wrap", X_OK) == 0) {
+                strncpy(g_wrap_path, "./rbox-wrap/rbox-wrap", sizeof(g_wrap_path) - 1);
+            }
+
+            if (g_wrap_path[0] == '\0') {
+                char *path_env = getenv("PATH");
+                if (path_env) {
+                    char *path_copy = strdup(path_env);
+                    if (path_copy) {
+                        char *token = strtok(path_copy, ":");
+                        while (token && g_wrap_path[0] == '\0') {
+                            char candidate[PATH_MAX];
+                            snprintf(candidate, sizeof(candidate), "%s/rbox-wrap", token);
+                            if (access(candidate, X_OK) == 0) {
+                                strncpy(g_wrap_path, candidate, sizeof(g_wrap_path) - 1);
+                            }
+                            token = strtok(NULL, ":");
+                        }
+                        free(path_copy);
+                    }
+                }
+            }
+        }
+    }
+
     /* Socket path resolution order:
      * 1. --socket PATH (explicit)
      * 2. --system-socket → /run/readonlybox/readonlybox.sock
@@ -116,11 +184,17 @@ void validation_shutdown(void) {
     g_socket_explicitly_set = 0;
     g_force_system = 0;
     g_force_user = 0;
+    g_wrap_path[0] = '\0';
 }
 
 /* Get socket path */
 const char *validation_get_socket_path(void) {
     return g_socket_path;
+}
+
+/* Get wrap binary path */
+const char *validation_get_wrap_path(void) {
+    return g_wrap_path[0] ? g_wrap_path : NULL;
 }
 
 /* Check if command is allowed using DFA */

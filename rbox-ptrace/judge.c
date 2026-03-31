@@ -30,72 +30,6 @@ static int server_socket_exists(void) {
     return (stat(path, &st) == 0 && S_ISSOCK(st.st_mode));
 }
 
-/* Get path to readonlybox binary */
-const char *judge_get_readonlybox_path(void) {
-    static char path_buf[PATH_MAX];
-
-    /* First, check environment variable for explicit override */
-    const char *env_path = getenv("READONLYBOX_WRAP_PATH");
-    if (env_path && env_path[0]) {
-        if (access(env_path, X_OK) == 0) {
-            return env_path;
-        }
-    }
-
-    /* Try to find relative to our executable location */
-    char self_path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
-    if (len > 0) {
-        self_path[len] = '\0';
-        char *dir = dirname(self_path);
-
-        /* Try relative to executable: ../rbox-wrap/rbox-wrap */
-        snprintf(path_buf, sizeof(path_buf), "%s/../rbox-wrap/rbox-wrap", dir);
-        if (access(path_buf, X_OK) == 0) {
-            return path_buf;
-        }
-
-        /* Try relative to executable: ../../rbox-wrap/rbox-wrap */
-        snprintf(path_buf, sizeof(path_buf), "%s/../../rbox-wrap/rbox-wrap", dir);
-        if (access(path_buf, X_OK) == 0) {
-            return path_buf;
-        }
-
-        /* Also try readonlybox as fallback */
-        snprintf(path_buf, sizeof(path_buf), "%s/../readonlybox-ptrace", dir);
-        if (access(path_buf, X_OK) == 0) {
-            /* This is the ptrace binary itself - check sibling directory */
-            snprintf(path_buf, sizeof(path_buf), "%s/../../bin/rbox-wrap", dir);
-            if (access(path_buf, X_OK) == 0) {
-                return path_buf;
-            }
-        }
-    }
-
-    /* Try current working directory */
-    if (access("./rbox-wrap/rbox-wrap", X_OK) == 0) {
-        return "./rbox-wrap/rbox-wrap";
-    }
-
-    /* Try PATH */
-    char *path_env = getenv("PATH");
-    if (path_env) {
-        char *path_copy = strdup(path_env);
-        char *dir = strtok(path_copy, ":");
-        while (dir) {
-            snprintf(path_buf, sizeof(path_buf), "%s/rbox-wrap", dir);
-            if (access(path_buf, X_OK) == 0) {
-                free(path_copy);
-                return path_buf;
-            }
-            dir = strtok(NULL, ":");
-        }
-        free(path_copy);
-    }
-
-    return NULL;
-}
-
 /* Run readonlybox --judge to get server decision
  * Returns: 0 = ALLOW, 9 = DENY, -1 = error
  */
@@ -110,8 +44,8 @@ int judge_run(const char *command, const char *caller_info) {
             sleep(1);
         }
 
-        /* Get wrapper binary path - may become available later */
-        const char *readonlybox_path = judge_get_readonlybox_path();
+        /* Get wrapper binary path - resolved once at startup in validation_init */
+        const char *readonlybox_path = validation_get_wrap_path();
         if (!readonlybox_path) {
             retry_count++;
             if (retry_count > MAX_RETRIES) {
