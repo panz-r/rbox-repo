@@ -723,8 +723,9 @@ int main(int argc, char *argv[]) {
     }
 
     /* Default: text mode query to server (judge mode) */
-    rbox_response_t response;
-    rbox_error_t err = rbox_blocking_request(
+    char *packet = NULL;
+    size_t pkt_len = 0;
+    rbox_error_t err = rbox_blocking_request_raw(
         socket_path,
         command,
         cmd_argc,
@@ -734,30 +735,69 @@ int main(int argc, char *argv[]) {
         flagged_count,
         (const char **)flagged_names,
         flagged_scores,
-        &response,
+        &packet,
+        &pkt_len,
         RBOX_RETRY_BASE_DELAY_MS,
         RBOX_RETRY_MAX_RETRIES
     );
 
-    free_flagged_envs(flagged_count, flagged_names);
-    free(flagged_scores);
-    free(socket_path);
-
-    if (err != RBOX_OK) {
+    if (err != RBOX_OK || !packet) {
         fprintf(stderr, "%s: %s\n", program_name, rbox_strerror(err));
+        free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
+        free(socket_path);
         return EXIT_ERROR;
     }
 
-    if (response.decision == RBOX_DECISION_ALLOW) {
-        printf("ALLOW %s\n", response.reason[0] ? response.reason : "");
+    /* Decode the response */
+    rbox_decoded_header_t header;
+    rbox_decode_header(packet, pkt_len, &header);
+    if (!header.valid) {
+        fprintf(stderr, "%s: invalid response header\n", program_name);
+        free(packet);
+        free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
+        free(socket_path);
+        return EXIT_ERROR;
+    }
+
+    rbox_response_details_t details;
+    rbox_decode_response_details(&header, packet, pkt_len, &details);
+
+    rbox_env_decisions_t env_decisions;
+    rbox_decode_env_decisions(&header, &details, packet, pkt_len, &env_decisions);
+    /* Not used in judge mode, but must be freed */
+    rbox_free_env_decisions(&env_decisions);
+
+    free(packet);
+
+    if (!details.valid) {
+        fprintf(stderr, "%s: invalid response details\n", program_name);
+        free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
+        free(socket_path);
+        return EXIT_ERROR;
+    }
+
+    if (details.decision == RBOX_DECISION_ALLOW) {
+        printf("ALLOW %s\n", details.reason[0] ? details.reason : "");
+        free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
+        free(socket_path);
         return EXIT_ALLOW;
     }
-    else if (response.decision == RBOX_DECISION_DENY) {
-        printf("DENY %s\n", response.reason[0] ? response.reason : "");
+    else if (details.decision == RBOX_DECISION_DENY) {
+        printf("DENY %s\n", details.reason[0] ? details.reason : "");
+        free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
+        free(socket_path);
         return EXIT_DENY;
     }
     else {
-        fprintf(stderr, "%s: Unknown decision: %d\n", program_name, response.decision);
+        fprintf(stderr, "%s: Unknown decision: %d\n", program_name, details.decision);
+        free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
+        free(socket_path);
         return EXIT_ERROR;
     }
 }

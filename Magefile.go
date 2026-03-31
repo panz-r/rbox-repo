@@ -343,6 +343,38 @@ func BuildBinaries() error {
 		return fmt.Errorf("copying rbox-wrap failed: %w", err)
 	}
 
+	// Fix rbox-wrap library path with patchelf:
+	// - Replace NEEDED path with just library name
+	// - Set RUNPATH to $ORIGIN/../lib
+	rboxWrapBin := filepath.Join(wd, binDir, "rbox-wrap")
+	if _, err := os.Stat(rboxWrapBin); err == nil {
+		// Replace NEEDED entry: ../rbox-protocol/librbox_protocol.so -> librbox_protocol.so
+		cmd = exec.Command("patchelf", "--replace-needed", "../rbox-protocol/librbox_protocol.so", "librbox_protocol.so", rboxWrapBin)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("patchelf replace-needed failed: %w", err)
+		}
+		// Set RUNPATH to $ORIGIN/../lib
+		cmd = exec.Command("patchelf", "--set-rpath", "$ORIGIN/../lib", rboxWrapBin)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("patchelf set-rpath failed: %w", err)
+		}
+	}
+
+	// Create lib directory for librbox_protocol.so (dev build)
+	libDir := filepath.Join(wd, "lib")
+	if err := os.MkdirAll(libDir, 0755); err != nil {
+		return fmt.Errorf("creating lib dir failed: %w", err)
+	}
+	// Copy librbox_protocol.so to lib directory for dev builds
+	if err := copyFile(filepath.Join(wd, rboxProtocolDir, "librbox_protocol.so"),
+		filepath.Join(wd, "lib", "librbox_protocol.so")); err != nil {
+		return fmt.Errorf("copying librbox_protocol.so failed: %w", err)
+	}
+
 	// rbox-server (Go with C library)
 	fmt.Println("=== Building readonlybox-server ===")
 	rboxProto := filepath.Join(wd, rboxProtocolDir)
@@ -398,6 +430,12 @@ func Clean() error {
 	binPath := filepath.Join(wd, binDir)
 	if err := os.RemoveAll(binPath); err != nil && !os.IsNotExist(err) {
 		errs = append(errs, fmt.Errorf("removing %s failed: %w", binDir, err))
+	}
+
+	// Remove lib directory (dev build artifact)
+	libPath := filepath.Join(wd, "lib")
+	if err := os.RemoveAll(libPath); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, fmt.Errorf("removing lib failed: %w", err))
 	}
 
 	// Clean generated DFA files
