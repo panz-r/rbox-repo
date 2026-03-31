@@ -5,10 +5,13 @@ Phase 1: Context struct refactoring.
 """
 
 import re
+import os
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def transform():
-    with open("/w/rbox-copy/c-dfa/tools/nfa2dfa.c", "r") as f:
+    with open(os.path.join(SCRIPT_DIR, "nfa2dfa.c"), "r") as f:
         lines = f.readlines()
 
     output = []
@@ -497,7 +500,7 @@ void nfa2dfa_context_destroy(nfa2dfa_context_t* ctx) {
     # After replacement: dfa_compress(ctx->dfa, ctx->dfa_state_count, &opts)
     # This should be correct
 
-    with open("/w/rbox-copy/c-dfa/tools/nfa2dfa.c", "w") as f:
+    with open(os.path.join(SCRIPT_DIR, "nfa2dfa.c"), "w") as f:
         f.write(content)
 
     print("Transformation complete!")

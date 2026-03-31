@@ -1,7 +1,7 @@
 #!/bin/bash
 # Test the acceptance category fix
 
-cd /home/panz/osrc/lms-test/readonlybox/c-dfa
+cd "$(dirname "$0")/../.."
 
 echo "Building NFA..."
 ./tools/nfa_builder ./tools/alphabet.map ./patterns_acceptance_category_test.txt ./test_accept.nfa 2>&1 | grep -v "^//DEBUG"

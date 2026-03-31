@@ -1,4 +1,4 @@
-cd /home/panz/osrc/lms-test/readonlybox/c-dfa
+cd "$(dirname "$0")/../.."
 
 echo "=== States 93-100 to see the pattern structure ==="
 for i in 93 94 95 96 97 98 99 100; do

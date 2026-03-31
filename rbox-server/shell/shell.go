@@ -1,7 +1,7 @@
 package shell
 
-// #cgo CFLAGS: -I/w/rbox-copy/shellsplit/include
-// #cgo LDFLAGS: -L/w/rbox-copy/shellsplit -lshellsplit -lm -Wl,-rpath,/w/rbox-copy/shellsplit
+// #cgo CFLAGS: -I../shellsplit/include
+// #cgo LDFLAGS: -L../shellsplit -lshellsplit -lm
 // #include <stdlib.h>
 // #include "shell_interop.h"
 import "C"
