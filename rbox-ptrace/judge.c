@@ -213,6 +213,8 @@ int judge_run(const char *command, const char *caller_info) {
                 _exit(1);
             }
 
+            setenv("READONLYBOX_SOCKET", validation_get_socket_path(), 1);
+
             /* Use binary mode for v8 protocol */
             execl(readonlybox_path, "rbox-wrap", "--bin", "--judge", command, NULL);
             /* If we get here, execl failed */
