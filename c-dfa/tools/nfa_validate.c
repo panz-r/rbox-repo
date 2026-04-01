@@ -200,7 +200,7 @@ bool nfa_validate_pattern_file(nfa_builder_context_t* ctx, const char* spec_file
             }
 
             if (*pattern_start != '\0' &&
-                strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*?[]()-+.:\\<", *pattern_start) == NULL) {
+                strchr("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789*?[]()-+.:\\<\"'/", *pattern_start) == NULL) {
                 ERROR("Invalid pattern start at line %d: %s", line_num, line);
                 errors++;
             }
