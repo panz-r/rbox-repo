@@ -52,10 +52,6 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 # WHITESPACE HANDLING
 #   Space in patterns normalizes to [ \t]+ (one or more whitespace)
 #
-# CHARACTER CLASSES (single characters only)
-#   [abc]           - Matches any one of a, b, or c
-#   [^abc]          - Negated: matches anything EXCEPT a, b, c
-#
 # FRAGMENT DEFINITIONS
 #   [fragment:name] pattern_value
 #
@@ -88,12 +84,13 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 
 # Shell commands
 [autoallow:shell:builtin] (true|false)
-[autoallow:shell:builtin] (/usr/libexec/)?vte-urlencode-cwd  
+[autoallow:shell:builtin] (/usr/libexec/)?vte-urlencode-cwd
 
 # Git read-only commands
 [autoallow:readonly:git] git status
 [autoallow:readonly:git] git status -s
 [autoallow:readonly:git] git status --short
+[autoallow:readonly:git] (/usr/lib/git-core/)?git status --porcelain=2
 [autoallow:readonly:git] git log
 [autoallow:readonly:git] git log -n ((safe::digit))+
 [autoallow:readonly:git] git log --oneline
@@ -136,11 +133,7 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 [autoallow:readonly:git] git count-objects
 
 # File system read-only commands
-[autoallow:readonly:file] ls
-[autoallow:readonly:file] ls ((safe::filename))*
-[autoallow:readonly:file] ls -la
-[autoallow:readonly:file] ls -l
-[autoallow:readonly:file] ls -a
+[autoallow:readonly:file] ls( (-(la|l|a) )?((safe::filename))*)?
 [autoallow:readonly:file] ls -R
 [autoallow:readonly:file] ls -r
 [autoallow:readonly:file] ls -t
