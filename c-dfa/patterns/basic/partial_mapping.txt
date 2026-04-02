@@ -1,0 +1,6 @@
+# Test partial ACCEPTANCE_MAPPING: one-component mapping should match
+# patterns with two or three component headers.
+ACCEPTANCE_MAPPING [safe] -> 0
+
+[safe:analysis] test1
+[safe:analysis:full] test2

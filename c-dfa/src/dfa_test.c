@@ -197,6 +197,7 @@ static void run_whitespace_tests(void);
 static void run_empty_matching_tests(void);
 static void run_boundary_new_tests(void);
 static void run_category_mix_tests(void);
+static void run_partial_mapping_tests(void);
 static void run_negative_integrity_tests(void);
 static void run_nested_capture_tests(void);
 static void run_factorization_tests(void);
@@ -1290,6 +1291,7 @@ int main(int argc, char* argv[]) {
         // New tests
         run_boundary_new_tests();
         run_category_mix_tests();
+        run_partial_mapping_tests();
         run_multi_category_mask_tests();
     }
 
@@ -1725,6 +1727,22 @@ static void run_category_mix_tests(void) {
 
     run_test_group("CATEGORY MIX TESTS", "patterns_category_mix.txt",
                    "build_test/category_mix.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// Partial Mapping Tests - ACCEPTANCE_MAPPING with fewer components than patterns
+// ============================================================================
+
+static void run_partial_mapping_tests(void) {
+    TestCase cases[] = {
+        // A one-component mapping [safe] -> 0 should match patterns with
+        // two-component headers like [safe:analysis] and
+        // three-component headers like [safe:analysis:full].
+        {"test1", true, 5, CAT_MASK_SAFE, "[safe:analysis] test1 matches with [safe] mapping"},
+        {"test2", true, 5, CAT_MASK_SAFE, "[safe:analysis:full] test2 matches with [safe] mapping"},
+    };
+
+    run_test_group("PARTIAL MAPPING TESTS", "patterns_partial_mapping.txt",
+                   "build_test/partial_mapping.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // Negative Integrity Tests - Ensure we're not over-accepting

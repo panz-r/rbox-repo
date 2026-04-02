@@ -1,0 +1,13 @@
+# Test: ACCEPTANCE_MAPPING with fewer components than pattern headers
+# A one-component mapping [safe] should match patterns with
+# two-component headers like [safe:analysis] and
+# three-component headers like [safe:archive:readonly].
+# This tests that wildcard matching works: a mapping missing a component
+# should accept any value for that component in the pattern.
+
+ACCEPTANCE_MAPPING [safe] -> 0
+
+[safe] echo hello
+[safe:analysis] cat test.txt
+[safe:archive:readonly] ls -la
+[safe:build:run] make test

@@ -115,8 +115,10 @@ int nfa_category_lookup(nfa_builder_context_t* ctx, const char* category,
     for (int i = 0; i < ctx->category_mapping_count; i++) {
         category_mapping_t* m = &ctx->category_mappings[i];
         if (strcmp(m->category, category) != 0) continue;
-        if (m->subcategory[0] != '\0' && strcmp(m->subcategory, subcategory) != 0) continue;
-        if (m->operations[0] != '\0' && strcmp(m->operations, operations) != 0) continue;
+        if (m->subcategory[0] != '\0' && subcategory[0] != '\0' &&
+            strcmp(m->subcategory, subcategory) != 0) continue;
+        if (m->operations[0] != '\0' && operations[0] != '\0' &&
+            strcmp(m->operations, operations) != 0) continue;
         return m->acceptance_category;
     }
     return -1;
