@@ -47,7 +47,7 @@ TARGET = test_runner
 .PHONY: all clean test test-verbose test-memory test-syscall test-validation test-integration test-e2e list help check-prereqs validate-test-runner debug coverage cppcheck valgrind
 
 # Default target
-all: check-prereqs validate-test-runner $(TARGET)
+all: check-prereqs check-dfa validate-test-runner $(TARGET)
 
 # Check prerequisites
 check-prereqs:
@@ -57,6 +57,10 @@ check-prereqs:
 	@which $(CC) > /dev/null 2>&1 || (echo "ERROR: $(CC) not found"; exit 1)
 	@which valgrind > /dev/null 2>&1 || echo "WARNING: valgrind not installed (valgrind target will be skipped)"
 	@which cppcheck > /dev/null 2>&1 || echo "WARNING: cppcheck not installed (cppcheck target will be skipped)"
+
+# Ensure DFA data is built before running tests
+check-dfa:
+	$(MAKE) -C .. dfa
 
 # Build test runner
 $(TARGET): $(TEST_OBJS) $(OBJS)
@@ -102,7 +106,68 @@ test-integration: $(TARGET)
 	./$(TARGET) integration
 
 # Run end-to-end tests (requires server binary)
-test-e2e: $(TARGET)
+test-e2e: check-dfa $(TARGET)
+	./$(TARGET) e2e
+
+# Run e2e tests with capabilities set
+# Checks if CAP_SYS_PTRACE, CAP_SETUID, CAP_SETGID are set on required binaries
+test-with-caps: check-dfa $(TARGET)
+	@echo "Checking capabilities on required binaries..." && \
+	echo "" && \
+	echo "Required capabilities: cap_sys_ptrace, cap_setuid, cap_setgid" && \
+	echo "" && \
+	echo "  Checking readonlybox-ptrace (../../bin/readonlybox-ptrace)..." && \
+	caps=$$(getcap "../../bin/readonlybox-ptrace" 2>/dev/null) && \
+	if [ -z "$$caps" ]; then \
+		echo "    MISSING - no capabilities set"; \
+	else \
+		echo "    cap_sys_ptrace: [ $$(echo "$$caps" | grep -c "cap_sys_ptrace") ]" && \
+		echo "    cap_setuid: [ $$(echo "$$caps" | grep -c "cap_setuid") ]" && \
+		echo "    cap_setgid: [ $$(echo "$$caps" | grep -c "cap_setgid") ]"; \
+	fi && \
+	echo "  Checking test_runner (./test_runner)..." && \
+	caps=$$(getcap "./test_runner" 2>/dev/null) && \
+	if [ -z "$$caps" ]; then \
+		echo "    MISSING - no capabilities set"; \
+	else \
+		echo "    cap_sys_ptrace: [ $$(echo "$$caps" | grep -c "cap_sys_ptrace") ]" && \
+		echo "    cap_setuid: [ $$(echo "$$caps" | grep -c "cap_setuid") ]" && \
+		echo "    cap_setgid: [ $$(echo "$$caps" | grep -c "cap_setgid") ]"; \
+	fi && \
+	echo "" && \
+	caps1=$$(getcap "../../bin/readonlybox-ptrace" 2>/dev/null) && \
+	caps2=$$(getcap "./test_runner" 2>/dev/null) && \
+	if [ -z "$$caps1" ] || [ -z "$$caps2" ]; then \
+		echo "ERROR: Required capabilities not set." && \
+		echo "" && \
+		echo "To set capabilities, run these commands from rbox-ptrace/:" && \
+		echo "" && \
+		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid+ep ./bin/readonlybox-ptrace" && \
+		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid+ep ./tests/test_runner" && \
+		echo "" && \
+		echo "Then re-run: make test-with-caps"; \
+		exit 1; \
+	fi && \
+	p1=$$(echo "$$caps1" | grep -c "cap_sys_ptrace") && \
+	u1=$$(echo "$$caps1" | grep -c "cap_setuid") && \
+	g1=$$(echo "$$caps1" | grep -c "cap_setgid") && \
+	p2=$$(echo "$$caps2" | grep -c "cap_sys_ptrace") && \
+	u2=$$(echo "$$caps2" | grep -c "cap_setuid") && \
+	g2=$$(echo "$$caps2" | grep -c "cap_setgid") && \
+	if [ "$$p1" != "1" ] || [ "$$u1" != "1" ] || [ "$$g1" != "1" ] || \
+	   [ "$$p2" != "1" ] || [ "$$u2" != "1" ] || [ "$$g2" != "1" ]; then \
+		echo "ERROR: Required capabilities not set." && \
+		echo "" && \
+		echo "To set capabilities, run these commands from rbox-ptrace/:" && \
+		echo "" && \
+		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid+ep ./bin/readonlybox-ptrace" && \
+		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid+ep ./tests/test_runner" && \
+		echo "" && \
+		echo "Then re-run: make test-with-caps"; \
+		exit 1; \
+	fi && \
+	echo "" && \
+	echo "All capabilities set correctly. Running e2e tests..." && \
 	./$(TARGET) e2e
 
 # List available test suites

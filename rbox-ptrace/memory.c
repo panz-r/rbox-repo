@@ -13,6 +13,7 @@
 #include <limits.h>
 
 #include "memory.h"
+#include "debug.h"
 
 /*
  * Memory string read limit.
@@ -50,6 +51,8 @@ char *memory_read_string(pid_t pid, unsigned long addr) {
         errno = 0;
         word = ptrace(PTRACE_PEEKDATA, pid, addr + offset, NULL);
         if (errno != 0) {
+            DEBUG_PRINT("memory_read_string: ptrace PEEKDATA failed at addr=0x%lx: %s\n",
+                        addr + offset, strerror(errno));
             free(buffer);
             return NULL;
         }
@@ -150,7 +153,11 @@ unsigned long memory_write_string(MemoryContext *ctx, const char *str) {
                             sizeof(long) : (len - i * sizeof(long));
         memcpy(&word, str + i * sizeof(long), bytes_to_copy);
 
-        if (ptrace(PTRACE_POKEDATA, ctx->pid, ctx->free_addr + i * sizeof(long), word) == -1) {
+        unsigned long addr = ctx->free_addr + i * sizeof(long);
+        errno = 0;
+        if (ptrace(PTRACE_POKEDATA, ctx->pid, addr, word) == -1) {
+            DEBUG_PRINT("memory_write_string: ptrace POKEDATA failed at addr=0x%lx: %s\n",
+                        addr, strerror(errno));
             return 0;
         }
     }
@@ -164,7 +171,10 @@ unsigned long memory_write_string(MemoryContext *ctx, const char *str) {
 int memory_write_pointer_at(MemoryContext *ctx, unsigned long addr, unsigned long value) {
     if (!ctx || addr == 0) return -1;
     
+    errno = 0;
     if (ptrace(PTRACE_POKEDATA, ctx->pid, addr, value) == -1) {
+        DEBUG_PRINT("memory_write_pointer_at: ptrace POKEDATA failed at addr=0x%lx: %s\n",
+                    addr, strerror(errno));
         return -1;
     }
     return 0;
@@ -177,13 +187,21 @@ unsigned long memory_write_pointer_array(MemoryContext *ctx, unsigned long *poin
     unsigned long base = ctx->free_addr;
 
     for (int i = 0; i < count; i++) {
-        if (ptrace(PTRACE_POKEDATA, ctx->pid, base + i * sizeof(long), pointers[i]) == -1) {
+        unsigned long addr = base + i * sizeof(long);
+        errno = 0;
+        if (ptrace(PTRACE_POKEDATA, ctx->pid, addr, pointers[i]) == -1) {
+            DEBUG_PRINT("memory_write_pointer_array: ptrace POKEDATA failed at addr=0x%lx: %s\n",
+                        addr, strerror(errno));
             return 0;
         }
     }
 
     /* Add NULL terminator */
-    if (ptrace(PTRACE_POKEDATA, ctx->pid, base + count * sizeof(long), 0) == -1) {
+    unsigned long null_addr = base + count * sizeof(long);
+    errno = 0;
+    if (ptrace(PTRACE_POKEDATA, ctx->pid, null_addr, 0) == -1) {
+        DEBUG_PRINT("memory_write_pointer_array: ptrace POKEDATA NULL terminator failed at addr=0x%lx: %s\n",
+                    null_addr, strerror(errno));
         return 0;
     }
 

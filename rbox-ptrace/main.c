@@ -75,6 +75,14 @@ static void cleanup_global_resources(void) {
     /* Clear flagged env storage */
     env_clear_flagged();
 
+    /* Free extra env storage */
+    for (int i = 0; i < g_extra_env_count; i++) {
+        free(g_extra_env[i]);
+    }
+    free(g_extra_env);
+    g_extra_env = NULL;
+    g_extra_env_count = 0;
+
     /* Close syslog */
     closelog();
 }
@@ -683,6 +691,11 @@ int main(int argc, char *argv[]) {
             _exit(1);
         }
         raise(SIGSTOP);
+        /* Prevent gaining new privileges before applying sandbox restrictions.
+         * This must be set before apply_sandboxing() which includes Landlock. */
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+            LOG_WARN("failed to set PR_SET_NO_NEW_PRIVS before sandbox");
+        }
         /* Apply sandbox restrictions before dropping privileges.
          * This must be done while we still have CAP_SYS_ADMIN.
          * Landlock and seccomp restrictions will be inherited by the execved process.

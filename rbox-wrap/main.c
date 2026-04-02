@@ -585,7 +585,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-
     int cmd_start = optind;
     for (int i = optind; i < argc; i++) {
         if (strcmp(argv[i], "--") == 0) {

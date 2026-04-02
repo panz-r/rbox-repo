@@ -177,18 +177,16 @@ int judge_run(const char *command, const char *caller_info) {
             free(buffer);
             if (WIFEXITED(status)) {
                 int code = WEXITSTATUS(status);
-                if (code == 0) {
-                    DEBUG_PRINT("JUDGE: child exited with 0 but no output - assume allow\n");
-                    return 0;
-                }
                 if (code == 9) {
                     DEBUG_PRINT("JUDGE: child exited with 9 but no output - assume deny\n");
                     return 9;
                 }
+                /* Exit 0 with no output means rbox-wrap couldn't communicate with server
+                 * and fast-path allowed - but we need server decision, so retry */
                 retry_count++;
                 if (retry_count > MAX_RETRIES) {
-                    LOG_ERROR("rbox-wrap exited with code %d after %d retries", code, MAX_RETRIES);
-                    exit(1);
+                    DEBUG_PRINT("JUDGE: rbox-wrap failed after %d retries - fail closed\n", MAX_RETRIES);
+                    return 2;  /* Error: couldn't reach server, fail closed */
                 }
                 DEBUG_PRINT("JUDGE: child exited with code %d, retry %d/%d\n", code, retry_count, MAX_RETRIES);
                 sleep(1);
@@ -196,8 +194,8 @@ int judge_run(const char *command, const char *caller_info) {
             } else {
                 retry_count++;
                 if (retry_count > MAX_RETRIES) {
-                    LOG_ERROR("rbox-wrap terminated abnormally after %d retries", MAX_RETRIES);
-                    exit(1);
+                    DEBUG_PRINT("JUDGE: rbox-wrap terminated abnormally after %d retries - fail closed\n", MAX_RETRIES);
+                    return 2;
                 }
                 DEBUG_PRINT("JUDGE: child terminated, retry %d/%d\n", retry_count, MAX_RETRIES);
                 sleep(1);
@@ -215,12 +213,12 @@ int judge_run(const char *command, const char *caller_info) {
             free(buffer);
             if (WIFEXITED(status)) {
                 int code = WEXITSTATUS(status);
-                if (code == 0) return 0;
                 if (code == 9) return 9;
+                /* Invalid header - retry */
                 retry_count++;
                 if (retry_count > MAX_RETRIES) {
-                    LOG_ERROR("rbox-wrap returned invalid header (exit %d) after %d retries", code, MAX_RETRIES);
-                    exit(1);
+                    DEBUG_PRINT("JUDGE: invalid header after %d retries - fail closed\n", MAX_RETRIES);
+                    return 2;  /* Error: couldn't parse response */
                 }
                 DEBUG_PRINT("JUDGE: invalid header, retry %d/%d\n", retry_count, MAX_RETRIES);
                 sleep(1);
@@ -228,8 +226,8 @@ int judge_run(const char *command, const char *caller_info) {
             }
             retry_count++;
             if (retry_count > MAX_RETRIES) {
-                LOG_ERROR("rbox-wrap returned invalid header and did not exit cleanly after %d retries", MAX_RETRIES);
-                exit(1);
+                DEBUG_PRINT("JUDGE: invalid header (abnormal exit) after %d retries - fail closed\n", MAX_RETRIES);
+                return 2;
             }
             DEBUG_PRINT("JUDGE: invalid header, retry %d/%d\n", retry_count, MAX_RETRIES);
             sleep(1);
@@ -299,12 +297,12 @@ int judge_run(const char *command, const char *caller_info) {
         free(buffer);
         if (WIFEXITED(status)) {
             int code = WEXITSTATUS(status);
-            if (code == 0) return 0;
             if (code == 9) return 9;
+            /* Invalid details with exit 0 - retry, don't assume allow */
             retry_count++;
             if (retry_count > MAX_RETRIES) {
-                LOG_ERROR("rbox-wrap returned invalid details (exit %d) after %d retries", code, MAX_RETRIES);
-                exit(1);
+                DEBUG_PRINT("JUDGE: invalid details after %d retries - fail closed\n", MAX_RETRIES);
+                return 2;  /* Error: couldn't parse response */
             }
             DEBUG_PRINT("JUDGE: invalid details, retry %d/%d\n", retry_count, MAX_RETRIES);
             sleep(1);
@@ -312,8 +310,8 @@ int judge_run(const char *command, const char *caller_info) {
         }
         retry_count++;
         if (retry_count > MAX_RETRIES) {
-            LOG_ERROR("rbox-wrap returned invalid details and did not exit cleanly after %d retries", MAX_RETRIES);
-            exit(1);
+            DEBUG_PRINT("JUDGE: invalid details (abnormal exit) after %d retries - fail closed\n", MAX_RETRIES);
+            return 2;
         }
         DEBUG_PRINT("JUDGE: invalid details, retry %d/%d\n", retry_count, MAX_RETRIES);
         sleep(1);

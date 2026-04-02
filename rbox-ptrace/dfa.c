@@ -22,24 +22,6 @@ static void dfa_init_once_wrapper(void) {
     g_dfa_initialized = true;
 }
 
-int dfa_should_allow(const char* cmd) {
-    if (cmd == NULL || cmd[0] == '\0') {
-        return 0;
-    }
-
-    pthread_once(&dfa_init_once, dfa_init_once_wrapper);
-
-    if (!g_dfa_initialized) {
-        return 0;
-    }
-
-    dfa_result_t result;
-    if (dfa_eval(rbox_ptrace_dfa, rbox_ptrace_dfa_size, cmd, strlen(cmd), &result)) {
-        return (result.category_mask & CAT_MASK_AUTOALLOW) && result.matched;
-    }
-    return 0;
-}
-
 int dfa_get_category_mask(const char* cmd, uint8_t* out_mask) {
     if (cmd == NULL || cmd[0] == '\0' || out_mask == NULL) {
         if (out_mask) *out_mask = 0;

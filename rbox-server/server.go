@@ -132,13 +132,14 @@ func main() {
 	fmt.Printf("readonlybox-server v1.0 - listening on %s\n", socketPath)
 	os.Chmod(socketPath, 0666)
 
-	mode := "blocking"
-	if *quiet || (!*verbose && !*veryVerbose) {
-		mode = "quiet (blocked only)"
-	} else if *veryVerbose {
+	mode := "quiet (blocked only)"
+	if *veryVerbose {
 		mode = "very verbose (all commands and logs)"
 	} else if *verbose {
 		mode = "verbose (all commands)"
+	}
+	if *autoDeny {
+		mode += " + auto-deny"
 	}
 	fmt.Printf("Mode: %s\n\n", mode)
 

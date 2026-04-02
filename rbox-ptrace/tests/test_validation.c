@@ -57,8 +57,6 @@ TEST(validation_init_basic) {
     /* Cleanup */
     validation_shutdown();
     return 0;
-
-    return 0;
 }
 
 /*
@@ -67,8 +65,6 @@ TEST(validation_init_basic) {
 TEST(validation_shutdown_no_init) {
     /* Should not crash */
     validation_shutdown();
-    ASSERT(1);  /* If we get here, test passed */
-
     return 0;
 }
 
@@ -80,10 +76,7 @@ TEST(validation_init_shutdown_cycle) {
         int result = validation_init();
         ASSERT_EQ(result, 0);
         validation_shutdown();
-    
-    return 0;
-}
-    ASSERT(1);  /* If we get here, all cycles passed */
+    }
     return 0;
 }
 
@@ -97,8 +90,6 @@ TEST(validation_get_socket_path_default) {
     ASSERT_STR_EQ(path, "/run/readonlybox/readonlybox.sock");
 
     validation_shutdown();
-    return 0;
-
     return 0;
 }
 
@@ -119,8 +110,6 @@ TEST(validation_get_socket_path_env) {
 
     /* Clean up environment */
     unsetenv(ROBO_ENV_SOCKET);
-    return 0;
-
     return 0;
 }
 

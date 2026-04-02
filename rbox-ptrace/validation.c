@@ -21,7 +21,6 @@
 #include "debug.h"
 
 /* External DFA functions from the linked library */
-extern int dfa_should_allow(const char *cmd);
 extern int dfa_get_category_mask(const char *cmd, uint8_t *out_mask);
 
 /* Category bits for decision making */
@@ -223,3 +222,4 @@ int validation_check_dfa(const char *command) {
     /* No explicit category - ask server by default */
     return VALIDATION_ASK;
 }
+

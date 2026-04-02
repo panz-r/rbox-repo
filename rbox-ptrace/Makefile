@@ -113,8 +113,9 @@ help:
 	@echo "  all          - Build readonlybox-ptrace (default)"
 	@echo "  debug        - Build with debug symbols"
 	@echo "  clean        - Remove all build artifacts"
-	@echo "  test         - Run all tests"
+	@echo "  test         - Run all tests (excludes e2e)"
 	@echo "  test-e2e     - Run end-to-end tests"
+	@echo "  test-with-caps - Run e2e tests (requires setcap first)"
 	@echo "  test-memory  - Run memory tests"
 	@echo "  test-syscall - Run syscall tests"
 	@echo "  test-validation - Run validation tests"
@@ -133,6 +134,9 @@ test: $(TARGET)
 
 test-e2e: $(TARGET)
 	$(MAKE) -C tests test-e2e
+
+test-with-caps: $(TARGET)
+	$(MAKE) -C tests test-with-caps
 
 test-memory: $(TARGET)
 	$(MAKE) -C tests test-memory

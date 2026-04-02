@@ -12,3 +12,6 @@ readonlybox-ptrace
 
 # Build artifacts
 compile_commands.json
+
+.cache/*
+logs/*
