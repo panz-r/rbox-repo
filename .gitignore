@@ -1,6 +1,6 @@
 # generated files
 rbox-preload/readonlybox_dfa.c 
-
+.cache/
 bin/
 *.so
 *.o
