@@ -184,7 +184,7 @@ pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
 
 // Initialize NFA transitions to -1 (load_nfa_file skips nfa_init in library builds)
 static void init_nfa_array(nfa2dfa_context_t* ctx) {
-    for (int i = 0; i < ctx->max_states; i++) {
+    for (int i = 0; i < ctx->nfa_state_count; i++) {
         for (int j = 0; j < 256; j++) {  // MAX_SYMBOLS = 256
             ctx->nfa[i].transitions[j] = -1;
         }
@@ -249,13 +249,16 @@ pipeline_error_t pipeline_compress(pipeline_t* p) {
 }
 
 pipeline_error_t pipeline_optimize_layout(pipeline_t* p) {
-    if (!p || !p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+    if (!p || !p->nfa2dfa_ctx || !p->nfa2dfa_ctx->dfa) return PIPELINE_INVALID_STATE;
 
-    layout_options_t opts = get_default_layout_options();
-    int* order = optimize_dfa_layout(p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, &opts);
-    if (order) {
-        free(order);
+    layout_options_t layout_opts = get_default_layout_options();
+    int* order = optimize_dfa_layout(p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, &layout_opts);
+    
+    if (!order) {
+        return PIPELINE_ERROR;
     }
+    
+    free(order);
     return PIPELINE_OK;
 }
 

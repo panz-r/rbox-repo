@@ -48,6 +48,7 @@ typedef struct {
     // Configuration
     char pattern_identifier[256];
     bool flag_verbose;
+    bool flag_chain;
 } nfa2dfa_context_t;
 
 /**

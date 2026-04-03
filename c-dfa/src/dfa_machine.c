@@ -16,7 +16,7 @@ bool dfa_machine_init_with_id(dfa_machine_t* m, const void* dfa_data, size_t siz
 
     const dfa_t* dfa = (const dfa_t*)dfa_data;
     if (dfa->magic != DFA_MAGIC) return false;
-    if (dfa->version < 5 || dfa->version > 6) return false;
+    if (dfa->version < 5 || dfa->version > 10) return false;
     if (dfa->state_count == 0 || dfa->initial_state >= size) return false;
 
     // Validate identifier match at load time (if requested)
