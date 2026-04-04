@@ -17,6 +17,7 @@
 #include "dfa_layout.h"
 #include "nfa_preminimize.h"
 #include "nfa2dfa_context.h"
+#include "../include/cdfa_defines.h"
 
 #if MAX_SYMBOLS != 320
 #error "MAX_SYMBOLS must be 320"
@@ -74,8 +75,7 @@ static int max_states = MAX_STATES;
 static int dfa_hash_table[DFA_HASH_SIZE];
 static int dfa_next_in_bucket[MAX_STATES];
 
-void init_hash_table(nfa2dfa_context_t* ctx) {
-    (void)ctx; // Context not used with static arrays
+void init_hash_table(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     memset(dfa_hash_table, -1, sizeof(dfa_hash_table));
     memset(dfa_next_in_bucket, -1, sizeof(dfa_next_in_bucket));
 }
@@ -90,10 +90,7 @@ void init_hash_table(nfa2dfa_context_t* ctx) {
 static MarkerList* dfa_marker_lists = NULL;
 static int marker_list_count = 0;
 
-static void init_marker_lists(nfa2dfa_context_t* ctx) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+static void init_marker_lists(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     dfa_marker_lists = alloc_or_abort(malloc(sizeof(MarkerList) * MAX_DFA_MARKER_LISTS), "Failed to allocate marker lists");
     memset(dfa_marker_lists, 0, sizeof(MarkerList) * MAX_DFA_MARKER_LISTS);
 }
@@ -101,10 +98,7 @@ static void init_marker_lists(nfa2dfa_context_t* ctx) {
 // Note: No free_marker_lists() needed - CLI tool exits after processing
 
 // Get unique marker list (store if new)
-static uint32_t store_marker_list(nfa2dfa_context_t* ctx, const uint32_t* markers, int count) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+static uint32_t store_marker_list(ATTR_UNUSED nfa2dfa_context_t* ctx, const uint32_t* markers, int count) {
     if (count == 0) return 0;
     
     // Check if list already exists
@@ -130,11 +124,8 @@ static uint32_t store_marker_list(nfa2dfa_context_t* ctx, const uint32_t* marker
 }
 
 // Collect markers from NFA states in an epsilon closure
-static void collect_markers_from_states(nfa2dfa_context_t* ctx, const int* states, int state_count,
+static void collect_markers_from_states(ATTR_UNUSED nfa2dfa_context_t* ctx, const int* states, int state_count,
                                         uint32_t* out_markers, int* out_count) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
     int count = *out_count;  // Start with existing marker count
     for (int i = 0; i < state_count && count < MAX_MARKERS_PER_DFA_TRANSITION; i++) {
         int ns = states[i];
@@ -161,10 +152,7 @@ static void collect_markers_from_states(nfa2dfa_context_t* ctx, const int* state
 // Insertion sort for small-to-medium integer arrays.
 // Faster than qsort for typical NFA state set sizes (10-1000 elements)
 // due to no function call overhead and better cache behavior.
-static void sort_states_canonical(nfa2dfa_context_t* ctx, int* states, int count) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+static void sort_states_canonical(ATTR_UNUSED nfa2dfa_context_t* ctx, int* states, int count) {
     for (int i = 1; i < count; i++) {
         int key = states[i];
         int j = i - 1;
@@ -228,8 +216,7 @@ void nfa_init(void) {
 
 #endif  // NFABUILDER_EXCLUDE_NFA_INIT
 
-void dfa_init(nfa2dfa_context_t* ctx) {
-    (void)ctx; // CLI version uses global state
+void dfa_init(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     memset(dfa_hash_table, -1, sizeof(int) * DFA_HASH_SIZE);
     memset(dfa_next_in_bucket, -1, sizeof(int) * max_states);
     // Free any previously allocated states
@@ -246,11 +233,8 @@ void dfa_init(nfa2dfa_context_t* ctx) {
     dfa_state_count = 0;
 }
 
-void epsilon_closure_with_markers(nfa2dfa_context_t* ctx, int* states, int* count, int max_states,
+void epsilon_closure_with_markers(ATTR_UNUSED nfa2dfa_context_t* ctx, int* states, int* count, int max_states,
                                    uint32_t* markers, int* marker_count, int max_markers) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
     const int epsilon_symbol_id = 257;
     bool* in_set = alloc_or_abort(calloc(max_states, sizeof(bool)), "epsilon_closure in_set");
     int* stack = alloc_or_abort(malloc(max_states * sizeof(int)), "epsilon_closure stack");
@@ -293,10 +277,7 @@ void epsilon_closure_with_markers(nfa2dfa_context_t* ctx, int* states, int* coun
     }
 }
 
-void epsilon_closure(nfa2dfa_context_t* ctx, int* states, int* count, int max_states) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+void epsilon_closure(ATTR_UNUSED nfa2dfa_context_t* ctx, int* states, int* count, int max_states) {
     int epsilon_sid = -1;
     int epsilon_symbol_id = 257;
     for (int s = 0; s < alphabet_size; s++) {
@@ -340,10 +321,7 @@ void epsilon_closure(nfa2dfa_context_t* ctx, int* states, int* count, int max_st
 // CRITICAL FIX: For INITIAL state, collect ALL fork categories unconditionally because
 // patterns like "cmd ((abc))*" have fork states that aren't reachable via epsilon from state 0
 // (they're after the literal characters), but should still contribute to initial state for empty match
-static uint8_t collect_fork_categories(nfa2dfa_context_t* ctx, int* states, int count, bool is_initial_state) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+static uint8_t collect_fork_categories(ATTR_UNUSED nfa2dfa_context_t* ctx, int* states, int count, bool is_initial_state) {
     uint8_t fork_cats = 0;
     
     // Check if there are any fork states in the NFA (is_eos_target with category)
@@ -440,10 +418,7 @@ static uint8_t collect_fork_categories(nfa2dfa_context_t* ctx, int* states, int 
     return fork_cats;
 }
 
-int dfa_add_state(nfa2dfa_context_t* ctx, uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id, uint16_t first_accepting_pattern) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+int dfa_add_state(ATTR_UNUSED nfa2dfa_context_t* ctx, uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id, uint16_t first_accepting_pattern) {
     // Sort once for hash, lookup, and storage
     int* sorted = alloc_or_abort(malloc(nfa_count * sizeof(int)), "dfa_add_state sorted");
     for (int i = 0; i < nfa_count; i++) {
@@ -491,10 +466,7 @@ int dfa_add_state(nfa2dfa_context_t* ctx, uint8_t category_mask, int* nfa_states
     return state;
 }
 
-void nfa_move(nfa2dfa_context_t* ctx, int* states, int* count, int sid, int max_states) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+void nfa_move(ATTR_UNUSED nfa2dfa_context_t* ctx, int* states, int* count, int sid, int max_states) {
     int* ns = alloc_or_abort(malloc(max_states * sizeof(int)), "nfa_move ns");
     int nc = 0; 
     bool* is = alloc_or_abort(calloc(max_states, sizeof(bool)), "nfa_move is");
@@ -516,11 +488,8 @@ void nfa_move(nfa2dfa_context_t* ctx, int* states, int* count, int sid, int max_
     free(is);
 }
 
-static void collect_transition_markers(nfa2dfa_context_t* ctx, int source_count, int* source_states, int sid,
+static void collect_transition_markers(ATTR_UNUSED nfa2dfa_context_t* ctx, int source_count, int* source_states, int sid,
                                        uint32_t* out_markers, int* out_count, int max_markers) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
     int count = *out_count;
     for (int i = 0; i < source_count && count < max_markers; i++) {
         int s = source_states[i];
@@ -589,10 +558,7 @@ static void collect_transition_markers(nfa2dfa_context_t* ctx, int source_count,
     *out_count = count;
 }
 
-void nfa_to_dfa(nfa2dfa_context_t* ctx) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     DEBUG_PRINT("nfa_to_dfa: nfa_state_count=%d, alphabet_size=%d\n", nfa_state_count, alphabet_size);
     dfa_init(NULL);
     init_marker_lists(ctx);
@@ -921,10 +887,7 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx) {
     free(temp);
 }
 
-void flatten_dfa(nfa2dfa_context_t* ctx) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+void flatten_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     int any_sid = -1;
     int space_sid = -1;
     int tab_sid = -1;
@@ -1088,7 +1051,7 @@ static bool follow_chain(int start_char, int start_target, chain_entry_t* out_ch
  * @return Number of chains detected (0 if chain encoding not beneficial)
  */
 static int detect_state_chains(int state_idx, chain_entry_t* chains, int max_chains,
-                                int* total_savings, int enc_ow) {
+                                int* total_savings, ATTR_UNUSED int enc_ow) {
     if (state_idx < 0 || state_idx >= dfa_state_count) return 0;
     
     // Skip states with markers (chain encoding doesn't support markers yet)
@@ -1326,10 +1289,7 @@ static int compute_packed_entries(int state_idx, const intermediate_rule_t* rule
     return ne;
 }
 
-void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+void write_dfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
     FILE* file = fopen(filename, "wb");
     if (!file) { FATAL_SYS("Cannot open '%s' for writing", filename); exit(EXIT_FAILURE); }
     
@@ -1695,7 +1655,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     int eos_marker_count = 0;
     
     for (int i = 0; i < dfa_state_count; i++) {
-        if (dfa[i]->eos_target > 0 && dfa[i]->eos_target < dfa_state_count) {
+        if (dfa[i]->eos_target > 0 && dfa[i]->eos_target < (uint32_t)dfa_state_count) {
             eos_targets[eos_target_count].state_off = (uint32_t)state_offset[i];
             eos_targets[eos_target_count].value = (uint32_t)state_offset[dfa[i]->eos_target];
             eos_target_count++;
@@ -1993,10 +1953,7 @@ void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename) {
     }
 }
 
-void load_nfa_file(nfa2dfa_context_t* ctx, const char* filename) {
-#ifndef NFA2DFA_BUILDING_LIB
-    (void)ctx; // CLI version uses global state
-#endif
+void load_nfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
     FILE* file = fopen(filename, "r");
     if (!file) { FATAL_SYS("Cannot open NFA file '%s'", filename); exit(EXIT_FAILURE); }
     char line[1024]; 

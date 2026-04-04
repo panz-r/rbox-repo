@@ -204,12 +204,14 @@ typedef enum {
 /**
  * Result of DFA evaluation
  */
+#define DFA_MAX_EVAL_LEN 16384
+
 typedef struct {
     dfa_command_category_t category;
     uint8_t category_mask;
     uint32_t final_state;
     bool matched;
-    bool truncated;         // true if input was truncated at MAX_EVAL_LEN
+    bool truncated;         // true if input was truncated at DFA_MAX_EVAL_LEN
     size_t matched_length;
     dfa_capture_t captures[DFA_MAX_CAPTURES];
     int capture_count;

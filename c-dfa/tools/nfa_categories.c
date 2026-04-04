@@ -47,8 +47,7 @@ void nfa_category_parse_definition(nfa_builder_context_t* ctx, const char* line)
     }
     name[name_len] = '\0';
 
-    strncpy(ctx->dynamic_category_names[idx], name, MAX_CATEGORY_NAME - 1);
-    ctx->dynamic_category_names[idx][MAX_CATEGORY_NAME - 1] = '\0';
+    snprintf(ctx->dynamic_category_names[idx], MAX_CATEGORY_NAME, "%s", name);
 
     if (idx >= ctx->dynamic_category_count) {
         ctx->dynamic_category_count = idx + 1;

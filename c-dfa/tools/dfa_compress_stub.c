@@ -4,6 +4,7 @@
 
 #include "dfa_compress.h"
 #include "dfa_minimize.h"
+#include "../include/cdfa_defines.h"
 
 // Statistics from last compression
 static compression_stats_t last_stats = {0};
@@ -23,14 +24,11 @@ void dfa_get_compression_stats(compression_stats_t* stats) {
     if (stats) *stats = last_stats;
 }
 
-float dfa_estimate_compression(const build_dfa_state_t* dfa, int state_count, 
-                               const compress_options_t* options) {
-    (void)dfa; (void)state_count; (void)options;
+float dfa_estimate_compression(ATTR_UNUSED const build_dfa_state_t** dfa, ATTR_UNUSED int state_count,
+                               ATTR_UNUSED const compress_options_t* options) {
     return 1.0f;  // No compression in stub
 }
 
-int dfa_compress(build_dfa_state_t* dfa, int state_count, const compress_options_t* options) {
-    (void)dfa; (void)options;
-    // Stub: no compression, just return original count
+int dfa_compress(ATTR_UNUSED build_dfa_state_t** dfa, int state_count, ATTR_UNUSED const compress_options_t* options) {
     return state_count;
 }

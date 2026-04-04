@@ -7,6 +7,7 @@
 
 #include "nfa_builder.h"
 #include "../include/dfa_errors.h"
+#include "../include/cdfa_defines.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -49,8 +50,7 @@ void nfa_alphabet_load(nfa_builder_context_t* ctx, const char* filename) {
     }
 }
 
-bool nfa_alphabet_construct_from_patterns(nfa_builder_context_t* ctx, const char* spec_file) {
-    (void)spec_file;
+bool nfa_alphabet_construct_from_patterns(nfa_builder_context_t* ctx, ATTR_UNUSED const char* spec_file) {
 
     // Build alphabet directly in context
     int size = 0;

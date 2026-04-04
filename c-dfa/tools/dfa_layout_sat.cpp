@@ -24,6 +24,7 @@
 #include <climits>
 #include <vector>
 #include "cadical.hpp"
+#include "../include/cdfa_defines.h"
 
 // ============================================================================
 // CNF Builder with Incremental Solving
@@ -102,7 +103,7 @@ extern "C" {
 int* sat_optimize_condensation_order(
     int** cond,
     int scc_count,
-    const int* greedy_order,
+    ATTR_UNUSED const int* greedy_order,
     long long greedy_cost
 ) {
     if (scc_count <= 3 || scc_count > 20) return nullptr;
@@ -231,7 +232,6 @@ int* sat_optimize_condensation_order(
     // Build sequential counter for max possible bound
     int max_bound = (int)cost_vars.size();
     auto counter = sat.sequential_counter(cost_vars, max_bound);
-    int terminal_var = counter[max_bound][max_bound + 1]; // Terminal at full size
     
     // Binary search for optimal bound
     int lb = 0;

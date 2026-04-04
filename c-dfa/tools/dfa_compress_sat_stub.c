@@ -6,11 +6,9 @@
 #include <stdio.h>
 #include "../include/dfa_types.h"
 #include "dfa_compress.h"
+#include "../include/cdfa_defines.h"
 
 __attribute__((weak))
-int sat_merge_rules_for_state(build_dfa_state_t* state, int max_group_size) {
-    (void)state;
-    (void)max_group_size;
-    // Fall back to greedy merge (already called by dfa_compress when use_sat=false)
+int sat_merge_rules_for_state(ATTR_UNUSED build_dfa_state_t* state, ATTR_UNUSED int max_group_size) {
     return 0;
 }

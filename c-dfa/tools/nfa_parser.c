@@ -7,6 +7,7 @@
 
 #include "nfa_builder.h"
 #include "../include/dfa_errors.h"
+#include "../include/cdfa_defines.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -159,13 +160,9 @@ static FragmentResult parse_rdp_fragment(nfa_builder_context_t* ctx, const char*
 // RDP: Character class (not supported - returns error)
 // ============================================================================
 
-static int parse_rdp_class(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state) {
-    (void)ctx;
-    (void)start_state;
-    (void)pos;
+static int parse_rdp_class(ATTR_UNUSED nfa_builder_context_t* ctx, ATTR_UNUSED const char* pattern, ATTR_UNUSED int* pos, ATTR_UNUSED int start_state) {
     ERROR("Character class syntax [abc] is not supported");
     ERROR("  Use (a|b|c) for alternatives, escape '\\[' for literal bracket");
-    ERROR("  Pattern: %s", pattern);
     return -1;
 }
 
@@ -459,8 +456,7 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
 // Check if a quantifier at the given position is valid.
 // Quantifiers (*, +, ?) must follow a closing parenthesis ')'.
 // This prevents the common misunderstanding that * is a wildcard.
-static bool quantifier_is_valid(const char* pattern, int quant_pos, nfa_builder_context_t* ctx) {
-    // Check if quant_pos is inside quoted strings - if so, it's a literal, not a quantifier
+static bool quantifier_is_valid(const char* pattern, int quant_pos, ATTR_UNUSED nfa_builder_context_t* ctx) {
     int quotes = 0;
     bool in_esc = false;
     for (int i = 0; i < quant_pos; i++) {
@@ -470,8 +466,6 @@ static bool quantifier_is_valid(const char* pattern, int quant_pos, nfa_builder_
     }
     if (quotes % 2 == 1) return false;  // Inside quotes - treat as literal, reject as quantifier
 
-    (void)ctx;
-    // Scan backward for previous non-whitespace character
     int p = quant_pos - 1;
     while (p >= 0 && (pattern[p] == ' ' || pattern[p] == '\t')) p--;
     if (p < 0) return false;

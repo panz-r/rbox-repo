@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include "cdfa_defines.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -230,7 +231,7 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
 #define DFA_PACK_RANGE_SIZE(enc)   (2 + dfa_owb(enc))
 
 /* Bitmask rule field accessors */
-static inline int dfa_bm_off_target(int enc)  { return 33; }
+static inline int dfa_bm_off_target(ATTR_UNUSED int enc)  { return 33; }
 static inline int dfa_bm_off_markers(int enc) { return 33 + dfa_owb(enc); }
 
 #define DFA_STATE_ACCEPTING      0x0001
@@ -311,7 +312,7 @@ static inline int dfa_st_off_first(int enc) { return dfa_cwb(enc) + dfa_owb(enc)
 #define DFA_RL_OFF_DATA2   2
 #define DFA_RL_OFF_DATA3   3
 
-static inline int dfa_rl_off_target(int enc)  { return 4; }
+static inline int dfa_rl_off_target(ATTR_UNUSED int enc)  { return 4; }
 static inline int dfa_rl_off_markers(int enc) { return 4 + dfa_owb(enc); }
 
 /* ============================================================================

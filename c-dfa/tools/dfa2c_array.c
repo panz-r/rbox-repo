@@ -27,6 +27,7 @@
 
 #define DFA_ERROR_PROGRAM "dfa2c_array"
 #include "dfa_errors.h"
+#include "../include/cdfa_defines.h"
 
 static void usage(const char* prog) {
     fprintf(stderr, "Usage: %s [options] <input.dfa> <output.c> <array_name>\n", prog);
@@ -237,8 +238,7 @@ static bool write_source(const config_t* cfg, const unsigned char* data, long si
     return true;
 }
 
-static bool write_header(const config_t* cfg, long size) {
-    (void)size;
+static bool write_header(const config_t* cfg, ATTR_UNUSED long size) {
     FILE* f = fopen(cfg->header_path, "w");
     if (!f) {
         ERROR_SYS("Cannot open '%s' for writing", cfg->header_path);

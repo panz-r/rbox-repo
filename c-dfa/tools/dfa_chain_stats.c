@@ -160,8 +160,7 @@ static int get_single_target(const uint8_t* d, size_t sz, int enc, size_t so, ui
 /**
  * Check if a state is accepting (has category or pattern_id)
  */
-static bool is_accepting(const uint8_t* d, size_t sz, int enc, size_t so, uint16_t tc) {
-    (void)sz; (void)tc;
+static bool is_accepting(const uint8_t* d, size_t sz, int enc, size_t so, ATTR_UNUSED uint16_t tc) {
     uint16_t flags = dfa_fmt_st_flags_tc(d, so, enc, tc);
     uint8_t cat = DFA_GET_CATEGORY_MASK(flags);
     if (cat != 0) return true;
@@ -180,8 +179,7 @@ static bool is_accepting(const uint8_t* d, size_t sz, int enc, size_t so, uint16
 /**
  * Check if a state has an EOS target (V9: uses EOS section)
  */
-static bool has_eos_target(const uint8_t* d, size_t sz, int enc, size_t so, uint16_t tc) {
-    (void)sz; (void)tc;
+static bool has_eos_target(const uint8_t* d, size_t sz, int enc, size_t so, ATTR_UNUSED uint16_t tc) {
     uint32_t eos_off = dfa_fmt_eos_offset(d);
     if (eos_off == 0 || eos_off >= sz) return false;
     const uint8_t* eos = d + eos_off;

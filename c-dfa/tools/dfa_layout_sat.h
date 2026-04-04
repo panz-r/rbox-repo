@@ -5,6 +5,8 @@
 #ifndef DFA_LAYOUT_SAT_H
 #define DFA_LAYOUT_SAT_H
 
+#include "../include/cdfa_defines.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -17,7 +19,7 @@ extern "C" {
 int* sat_optimize_condensation_order(
     int** cond,              // condensation graph [scc_count][scc_count]
     int scc_count,           // number of SCCs
-    const int* greedy_order, // greedy ordering (position -> SCC)
+    ATTR_UNUSED const int* greedy_order, // greedy ordering (position -> SCC)
     long long greedy_cost    // cost of greedy ordering
 );
 

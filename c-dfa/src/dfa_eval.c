@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 /**
- * DFA Evaluator - v7 adaptive-width reader
+ * DFA Evaluator - v9/v10 adaptive-width reader
  * All reads via dfa_fmt_* with runtime encoding. No struct casts.
  */
 
@@ -19,7 +19,6 @@
 #define DBG(...) ((void)0)
 #endif
 
-#define MAX_EVAL_LEN 16384
 #define MAX_TRACE    16384
 #define MAX_CAP_STK  32
 
@@ -38,7 +37,7 @@ static void add_cap(dfa_result_t* r, int id, size_t s, size_t e) {
     if (r->capture_count >= DFA_MAX_CAPTURES) return;
     dfa_capture_t* c = &r->captures[r->capture_count++];
     c->start = s; c->end = e; c->capture_id = id;
-    c->name[0] = '\0'; c->active = false; c->completed = true;
+    strcpy(c->name, "(unnamed)"); c->active = false; c->completed = true;
 }
 
 static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
@@ -127,7 +126,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     if (td < MAX_TRACE) tr[td++] = cur; else return false;
     size_t pos = 0;
 
-    while (pos < len && pos < MAX_EVAL_LEN) {
+    while (pos < len && pos < DFA_MAX_EVAL_LEN) {
         unsigned char c = (unsigned char)in[pos];
         uint16_t tc = dfa_fmt_st_tc(d, cur, enc);
         uint32_t rl = dfa_fmt_st_rules(d, cur, enc);
@@ -257,8 +256,8 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         pos++; cur = nxt; if (td < MAX_TRACE) tr[td++] = cur;
     }
 
-    // Detect if input was truncated at MAX_EVAL_LEN
-    if (pos >= MAX_EVAL_LEN && len > MAX_EVAL_LEN) {
+    // Detect if input was truncated at DFA_MAX_EVAL_LEN
+    if (pos >= DFA_MAX_EVAL_LEN && len > DFA_MAX_EVAL_LEN) {
         res->truncated = true;
     }
 
@@ -287,7 +286,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         res->final_state = cur;
         for (int i=0;i<8;i++) if (cat&(1<<i)) { res->category=(dfa_command_category_t)(i+1); break; }
 
-        /* Captures (v7+) */
+        /* Captures (v6+) */
         if (wpid && wpid != UINT16_MAX) {
             cap_t stk[MAX_CAP_STK]; int sd = 0;
             uint32_t meta = dfa_fmt_meta_offset(d);
@@ -360,7 +359,8 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
 /* Capture access */
 int dfa_result_get_capture(const dfa_result_t* r, int i, const char** s, size_t* l) {
     if (!r||i<0||i>=r->capture_count) return -1;
-    if (s) *s=NULL; if (l) *l=r->captures[i].end-r->captures[i].start;
+    if (s) { *s=NULL; }
+    if (l) { *l=r->captures[i].end-r->captures[i].start; }
     return r->captures[i].capture_id;
 }
 const char* dfa_result_get_capture_name(const dfa_result_t* r, int i) {
@@ -369,7 +369,8 @@ const char* dfa_result_get_capture_name(const dfa_result_t* r, int i) {
 int dfa_result_get_capture_count(const dfa_result_t* r) { return r ? r->capture_count : 0; }
 bool dfa_result_get_capture_by_index(const dfa_result_t* r, int i, size_t* s, size_t* l) {
     if (!r||i<0||i>=r->capture_count) return false;
-    if (s) *s=r->captures[i].start; if (l) *l=r->captures[i].end-r->captures[i].start;
+    if (s) { *s=r->captures[i].start; }
+    if (l) { *l=r->captures[i].end-r->captures[i].start; }
     return true;
 }
 bool dfa_result_get_capture_string(const dfa_result_t* r, int i,
@@ -377,9 +378,10 @@ bool dfa_result_get_capture_string(const dfa_result_t* r, int i,
 {
     (void)dd; (void)ds;
     if (!r||i<0||i>=r->capture_count) return false;
-    dfa_capture_t* c = (dfa_capture_t*)&r->captures[i];
-    if (s) *s=in+c->start; if (l) *l=c->end-c->start;
-    if (nm) { if (!c->name[0]) snprintf(c->name,sizeof(c->name),"capture_%d",c->capture_id); *nm=c->name; }
+    const dfa_capture_t* c = &r->captures[i];
+    if (s) { *s=in+c->start; }
+    if (l) { *l=c->end-c->start; }
+    if (nm) *nm=c->name;
     return true;
 }
 
@@ -390,8 +392,8 @@ bool dfa_eval_validate_id(const void* vd, size_t sz, const char* eid) {
     if (dfa_fmt_magic(d) != DFA_MAGIC) return false;
     int enc = dfa_fmt_encoding(d);
     uint8_t il = dfa_fmt_id_len(d);
-    if (DFA_HEADER_SIZE(enc, il) > sz) return false;
-    if (DFA_HEADER_SIZE(enc, il) + il > sz) return false;
+    if ((size_t)DFA_HEADER_SIZE(enc, il) > sz) return false;
+    if ((size_t)DFA_HEADER_SIZE(enc, il) + il > sz) return false;
     size_t el = strlen(eid);
     if (il != el) return false;
     return !memcmp(dfa_fmt_identifier(d), eid, el);
