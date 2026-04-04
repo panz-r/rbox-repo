@@ -47,9 +47,10 @@ static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
     if (!moff || moff >= sz) return;
     bool filt = (cmask && wpid != UINT16_MAX);
     for (size_t i = 0; i < 1024; i++) {
-        if (moff + i*4 + 4 > sz) break;
-        uint32_t mk = dfa_r32(d, moff + i*4);
-        if (mk == MARKER_SENTINEL) break;
+        size_t off = (size_t)moff + (size_t)i * 4;
+        if (off + 4 < off || off + 4 > sz) { i = 1024; break; }
+        uint32_t mk = dfa_r32(d, off);
+        if (mk == MARKER_SENTINEL) { i = 1024; break; }
         uint16_t pid = MARKER_GET_PATTERN_ID(mk);
         uint16_t uid = MARKER_GET_UID(mk);
         uint8_t  typ = MARKER_GET_TYPE(mk);
@@ -57,8 +58,10 @@ static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
         if (typ == MARKER_TYPE_START) {
             if (*sd < MAX_CAP_STK) { stk[*sd].id=uid; stk[*sd].start=pos; stk[*sd].end=0; (*sd)++; }
         } else if (typ == MARKER_TYPE_END) {
-            for (int j=*sd-1; j>=0; j--) {
-                if (stk[j].id==uid && !stk[j].end) { stk[j].end=pos; add_cap(r,uid,stk[j].start,pos); break; }
+            if (*sd > 0) {
+                for (int j=*sd-1; j>=0; j--) {
+                    if (stk[j].id==uid && !stk[j].end) { stk[j].end=pos; add_cap(r,uid,stk[j].start,pos); break; }
+                }
             }
         }
     }
@@ -90,13 +93,13 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint32_t init = dfa_fmt_initial_state(d);
     if ((size_t)init + DFA_STATE_SIZE_TC(enc, 0) > sz) return false;  // min state size
 
-    /* Get EOS section pointer (V9+) */
+    /* Get EOS section pointer (V9+) - validate section header is within bounds */
     uint32_t eos_off = dfa_fmt_eos_offset(d);
-    const uint8_t* eos_section = (eos_off > 0 && eos_off < sz) ? d + eos_off : NULL;
+    const uint8_t* eos_section = (eos_off > 0 && eos_off + 4 <= sz) ? d + eos_off : NULL;
 
-    /* Get Pattern ID section pointer (V10+) */
+    /* Get Pattern ID section pointer (V10+) - validate section header is within bounds */
     uint32_t pid_off = dfa_fmt_pid_offset(d);
-    const uint8_t* pid_section = (pid_off > 0 && pid_off < sz) ? d + pid_off : NULL;
+    const uint8_t* pid_section = (pid_off > 0 && pid_off + 4 <= sz) ? d + pid_off : NULL;
 
     /* Empty input: check initial state and EOS */
     if (!len) {
@@ -120,7 +123,8 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
 
     /* Walk states */
     uint32_t cur = init;
-    uint32_t tr[MAX_TRACE]; int td = 0; tr[td++] = cur;
+    uint32_t tr[MAX_TRACE]; int td = 0;
+    if (td < MAX_TRACE) tr[td++] = cur; else return false;
     size_t pos = 0;
 
     while (pos < len && pos < MAX_EVAL_LEN) {
@@ -163,8 +167,11 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
             // Bitmask rules: check each bitmask rule for character match
             int bms = DFA_RULE_BITMASK_SIZE(enc);
             for (uint16_t i = 0; i < tc; i++) {
-                size_t ro = rl + (size_t)i * bms;
-                if ((size_t)ro + (size_t)bms > sz) break;
+                if (bms == 0) break;
+                size_t ioff = (size_t)i * (size_t)bms;
+                if (ioff > sz || rl > sz - ioff) break;
+                size_t ro = rl + ioff;
+                if (ro >= sz || ro + (size_t)bms > sz) break;
                 uint8_t rt = dfa_fmt_rl_type(d, ro);
                 if (rt != DFA_RULE_BITMASK && rt != DFA_RULE_NOT_BITMASK) break;
                 // Check bitmask
@@ -207,7 +214,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                 
                 if (chain_match) {
                     uint32_t tgt = dfa_chain_target(chain, enc);
-                    if (tgt >= sz) return false;
+                    if (tgt >= sz || chain_len == 0) return false;
                     pos += chain_len - 1;  // -1 because pos++ happens after loop
                     nxt = tgt;
                     found = true;
@@ -227,7 +234,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
             // Normal fixed-stride rules
             for (uint16_t i = 0; i < tc; i++) {
                 size_t ro = rl + (size_t)i * rs;
-                if ((size_t)ro + (size_t)rs > sz) break;
+                if (rs == 0 || ro >= sz || ro + rs > sz) break;
                 uint8_t rt = dfa_fmt_rl_type(d, ro);
                 uint8_t r1 = dfa_fmt_rl_d1(d, ro);
                 uint8_t r2 = dfa_fmt_rl_d2(d, ro);
@@ -248,6 +255,11 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         }
         if (!found) return false;
         pos++; cur = nxt; if (td < MAX_TRACE) tr[td++] = cur;
+    }
+
+    // Detect if input was truncated at MAX_EVAL_LEN
+    if (pos >= MAX_EVAL_LEN && len > MAX_EVAL_LEN) {
+        res->truncated = true;
     }
 
     /* Determine category */
@@ -379,6 +391,8 @@ bool dfa_eval_validate_id(const void* vd, size_t sz, const char* eid) {
     int enc = dfa_fmt_encoding(d);
     uint8_t il = dfa_fmt_id_len(d);
     if (DFA_HEADER_SIZE(enc, il) > sz) return false;
+    if (DFA_HEADER_SIZE(enc, il) + il > sz) return false;
     size_t el = strlen(eid);
-    return il == el && !memcmp(dfa_fmt_identifier(d), eid, el);
+    if (il != el) return false;
+    return !memcmp(dfa_fmt_identifier(d), eid, el);
 }

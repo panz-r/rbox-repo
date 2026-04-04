@@ -1,6 +1,8 @@
 #ifndef DFA_TYPES_H
 #define DFA_TYPES_H
 
+#include <string.h>
+
 /**
  * dfa_types.h - Shared type definitions for the c-dfa library
  *
@@ -207,10 +209,16 @@ typedef struct {
     uint8_t category_mask;
     uint32_t final_state;
     bool matched;
+    bool truncated;         // true if input was truncated at MAX_EVAL_LEN
     size_t matched_length;
     dfa_capture_t captures[DFA_MAX_CAPTURES];
     int capture_count;
 } dfa_result_t;
+
+// Initialize a dfa_result_t to zero/empty state
+static inline void dfa_result_init(dfa_result_t* r) {
+    memset(r, 0, sizeof(dfa_result_t));
+}
 
 /**
  * Marker Block Constants

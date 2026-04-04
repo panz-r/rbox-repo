@@ -58,6 +58,7 @@ bool dfa_result_get_capture_by_index(const dfa_result_t* result, int index, size
 const char* dfa_category_string(dfa_command_category_t category);
 
 // Builder file I/O (not in eval library)
+void unload_dfa(void* data);
 void* load_dfa_from_file(const char* filename, size_t* size);
 
 #ifdef __cplusplus

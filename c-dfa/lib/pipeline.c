@@ -158,7 +158,9 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
     if (!p || !p->builder_ctx) return PIPELINE_INVALID_STATE;
 
     // Build alphabet before constructing NFA
-    nfa_alphabet_construct_from_patterns(p->builder_ctx, p->builder_ctx->current_input_file);
+    if (!nfa_alphabet_construct_from_patterns(p->builder_ctx, p->builder_ctx->current_input_file)) {
+        return PIPELINE_PARSE_ERROR;
+    }
 
     nfa_construct_init(p->builder_ctx);
 
@@ -167,8 +169,8 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
 
     // Write NFA to temp file
     nfa_construct_write_file(p->builder_ctx, p->temp_nfa_file);
-    p->nfa_built = true;
 
+    p->nfa_built = true;
     return PIPELINE_OK;
 }
 
@@ -323,13 +325,11 @@ pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file) {
         return PIPELINE_IO_ERROR;
     }
     fseek(f, 0, SEEK_END);
+    if (ferror(f)) { fclose(f); ERROR("fseek SEEK_END failed"); return PIPELINE_IO_ERROR; }
     p->binary_size = ftell(f);
+    if (p->binary_size <= 0) { fclose(f); ERROR("Temp DFA file '%s' is empty", p->temp_dfa_file); return PIPELINE_IO_ERROR; }
     fseek(f, 0, SEEK_SET);
-    if (p->binary_size <= 0) {
-        fclose(f);
-        ERROR("Temp DFA file '%s' is empty", p->temp_dfa_file);
-        return PIPELINE_IO_ERROR;
-    }
+    if (ferror(f)) { fclose(f); ERROR("fseek SEEK_SET failed"); return PIPELINE_IO_ERROR; }
     p->binary_data = malloc(p->binary_size);
     if (!p->binary_data) {
         fclose(f);
@@ -415,7 +415,7 @@ dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input) {
     dfa_result_t result = {0};
     if (!e || !input) return result;
 
-    dfa_eval(e->data, e->size, input, strlen(input), &result);
+    result.matched = dfa_eval(e->data, e->size, input, strlen(input), &result);
     return result;
 }
 
