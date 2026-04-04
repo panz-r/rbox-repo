@@ -80,7 +80,6 @@ void init_hash_table(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     memset(dfa_next_in_bucket, -1, sizeof(dfa_next_in_bucket));
 }
 
-// Phase 3: Marker harvesting system
 #define MAX_MARKERS_PER_DFA_TRANSITION 16
 #define MAX_DFA_MARKER_LISTS 8192
 #define MARKER_SENTINEL 0xFFFFFFFF

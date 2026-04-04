@@ -134,7 +134,6 @@ static void resolve_patterns_path(const char* patterns_file, char* patterns_path
 
 /**
  * Build DFA from patterns file using library API (no shell-out).
- * This replaces the old system() call approach.
  */
 static void build_dfa(const char* patterns_file, const char* dfa_file) {
     char patterns_path[512];
@@ -1364,11 +1363,7 @@ static void run_stress_structural_tests(void) {
 }
 
 static void run_stress_capture_tests(void) {
-    // Capture tests disabled - skip entirely
-    // TestCase cases[1] = {0};  // Empty placeholder - capture tests disabled
-    // run_test_group("STRESS: Capture Precision (Mealy Replay)", "stress_test.txt",
-    //                "build_test/stress_capture.dfa", cases, sizeof(cases)/sizeof(cases[0]));
-    (void)0;  // No-op to avoid empty function
+    (void)0;
 }
 
 static void run_stress_whitespace_tests(void) {

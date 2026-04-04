@@ -5,8 +5,6 @@
  * Writer (nfa2dfa.c) and reader (dfa_eval.c, dfa_loader.c) both use these.
  * Never hardcode offsets elsewhere.
  *
- * V7: encoding byte selects field widths. No struct casts.
- * V8: capture-end deferral
  * V9: separate EOS section - reduces state header size by 6 bytes
  * V10: separate Pattern ID section - reduces state header by 1 byte
  */
@@ -71,7 +69,7 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
 }
 
 /* ============================================================================
- * Header layout (v7)
+ * Header layout (v10)
  *
  *  0: magic          (4B)
  *  4: version        (2B)

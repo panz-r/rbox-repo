@@ -47,7 +47,7 @@ static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
     bool filt = (cmask && wpid != UINT16_MAX);
     for (size_t i = 0; i < 1024; i++) {
         size_t off = (size_t)moff + (size_t)i * 4;
-        if (off + 4 < off || off + 4 > sz) { i = 1024; break; }
+        if (off + 4 > sz) { i = 1024; break; }
         uint32_t mk = dfa_r32(d, off);
         if (mk == MARKER_SENTINEL) { i = 1024; break; }
         uint16_t pid = MARKER_GET_PATTERN_ID(mk);
@@ -126,7 +126,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     if (td < MAX_TRACE) tr[td++] = cur; else return false;
     size_t pos = 0;
 
-    while (pos < len && pos < DFA_MAX_EVAL_LEN) {
+    while (pos < len) {
         unsigned char c = (unsigned char)in[pos];
         uint16_t tc = dfa_fmt_st_tc(d, cur, enc);
         uint32_t rl = dfa_fmt_st_rules(d, cur, enc);
@@ -256,11 +256,6 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         pos++; cur = nxt; if (td < MAX_TRACE) tr[td++] = cur;
     }
 
-    // Detect if input was truncated at DFA_MAX_EVAL_LEN
-    if (pos >= DFA_MAX_EVAL_LEN && len > DFA_MAX_EVAL_LEN) {
-        res->truncated = true;
-    }
-
     /* Determine category */
     uint16_t cur_tc = dfa_fmt_st_tc(d, cur, enc);
     uint16_t src_fl = dfa_fmt_st_flags_tc(d, cur, enc, cur_tc);
@@ -286,7 +281,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         res->final_state = cur;
         for (int i=0;i<8;i++) if (cat&(1<<i)) { res->category=(dfa_command_category_t)(i+1); break; }
 
-        /* Captures (v6+) */
+        /* Captures */
         if (wpid && wpid != UINT16_MAX) {
             cap_t stk[MAX_CAP_STK]; int sd = 0;
             uint32_t meta = dfa_fmt_meta_offset(d);
