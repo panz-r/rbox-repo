@@ -89,16 +89,19 @@ void privilege_drop(void) {
         const char *shell = pw ? pw->pw_shell : "/bin/sh";
 
         if (initgroups(username, gid) < 0) {
-            perror("initgroups");
+            LOG_FATAL("Failed to drop supplementary groups");
         }
         if (setgid(gid) < 0) {
-            perror("setgid");
+            LOG_FATAL("Failed to drop group privileges");
+        }
+        if (getegid() != gid) {
+            LOG_FATAL("Failed to verify group privileges were dropped");
         }
         if (setuid(g_original_uid) < 0) {
-            perror("setuid");
+            LOG_FATAL("Failed to drop user privileges");
         }
         if (geteuid() != g_original_uid) {
-            LOG_FATAL("Failed to drop privileges");
+            LOG_FATAL("Failed to verify user privileges were dropped");
         }
 
         /* Prevent gaining new privileges via execve (e.g., setuid binaries) */

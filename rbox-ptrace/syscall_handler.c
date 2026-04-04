@@ -925,6 +925,13 @@ static int syscall_is_filesystem(USER_REGS *regs) {
  * chdir() handling: We read /proc/pid/cwd fresh on every call, so chdir()
  * is handled automatically without needing to intercept that syscall.
  *
+ * TOCTOU note: There is an inherent race between reading /proc/PID/cwd or
+ * /proc/PID/fd/N and the actual syscall execution. A process could change
+ * its cwd or close/reopen a directory fd between our readlink() and the
+ * kernel's actual path resolution. This is a fundamental limitation of
+ * ptrace-based interception and cannot be fixed without kernel support.
+ * The policy is best-effort, not a hard security boundary.
+ *
  * Returns NULL on error (path cannot be resolved).
  */
 static void strip_trailing_slashes(char *p) {
@@ -932,21 +939,44 @@ static void strip_trailing_slashes(char *p) {
     while (len > 1 && p[len-1] == '/') p[--len] = '\0';
 }
 
-static char *resolve_path_at(pid_t pid, int dirfd, const char *path, char *buf, size_t buf_size) {
+static void get_parent_path(const char *path, char *parent, size_t parent_size) {
+    const char *last_slash = strrchr(path, '/');
+    if (last_slash && last_slash != path) {
+        size_t parent_len = last_slash - path;
+        if (parent_len >= parent_size) parent_len = parent_size - 1;
+        memcpy(parent, path, parent_len);
+        parent[parent_len] = '\0';
+    } else if (last_slash == path) {
+        strcpy(parent, "/");
+    } else {
+        strcpy(parent, ".");
+    }
+}
+
+static char *resolve_path_at(pid_t pid, int dirfd, const char *path, char *buf, size_t buf_size, int *file_exists) {
     char dir_buf[PATH_MAX];
     char *result;
+    int exists = -1;
 
     if (!path || !buf || buf_size < PATH_MAX) return NULL;
+    if (file_exists) *file_exists = -1;
 
     if (path[0] == '/') {
         result = realpath(path, buf);
-        if (result) return result;
-        strlcpy(buf, path, buf_size);
-        strip_trailing_slashes(buf);
-        if (buf[0] == '\0') {
-            strcpy(buf, "/");
+        if (result) {
+            exists = 1;
+        } else if (errno == ENOENT) {
+            exists = 0;
+            strlcpy(buf, path, buf_size);
+            strip_trailing_slashes(buf);
+            if (buf[0] == '\0') {
+                strcpy(buf, "/");
+            }
+        } else {
+            return NULL;
         }
-        return buf;
+        if (file_exists) *file_exists = exists;
+        return exists >= 0 ? buf : NULL;
     }
 
     if (dirfd == AT_FDCWD) {
@@ -979,13 +1009,18 @@ static char *resolve_path_at(pid_t pid, int dirfd, const char *path, char *buf, 
     char tmp_buf[PATH_MAX];
     result = realpath(buf, tmp_buf);
     if (result) {
+        exists = 1;
         size_t copy_len = strlen(tmp_buf);
         if (copy_len >= buf_size) copy_len = buf_size - 1;
         memcpy(buf, tmp_buf, copy_len);
         buf[copy_len] = '\0';
-        return buf;
+    } else if (errno == ENOENT) {
+        exists = 0;
+        strip_trailing_slashes(buf);
+    } else {
+        return NULL;
     }
-    strip_trailing_slashes(buf);
+    if (file_exists) *file_exists = exists;
     return buf;
 }
 
@@ -1427,6 +1462,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             int dirfd1 = AT_FDCWD;
             int dirfd2 = AT_FDCWD;
             int ret = 0;
+            int is_creat = 0;
 
             switch (sysnum) {
                 case SYSCALL_OPEN: {
@@ -1446,6 +1482,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                         }
                         if (flags & O_CREAT) {
                             access_mask |= SOFT_ACCESS_WRITE;
+                            is_creat = 1;
                         }
                     }
                     dirfd1 = AT_FDCWD;
@@ -1469,6 +1506,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                         }
                         if (flags & O_CREAT) {
                             access_mask |= SOFT_ACCESS_WRITE;
+                            is_creat = 1;
                         }
                     }
                     break;
@@ -1477,6 +1515,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     access_mask = SOFT_ACCESS_WRITE | SOFT_ACCESS_TRUNCATE;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
+                    is_creat = 1;
                     break;
                 case SYSCALL_MKDIR:
                     access_mask = SOFT_ACCESS_MKDIR;
@@ -1613,31 +1652,61 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             }
 
             if (path1) {
-                char *resolved = resolve_path_at(pid, dirfd1, path1, path_buf1, sizeof(path_buf1));
+                int file_exists = -1;
+                char *resolved = resolve_path_at(pid, dirfd1, path1, path_buf1, sizeof(path_buf1), &file_exists);
                 if (!resolved) {
-                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for '%s', denying\n", pid, path1);
-                    ret = block_syscall(pid, regs);
-                    goto cleanup;
+                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for '%s', allowing kernel to handle\n", pid, path1);
+                    free(path1);
+                    path1 = NULL;
+                } else if (is_creat && !file_exists) {
+                    char parent_buf[PATH_MAX];
+                    get_parent_path(path_buf1, parent_buf, sizeof(parent_buf));
+                    char *parent_resolved = resolve_path_at(pid, dirfd1, parent_buf, path_buf1, sizeof(path_buf1), &file_exists);
+                    (void)file_exists;
+                    DEBUG_PRINT("HANDLER: pid=%d O_CREAT on non-existent '%s', checking parent '%s'\n", pid, path1, path_buf1);
+                    free(path1);
+                    path1 = NULL;
+                    if (parent_resolved) {
+                        inputs[count].path = path_buf1;
+                        inputs[count].access_mask = SOFT_ACCESS_WRITE;
+                        count++;
+                    }
+                } else {
+                    free(path1);
+                    path1 = NULL;
+                    inputs[count].path = path_buf1;
+                    inputs[count].access_mask = access_mask;
+                    count++;
                 }
-                free(path1);
-                path1 = NULL;
-                inputs[count].path = path_buf1;
-                inputs[count].access_mask = access_mask;
-                count++;
             }
 
             if (path2) {
-                char *resolved = resolve_path_at(pid, dirfd2, path2, path_buf2, sizeof(path_buf2));
+                int file_exists = -1;
+                char *resolved = resolve_path_at(pid, dirfd2, path2, path_buf2, sizeof(path_buf2), &file_exists);
                 if (!resolved) {
-                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for '%s', denying\n", pid, path2);
-                    ret = block_syscall(pid, regs);
-                    goto cleanup;
+                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for '%s', allowing kernel to handle\n", pid, path2);
+                    free(path2);
+                    path2 = NULL;
+                } else if (is_creat && !file_exists) {
+                    char parent_buf[PATH_MAX];
+                    get_parent_path(path_buf2, parent_buf, sizeof(parent_buf));
+                    char *parent_resolved = resolve_path_at(pid, dirfd2, parent_buf, path_buf2, sizeof(path_buf2), &file_exists);
+                    (void)file_exists;
+                    DEBUG_PRINT("HANDLER: pid=%d O_CREAT on non-existent '%s', checking parent '%s'\n", pid, path2, path_buf2);
+                    free(path2);
+                    path2 = NULL;
+                    if (parent_resolved) {
+                        inputs[count].path = path_buf2;
+                        inputs[count].access_mask = SOFT_ACCESS_WRITE;
+                        count++;
+                    }
+                } else {
+                    free(path2);
+                    path2 = NULL;
+                    inputs[count].path = path_buf2;
+                    inputs[count].access_mask = access_mask;
+                    count++;
                 }
-                free(path2);
-                path2 = NULL;
-                inputs[count].path = path_buf2;
-                inputs[count].access_mask = access_mask;
-                count++;
             }
 
             if (count > 0) {

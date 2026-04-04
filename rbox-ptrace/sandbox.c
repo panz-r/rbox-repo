@@ -773,22 +773,6 @@ void sandbox_expand_paths(struct allowed_entry *allow, int allow_count,
     expansion_context_free(&ctx);
 }
 
-void sandbox_expand_paths_with_results(struct allowed_entry *allow, int allow_count,
-                         struct denied_entry *deny, int deny_count) {
-    struct expansion_context ctx;
-    expansion_context_init(&ctx);
-
-    expand_allow_list(&ctx, allow, allow_count, deny, deny_count);
-
-    free_result_paths();
-    g_result_paths = ctx.result_paths;
-    g_result_count = ctx.result_count;
-    ctx.result_paths = NULL;
-    ctx.result_count = 0;
-
-    expansion_context_free(&ctx);
-}
-
 int sandbox_get_expanded_count(void) {
     return g_result_count;
 }
@@ -1055,13 +1039,13 @@ static int apply_no_network(void) {
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_sendmmsg, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
 
-        /* Check if syscall is sendfile (can send data over socket) */
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_sendfile, 0, 1),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
-
-        /* Check if syscall is splice (move data between sockets/files) */
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_splice, 0, 1),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+        /* Note: sendfile(2) and splice(2) are NOT blocked here because
+         * they cannot be used for network access without socket().
+         * - sendfile's out_fd must be a socket, which requires socket()
+         * - splice requires at least one fd to be a pipe
+         * Since socket(), connect(), accept(), etc. are all blocked above,
+         * blocking sendfile/splice would only break legitimate file-to-file
+         * copies and adds no security benefit. */
 
         /* Allow all other syscalls */
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),

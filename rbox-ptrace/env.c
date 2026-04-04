@@ -63,7 +63,7 @@ static void extract_env_name(const char *entry, char *name, size_t name_size) {
     if (eq) {
         size_t len = eq - entry;
         if (len >= name_size) len = name_size - 1;
-        strlcpy(name, entry, len + 1);
+        snprintf(name, name_size, "%.*s", (int)len, entry);
     } else {
         name[0] = '\0';
     }
