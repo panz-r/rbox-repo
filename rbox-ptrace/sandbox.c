@@ -169,14 +169,12 @@ struct allowed_entry *sandbox_parse_allow_list(const char *env_value, int *out_c
         if (!resolved) {
             LOG_FATAL("hard-allow: cannot resolve path '%s': %s", path, strerror(errno));
             free(path);
-            exit(1);
         }
 
         if (!validator(resolved, ctx)) {
             LOG_FATAL("hard-allow: '%s' is not a directory", resolved);
             free(resolved);
             free(path);
-            exit(1);
         }
 
         if (count >= capacity) {
@@ -237,14 +235,12 @@ struct denied_entry *sandbox_parse_deny_list(const char *env_value, int *out_cou
         if (!resolved) {
             LOG_FATAL("hard-deny: cannot resolve path '%s': %s", path, strerror(errno));
             free(path);
-            exit(1);
         }
 
         if (!validator(resolved, ctx)) {
             LOG_FATAL("hard-deny: '%s' is not a directory", resolved);
             free(resolved);
             free(path);
-            exit(1);
         }
 
         if (count >= capacity) {
@@ -423,31 +419,88 @@ struct queue_entry {
     uint64_t access;
 };
 
-static struct expanded_path *g_expanded_paths = NULL;
-static int g_expanded_count = 0;
-static int g_expanded_capacity = 0;
+struct expansion_context {
+    struct expanded_path *paths;
+    int path_count;
+    int path_capacity;
 
-static struct queue_entry g_queue[MAX_QUEUE_PATHS];
-static int g_queue_head = 0;
-static int g_queue_size = 0;
+    struct queue_entry *queue;
+    int queue_head;
+    int queue_size;
+    int queue_capacity;
 
-static char **g_visited = NULL;
-static int g_visited_count = 0;
-static int g_visited_capacity = 0;
+    char **visited;
+    int visited_count;
+    int visited_capacity;
 
-static void add_expanded_path(const char *path, uint64_t access) {
-    if (g_expanded_count >= MAX_EXPANDED_PATHS) {
+    struct expanded_path *result_paths;
+    int result_count;
+};
+
+static void expansion_context_init(struct expansion_context *ctx) {
+    ctx->paths = NULL;
+    ctx->path_count = 0;
+    ctx->path_capacity = 0;
+
+    ctx->queue = calloc(MAX_QUEUE_PATHS, sizeof(struct queue_entry));
+    ctx->queue_head = 0;
+    ctx->queue_size = 0;
+    ctx->queue_capacity = MAX_QUEUE_PATHS;
+
+    ctx->visited = NULL;
+    ctx->visited_count = 0;
+    ctx->visited_capacity = 0;
+
+    ctx->result_paths = NULL;
+    ctx->result_count = 0;
+}
+
+static void expansion_context_free(struct expansion_context *ctx) {
+    for (int i = 0; i < ctx->path_count; i++) {
+        free(ctx->paths[i].path);
+    }
+    free(ctx->paths);
+
+    for (int i = 0; i < ctx->queue_size; i++) {
+        int idx = (ctx->queue_head + i) % ctx->queue_capacity;
+        free(ctx->queue[idx].path);
+    }
+    free(ctx->queue);
+
+    for (int i = 0; i < ctx->visited_count; i++) {
+        free(ctx->visited[i]);
+    }
+    free(ctx->visited);
+
+    free(ctx->result_paths);
+
+    ctx->paths = NULL;
+    ctx->path_count = 0;
+    ctx->path_capacity = 0;
+    ctx->queue = NULL;
+    ctx->queue_head = 0;
+    ctx->queue_size = 0;
+    ctx->queue_capacity = 0;
+    ctx->visited = NULL;
+    ctx->visited_count = 0;
+    ctx->visited_capacity = 0;
+    ctx->result_paths = NULL;
+    ctx->result_count = 0;
+}
+
+static void add_expanded_path(struct expansion_context *ctx, const char *path, uint64_t access) {
+    if (ctx->path_count >= MAX_EXPANDED_PATHS) {
         return;
     }
-    if (g_expanded_count >= g_expanded_capacity) {
-        g_expanded_capacity = g_expanded_capacity ? g_expanded_capacity * 2 : 16;
-        struct expanded_path *new_paths = realloc(g_expanded_paths, g_expanded_capacity * sizeof(struct expanded_path));
+    if (ctx->path_count >= ctx->path_capacity) {
+        ctx->path_capacity = ctx->path_capacity ? ctx->path_capacity * 2 : 16;
+        struct expanded_path *new_paths = realloc(ctx->paths, ctx->path_capacity * sizeof(struct expanded_path));
         if (!new_paths) return;
-        g_expanded_paths = new_paths;
+        ctx->paths = new_paths;
     }
-    g_expanded_paths[g_expanded_count].path = strdup(path);
-    g_expanded_paths[g_expanded_count].access = access;
-    g_expanded_count++;
+    ctx->paths[ctx->path_count].path = strdup(path);
+    ctx->paths[ctx->path_count].access = access;
+    ctx->path_count++;
 }
 
 static bool is_under_deny(const char *path, size_t path_len,
@@ -502,70 +555,51 @@ bool sandbox_is_path_prefix(const char *parent, const char *child) {
     return is_path_prefix(parent, child);
 }
 
-static void visited_set_add(const char *path) {
-    if (g_visited_count >= MAX_VISITED_PATHS) return;
-    if (g_visited_count >= g_visited_capacity) {
-        g_visited_capacity = g_visited_capacity ? g_visited_capacity * 2 : 32;
-        char **new_visited = realloc(g_visited, g_visited_capacity * sizeof(char *));
+static void visited_set_add(struct expansion_context *ctx, const char *path) {
+    if (ctx->visited_count >= MAX_VISITED_PATHS) return;
+    if (ctx->visited_count >= ctx->visited_capacity) {
+        ctx->visited_capacity = ctx->visited_capacity ? ctx->visited_capacity * 2 : 32;
+        char **new_visited = realloc(ctx->visited, ctx->visited_capacity * sizeof(char *));
         if (!new_visited) return;
-        g_visited = new_visited;
+        ctx->visited = new_visited;
     }
-    g_visited[g_visited_count++] = strdup(path);
+    ctx->visited[ctx->visited_count++] = strdup(path);
 }
 
-static bool visited_set_contains(const char *path) {
-    for (int i = 0; i < g_visited_count; i++) {
-        if (strcmp(g_visited[i], path) == 0) {
+static bool visited_set_contains(struct expansion_context *ctx, const char *path) {
+    for (int i = 0; i < ctx->visited_count; i++) {
+        if (strcmp(ctx->visited[i], path) == 0) {
             return true;
         }
     }
     return false;
 }
 
-static void visited_set_clear(void) {
-    for (int i = 0; i < g_visited_count; i++) {
-        free(g_visited[i]);
-    }
-    free(g_visited);
-    g_visited = NULL;
-    g_visited_count = 0;
-    g_visited_capacity = 0;
-}
-
-static void queue_push(const char *path, uint64_t access) {
-    if (g_queue_size >= MAX_QUEUE_PATHS) {
+static void queue_push(struct expansion_context *ctx, const char *path, uint64_t access) {
+    if (ctx->queue_size >= ctx->queue_capacity) {
         DEBUG_PRINT("SANDBOX: queue overflow, discarding path '%s'\n", path);
         return;
     }
-    int idx = (g_queue_head + g_queue_size) % MAX_QUEUE_PATHS;
-    g_queue[idx].path = strdup(path);
-    g_queue[idx].access = access;
-    g_queue_size++;
+    int idx = (ctx->queue_head + ctx->queue_size) % ctx->queue_capacity;
+    ctx->queue[idx].path = strdup(path);
+    ctx->queue[idx].access = access;
+    ctx->queue_size++;
 }
 
-static bool queue_empty(void) {
-    return g_queue_size == 0;
+static bool queue_empty(struct expansion_context *ctx) {
+    return ctx->queue_size == 0;
 }
 
-static struct queue_entry queue_pop(void) {
-    static struct queue_entry empty = {NULL, 0};
-    if (g_queue_size == 0) return empty;
-    int idx = g_queue_head;
-    g_queue_head = (g_queue_head + 1) % MAX_QUEUE_PATHS;
-    g_queue_size--;
-    return g_queue[idx];
+static struct queue_entry queue_pop(struct expansion_context *ctx) {
+    struct queue_entry empty = {NULL, 0};
+    if (ctx->queue_size == 0) return empty;
+    int idx = ctx->queue_head;
+    ctx->queue_head = (ctx->queue_head + 1) % ctx->queue_capacity;
+    ctx->queue_size--;
+    return ctx->queue[idx];
 }
 
-static void queue_clear(void) {
-    for (int i = 0; i < g_queue_size; i++) {
-        int idx = (g_queue_head + i) % MAX_QUEUE_PATHS;
-        free(g_queue[idx].path);
-    }
-    g_queue_size = 0;
-    g_queue_head = 0;
-}
-
-static void scan_dir_for_external_symlinks(const char *path, uint64_t access,
+static void scan_dir_for_external_symlinks(struct expansion_context *ctx, const char *path, uint64_t access,
                                           struct denied_entry *deny, int deny_count) {
     DIR *dir = opendir(path);
     if (!dir) return;
@@ -602,14 +636,14 @@ static void scan_dir_for_external_symlinks(const char *path, uint64_t access,
             continue;
         }
 
-        if (!visited_set_contains(resolved)) {
-            queue_push(resolved, access);
+        if (!visited_set_contains(ctx, resolved)) {
+            queue_push(ctx, resolved, access);
         }
     }
     closedir(dir);
 }
 
-static void expand_allow_path_recursive(const char *path, uint64_t access,
+static void expand_allow_path_recursive(struct expansion_context *ctx, const char *path, uint64_t access,
                                         struct denied_entry *deny, int deny_count) {
     DIR *dir = opendir(path);
     if (!dir) {
@@ -636,15 +670,11 @@ static void expand_allow_path_recursive(const char *path, uint64_t access,
         }
 
         if (S_ISDIR(st.st_mode)) {
-            if (has_deny_under(child_path, strlen(child_path), deny, deny_count)) {
-                if (!visited_set_contains(child_path)) {
-                    visited_set_add(child_path);
-                    expand_allow_path_recursive(child_path, access, deny, deny_count);
-                }
-            } else {
-                add_expanded_path(child_path, access);
-                visited_set_add(child_path);
-                scan_dir_for_external_symlinks(child_path, access, deny, deny_count);
+            if (!visited_set_contains(ctx, child_path)) {
+                visited_set_add(ctx, child_path);
+                add_expanded_path(ctx, child_path, access);
+                scan_dir_for_external_symlinks(ctx, child_path, access, deny, deny_count);
+                queue_push(ctx, child_path, access);
             }
         } else if (S_ISLNK(st.st_mode)) {
             char resolved[PATH_MAX];
@@ -661,98 +691,122 @@ static void expand_allow_path_recursive(const char *path, uint64_t access,
                 continue;
             }
             if (is_path_prefix(path, resolved)) {
-                if (!visited_set_contains(resolved)) {
-                    visited_set_add(resolved);
-                    expand_allow_path_recursive(resolved, access, deny, deny_count);
+                if (!visited_set_contains(ctx, resolved)) {
+                    visited_set_add(ctx, resolved);
+                    add_expanded_path(ctx, resolved, access);
+                    scan_dir_for_external_symlinks(ctx, resolved, access, deny, deny_count);
+                    expand_allow_path_recursive(ctx, resolved, access, deny, deny_count);
                 }
             } else {
-                queue_push(resolved, access);
+                if (!visited_set_contains(ctx, resolved)) {
+                    queue_push(ctx, resolved, access);
+                }
             }
         }
     }
     closedir(dir);
 }
 
-void expand_allow_list(struct allowed_entry *allow, int allow_count,
+static void expand_allow_list(struct expansion_context *ctx, struct allowed_entry *allow, int allow_count,
                        struct denied_entry *deny, int deny_count) {
-    g_expanded_paths = NULL;
-    g_expanded_count = 0;
-    g_expanded_capacity = 0;
-    g_queue_size = 0;
-    g_queue_head = 0;
-    g_visited = NULL;
-    g_visited_count = 0;
-    g_visited_capacity = 0;
-
     for (int i = 0; i < allow_count; i++) {
         if (allow[i].resolved == NULL) continue;
         if (is_under_deny(allow[i].resolved, strlen(allow[i].resolved), deny, deny_count)) {
             continue;
         }
-        visited_set_add(allow[i].resolved);
+        visited_set_add(ctx, allow[i].resolved);
         if (has_deny_under(allow[i].resolved, strlen(allow[i].resolved), deny, deny_count)) {
-            expand_allow_path_recursive(allow[i].resolved, allow[i].access, deny, deny_count);
+            add_expanded_path(ctx, allow[i].resolved, allow[i].access);
+            expand_allow_path_recursive(ctx, allow[i].resolved, allow[i].access, deny, deny_count);
         } else {
-            add_expanded_path(allow[i].resolved, allow[i].access);
-            scan_dir_for_external_symlinks(allow[i].resolved, allow[i].access, deny, deny_count);
+            add_expanded_path(ctx, allow[i].resolved, allow[i].access);
+            scan_dir_for_external_symlinks(ctx, allow[i].resolved, allow[i].access, deny, deny_count);
         }
     }
 
-    while (!queue_empty()) {
-        struct queue_entry entry = queue_pop();
-        if (visited_set_contains(entry.path)) {
+    while (!queue_empty(ctx)) {
+        struct queue_entry entry = queue_pop(ctx);
+        if (visited_set_contains(ctx, entry.path)) {
             free(entry.path);
             continue;
         }
-        visited_set_add(entry.path);
+        visited_set_add(ctx, entry.path);
         if (has_deny_under(entry.path, strlen(entry.path), deny, deny_count)) {
-            expand_allow_path_recursive(entry.path, entry.access, deny, deny_count);
+            expand_allow_path_recursive(ctx, entry.path, entry.access, deny, deny_count);
         } else {
-            add_expanded_path(entry.path, entry.access);
+            add_expanded_path(ctx, entry.path, entry.access);
         }
         free(entry.path);
     }
 
-    queue_clear();
-    visited_set_clear();
+    ctx->result_paths = ctx->paths;
+    ctx->result_count = ctx->path_count;
+    ctx->paths = NULL;
+    ctx->path_count = 0;
 }
 
-static void free_expanded_paths(void) {
-    for (int i = 0; i < g_expanded_count; i++) {
-        free(g_expanded_paths[i].path);
+static struct expanded_path *g_result_paths = NULL;
+static int g_result_count = 0;
+
+static void free_result_paths(void) {
+    for (int i = 0; i < g_result_count; i++) {
+        free(g_result_paths[i].path);
     }
-    free(g_expanded_paths);
-    g_expanded_paths = NULL;
-    g_expanded_count = 0;
-    g_expanded_capacity = 0;
-    queue_clear();
-    visited_set_clear();
+    free(g_result_paths);
+    g_result_paths = NULL;
+    g_result_count = 0;
 }
 
 void sandbox_expand_paths(struct allowed_entry *allow, int allow_count,
                          struct denied_entry *deny, int deny_count) {
-    free_expanded_paths();
-    expand_allow_list(allow, allow_count, deny, deny_count);
+    struct expansion_context ctx;
+    expansion_context_init(&ctx);
+
+    expand_allow_list(&ctx, allow, allow_count, deny, deny_count);
+
+    free_result_paths();
+    g_result_paths = ctx.result_paths;
+    g_result_count = ctx.result_count;
+    ctx.result_paths = NULL;
+    ctx.result_count = 0;
+
+    expansion_context_free(&ctx);
+}
+
+void sandbox_expand_paths_with_results(struct allowed_entry *allow, int allow_count,
+                         struct denied_entry *deny, int deny_count) {
+    struct expansion_context ctx;
+    expansion_context_init(&ctx);
+
+    expand_allow_list(&ctx, allow, allow_count, deny, deny_count);
+
+    free_result_paths();
+    g_result_paths = ctx.result_paths;
+    g_result_count = ctx.result_count;
+    ctx.result_paths = NULL;
+    ctx.result_count = 0;
+
+    expansion_context_free(&ctx);
 }
 
 int sandbox_get_expanded_count(void) {
-    return g_expanded_count;
+    return g_result_count;
 }
 
 const char *sandbox_get_expanded_path(int index) {
-    if (index >= 0 && index < g_expanded_count)
-        return g_expanded_paths[index].path;
+    if (index >= 0 && index < g_result_count)
+        return g_result_paths[index].path;
     return NULL;
 }
 
 uint64_t sandbox_get_expanded_access(int index) {
-    if (index >= 0 && index < g_expanded_count)
-        return g_expanded_paths[index].access;
+    if (index >= 0 && index < g_result_count)
+        return g_result_paths[index].access;
     return 0;
 }
 
 void sandbox_expansion_cleanup(void) {
-    free_expanded_paths();
+    free_result_paths();
 }
 
 int validate_landlock_paths(void) {
@@ -810,27 +864,30 @@ static void apply_landlock(void) {
     sandbox_simplify_allow_list(&allow_entries, &allow_count);
     sandbox_simplify_deny_list(&deny_entries, &deny_count);
 
-    expand_allow_list(allow_entries, allow_count, deny_entries, deny_count);
+    struct expansion_context ctx;
+    expansion_context_init(&ctx);
+    expand_allow_list(&ctx, allow_entries, allow_count, deny_entries, deny_count);
 
-    if (g_expanded_count == 0) {
-        LOG_ERROR("Hard allow/deny options resulted in no allowed paths - possible configuration error");
-        free_expanded_paths();
+    free_result_paths();
+    g_result_paths = ctx.result_paths;
+    g_result_count = ctx.result_count;
+    ctx.result_paths = NULL;
+    ctx.result_count = 0;
+    expansion_context_free(&ctx);
+
+    if (g_result_count == 0) {
+        LOG_FATAL("Hard allow/deny options resulted in no allowed paths - possible configuration error");
+        sandbox_expansion_cleanup();
         if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
         if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
-        exit(1);
     }
 
-    if (g_expanded_count > MAX_EXPANDED_PATHS) {
-        LOG_WARN("Too many Landlock rules (%d), falling back to ptrace enforcement", g_expanded_count);
-        free_expanded_paths();
+    if (g_result_count > MAX_EXPANDED_PATHS) {
+        LOG_WARN("Too many Landlock rules (%d), falling back to ptrace enforcement", g_result_count);
+        sandbox_expansion_cleanup();
         if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
         if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
         return;
-    }
-
-    uint64_t handled_access_fs = 0;
-    for (int i = 0; i < g_expanded_count; i++) {
-        handled_access_fs |= g_expanded_paths[i].access;
     }
 
     uint64_t all_access = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR |
@@ -841,9 +898,7 @@ static void apply_landlock(void) {
                           LANDLOCK_ACCESS_FS_MAKE_FIFO | LANDLOCK_ACCESS_FS_MAKE_BLOCK |
                           LANDLOCK_ACCESS_FS_MAKE_SYM | LANDLOCK_ACCESS_FS_REFER;
 
-    if (handled_access_fs == 0) {
-        handled_access_fs = all_access;
-    }
+    uint64_t handled_access_fs = all_access;
 
     switch (abi) {
     case 1:
@@ -874,32 +929,32 @@ static void apply_landlock(void) {
     int ruleset_fd = syscall(__NR_landlock_create_ruleset, &attr, sizeof(attr), 0);
     if (ruleset_fd < 0) {
         LOG_ERRNO("Failed to create Landlock ruleset");
-        free_expanded_paths();
+        sandbox_expansion_cleanup();
         if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
         if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
         return;
     }
 
-    for (int i = 0; i < g_expanded_count; i++) {
-        int dir_fd = open(g_expanded_paths[i].path, O_NOFOLLOW | O_PATH | O_CLOEXEC);
+    for (int i = 0; i < g_result_count; i++) {
+        int dir_fd = open(g_result_paths[i].path, O_NOFOLLOW | O_PATH | O_CLOEXEC);
         if (dir_fd < 0) {
             LOG_ERROR("Landlock: cannot open allow path '%s': %s",
-                    g_expanded_paths[i].path, strerror(errno));
+                    g_result_paths[i].path, strerror(errno));
             continue;
         }
 
         struct landlock_path_beneath_attr path_attr = {
-            .allowed_access = g_expanded_paths[i].access,
+            .allowed_access = g_result_paths[i].access,
             .parent_fd = dir_fd,
         };
 
         if (syscall(__NR_landlock_add_rule, ruleset_fd, LANDLOCK_RULE_PATH_BENEATH,
                     &path_attr, 0) != 0) {
             LOG_ERROR("Landlock: failed to add allow rule for '%s' (access 0x%llx): %s",
-                    g_expanded_paths[i].path, (unsigned long long)g_expanded_paths[i].access, strerror(errno));
+                    g_result_paths[i].path, (unsigned long long)g_result_paths[i].access, strerror(errno));
         } else {
             DEBUG_PRINT("SANDBOX: Landlock allow rule for '%s' (access 0x%llx)\n",
-                        g_expanded_paths[i].path, (unsigned long long)g_expanded_paths[i].access);
+                        g_result_paths[i].path, (unsigned long long)g_result_paths[i].access);
         }
         close(dir_fd);
     }
@@ -911,7 +966,7 @@ static void apply_landlock(void) {
     }
     close(ruleset_fd);
 
-    free_expanded_paths();
+    sandbox_expansion_cleanup();
     if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
     if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
 }
@@ -920,6 +975,11 @@ static void apply_landlock(void) {
  * Returns 0 on success, -1 on failure. */
 static int apply_no_network(void) {
     if (!getenv("READONLYBOX_NO_NETWORK")) return 0;
+
+#if defined(__i386__)
+    LOG_ERROR("Seccomp network filtering is not supported on i386 (network syscalls use socketcall)");
+    return -1;
+#endif
 
     /* BPF filter program to block network syscalls.
      * Uses __NR_* syscall numbers for portability across architectures. */

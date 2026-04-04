@@ -81,10 +81,18 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
     /* Write the screened environment to the temp file.
      * The file will be unlinked by pkexec's child after reading it.
      * If execve fails, the cleanup handler will unlink it.
-     * We use write_full() to handle partial writes. */
+     * We use write_full() to handle partial writes.
+     * A 128KB limit prevents abuse from huge environments. */
+    #define ENV_FILE_LIMIT (128 * 1024)
     extern char **environ;
+    size_t total_env_size = 0;
     for (char **e = environ; *e; e++) {
         size_t len = strlen(*e);
+        if (total_env_size + len + 1 > ENV_FILE_LIMIT) {
+            LOG_ERROR("Environment too large (> %d bytes), truncated", ENV_FILE_LIMIT);
+            break;
+        }
+        total_env_size += len + 1;
         if (write_full(env_fd, *e, len) < 0 ||
             write_full(env_fd, "\n", 1) < 0) {
             LOG_ERROR("Error writing environment to temp file");

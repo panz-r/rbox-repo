@@ -73,7 +73,7 @@ $(DFA_DATA_OBJ): $(DFA_DATA_C)
 	$(CC) $(CFLAGS) -c -o $@ $(DFA_DATA_C)
 
 $(TARGET): $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(DFA_DATA_OBJ)
-	$(CC) $(CFLAGS) -Wl,-rpath,'$$ORIGIN/../lib' -o $@ $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(DFA_DATA_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -Wl,-rpath,'$$ORIGIN/../lib' -o $@ $(SRC) -L../lib -lrbox_protocol $(DFA_EVAL_LIB) $(DFA_DATA_OBJ) $(LDFLAGS)
 
 $(RBOX_LIB):
 	$(MAKE) -C $(RBOX_PROTOCOL)

@@ -292,8 +292,7 @@ TEST(syscall_detection_realistic) {
 TEST(process_hash_collision_handling) {
     syscall_handler_init();
 
-    /* Create PIDs that might hash to same bucket */
-    /* MAX_PROCESSES is 1024, so these should be in different buckets */
+    /* Create PIDs to test hash table collision handling */
     pid_t pid1 = 1024;
     pid_t pid2 = 2048;
     pid_t pid3 = 3072;

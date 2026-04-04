@@ -23,6 +23,8 @@
 #include <time.h>
 #include <dirent.h>
 
+#include "test_utils.h"
+
 /* Test counter */
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -756,9 +758,7 @@ static int create_symlink_testdir(char *base, const char *dir_name,
 
 static void cleanup_symlink_testdir(char *base) {
     if (base && base[0]) {
-        char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", base);
-        system(cmd);
+        rmtree(base);
     }
 }
 
@@ -843,9 +843,7 @@ TEST(landlock_symlink_chain) {
     int exit_code;
     int result = run_ptrace_landlock(args, &exit_code, hard_allow, NULL);
 
-    char rm_cmd[1024];
-    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf '%s'", base);
-    (void)system(rm_cmd);
+    rmtree(base);
 
     CHECK_EQ(result, result, 0);
     CHECK_EQ(result, exit_code, 0);
@@ -881,9 +879,7 @@ TEST(landlock_multiple_symlinks_same_target) {
     int exit_code;
     int result = run_ptrace_landlock(args, &exit_code, hard_allow, NULL);
 
-    char rm_cmd[1024];
-    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf '%s'", base);
-    (void)system(rm_cmd);
+    rmtree(base);
 
     CHECK_EQ(result, result, 0);
     CHECK_EQ(result, exit_code, 0);

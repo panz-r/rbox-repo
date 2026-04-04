@@ -93,27 +93,86 @@ typedef struct AllowanceSpillover {
 /* Convenience macros using system syscall numbers.
  * System headers (<sys/syscall.h>) are the authoritative source for syscall numbers.
  * This ensures architecture-appropriate values are used automatically at build time.
- * If a syscall is not available on the build system, the fallback values below
- * represent common Linux syscall numbers. */
+ * If a syscall is not available on the build system, we fail at compile time. */
 #define SYSCALL_EXECVE      SYS_execve
 #ifdef SYS_execveat
     #define SYSCALL_EXECVEAT    SYS_execveat
 #else
-    /* execveat syscall numbers: x86_64=322, aarch64=281, i386=391, riscv64=281 */
-    #if defined(__x86_64__)
-        #define SYSCALL_EXECVEAT    322
-    #elif defined(__aarch64__) || defined(__riscv)
-        #define SYSCALL_EXECVEAT    281
-    #elif defined(__i386__)
-        #define SYSCALL_EXECVEAT    391
-    #else
-        #define SYSCALL_EXECVEAT    0
-    #endif
+    #error "SYS_execveat not available on this platform"
 #endif
 #define SYSCALL_CLONE       SYS_clone
 #define SYSCALL_FORK        SYS_fork
 #define SYSCALL_VFORK       SYS_vfork
 #define SYSCALL_EXIT_GROUP  SYS_exit_group
+
+/* Filesystem syscalls for soft policy enforcement
+ * Use SYS_* macros from <sys/syscall.h> for architecture portability */
+#define SYSCALL_OPEN        SYS_open
+#ifdef SYS_openat
+    #define SYSCALL_OPENAT      SYS_openat
+#else
+    #error "SYS_openat not available on this platform"
+#endif
+#define SYSCALL_CREAT       SYS_creat
+#define SYSCALL_MKDIR       SYS_mkdir
+#ifdef SYS_mkdirat
+    #define SYSCALL_MKDIRAT     SYS_mkdirat
+#else
+    #error "SYS_mkdirat not available on this platform"
+#endif
+#define SYSCALL_RMDIR       SYS_rmdir
+#define SYSCALL_UNLINK      SYS_unlink
+#ifdef SYS_unlinkat
+    #define SYSCALL_UNLINKAT    SYS_unlinkat
+#else
+    #error "SYS_unlinkat not available on this platform"
+#endif
+#define SYSCALL_RENAME      SYS_rename
+#ifdef SYS_renameat
+    #define SYSCALL_RENAMEAT    SYS_renameat
+#else
+    #error "SYS_renameat not available on this platform"
+#endif
+#define SYSCALL_SYMLINK     SYS_symlink
+#ifdef SYS_symlinkat
+    #define SYSCALL_SYMLINKAT   SYS_symlinkat
+#else
+    #error "SYS_symlinkat not available on this platform"
+#endif
+#define SYSCALL_LINK        SYS_link
+#ifdef SYS_linkat
+    #define SYSCALL_LINKAT      SYS_linkat
+#else
+    #error "SYS_linkat not available on this platform"
+#endif
+#define SYSCALL_CHMOD       SYS_chmod
+#define SYSCALL_CHOWN       SYS_chown
+#define SYSCALL_TRUNCATE    SYS_truncate
+#define SYSCALL_FTRUNCATE   SYS_ftruncate
+#define SYSCALL_UTIME       SYS_utime
+
+/* Read-only stat syscalls (for information leak prevention) */
+#define SYSCALL_STAT        SYS_stat
+#define SYSCALL_LSTAT       SYS_lstat
+#ifdef SYS_newfstatat
+    #define SYSCALL_NEWFSTATAT  SYS_newfstatat
+#elif defined(SYS_fstatat)
+    #define SYSCALL_NEWFSTATAT  SYS_fstatat
+#else
+    #error "SYS_newfstatat not available on this platform"
+#endif
+#define SYSCALL_FSTAT       SYS_fstat
+#define SYSCALL_ACCESS      SYS_access
+#ifdef SYS_faccessat
+    #define SYSCALL_FACCESSAT SYS_faccessat
+#else
+    #error "SYS_faccessat not available on this platform"
+#endif
+#ifdef SYS_faccessat2
+    #define SYSCALL_FACCESSAT2 SYS_faccessat2
+#else
+    #define SYSCALL_FACCESSAT2 (-1)
+#endif
 
 /*
  * Process state tracking structure.
@@ -160,7 +219,6 @@ typedef struct {
      * the wrapper chain is tracked here so children can exec the wrappers. */
     struct {
         char *wrapper_command;      /* Full wrapper chain string (e.g., "timeout timeout cmd") */
-        int wrapper_offset;         /* Byte offset into wrapper_command for remaining suffix */
         struct timespec timestamp;  /* When the allowance was granted (monotonic clock) */
     } wrapper_chain;
 } ProcessState;

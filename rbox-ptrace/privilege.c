@@ -41,8 +41,7 @@ void privilege_init(uid_t provided_uid, const char *provided_cwd) {
     }
 
     if (provided_cwd && provided_cwd[0]) {
-        strncpy(g_original_cwd, provided_cwd, sizeof(g_original_cwd) - 1);
-        g_original_cwd[sizeof(g_original_cwd) - 1] = '\0';
+        strlcpy(g_original_cwd, provided_cwd, sizeof(g_original_cwd));
     } else {
         if (getcwd(g_original_cwd, sizeof(g_original_cwd)) == NULL) {
             strcpy(g_original_cwd, ".");

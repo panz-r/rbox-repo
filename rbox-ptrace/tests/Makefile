@@ -20,15 +20,19 @@ TEST_SRCS = test_main.c \
             test_integration.c \
             test_e2e.c \
             test_sandbox.c \
+            test_soft_policy.c \
+            test_utils.c \
             debug.c
 
 # Source files from parent directory (excluding main.c)
-SRCS = ../memory.c \
+SRCS = ../progname.c \
+       ../memory.c \
        ../syscall_handler.c \
        ../validation.c \
        ../dfa.c \
        ../privilege.c \
        ../sandbox.c \
+       ../soft_policy.c \
        ../env.c \
        ../pkexec.c \
        ../judge.c \
@@ -110,11 +114,11 @@ test-e2e: check-dfa $(TARGET)
 	./$(TARGET) e2e
 
 # Run e2e tests with capabilities set
-# Checks if CAP_SYS_PTRACE, CAP_SETUID, CAP_SETGID are set on required binaries
+# Checks if CAP_SYS_PTRACE, CAP_SETUID, CAP_SETGID, CAP_SYS_ADMIN are set on required binaries
 test-with-caps: check-dfa $(TARGET)
 	@echo "Checking capabilities on required binaries..." && \
 	echo "" && \
-	echo "Required capabilities: cap_sys_ptrace, cap_setuid, cap_setgid" && \
+	echo "Required capabilities: cap_sys_ptrace, cap_setuid, cap_setgid, cap_sys_admin" && \
 	echo "" && \
 	echo "  Checking readonlybox-ptrace (../../bin/readonlybox-ptrace)..." && \
 	caps=$$(getcap "../../bin/readonlybox-ptrace" 2>/dev/null) && \
@@ -123,7 +127,8 @@ test-with-caps: check-dfa $(TARGET)
 	else \
 		echo "    cap_sys_ptrace: [ $$(echo "$$caps" | grep -c "cap_sys_ptrace") ]" && \
 		echo "    cap_setuid: [ $$(echo "$$caps" | grep -c "cap_setuid") ]" && \
-		echo "    cap_setgid: [ $$(echo "$$caps" | grep -c "cap_setgid") ]"; \
+		echo "    cap_setgid: [ $$(echo "$$caps" | grep -c "cap_setgid") ]" && \
+		echo "    cap_sys_admin: [ $$(echo "$$caps" | grep -c "cap_sys_admin") ]"; \
 	fi && \
 	echo "  Checking test_runner (./test_runner)..." && \
 	caps=$$(getcap "./test_runner" 2>/dev/null) && \
@@ -132,7 +137,8 @@ test-with-caps: check-dfa $(TARGET)
 	else \
 		echo "    cap_sys_ptrace: [ $$(echo "$$caps" | grep -c "cap_sys_ptrace") ]" && \
 		echo "    cap_setuid: [ $$(echo "$$caps" | grep -c "cap_setuid") ]" && \
-		echo "    cap_setgid: [ $$(echo "$$caps" | grep -c "cap_setgid") ]"; \
+		echo "    cap_setgid: [ $$(echo "$$caps" | grep -c "cap_setgid") ]" && \
+		echo "    cap_sys_admin: [ $$(echo "$$caps" | grep -c "cap_sys_admin") ]"; \
 	fi && \
 	echo "" && \
 	caps1=$$(getcap "../../bin/readonlybox-ptrace" 2>/dev/null) && \
@@ -142,8 +148,8 @@ test-with-caps: check-dfa $(TARGET)
 		echo "" && \
 		echo "To set capabilities, run these commands from rbox-ptrace/:" && \
 		echo "" && \
-		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid+ep ./bin/readonlybox-ptrace" && \
-		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid+ep ./tests/test_runner" && \
+		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid,cap_sys_admin+ep ./bin/readonlybox-ptrace" && \
+		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid,cap_sys_admin+ep ./tests/test_runner" && \
 		echo "" && \
 		echo "Then re-run: make test-with-caps"; \
 		exit 1; \
@@ -151,17 +157,19 @@ test-with-caps: check-dfa $(TARGET)
 	p1=$$(echo "$$caps1" | grep -c "cap_sys_ptrace") && \
 	u1=$$(echo "$$caps1" | grep -c "cap_setuid") && \
 	g1=$$(echo "$$caps1" | grep -c "cap_setgid") && \
+	a1=$$(echo "$$caps1" | grep -c "cap_sys_admin") && \
 	p2=$$(echo "$$caps2" | grep -c "cap_sys_ptrace") && \
 	u2=$$(echo "$$caps2" | grep -c "cap_setuid") && \
 	g2=$$(echo "$$caps2" | grep -c "cap_setgid") && \
-	if [ "$$p1" != "1" ] || [ "$$u1" != "1" ] || [ "$$g1" != "1" ] || \
-	   [ "$$p2" != "1" ] || [ "$$u2" != "1" ] || [ "$$g2" != "1" ]; then \
+	a2=$$(echo "$$caps2" | grep -c "cap_sys_admin") && \
+	if [ "$$p1" != "1" ] || [ "$$u1" != "1" ] || [ "$$g1" != "1" ] || [ "$$a1" != "1" ] || \
+	   [ "$$p2" != "1" ] || [ "$$u2" != "1" ] || [ "$$g2" != "1" ] || [ "$$a2" != "1" ]; then \
 		echo "ERROR: Required capabilities not set." && \
 		echo "" && \
 		echo "To set capabilities, run these commands from rbox-ptrace/:" && \
 		echo "" && \
-		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid+ep ./bin/readonlybox-ptrace" && \
-		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid+ep ./tests/test_runner" && \
+		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid,cap_sys_admin+ep ./bin/readonlybox-ptrace" && \
+		echo "  sudo setcap cap_sys_ptrace,cap_setuid,cap_setgid,cap_sys_admin+ep ./tests/test_runner" && \
 		echo "" && \
 		echo "Then re-run: make test-with-caps"; \
 		exit 1; \

@@ -109,7 +109,11 @@ char **memory_read_string_array_with_addrs(pid_t pid, unsigned long addr, unsign
 
         addrs[i] = ptr;
         array[i] = memory_read_string(pid, ptr);
-        if (!array[i]) break;
+        if (!array[i]) {
+            free(addrs);
+            addrs = NULL;
+            break;
+        }
 
         i++;
     }

@@ -4,7 +4,7 @@
  * IMPLEMENTATION LIMITS:
  * - Maximum string length: PATH_MAX (typically 4096 on Linux)
  * - Maximum env array size: 1024 entries (prevents truncation while bounding allocation)
- * - Stack assumption: memory_init() reserves STACK_RESERVE bytes below the stack pointer.
+ * - Stack reservation: memory_init() reserves 8192 bytes below the stack pointer.
  *   This assumes the stack has sufficient grow-down space. On Linux, stacks are
  *   typically 8MB and grow down from high addresses, so 8KB is safe.
  *

@@ -27,6 +27,7 @@
 #include "protocol.h"
 #include "debug.h"
 #include "judge.h"
+#include "soft_policy.h"
 #include <shell_tokenizer.h>
 
 /* Forward declarations */
@@ -333,26 +334,28 @@ static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child
         DEBUG_PRINT("WRAPPER_CHAIN: expired for pid %d\n", parent_state->pid);
         free(parent_state->wrapper_chain.wrapper_command);
         parent_state->wrapper_chain.wrapper_command = NULL;
-        parent_state->wrapper_chain.wrapper_offset = 0;
         return 0;
     }
 
-    const char *remaining_suffix = parent_state->wrapper_chain.wrapper_command + parent_state->wrapper_chain.wrapper_offset;
+    const char *remaining_suffix = parent_state->wrapper_chain.wrapper_command;
+    size_t suffix_len = strlen(remaining_suffix);
+    size_t subcommand_len = strlen(subcommand);
 
     /* Create a copy of the original suffix for length calculation (local_suffix).
      * wrapper_prefix_len must be called on the original since it returns a byte
      * offset into the string. */
-    char local_suffix[4096];
-    size_t copy_len = strlen(remaining_suffix);
-    if (copy_len >= sizeof(local_suffix)) copy_len = sizeof(local_suffix) - 1;
-    memcpy(local_suffix, remaining_suffix, copy_len);
-    local_suffix[copy_len] = '\0';
+    char *local_suffix = malloc(suffix_len + 1);
+    if (!local_suffix) return 0;
+    memcpy(local_suffix, remaining_suffix, suffix_len + 1);
 
     /* Create a separate buffer for comparison (normalized), with quotes stripped
      * for sh -c so we can match against child's argv (which has no quotes). */
-    char normalized[4096];
-    strncpy(normalized, local_suffix, sizeof(normalized) - 1);
-    normalized[sizeof(normalized) - 1] = '\0';
+    char *normalized = malloc(suffix_len + 1);
+    if (!normalized) {
+        free(local_suffix);
+        return 0;
+    }
+    memcpy(normalized, local_suffix, suffix_len + 1);
 
     /* For sh -c: strip quotes from the argument after -c in the normalized buffer only */
     if (strncmp(normalized, "sh -c", 5) == 0) {
@@ -366,6 +369,8 @@ static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child
 
     /* Compare normalized suffix with child command */
     if (strcmp(normalized, subcommand) != 0) {
+        free(local_suffix);
+        free(normalized);
         return 0;   /* No match */
     }
 
@@ -374,17 +379,24 @@ static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child
                 subcommand, remaining_suffix);
 
     size_t consumed = wrapper_prefix_len(local_suffix);
+    int result = 0;
+
     if (consumed > 0) {
-        /* Compute canonical remainder by stripping the wrapper from the child's command */
-        char child_remainder[4096];
-        strncpy(child_remainder, subcommand, sizeof(child_remainder)-1);
-        child_remainder[sizeof(child_remainder)-1] = '\0';
-        const char *canonical = strip_outermost_wrapper_prefix(child_remainder, child_remainder, sizeof(child_remainder));
+        /* Compute canonical remainder by stripping the wrapper from the child's command.
+         * Use dynamically allocated buffer sized for the actual subcommand length. */
+        char *child_remainder = malloc(subcommand_len + 1);
+        if (!child_remainder) {
+            free(local_suffix);
+            free(normalized);
+            return 0;
+        }
+        memcpy(child_remainder, subcommand, subcommand_len + 1);
+
+        const char *canonical = strip_outermost_wrapper_prefix(child_remainder, child_remainder, subcommand_len + 1);
         if (canonical && *canonical) {
             /* Update parent's chain to the canonical remainder (no quotes) */
             free(parent_state->wrapper_chain.wrapper_command);
             parent_state->wrapper_chain.wrapper_command = strdup(canonical);
-            parent_state->wrapper_chain.wrapper_offset = 0;
             clock_gettime(CLOCK_MONOTONIC, &parent_state->wrapper_chain.timestamp);
             DEBUG_PRINT("WRAPPER_CHAIN: parent chain updated to '%s'\n", canonical);
 
@@ -392,7 +404,6 @@ static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child
             free(child_state->wrapper_chain.wrapper_command);
             child_state->wrapper_chain.wrapper_command = strdup(canonical);
             if (child_state->wrapper_chain.wrapper_command) {
-                child_state->wrapper_chain.wrapper_offset = 0;
                 clock_gettime(CLOCK_MONOTONIC, &child_state->wrapper_chain.timestamp);
                 DEBUG_PRINT("WRAPPER_CHAIN: transferred chain '%s' to child pid %d\n",
                             canonical, child_state->pid);
@@ -401,29 +412,30 @@ static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child
             /* No further wrapper: clear both chains */
             free(parent_state->wrapper_chain.wrapper_command);
             parent_state->wrapper_chain.wrapper_command = NULL;
-            parent_state->wrapper_chain.wrapper_offset = 0;
             free(child_state->wrapper_chain.wrapper_command);
             child_state->wrapper_chain.wrapper_command = NULL;
-            child_state->wrapper_chain.wrapper_offset = 0;
         }
+        free(child_remainder);
         /* Mark command as validated to prevent repeated execve detections */
         free(child_state->last_validated_cmd);
         child_state->last_validated_cmd = strdup(subcommand);
-        return 1;
+        result = 1;
     } else {
         /* Base wrappee: child has no wrapper. Consume entire parent chain and clear child's chain. */
         free(parent_state->wrapper_chain.wrapper_command);
         parent_state->wrapper_chain.wrapper_command = NULL;
-        parent_state->wrapper_chain.wrapper_offset = 0;
         free(child_state->wrapper_chain.wrapper_command);
         child_state->wrapper_chain.wrapper_command = NULL;
-        child_state->wrapper_chain.wrapper_offset = 0;
         /* Mark command as validated to prevent repeated execve detections */
         free(child_state->last_validated_cmd);
         child_state->last_validated_cmd = strdup(subcommand);
         DEBUG_PRINT("WRAPPER_CHAIN: base wrappee matched, chain consumed\n");
-        return 1;
+        result = 1;
     }
+
+    free(local_suffix);
+    free(normalized);
+    return result;
 }
 
 
@@ -471,15 +483,20 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
         }
 
         /* Store the suffix as a wrapper-chain allowance */
-        /* Clear any existing wrapper chain */
+        /* Clear any existing wrapper chain.
+         * For sh -c commands, suffix may still have quotes from the parser,
+         * so we need to create a modifiable copy and strip them. */
+        char *suffix_copy = strdup(suffix);
+        if (suffix_copy) {
+            strip_quotes(suffix_copy);
+        }
         free(state->wrapper_chain.wrapper_command);
-        state->wrapper_chain.wrapper_command = strdup(suffix);
+        state->wrapper_chain.wrapper_command = suffix_copy;
         free(large_buf);
         if (!state->wrapper_chain.wrapper_command) {
             DEBUG_PRINT("WRAPPER_CHAIN: failed to allocate memory for '%s'\n", suffix);
             return;
         }
-        state->wrapper_chain.wrapper_offset = 0;
         clock_gettime(CLOCK_MONOTONIC, &state->wrapper_chain.timestamp);
         DEBUG_PRINT("WRAPPER_CHAIN: stored '%s' for pid %d\n", suffix, state->pid);
         return;
@@ -857,6 +874,121 @@ int syscall_is_fork(USER_REGS *regs) {
             sysnum == SYSCALL_VFORK);
 }
 
+/* Check if syscall is a filesystem syscall subject to soft policy */
+static int syscall_is_filesystem(USER_REGS *regs) {
+    long sysnum = REG_SYSCALL(regs);
+    switch (sysnum) {
+        case SYSCALL_OPEN:
+        case SYSCALL_OPENAT:
+        case SYSCALL_CREAT:
+        case SYSCALL_MKDIR:
+        case SYSCALL_MKDIRAT:
+        case SYSCALL_RMDIR:
+        case SYSCALL_UNLINK:
+        case SYSCALL_UNLINKAT:
+        case SYSCALL_RENAME:
+        case SYSCALL_RENAMEAT:
+        case SYSCALL_SYMLINK:
+        case SYSCALL_SYMLINKAT:
+        case SYSCALL_LINK:
+        case SYSCALL_LINKAT:
+        case SYSCALL_CHMOD:
+        case SYSCALL_CHOWN:
+        case SYSCALL_TRUNCATE:
+        case SYSCALL_FTRUNCATE:
+        case SYSCALL_UTIME:
+        case SYSCALL_STAT:
+        case SYSCALL_LSTAT:
+        case SYSCALL_NEWFSTATAT:
+        case SYSCALL_FSTAT:
+        case SYSCALL_ACCESS:
+        case SYSCALL_FACCESSAT:
+        case SYSCALL_FACCESSAT2:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/*
+ * Resolve a path for a *_at syscall or any syscall with a relative path.
+ *
+ * For absolute paths, this returns a realpath-resolved canonical path.
+ * For relative paths:
+ *   - If dirfd == AT_FDCWD, resolves against the child process's cwd.
+ *   - Otherwise, resolves against the directory referred to by dirfd.
+ *
+ * If the path does not exist (e.g., for file creation), this function
+ * resolves the parent directory and appends the basename. This allows
+ * policy checking on creation operations.
+ *
+ * chdir() handling: We read /proc/pid/cwd fresh on every call, so chdir()
+ * is handled automatically without needing to intercept that syscall.
+ *
+ * Returns NULL on error (path cannot be resolved).
+ */
+static void strip_trailing_slashes(char *p) {
+    size_t len = strlen(p);
+    while (len > 1 && p[len-1] == '/') p[--len] = '\0';
+}
+
+static char *resolve_path_at(pid_t pid, int dirfd, const char *path, char *buf, size_t buf_size) {
+    char dir_buf[PATH_MAX];
+    char *result;
+
+    if (!path || !buf || buf_size < PATH_MAX) return NULL;
+
+    if (path[0] == '/') {
+        result = realpath(path, buf);
+        if (result) return result;
+        strlcpy(buf, path, buf_size);
+        strip_trailing_slashes(buf);
+        if (buf[0] == '\0') {
+            strcpy(buf, "/");
+        }
+        return buf;
+    }
+
+    if (dirfd == AT_FDCWD) {
+        snprintf(dir_buf, sizeof(dir_buf), "/proc/%d/cwd", pid);
+    } else {
+        snprintf(dir_buf, sizeof(dir_buf), "/proc/%d/fd/%d", pid, dirfd);
+    }
+
+    char link_buf[PATH_MAX];
+    ssize_t len = readlink(dir_buf, link_buf, sizeof(link_buf)-1);
+    if (len <= 0) {
+        DEBUG_PRINT("HANDLER: failed to read link %s: %s\n", dir_buf, strerror(errno));
+        return NULL;
+    }
+    link_buf[len] = '\0';
+
+    size_t link_len = strlen(link_buf);
+    size_t path_len = strlen(path);
+    if (link_len + 1 + path_len >= buf_size) {
+        DEBUG_PRINT("HANDLER: path too long: %s/%s\n", link_buf, path);
+        return NULL;
+    }
+
+    int written = snprintf(buf, buf_size, "%s/%s", link_buf, path);
+    if (written < 0 || (size_t)written >= buf_size) {
+        DEBUG_PRINT("HANDLER: snprintf failed or truncated: %s/%s\n", link_buf, path);
+        return NULL;
+    }
+
+    char tmp_buf[PATH_MAX];
+    result = realpath(buf, tmp_buf);
+    if (result) {
+        size_t copy_len = strlen(tmp_buf);
+        if (copy_len >= buf_size) copy_len = buf_size - 1;
+        memcpy(buf, tmp_buf, copy_len);
+        buf[copy_len] = '\0';
+        return buf;
+    }
+    strip_trailing_slashes(buf);
+    return buf;
+}
+
 /* Build command string from argv - dynamic allocation */
 #define MAX_COMMAND_STRING_LEN 65536  /* 64KB sanity limit */
 
@@ -903,6 +1035,34 @@ static const char *get_basename(const char *path) {
     return base ? base + 1 : path;
 }
 
+/* Block a filesystem syscall by returning an error and skipping the syscall instruction.
+ * Returns 1 if blocked, -1 on error. */
+static int block_syscall(pid_t pid, USER_REGS *regs) {
+#ifdef __x86_64__
+    regs->rax = -EACCES;
+    regs->rip += 2;
+#elif defined(__i386__)
+    regs->eax = -EACCES;
+    regs->eip += 2;
+#elif defined(__aarch64__)
+    regs->regs[0] = -EACCES;
+    regs->pc += 4;
+#elif defined(__riscv)
+    regs->regs[0] = -EACCES;
+    regs->epc += 4;
+#else
+    return -1;
+#endif
+
+    if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+        perror("ptrace(SETREGS) for block_syscall");
+        return -1;
+    }
+
+    DEBUG_PRINT("HANDLER: blocked filesystem syscall\n");
+    return 1;
+}
+
 /* Block execve by replacing it with a shell command that prints permission denied */
 static int block_execve(pid_t pid, USER_REGS *regs) {
     MemoryContext mem_ctx;
@@ -913,8 +1073,20 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
         return -1;
     }
 
-    /* Use /bin/sh to print the permission denied message */
-    const char *sh_path = "/bin/sh";
+    /* Try multiple shell paths - some minimal systems may not have /bin/sh */
+    const char *shell_paths[] = { "/bin/sh", "/bin/bash", "/bin/dash", NULL };
+    const char *sh_path = NULL;
+    for (int i = 0; shell_paths[i]; i++) {
+        if (access(shell_paths[i], X_OK) == 0) {
+            sh_path = shell_paths[i];
+            break;
+        }
+    }
+    if (!sh_path) {
+        DEBUG_PRINT("HANDLER: no shell found for block_execve, using kill\n");
+        return -1;
+    }
+
     const char *dash_c = "-c";
     const char *message_cmd = "echo 'Permission denied, this command was not executed and had no effects on the system.' >&2; exit 1";
 
@@ -1003,9 +1175,11 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         unsigned long pathname_addr;
         unsigned long argv_addr;
         unsigned long envp_addr;
+        int dirfd = AT_FDCWD;
 
         if (REG_SYSCALL(regs) == SYSCALL_EXECVEAT) {
             /* execveat: dirfd is in arg1, pathname in arg2 */
+            dirfd = (int)REG_ARG1(regs);
             pathname_addr = REG_ARG2(regs);
             argv_addr = REG_ARG3(regs);
             envp_addr = REG_ARG4(regs);
@@ -1023,6 +1197,22 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         memory_free_ulong_array(state->execve_envp_addrs);
 
         state->execve_pathname = memory_read_string(pid, pathname_addr);
+
+        /* Handle empty pathname with AT_EMPTY_PATH semantics:
+         * If pathname is empty, resolve from dirfd using /proc/<pid>/fd/<dirfd>.
+         * This handles execveat(dirfd, "", argv, envp, AT_EMPTY_PATH) correctly. */
+        if (state->execve_pathname && state->execve_pathname[0] == '\0' && dirfd != AT_FDCWD) {
+            char fd_path[64];
+            char resolved[PATH_MAX];
+            snprintf(fd_path, sizeof(fd_path), "/proc/%d/fd/%d", pid, dirfd);
+            ssize_t len = readlink(fd_path, resolved, sizeof(resolved) - 1);
+            if (len > 0) {
+                resolved[len] = '\0';
+                free(state->execve_pathname);
+                state->execve_pathname = strdup(resolved);
+            }
+        }
+
         state->execve_argv = memory_read_string_array(pid, argv_addr);
         /* Also capture the addresses of environment variables in child memory */
         state->execve_envp = memory_read_string_array_with_addrs(pid, envp_addr, &state->execve_envp_addrs);
@@ -1096,6 +1286,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     DEBUG_PRINT("HANDLER: pid=%d has wrapper-chain from parent %d for '%s', allowing\n",
                                pid, parent_pid, command);
                     state->validated = 1;
+                    free(command);
                     return 0;
                 }
                 /* Check subcommand allowances */
@@ -1103,6 +1294,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     DEBUG_PRINT("HANDLER: pid=%d has allowance from parent %d for '%s', allowing\n",
                                pid, parent_pid, command);
                     state->validated = 1;
+                    free(command);
                     return 0;
                 }
             }
@@ -1219,12 +1411,283 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         return 0;
     }
 
+    /* Check for filesystem syscalls (soft policy) */
+    if (syscall_is_filesystem(regs)) {
+        soft_policy_t *policy = soft_policy_get_global();
+        if (soft_policy_is_active(policy)) {
+            soft_path_mode_t inputs[16];
+            int results[16];
+            int count = 0;
+            long sysnum = REG_SYSCALL(regs);
+            uint32_t access_mask = 0;
+            char *path1 = NULL;
+            char *path2 = NULL;
+            char path_buf1[PATH_MAX];
+            char path_buf2[PATH_MAX];
+            int dirfd1 = AT_FDCWD;
+            int dirfd2 = AT_FDCWD;
+            int ret = 0;
+
+            switch (sysnum) {
+                case SYSCALL_OPEN: {
+                    access_mask = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    if (path1) {
+                        int flags = (int)REG_ARG2(regs);
+                        if ((flags & O_ACCMODE) == O_RDONLY) {
+                            access_mask = SOFT_ACCESS_READ;
+                        } else if ((flags & O_ACCMODE) == O_WRONLY) {
+                            access_mask = SOFT_ACCESS_WRITE;
+                        } else if ((flags & O_ACCMODE) == O_RDWR) {
+                            access_mask = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
+                        }
+                        if (flags & O_TRUNC) {
+                            access_mask |= SOFT_ACCESS_TRUNCATE;
+                        }
+                        if (flags & O_CREAT) {
+                            access_mask |= SOFT_ACCESS_WRITE;
+                        }
+                    }
+                    dirfd1 = AT_FDCWD;
+                    break;
+                }
+                case SYSCALL_OPENAT: {
+                    access_mask = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    if (path1) {
+                        int flags = (int)REG_ARG3(regs);
+                        if ((flags & O_ACCMODE) == O_RDONLY) {
+                            access_mask = SOFT_ACCESS_READ;
+                        } else if ((flags & O_ACCMODE) == O_WRONLY) {
+                            access_mask = SOFT_ACCESS_WRITE;
+                        } else if ((flags & O_ACCMODE) == O_RDWR) {
+                            access_mask = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
+                        }
+                        if (flags & O_TRUNC) {
+                            access_mask |= SOFT_ACCESS_TRUNCATE;
+                        }
+                        if (flags & O_CREAT) {
+                            access_mask |= SOFT_ACCESS_WRITE;
+                        }
+                    }
+                    break;
+                }
+                case SYSCALL_CREAT:
+                    access_mask = SOFT_ACCESS_WRITE | SOFT_ACCESS_TRUNCATE;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_MKDIR:
+                    access_mask = SOFT_ACCESS_MKDIR;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_MKDIRAT:
+                    access_mask = SOFT_ACCESS_MKDIR;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    break;
+                case SYSCALL_RMDIR:
+                    access_mask = SOFT_ACCESS_RMDIR;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_UNLINK:
+                    access_mask = SOFT_ACCESS_UNLINK;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_UNLINKAT:
+                    access_mask = SOFT_ACCESS_UNLINK;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    break;
+                case SYSCALL_RENAME:
+                    access_mask = SOFT_ACCESS_RENAME;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    path2 = memory_read_string(pid, REG_ARG2(regs));
+                    dirfd1 = AT_FDCWD;
+                    dirfd2 = AT_FDCWD;
+                    break;
+                case SYSCALL_RENAMEAT:
+                    access_mask = SOFT_ACCESS_RENAME;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    dirfd2 = (int)REG_ARG3(regs);
+                    path2 = memory_read_string(pid, REG_ARG4(regs));
+                    break;
+                case SYSCALL_SYMLINK:
+                    access_mask = SOFT_ACCESS_SYMLINK;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    path2 = memory_read_string(pid, REG_ARG2(regs));
+                    dirfd1 = AT_FDCWD;
+                    dirfd2 = AT_FDCWD;
+                    break;
+                case SYSCALL_SYMLINKAT:
+                    access_mask = SOFT_ACCESS_SYMLINK;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    dirfd2 = AT_FDCWD;
+                    path2 = memory_read_string(pid, REG_ARG3(regs));
+                    break;
+                case SYSCALL_LINK:
+                    access_mask = SOFT_ACCESS_LINK;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    path2 = memory_read_string(pid, REG_ARG2(regs));
+                    dirfd1 = AT_FDCWD;
+                    dirfd2 = AT_FDCWD;
+                    break;
+                case SYSCALL_LINKAT:
+                    access_mask = SOFT_ACCESS_LINK;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    dirfd2 = (int)REG_ARG3(regs);
+                    path2 = memory_read_string(pid, REG_ARG4(regs));
+                    break;
+                case SYSCALL_CHMOD:
+                    access_mask = SOFT_ACCESS_CHMOD;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_CHOWN:
+                    access_mask = SOFT_ACCESS_CHOWN;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_TRUNCATE:
+                    access_mask = SOFT_ACCESS_WRITE | SOFT_ACCESS_TRUNCATE;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_FTRUNCATE:
+                    /* ftruncate operates on a file descriptor, not a path.
+                     * We cannot apply soft policy without tracking open file descriptors.
+                     * The file descriptor was already checked at open() time. */
+                    DEBUG_PRINT("HANDLER: pid=%d ftruncate (fd-based), allowing\n", pid);
+                    return 0;
+                case SYSCALL_UTIME:
+                    access_mask = SOFT_ACCESS_WRITE;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_STAT:
+                    access_mask = SOFT_ACCESS_READ;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_LSTAT:
+                    access_mask = SOFT_ACCESS_READ;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_NEWFSTATAT:
+                    access_mask = SOFT_ACCESS_READ;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    break;
+                case SYSCALL_FSTAT:
+                    /* fstat operates on a file descriptor, not a path.
+                     * We cannot apply soft policy without tracking open file descriptors.
+                     * The file descriptor was already checked at open() time. */
+                    DEBUG_PRINT("HANDLER: pid=%d fstat (fd-based), allowing\n", pid);
+                    return 0;
+                case SYSCALL_ACCESS:
+                    access_mask = SOFT_ACCESS_READ;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));
+                    dirfd1 = AT_FDCWD;
+                    break;
+                case SYSCALL_FACCESSAT:
+                    access_mask = SOFT_ACCESS_READ;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    break;
+                case SYSCALL_FACCESSAT2:
+                    access_mask = SOFT_ACCESS_READ;
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    break;
+                default:
+                    DEBUG_PRINT("HANDLER: pid=%d unknown filesystem syscall %ld\n", pid, sysnum);
+                    return 0;
+            }
+
+            if (path1) {
+                char *resolved = resolve_path_at(pid, dirfd1, path1, path_buf1, sizeof(path_buf1));
+                if (!resolved) {
+                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for '%s', denying\n", pid, path1);
+                    ret = block_syscall(pid, regs);
+                    goto cleanup;
+                }
+                free(path1);
+                path1 = NULL;
+                inputs[count].path = path_buf1;
+                inputs[count].access_mask = access_mask;
+                count++;
+            }
+
+            if (path2) {
+                char *resolved = resolve_path_at(pid, dirfd2, path2, path_buf2, sizeof(path_buf2));
+                if (!resolved) {
+                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for '%s', denying\n", pid, path2);
+                    ret = block_syscall(pid, regs);
+                    goto cleanup;
+                }
+                free(path2);
+                path2 = NULL;
+                inputs[count].path = path_buf2;
+                inputs[count].access_mask = access_mask;
+                count++;
+            }
+
+            if (count > 0) {
+                DEBUG_PRINT("HANDLER: pid=%d filesystem syscall %ld, checking %d paths\n",
+                           pid, sysnum, count);
+                int check_result = soft_policy_check(policy, inputs, results, count);
+                if (check_result != 0) {
+                    DEBUG_PRINT("HANDLER: soft_policy_check failed (error), blocking syscall\n");
+                    if (block_syscall(pid, regs) < 0) {
+                        kill(pid, SIGKILL);
+                    }
+                    ret = -1;
+                    goto cleanup;
+                } else {
+                    for (int i = 0; i < count; i++) {
+                        if (g_soft_debug) {
+                            fprintf(stderr, "SOFT: syscall=%ld path=%s access=0x%x -> %s\n",
+                                    sysnum, inputs[i].path, inputs[i].access_mask,
+                                    results[i] ? "ALLOW" : "DENY");
+                        }
+                        if (!results[i]) {
+                            DEBUG_PRINT("HANDLER: pid=%d SOFT POLICY DENY path '%s'\n", pid, inputs[i].path);
+                            int block_result = block_syscall(pid, regs);
+                            if (block_result < 0) {
+                                DEBUG_PRINT("HANDLER: failed to block syscall, killing child\n");
+                                kill(pid, SIGKILL);
+                                ret = -1;
+                                goto cleanup;
+                            }
+                            ret = block_result;
+                            goto cleanup;
+                        }
+                    }
+                }
+            }
+
+cleanup:
+            free(path1);
+            free(path2);
+            return ret;
+        }
+    }
+
     return 0;
 }
 
 /* Filter environment variables based on server decisions
  * Reads READONLYBOX_ENV_DECISIONS and removes denied vars from state->execve_envp
- * Also writes the filtered envp to the child's memory and updates the register */
+ * Also writes the filtered envp to the child's memory and updates the register
+ * Returns: 0 on success, -1 on error (parse error or allocation failure) */
 static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs) {
     if (!state || !state->execve_envp || !state->execve_envp_addrs) return 0;
 
@@ -1290,8 +1753,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
 
     /* Parse names from environment */
     char buf[4096];
-    strncpy(buf, env_names_str, sizeof(buf) - 1);
-    buf[sizeof(buf) - 1] = '\0';
+    strlcpy(buf, env_names_str, sizeof(buf));
 
     char *saveptr;
     char *token = strtok_r(buf, ",", &saveptr);
@@ -1351,22 +1813,22 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     new_envp[new_idx] = NULL;
     new_env_addrs[new_idx] = 0;
 
-    /* Replace envp */
-    free(state->execve_envp);
-    state->execve_envp = new_envp;
-    free(state->execve_envp_addrs);
-    state->execve_envp_addrs = new_env_addrs;
+    /* Keep pointers to old state for cleanup on failure */
+    char **old_envp = state->execve_envp;
+    unsigned long *old_env_addrs = state->execve_envp_addrs;
 
     /* Write the new envp array to the child's memory and update the register */
     MemoryContext mem_ctx;
     if (memory_init(&mem_ctx, pid, REG_SP(regs)) < 0) {
         DEBUG_PRINT("FILTER: failed to init memory context\n");
+        free(new_envp);
+        free(new_env_addrs);
         return -1;
     }
 
     /* Count how many env vars we're keeping */
     int keep_count = 0;
-    while (state->execve_envp[keep_count]) keep_count++;
+    while (new_envp[keep_count]) keep_count++;
 
     if (keep_count == 0) {
         /* No environment variables - set envp to NULL */
@@ -1381,8 +1843,16 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
 
         if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
             DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
+            free(new_envp);
+            free(new_env_addrs);
             return -1;
         }
+
+        /* Success - now update state */
+        free(old_envp);
+        free(old_env_addrs);
+        state->execve_envp = new_envp;
+        state->execve_envp_addrs = new_env_addrs;
 
         DEBUG_PRINT("FILTER: env vars filtered, 0 remaining (empty envp)\n");
         return 0;
@@ -1392,6 +1862,8 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     unsigned long new_envp_addr = memory_alloc(&mem_ctx, (keep_count + 1) * sizeof(unsigned long));
     if (!new_envp_addr) {
         DEBUG_PRINT("FILTER: failed to allocate memory for envp\n");
+        free(new_envp);
+        free(new_env_addrs);
         return -1;
     }
 
@@ -1399,8 +1871,10 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
      * We use the original addresses of each string in the child memory. */
     for (int i = 0; i < keep_count; i++) {
         if (memory_write_pointer_at(&mem_ctx, new_envp_addr + i * sizeof(unsigned long),
-                                     state->execve_envp_addrs[i]) < 0) {
+                                     new_env_addrs[i]) < 0) {
             DEBUG_PRINT("FILTER: failed to write envp pointer %d\n", i);
+            free(new_envp);
+            free(new_env_addrs);
             return -1;
         }
     }
@@ -1408,6 +1882,8 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     /* Write NULL terminator */
     if (memory_write_pointer_at(&mem_ctx, new_envp_addr + keep_count * sizeof(unsigned long), 0) < 0) {
         DEBUG_PRINT("FILTER: failed to write envp NULL terminator\n");
+        free(new_envp);
+        free(new_env_addrs);
         return -1;
     }
 
@@ -1421,8 +1897,16 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     /* Apply changes to the child */
     if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
         DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
+        free(new_envp);
+        free(new_env_addrs);
         return -1;
     }
+
+    /* Success - now update state */
+    free(old_envp);
+    free(old_env_addrs);
+    state->execve_envp = new_envp;
+    state->execve_envp_addrs = new_env_addrs;
 
     DEBUG_PRINT("FILTER: env vars filtered, %d remaining, envp updated at 0x%lx\n", keep_count, new_envp_addr);
     return 0;

@@ -21,7 +21,8 @@ typedef struct {
 } FlaggedEnv;
 
 /* Global storage for flagged env vars with scores (used by run_judge) */
-static FlaggedEnv g_flagged_envs[256];
+#define MAX_FLAGGED_ENVS 1024
+static FlaggedEnv g_flagged_envs[MAX_FLAGGED_ENVS];
 static int g_flagged_env_count = 0;
 
 /* Get flagged env count for external use */
@@ -31,7 +32,7 @@ int env_get_flagged_count(void) {
 
 /* Get flagged env name by index */
 const char *env_get_flagged_name(int idx) {
-    if (idx >= 0 && idx < g_flagged_env_count && idx < 256) {
+    if (idx >= 0 && idx < g_flagged_env_count && idx < MAX_FLAGGED_ENVS) {
         return g_flagged_envs[idx].name;
     }
     return NULL;
@@ -39,7 +40,7 @@ const char *env_get_flagged_name(int idx) {
 
 /* Get flagged env score by index */
 double env_get_flagged_score(int idx) {
-    if (idx >= 0 && idx < g_flagged_env_count && idx < 256) {
+    if (idx >= 0 && idx < g_flagged_env_count && idx < MAX_FLAGGED_ENVS) {
         return g_flagged_envs[idx].score;
     }
     return 0.0;
@@ -47,7 +48,7 @@ double env_get_flagged_score(int idx) {
 
 /* Clear all flagged envs */
 void env_clear_flagged(void) {
-    for (int i = 0; i < g_flagged_env_count && i < 256; i++) {
+    for (int i = 0; i < g_flagged_env_count && i < MAX_FLAGGED_ENVS; i++) {
         if (g_flagged_envs[i].name) {
             free(g_flagged_envs[i].name);
             g_flagged_envs[i].name = NULL;
@@ -62,8 +63,7 @@ static void extract_env_name(const char *entry, char *name, size_t name_size) {
     if (eq) {
         size_t len = eq - entry;
         if (len >= name_size) len = name_size - 1;
-        strncpy(name, entry, len);
-        name[len] = '\0';
+        strlcpy(name, entry, len + 1);
     } else {
         name[0] = '\0';
     }
@@ -120,6 +120,23 @@ void env_screen(void) {
     }
     g_flagged_env_count = 0;
 
+    /* Collect variables to unset AFTER processing (to avoid environ reallocation issues) */
+    char **unset_vars = NULL;
+    int unset_capacity = 0;
+    int unset_count = 0;
+
+    /* Helper macro to add to unset list with dynamic growth */
+    #define ADD_TO_UNSET(name) do { \
+        if (unset_count >= unset_capacity) { \
+            unset_capacity = unset_capacity ? unset_capacity * 2 : 16; \
+            char **new_unset = realloc(unset_vars, unset_capacity * sizeof(char *)); \
+            if (new_unset) unset_vars = new_unset; \
+        } \
+        if (unset_count < unset_capacity) { \
+            unset_vars[unset_count++] = strdup(name); \
+        } \
+    } while(0)
+
     /* Prompt user for each flagged variable and only add allowed ones */
     for (int i = 0; i < flagged_count; i++) {
         extern char **environ;
@@ -134,21 +151,23 @@ void env_screen(void) {
         double score = env_screener_combined_score_name(name, value);
 
         /* Check if we have room for more flagged envs */
-        if (g_flagged_env_count >= 256) {
-            /* No more room - unset to block this var */
-            unsetenv(name);
-            fprintf(stderr, "   → Auto-blocked (capacity): %s\n", name);
+        if (g_flagged_env_count >= MAX_FLAGGED_ENVS) {
+            /* No more room - mark to unset this var */
+            ADD_TO_UNSET(name);
+            fprintf(stderr, "   → Auto-blocked (capacity %d reached): %s\n", MAX_FLAGGED_ENVS, name);
             continue;
         }
 
         if (!is_terminal) {
             /* Non-interactive mode: auto-block high-confidence, allow others */
             if (score > 0.8) {
+                ADD_TO_UNSET(name);
                 fprintf(stderr, "   → Auto-blocked (non-interactive): %s\n", name);
             } else {
                 /* Allow low-confidence vars by adding to list */
                 char *dup = strdup(name);
                 if (!dup) {
+                    ADD_TO_UNSET(name);
                     fprintf(stderr, "   → Auto-blocked (memory allocation failed): %s\n", name);
                     continue;
                 }
@@ -178,8 +197,8 @@ void env_screen(void) {
             /* User allowed this variable */
             char *dup = strdup(name);
             if (!dup) {
+                ADD_TO_UNSET(name);
                 fprintf(stderr, "   → Blocked (memory allocation failed): %s\n", name);
-                unsetenv(name);
             } else {
                 g_flagged_envs[g_flagged_env_count].name = dup;
                 g_flagged_envs[g_flagged_env_count].score = score;
@@ -187,11 +206,22 @@ void env_screen(void) {
             }
         } else {
             /* User blocked this variable or invalid input */
-            unsetenv(name);
+            ADD_TO_UNSET(name);
             fprintf(stderr, "   → Blocked: %s\n", name);
         }
         free(line);
     }
+
+    #undef ADD_TO_UNSET
+
+    /* Now unset all blocked variables (after processing to avoid environ reallocation) */
+    for (int i = 0; i < unset_count; i++) {
+        if (unset_vars[i]) {
+            unsetenv(unset_vars[i]);
+            free(unset_vars[i]);
+        }
+    }
+    free(unset_vars);
 
     free(indices);
     fprintf(stderr, "\n✓ Environment screened\n");

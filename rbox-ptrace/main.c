@@ -38,13 +38,15 @@
 #include "pkexec.h"
 #include "judge.h"
 #include "privilege.h"
+#include "progname.h"
 #include "sandbox.h"
+#include "soft_policy.h"
 
 #include "env_screener.h"
 
 /* Debug file pointer - defined here, used by DEBUG_PRINT in all files */
-#ifdef DEBUG
 FILE *g_debug_file = NULL;
+int g_verbose_level = 0;
 
 void debug_init(void) {
     if (g_debug_file) return;
@@ -59,11 +61,10 @@ void debug_init(void) {
         g_debug_file = stderr;
     }
 }
-#endif
 
-static const char *g_progname = "readonlybox-ptrace";
 static bool g_keep_env = true;  /* Keep environment by default */
 static bool g_skip_pkexec = false;  /* Skip pkexec even if no ptrace capability */
+extern bool g_soft_debug;  /* Enable soft policy debug logging */
 static char **g_extra_env = NULL;
 static int g_extra_env_count = 0;
 
@@ -88,9 +89,9 @@ static void cleanup_global_resources(void) {
 }
 
 static void print_usage(void) {
-    fprintf(stderr, "Usage: %s wrap <command> [args...]\n", g_progname);
-    fprintf(stderr, "       %s [options] -- <command> [args...]\n", g_progname);
-    fprintf(stderr, "       %s -p <pid> [options] -- <command> [args...]\n", g_progname);
+    fprintf(stderr, "Usage: ./readonlybox-ptrace wrap <command> [args...]\n");
+    fprintf(stderr, "       ./readonlybox-ptrace [options] -- <command> [args...]\n");
+    fprintf(stderr, "       ./readonlybox-ptrace -p <pid> [options] -- <command> [args...]\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Run a command with ptrace-based command interception.\n");
     fprintf(stderr, "\n");
@@ -103,12 +104,40 @@ static void print_usage(void) {
     fprintf(stderr, "  --clean-env          Clear environment before execution\n");
     fprintf(stderr, "  --env VAR=value      Set environment variable for command\n");
     fprintf(stderr, "  --memory-limit <n>   Set memory limit (e.g., 256M, 1G)\n");
-    fprintf(stderr, "  --hard-allow <p>    Allow directory with mode (path:mode,...)\n");
-    fprintf(stderr, "                       Modes: ro (read), rx (read/exec), rw, rwx\n");
-    fprintf(stderr, "  --hard-deny <p>     Deny directory access\n");
-    fprintf(stderr, "  --no-network         Block network access\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Hard Policy (Landlock filesystem restrictions):\n");
+    fprintf(stderr, "  --hard-allow <path:mode[,path:mode...]>\n");
+    fprintf(stderr, "                       Allow access to a directory with the specified mode.\n");
+    fprintf(stderr, "                       Modes: ro (read-only), rx (read+execute), rw (read+write),\n");
+    fprintf(stderr, "                              rwx (full access, including special files).\n");
+    fprintf(stderr, "                       This is a **default-deny** policy: only explicitly allowed\n");
+    fprintf(stderr, "                       paths and operations are permitted; everything else is\n");
+    fprintf(stderr, "                       blocked. Multiple entries can be comma-separated.\n");
+    fprintf(stderr, "                       Example: --hard-allow /tmp:rw,/usr/bin:rx\n");
+    fprintf(stderr, "  --hard-deny <path[,path...]>\n");
+    fprintf(stderr, "                       Explicitly deny access to a directory (takes precedence\n");
+    fprintf(stderr, "                       over --hard-allow if paths overlap).\n");
+    fprintf(stderr, "  --no-network         Block network access using seccomp (default-allow for all\n");
+    fprintf(stderr, "                       other syscalls)\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Soft Policy (syscall interception - filesystem access checks):\n");
+    fprintf(stderr, "  Default: DENY (fail-closed). Built-in rules (longest-prefix overridable):\n");
+    fprintf(stderr, "    Read-only (RO):    /, /etc, /proc, /sys, /dev, /var, /run\n");
+    fprintf(stderr, "    Read+Execute (RX): /usr, /lib, /lib64\n");
+    fprintf(stderr, "    Read+Write (RW):   /tmp, /dev/shm, /var/tmp\n");
+    fprintf(stderr, "    Denied (blocked):  /home, /root, /var/log, /var/spool, /run/user\n");
+    fprintf(stderr, "                       plus sensitive files: /etc/shadow, /etc/gshadow,\n");
+    fprintf(stderr, "                       /etc/sudoers, /etc/securetty, SSH private keys\n");
+    fprintf(stderr, "  Current user's home, runtime dir, mail spool are automatically allowed.\n");
+    fprintf(stderr, "  Add custom rules (override built-ins):\n");
+    fprintf(stderr, "    --soft-allow <path>[:ro|rx|rw|rwx]   (default mode: ro)\n");
+    fprintf(stderr, "    --soft-deny <path>                   (blocks all access)\n");
+    fprintf(stderr, "  Example: --soft-allow /home/user:rwx --soft-deny /home/user/secret\n");
+    fprintf(stderr, "  --soft-debug         Enable soft policy debug output\n");
+    fprintf(stderr, "\n");
     fprintf(stderr, "  -h, --help           Show this help\n");
-    fprintf(stderr, "  -v, --version        Show version\n");
+    fprintf(stderr, "  -v                   Enable verbose output (use -vv or -vvv for more verbosity)\n");
+    fprintf(stderr, "  -V, --version        Show version\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "The -- separator is optional and separates options from the command.\n");
 }
@@ -217,8 +246,7 @@ static int trace_process(pid_t initial_pid) {
             if (parent_state && parent_state->execve_pathname) {
                 /* Use stored pathname from parent's state */
                 const char *path = parent_state->execve_pathname;
-                strncpy(parent_exe, path, sizeof(parent_exe) - 1);
-                parent_exe[sizeof(parent_exe) - 1] = '\0';
+                strlcpy(parent_exe, path, sizeof(parent_exe));
                 if (strstr(parent_exe, "readonlybox") != NULL) {
                     parent_is_readonlybox = true;
                 }
@@ -331,7 +359,7 @@ int main(int argc, char *argv[]) {
     pid_t attach_pid = 0;  /* PID to attach to (0 = spawn new process) */
     int internal_screened = 0;  /* Flag: already screened (set after pkexec relaunch) */
 
-    g_progname = argv[0];
+    progname_set(argv[0]);
 
     /* Disable core dumps to prevent sensitive data leakage when running with elevated privileges.
      * This must be done early, before any potentially dangerous operations. */
@@ -345,7 +373,7 @@ int main(int argc, char *argv[]) {
 
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
-        {"version", no_argument, 0, 'v'},
+        {"version", no_argument, 0, 'V'},
         {"uid", required_argument, 0, 'u'},
         {"cwd", required_argument, 0, 'c'},
         {"cmd", required_argument, 0, 'm'},
@@ -369,6 +397,10 @@ int main(int argc, char *argv[]) {
         {"no-network", no_argument, 0, 263},
         /* Skip pkexec even if no ptrace capability */
         {"no-pkexec", no_argument, 0, 264},
+        /* Soft policy options */
+        {"soft-allow", required_argument, 0, 266},
+        {"soft-deny", required_argument, 0, 267},
+        {"soft-debug", no_argument, 0, 268},
         {0, 0, 0, 0}
     };
 
@@ -399,6 +431,14 @@ int main(int argc, char *argv[]) {
                 print_usage();
                 return 0;
             case 'v':
+                g_verbose_level++;
+                if (optarg) {
+                    for (const char *p = optarg; *p == 'v'; p++) {
+                        g_verbose_level++;
+                    }
+                }
+                break;
+            case 'V':
                 printf("%s version 1.0.0\n", g_progname);
                 return 0;
             case 'u':
@@ -424,6 +464,7 @@ int main(int argc, char *argv[]) {
                 char **new_env = realloc(g_extra_env, (g_extra_env_count + 1) * sizeof(char *));
                 if (!new_env) {
                     LOG_ERROR("Failed to allocate memory for --env");
+                    cleanup_global_resources();
                     return 1;
                 }
                 g_extra_env = new_env;
@@ -472,6 +513,7 @@ int main(int argc, char *argv[]) {
                 free(line);
                 fclose(f);
                 unlink(optarg);  /* Clean up the temp file */
+                validation_init();  /* Re-initialize socket and wrap paths after env restore */
                 break;
             }
             case 259:
@@ -489,9 +531,19 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case 262:
-                /* Set landlock paths via environment variable (legacy) or hard-allow */
-                if (setenv("READONLYBOX_HARD_ALLOW", optarg, 1) != 0) {
-                    LOG_WARN("failed to set READONLYBOX_HARD_ALLOW");
+                {
+                    const char *existing = getenv("READONLYBOX_HARD_ALLOW");
+                    if (existing && existing[0]) {
+                        size_t new_len = strlen(existing) + 1 + strlen(optarg) + 1;
+                        char *combined = malloc(new_len);
+                        if (combined) {
+                            snprintf(combined, new_len, "%s,%s", existing, optarg);
+                            setenv("READONLYBOX_HARD_ALLOW", combined, 1);
+                            free(combined);
+                        }
+                    } else {
+                        setenv("READONLYBOX_HARD_ALLOW", optarg, 1);
+                    }
                 }
                 break;
             case 263:
@@ -510,6 +562,45 @@ int main(int argc, char *argv[]) {
                     LOG_WARN("failed to set READONLYBOX_HARD_DENY");
                 }
                 break;
+            case 266:
+                {
+                    const char *existing = getenv("READONLYBOX_SOFT_ALLOW");
+                    if (existing && existing[0]) {
+                        size_t new_len = strlen(existing) + 1 + strlen(optarg) + 1;
+                        char *combined = malloc(new_len);
+                        if (combined) {
+                            snprintf(combined, new_len, "%s,%s", existing, optarg);
+                            setenv("READONLYBOX_SOFT_ALLOW", combined, 1);
+                            free(combined);
+                        }
+                    } else {
+                        setenv("READONLYBOX_SOFT_ALLOW", optarg, 1);
+                    }
+                }
+                break;
+            case 267:
+                {
+                    const char *existing = getenv("READONLYBOX_SOFT_DENY");
+                    if (existing && existing[0]) {
+                        size_t new_len = strlen(existing) + 1 + strlen(optarg) + 1;
+                        char *combined = malloc(new_len);
+                        if (combined) {
+                            snprintf(combined, new_len, "%s,%s", existing, optarg);
+                            setenv("READONLYBOX_SOFT_DENY", combined, 1);
+                            free(combined);
+                        }
+                    } else {
+                        setenv("READONLYBOX_SOFT_DENY", optarg, 1);
+                    }
+                }
+                break;
+            case 268:
+                /* Enable soft policy debug logging */
+                g_soft_debug = true;
+                if (setenv("READONLYBOX_SOFT_DEBUG", "1", 1) != 0) {
+                    LOG_WARN("failed to set READONLYBOX_SOFT_DEBUG");
+                }
+                break;
             default:
                 print_usage();
                 return 1;
@@ -517,6 +608,17 @@ int main(int argc, char *argv[]) {
     }
 
     privilege_init(provided_uid, provided_cwd);
+
+    if (g_verbose_level > 0) {
+        fprintf(stderr, "logging to /tmp/readonlybox-ptrace.log\n");
+    }
+
+    /* Validate soft policy rules before requesting auth via pkexec.
+     * This catches invalid paths or too many rules before any privilege escalation. */
+    if (soft_policy_validate_from_env() != 0) {
+        LOG_ERROR("Invalid soft policy rules");
+        return 1;
+    }
 
     /* If attaching to a process, no command should be provided */
     int cmd_start = optind;
@@ -575,18 +677,29 @@ int main(int argc, char *argv[]) {
         env_screen();
     }
 
+    /* Initialize validation (socket and wrap paths) before checking pkexec */
+    if (validation_init() < 0) {
+        LOG_ERROR("Failed to initialize validation");
+        free(cmd_path);
+        return 1;
+    }
+
+    /* Validate that rbox-wrap works before attempting pkexec or tracing */
+    if (validate_wrap_binary() < 0) {
+        fprintf(stderr, "%s: rbox-wrap validation failed - cannot proceed\n", g_progname);
+        free(cmd_path);
+        return 1;
+    }
+
     if (!g_skip_pkexec && attach_pid == 0 && provided_uid == 0 && !privilege_has_ptrace_capability()) {
+        char uid_str[32];
+        snprintf(uid_str, sizeof(uid_str), "%d", getuid());
+        setenv("READONLYBOX_ORIGINAL_UID", uid_str, 1);
         fprintf(stderr, "%s: Requesting elevated privileges...\n", g_progname);
         pkexec_set_progname(g_progname);
         int ret = pkexec_launch(argc, argv, cmd_path);
         free(cmd_path);
         return ret;
-    }
-
-    if (validation_init() < 0) {
-        LOG_ERROR("Failed to initialize validation");
-        free(cmd_path);
-        return 1;
     }
 
     if (syscall_handler_init() < 0) {
@@ -595,6 +708,19 @@ int main(int argc, char *argv[]) {
         free(cmd_path);
         return 1;
     }
+
+    soft_policy_t *soft = soft_policy_get_global();
+    if (soft_policy_load_from_env(soft) != 0) {
+        LOG_ERROR("Failed to initialize soft policy");
+        soft_policy_free(soft);
+    } else if (soft_policy_is_active(soft)) {
+        soft_policy_load_builtin(soft);
+        DEBUG_PRINT("MAIN: Soft policy active with %d rules\n", soft->count);
+    }
+
+    unsetenv("READONLYBOX_SOFT_ALLOW");
+    unsetenv("READONLYBOX_SOFT_DENY");
+    unsetenv("READONLYBOX_SOFT_DEBUG");
 
     /* Check if we're attaching to a running process or spawning new */
     if (attach_pid > 0) {
@@ -703,8 +829,10 @@ int main(int argc, char *argv[]) {
         apply_sandboxing();
         drop_privileges_and_apply_env();
         char cmd_path_copy[PATH_MAX];
-        strncpy(cmd_path_copy, cmd_path, PATH_MAX - 1);
-        cmd_path_copy[PATH_MAX - 1] = '\0';
+        strlcpy(cmd_path_copy, cmd_path, sizeof(cmd_path_copy));
+        unsetenv("READONLYBOX_SOFT_ALLOW");
+        unsetenv("READONLYBOX_SOFT_DENY");
+        unsetenv("READONLYBOX_SOFT_DEBUG");
         execv(cmd_path_copy, &argv[cmd_start]);
         LOG_ERROR("execv failed for %s: %s", cmd_path_copy, strerror(errno));
         _exit(1);

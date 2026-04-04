@@ -30,30 +30,71 @@ static int server_socket_exists(void) {
     return (stat(path, &st) == 0 && S_ISSOCK(st.st_mode));
 }
 
+/* Validate that rbox-wrap can be executed with --bin flag (tests library loading)
+ * Returns 0 on success, -1 on failure
+ */
+int validate_wrap_binary(void) {
+    const char *wrap_path = validation_get_wrap_path();
+    if (!wrap_path) {
+        fprintf(stderr, "%s: rbox-wrap not found (set READONLYBOX_WRAP_PATH or ensure it's in PATH)\n", g_progname);
+        return -1;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "%s: fork failed during wrap validation\n", g_progname);
+        return -1;
+    }
+
+    if (pid == 0) {
+        /* Use --bin --version to test that the binary can load its libraries */
+        execl(wrap_path, "rbox-wrap", "--bin", "--version", NULL);
+        _exit(1);
+    }
+
+    int status;
+    waitpid(pid, &status, 0);
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        return 0;
+    }
+
+    fprintf(stderr, "%s: rbox-wrap at '%s' cannot be executed (check library paths: ../rbox-protocol)\n",
+            g_progname, wrap_path);
+    return -1;
+}
+
 /* Run readonlybox --judge to get server decision
  * Returns: 0 = ALLOW, 9 = DENY, -1 = error
  */
 int judge_run(const char *command, const char *caller_info) {
     int retry_count = 0;
     const int MAX_RETRIES = 10;
+    int retry_delay = 1;  /* Exponential backoff: 1, 2, 4, 8, ... seconds, capped */
+
+    DEBUG_PRINT("JUDGE: command='%s' caller_info='%s'\n", command, caller_info);
+    const char *socket_path = validation_get_socket_path();
+    DEBUG_PRINT("JUDGE: socket path='%s'\n", socket_path);
 
     while (1) {
         /* Wait for socket to appear */
+        DEBUG_PRINT("JUDGE: checking socket at '%s'\n", socket_path);
         while (!server_socket_exists()) {
-            DEBUG_PRINT("JUDGE: waiting for server socket...\n");
+            DEBUG_PRINT("JUDGE: socket not found, waiting...\n");
             sleep(1);
         }
 
         /* Get wrapper binary path - resolved once at startup in validation_init */
         const char *readonlybox_path = validation_get_wrap_path();
+        DEBUG_PRINT("JUDGE: wrap path='%s'\n", readonlybox_path ? readonlybox_path : "(null)");
         if (!readonlybox_path) {
             retry_count++;
             if (retry_count > MAX_RETRIES) {
                 LOG_ERROR("rbox-wrap binary not found after %d retries", MAX_RETRIES);
                 exit(1);
             }
-            DEBUG_PRINT("JUDGE: rbox-wrap not found, retry %d/%d\n", retry_count, MAX_RETRIES);
-            sleep(1);
+            DEBUG_PRINT("JUDGE: rbox-wrap not found, retry %d/%d, sleeping %ds\n", retry_count, MAX_RETRIES, retry_delay);
+            sleep(retry_delay);
+            retry_delay = retry_delay * 2 > 8 ? 8 : retry_delay * 2;
             continue;
         }
 
@@ -101,18 +142,23 @@ int judge_run(const char *command, const char *caller_info) {
                     const char *name = env_get_flagged_name(i);
                     if (name) {
                         double score = env_get_flagged_score(i);
+                        if (score < -2.0) score = -2.0;
+                        if (score > 2.0) score = 2.0;
                         size_t len = strlen(name);
-                        size_t needed = len + 8;
+                        char score_buf[16];
+                        int n = snprintf(score_buf, sizeof(score_buf), ":%.5f", score);
+                        size_t score_len = (n > 0) ? (size_t)n : 0;
+                        size_t needed = len + score_len;
 
                         if (rem >= needed) {
                             memcpy(p, name, len);
                             p += len;
                             rem -= len;
 
-                            int n = snprintf(p, rem, ":%.2f", score);
-                            if (n > 0 && (size_t)n < rem) {
-                                p += n;
-                                rem -= n;
+                            if (score_len > 0 && score_len < rem) {
+                                memcpy(p, score_buf, score_len);
+                                p += score_len;
+                                rem -= score_len;
                             }
 
                             if (rem > 1 && i < flagged_count - 1) {
@@ -142,12 +188,16 @@ int judge_run(const char *command, const char *caller_info) {
         /* Parent */
         close(pipefd[1]);
 
-#define MAX_RESPONSE_SIZE 65536
+        /* Soft limit on response size: 16MB
+         * This protects against malformed data or bugs that produce excessive output.
+         * The limit is high enough to handle large environment variable lists. */
+#define MAX_RESPONSE_SIZE (16 * 1024 * 1024)
         ssize_t n;
         while ((n = read(pipefd[0], buffer + bytes_read, cap - bytes_read)) > 0) {
             bytes_read += n;
             if ((size_t)bytes_read == cap) {
                 if (cap >= MAX_RESPONSE_SIZE) {
+                    DEBUG_PRINT("JUDGE: response exceeds soft limit %d bytes\n", MAX_RESPONSE_SIZE);
                     kill(pid, SIGKILL);
                     close(pipefd[0]);
                     waitpid(pid, NULL, 0);
@@ -158,6 +208,7 @@ int judge_run(const char *command, const char *caller_info) {
                 if (new_cap > MAX_RESPONSE_SIZE) new_cap = MAX_RESPONSE_SIZE;
                 char *new_buf = realloc(buffer, new_cap);
                 if (!new_buf) {
+                    DEBUG_PRINT("JUDGE: realloc failed for response buffer\n");
                     kill(pid, SIGKILL);
                     close(pipefd[0]);
                     waitpid(pid, NULL, 0);
@@ -188,8 +239,9 @@ int judge_run(const char *command, const char *caller_info) {
                     DEBUG_PRINT("JUDGE: rbox-wrap failed after %d retries - fail closed\n", MAX_RETRIES);
                     return 2;  /* Error: couldn't reach server, fail closed */
                 }
-                DEBUG_PRINT("JUDGE: child exited with code %d, retry %d/%d\n", code, retry_count, MAX_RETRIES);
-                sleep(1);
+                DEBUG_PRINT("JUDGE: child exited with code %d, retry %d/%d, sleeping %ds\n", code, retry_count, MAX_RETRIES, retry_delay);
+                sleep(retry_delay);
+                retry_delay = retry_delay * 2 > 8 ? 8 : retry_delay * 2;
                 continue;
             } else {
                 retry_count++;
@@ -197,8 +249,9 @@ int judge_run(const char *command, const char *caller_info) {
                     DEBUG_PRINT("JUDGE: rbox-wrap terminated abnormally after %d retries - fail closed\n", MAX_RETRIES);
                     return 2;
                 }
-                DEBUG_PRINT("JUDGE: child terminated, retry %d/%d\n", retry_count, MAX_RETRIES);
-                sleep(1);
+                DEBUG_PRINT("JUDGE: child terminated, retry %d/%d, sleeping %ds\n", retry_count, MAX_RETRIES, retry_delay);
+                sleep(retry_delay);
+                retry_delay = retry_delay * 2 > 8 ? 8 : retry_delay * 2;
                 continue;
             }
         }
@@ -259,32 +312,44 @@ int judge_run(const char *command, const char *caller_info) {
 
             int flagged_count = env_get_flagged_count();
             if (flagged_count > 0) {
-                char env_names_buf[4096] = {0};
-                char *p = env_names_buf;
-                size_t rem = sizeof(env_names_buf) - 1;
-
-                for (int i = 0; i < flagged_count && i < env_decisions.env_count && rem > 1; i++) {
+                size_t total_len = 0;
+                for (int i = 0; i < flagged_count && i < env_decisions.env_count; i++) {
                     const char *name = env_get_flagged_name(i);
                     if (name) {
-                        size_t len = strlen(name);
-                        if (len < rem) {
-                            memcpy(p, name, len);
-                            p += len;
-                            rem -= len;
-                            if (rem > 1 && i < flagged_count - 1) {
-                                *p++ = ',';
-                                rem--;
-                            }
-                        }
+                        total_len += strlen(name) + 1;
                     }
                 }
 
-                if (env_names_buf[0]) {
-                    setenv("READONLYBOX_FLAGGED_ENV_NAMES", env_names_buf, 1);
+                if (total_len > 0) {
+                    char *env_names_buf = malloc(total_len);
+                    if (env_names_buf) {
+                        char *p = env_names_buf;
+                        size_t rem = total_len;
+                        for (int i = 0; i < flagged_count && i < env_decisions.env_count && rem > 1; i++) {
+                            const char *name = env_get_flagged_name(i);
+                            if (name) {
+                                size_t len = strlen(name);
+                                if (len < rem) {
+                                    memcpy(p, name, len);
+                                    p += len;
+                                    rem -= len;
+                                    if (rem > 1 && i < flagged_count - 1) {
+                                        *p++ = ',';
+                                        rem--;
+                                    }
+                                }
+                            }
+                        }
+                        if (env_names_buf[0]) {
+                            setenv("READONLYBOX_FLAGGED_ENV_NAMES", env_names_buf, 1);
+                        }
+                        free(env_names_buf);
+                    }
                 }
             }
 
             free(env_decisions.bitmap);
+            env_decisions.bitmap = NULL;
         }
 
         rbox_decode_response_details(&header, buffer, bytes_read, &details);

@@ -16,8 +16,7 @@ static bool g_dfa_initialized = false;
 
 static void dfa_init_once_wrapper(void) {
     if (!dfa_eval_validate_id(rbox_ptrace_dfa, rbox_ptrace_dfa_size, EXPECTED_IDENTIFIER)) {
-        LOG_ERROR("DFA initialization failed: identifier mismatch");
-        exit(1);
+        LOG_FATAL("DFA initialization failed: identifier mismatch");
     }
     g_dfa_initialized = true;
 }

@@ -8,6 +8,7 @@
 #include <fcntl.h>
 
 FILE *g_debug_file = NULL;
+int g_verbose_level = 0;
 
 void debug_init(void) {
     if (g_debug_file) return;

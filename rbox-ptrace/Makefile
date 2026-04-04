@@ -35,6 +35,7 @@ DFA_DATA_C = $(BUILD_DIR)/rbox_ptrace_dfa_data.c
 
 # Source files
 SRCS = main.c \
+       progname.c \
        syscall_handler.c \
        memory.c \
        validation.c \
@@ -44,6 +45,7 @@ SRCS = main.c \
        env.c \
        pkexec.c \
        judge.c \
+       soft_policy.c \
        $(DFA_DATA_C) \
        ../shellsplit/src/env_screener.c \
        ../shellsplit/src/relative_permutation_entropy.c
