@@ -45,7 +45,7 @@ static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
 {
     if (!moff || moff >= sz) return;
     bool filt = (cmask && wpid != UINT16_MAX);
-    for (size_t i = 0; i < 1024; i++) {
+    for (size_t i = 0; i < 32768; i++) {
         size_t off = (size_t)moff + (size_t)i * 4;
         if (off + 4 > sz) { i = 1024; break; }
         uint32_t mk = dfa_r32(d, off);
@@ -167,6 +167,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
             int bms = DFA_RULE_BITMASK_SIZE(enc);
             for (uint16_t i = 0; i < tc; i++) {
                 if (bms == 0) break;
+                if (i > 0 && (size_t)i > SIZE_MAX / (size_t)bms) break;
                 size_t ioff = (size_t)i * (size_t)bms;
                 if (ioff > sz || rl > sz - ioff) break;
                 size_t ro = rl + ioff;
@@ -193,9 +194,14 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                 if ((size_t)(chain - d) >= sz) break;
                 uint16_t chain_len = dfa_chain_len(chain);
                 const uint8_t* chain_bytes = dfa_chain_bytes(chain);
-                
-                // Check bounds
-                if ((size_t)(chain + DFA_CHAIN_HEADER_SIZE + chain_len + DFA_CHAIN_TRAILER_SIZE(enc) - d) > sz) break;
+
+                // Check bounds safely - avoid overflow in offset calculation
+                size_t cur_off = (size_t)(chain - d);
+                size_t trailer_sz = DFA_CHAIN_TRAILER_SIZE(enc);
+                if (cur_off > sz ||
+                    DFA_CHAIN_HEADER_SIZE > sz - cur_off ||
+                    chain_len > sz - cur_off - DFA_CHAIN_HEADER_SIZE ||
+                    trailer_sz > sz - cur_off - DFA_CHAIN_HEADER_SIZE - chain_len) break;
                 
                 // Check if remaining input matches chain
                 if (pos + chain_len > len) {
