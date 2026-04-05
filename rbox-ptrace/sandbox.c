@@ -675,7 +675,9 @@ static void expand_allow_path_recursive(struct expansion_context *ctx, const cha
                 visited_set_add(ctx, child_path);
                 add_expanded_path(ctx, child_path, access);
                 scan_dir_for_external_symlinks(ctx, child_path, access, deny, deny_count);
-                queue_push(ctx, child_path, access);
+                if (has_deny_under(child_path, strlen(child_path), deny, deny_count)) {
+                    queue_push(ctx, child_path, access);
+                }
             }
         } else if (S_ISLNK(st.st_mode)) {
             char resolved[PATH_MAX];

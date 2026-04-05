@@ -11,6 +11,8 @@
 #include <sys/fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <linux/capability.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,9 +69,98 @@ static bool g_skip_pkexec = false;  /* Skip pkexec even if no ptrace capability 
 extern bool g_soft_debug;  /* Enable soft policy debug logging */
 static char **g_extra_env = NULL;
 static int g_extra_env_count = 0;
+static char *g_env_socket = NULL;  /* Abstract socket name for environment passing */
 
 /* Forward declarations */
 static char *resolve_command_path(const char *cmd);
+
+/* Restore environment from an abstract Unix socket.
+ * Returns 0 on success, -1 on error (caller may then proceed with a clean env). */
+static int restore_environment_from_socket(const char *sock_name) {
+#ifndef UNIX_PATH_MAX
+#define UNIX_PATH_MAX 108
+#endif
+#define ENV_RESTORE_MAX (1024 * 1024)
+
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    addr.sun_path[0] = '\0';
+    size_t name_len = strlen(sock_name);
+    if (name_len + 1 > UNIX_PATH_MAX) {
+        LOG_ERROR("Socket name too long");
+        return -1;
+    }
+    memcpy(addr.sun_path + 1, sock_name, name_len + 1);
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        LOG_ERRNO("socket");
+        return -1;
+    }
+
+    /* Timeout after 5 seconds to avoid hanging */
+    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    socklen_t addr_len = offsetof(struct sockaddr_un, sun_path) + 1 + name_len;
+    if (connect(fd, (struct sockaddr*)&addr, addr_len) < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT) {
+            LOG_WARN("Timeout connecting to environment socket, using clean environment");
+        } else {
+            LOG_ERRNO("connect to environment socket");
+        }
+        close(fd);
+        return -1;
+    }
+
+    /* Read environment data with size limit (1 MB) */
+    char *buf = malloc(ENV_RESTORE_MAX);
+    if (!buf) {
+        LOG_ERROR("malloc failed");
+        close(fd);
+        return -1;
+    }
+
+    size_t total = 0;
+    ssize_t n;
+    while ((n = read(fd, buf + total, ENV_RESTORE_MAX - total - 1)) > 0) {
+        total += n;
+        if (total >= ENV_RESTORE_MAX - 1) {
+            LOG_WARN("Environment too large, truncated");
+            break;
+        }
+    }
+    if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        LOG_ERRNO("read from socket");
+        free(buf);
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    buf[total] = '\0';
+
+    /* Parse lines: each line is "NAME=value", terminated by an empty line */
+    char *line = buf;
+    while (line && *line) {
+        char *next = strchr(line, '\n');
+        if (next) *next = '\0';
+        if (line[0] != '\0') {
+            char *env_entry = strdup(line);
+            if (!env_entry) {
+                LOG_ERROR("strdup failed for environment variable");
+                free(buf);
+                return -1;
+            }
+            if (putenv(env_entry) != 0) {
+                LOG_WARN("putenv failed for '%s'", env_entry);
+                free(env_entry);
+            }
+        }
+        line = next ? next + 1 : NULL;
+    }
+
+    free(buf);
+    return 0;
+}
 
 /* Cleanup function for atexit */
 static void cleanup_global_resources(void) {
@@ -399,6 +490,8 @@ int main(int argc, char *argv[]) {
         {"soft-allow", required_argument, 0, 266},
         {"soft-deny", required_argument, 0, 267},
         {"soft-debug", no_argument, 0, 268},
+        /* Abstract socket for environment passing (used by pkexec helper) */
+        {"env-socket", required_argument, 0, 269},
         {0, 0, 0, 0}
     };
 
@@ -599,9 +692,30 @@ int main(int argc, char *argv[]) {
                     LOG_WARN("failed to set READONLYBOX_SOFT_DEBUG");
                 }
                 break;
+            case 269:
+                /* Abstract socket name for environment passing from pkexec helper */
+                g_env_socket = optarg;
+                break;
             default:
                 print_usage();
                 return 1;
+        }
+    }
+
+    /* Restore environment from abstract socket if passed by pkexec helper.
+     * This must happen before privilege_init() so the environment is available. */
+    if (g_env_socket && geteuid() == 0) {
+        restore_environment_from_socket(g_env_socket);
+        /* Remove --env-socket and its argument from argv to hide from later processing */
+        for (int i = 0; i < argc; i++) {
+            if (i + 1 < argc && strcmp(argv[i], "--env-socket") == 0) {
+                for (int j = i; j < argc - 2; j++) {
+                    argv[j] = argv[j + 2];
+                }
+                argc -= 2;
+                optind = (optind > i) ? optind - 2 : optind;
+                break;
+            }
         }
     }
 

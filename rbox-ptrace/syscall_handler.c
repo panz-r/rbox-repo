@@ -1460,6 +1460,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             int dirfd2 = AT_FDCWD;
             int ret = 0;
             int is_creat = 0;
+            int modifies_dir_entry = 0;
 
             switch (sysnum) {
                 case SYSCALL_OPEN: {
@@ -1531,16 +1532,19 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     break;
                 case SYSCALL_UNLINK:
                     access_mask = SOFT_ACCESS_UNLINK;
+                    modifies_dir_entry = 1;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
                     break;
                 case SYSCALL_UNLINKAT:
                     access_mask = SOFT_ACCESS_UNLINK;
+                    modifies_dir_entry = 1;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     break;
                 case SYSCALL_RENAME:
                     access_mask = SOFT_ACCESS_RENAME;
+                    modifies_dir_entry = 1;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     path2 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd1 = AT_FDCWD;
@@ -1548,6 +1552,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     break;
                 case SYSCALL_RENAMEAT:
                     access_mask = SOFT_ACCESS_RENAME;
+                    modifies_dir_entry = 1;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd2 = (int)REG_ARG3(regs);
@@ -1555,6 +1560,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     break;
                 case SYSCALL_SYMLINK:
                     access_mask = SOFT_ACCESS_SYMLINK;
+                    modifies_dir_entry = 1;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     path2 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd1 = AT_FDCWD;
@@ -1562,6 +1568,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     break;
                 case SYSCALL_SYMLINKAT:
                     access_mask = SOFT_ACCESS_SYMLINK;
+                    modifies_dir_entry = 1;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd2 = AT_FDCWD;
@@ -1569,6 +1576,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     break;
                 case SYSCALL_LINK:
                     access_mask = SOFT_ACCESS_LINK;
+                    modifies_dir_entry = 1;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     path2 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd1 = AT_FDCWD;
@@ -1576,6 +1584,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     break;
                 case SYSCALL_LINKAT:
                     access_mask = SOFT_ACCESS_LINK;
+                    modifies_dir_entry = 1;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd2 = (int)REG_ARG3(regs);
@@ -1658,20 +1667,36 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 } else if (is_creat && !file_exists) {
                     char parent_buf[PATH_MAX];
                     get_parent_path(path_buf1, parent_buf, sizeof(parent_buf));
-                    char *parent_resolved = resolve_path_at(pid, dirfd1, parent_buf, path_buf1, sizeof(path_buf1), &file_exists);
+                    char *parent_resolved = resolve_path_at(pid, dirfd1, parent_buf, parent_buf, sizeof(parent_buf), &file_exists);
                     (void)file_exists;
-                    DEBUG_PRINT("HANDLER: pid=%d O_CREAT on non-existent '%s', checking parent '%s'\n", pid, path1, path_buf1);
+                    DEBUG_PRINT("HANDLER: pid=%d O_CREAT on non-existent '%s', checking parent '%s'\n", pid, path1, parent_buf);
                     free(path1);
                     path1 = NULL;
                     if (parent_resolved) {
-                        inputs[count].path = path_buf1;
+                        inputs[count].path = strdup(parent_buf);
                         inputs[count].access_mask = SOFT_ACCESS_WRITE;
                         count++;
                     }
                 } else {
+                    /* For dir entry modifications (rename/symlink/link/unlink), check parent with WRITE.
+                     * For symlink/link, also check target with READ if it exists. */
+                    if (modifies_dir_entry) {
+                        char parent_buf[PATH_MAX];
+                        get_parent_path(path_buf1, parent_buf, sizeof(parent_buf));
+                        inputs[count].path = strdup(parent_buf);
+                        inputs[count].access_mask = SOFT_ACCESS_WRITE;
+                        count++;
+                        /* For symlink/link: check target (path1) with READ if it exists */
+                        if ((sysnum == SYSCALL_SYMLINK || sysnum == SYSCALL_SYMLINKAT ||
+                             sysnum == SYSCALL_LINK || sysnum == SYSCALL_LINKAT) && file_exists) {
+                            inputs[count].path = strdup(path_buf1);
+                            inputs[count].access_mask = SOFT_ACCESS_READ;
+                            count++;
+                        }
+                    }
                     free(path1);
                     path1 = NULL;
-                    inputs[count].path = path_buf1;
+                    inputs[count].path = strdup(path_buf1);
                     inputs[count].access_mask = access_mask;
                     count++;
                 }
@@ -1687,20 +1712,28 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 } else if (is_creat && !file_exists) {
                     char parent_buf[PATH_MAX];
                     get_parent_path(path_buf2, parent_buf, sizeof(parent_buf));
-                    char *parent_resolved = resolve_path_at(pid, dirfd2, parent_buf, path_buf2, sizeof(path_buf2), &file_exists);
+                    char *parent_resolved = resolve_path_at(pid, dirfd2, parent_buf, parent_buf, sizeof(parent_buf), &file_exists);
                     (void)file_exists;
-                    DEBUG_PRINT("HANDLER: pid=%d O_CREAT on non-existent '%s', checking parent '%s'\n", pid, path2, path_buf2);
+                    DEBUG_PRINT("HANDLER: pid=%d O_CREAT on non-existent '%s', checking parent '%s'\n", pid, path2, parent_buf);
                     free(path2);
                     path2 = NULL;
                     if (parent_resolved) {
-                        inputs[count].path = path_buf2;
+                        inputs[count].path = strdup(parent_buf);
                         inputs[count].access_mask = SOFT_ACCESS_WRITE;
                         count++;
                     }
                 } else {
+                    /* For dir entry modifications, check parent with WRITE */
+                    if (modifies_dir_entry) {
+                        char parent_buf[PATH_MAX];
+                        get_parent_path(path_buf2, parent_buf, sizeof(parent_buf));
+                        inputs[count].path = strdup(parent_buf);
+                        inputs[count].access_mask = SOFT_ACCESS_WRITE;
+                        count++;
+                    }
                     free(path2);
                     path2 = NULL;
-                    inputs[count].path = path_buf2;
+                    inputs[count].path = strdup(path_buf2);
                     inputs[count].access_mask = access_mask;
                     count++;
                 }
