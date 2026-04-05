@@ -276,8 +276,6 @@ static int trace_process(pid_t initial_pid) {
                 DEBUG_PRINT("PARENT: detaching child %d (parent_is_readonlybox=%d, parent_is_tracer=%d)\n",
                           (int)child_pid, parent_is_readonlybox, parent_is_tracer);
                 ptrace(PTRACE_DETACH, (pid_t)child_pid, 0, 0);
-                /* Also remove process state for the detached child */
-                syscall_remove_process_state((pid_t)child_pid);
             } else {
                 DEBUG_PRINT("PARENT: pid=%d (%s) fork/clone, resuming child %d\n", pid, parent_exe, (int)child_pid);
                 /* Set options on child for tracing */
@@ -684,11 +682,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Validate that rbox-wrap works before attempting pkexec or tracing */
-    if (validate_wrap_binary() < 0) {
-        fprintf(stderr, "%s: rbox-wrap validation failed - cannot proceed\n", g_progname);
-        free(cmd_path);
-        return 1;
+    /* Validate that rbox-wrap works before attempting pkexec or tracing.
+     * Skip if already validated after pkexec relaunch (internal_screened && root). */
+    if (!(internal_screened && geteuid() == 0)) {
+        if (validate_wrap_binary() < 0) {
+            fprintf(stderr, "%s: rbox-wrap validation failed - cannot proceed\n", g_progname);
+            free(cmd_path);
+            return 1;
+        }
     }
 
     if (!g_skip_pkexec && attach_pid == 0 && provided_uid == 0 && !privilege_has_ptrace_capability()) {

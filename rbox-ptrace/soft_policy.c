@@ -190,6 +190,10 @@ static int soft_policy_grow(soft_policy_t *policy) {
 
 int soft_policy_add_rule(soft_policy_t *policy, const char *path, soft_mode_t mode) {
     if (!policy || !path || path[0] == '\0') return -1;
+    if (strlen(path) > PATH_MAX) {
+        LOG_ERROR("Path too long (>%d bytes)", PATH_MAX);
+        return -1;
+    }
     if (path[0] != '/') {
         LOG_ERROR("Soft policy path '%s' is not absolute; ignoring", path);
         return -1;
@@ -275,6 +279,7 @@ static int path_matches(const char *rule_path, const char *target_path) {
 
 int soft_policy_check(const soft_policy_t *policy, const soft_path_mode_t *inputs, int *results, int count) {
     if (!policy || !inputs || !results) return -1;
+    if (count > MAX_SOFT_RULES) return -1;
 
     for (int i = 0; i < count; i++) {
         const char *path = inputs[i].path;

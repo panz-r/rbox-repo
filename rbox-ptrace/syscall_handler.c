@@ -1091,6 +1091,7 @@ static int block_syscall(pid_t pid, USER_REGS *regs) {
 
     if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
         perror("ptrace(SETREGS) for block_syscall");
+        kill(pid, SIGKILL);
         return -1;
     }
 
@@ -1437,10 +1438,6 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             free(command);
             return 0;
         }
-
-        /* Clear environment decision variables to prevent leakage to subsequent commands */
-        unsetenv("READONLYBOX_ENV_DECISIONS");
-        unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
 
         free(command);
         return 0;
@@ -1849,6 +1846,16 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
         return -1;
     }
 
+    /* Track which entries are being removed (for cleanup on success) */
+    int *removed_indices = calloc(env_count, sizeof(int));
+    if (!removed_indices) {
+        free(new_envp);
+        free(new_env_addrs);
+        DEBUG_PRINT("FILTER: failed to allocate removed_indices\n");
+        return -1;
+    }
+    int removed_count = 0;
+
     int new_idx = 0;
     for (int i = 0; i < env_count && state->execve_envp[i]; i++) {
         /* Get env var name */
@@ -1869,14 +1876,12 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
             }
         }
 
-        if (denied) {
-            /* Free the string for denied env vars to prevent memory leak */
-            free(state->execve_envp[i]);
-            state->execve_envp[i] = NULL;
-        } else {
+        if (!denied) {
             new_envp[new_idx] = state->execve_envp[i];
             new_env_addrs[new_idx] = state->execve_envp_addrs[i];
             new_idx++;
+        } else {
+            removed_indices[removed_count++] = i;
         }
     }
     new_envp[new_idx] = NULL;
@@ -1892,6 +1897,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
         DEBUG_PRINT("FILTER: failed to init memory context\n");
         free(new_envp);
         free(new_env_addrs);
+        free(removed_indices);
         return -1;
     }
 
@@ -1914,12 +1920,18 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
             DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
             free(new_envp);
             free(new_env_addrs);
+            free(removed_indices);
+            kill(pid, SIGKILL);
             return -1;
         }
 
-        /* Success - now update state */
+        /* Success - now update state and free removed entries */
+        for (int i = 0; i < removed_count; i++) {
+            free(old_envp[removed_indices[i]]);
+        }
         free(old_envp);
         free(old_env_addrs);
+        free(removed_indices);
         state->execve_envp = new_envp;
         state->execve_envp_addrs = new_env_addrs;
 
@@ -1933,6 +1945,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
         DEBUG_PRINT("FILTER: failed to allocate memory for envp\n");
         free(new_envp);
         free(new_env_addrs);
+        free(removed_indices);
         return -1;
     }
 
@@ -1944,6 +1957,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
             DEBUG_PRINT("FILTER: failed to write envp pointer %d\n", i);
             free(new_envp);
             free(new_env_addrs);
+            free(removed_indices);
             return -1;
         }
     }
@@ -1953,6 +1967,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
         DEBUG_PRINT("FILTER: failed to write envp NULL terminator\n");
         free(new_envp);
         free(new_env_addrs);
+        free(removed_indices);
         return -1;
     }
 
@@ -1968,12 +1983,18 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
         DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
         free(new_envp);
         free(new_env_addrs);
+        free(removed_indices);
+        kill(pid, SIGKILL);
         return -1;
     }
 
-    /* Success - now update state */
+    /* Success - now update state and free removed entries */
+    for (int i = 0; i < removed_count; i++) {
+        free(old_envp[removed_indices[i]]);
+    }
     free(old_envp);
     free(old_env_addrs);
+    free(removed_indices);
     state->execve_envp = new_envp;
     state->execve_envp_addrs = new_env_addrs;
 

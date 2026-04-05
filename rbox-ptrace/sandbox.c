@@ -637,6 +637,7 @@ static void scan_dir_for_external_symlinks(struct expansion_context *ctx, const 
         }
 
         if (!visited_set_contains(ctx, resolved)) {
+            visited_set_add(ctx, resolved);
             queue_push(ctx, resolved, access);
         }
     }
