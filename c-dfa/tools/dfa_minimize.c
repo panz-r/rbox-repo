@@ -694,20 +694,20 @@ static bool verify_minimized_dfa(build_dfa_state_t** dfa, int state_count) {
     return true;
 }
 
-int dfa_minimize(build_dfa_state_t** dfa, int state_count) {
+int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo) {
     if (state_count <= 0) return 0;
     int original = state_count;
-    
+
     // Phase 1: Structural optimization
     state_count = prune_dead_states(dfa, state_count);
 
     // Phase 2: Behavioral optimization
     int new_count;
-    if (current_algo == DFA_MIN_MOORE) {
+    if (algo == DFA_MIN_MOORE) {
         new_count = dfa_minimize_moore(dfa, state_count);
-    } else if (current_algo == DFA_MIN_BRZOZOWSKI) {
+    } else if (algo == DFA_MIN_BRZOZOWSKI) {
         new_count = dfa_minimize_brzozowski(dfa, state_count);
-    } else if (current_algo == DFA_MIN_SAT) {
+    } else if (algo == DFA_MIN_SAT) {
         new_count = dfa_minimize_sat(dfa, state_count);
     } else {
         new_count = dfa_minimize_hopcroft(dfa, state_count);

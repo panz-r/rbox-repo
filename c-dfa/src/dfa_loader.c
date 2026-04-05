@@ -168,6 +168,7 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
 
     if (fseek(file, binary_start, SEEK_SET) != 0) { fclose(file); return NULL; }
     void* data = malloc(binary_size);
+    if (!data) { fclose(file); return NULL; }
     size_t bytes_read = fread(data, 1, binary_size, file);
     fclose(file);
 

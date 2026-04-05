@@ -74,7 +74,6 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     if (mc <= 0) mc = DFA_MAX_CAPTURES;
     if (mc > DFA_MAX_CAPTURES) mc = DFA_MAX_CAPTURES;
     const uint8_t* d = (const uint8_t*)vd;
-    if (!d || !in || !res) return false;
     if (sz < DFA_HEADER_FIXED) return false;
 
     DBG("input='%.*s' len=%zu\n", (int)len, in, len);
@@ -124,7 +123,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     /* Walk states */
     uint32_t cur = init;
     uint32_t tr[MAX_TRACE]; int td = 0;
-    if (td < MAX_TRACE) tr[td++] = cur; else return false;
+    if (td < MAX_TRACE) tr[td++] = cur; /* else: trace overflow - captures may be incomplete */
     size_t pos = 0;
 
     while (pos < len) {
@@ -360,17 +359,17 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
 
 /* Capture access */
 int dfa_result_get_capture(const dfa_result_t* r, int i, const char** s, size_t* l) {
-    if (!r||i<0||i>=r->capture_count) return -1;
+    if (i<0||i>=r->capture_count) return -1;
     if (s) { *s=NULL; }
     if (l) { *l=r->captures[i].end-r->captures[i].start; }
     return r->captures[i].capture_id;
 }
 const char* dfa_result_get_capture_name(const dfa_result_t* r, int i) {
-    return (r&&i>=0&&i<r->capture_count) ? r->captures[i].name : NULL;
+    return (i>=0&&i<r->capture_count) ? r->captures[i].name : NULL;
 }
-int dfa_result_get_capture_count(const dfa_result_t* r) { return r ? r->capture_count : 0; }
+int dfa_result_get_capture_count(const dfa_result_t* r) { return r->capture_count; }
 bool dfa_result_get_capture_by_index(const dfa_result_t* r, int i, size_t* s, size_t* l) {
-    if (!r||i<0||i>=r->capture_count) return false;
+    if (i<0||i>=r->capture_count) return false;
     if (s) { *s=r->captures[i].start; }
     if (l) { *l=r->captures[i].end-r->captures[i].start; }
     return true;
@@ -378,7 +377,7 @@ bool dfa_result_get_capture_by_index(const dfa_result_t* r, int i, size_t* s, si
 bool dfa_result_get_capture_string(const dfa_result_t* r, int i,
     ATTR_UNUSED const void* dd, ATTR_UNUSED size_t ds, const char* in, const char** s, size_t* l, const char** nm)
 {
-    if (!r||i<0||i>=r->capture_count) return false;
+    if (i<0||i>=r->capture_count) return false;
     const dfa_capture_t* c = &r->captures[i];
     if (s) { *s=in+c->start; }
     if (l) { *l=c->end-c->start; }
@@ -389,7 +388,7 @@ bool dfa_result_get_capture_string(const dfa_result_t* r, int i,
 /* Identifier validation */
 bool dfa_eval_validate_id(const void* vd, size_t sz, const char* eid) {
     const uint8_t* d = (const uint8_t*)vd;
-    if (!d||sz<DFA_HEADER_FIXED||!eid) return false;
+    if (sz < DFA_HEADER_FIXED) return false;
     if (dfa_fmt_magic(d) != DFA_MAGIC) return false;
     int enc = dfa_fmt_encoding(d);
     uint8_t il = dfa_fmt_id_len(d);

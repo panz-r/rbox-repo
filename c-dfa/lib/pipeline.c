@@ -81,7 +81,7 @@ const char* pipeline_error_string(pipeline_error_t err) {
 }
 
 const char* pipeline_get_last_error(pipeline_t* p) {
-    if (!p || p->last_error_code == PIPELINE_OK) return NULL;
+    if (p->last_error_code == PIPELINE_OK) return NULL;
     return p->last_error;
 }
 
@@ -106,18 +106,27 @@ pipeline_t* pipeline_create(const pipeline_config_t* config) {
         p->config.optimize_layout = true;
     }
 
-    // Create temp file paths
-    snprintf(p->temp_nfa_file, sizeof(p->temp_nfa_file),
-             "/tmp/readonlybox_pipeline_%d.nfa", getpid());
-    snprintf(p->temp_dfa_file, sizeof(p->temp_dfa_file),
-             "/tmp/readonlybox_pipeline_%d.dfa", getpid());
+    // Create temp files atomically using mkstemp
+    snprintf(p->temp_nfa_file, sizeof(p->temp_nfa_file), "/tmp/readonlybox_nfa_XXXXXX");
+    snprintf(p->temp_dfa_file, sizeof(p->temp_dfa_file), "/tmp/readonlybox_dfa_XXXXXX");
+    int nfa_fd = mkstemp(p->temp_nfa_file);
+    int dfa_fd = mkstemp(p->temp_dfa_file);
+    if (nfa_fd < 0 || dfa_fd < 0) {
+        if (nfa_fd >= 0) close(nfa_fd);
+        if (dfa_fd >= 0) close(dfa_fd);
+        unlink(p->temp_nfa_file);
+        unlink(p->temp_dfa_file);
+        free(p);
+        return NULL;
+    }
+    close(nfa_fd);  // Close fd, path remains valid for later use
+    close(dfa_fd);
 
     p->last_error_code = PIPELINE_OK;
     return p;
 }
 
 void pipeline_destroy(pipeline_t* p) {
-    if (!p) return;
     nfa_builder_context_destroy(p->builder_ctx);
     nfa2dfa_context_destroy(p->nfa2dfa_ctx);
     free(p->binary_data);
@@ -132,8 +141,6 @@ void pipeline_destroy(pipeline_t* p) {
 // ============================================================================
 
 pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename) {
-    if (!p || !filename) return PIPELINE_ERROR;
-
     p->builder_ctx = nfa_builder_context_create();
     if (!p->builder_ctx) {
         set_error(p, PIPELINE_OOM, "Failed to create builder context");
@@ -155,7 +162,7 @@ pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename) {
 }
 
 pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
-    if (!p || !p->builder_ctx) return PIPELINE_INVALID_STATE;
+    if (!p->builder_ctx) return PIPELINE_INVALID_STATE;
 
     // Build alphabet before constructing NFA
     if (!nfa_alphabet_construct_from_patterns(p->builder_ctx, p->builder_ctx->current_input_file)) {
@@ -175,7 +182,7 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
 }
 
 pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
-    if (!p || !p->nfa2dfa_ctx) return PIPELINE_INVALID_STATE;
+    if (!p->nfa2dfa_ctx) return PIPELINE_INVALID_STATE;
 
     nfa_premin_options_t opts = nfa_premin_default_options();
     opts.verbose = p->config.verbose;
@@ -194,8 +201,6 @@ static void init_nfa_array(nfa2dfa_context_t* ctx) {
 }
 
 pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
-    if (!p) return PIPELINE_ERROR;
-
     // Initialize nfa2dfa context if needed
     if (!p->nfa2dfa_ctx) {
         p->nfa2dfa_ctx = nfa2dfa_context_create();
@@ -226,11 +231,10 @@ pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
 }
 
 pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
-    if (!p || !p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+    if (!p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
 
-    dfa_minimize_set_algorithm((dfa_min_algo_t)algo);
     p->nfa2dfa_ctx->dfa_state_count = dfa_minimize(
-        p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count);
+        p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, (dfa_min_algo_t)algo);
 
     // Re-flatten after minimization (except Brzozowski)
     if (algo != PIPELINE_MIN_BRZOZOWSKI) {
@@ -241,7 +245,7 @@ pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
 }
 
 pipeline_error_t pipeline_compress(pipeline_t* p) {
-    if (!p || !p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+    if (!p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
 
     compress_options_t opts = get_default_compress_options();
     opts.verbose = p->config.verbose;
@@ -251,7 +255,7 @@ pipeline_error_t pipeline_compress(pipeline_t* p) {
 }
 
 pipeline_error_t pipeline_optimize_layout(pipeline_t* p) {
-    if (!p || !p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+    if (!p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
 
     layout_options_t layout_opts = get_default_layout_options();
     int* order = optimize_dfa_layout(p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, &layout_opts);
@@ -269,13 +273,13 @@ pipeline_error_t pipeline_optimize_layout(pipeline_t* p) {
 // ============================================================================
 
 const uint8_t* pipeline_get_binary(pipeline_t* p, size_t* size) {
-    if (!p || !p->dfa_built) return NULL;
+    if (!p->dfa_built) return NULL;
     if (size) *size = p->binary_size;
     return p->binary_data;
 }
 
 pipeline_error_t pipeline_save_binary(pipeline_t* p, const char* filename) {
-    if (!p || !p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+    if (!p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
 
     write_dfa_file(p->nfa2dfa_ctx, filename);
     return PIPELINE_OK;
@@ -286,8 +290,6 @@ pipeline_error_t pipeline_save_binary(pipeline_t* p, const char* filename) {
 // ============================================================================
 
 pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file) {
-    if (!p || !pattern_file) return PIPELINE_ERROR;
-
     pipeline_error_t err;
 
     // 1. Parse patterns
@@ -368,7 +370,7 @@ pipeline_error_t pipeline_build(const char* pattern_file,
 // ============================================================================
 
 dfa_evaluator_t* dfa_eval_create(const uint8_t* binary_data, size_t size) {
-    if (!binary_data || size == 0) return NULL;
+    if (size == 0) return NULL;
 
     dfa_evaluator_t* e = calloc(1, sizeof(dfa_evaluator_t));
     if (!e) return NULL;
@@ -386,8 +388,6 @@ dfa_evaluator_t* dfa_eval_create(const uint8_t* binary_data, size_t size) {
 }
 
 dfa_evaluator_t* dfa_eval_load(const char* filename) {
-    if (!filename) return NULL;
-
     size_t size = 0;
     void* data = load_dfa_from_file(filename, &size);
     if (!data) return NULL;
@@ -406,14 +406,12 @@ dfa_evaluator_t* dfa_eval_load(const char* filename) {
 }
 
 void dfa_eval_destroy(dfa_evaluator_t* e) {
-    if (!e) return;
     if (e->owns_data) free(e->data);
     free(e);
 }
 
 dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input) {
     dfa_result_t result = {0};
-    if (!e || !input) return result;
 
     result.matched = dfa_eval(e->data, e->size, input, strlen(input), &result);
     return result;

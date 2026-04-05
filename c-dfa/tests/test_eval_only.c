@@ -82,59 +82,12 @@ static bool test_no_match(void) {
     return true;
 }
 
-static bool test_null_safety(void) {
-    TEST("dfa_eval NULL safety");
-
-    dfa_result_t result;
-
-    // NULL dfa_data
-    if (dfa_eval(NULL, 100, "cat", 3, &result)) {
-        FAIL("should return false for NULL dfa_data");
-        return false;
-    }
-
-    // NULL input
-    size_t dfa_size;
-    void* dfa_data = load_test_dfa(&dfa_size);
-    if (!dfa_data) { FAIL("load_test_dfa failed"); return false; }
-
-    if (dfa_eval(dfa_data, dfa_size, NULL, 3, &result)) {
-        free(dfa_data);
-        FAIL("should return false for NULL input");
-        return false;
-    }
-
-    // NULL result
-    if (dfa_eval(dfa_data, dfa_size, "cat", 3, NULL)) {
-        free(dfa_data);
-        FAIL("should return false for NULL result");
-        return false;
-    }
-
-    free(dfa_data);
-    PASS();
-    return true;
-}
-
 static bool test_validate_id(void) {
     TEST("dfa_eval_validate_id");
 
     size_t dfa_size;
     void* dfa_data = load_test_dfa(&dfa_size);
     if (!dfa_data) { FAIL("load_test_dfa failed"); return false; }
-
-    // NULL arguments should return false
-    if (dfa_eval_validate_id(NULL, 100, "test")) {
-        free(dfa_data);
-        FAIL("should return false for NULL dfa_data");
-        return false;
-    }
-
-    if (dfa_eval_validate_id(dfa_data, dfa_size, NULL)) {
-        free(dfa_data);
-        FAIL("should return false for NULL expected_id");
-        return false;
-    }
 
     // Correct identifier should match (this is the key test that catches offset bugs)
     if (!dfa_eval_validate_id(dfa_data, dfa_size, "dfa-eval-test-only")) {
@@ -204,50 +157,15 @@ static bool test_category_string(void) {
     return true;
 }
 
-static bool test_capture_string_null_safety(void) {
-    TEST("dfa_result_get_capture_string NULL safety");
-
-    dfa_result_t result;
-    memset(&result, 0, sizeof(result));
-    result.capture_count = 0;
-
-    const char* start;
-    size_t len;
-    const char* name;
-
-    // NULL result
-    if (dfa_result_get_capture_string(NULL, 0, NULL, 0, "input", &start, &len, &name)) {
-        FAIL("should return false for NULL result");
-        return false;
-    }
-
-    // Out of bounds index
-    if (dfa_result_get_capture_string(&result, 0, NULL, 0, "input", &start, &len, &name)) {
-        FAIL("should return false for out-of-bounds index");
-        return false;
-    }
-
-    // Negative index
-    if (dfa_result_get_capture_string(&result, -1, NULL, 0, "input", &start, &len, &name)) {
-        FAIL("should return false for negative index");
-        return false;
-    }
-
-    PASS();
-    return true;
-}
-
 int main(void) {
     printf("Eval-Only Library Tests (libdfa_eval.a)\n");
     printf("========================================\n\n");
 
     test_basic_eval();
     test_no_match();
-    test_null_safety();
     test_validate_id();
     test_capture_count();
     test_category_string();
-    test_capture_string_null_safety();
 
     printf("\n========================================\n");
     printf("SUMMARY: %d/%d passed\n", tests_passed, tests_passed + tests_failed);

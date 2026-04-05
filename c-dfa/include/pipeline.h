@@ -26,6 +26,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "cdfa_defines.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -89,7 +91,7 @@ pipeline_t* pipeline_create(const pipeline_config_t* config);
 /**
  * Free all resources associated with the pipeline.
  */
-void pipeline_destroy(pipeline_t* p);
+void pipeline_destroy(pipeline_t* p) ATTR_NONNULL(1);
 
 // ============================================================================
 // Pipeline Stages (incremental API)
@@ -98,37 +100,37 @@ void pipeline_destroy(pipeline_t* p);
 /**
  * Parse pattern file and load patterns into pipeline.
  */
-pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename);
+pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename) ATTR_NONNULL(1, 2);
 
 /**
  * Build NFA from parsed patterns.
  */
-pipeline_error_t pipeline_build_nfa(pipeline_t* p);
+pipeline_error_t pipeline_build_nfa(pipeline_t* p) ATTR_NONNULL(1);
 
 /**
  * Pre-minimize NFA (optional optimization).
  */
-pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p);
+pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) ATTR_NONNULL(1);
 
 /**
  * Convert NFA to DFA via subset construction.
  */
-pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p);
+pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) ATTR_NONNULL(1);
 
 /**
  * Minimize DFA using specified algorithm.
  */
-pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo);
+pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) ATTR_NONNULL(1);
 
 /**
  * Compress DFA transitions.
  */
-pipeline_error_t pipeline_compress(pipeline_t* p);
+pipeline_error_t pipeline_compress(pipeline_t* p) ATTR_NONNULL(1);
 
 /**
  * Optimize DFA layout for cache performance.
  */
-pipeline_error_t pipeline_optimize_layout(pipeline_t* p);
+pipeline_error_t pipeline_optimize_layout(pipeline_t* p) ATTR_NONNULL(1);
 
 // ============================================================================
 // Pipeline Results
@@ -137,13 +139,14 @@ pipeline_error_t pipeline_optimize_layout(pipeline_t* p);
 /**
  * Get pointer to internal binary data and its size.
  * Data is owned by the pipeline and valid until pipeline_destroy().
+ * size pointer may be NULL if size is not needed.
  */
-const uint8_t* pipeline_get_binary(pipeline_t* p, size_t* size);
+const uint8_t* pipeline_get_binary(pipeline_t* p, size_t* size) ATTR_NONNULL(1);
 
 /**
  * Save binary DFA to file.
  */
-pipeline_error_t pipeline_save_binary(pipeline_t* p, const char* filename);
+pipeline_error_t pipeline_save_binary(pipeline_t* p, const char* filename) ATTR_NONNULL(1, 2);
 
 // ============================================================================
 // Convenience Functions
@@ -152,7 +155,7 @@ pipeline_error_t pipeline_save_binary(pipeline_t* p, const char* filename);
 /**
  * Run full pipeline: parse → NFA → DFA → minimize → output.
  */
-pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file);
+pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file) ATTR_NONNULL(1, 2);
 
 /**
  * One-shot: build binary DFA from pattern file.
@@ -170,22 +173,22 @@ pipeline_error_t pipeline_build(const char* pattern_file,
  * Create evaluator from in-memory binary data.
  * Copies the data internally.
  */
-dfa_evaluator_t* dfa_eval_create(const uint8_t* binary_data, size_t size);
+dfa_evaluator_t* dfa_eval_create(const uint8_t* binary_data, size_t size) ATTR_NONNULL(1);
 
 /**
  * Load evaluator from binary DFA file.
  */
-dfa_evaluator_t* dfa_eval_load(const char* filename);
+dfa_evaluator_t* dfa_eval_load(const char* filename) ATTR_NONNULL(1);
 
 /**
  * Free evaluator resources.
  */
-void dfa_eval_destroy(dfa_evaluator_t* e);
+void dfa_eval_destroy(dfa_evaluator_t* e) ATTR_NONNULL(1);
 
 /**
  * Evaluate input string against loaded DFA.
  */
-dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input);
+dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input) ATTR_NONNULL_ALL;
 
 /**
  * Get human-readable category name.
@@ -205,7 +208,7 @@ const char* pipeline_error_string(pipeline_error_t err);
  * Get last error message from pipeline (if any).
  * Returns NULL if no error.
  */
-const char* pipeline_get_last_error(pipeline_t* p);
+const char* pipeline_get_last_error(pipeline_t* p) ATTR_NONNULL(1);
 
 #ifdef __cplusplus
 }

@@ -2103,7 +2103,7 @@ int main(int argc, char* argv[]) {
     
     if (minimize) {
         dfa_min_algo_t algo = dfa_minimize_get_algorithm();
-        dfa_state_count = dfa_minimize(dfa, dfa_state_count);
+        dfa_state_count = dfa_minimize(dfa, dfa_state_count, algo);
         // Don't re-flatten after Brzozowski - it already produces correct transitions
         if (algo != DFA_MIN_BRZOZOWSKI) {
             flatten_dfa(NULL);  // Re-flatten with new state indices after minimization

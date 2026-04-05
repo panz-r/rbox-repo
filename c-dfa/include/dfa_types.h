@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <cdfa_defines.h>
 
 /* Suppress pedantic warnings for flexible array members in C++ 
  * This is a GCC/Clang extension that is widely supported */
@@ -37,7 +38,7 @@
  * - Bits 0-7: State flags (DFA_STATE_*)
  * - Bits 8-15: Category mask (8-way parallel acceptance)
  *
- * Version 6 layout (with capture markers):
+ * Version 10 layout (with capture markers):
  * - Header (dfa_t)
  * - Identifier
  * - Name Table (metadata block)
@@ -57,7 +58,7 @@ typedef struct __attribute__((packed)) {
 /**
  * Complete DFA structure - can be memory-mapped directly
  *
- * Version 6 layout (with capture markers):
+ * Version 10 layout (with capture markers):
  * - Header (dfa_t): magic(4) + version(2) + state_count(2) + initial_state(4) +
  *                   accepting_mask(4) + flags(2) + identifier_length(1) + metadata_offset(4) = 23 bytes
  * - identifier (0-255 bytes, not null-terminated)
@@ -306,10 +307,10 @@ typedef struct {
  * Build-time DFA state management functions
  */
 build_dfa_state_t* build_dfa_state_create(int alphabet_size, int initial_nfa_capacity);
-void build_dfa_state_destroy(build_dfa_state_t* state);
-void build_dfa_state_destroy_array(build_dfa_state_t** states, int count);
+void build_dfa_state_destroy(build_dfa_state_t* state) ATTR_NONNULL(1);
+void build_dfa_state_destroy_array(build_dfa_state_t** states, int count) ATTR_NONNULL(1);
 bool build_dfa_state_grow_nfa(build_dfa_state_t* state, int additional);
-build_dfa_state_t* build_dfa_state_clone(const build_dfa_state_t* src);
+build_dfa_state_t* build_dfa_state_clone(const build_dfa_state_t* src) ATTR_NONNULL(1);
 
 #if defined(__cplusplus) && defined(__GNUC__)
 #pragma GCC diagnostic pop

@@ -1,5 +1,5 @@
 /**
- * Dynamic build_dfa_state_t implementation (Phase 6)
+ * Dynamic build_dfa_state_t implementation
  */
 
 #include "dfa_types.h"
@@ -64,7 +64,6 @@ build_dfa_state_t* build_dfa_state_create(int alphabet_size, int initial_nfa_cap
 }
 
 void build_dfa_state_destroy(build_dfa_state_t* state) {
-    if (!state) return;
     free(state->transitions);
     free(state->transitions_from_any);
     free(state->marker_offsets);
@@ -73,7 +72,6 @@ void build_dfa_state_destroy(build_dfa_state_t* state) {
 }
 
 void build_dfa_state_destroy_array(build_dfa_state_t** states, int count) {
-    if (!states) return;
     for (int i = 0; i < count; i++) {
         build_dfa_state_destroy(states[i]);
     }
@@ -100,8 +98,6 @@ bool build_dfa_state_grow_nfa(build_dfa_state_t* state, int additional) {
 }
 
 build_dfa_state_t* build_dfa_state_clone(const build_dfa_state_t* src) {
-    if (!src) return NULL;
-
     // Ensure we allocate enough capacity for all NFA states
     int required_nfa_capacity = src->nfa_state_count;
     if (required_nfa_capacity < src->nfa_state_capacity) {
