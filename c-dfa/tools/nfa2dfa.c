@@ -55,7 +55,7 @@ static void* alloc_or_abort(void* ptr, const char* msg) {
 // Global NFA/DFA storage - use larger static arrays for practical workloads
 // For truly astronomical state counts (>32K), a more sophisticated solution would be needed
 static nfa_state_t nfa[MAX_STATES];
-static build_dfa_state_t* dfa[MAX_STATES];  // Array of pointers (Phase 6: dynamic states)
+static build_dfa_state_t* dfa[MAX_STATES];
 static alphabet_entry_t alphabet[MAX_SYMBOLS];
 static int nfa_state_count = 0;
 static int dfa_state_count = 0;
@@ -130,7 +130,7 @@ static void collect_markers_from_states(ATTR_UNUSED nfa2dfa_context_t* ctx, cons
         int ns = states[i];
         if (ns < 0 || ns >= nfa_state_count) continue;
 
-        // Collect markers from pending_markers array (Phase 2: edge payloads)
+        // Collect markers from pending_markers array
         for (int m = 0; m < nfa[ns].pending_marker_count && count < MAX_MARKERS_PER_DFA_TRANSITION; m++) {
             if (nfa[ns].pending_markers[m].active) {
                 uint32_t marker = ((uint32_t)nfa[ns].pending_markers[m].pattern_id << 17) |
@@ -2000,8 +2000,7 @@ void load_nfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
                         nfa[s_idx].pattern_id = (uint16_t)p;
                     }
                 }
-                // Phase 2: markers are now stored as edge payloads, not on states
-                // BUT CaptureEnd and CaptureStart need special handling
+                // CaptureEnd and CaptureStart need special handling
                 else if (strncmp(line, "  CaptureEnd:", 12) == 0) {
                     int cap_id;
                     if (sscanf(line + 14, "%d", &cap_id) == 1) {

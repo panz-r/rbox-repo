@@ -33,15 +33,15 @@ const char* dfa_category_string(dfa_command_category_t cat) {
     return (i >= 0 && i <= 8) ? n[i] : "Invalid";
 }
 
-static void add_cap(dfa_result_t* r, int id, size_t s, size_t e) {
-    if (r->capture_count >= DFA_MAX_CAPTURES) return;
+static void add_cap(dfa_result_t* r, int id, size_t s, size_t e, int max_caps) {
+    if (r->capture_count >= max_caps) return;
     dfa_capture_t* c = &r->captures[r->capture_count++];
     c->start = s; c->end = e; c->capture_id = id;
     strcpy(c->name, "(unnamed)"); c->active = false; c->completed = true;
 }
 
 static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
-    uint16_t wpid, uint8_t cmask, cap_t* stk, int* sd, dfa_result_t* r)
+    uint16_t wpid, uint8_t cmask, cap_t* stk, int* sd, dfa_result_t* r, int max_caps)
 {
     if (!moff || moff >= sz) return;
     bool filt = (cmask && wpid != UINT16_MAX);
@@ -59,7 +59,7 @@ static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
         } else if (typ == MARKER_TYPE_END) {
             if (*sd > 0) {
                 for (int j=*sd-1; j>=0; j--) {
-                    if (stk[j].id==uid && !stk[j].end) { stk[j].end=pos; add_cap(r,uid,stk[j].start,pos); break; }
+                    if (stk[j].id==uid && !stk[j].end) { stk[j].end=pos; add_cap(r,uid,stk[j].start,pos,max_caps); break; }
                 }
             }
         }
@@ -71,7 +71,8 @@ bool dfa_eval(const void* data, size_t sz, const char* in, size_t len, dfa_resul
 }
 
 bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, dfa_result_t* res, int mc) {
-    (void)mc;
+    if (mc <= 0) mc = DFA_MAX_CAPTURES;
+    if (mc > DFA_MAX_CAPTURES) mc = DFA_MAX_CAPTURES;
     const uint8_t* d = (const uint8_t*)vd;
     if (!d || !in || !res) return false;
     if (sz < DFA_HEADER_FIXED) return false;
@@ -317,7 +318,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                         if (matched) {
                             uint32_t mk = dfa_r32(d, frl + dfa_rl_off_markers(enc));
                             if (mk && meta && mk+4 <= sz)
-                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res);
+                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res, mc);
                             break;
                         }
                     }
@@ -330,7 +331,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                         if (dfa_chain_target(chain, enc) == to) {
                             uint32_t mk = dfa_chain_markers(chain, enc);
                             if (mk && meta && mk+4 <= sz)
-                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res);
+                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res, mc);
                             break;
                         }
                         chain = dfa_chain_next(chain, enc);
@@ -342,7 +343,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                         if (dfa_fmt_rl_target(d, ro, enc) == to) {
                             uint32_t mk = dfa_fmt_rl_markers(d, ro, enc);
                             if (mk && meta && mk+4 <= sz)
-                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res);
+                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res, mc);
                             break;
                         }
                     }
@@ -351,7 +352,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
             /* Look up EOS marker from EOS section */
             uint32_t em = dfa_fmt_eos_lookup_marker(eos_section, enc, cur);
             if (em && meta && em+4 <= sz)
-                proc_markers(d, sz, em, pos, wpid, cat, stk, &sd, res);
+                proc_markers(d, sz, em, pos, wpid, cat, stk, &sd, res, mc);
         }
     }
     return res->matched;
@@ -375,9 +376,8 @@ bool dfa_result_get_capture_by_index(const dfa_result_t* r, int i, size_t* s, si
     return true;
 }
 bool dfa_result_get_capture_string(const dfa_result_t* r, int i,
-    const void* dd, size_t ds, const char* in, const char** s, size_t* l, const char** nm)
+    ATTR_UNUSED const void* dd, ATTR_UNUSED size_t ds, const char* in, const char** s, size_t* l, const char** nm)
 {
-    (void)dd; (void)ds;
     if (!r||i<0||i>=r->capture_count) return false;
     const dfa_capture_t* c = &r->captures[i];
     if (s) { *s=in+c->start; }

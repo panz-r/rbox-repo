@@ -51,6 +51,9 @@ bool dfa_result_get_capture_string(const dfa_result_t* result, int index,
 // Returns true if match, false if mismatch or invalid
 bool dfa_eval_validate_id(const void* dfa_data, size_t dfa_size, const char* expected_id);
 
+// Free DFA data loaded via load_dfa_from_file()
+void unload_dfa(void* data);
+
 const char* dfa_category_string(dfa_command_category_t category);
 
 #ifdef __cplusplus

@@ -251,7 +251,7 @@ pipeline_error_t pipeline_compress(pipeline_t* p) {
 }
 
 pipeline_error_t pipeline_optimize_layout(pipeline_t* p) {
-    if (!p || !p->nfa2dfa_ctx || !p->nfa2dfa_ctx->dfa) return PIPELINE_INVALID_STATE;
+    if (!p || !p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
 
     layout_options_t layout_opts = get_default_layout_options();
     int* order = optimize_dfa_layout(p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, &layout_opts);
