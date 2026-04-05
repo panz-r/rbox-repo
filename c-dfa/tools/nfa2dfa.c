@@ -65,9 +65,8 @@ static int max_states = MAX_STATES;
 // ============================================================================
 // NFA-TO-DFA CONVERTER STATE DOCUMENTATION
 // 
-// The following global variables hold the NFA-to-DFA conversion state.
-// For a production-quality refactor, these should be encapsulated in a context.
-// Current design: CLI tool that runs once and exits - globals are acceptable.
+// The following global variables hold legacy state. Context refactoring is in
+// progress. CLI tool design - not thread-safe.
 // ============================================================================
 
 // DFA Deduplication Hash Table
@@ -1363,8 +1362,16 @@ void write_dfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
     int* n_entries = calloc(dfa_state_count, sizeof(int));
     size_t* packed_sizes = calloc(dfa_state_count, sizeof(size_t));
     pack_entry_t* tmp_entries = malloc(MAX_SYMBOLS * sizeof(pack_entry_t));
-    uint8_t* packed_data = malloc(dfa_state_count * MAX_SYMBOLS * (rng_size > lit_size ? rng_size : lit_size));
-    size_t* packed_data_offset = malloc(dfa_state_count * sizeof(size_t));
+    
+    size_t element_size = (rng_size > lit_size ? rng_size : lit_size);
+    size_t packed_data_size = (size_t)dfa_state_count * MAX_SYMBOLS;
+    if (dfa_state_count > 0 && packed_data_size / dfa_state_count != MAX_SYMBOLS) {
+        FATAL("Integer overflow calculating packed data size");
+        exit(EXIT_FAILURE);
+    }
+    packed_data_size *= element_size;
+    uint8_t* packed_data = malloc(packed_data_size);
+    size_t* packed_data_offset = malloc((size_t)dfa_state_count * sizeof(size_t));
     size_t packed_data_used = 0;
     
     // Chain encoding data
@@ -1372,9 +1379,14 @@ void write_dfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
     int* chain_counts = NULL;
     size_t* chain_sizes = NULL;
     if (flag_chain) {
-        state_chains = calloc(dfa_state_count * MAX_CHAINS_PER_STATE, sizeof(chain_entry_t));
-        chain_counts = calloc(dfa_state_count, sizeof(int));
-        chain_sizes = calloc(dfa_state_count, sizeof(size_t));
+        size_t chain_count_size = (size_t)dfa_state_count * MAX_CHAINS_PER_STATE;
+        if (dfa_state_count > 0 && chain_count_size / dfa_state_count != MAX_CHAINS_PER_STATE) {
+            FATAL("Integer overflow calculating chain data size");
+            exit(EXIT_FAILURE);
+        }
+        state_chains = calloc(chain_count_size, sizeof(chain_entry_t));
+        chain_counts = calloc((size_t)dfa_state_count, sizeof(int));
+        chain_sizes = calloc((size_t)dfa_state_count, sizeof(size_t));
     }
     
     for (int i = 0; i < dfa_state_count; i++) {
@@ -1723,14 +1735,10 @@ void write_dfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
             uint16_t flags = dfa[i]->flags;
             DFA_SET_RULE_ENC(flags, rule_encoding[i]);
             dfa_fmt_set_st_flags(raw, so, enc, flags);
-            /* Pattern ID moved to Pattern ID section in V10 */
-            /* EOS data moved to separate section in V9 */
             dfa_fmt_set_st_first(raw, so, enc, (uint16_t)n_entries[i]);
         } else {
             int cof = dfa_st_off_flags_c(enc);
             dfa_w16(raw, so + cof, dfa[i]->flags);
-            /* Pattern ID moved to Pattern ID section in V10 */
-            /* EOS data moved to separate section in V9 */
             dfa_wwp(raw, so + cof + 2, enc, 0);  /* first */
         }
     }

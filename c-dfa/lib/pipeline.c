@@ -106,16 +106,26 @@ pipeline_t* pipeline_create(const pipeline_config_t* config) {
         p->config.optimize_layout = true;
     }
 
-    // Create temp files atomically using mkstemp
-    snprintf(p->temp_nfa_file, sizeof(p->temp_nfa_file), "/tmp/readonlybox_nfa_XXXXXX");
-    snprintf(p->temp_dfa_file, sizeof(p->temp_dfa_file), "/tmp/readonlybox_dfa_XXXXXX");
+    // Create process-private temp directory using mkdtemp
+    char temp_dir_template[] = "/tmp/readonlybox.XXXXXX";
+    if (mkdtemp(temp_dir_template) == NULL) {
+        free(p);
+        return NULL;
+    }
+    
+    // Create temp files inside the private directory
+    snprintf(p->temp_nfa_file, sizeof(p->temp_nfa_file), "%s/nfa_XXXXXX", temp_dir_template);
+    snprintf(p->temp_dfa_file, sizeof(p->temp_dfa_file), "%s/dfa_XXXXXX", temp_dir_template);
     int nfa_fd = mkstemp(p->temp_nfa_file);
     int dfa_fd = mkstemp(p->temp_dfa_file);
     if (nfa_fd < 0 || dfa_fd < 0) {
+        // Close any successfully opened fd
         if (nfa_fd >= 0) close(nfa_fd);
         if (dfa_fd >= 0) close(dfa_fd);
-        unlink(p->temp_nfa_file);
-        unlink(p->temp_dfa_file);
+        // Unlink any files that were successfully created
+        if (nfa_fd >= 0) unlink(p->temp_nfa_file);
+        if (dfa_fd >= 0) unlink(p->temp_dfa_file);
+        unlink(temp_dir_template);
         free(p);
         return NULL;
     }
@@ -130,9 +140,17 @@ void pipeline_destroy(pipeline_t* p) {
     nfa_builder_context_destroy(p->builder_ctx);
     nfa2dfa_context_destroy(p->nfa2dfa_ctx);
     free(p->binary_data);
-    // Clean up temp files
+    // Clean up temp files and directory
     unlink(p->temp_nfa_file);
     unlink(p->temp_dfa_file);
+    // Remove parent temp directory (extract dir from temp_nfa_file path)
+    char temp_dir[256];
+    snprintf(temp_dir, sizeof(temp_dir), "%s", p->temp_nfa_file);
+    char* last_slash = strrchr(temp_dir, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        rmdir(temp_dir);
+    }
     free(p);
 }
 

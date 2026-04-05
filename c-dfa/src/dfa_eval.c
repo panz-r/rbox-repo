@@ -5,19 +5,9 @@
 #include <stdbool.h>
 
 /**
- * DFA Evaluator - v9/v10 adaptive-width reader
+ * DFA Evaluator - v10 adaptive-width reader
  * All reads via dfa_fmt_* with runtime encoding. No struct casts.
  */
-
-#ifndef DFA_EVAL_DEBUG
-#define DFA_EVAL_DEBUG 0
-#endif
-
-#if DFA_EVAL_DEBUG
-#define DBG(fmt, ...) fprintf(stderr, "[EVAL] " fmt, ##__VA_ARGS__)
-#else
-#define DBG(...) ((void)0)
-#endif
 
 #define MAX_TRACE    16384
 #define MAX_CAP_STK  32
@@ -37,7 +27,8 @@ static void add_cap(dfa_result_t* r, int id, size_t s, size_t e, int max_caps) {
     if (r->capture_count >= max_caps) return;
     dfa_capture_t* c = &r->captures[r->capture_count++];
     c->start = s; c->end = e; c->capture_id = id;
-    strcpy(c->name, "(unnamed)"); c->active = false; c->completed = true;
+    snprintf(c->name, sizeof(c->name), "(unnamed)");
+    c->active = false; c->completed = true;
 }
 
 static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
@@ -76,7 +67,6 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     const uint8_t* d = (const uint8_t*)vd;
     if (sz < DFA_HEADER_FIXED) return false;
 
-    DBG("input='%.*s' len=%zu\n", (int)len, in, len);
     memset(res, 0, sizeof(*res));
     res->category = DFA_CMD_UNKNOWN;
 
@@ -92,11 +82,11 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint32_t init = dfa_fmt_initial_state(d);
     if ((size_t)init + DFA_STATE_SIZE_TC(enc, 0) > sz) return false;  // min state size
 
-    /* Get EOS section pointer (V9+) - validate section header is within bounds */
+    /* Get EOS section pointer - validate section header is within bounds */
     uint32_t eos_off = dfa_fmt_eos_offset(d);
     const uint8_t* eos_section = (eos_off > 0 && eos_off + 4 <= sz) ? d + eos_off : NULL;
 
-    /* Get Pattern ID section pointer (V10+) - validate section header is within bounds */
+    /* Get Pattern ID section pointer - validate section header is within bounds */
     uint32_t pid_off = dfa_fmt_pid_offset(d);
     const uint8_t* pid_section = (pid_off > 0 && pid_off + 4 <= sz) ? d + pid_off : NULL;
 
@@ -132,7 +122,6 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         uint32_t rl = dfa_fmt_st_rules(d, cur, enc);
         uint16_t flags = dfa_fmt_st_flags_tc(d, cur, enc, tc);
         int renc = DFA_GET_RULE_ENC(flags);
-        DBG("pos=%zu c='%c' st=%u tc=%u rl=%u renc=%d\n", pos, c, cur, tc, rl, renc);
 
         if ((size_t)cur < hs || (size_t)cur + DFA_STATE_SIZE_TC(enc, tc) > sz) return false;
 
@@ -266,7 +255,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint16_t cur_tc = dfa_fmt_st_tc(d, cur, enc);
     uint16_t src_fl = dfa_fmt_st_flags_tc(d, cur, enc, cur_tc);
     uint8_t src_cat = DFA_GET_CATEGORY_MASK(src_fl);
-    /* Look up pattern_id from Pattern ID section (V10) */
+    /* Look up pattern_id from Pattern ID section */
     uint16_t wpid = dfa_fmt_pid_lookup(pid_section, enc, cur);
 
     /* Look up EOS target from EOS section */

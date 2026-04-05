@@ -26,8 +26,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "cdfa_defines.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif

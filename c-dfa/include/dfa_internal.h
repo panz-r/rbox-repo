@@ -24,7 +24,6 @@
 
 #include "dfa_types.h"
 #include "dfa_format.h"
-#include "cdfa_defines.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>

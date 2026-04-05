@@ -1201,7 +1201,7 @@ static void parse_advanced_pattern(nfa_builder_context_t* ctx, const char* line)
 
     while (*line == ' ' || *line == '\t') line++;
 
-    // Check for scoped fragment definition (deprecated)
+    // Check for scoped fragment definition
     if (strchr(line, '=') != NULL) {
         char* eq = strchr(line, '=');
         char* name_start = (char*)line;

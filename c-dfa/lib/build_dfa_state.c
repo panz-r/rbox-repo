@@ -116,7 +116,6 @@ build_dfa_state_t* build_dfa_state_clone(const build_dfa_state_t* src) {
     dst->eos_marker_offset = src->eos_marker_offset;
     dst->first_accepting_pattern = src->first_accepting_pattern;
     dst->reachable_accepting_patterns = src->reachable_accepting_patterns;
-    dst->nfa_state_count = src->nfa_state_count;
     dst->identity_hash = src->identity_hash;
 
     // Copy arrays
@@ -125,8 +124,15 @@ build_dfa_state_t* build_dfa_state_clone(const build_dfa_state_t* src) {
         memcpy(dst->transitions_from_any, src->transitions_from_any, sizeof(bool) * src->alphabet_size);
         memcpy(dst->marker_offsets, src->marker_offsets, sizeof(uint32_t) * src->alphabet_size);
     }
+
+    // Copy NFA states - clamp to actual capacity in case invariant is violated
     if (src->nfa_state_count > 0) {
-        memcpy(dst->nfa_states, src->nfa_states, sizeof(int) * src->nfa_state_count);
+        int safe_count = src->nfa_state_count;
+        if (safe_count > src->nfa_state_capacity) {
+            safe_count = src->nfa_state_capacity;  // Clamp to allocation
+        }
+        memcpy(dst->nfa_states, src->nfa_states, sizeof(int) * safe_count);
+        dst->nfa_state_count = safe_count;
     }
 
     return dst;

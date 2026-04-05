@@ -23,7 +23,6 @@
  */
 
 #include "dfa_types.h"
-#include "cdfa_defines.h"
 #include <stddef.h>
 
 #ifdef __cplusplus

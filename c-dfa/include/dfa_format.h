@@ -98,20 +98,7 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
  * Constants
  * ============================================================================ */
 
-#define DFA_MAGIC          0xDFA1DFA1
-#define DFA_VERSION        10
-
-#define DFA_RULE_LITERAL       0
-#define DFA_RULE_RANGE         1
-#define DFA_RULE_LITERAL_2     2
-#define DFA_RULE_LITERAL_3     3
-#define DFA_RULE_RANGE_LITERAL 4
-#define DFA_RULE_DEFAULT       5
-#define DFA_RULE_NOT_LITERAL   6
-#define DFA_RULE_NOT_RANGE     7
-#define DFA_RULE_BITMASK       8   /* match bytes in mask → target */
-#define DFA_RULE_NOT_BITMASK   9   /* match bytes NOT in mask → target */
-#define DFA_RULE_CHAIN         10  /* match chain of bytes → target */
+/* DFA_MAGIC, DFA_VERSION, DFA_STATE_*, DFA_RULE_*, DFA_RULE_ENC_* defined in cdfa_defines.h */
 
 /* Bitmask rule size: type(1) + mask(32) + target(OW) + markers(4) */
 #define DFA_RULE_BITMASK_SIZE(enc) (1 + 32 + dfa_owb(enc) + 4)
@@ -232,24 +219,8 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
 static inline int dfa_bm_off_target(ATTR_UNUSED int enc)  { return 33; }
 static inline int dfa_bm_off_markers(int enc) { return 33 + dfa_owb(enc); }
 
-#define DFA_STATE_ACCEPTING      0x0001
-#define DFA_STATE_CATEGORY_MASK  0xFF00  /* bits 8-15: 8-bit category mask */
-#define DFA_STATE_RULE_ENC_MASK  0x00C0  /* bits 6-7: rule encoding selector */
-#define DFA_STATE_RULE_ENC_SHIFT 6
-
-/* Rule encoding values (in bits 6-7 of state flags)
- *
- * NORMAL:  fixed-stride rules [type(1) d1(1) d2(1) d3(1) target(OW) markers(4)]
- * BITMASK: 32-byte bitmask per target [type(1) mask(32) target(OW) markers(4)]
- * PACKED:  variable-stride entries [literal: 0b0LLLLLLL target(OW)]
- *                                    [range:   0b1SSSSSSS end(1) target(OW)]
- * CHAIN:   multi-character literal chains [len(2) bytes... target(OW) markers(4)]
- *          followed by [default_target(OW)]
- */
-#define DFA_RULE_ENC_NORMAL    0  /* Fixed-stride rules */
-#define DFA_RULE_ENC_BITMASK   1  /* Bitmask rules (one per target) */
-#define DFA_RULE_ENC_PACKED    2  /* Variable-stride packed entries (no markers) */
-#define DFA_RULE_ENC_CHAIN     3  /* Multi-character literal chains */
+/* DFA_STATE_*, DFA_STATE_CATEGORY_MASK, DFA_STATE_RULE_ENC_* defined in cdfa_defines.h */
+/* DFA_RULE_ENC_* defined in cdfa_defines.h */
 
 #define DFA_GET_CATEGORY_MASK(flags) ((uint8_t)(((flags) >> 8) & 0xFF))
 #define DFA_SET_CATEGORY_MASK(flags, mask) \
@@ -293,8 +264,6 @@ static inline int dfa_st_off_flags(int enc) { return dfa_cwb(enc) + dfa_owb(enc)
 
 /* Compact state field offsets (tc == 0, no rules_offset) */
 static inline int dfa_st_off_flags_c(int enc) { return dfa_cwb(enc); }
-/* pattern_id removed from state header in V10 - now in Pattern ID section */
-/* eos_target and eos_marker removed from state header in V9 - now in EOS section */
 static inline int dfa_st_off_first(int enc) { return dfa_cwb(enc) + dfa_owb(enc) + 2; }
 
 /* ============================================================================
@@ -439,16 +408,12 @@ static inline void dfa_fmt_set_pid_offset(uint8_t* d, int enc, uint32_t v) {
 static inline uint16_t dfa_fmt_st_tc(const uint8_t* d, size_t so, int enc)    { return dfa_rcw(d, so, enc); }
 static inline uint32_t dfa_fmt_st_rules(const uint8_t* d, size_t so, int enc) { return dfa_row(d, so + dfa_st_off_rules(enc), enc); }
 static inline uint16_t dfa_fmt_st_flags(const uint8_t* d, size_t so, int enc) { return dfa_r16(d, so + dfa_st_off_flags(enc)); }
-/* pattern_id moved to separate Pattern ID section in V10 */
-/* eos_target and eos_marker moved to separate EOS section in V9 */
 static inline uint16_t dfa_fmt_st_first(const uint8_t* d, size_t so, int enc) { return dfa_rpw(d, so + dfa_st_off_first(enc), enc); }
 
 /* TC-aware state field offsets: handle compact (tc=0) vs full (tc>0) */
 static inline int dfa_st_foff_flags(int enc, uint16_t tc) {
     return dfa_cwb(enc) + (tc > 0 ? dfa_owb(enc) : 0);
 }
-/* pattern_id removed from state header in V10 - now in Pattern ID section */
-/* eos_target and eos_marker removed from state header in V9 - now in EOS section */
 static inline int dfa_st_foff_first(int enc, uint16_t tc) {
     return dfa_st_foff_flags(enc, tc) + 2;
 }
@@ -457,8 +422,6 @@ static inline int dfa_st_foff_first(int enc, uint16_t tc) {
 static inline uint16_t dfa_fmt_st_flags_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
     return dfa_r16(d, so + dfa_st_foff_flags(enc, tc));
 }
-/* pattern_id moved to Pattern ID section in V10 */
-/* eos_target and eos_marker moved to EOS section in V9 */
 static inline uint16_t dfa_fmt_st_first_tc(const uint8_t* d, size_t so, int enc, uint16_t tc) {
     return dfa_rpw(d, so + dfa_st_foff_first(enc, tc), enc);
 }
@@ -515,8 +478,6 @@ static inline uint16_t dfa_fmt_pid_lookup(const uint8_t* pid, int enc, uint32_t 
 static inline void dfa_fmt_set_st_tc(uint8_t* d, size_t so, int enc, uint16_t v)    { dfa_wwc(d, so, enc, v); }
 static inline void dfa_fmt_set_st_rules(uint8_t* d, size_t so, int enc, uint32_t v) { dfa_wow(d, so + dfa_st_off_rules(enc), enc, v); }
 static inline void dfa_fmt_set_st_flags(uint8_t* d, size_t so, int enc, uint16_t v) { dfa_w16(d, so + dfa_st_off_flags(enc), v); }
-/* pattern_id moved to Pattern ID section in V10 */
-/* eos_target and eos_marker moved to EOS section in V9 */
 static inline void dfa_fmt_set_st_first(uint8_t* d, size_t so, int enc, uint16_t v) { dfa_wwp(d, so + dfa_st_off_first(enc), enc, v); }
 
 /* ============================================================================

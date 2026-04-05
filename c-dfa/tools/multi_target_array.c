@@ -12,31 +12,37 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <limits.h>
 #include <errno.h>
 #include "../include/multi_target_array.h"
 
 /**
- * Check allocation result and abort on failure
+ * Checked allocation - returns NULL on failure
  */
-static void* alloc_or_abort(void* ptr, const char* msg) {
-    if (ptr == NULL) {
-        FATAL("%s", msg);
-        exit(EXIT_FAILURE);
-    }
+static void* checked_malloc(size_t size) {
+    if (size == 0) return NULL;
+    if (size > SIZE_MAX) return NULL;
+    void* ptr = malloc(size);
     return ptr;
 }
 
 static mta_entry_t* mta_create_entry(int symbol_id) {
-    mta_entry_t* entry = alloc_or_abort(malloc(sizeof(mta_entry_t)), "Failed to allocate mta_entry_t");
+    mta_entry_t* entry = checked_malloc(sizeof(mta_entry_t));
+    if (entry == NULL) return NULL;
 
     entry->symbol_id = symbol_id;
     entry->target_count = 0;
     entry->target_capacity = INITIAL_TARGET_CAPACITY;
     entry->dirty = true;
     entry->cached_csv = NULL;
-    entry->marker_count = 0;  // Initialize marker count
-    entry->targets = alloc_or_abort(malloc(INITIAL_TARGET_CAPACITY * sizeof(int)), 
-                                    "Failed to allocate initial targets array");
+    entry->marker_count = 0;
+    
+    size_t targets_size = (size_t)INITIAL_TARGET_CAPACITY * sizeof(int);
+    entry->targets = checked_malloc(targets_size);
+    if (entry->targets == NULL) {
+        free(entry);
+        return NULL;
+    }
     
     return entry;
 }
@@ -50,8 +56,15 @@ static void mta_free_entry(mta_entry_t* entry) {
 }
 
 static bool mta_grow_targets(mta_entry_t* entry) {
+    if (entry->target_capacity > INT_MAX / TARGET_GROWTH_FACTOR) {
+        return false;  // Overflow would happen
+    }
     int new_capacity = entry->target_capacity * TARGET_GROWTH_FACTOR;
-    int* new_targets = realloc(entry->targets, new_capacity * sizeof(int));
+    size_t new_size = (size_t)new_capacity * sizeof(int);
+    if (new_capacity > 0 && new_size > SIZE_MAX) {
+        return false;  // Overflow
+    }
+    int* new_targets = realloc(entry->targets, new_size);
     if (new_targets == NULL) return false;
 
     entry->targets = new_targets;
@@ -99,7 +112,7 @@ bool mta_add_target(multi_target_array_t* arr, int symbol_id, int target_state) 
             if (arr->first_targets[symbol_id] == target_state) return true;
 
             mta_entry_t* new_entry = mta_create_entry(symbol_id);
-            // new_entry is already checked by alloc_or_abort inside mta_create_entry
+            if (new_entry == NULL) return false;
 
             new_entry->targets[0] = arr->first_targets[symbol_id];
             new_entry->targets[1] = target_state;
@@ -111,10 +124,15 @@ bool mta_add_target(multi_target_array_t* arr, int symbol_id, int target_state) 
             // Add to active list for iteration
             if (arr->entry_count >= arr->entry_capacity) {
                 int new_cap = arr->entry_capacity == 0 ? 8 : arr->entry_capacity * 2;
-                mta_entry_t** next_active = realloc(arr->active_entries, new_cap * sizeof(mta_entry_t*));
+                if (arr->entry_capacity > 0 && new_cap <= arr->entry_capacity) {
+                    return false;  // Overflow
+                }
+                size_t new_size = (size_t)new_cap * sizeof(mta_entry_t*);
+                if (new_size > SIZE_MAX) return false;
+                mta_entry_t** next_active = realloc(arr->active_entries, new_size);
                 if (next_active == NULL) {
-                    FATAL("Failed to grow multi-target array");
-                    exit(EXIT_FAILURE);
+                    mta_free_entry(new_entry);
+                    return false;
                 }
                 arr->active_entries = next_active;
                 arr->entry_capacity = new_cap;
@@ -140,7 +158,7 @@ bool mta_add_target(multi_target_array_t* arr, int symbol_id, int target_state) 
     // Add new target
     if (entry->target_count >= entry->target_capacity) {
         if (!mta_grow_targets(entry)) {
-            alloc_or_abort(NULL, "Failed to grow targets array");
+            return false;
         }
     }
 
@@ -158,7 +176,8 @@ static void mta_update_cache(mta_entry_t* entry) {
     if (!entry->dirty && entry->cached_csv != NULL) return;
 
     if (entry->cached_csv == NULL) {
-        entry->cached_csv = alloc_or_abort(malloc(MAX_TARGET_BUFFER), "Failed to allocate CSV cache");
+        entry->cached_csv = checked_malloc(MAX_TARGET_BUFFER);
+        if (entry->cached_csv == NULL) return;  // Cache allocation failed, skip caching
     }
 
     char* p = entry->cached_csv;
@@ -277,8 +296,19 @@ bool mta_add_marker(multi_target_array_t* arr, int symbol_id,
     if (entry == NULL && !arr->has_first_target[symbol_id]) {
         // No transition exists for this symbol, create a placeholder entry
         entry = mta_create_entry(symbol_id);
+        if (entry == NULL) return false;
+        
         int new_cap = arr->entry_capacity == 0 ? 8 : arr->entry_capacity * 2;
-        mta_entry_t** next_active = realloc(arr->active_entries, new_cap * sizeof(mta_entry_t*));
+        if (arr->entry_capacity > 0 && new_cap <= arr->entry_capacity) {
+            mta_free_entry(entry);
+            return false;  // Overflow
+        }
+        size_t new_size = (size_t)new_cap * sizeof(mta_entry_t*);
+        if (new_size > SIZE_MAX) {
+            mta_free_entry(entry);
+            return false;
+        }
+        mta_entry_t** next_active = realloc(arr->active_entries, new_size);
         if (next_active == NULL) {
             mta_free_entry(entry);
             return false;
@@ -290,11 +320,22 @@ bool mta_add_marker(multi_target_array_t* arr, int symbol_id,
     } else if (entry == NULL && arr->has_first_target[symbol_id]) {
         // Single-target transition exists, need to upgrade
         entry = mta_create_entry(symbol_id);
+        if (entry == NULL) return false;
+        
         entry->targets[0] = arr->first_targets[symbol_id];
         entry->target_count = 1;
 
         int new_cap = arr->entry_capacity == 0 ? 8 : arr->entry_capacity * 2;
-        mta_entry_t** next_active = realloc(arr->active_entries, new_cap * sizeof(mta_entry_t*));
+        if (arr->entry_capacity > 0 && new_cap <= arr->entry_capacity) {
+            mta_free_entry(entry);
+            return false;  // Overflow
+        }
+        size_t new_size = (size_t)new_cap * sizeof(mta_entry_t*);
+        if (new_size > SIZE_MAX) {
+            mta_free_entry(entry);
+            return false;
+        }
+        mta_entry_t** next_active = realloc(arr->active_entries, new_size);
         if (next_active == NULL) {
             mta_free_entry(entry);
             return false;

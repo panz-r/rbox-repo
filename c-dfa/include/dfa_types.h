@@ -81,24 +81,17 @@ typedef struct __attribute__((packed)) {
 
 /**
  * DFA State Flags
- * NOTE: DFA_STATE_ACCEPTING, DFA_GET_CATEGORY_MASK, DFA_SET_CATEGORY_MASK,
- * DFA_MAGIC, and MARKER_SENTINEL are defined in dfa_format.h
+ * Defined in cdfa_defines.h - DFA_STATE_ACCEPTING, DFA_STATE_ERROR, etc.
  */
-#define DFA_STATE_ACCEPTING      0x0001  // This is an accepting state
-#define DFA_STATE_ERROR          0x0002  // This is an error state
-#define DFA_STATE_DEAD           0x0004  // No transitions from this state
-#define DFA_STATE_CAPTURE_START  0x0008  // State has CAPTURE_START marker
-#define DFA_STATE_CAPTURE_END    0x0010  // State has CAPTURE_END marker
-#define DFA_STATE_CAPTURE_DEFER  0x0020  // Defer CAPTURE_END until leaving this state
 
 /**
  * Magic number for DFA validation
- * NOTE: DFA_MAGIC is defined in dfa_format.h
+ * Defined in cdfa_defines.h - DFA_MAGIC
  */
 
 /**
  * Current DFA version
- * NOTE: DFA_VERSION is defined in dfa_format.h (single source of truth)
+ * Defined in cdfa_defines.h - DFA_VERSION
  */
 
 /**
@@ -112,16 +105,9 @@ typedef struct __attribute__((packed)) {
 #define DFA_MAX_TRANSITIONS 256
 
 /**
- * Rule types for V5 format
+ * Rule types
+ * Defined in cdfa_defines.h - DFA_RULE_LITERAL, DFA_RULE_RANGE, etc.
  */
-#define DFA_RULE_LITERAL        0  // Match data1
-#define DFA_RULE_RANGE          1  // Match data1..data2
-#define DFA_RULE_LITERAL_2      2  // Match data1 or data2
-#define DFA_RULE_LITERAL_3      3  // Match data1 or data2 or data3
-#define DFA_RULE_RANGE_LITERAL  4  // Match data1..data2 or data3
-#define DFA_RULE_DEFAULT        5  // Match anything
-#define DFA_RULE_NOT_LITERAL    6  // Match anything NOT data1
-#define DFA_RULE_NOT_RANGE      7  // Match anything NOT in data1..data2
 
 /**
  * Compact Rule entry (12 bytes on 32-bit systems, may vary)

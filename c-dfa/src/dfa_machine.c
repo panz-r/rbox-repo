@@ -57,9 +57,11 @@ const char* dfa_machine_get_identifier(const dfa_machine_t* m) {
 }
 
 uint16_t dfa_machine_get_version(const dfa_machine_t* m) {
+    if (!m->dfa) return 0;
     return m->dfa->version;
 }
 
 uint16_t dfa_machine_get_state_count(const dfa_machine_t* m) {
+    if (!m->dfa) return 0;
     return m->dfa->state_count;
 }

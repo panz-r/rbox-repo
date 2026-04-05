@@ -30,7 +30,7 @@ typedef struct {
     int identical_merged;     // States merged by identical state detection
     int prefix_merged;        // States merged by bidirectional merging
     int final_deduped;        // Final states deduplicated
-    int suffix_merged;        // States merged by suffix merging (deprecated)
+    int suffix_merged;        // States merged by suffix merging
     int sat_merged;           // States merged via SAT verification
     int sat_optimal;          // States merged via SAT optimal selection
 } nfa_premin_stats_t;

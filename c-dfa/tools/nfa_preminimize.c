@@ -97,6 +97,10 @@ static void sig_cache_init(int capacity) {
     
     // Allocate new cache
     sig_cache = calloc(capacity, sizeof(signature_cache_entry_t));
+    if (!sig_cache) {
+        sig_cache_capacity = 0;  // OOM - cache disabled
+        return;
+    }
     sig_cache_capacity = capacity;
 }
 
@@ -639,7 +643,7 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
         
         nfa_state_t* state = &nfa[s];
         
-        // Count single transitions (older format, may be removed in future)
+        // Count single transitions (legacy format)
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int target = state->transitions[sym];
             if (target >= 0 && !dead_states[target]) {
@@ -674,7 +678,7 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
         
         nfa_state_t* state = &nfa[s];
         
-        // Single transitions (older format)
+        // Single transitions (legacy format)
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int target = state->transitions[sym];
             if (target >= 0 && !dead_states[target]) {
@@ -1330,7 +1334,7 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
         int single_trans_count = 0;  // Count from transitions[] array
         int mta_trans_count = 0;     // Count from multi_targets
         
-        // Check single transitions (old format)
+        // Check single transitions (legacy format)
         for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
             if (state->transitions[sym] >= 0) {
                 if (out_count == 0) {
@@ -1404,7 +1408,7 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
         int out_symbol = -1;
         int out_count = 0;
         
-        // Check single transitions (old format)
+        // Check single transitions (legacy format)
         for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
             if (state->transitions[sym] >= 0) {
                 if (out_count == 0) {
