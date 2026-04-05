@@ -256,7 +256,7 @@ static bool build_inverse_graph(build_dfa_state_t** dfa, int state_count, invers
 // ============================================================================
 
 static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
-    // Phase 1: Forward reachability from start state (state 0)
+    // Pass 1: Forward reachability from start state (state 0)
     bool* forward_reachable = calloc(state_count, sizeof(bool));
     int* queue = malloc(state_count * sizeof(int));
     if (!forward_reachable || !queue) {
@@ -278,7 +278,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
         }
     }
 
-    // Phase 2: Backward reachability from accepting states
+    // Pass 2: Backward reachability from accepting states
     bool* backward_reachable = calloc(state_count, sizeof(bool));
     inverse_graph_t inv;
 
@@ -308,7 +308,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
     free_inverse_graph(&inv);
     free(queue);
 
-    // Phase 3: Keep states that are BOTH forward and backward reachable
+    // Pass 3: Keep states that are BOTH forward and backward reachable
     bool* useful = alloc_or_abort(malloc(state_count * sizeof(bool)), "Alloc useful");
     int useful_count = 0;
     for (int s = 0; s < state_count; s++) {
@@ -319,7 +319,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
     }
     useful[0] = true;  // Always keep start state
 
-    // Phase 4: Compact the DFA
+    // Pass 4: Compact the DFA
     int* map = alloc_or_abort(malloc(state_count * sizeof(int)), "Alloc map");
     int new_count = 0;
     for (int s = 0; s < state_count; s++) {
@@ -330,7 +330,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
         } else map[s] = -1;
     }
 
-    // Phase 5: Update transitions using the compact map
+    // Pass 5: Update transitions using the compact map
     for (int s = 0; s < new_count; s++) {
         for (int c = 0; c < 256; c++) {
             int t = dfa[s]->transitions[c];

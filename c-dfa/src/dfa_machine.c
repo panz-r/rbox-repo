@@ -29,8 +29,7 @@ bool dfa_machine_init_with_id(dfa_machine_t* m, const void* dfa_data, size_t siz
     m->dfa_size = size;
 
     if (expected_id) {
-        strncpy(m->identifier, expected_id, sizeof(m->identifier) - 1);
-        m->identifier[sizeof(m->identifier) - 1] = '\0';
+        snprintf(m->identifier, sizeof(m->identifier), "%s", expected_id);
     } else {
         m->identifier[0] = '\0';
     }

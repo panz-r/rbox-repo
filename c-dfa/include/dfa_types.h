@@ -69,7 +69,7 @@ typedef struct __attribute__((packed)) {
  */
 typedef struct __attribute__((packed)) {
     uint32_t magic;                   // Magic number: 0xDFA1DFA1
-    uint16_t version;                 // Version: 6
+    uint16_t version;                 // Version: 10
     uint16_t state_count;             // Total number of states
     uint32_t initial_state;           // Offset to initial state (absolute, from DFA base)
     uint32_t accepting_mask;          // Bitmask of accepting states
@@ -167,13 +167,6 @@ typedef struct {
 #define CAT_MASK_CONTAINER  0x80
 
 /**
- * ReadOnlyBox Client category constants
- */
-#define CAT_MASK_AUTOALLOW  0x01  // Auto-allow: execute without server query
-#define CAT_MASK_AUTODENY  0x02  // Auto-deny: block without server query
-#define CAT_MASK_ALWAYSASK 0x04  // Always ask: query server even if autoallow matches
-
-/**
  * Command categories
  */
 typedef enum {
@@ -256,7 +249,7 @@ typedef struct {
 } dfa_machine_t;
 
 /* ------------------------------------------------------------------------- */
-/* Dynamic build-time DFA state (Phase 6)                                    */
+/* Dynamic build-time DFA state                                               */
 /* ------------------------------------------------------------------------- */
 
 /**

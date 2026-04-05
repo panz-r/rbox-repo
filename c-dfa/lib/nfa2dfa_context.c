@@ -8,14 +8,12 @@
 #include "nfa.h"
 #include "../tools/nfa2dfa_context.h"
 
-#define DFA_HASH_SIZE 32749
-
 nfa2dfa_context_t* nfa2dfa_context_create(void) {
     nfa2dfa_context_t* ctx = calloc(1, sizeof(nfa2dfa_context_t));
     if (!ctx) return NULL;
 
     // Allocate NFA array
-    ctx->nfa = calloc(32768, sizeof(nfa_state_t));  // MAX_STATES
+    ctx->nfa = calloc(MAX_STATES, sizeof(nfa_state_t));
     if (!ctx->nfa) {
         free(ctx);
         return NULL;
@@ -23,18 +21,18 @@ nfa2dfa_context_t* nfa2dfa_context_create(void) {
     ctx->nfa_state_count = 0;
     
     // Allocate DFA state pointer array
-    ctx->dfa = calloc(32768, sizeof(build_dfa_state_t*));  // MAX_STATES
+    ctx->dfa = calloc(MAX_STATES, sizeof(build_dfa_state_t*));
     if (!ctx->dfa) {
         free(ctx->nfa);
         free(ctx);
         return NULL;
     }
     ctx->dfa_state_count = 0;
-    ctx->dfa_state_capacity = 32768;
-    ctx->max_states = 32768;
+    ctx->dfa_state_capacity = MAX_STATES;
+    ctx->max_states = MAX_STATES;
     
     // Allocate alphabet array
-    ctx->alphabet = calloc(320, sizeof(alphabet_entry_t));  // MAX_SYMBOLS
+    ctx->alphabet = calloc(MAX_SYMBOLS, sizeof(alphabet_entry_t));
     if (!ctx->alphabet) {
         free(ctx->dfa);
         free(ctx->nfa);
@@ -44,8 +42,8 @@ nfa2dfa_context_t* nfa2dfa_context_create(void) {
     ctx->alphabet_size = 0;
     
     // Allocate hash table
-    ctx->dfa_hash_table = calloc(32749, sizeof(int));  // DFA_HASH_SIZE
-    ctx->dfa_next_in_bucket = calloc(32768, sizeof(int));  // MAX_STATES
+    ctx->dfa_hash_table = calloc(DFA_HASH_SIZE, sizeof(int));
+    ctx->dfa_next_in_bucket = calloc(MAX_STATES, sizeof(int));
     if (!ctx->dfa_hash_table || !ctx->dfa_next_in_bucket) {
         free(ctx->alphabet);
         free(ctx->dfa);

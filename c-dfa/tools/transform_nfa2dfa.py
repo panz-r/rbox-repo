@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Transform nfa2dfa.c to use context struct instead of globals.
-Phase 1: Context struct refactoring.
+Completed: Context struct refactoring.
 """
 
 import re

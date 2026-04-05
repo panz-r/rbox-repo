@@ -36,11 +36,12 @@ static void proc_markers(const uint8_t* d, size_t sz, uint32_t moff, size_t pos,
 {
     if (!moff || moff >= sz) return;
     bool filt = (cmask && wpid != UINT16_MAX);
-    for (size_t i = 0; i < 32768; i++) {
+    size_t max_markers = (sz - moff) / 4;
+    for (size_t i = 0; i < max_markers; i++) {
         size_t off = (size_t)moff + (size_t)i * 4;
-        if (off + 4 > sz) { i = 1024; break; }
+        if (off + 4 > sz) break;
         uint32_t mk = dfa_r32(d, off);
-        if (mk == MARKER_SENTINEL) { i = 1024; break; }
+        if (mk == MARKER_SENTINEL) break;
         uint16_t pid = MARKER_GET_PATTERN_ID(mk);
         uint16_t uid = MARKER_GET_UID(mk);
         uint8_t  typ = MARKER_GET_TYPE(mk);

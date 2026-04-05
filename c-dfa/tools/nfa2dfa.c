@@ -33,13 +33,9 @@ static bool flag_chain = false;  /* Enable chain encoding detection */
 
 #define DEBUG_PRINT(...) do { if (flag_verbose) fprintf(stderr, __VA_ARGS__); } while (0)
 
-// Virtual symbol definitions (must match nfa_builder.c)
+// Virtual symbol definitions (must match nfa_builder.h)
 #define VSYM_EPS 257
 #define VSYM_EOS 258
-
-// Marker type definitions
-#define MARKER_TYPE_START 0
-#define MARKER_TYPE_END 1
 
 /**
  * Check allocation result and abort on failure
@@ -65,12 +61,10 @@ static int max_states = MAX_STATES;
 // ============================================================================
 // NFA-TO-DFA CONVERTER STATE DOCUMENTATION
 // 
-// The following global variables hold legacy state. Context refactoring is in
-// progress. CLI tool design - not thread-safe.
+// Legacy global state for CLI tool. Library functions use nfa2dfa_context_t.
 // ============================================================================
 
 // DFA Deduplication Hash Table
-#define DFA_HASH_SIZE 32749
 static int dfa_hash_table[DFA_HASH_SIZE];
 static int dfa_next_in_bucket[MAX_STATES];
 
@@ -81,7 +75,6 @@ void init_hash_table(ATTR_UNUSED nfa2dfa_context_t* ctx) {
 
 #define MAX_MARKERS_PER_DFA_TRANSITION 16
 #define MAX_DFA_MARKER_LISTS 8192
-#define MARKER_SENTINEL 0xFFFFFFFF
 
 // MarkerList is now defined in dfa_minimize.h (shared with SAT minimizer)
 
@@ -601,7 +594,6 @@ void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
         
         // Category from states that are either accepting (pattern_id) or EOS targets
         if ((nfa[ns].pattern_id != 0 || (nfa[ns].is_eos_target && !is_initial_state)) && nfa[ns].category_mask != 0) {
-            // fprintf(stderr, "DEBUG: adding cat 0x%02x from state %d\n", nfa[ns].category_mask, ns);
             im |= nfa[ns].category_mask;
         }
         // Accept pattern from states with pattern_id (true accepting states)

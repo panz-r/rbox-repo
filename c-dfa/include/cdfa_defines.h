@@ -7,6 +7,7 @@
  *   - State flags (DFA_STATE_*)
  *   - Rule types (DFA_RULE_*)
  *   - Rule encoding types (DFA_RULE_ENC_*)
+ *   - Size limits (MAX_STATES, DFA_HASH_SIZE)
  */
 
 #ifndef CDFA_DEFINES_H
@@ -25,6 +26,22 @@
 #define ATTR_UNUSED
 #define ATTR_NONNULL(...)
 #define ATTR_NONNULL_ALL
+#endif
+
+/* ============================================================================
+ * Size limits
+ * ============================================================================ */
+
+#ifndef MAX_STATES
+#define MAX_STATES 32768
+#endif
+
+#ifndef DFA_HASH_SIZE
+#define DFA_HASH_SIZE 32749
+#endif
+
+#ifndef MAX_SYMBOLS
+#define MAX_SYMBOLS 320
 #endif
 
 /* ============================================================================

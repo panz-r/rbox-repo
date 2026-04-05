@@ -344,12 +344,12 @@ pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file) {
         ERROR("Failed to open temp DFA file '%s' for reading", p->temp_dfa_file);
         return PIPELINE_IO_ERROR;
     }
-    fseek(f, 0, SEEK_END);
-    if (ferror(f)) { fclose(f); ERROR("fseek SEEK_END failed"); return PIPELINE_IO_ERROR; }
-    p->binary_size = ftell(f);
-    if (p->binary_size <= 0) { fclose(f); ERROR("Temp DFA file '%s' is empty", p->temp_dfa_file); return PIPELINE_IO_ERROR; }
-    fseek(f, 0, SEEK_SET);
-    if (ferror(f)) { fclose(f); ERROR("fseek SEEK_SET failed"); return PIPELINE_IO_ERROR; }
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); ERROR("fseek SEEK_END failed"); return PIPELINE_IO_ERROR; }
+    long binary_size_long = ftell(f);
+    if (binary_size_long < 0) { fclose(f); ERROR("ftell failed"); return PIPELINE_IO_ERROR; }
+    if (binary_size_long == 0) { fclose(f); ERROR("Temp DFA file '%s' is empty", p->temp_dfa_file); return PIPELINE_IO_ERROR; }
+    p->binary_size = (size_t)binary_size_long;
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); ERROR("fseek SEEK_SET failed"); return PIPELINE_IO_ERROR; }
     p->binary_data = malloc(p->binary_size);
     if (!p->binary_data) {
         fclose(f);
@@ -358,8 +358,8 @@ pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file) {
     }
     size_t bytes_read = fread(p->binary_data, 1, p->binary_size, f);
     fclose(f);
-    if (bytes_read != (size_t)p->binary_size) {
-        ERROR("Failed to read DFA binary (got %zu of %ld bytes)", bytes_read, p->binary_size);
+    if (bytes_read != p->binary_size) {
+        ERROR("Failed to read DFA binary (got %zu of %zu bytes)", bytes_read, p->binary_size);
         free(p->binary_data);
         p->binary_data = NULL;
         return PIPELINE_IO_ERROR;

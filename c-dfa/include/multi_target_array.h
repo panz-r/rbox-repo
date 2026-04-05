@@ -11,8 +11,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "cdfa_defines.h"
 
-#define MAX_SYMBOLS 320
 #define INITIAL_TARGET_CAPACITY 8
 #define TARGET_GROWTH_FACTOR 2
 #define MAX_TARGETS 256

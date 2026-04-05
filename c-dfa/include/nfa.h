@@ -8,9 +8,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "cdfa_defines.h"
 
-#define MAX_STATES 32768
-#define MAX_SYMBOLS 320
 #define MAX_CHARS 256
 #define MAX_PATTERNS 2048
 #define MAX_LINE_LENGTH 2048

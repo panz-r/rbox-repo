@@ -9,7 +9,7 @@
  * Key advantage: We have global knowledge of the full NFA, unlike the
  * per-pattern RDP parser which has no look-ahead.
  * 
- * PREFIX MERMING LIMITATIONS:
+ * PREFIX MERGING LIMITATIONS:
  * ==========================
  * Prefix merging is DISABLED by default because it requires tracking the full
  * path from the start state, not just the immediate source.

@@ -13,8 +13,6 @@
 #include "../include/nfa.h"
 #include "dfa_minimize.h"
 
-#define DFA_HASH_SIZE 32749
-
 typedef struct {
     int symbol_id;
     int start_char;
