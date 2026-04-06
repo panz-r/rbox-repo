@@ -178,8 +178,7 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 [autoallow:processing:text] sort ((safe::filename))*
 [autoallow:processing:text] uniq
 [autoallow:processing:text] uniq ((safe::filename))*
-[autoallow:processing:text] wc
-[autoallow:processing:text] wc -l
+[autoallow:processing:text] wc( -l)?( ((safe::filename))*)?
 [autoallow:processing:text] wc -w
 [autoallow:processing:text] wc -c
 [autoallow:processing:text] cut

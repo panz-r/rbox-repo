@@ -56,6 +56,7 @@ var (
 	testEnvDeny  = flag.String("test-env-deny", "", "Bitmap of env var indices to deny (for testing, e.g., '1,3' denies indices 1 and 3)")
 	systemSocket = flag.Bool("system-socket", false, "Use system socket /run/readonlybox/readonlybox.sock")
 	userSocket   = flag.Bool("user-socket", false, "Use user socket $XDG_RUNTIME_DIR/readonlybox.sock")
+	logReader    = flag.Bool("log-reader", false, "Output machine-readable ALLOW/DENY lines to stdout")
 )
 
 const (
@@ -211,10 +212,23 @@ func main() {
 
 		// Log decision
 		if *verbose || *veryVerbose {
+			// When log-reader mode is enabled, skip verbose output to avoid duplication
+			// The machine-readable format below provides clean counting
+			if !*logReader {
+				if decision == DecisionDeny {
+					fmt.Printf("DENY: %s (%s)\n", cmd, reason)
+				} else {
+					fmt.Printf("ALLOW: %s\n", cmd)
+				}
+			}
+		}
+
+		// Log-reader output: machine-readable format
+		if *logReader {
 			if decision == DecisionDeny {
-				fmt.Printf("DENY: %s (%s)\n", cmd, reason)
+				fmt.Fprintf(os.Stdout, "DENY:%s\n", cmd)
 			} else {
-				fmt.Printf("ALLOW: %s\n", cmd)
+				fmt.Fprintf(os.Stdout, "ALLOW:%s\n", cmd)
 			}
 		}
 	}

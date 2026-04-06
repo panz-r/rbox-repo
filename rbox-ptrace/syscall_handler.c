@@ -499,6 +499,68 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
         }
         clock_gettime(CLOCK_MONOTONIC, &state->wrapper_chain.timestamp);
         DEBUG_PRINT("WRAPPER_CHAIN: stored '%s' for pid %d\n", suffix, state->pid);
+
+        /* Parse the suffix for subcommands and grant allowances for them.
+         * This handles sh -c 'cmd1; cmd2' and nested wrappers like timeout sh -c '...'.
+         * We parse the suffix and directly store allowances without recursing into
+         * grant_allowance (which would store wrapper_chain at each level). */
+        shell_parse_result_t inner_result;
+        if (shell_parse_fast(suffix, strlen(suffix), &SHELL_LIMITS_DEFAULT, &inner_result) == SHELL_OK) {
+            /* Find an empty slot for the allowances */
+            AllowanceSet *slot = NULL;
+            for (int i = 0; i < INLINE_ALLOWANCE_SETS; i++) {
+                expire_allowance_set(&state->allowances.inline_sets[i]);
+                if (state->allowances.inline_sets[i].subcommand_count == 0) {
+                    slot = &state->allowances.inline_sets[i];
+                    break;
+                }
+            }
+            if (!slot) {
+                AllowanceSpillover **node_ptr = &state->allowances.spillover;
+                while (*node_ptr) {
+                    for (int i = 0; i < SPILLOVER_ALLOWANCE_SETS; i++) {
+                        expire_allowance_set(&(*node_ptr)->sets[i]);
+                        if ((*node_ptr)->sets[i].subcommand_count == 0) {
+                            slot = &(*node_ptr)->sets[i];
+                            break;
+                        }
+                    }
+                    if (slot) break;
+                    node_ptr = &(*node_ptr)->next;
+                }
+                if (!slot) {
+                    /* Count existing spillover nodes */
+                    int node_count = 0;
+                    AllowanceSpillover *count_node = state->allowances.spillover;
+                    while (count_node) {
+                        node_count++;
+                        count_node = count_node->next;
+                    }
+                    if (node_count < MAX_SPILLOVER_NODES) {
+                        *node_ptr = calloc(1, sizeof(AllowanceSpillover));
+                        if (*node_ptr) {
+                            slot = &(*node_ptr)->sets[0];
+                        }
+                    }
+                }
+            }
+            if (slot) {
+                clock_gettime(CLOCK_MONOTONIC, &slot->timestamp);
+                slot->subcommand_count = 0;
+                memset(slot->used_mask, 0, sizeof(slot->used_mask));
+                for (uint32_t i = 0; i < inner_result.count && i < SHELL_MAX_SUBCOMMANDS; i++) {
+                    uint32_t subcmd_len;
+                    const char *subcmd_ptr = shell_get_subcommand(suffix, &inner_result.cmds[i], &subcmd_len);
+                    if (subcmd_len > 0) {
+                        slot->subcommands[slot->subcommand_count] = strndup(subcmd_ptr, subcmd_len);
+                        if (slot->subcommands[slot->subcommand_count]) {
+                            slot->subcommand_count++;
+                            DEBUG_PRINT("ALLOWANCE: granted inner subcommand '%.*s'\n", subcmd_len, subcmd_ptr);
+                        }
+                    }
+                }
+            }
+        }
         return;
     }
 
@@ -1310,30 +1372,53 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                        pid, proc_status);
         }
 
-        /* Check if parent has an allowance for this subcommand */
-        if (parent_pid > 0) {
-            /* Look up parent's process state */
-            ProcessState *parent_state = syscall_find_process_state(parent_pid);
-            if (parent_state) {
+        /* Walk up the process tree to find an ancestor with allowances.
+         * A child consumes allowances from its parent (not inherited, directly accessed).
+         * Stop when we reach the ptrace process itself (g_main_process_pid). */
+        pid_t ancestor_pid = parent_pid;
+        while (ancestor_pid > 0 && ancestor_pid != g_main_process_pid) {
+            ProcessState *ancestor_state = syscall_find_process_state(ancestor_pid);
+            if (ancestor_state) {
                 /* First check wrapper chain - if first word is a wrapper, advance offset.
                  * If first word is NOT a wrapper, consume the wrapper chain.
                  * Then check subcommand allowances. */
-                if (consume_wrapper_chain(parent_state, state, command)) {
-                    DEBUG_PRINT("HANDLER: pid=%d has wrapper-chain from parent %d for '%s', allowing\n",
-                               pid, parent_pid, command);
+                if (consume_wrapper_chain(ancestor_state, state, command)) {
+                    DEBUG_PRINT("HANDLER: pid=%d has wrapper-chain from ancestor %d for '%s', allowing\n",
+                               pid, ancestor_pid, command);
                     state->validated = 1;
                     free(command);
                     return 0;
                 }
                 /* Check subcommand allowances */
-                if (consume_allowance(parent_state, command)) {
-                    DEBUG_PRINT("HANDLER: pid=%d has allowance from parent %d for '%s', allowing\n",
-                               pid, parent_pid, command);
+                if (consume_allowance(ancestor_state, command)) {
+                    DEBUG_PRINT("HANDLER: pid=%d has allowance from ancestor %d for '%s', allowing\n",
+                               pid, ancestor_pid, command);
                     state->validated = 1;
                     free(command);
                     return 0;
                 }
             }
+
+            /* Get parent's parent to continue walking up the tree */
+            char ancestor_status_path[64];
+            snprintf(ancestor_status_path, sizeof(ancestor_status_path), "/proc/%d/status", ancestor_pid);
+            FILE *ancestor_status = fopen(ancestor_status_path, "r");
+            pid_t next_ancestor = 0;
+            if (ancestor_status) {
+                char line[256];
+                while (fgets(line, sizeof(line), ancestor_status)) {
+                    if (strncmp(line, "PPid:", 5) == 0) {
+                        sscanf(line + 5, "%d", &next_ancestor);
+                        break;
+                    }
+                }
+                fclose(ancestor_status);
+            }
+            if (next_ancestor == 0 || next_ancestor == ancestor_pid) {
+                /* Can't go further up the tree */
+                break;
+            }
+            ancestor_pid = next_ancestor;
         }
 
         /* Check if this is the same command we just validated for this process.

@@ -44,12 +44,12 @@ void pkexec_set_progname(const char *progname) {
  *
  * Arguments:
  *   argc, argv - original command line arguments
- *   cmd_path - the command to run
+ *   resolved_cmd - the already-resolved command path to pass via --cmd
  *
  * The screened environment is passed via an abstract Unix socket
  * to avoid any filesystem footprint.
  */
-int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
+int pkexec_launch(int argc, char *argv[], const char *resolved_cmd) {
     uid_t original_uid = getuid();
     char cwd[4096];
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
@@ -205,17 +205,17 @@ int pkexec_launch(int argc, char *argv[], const char *cmd_path) {
     if (!new_argv[idx]) goto cleanup_argv;
     allocated_strings[allocated_count++] = new_argv[idx];
     idx++;
-    new_argv[idx++] = "--cmd";
-    new_argv[idx] = strdup(cmd_path);
-    if (!new_argv[idx]) goto cleanup_argv;
-    allocated_strings[allocated_count++] = new_argv[idx];
-    idx++;
     new_argv[idx++] = "--env-socket";
     new_argv[idx] = strdup(sock_name);
     if (!new_argv[idx]) goto cleanup_argv;
     allocated_strings[allocated_count++] = new_argv[idx];
     idx++;
     new_argv[idx++] = "--internal-screened";
+    new_argv[idx++] = "--cmd";
+    new_argv[idx] = strdup(resolved_cmd);
+    if (!new_argv[idx]) goto cleanup_argv;
+    allocated_strings[allocated_count++] = new_argv[idx];
+    idx++;
 
     /* Add remaining original arguments */
     for (int i = 1; i < argc; i++) {

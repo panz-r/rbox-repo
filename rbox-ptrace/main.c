@@ -497,25 +497,6 @@ int main(int argc, char *argv[]) {
 
     /* Parse options until we see -- or a non-option argument */
     /* Use + to stop at first non-option (for -- separator support) */
-    /* Skip "wrap" keyword and handle --no-pkexec if present */
-    if (argc > 1 && strcmp(argv[1], "wrap") == 0) {
-        /* If next arg is --no-pkexec, set the flag and shift args */
-        if (argc > 2 && strcmp(argv[2], "--no-pkexec") == 0) {
-            g_skip_pkexec = true;
-            /* Shift remaining args left to overwrite --no-pkexec */
-            for (int i = 2; i < argc; i++) {
-                argv[i] = argv[i + 1];
-            }
-            argc--;
-        }
-        /* Shift to skip "wrap" */
-        for (int i = 1; i < argc; i++) {
-            argv[i] = argv[i + 1];
-        }
-        argc--;
-        optind = 1;
-    }
-
     while ((opt = getopt_long(argc, argv, "+hvu:c:m:p:ke:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
@@ -712,6 +693,7 @@ int main(int argc, char *argv[]) {
                 for (int j = i; j < argc - 2; j++) {
                     argv[j] = argv[j + 2];
                 }
+                argv[argc - 2] = NULL;
                 argc -= 2;
                 optind = (optind > i) ? optind - 2 : optind;
                 break;
@@ -734,6 +716,10 @@ int main(int argc, char *argv[]) {
 
     /* If attaching to a process, no command should be provided */
     int cmd_start = optind;
+    /* Skip "--" separator if present (handles case where --env-socket was removed) */
+    if (cmd_start < argc && strcmp(argv[cmd_start], "--") == 0) {
+        cmd_start++;
+    }
     if (attach_pid > 0) {
         /* Skip "wrap" keyword if present */
         if (cmd_start < argc && strcmp(argv[cmd_start], "wrap") == 0) {
@@ -813,7 +799,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "%s: Requesting elevated privileges...\n", g_progname);
         pkexec_set_progname(g_progname);
         int ret = pkexec_launch(argc, argv, cmd_path);
-        free(cmd_path);
         return ret;
     }
 
@@ -857,7 +842,7 @@ int main(int argc, char *argv[]) {
             free(cmd_path);
             return 1;
         }
-        
+
         /* Wait for the process to stop */
         int status;
         if (waitpid(attach_pid, &status, 0) < 0) {
@@ -867,7 +852,7 @@ int main(int argc, char *argv[]) {
             free(cmd_path);
             return 1;
         }
-        
+
         if (!WIFSTOPPED(status)) {
             LOG_ERROR("Process %d did not stop as expected", attach_pid);
             syscall_handler_cleanup();
@@ -875,7 +860,7 @@ int main(int argc, char *argv[]) {
             free(cmd_path);
             return 1;
         }
-        
+
         /* Set trace options on the attached process */
         if (ptrace(PTRACE_SETOPTIONS, attach_pid, 0,
                    PTRACE_O_TRACESYSGOOD |
@@ -890,7 +875,7 @@ int main(int argc, char *argv[]) {
             free(cmd_path);
             return 1;
         }
-        
+
         /* Resume the process with PTRACE_SYSCALL to trap syscall entries/exits */
         if (ptrace(PTRACE_SYSCALL, attach_pid, NULL, NULL) < 0) {
             LOG_ERRNO("ptrace(SYSCALL)");
@@ -899,14 +884,14 @@ int main(int argc, char *argv[]) {
             free(cmd_path);
             return 1;
         }
-        
+
         /* For attached processes, we DON'T set as main process.
          * This ensures the first execve from the attached process
          * goes through validation (not automatically allowed).
          * This is the expected behavior for Option A/D.
          */
         /* Note: We skip syscall_set_main_process(attach_pid) intentionally */
-        
+
         int exit_code = trace_process(attach_pid);
 
         free(cmd_path);
@@ -948,6 +933,8 @@ int main(int argc, char *argv[]) {
         unsetenv("READONLYBOX_SOFT_ALLOW");
         unsetenv("READONLYBOX_SOFT_DENY");
         unsetenv("READONLYBOX_SOFT_DEBUG");
+        /* Replace the command name in argv with the resolved path */
+        argv[cmd_start] = cmd_path_copy;
         execv(cmd_path_copy, &argv[cmd_start]);
         LOG_ERROR("execv failed for %s: %s", cmd_path_copy, strerror(errno));
         _exit(1);
@@ -1004,4 +991,3 @@ static char *resolve_command_path(const char *cmd) {
     free(path_copy);
     return NULL;
 }
-
