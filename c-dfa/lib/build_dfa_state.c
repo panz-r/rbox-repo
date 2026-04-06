@@ -8,9 +8,6 @@
 #include <string.h>
 #include <limits.h>
 
-#define INITIAL_NFA_CAPACITY 64
-#define NFA_GROWTH_FACTOR 2
-
 build_dfa_state_t* build_dfa_state_create(int alphabet_size, int initial_nfa_capacity) {
     if (alphabet_size <= 0) alphabet_size = 1;
     if (initial_nfa_capacity <= 0) initial_nfa_capacity = INITIAL_NFA_CAPACITY;
@@ -84,13 +81,15 @@ bool build_dfa_state_grow_nfa(build_dfa_state_t* state, int additional) {
 
     int new_capacity = state->nfa_state_capacity;
     while (new_capacity < needed) {
-        if (new_capacity > INT_MAX / NFA_GROWTH_FACTOR) return false;
-        new_capacity *= NFA_GROWTH_FACTOR;
+        int doubled;
+        if (CKD_MUL(&doubled, new_capacity, NFA_GROWTH_FACTOR)) return false;
+        new_capacity = doubled;
     }
 
-    if (new_capacity > 0 && (size_t)new_capacity > SIZE_MAX / sizeof(int)) return false;
+    size_t alloc_size;
+    if (CKD_MUL(&alloc_size, (size_t)new_capacity, sizeof(int))) return false;
 
-    void* tmp = realloc(state->nfa_states, (size_t)new_capacity * sizeof(int));
+    void* tmp = realloc(state->nfa_states, alloc_size);
     if (!tmp) return false;
     state->nfa_states = tmp;
     state->nfa_state_capacity = new_capacity;

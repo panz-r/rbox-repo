@@ -19,6 +19,7 @@
  *   --help            Show this help
  */
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -190,10 +191,10 @@ static bool write_source(const config_t* cfg, const unsigned char* data, long si
 
     // Build prefix: "static const " or "const " or "static " or ""
     char prefix[32] = "";
-    if (linkage[0]) strcat(prefix, linkage);
-    if (linkage[0] && qualifier[0]) strcat(prefix, " ");
-    if (qualifier[0]) strcat(prefix, qualifier);
-    if (prefix[0]) strcat(prefix, " ");
+    if (linkage[0]) strlcat(prefix, linkage, sizeof(prefix));
+    if (linkage[0] && qualifier[0]) strlcat(prefix, " ", sizeof(prefix));
+    if (qualifier[0]) strlcat(prefix, qualifier, sizeof(prefix));
+    if (prefix[0]) strlcat(prefix, " ", sizeof(prefix));
 
     fprintf(f, "/* Auto-generated from %s by dfa2c_array */\n", cfg->input_path);
     fprintf(f, "/* Do not edit manually */\n\n");

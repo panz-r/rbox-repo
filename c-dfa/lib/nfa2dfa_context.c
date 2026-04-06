@@ -12,16 +12,27 @@ nfa2dfa_context_t* nfa2dfa_context_create(void) {
     nfa2dfa_context_t* ctx = calloc(1, sizeof(nfa2dfa_context_t));
     if (!ctx) return NULL;
 
-    // Allocate NFA array
-    ctx->nfa = calloc(MAX_STATES, sizeof(nfa_state_t));
+    // Allocate NFA array with overflow check
+    size_t nfa_size;
+    if (CKD_MUL(&nfa_size, (size_t)MAX_STATES, sizeof(nfa_state_t))) {
+        free(ctx);
+        return NULL;
+    }
+    ctx->nfa = calloc(1, nfa_size);
     if (!ctx->nfa) {
         free(ctx);
         return NULL;
     }
     ctx->nfa_state_count = 0;
     
-    // Allocate DFA state pointer array
-    ctx->dfa = calloc(MAX_STATES, sizeof(build_dfa_state_t*));
+    // Allocate DFA state pointer array with overflow check
+    size_t dfa_size;
+    if (CKD_MUL(&dfa_size, (size_t)MAX_STATES, sizeof(build_dfa_state_t*))) {
+        free(ctx->nfa);
+        free(ctx);
+        return NULL;
+    }
+    ctx->dfa = calloc(1, dfa_size);
     if (!ctx->dfa) {
         free(ctx->nfa);
         free(ctx);
@@ -31,8 +42,15 @@ nfa2dfa_context_t* nfa2dfa_context_create(void) {
     ctx->dfa_state_capacity = MAX_STATES;
     ctx->max_states = MAX_STATES;
     
-    // Allocate alphabet array
-    ctx->alphabet = calloc(MAX_SYMBOLS, sizeof(alphabet_entry_t));
+    // Allocate alphabet array with overflow check
+    size_t alphabet_alloc_size;
+    if (CKD_MUL(&alphabet_alloc_size, (size_t)MAX_SYMBOLS, sizeof(alphabet_entry_t))) {
+        free(ctx->dfa);
+        free(ctx->nfa);
+        free(ctx);
+        return NULL;
+    }
+    ctx->alphabet = calloc(1, alphabet_alloc_size);
     if (!ctx->alphabet) {
         free(ctx->dfa);
         free(ctx->nfa);
@@ -41,7 +59,16 @@ nfa2dfa_context_t* nfa2dfa_context_create(void) {
     }
     ctx->alphabet_size = 0;
     
-    // Allocate hash table
+    // Allocate hash table with overflow check
+    size_t hash_size, next_size;
+    if (CKD_MUL(&hash_size, (size_t)DFA_HASH_SIZE, sizeof(int)) ||
+        CKD_MUL(&next_size, (size_t)MAX_STATES, sizeof(int))) {
+        free(ctx->alphabet);
+        free(ctx->dfa);
+        free(ctx->nfa);
+        free(ctx);
+        return NULL;
+    }
     ctx->dfa_hash_table = calloc(DFA_HASH_SIZE, sizeof(int));
     ctx->dfa_next_in_bucket = calloc(MAX_STATES, sizeof(int));
     if (!ctx->dfa_hash_table || !ctx->dfa_next_in_bucket) {

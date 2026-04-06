@@ -12,16 +12,10 @@
 
 #define MAX_CHARS 256
 #define MAX_PATTERNS 2048
-#define MAX_LINE_LENGTH 2048
 #define MAX_TAGS 16
 #define SIGNATURE_TABLE_SIZE 4096
 #define MAX_PENDING_MARKERS 8
 #define MAX_TRANSITION_MARKERS 65536
-
-/* Dynamic allocation for large arrays - use malloc at runtime */
-#ifndef STATIC_ARRAYS
-#define USE_DYNAMIC_ARRAYS 1
-#endif
 
 /* Category bitmask constants (8 categories, one bit each) */
 #define CAT_MASK_SAFE       0x01

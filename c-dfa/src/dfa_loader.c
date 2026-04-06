@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define MAX_LINE_LENGTH 1024
+// MAX_LINE_LENGTH is defined in cdfa_defines.h
 
 // Validation function to verify DFA structure integrity
 static bool validate_dfa_structure(const uint8_t* d, size_t file_size) {

@@ -157,10 +157,10 @@ static void sort_states_canonical(ATTR_UNUSED nfa2dfa_context_t* ctx, int* state
 
 // Hash a canonical (sorted) NFA state set
 static uint32_t hash_nfa_set(const int* sorted_states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
-    uint32_t hash = 2166136261u;
+    uint32_t hash = FNV_OFFSET_BASIS;
     for (int i = 0; i < count; i++) {
         hash ^= (uint32_t)sorted_states[i];
-        hash *= 16777619;
+        hash *= FNV_PRIME;
     }
     hash ^= (uint32_t)mask << 24;
     hash ^= (uint32_t)first_accepting_pattern;
@@ -1962,7 +1962,7 @@ void load_nfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
     nfa_init();
 #endif
     while (fgets(line, sizeof(line), file)) {
-        if (strncmp(line, "Identifier:", 11) == 0) sscanf(line + 11, "%s", pattern_identifier);
+        if (strncmp(line, "Identifier:", 11) == 0) sscanf(line + 11, "%255s", pattern_identifier);
         else if (strncmp(line, "AlphabetSize:", 13) == 0) {
             sscanf(line + 13, "%d", &alphabet_size);
         } else if (strncmp(line, "States:", 7) == 0) {

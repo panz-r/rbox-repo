@@ -1904,28 +1904,28 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     bool* dead_states = calloc(dead_states_capacity, sizeof(bool));
     int* partition = malloc(original_count * sizeof(int));
     
-    // Phase 1: Remove unreachable states first (O(n))
+    // Pass 1: Remove unreachable states first (O(n))
     if (opts.enable_prune) {
         VERBOSE_PRINT("Removing unreachable states...\n");
         last_stats.unreachable_removed = remove_unreachable(nfa, original_count, dead_states);
         VERBOSE_PRINT("Removed %d unreachable states\n", last_stats.unreachable_removed);
     }
     
-    // Phase 2: Bypass epsilon pass-through states (O(n))
+    // Pass 2: Bypass epsilon pass-through states (O(n))
     if (opts.enable_epsilon_elim) {
         VERBOSE_PRINT("Bypassing epsilon pass-through states...\n");
         last_stats.epsilon_bypassed = bypass_epsilon_pass_through(nfa, original_count, dead_states);
         VERBOSE_PRINT("Bypassed %d epsilon pass-through states\n", last_stats.epsilon_bypassed);
     }
     
-    // Phase 3: Compress epsilon chains (O(n))
+    // Pass 3: Compress epsilon chains (O(n))
     if (opts.enable_epsilon_chain) {
         VERBOSE_PRINT("Compressing epsilon chains...\n");
         last_stats.epsilon_chains = compress_epsilon_chains(nfa, original_count, dead_states);
         VERBOSE_PRINT("Compressed %d epsilon chain hops\n", last_stats.epsilon_chains);
     }
     
-    // Phase 4: Deduplicate equivalent final states (O(n log n))
+    // Pass 4: Deduplicate equivalent final states (O(n log n))
     // This MUST run before bidirectional merging to create longer common suffixes
     if (opts.enable_final_dedup) {
         VERBOSE_PRINT("Deduplicating final states...\n");
@@ -1933,7 +1933,7 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
         VERBOSE_PRINT("Deduplicated %d final states\n", last_stats.final_deduped);
     }
     
-    // Phase 5: Bidirectional incremental merging (O(n log n))
+    // Pass 5: Bidirectional incremental merging (O(n log n))
     // This combines prefix and suffix merging in an incremental fixpoint iteration.
     // We alternate between prefix and suffix passes until no more merges happen.
     // Then, if SAT optimal is enabled, we try harder merges on remaining candidates.
@@ -1993,7 +1993,7 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
         effective_count = next_state;
         VERBOSE_PRINT("Effective state count after factorization: %d\n", effective_count);
         
-        // Phase 5b: SAT-based optimal merge selection (continuation of bidirectional)
+        // Pass 5b: SAT-based optimal merge selection (continuation of bidirectional)
         // After greedy fixpoint, try harder merges on remaining conflicting candidates.
         // This reuses the same NFA state and continues where bidirectional left off.
         if (opts.enable_sat_optimal && nfa_preminimize_optimal_available()) {
@@ -2007,7 +2007,7 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
         }
     }
     
-    // Phase 6: Final unreachable cleanup
+    // Pass 6: Final unreachable cleanup
     if (opts.enable_prune) {
         VERBOSE_PRINT("Final unreachable cleanup...\n");
         int final_unreachable = remove_unreachable(nfa, effective_count, dead_states);

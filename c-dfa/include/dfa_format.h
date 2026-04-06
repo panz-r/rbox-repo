@@ -1,12 +1,9 @@
 /**
- * dfa_format.h - DFA Binary Format Definition (v10, separate PID section)
+ * dfa_format.h - DFA Binary Format Definition
  *
  * SINGLE SOURCE OF TRUTH for the DFA binary format.
  * Writer (nfa2dfa.c) and reader (dfa_eval.c, dfa_loader.c) both use these.
  * Never hardcode offsets elsewhere.
- *
- * V9: separate EOS section - reduces state header size by 6 bytes
- * V10: separate Pattern ID section - reduces state header by 1 byte
  */
 
 #ifndef DFA_FORMAT_H

@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 /**
- * DFA Evaluator - v10 adaptive-width reader
+ * DFA Evaluator - adaptive-width reader
  * All reads via dfa_fmt_* with runtime encoding. No struct casts.
  */
 
@@ -305,9 +305,12 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                             entry += rng;
                         }
                         if (matched) {
-                            uint32_t mk = dfa_r32(d, frl + dfa_rl_off_markers(enc));
-                            if (mk && meta && mk+4 <= sz)
-                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res, mc);
+                            size_t marker_off = (size_t)frl + dfa_rl_off_markers(enc);
+                            if (marker_off + 4 <= sz) {
+                                uint32_t mk = dfa_r32(d, marker_off);
+                                if (mk && meta && mk+4 <= sz)
+                                    proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res, mc);
+                            }
                             break;
                         }
                     }
@@ -316,7 +319,10 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                     uint16_t n_chains = dfa_fmt_st_first_tc(d, fo, enc, ftc);
                     const uint8_t* chain = d + frl;
                     for (uint16_t i = 0; i < n_chains; i++) {
-                        if ((size_t)(chain - d) >= sz) break;
+                        size_t chain_off = (size_t)(chain - d);
+                        if (chain_off >= sz) break;
+                        size_t chain_size = dfa_chain_entry_size(chain, enc);
+                        if (chain_off + chain_size > sz) break;
                         if (dfa_chain_target(chain, enc) == to) {
                             uint32_t mk = dfa_chain_markers(chain, enc);
                             if (mk && meta && mk+4 <= sz)

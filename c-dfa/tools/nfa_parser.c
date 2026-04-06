@@ -5,6 +5,7 @@
  * pattern file reading, and NFA construction from patterns.
  */
 
+#define _GNU_SOURCE
 #include "nfa_builder.h"
 #include "../include/dfa_errors.h"
 #include "../include/cdfa_defines.h"
@@ -1258,11 +1259,11 @@ static void parse_advanced_pattern(nfa_builder_context_t* ctx, const char* line)
 
     // Store pattern
     if (ctx->pattern_count < MAX_PATTERNS) {
-        strncpy(ctx->patterns[ctx->pattern_count].pattern, pattern, MAX_LINE_LENGTH);
-        strncpy(ctx->patterns[ctx->pattern_count].category, category, sizeof(ctx->patterns[ctx->pattern_count].category));
-        strncpy(ctx->patterns[ctx->pattern_count].subcategory, subcategory, sizeof(ctx->patterns[ctx->pattern_count].subcategory));
-        strncpy(ctx->patterns[ctx->pattern_count].operations, operations, sizeof(ctx->patterns[ctx->pattern_count].operations));
-        strncpy(ctx->patterns[ctx->pattern_count].action, action, sizeof(ctx->patterns[ctx->pattern_count].action));
+        strlcpy(ctx->patterns[ctx->pattern_count].pattern, pattern, sizeof(ctx->patterns[ctx->pattern_count].pattern));
+        strlcpy(ctx->patterns[ctx->pattern_count].category, category, sizeof(ctx->patterns[ctx->pattern_count].category));
+        strlcpy(ctx->patterns[ctx->pattern_count].subcategory, subcategory, sizeof(ctx->patterns[ctx->pattern_count].subcategory));
+        strlcpy(ctx->patterns[ctx->pattern_count].operations, operations, sizeof(ctx->patterns[ctx->pattern_count].operations));
+        strlcpy(ctx->patterns[ctx->pattern_count].action, action, sizeof(ctx->patterns[ctx->pattern_count].action));
         ctx->patterns[ctx->pattern_count].category_id = nfa_category_parse(ctx, category);
         ctx->current_pattern_index = ctx->pattern_count;
         ctx->pattern_count++;

@@ -25,10 +25,6 @@
 #include "../include/nfa.h"
 #define TOTAL_SYMBOLS (MAX_SYMBOLS * 2 + 1)
 
-// FNV-1a Constants for hashing
-#define FNV_PRIME 16777619
-#define FNV_OFFSET_BASIS 2166136261u
-
 // Debug and Configuration
 static bool minimize_verbose = true;  // Enable for debugging
 static dfa_min_algo_t current_algo = DFA_MIN_HOPCROFT;
@@ -252,7 +248,7 @@ static bool build_inverse_graph(build_dfa_state_t** dfa, int state_count, invers
 }
 
 // ============================================================================
-// Phase 1: Dead State Pruning (Two-Pass: Forward + Backward)
+// Pass 1: Dead State Pruning (Two-Pass: Forward + Backward)
 // ============================================================================
 
 static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
@@ -531,7 +527,7 @@ static int build_minimized_dfa(build_dfa_state_t** dfa, const minimizer_state_t*
 }
 
 // ============================================================================
-// Phase 2 (A): Hopcroft's Algorithm
+// Pass 2 (A): Hopcroft's Algorithm
 // ============================================================================
 
 int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
@@ -608,7 +604,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
 }
 
 // ============================================================================
-// Phase 2 (B): Moore's Algorithm (Fallback)
+// Pass 2 (B): Moore's Algorithm (Fallback)
 // ============================================================================
 
 int dfa_minimize_moore(build_dfa_state_t** dfa, int state_count) {
@@ -698,10 +694,10 @@ int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo) 
     if (state_count <= 0) return 0;
     int original = state_count;
 
-    // Phase 1: Structural optimization
+    // Pass 1: Structural optimization
     state_count = prune_dead_states(dfa, state_count);
 
-    // Phase 2: Behavioral optimization
+    // Pass 2: Behavioral optimization
     int new_count;
     if (algo == DFA_MIN_MOORE) {
         new_count = dfa_minimize_moore(dfa, state_count);

@@ -7,11 +7,18 @@
  *   - State flags (DFA_STATE_*)
  *   - Rule types (DFA_RULE_*)
  *   - Rule encoding types (DFA_RULE_ENC_*)
- *   - Size limits (MAX_STATES, DFA_HASH_SIZE)
+ *   - Size limits (MAX_STATES, DFA_HASH_SIZE, MAX_SYMBOLS)
+ *   - Overflow-safe arithmetic macros (CKD_*)
+ *   - FNV hash constants
+ *   - Build-time NFA constants
  */
 
 #ifndef CDFA_DEFINES_H
 #define CDFA_DEFINES_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
 
 /* ============================================================================
  * Compiler attribute macros
@@ -29,6 +36,21 @@
 #endif
 
 /* ============================================================================
+ * C11 Checked Arithmetic Macros
+ *
+ * These macros detect integer overflow in multiplication and addition.
+ * Returns true if overflow would occur.
+ *
+ * Example: if (CKD_MUL(&result, a, b)) { handle overflow; }
+ * ============================================================================ */
+
+#include <stdckdint.h>
+
+#define CKD_MUL(result, a, b) __builtin_mul_overflow((a), (b), (result))
+#define CKD_ADD(result, a, b) __builtin_add_overflow((a), (b), (result))
+#define CKD_SUB(result, a, b) __builtin_sub_overflow((a), (b), (result))
+
+/* ============================================================================
  * Size limits
  * ============================================================================ */
 
@@ -42,6 +64,13 @@
 
 #ifndef MAX_SYMBOLS
 #define MAX_SYMBOLS 320
+#endif
+
+/**
+ * Maximum line length for text-based formats (pattern files, NFA/DFA text formats)
+ */
+#ifndef MAX_LINE_LENGTH
+#define MAX_LINE_LENGTH 2048
 #endif
 
 /* ============================================================================
@@ -97,5 +126,19 @@
 #define DFA_RULE_ENC_BITMASK 1  // Bitmask rules (one per target)
 #define DFA_RULE_ENC_PACKED  2  // Variable-stride packed entries (no markers)
 #define DFA_RULE_ENC_CHAIN   3  // Multi-character literal chains
+
+/* ============================================================================
+ * FNV-1a Hash Constants
+ * ============================================================================ */
+
+#define FNV_OFFSET_BASIS 2166136261u
+#define FNV_PRIME        16777619u
+
+/* ============================================================================
+ * NFA Build-Time Constants
+ * ============================================================================ */
+
+#define INITIAL_NFA_CAPACITY 64
+#define NFA_GROWTH_FACTOR 2
 
 #endif // CDFA_DEFINES_H

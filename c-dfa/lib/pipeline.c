@@ -212,7 +212,7 @@ pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
 // Initialize NFA transitions to -1 (load_nfa_file skips nfa_init in library builds)
 static void init_nfa_array(nfa2dfa_context_t* ctx) {
     for (int i = 0; i < ctx->nfa_state_count; i++) {
-        for (int j = 0; j < 256; j++) {  // MAX_SYMBOLS = 256
+        for (int j = 0; j < 256; j++) {  // MAX_CHARS = 256 (byte values 0-255)
             ctx->nfa[i].transitions[j] = -1;
         }
     }
@@ -362,6 +362,7 @@ pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file) {
         ERROR("Failed to read DFA binary (got %zu of %zu bytes)", bytes_read, p->binary_size);
         free(p->binary_data);
         p->binary_data = NULL;
+        p->binary_size = 0;
         return PIPELINE_IO_ERROR;
     }
 
