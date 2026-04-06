@@ -83,6 +83,7 @@ soft_mode_t soft_parse_mode(const char *mode_str);
 
 void soft_policy_init(soft_policy_t *policy);
 int soft_policy_add_rule(soft_policy_t *policy, const char *path, soft_mode_t mode);
+int soft_policy_prepend_rule(soft_policy_t *policy, const char *path, soft_mode_t mode);
 void soft_policy_free(soft_policy_t *policy);
 
 /* Clear all rules from a policy (does not free the policy itself).

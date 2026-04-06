@@ -229,6 +229,48 @@ int soft_policy_add_rule(soft_policy_t *policy, const char *path, soft_mode_t mo
     return 0;
 }
 
+int soft_policy_prepend_rule(soft_policy_t *policy, const char *path, soft_mode_t mode) {
+    if (!policy || !path || path[0] == '\0') return -1;
+    if (strlen(path) > PATH_MAX) {
+        LOG_ERROR("Path too long (>%d bytes)", PATH_MAX);
+        return -1;
+    }
+    if (path[0] != '/') {
+        LOG_ERROR("Soft policy path '%s' is not absolute; ignoring", path);
+        return -1;
+    }
+
+    char *path_copy = strdup(path);
+    if (!path_copy) {
+        LOG_ERROR("Failed to allocate path string");
+        return -1;
+    }
+
+    if (soft_policy_grow(policy) != 0) {
+        free(path_copy);
+        return -1;
+    }
+    if (policy->count >= MAX_SOFT_RULES) {
+        LOG_ERROR("Maximum soft policy rules (%d) exceeded", MAX_SOFT_RULES);
+        free(path_copy);
+        return -1;
+    }
+
+    size_t len = strlen(path_copy);
+    while (len > 1 && path_copy[len - 1] == '/') {
+        path_copy[--len] = '\0';
+    }
+
+    memmove(&policy->rules[1], &policy->rules[0], policy->count * sizeof(soft_rule_t));
+    policy->rules[0].path = path_copy;
+    policy->rules[0].mode = mode;
+    policy->count++;
+
+    DEBUG_PRINT("SOFT_POLICY: Prepended rule mode=%d '%s'\n", mode, path_copy);
+
+    return 0;
+}
+
 void soft_policy_free(soft_policy_t *policy) {
     if (!policy) return;
     if (policy == &g_soft_policy) return;

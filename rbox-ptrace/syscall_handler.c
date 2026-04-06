@@ -51,7 +51,9 @@ static char* strip_quotes(char *str) {
     if ((str[0] == '\'' && end[0] == '\'') ||
         (str[0] == '"' && end[0] == '"')) {
         /* Strip surrounding quotes by shifting content left */
+        /* Move content bytes (end - str bytes from str+1) */
         memmove(str, str + 1, end - str);
+        /* Null terminate after the last content character */
         str[end - str] = '\0';
     }
     return str;
@@ -84,9 +86,11 @@ static char* extract_timeout(char *cmd) {
 }
 
 /* Extract remainder for "sh -c": return everything after "sh -c ", with quotes stripped.
- * For sh -c, the rest of the string IS the command to execute. */
+ * For sh -c, the rest of the string IS the command to execute.
+ * Note: after wrapper name matching, there may be leading whitespace before the argument. */
 static char* extract_sh_c(char *cmd) {
     if (!cmd || *cmd == '\0') return NULL;
+    while (*cmd == ' ' || *cmd == '\t') cmd++;
     return strip_quotes(cmd);
 }
 
@@ -164,6 +168,19 @@ static void expire_allowance_set(AllowanceSet *set) {
     }
 }
 
+/* Check if all subcommands in a set have been used (via used_mask) */
+static int is_set_fully_used(AllowanceSet *set) {
+    if (set->subcommand_count == 0) return 0;
+    for (int i = 0; i < set->subcommand_count; i++) {
+        int word_idx = i / 32;
+        int bit_idx = i % 32;
+        if (!(set->used_mask[word_idx] & (1 << bit_idx))) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* Check if a process has a valid allowance for a specific subcommand.
  * Iterates through all allowance sets (inline + spillover). */
 static int consume_allowance(ProcessState *state, const char *subcommand) {
@@ -197,6 +214,10 @@ static int consume_allowance(ProcessState *state, const char *subcommand) {
                 /* Mark as used */
                 set->used_mask[word_idx] |= (1 << bit_idx);
 
+                if (is_set_fully_used(set)) {
+                    set->subcommand_count = 0;
+                }
+
                 DEBUG_PRINT("ALLOWANCE: using allowance set %d, subcommand '%s'\n",
                            i, subcommand);
                 return 1;
@@ -227,6 +248,10 @@ static int consume_allowance(ProcessState *state, const char *subcommand) {
                     strcmp(set->subcommands[j], subcommand) == 0) {
 
                     set->used_mask[word_idx] |= (1 << bit_idx);
+
+                    if (is_set_fully_used(set)) {
+                        set->subcommand_count = 0;
+                    }
 
                     DEBUG_PRINT("ALLOWANCE: using spillover set %d, subcommand '%s'\n",
                                i, subcommand);
@@ -368,11 +393,14 @@ static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child
     }
 
     /* Compare normalized suffix with child command */
+    DEBUG_PRINT("WRAPPER_CHAIN: comparing normalized='%s' vs subcommand='%s'\n", normalized, subcommand);
     if (strcmp(normalized, subcommand) != 0) {
+        DEBUG_PRINT("WRAPPER_CHAIN: no match, trying next ancestor\n");
         free(local_suffix);
         free(normalized);
         return 0;   /* No match */
     }
+    DEBUG_PRINT("WRAPPER_CHAIN: match found!\n");
 
     /* Match found. Use the original local_suffix (not normalized) for offset calculation */
     DEBUG_PRINT("WRAPPER_CHAIN: child '%s' matches parent's suffix '%s'\n",
@@ -482,16 +510,10 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
             return;
         }
 
-        /* Store the suffix as a wrapper-chain allowance */
-        /* Clear any existing wrapper chain.
-         * For sh -c commands, suffix may still have quotes from the parser,
-         * so we need to create a modifiable copy and strip them. */
-        char *suffix_copy = strdup(suffix);
-        if (suffix_copy) {
-            strip_quotes(suffix_copy);
-        }
+        /* Store the suffix as a wrapper-chain allowance (do NOT strip quotes).
+         * Quotes carry information about command structure and must be preserved. */
         free(state->wrapper_chain.wrapper_command);
-        state->wrapper_chain.wrapper_command = suffix_copy;
+        state->wrapper_chain.wrapper_command = strdup(suffix);
         free(large_buf);
         if (!state->wrapper_chain.wrapper_command) {
             DEBUG_PRINT("WRAPPER_CHAIN: failed to allocate memory for '%s'\n", suffix);
@@ -502,10 +524,13 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
 
         /* Parse the suffix for subcommands and grant allowances for them.
          * This handles sh -c 'cmd1; cmd2' and nested wrappers like timeout sh -c '...'.
-         * We parse the suffix and directly store allowances without recursing into
-         * grant_allowance (which would store wrapper_chain at each level). */
+         * We parse the original suffix (with quotes preserved) and directly store allowances
+         * without recursing into grant_allowance (which would store wrapper_chain at each level). */
+        DEBUG_PRINT("GRANT_ALLOWANCE: parsing suffix='%s' (len=%zu)\n", suffix, strlen(suffix));
         shell_parse_result_t inner_result;
-        if (shell_parse_fast(suffix, strlen(suffix), &SHELL_LIMITS_DEFAULT, &inner_result) == SHELL_OK) {
+        shell_error_t parse_err = shell_parse_fast(suffix, strlen(suffix), &SHELL_LIMITS_DEFAULT, &inner_result);
+        if (parse_err == SHELL_OK) {
+            DEBUG_PRINT("GRANT_ALLOWANCE: parsed %u subcommands from '%s'\n", inner_result.count, suffix);
             /* Find an empty slot for the allowances */
             AllowanceSet *slot = NULL;
             for (int i = 0; i < INLINE_ALLOWANCE_SETS; i++) {
@@ -548,18 +573,47 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
                 clock_gettime(CLOCK_MONOTONIC, &slot->timestamp);
                 slot->subcommand_count = 0;
                 memset(slot->used_mask, 0, sizeof(slot->used_mask));
+                DEBUG_PRINT("GRANT_ALLOWANCE: storing subcommands in slot, count=%u\n", inner_result.count);
                 for (uint32_t i = 0; i < inner_result.count && i < SHELL_MAX_SUBCOMMANDS; i++) {
                     uint32_t subcmd_len;
                     const char *subcmd_ptr = shell_get_subcommand(suffix, &inner_result.cmds[i], &subcmd_len);
                     if (subcmd_len > 0) {
-                        slot->subcommands[slot->subcommand_count] = strndup(subcmd_ptr, subcmd_len);
+                        /* Create a modifiable copy of the subcommand */
+                        char *subcmd_copy = strndup(subcmd_ptr, subcmd_len);
+                        if (!subcmd_copy) continue;
+                        
+                        /* Strip wrapper prefix to get inner command.
+                         * For example: "sh -c noop" -> "noop"
+                         * This ensures children exec'ing "noop" find the allowance. */
+                        char inner_buf[4096];
+                        const char *inner = strip_outermost_wrapper_prefix(subcmd_copy, inner_buf, sizeof(inner_buf));
+                        
+                        if (inner) {
+                            /* Successfully stripped wrapper, use the inner command */
+                            slot->subcommands[slot->subcommand_count] = strdup(inner);
+                            DEBUG_PRINT("GRANT_ALLOWANCE: stored subcommand[%d]='%s' (stripped from '%.*s')\n", 
+                                       slot->subcommand_count, inner, subcmd_len, subcmd_ptr);
+                        } else {
+                            /* No wrapper, store original subcommand (strip quotes for proper matching) */
+                            strip_quotes(subcmd_copy);
+                            slot->subcommands[slot->subcommand_count] = strdup(subcmd_copy);
+                            DEBUG_PRINT("GRANT_ALLOWANCE: stored subcommand[%d]='%s'\n", 
+                                       slot->subcommand_count, subcmd_copy);
+                            free(subcmd_copy);
+                            subcmd_copy = NULL; /* ownership transferred */
+                        }
+                        free(subcmd_copy);
                         if (slot->subcommands[slot->subcommand_count]) {
                             slot->subcommand_count++;
-                            DEBUG_PRINT("ALLOWANCE: granted inner subcommand '%.*s'\n", subcmd_len, subcmd_ptr);
                         }
                     }
                 }
+                DEBUG_PRINT("GRANT_ALLOWANCE: final slot subcommand_count=%d\n", slot->subcommand_count);
+            } else {
+                DEBUG_PRINT("GRANT_ALLOWANCE: no slot found to store subcommands!\n");
             }
+        } else {
+            DEBUG_PRINT("GRANT_ALLOWANCE: shell_parse_fast failed for '%s', err=%d\n", suffix, parse_err);
         }
         return;
     }
@@ -1086,39 +1140,113 @@ static char *resolve_path_at(pid_t pid, int dirfd, const char *path, char *buf, 
     return buf;
 }
 
-/* Build command string from argv - dynamic allocation */
+/* Check if a string needs quoting for shell safety */
+static int needs_shell_quoting(const char *str) {
+    if (!str || !*str) return 0;
+    for (const char *p = str; *p; p++) {
+        char c = *p;
+        if (c == ' ' || c == '\t' || c == '\n' || c == ';' || 
+            c == '\'' || c == '"' || c == '$' || c == '`' ||
+            c == '\\' || c == '(' || c == ')' || c == '[' || 
+            c == ']' || c == '{' || c == '}' || c == '<' ||
+            c == '>' || c == '&' || c == '|' || c == '*' ||
+            c == '?' || c == '!' || c == '#' || c == '~') {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Build command string from argv - dynamic allocation.
+ * Properly quotes arguments that contain shell special characters. */
 #define MAX_COMMAND_STRING_LEN 65536  /* 64KB sanity limit */
 
 static char *build_command_string_alloc(char *const argv[]) {
     if (!argv || !argv[0]) return NULL;
 
-    /* First pass: calculate total length needed */
+    /* First pass: calculate total length needed, accounting for quoting */
     size_t total_len = 0;
     for (int i = 0; argv[i]; i++) {
-        size_t len = strlen(argv[i]) + 1;  /* +1 for space separator */
+        size_t len = strlen(argv[i]);
+        if (needs_shell_quoting(argv[i])) {
+            /* Count single quotes to see if we can use single quoting */
+            int has_single_quote = 0;
+            for (size_t j = 0; j < len; j++) {
+                if (argv[i][j] == '\'') {
+                    has_single_quote = 1;
+                    break;
+                }
+            }
+            if (has_single_quote) {
+                /* Use double quotes - need to escape $, `, \, and " */
+                total_len += 2;  /* opening and closing " */
+                for (size_t j = 0; j < len; j++) {
+                    char c = argv[i][j];
+                    if (c == '$' || c == '`' || c == '\\' || c == '"') {
+                        total_len += 2;  /* backslash escape */
+                    }
+                    total_len++;
+                }
+            } else {
+                /* Use single quotes: 'arg' -> no special char escaping needed */
+                total_len += 2;  /* opening and closing ' */
+                total_len += len;
+            }
+        } else {
+            total_len += len;
+        }
+        total_len += 1;  /* space separator */
         /* Check for integer overflow */
-        if (total_len + len < total_len || total_len + len > MAX_COMMAND_STRING_LEN) {
+        if (total_len > MAX_COMMAND_STRING_LEN) {
             DEBUG_PRINT("HANDLER: command string too large or overflow\n");
             return NULL;
         }
-        total_len += len;
     }
 
     if (total_len == 0) return NULL;
 
-    /* Allocate buffer (add 1 for null terminator) */
+    /* Allocate buffer */
     char *buf = malloc(total_len + 1);
     if (!buf) return NULL;
 
-    /* Second pass: build the string */
+    /* Second pass: build the string with proper quoting */
     char *p = buf;
     for (int i = 0; argv[i]; i++) {
         if (i > 0) {
             *p++ = ' ';
         }
         size_t len = strlen(argv[i]);
-        memcpy(p, argv[i], len);
-        p += len;
+        if (needs_shell_quoting(argv[i])) {
+            /* Count single quotes */
+            int has_single_quote = 0;
+            for (size_t j = 0; j < len; j++) {
+                if (argv[i][j] == '\'') {
+                    has_single_quote = 1;
+                    break;
+                }
+            }
+            if (has_single_quote) {
+                /* Use double quotes with escaping */
+                *p++ = '"';
+                for (size_t j = 0; j < len; j++) {
+                    char c = argv[i][j];
+                    if (c == '$' || c == '`' || c == '\\' || c == '"') {
+                        *p++ = '\\';
+                    }
+                    *p++ = c;
+                }
+                *p++ = '"';
+            } else {
+                /* Use single quotes */
+                *p++ = '\'';
+                memcpy(p, argv[i], len);
+                p += len;
+                *p++ = '\'';
+            }
+        } else {
+            memcpy(p, argv[i], len);
+            p += len;
+        }
     }
     *p = '\0';
 
@@ -1326,6 +1454,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
         /* Build command string for validation - use dynamic allocation to avoid truncation */
         char *command = build_command_string_alloc(state->execve_argv);
+        DEBUG_PRINT("HANDLER: pid=%d built command string: '%s'\n", pid, command);
         if (!command) {
             /* Allocation failed - block the command to be safe */
             DEBUG_PRINT("HANDLER: pid=%d failed to build command string, blocking\n", pid);
@@ -1374,10 +1503,39 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
         /* Walk up the process tree to find an ancestor with allowances.
          * A child consumes allowances from its parent (not inherited, directly accessed).
-         * Stop when we reach the ptrace process itself (g_main_process_pid). */
+         * Stop when we reach the ptrace process itself (g_main_process_pid).
+         * 
+         * IMPORTANT: For execve-based wrappers like sh -c, the process making the execve
+         * is the SAME process that runs the wrapper command. So we must check the CURRENT
+         * process's state (not just ancestors) for allowances stored from a previous execve.
+         */
+        DEBUG_PRINT("HANDLER: pid=%d walking tree from parent=%d looking for '%s'\n", pid, parent_pid, command);
+        
+        /* First check the CURRENT process's own state (for execve-based wrappers).
+         * After execve, the process continues running but with a new program.
+         * Allowances from the PREVIOUS execve are still in this process's state. */
+        DEBUG_PRINT("HANDLER: pid=%d checking own state for wrapper-chain\n", pid);
+        if (consume_wrapper_chain(state, state, command)) {
+            DEBUG_PRINT("HANDLER: pid=%d has wrapper-chain from self for '%s', allowing\n",
+                       pid, command);
+            state->validated = 1;
+            free(command);
+            return 0;
+        }
+        DEBUG_PRINT("HANDLER: pid=%d checking allowances in self for '%s'\n", pid, command);
+        if (consume_allowance(state, command)) {
+            DEBUG_PRINT("HANDLER: pid=%d has allowance from self for '%s', allowing\n",
+                       pid, command);
+            state->validated = 1;
+            free(command);
+            return 0;
+        }
+        
+        /* Then walk up to ancestors */
         pid_t ancestor_pid = parent_pid;
         while (ancestor_pid > 0 && ancestor_pid != g_main_process_pid) {
             ProcessState *ancestor_state = syscall_find_process_state(ancestor_pid);
+            DEBUG_PRINT("HANDLER: pid=%d checking ancestor_pid=%d state=%s\n", pid, ancestor_pid, ancestor_state ? "found" : "NULL");
             if (ancestor_state) {
                 /* First check wrapper chain - if first word is a wrapper, advance offset.
                  * If first word is NOT a wrapper, consume the wrapper chain.
@@ -1390,6 +1548,7 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     return 0;
                 }
                 /* Check subcommand allowances */
+                DEBUG_PRINT("HANDLER: pid=%d checking allowances in ancestor %d for '%s'\n", pid, ancestor_pid, command);
                 if (consume_allowance(ancestor_state, command)) {
                     DEBUG_PRINT("HANDLER: pid=%d has allowance from ancestor %d for '%s', allowing\n",
                                pid, ancestor_pid, command);

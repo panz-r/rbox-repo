@@ -138,6 +138,7 @@ void env_screen(void) {
     } while(0)
 
     /* Prompt user for each flagged variable and only add allowed ones */
+    int capacity_hit = 0;
     for (int i = 0; i < flagged_count; i++) {
         extern char **environ;
         if (indices[i] < 0) continue;
@@ -152,10 +153,9 @@ void env_screen(void) {
 
         /* Check if we have room for more flagged envs */
         if (g_flagged_env_count >= MAX_FLAGGED_ENVS) {
-            /* No more room - mark to unset this var */
-            ADD_TO_UNSET(name);
-            fprintf(stderr, "   → Auto-blocked (capacity %d reached): %s\n", MAX_FLAGGED_ENVS, name);
-            continue;
+            /* No more room - mark for unsetting and stop processing */
+            capacity_hit = 1;
+            break;
         }
 
         if (!is_terminal) {
@@ -210,6 +210,22 @@ void env_screen(void) {
             fprintf(stderr, "   → Blocked: %s\n", name);
         }
         free(line);
+    }
+
+    /* If capacity was reached, mark all remaining flagged vars for unsetting */
+    if (capacity_hit && flagged_count > MAX_FLAGGED_ENVS) {
+        int remaining = flagged_count - MAX_FLAGGED_ENVS;
+        fprintf(stderr, "   → Auto-blocked %d more env vars (capacity %d reached)\n",
+                remaining, MAX_FLAGGED_ENVS);
+        for (int i = MAX_FLAGGED_ENVS; i < flagged_count; i++) {
+            if (indices[i] < 0) continue;
+            extern char **environ;
+            char *entry = environ[indices[i]];
+            if (!entry) continue;
+            char name[256];
+            extract_env_name(entry, name, sizeof(name));
+            ADD_TO_UNSET(name);
+        }
     }
 
     #undef ADD_TO_UNSET

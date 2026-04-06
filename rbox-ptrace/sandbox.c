@@ -33,6 +33,7 @@
 #include <linux/filter.h>
 
 #include "sandbox.h"
+#include "soft_policy.h"
 #include "debug.h"
 
 static void apply_memory_limit(void) {
@@ -821,18 +822,39 @@ int validate_landlock_paths(void) {
     return 0;
 }
 
-static void apply_landlock(void) {
+static soft_mode_t landlock_access_to_soft_mode(uint64_t landlock_access) {
+    if (landlock_access & LANDLOCK_ACCESS_FS_REFER) {
+        return SOFT_MODE_RWX;
+    }
+    if (landlock_access & LANDLOCK_ACCESS_FS_EXECUTE) {
+        if (landlock_access & (LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_MAKE_REG)) {
+            return SOFT_MODE_RWX;
+        }
+        return SOFT_MODE_RX;
+    }
+    if (landlock_access & (LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_MAKE_REG |
+                           LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+                           LANDLOCK_ACCESS_FS_MAKE_DIR | LANDLOCK_ACCESS_FS_TRUNCATE)) {
+        return SOFT_MODE_RW;
+    }
+    if (landlock_access & (LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR)) {
+        return SOFT_MODE_RO;
+    }
+    return SOFT_MODE_RO;
+}
+
+static int apply_landlock(void) {
     const char *allow_env = getenv("READONLYBOX_HARD_ALLOW");
     const char *deny_env = getenv("READONLYBOX_HARD_DENY");
 
     if ((!allow_env || !*allow_env) && (!deny_env || !*deny_env)) {
-        return;
+        return 0;
     }
 
     int abi = syscall(__NR_landlock_create_ruleset, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
     if (abi < 1) {
         LOG_ERROR("Landlock not supported (ABI version %d)", abi);
-        return;
+        return -1;
     }
 
     int allow_count = 0;
@@ -843,7 +865,7 @@ static void apply_landlock(void) {
     if (allow_count == 0 && deny_count == 0) {
         if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
         if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
-        return;
+        return 0;
     }
 
     allow_count = sandbox_remove_overlaps(allow_entries, allow_count, deny_entries, deny_count);
@@ -874,7 +896,7 @@ static void apply_landlock(void) {
         sandbox_expansion_cleanup();
         if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
         if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
-        return;
+        return -1;
     }
 
     uint64_t all_access = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR |
@@ -919,7 +941,7 @@ static void apply_landlock(void) {
         sandbox_expansion_cleanup();
         if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
         if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
-        return;
+        return -1;
     }
 
     for (int i = 0; i < g_result_count; i++) {
@@ -931,7 +953,7 @@ static void apply_landlock(void) {
         }
 
         struct landlock_path_beneath_attr path_attr = {
-            .allowed_access = g_result_paths[i].access,
+            .allowed_access = g_result_paths[i].access & handled_access_fs,
             .parent_fd = dir_fd,
         };
 
@@ -948,14 +970,24 @@ static void apply_landlock(void) {
 
     if (syscall(__NR_landlock_restrict_self, ruleset_fd, 0) != 0) {
         LOG_ERRNO("Failed to enforce Landlock ruleset");
-    } else {
-        DEBUG_PRINT("SANDBOX: Landlock enforced\n");
+        fprintf(stderr, "landlock setup failed, activating soft policy fallback.\n");
+        soft_policy_t *soft = soft_policy_get_global();
+        for (int i = 0; i < g_result_count; i++) {
+            soft_mode_t mode = landlock_access_to_soft_mode(g_result_paths[i].access);
+            soft_policy_add_rule(soft, g_result_paths[i].path, mode);
+        }
+        close(ruleset_fd);
+        sandbox_expansion_cleanup();
+        if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
+        if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
+        return -2;
     }
     close(ruleset_fd);
 
     sandbox_expansion_cleanup();
     if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
     if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
+    return 0;
 }
 
 /* Seccomp filter for blocking network syscalls.
@@ -1073,7 +1105,11 @@ static int apply_no_network(void) {
  * but before dropping privileges. */
 void apply_sandboxing(void) {
     apply_memory_limit();
-    apply_landlock();
+    int landlock_result = apply_landlock();
+    if (landlock_result == -2) {
+        soft_policy_t *soft = soft_policy_get_global();
+        DEBUG_PRINT("SANDBOX: Soft policy active with %d rules (Landlock fallback)\n", soft->count);
+    }
     if (getenv("READONLYBOX_NO_NETWORK") && apply_no_network() != 0) {
         LOG_FATAL("--no-network requested but seccomp failed to apply. Cannot enforce network restriction.");
     }

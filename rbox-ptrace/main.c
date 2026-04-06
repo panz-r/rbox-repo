@@ -935,6 +935,12 @@ int main(int argc, char *argv[]) {
         unsetenv("READONLYBOX_SOFT_DEBUG");
         /* Replace the command name in argv with the resolved path */
         argv[cmd_start] = cmd_path_copy;
+        /* Debug: log the command and full argv */
+        DEBUG_PRINT("EXEC: about to exec '%s' with argv:\n", cmd_path_copy);
+        for (int i = cmd_start; argv[i]; i++) {
+            DEBUG_PRINT("  argv[%d] = '%s'\n", i, argv[i]);
+        }
+        DEBUG_PRINT("EXEC: ---\n");
         execv(cmd_path_copy, &argv[cmd_start]);
         LOG_ERROR("execv failed for %s: %s", cmd_path_copy, strerror(errno));
         _exit(1);
