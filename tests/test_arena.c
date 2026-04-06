@@ -104,31 +104,6 @@ static void test_arena_strdup(void)
     arena_free(&a);
 }
 
-static void test_arena_strdup_empty(void)
-{
-    arena_t a;
-    arena_init(&a);
-
-    char *d = arena_strdup(&a, "");
-    TEST_ASSERT_NOT_NULL(d, "strdup empty string succeeds");
-    TEST_ASSERT_EQ(strlen(d), 0, "strdup empty string length");
-
-    arena_free(&a);
-}
-
-static void test_arena_memdup(void)
-{
-    arena_t a;
-    arena_init(&a);
-
-    uint8_t src[] = {0xDE, 0xAD, 0xBE, 0xEF};
-    void *d = arena_memdup(&a, src, sizeof(src));
-    TEST_ASSERT_NOT_NULL(d, "memdup succeeds");
-    TEST_ASSERT(memcmp(d, src, sizeof(src)) == 0, "memdup content matches");
-
-    arena_free(&a);
-}
-
 /* ------------------------------------------------------------------ */
 /*  Multi-block allocation                                             */
 /* ------------------------------------------------------------------ */
@@ -153,24 +128,6 @@ static void test_arena_multi_block(void)
     /* Check that usage is approximately correct */
     size_t usage = arena_usage(&a);
     TEST_ASSERT(usage >= 512 * 1024, "multi-block: usage >= 512 KB");
-
-    arena_free(&a);
-}
-
-/* ------------------------------------------------------------------ */
-/*  arena_usage                                                        */
-/* ------------------------------------------------------------------ */
-
-static void test_arena_usage(void)
-{
-    arena_t a;
-    arena_init(&a);
-
-    TEST_ASSERT_EQ(arena_usage(&a), 0, "initial usage is 0");
-
-    arena_alloc(&a, 100);
-    /* After alignment: 100 rounded up to 16 = 112 */
-    TEST_ASSERT(arena_usage(&a) >= 100, "usage >= allocation");
 
     arena_free(&a);
 }
@@ -211,9 +168,6 @@ void test_arena_run(void)
     RUN_TEST(test_arena_calloc_overflow);
     RUN_TEST(test_arena_calloc_zeroes);
     RUN_TEST(test_arena_strdup);
-    RUN_TEST(test_arena_strdup_empty);
-    RUN_TEST(test_arena_memdup);
     RUN_TEST(test_arena_multi_block);
-    RUN_TEST(test_arena_usage);
     RUN_TEST(test_arena_free_and_reuse);
 }

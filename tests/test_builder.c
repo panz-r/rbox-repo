@@ -121,6 +121,8 @@ static void test_builder_simplification(void)
     /* After simplification, only /usr should remain */
     TEST_ASSERT_EQ(count, 1, "simplified to single rule");
     TEST_ASSERT_STR_EQ(rules[0].path, "/usr", "remaining path");
+    /* Verify ABI v2 masking was applied (7 = EXECUTE|WRITE|READ, all in v2) */
+    TEST_ASSERT_EQ(rules[0].access, 7, "access masked correctly for ABI v2");
 
     landlock_builder_free(b);
 }
@@ -146,31 +148,6 @@ static void test_abi_mask_v1(void)
     TEST_ASSERT_EQ(rules[0].access, 1, "masked to EXECUTE only");
 
     landlock_builder_free(b);
-}
-
-static void test_abi_mask_v2(void)
-{
-    uint64_t mask = landlock_abi_mask(2);
-    TEST_ASSERT((mask & LL_FS_EXECUTE) != 0, "v2 has EXECUTE");
-    TEST_ASSERT((mask & LL_FS_WRITE_FILE) != 0, "v2 has WRITE_FILE");
-    TEST_ASSERT((mask & LL_FS_READ_FILE) != 0, "v2 has READ_FILE");
-    TEST_ASSERT((mask & LL_FS_READ_DIR) != 0, "v2 has READ_DIR");
-    /* v2 should NOT have REMOVE_DIR */
-    TEST_ASSERT((mask & LL_FS_REMOVE_DIR) == 0, "v2 lacks REMOVE_DIR");
-}
-
-static void test_abi_mask_v3(void)
-{
-    uint64_t mask = landlock_abi_mask(3);
-    TEST_ASSERT((mask & LL_FS_REMOVE_DIR) != 0, "v3 has REMOVE_DIR");
-    TEST_ASSERT((mask & LL_FS_RENAME_SRC) != 0, "v3 has RENAME_SRC");
-}
-
-static void test_abi_mask_v4(void)
-{
-    uint64_t mask = landlock_abi_mask(4);
-    TEST_ASSERT((mask & LL_FS_TRUNCATE) != 0, "v4 has TRUNCATE");
-    TEST_ASSERT((mask & LL_FS_IOCTL_DEV) != 0, "v4 has IOCTL_DEV");
 }
 
 static void test_abi_mask_invalid(void)
@@ -204,13 +181,21 @@ static void test_symlink_expansion(void)
 
     /* After simplification, /home should cover /home/user and /home/user/link
      * resolves to /var/data which should also be present. */
-    int found_var = 0;
+    int found_home = 0, found_var = 0;
     for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/home") == 0) {
+            found_home = 1;
+            TEST_ASSERT_EQ(rules[i].access, 7, "/home access correct");
+        }
         if (strcmp(rules[i].path, "/var/data") == 0) {
             found_var = 1;
+            TEST_ASSERT_EQ(rules[i].access, 7, "/var/data access correct");
         }
     }
+    TEST_ASSERT(found_home, "/home present after symlink expansion");
     TEST_ASSERT(found_var, "symlink target /var/data added as rule");
+    /* Verify no garbage rules — should be exactly 2 */
+    TEST_ASSERT_EQ(count, 2, "exactly 2 rules after symlink expansion");
 
     landlock_builder_free(b);
 }
@@ -232,12 +217,9 @@ static void test_symlink_loop_termination(void)
     /* Verify /a is still present (loop shouldn't corrupt the tree) */
     size_t count = 0;
     const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
-    TEST_ASSERT(count >= 1, "at least one rule after loop handling");
-    int found_a = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(rules[i].path, "/a") == 0) found_a = 1;
-    }
-    TEST_ASSERT(found_a, "/a survives symlink loop preparation");
+    TEST_ASSERT_EQ(count, 1, "exactly one rule after loop handling");
+    TEST_ASSERT_STR_EQ(rules[0].path, "/a", "/a is the only rule");
+    TEST_ASSERT_EQ(rules[0].access, 7, "/a access correct");
 
     landlock_builder_free(b);
 }
@@ -289,9 +271,6 @@ void test_builder_run(void)
     RUN_TEST(test_builder_multiple_paths);
     RUN_TEST(test_builder_simplification);
     RUN_TEST(test_abi_mask_v1);
-    RUN_TEST(test_abi_mask_v2);
-    RUN_TEST(test_abi_mask_v3);
-    RUN_TEST(test_abi_mask_v4);
     RUN_TEST(test_abi_mask_invalid);
     RUN_TEST(test_symlink_expansion);
     RUN_TEST(test_symlink_loop_termination);

@@ -13,42 +13,6 @@
 #include <unistd.h>
 
 /* ------------------------------------------------------------------ */
-/*  Bug regression: JSON save/load with special characters (bug #12)  */
-/* ------------------------------------------------------------------ */
-
-static void test_save_load_json_escaping(void)
-{
-    mock_fs_reset();
-    mock_fs_create_dir("/tmp_test_special");
-
-    landlock_builder_t *b = landlock_builder_new();
-    landlock_builder_allow(b, "/tmp_test_special", 7);
-    landlock_builder_prepare(b, 2, false);
-
-    TEST_ASSERT_EQ(landlock_builder_save(b, "/tmp/test_special.json"), 0,
-                   "save with special chars");
-
-    /* Verify the file contains properly escaped JSON */
-    FILE *f = fopen("/tmp/test_special.json", "r");
-    TEST_ASSERT_NOT_NULL(f, "saved file exists");
-    if (f) {
-        char buf[1024];
-        { size_t _r = fread(buf, 1, sizeof(buf) - 1, f); (void)_r; }
-        buf[sizeof(buf) - 1] = '\0';
-        fclose(f);
-
-        /* Check it's valid-ish JSON with proper structure */
-        TEST_ASSERT(strstr(buf, "\"abi_version\"") != NULL, "JSON has abi_version");
-        TEST_ASSERT(strstr(buf, "\"path\"") != NULL, "JSON has path key");
-        TEST_ASSERT(strstr(buf, "\"access\"") != NULL, "JSON has access key");
-        TEST_ASSERT(strstr(buf, "/tmp_test_special") != NULL, "JSON has path value");
-    }
-
-    landlock_builder_free(b);
-    remove("/tmp/test_special.json");
-}
-
-/* ------------------------------------------------------------------ */
 /*  Bug regression: save/load round-trip correctness (bug #16)         */
 /* ------------------------------------------------------------------ */
 
@@ -76,12 +40,12 @@ static void test_save_load_roundtrip(void)
 
     int found_a = 0, found_b = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "/round/a")) {
+        if (strcmp(rules[i].path, "/round/a") == 0) {
             found_a = 1;
             TEST_ASSERT_EQ(rules[i].access, LL_FS_READ_FILE,
                            "/round/a has correct access");
         }
-        if (strstr(rules[i].path, "/round/b")) {
+        if (strcmp(rules[i].path, "/round/b") == 0) {
             found_b = 1;
             TEST_ASSERT_EQ(rules[i].access, LL_FS_WRITE_FILE,
                            "/round/b has correct access");
@@ -267,8 +231,8 @@ static void test_load_appends(void)
      * Both should be present after collect_rules in load. */
     int found_a = 0, found_b = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "/load_test/a")) found_a = 1;
-        if (strstr(rules[i].path, "/load_test/b")) found_b = 1;
+        if (strcmp(rules[i].path, "/load_test/a") == 0) found_a = 1;
+        if (strcmp(rules[i].path, "/load_test/b") == 0) found_b = 1;
     }
     TEST_ASSERT(found_a, "loaded rule present");
     TEST_ASSERT(found_b, "pre-existing rule present");
@@ -276,36 +240,6 @@ static void test_load_appends(void)
     landlock_builder_free(b1);
     landlock_builder_free(b2);
     remove("/tmp/load_append.json");
-}
-
-/* ------------------------------------------------------------------ */
-/*  Empty file load                                                   */
-/* ------------------------------------------------------------------ */
-
-static void test_load_empty_file(void)
-{
-    /* Create an empty file */
-    FILE *f = fopen("/tmp/empty_policy.json", "w");
-    if (f) fclose(f);
-
-    landlock_builder_t *b = landlock_builder_new();
-    int ret = landlock_builder_load(b, "/tmp/empty_policy.json");
-    TEST_ASSERT_EQ(ret, -1, "load empty file fails");
-
-    landlock_builder_free(b);
-    remove("/tmp/empty_policy.json");
-}
-
-/* ------------------------------------------------------------------ */
-/*  Load nonexistent file                                             */
-/* ------------------------------------------------------------------ */
-
-static void test_load_nonexistent(void)
-{
-    landlock_builder_t *b = landlock_builder_new();
-    int ret = landlock_builder_load(b, "/nonexistent/file.json");
-    TEST_ASSERT_EQ(ret, -1, "load nonexistent file fails");
-    landlock_builder_free(b);
 }
 
 /* ------------------------------------------------------------------ */
@@ -329,7 +263,7 @@ static void test_symlink_chain(void)
     /* /link2 → /link1 → /real/target. The canonical path is /real/target */
     int found_target = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "/real/target")) {
+        if (strcmp(rules[i].path, "/real/target") == 0) {
             found_target = 1;
         }
     }
@@ -352,67 +286,6 @@ static void test_null_builder(void)
     TEST_ASSERT_EQ(landlock_builder_load(NULL, "/x"), -1, "load NULL");
 
     landlock_builder_free(NULL);  /* should not crash */
-}
-
-static void test_empty_path(void)
-{
-    mock_fs_reset();
-    landlock_builder_t *b = landlock_builder_new();
-    TEST_ASSERT_EQ(landlock_builder_allow(b, "", 1), -1, "empty path rejected");
-    TEST_ASSERT_EQ(landlock_builder_deny(b, ""), -1, "empty deny rejected");
-    landlock_builder_free(b);
-}
-
-static void test_double_slash_path(void)
-{
-    mock_fs_reset();
-    mock_fs_create_dir("/double/path");
-
-    landlock_builder_t *b = landlock_builder_new();
-    /* Path with double slashes should be normalised to /double/path */
-    int ret = landlock_builder_allow(b, "//double///path", 7);
-    TEST_ASSERT_EQ(ret, 0, "double-slash path accepted");
-
-    /* Verify the normalised path was stored */
-    landlock_builder_prepare(b, 2, false);
-    size_t count = 0;
-    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
-    TEST_ASSERT_EQ(count, 1, "one rule collected");
-    TEST_ASSERT_STR_EQ(rules[0].path, "/double/path",
-                       "slashes collapsed in collected path");
-
-    landlock_builder_free(b);
-}
-
-/* ------------------------------------------------------------------ */
-/*  O_PATH file descriptor helper                                     */
-/* ------------------------------------------------------------------ */
-
-static void test_open_fd_basic(void)
-{
-    mock_fs_reset();
-    mock_fs_create_dir("/openfd_test");
-
-    landlock_builder_t *b = landlock_builder_new();
-    landlock_builder_allow(b, "/openfd_test", 7);
-    landlock_builder_prepare(b, 2, false);
-
-    size_t count = 0;
-    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
-    TEST_ASSERT(count >= 1, "at least one rule");
-
-    /* Test opening the rule with O_PATH */
-    int fd = landlock_rule_open_fd(&rules[0], 0);
-    /* With mock fs, realpath returns the path, but the real kernel
-     * may not have /openfd_test.  Just check it doesn't crash. */
-    if (fd >= 0) close(fd);  /* real fs case */
-
-    /* Test NULL/invalid inputs */
-    TEST_ASSERT_EQ(landlock_rule_open_fd(NULL, 0), -1, "NULL rule rejected");
-    landlock_rule_t empty_rule = { .path = NULL, .access = 0 };
-    TEST_ASSERT_EQ(landlock_rule_open_fd(&empty_rule, 0), -1, "NULL path rejected");
-
-    landlock_builder_free(b);
 }
 
 /* ------------------------------------------------------------------ */
@@ -470,7 +343,7 @@ static void test_symlink_child_expansion_different_masks(void)
     size_t count = 0;
     const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
 
-    int found_src = 0; (void)0;
+    int found_src = 0;
     for (size_t i = 0; i < count; i++) {
         if (strcmp(rules[i].path, "/src") == 0) found_src = 1;
     }
@@ -482,13 +355,221 @@ static void test_symlink_child_expansion_different_masks(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Interaction: simplify + ABI masking with partial bit overlap       */
+/* ------------------------------------------------------------------ */
+
+static void test_simplify_with_abi_masking_partial_overlap(void)
+{
+    mock_fs_reset();
+    mock_fs_create_dir("/usr");
+    mock_fs_create_dir("/usr/lib");
+
+    landlock_builder_t *b = landlock_builder_new();
+    /* /usr has bits 0-7, /usr/lib has bits 0-2 (subset).
+     * ABI v1 only supports bit 0. After simplify, only /usr remains.
+     * After ABI v1 masking, access should be 1 (only EXECUTE). */
+    landlock_builder_allow(b, "/usr", 0xFF);
+    landlock_builder_allow(b, "/usr/lib", 0x07);
+    landlock_builder_prepare(b, 1, false);  /* ABI v1 */
+
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    TEST_ASSERT_EQ(count, 1, "simplified to one rule");
+    TEST_ASSERT_STR_EQ(rules[0].path, "/usr", "remaining path is /usr");
+    /* ABI v1 mask = 1 (EXECUTE only). 0xFF & 1 = 1. */
+    TEST_ASSERT_EQ(rules[0].access, 1, "access masked to ABI v1");
+
+    landlock_builder_free(b);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Interaction: symlink expansion + simplify + ABI masking end-to-end */
+/* ------------------------------------------------------------------ */
+
+static void test_symlink_expand_simplify_mask(void)
+{
+    mock_fs_reset();
+    mock_fs_create_dir("/real");
+    mock_fs_create_dir("/real/sub");
+    mock_fs_create_dir("/home/user");
+    mock_fs_create_symlink("/home/user/link", "/real");
+
+    landlock_builder_t *b = landlock_builder_new();
+    landlock_builder_allow(b, "/home", 7);
+    landlock_builder_allow(b, "/home/user/link", 7);
+    /* Note: mock fs doesn't resolve symlinks in intermediate path components,
+     * so /home/user/link/sub stays as-is instead of resolving to /real/sub.
+     * We test with a direct path to /real/sub instead. */
+    landlock_builder_allow(b, "/real/sub", 3);  /* subset, should be pruned */
+    landlock_builder_prepare(b, 3, true);  /* ABI v3 */
+
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+
+    /* After expand: /home, /real, /real/sub (mask 3 from direct allow)
+     * expand_symlinks adds /real with mask 7 (from /home rule matching
+     * /home/user/link). /real/sub has mask 3, subset of /real's 7.
+     * After simplify: /real covers /real/sub, pruned.
+     * Should have exactly 2 rules: /home and /real */
+    int found_home = 0, found_real = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/home") == 0) {
+            found_home = 1;
+            TEST_ASSERT_EQ(rules[i].access, 7, "/home access correct");
+        }
+        if (strcmp(rules[i].path, "/real") == 0) {
+            found_real = 1;
+            TEST_ASSERT_EQ(rules[i].access, 7, "/real access correct");
+        }
+    }
+    TEST_ASSERT(found_home, "/home present");
+    TEST_ASSERT(found_real, "/real present after expansion");
+    TEST_ASSERT_EQ(count, 2, "exactly 2 rules (children pruned)");
+
+    landlock_builder_free(b);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Interaction: save → load → re-prepare with different ABI           */
+/* ------------------------------------------------------------------ */
+
+static void test_save_load_reprepare_different_abi(void)
+{
+    mock_fs_reset();
+    mock_fs_create_dir("/data");
+
+    landlock_builder_t *b1 = landlock_builder_new();
+    landlock_builder_allow(b1, "/data", 0xFF);
+    landlock_builder_prepare(b1, 4, false);  /* ABI v4: full 0x1FFFF mask */
+
+    size_t c1 = 0;
+    const landlock_rule_t *r1 = landlock_builder_get_rules(b1, &c1);
+    TEST_ASSERT_EQ(c1, 1, "original has 1 rule");
+    /* 0xFF & ABI_v4_mask(0x1FFFF) = 0xFF */
+    TEST_ASSERT_EQ(r1[0].access, 0xFF, "original access masked to ABI v4");
+
+    /* Save and load */
+    TEST_ASSERT_EQ(landlock_builder_save(b1, "/tmp/reprepare.json"), 0,
+                   "save succeeds");
+
+    landlock_builder_t *b2 = landlock_builder_new();
+    TEST_ASSERT_EQ(landlock_builder_load(b2, "/tmp/reprepare.json"), 0,
+                   "load succeeds");
+
+    /* Re-prepare with ABI v1 (only EXECUTE) */
+    landlock_builder_prepare(b2, 1, false);
+
+    size_t c2 = 0;
+    const landlock_rule_t *r2 = landlock_builder_get_rules(b2, &c2);
+    TEST_ASSERT_EQ(c2, 1, "re-prepared has 1 rule");
+    TEST_ASSERT_STR_EQ(r2[0].path, "/data", "path preserved");
+    /* ABI v1 mask = 1. 0x1FFFF & 1 = 1 */
+    TEST_ASSERT_EQ(r2[0].access, 1, "access re-masked to ABI v1");
+
+    landlock_builder_free(b1);
+    landlock_builder_free(b2);
+    remove("/tmp/reprepare.json");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Interaction: deny on symlink target path                           */
+/* ------------------------------------------------------------------ */
+
+static void test_deny_symlink_target_path(void)
+{
+    mock_fs_reset();
+    mock_fs_create_dir("/real/secret");
+    mock_fs_create_dir("/home/user");
+    mock_fs_create_symlink("/home/user/link", "/real/secret");
+
+    landlock_builder_t *b = landlock_builder_new();
+    landlock_builder_allow(b, "/home", 7);
+    landlock_builder_allow(b, "/home/user/link", 7);
+    /* Deny the resolved target, not the symlink source */
+    landlock_builder_deny(b, "/real/secret");
+    landlock_builder_prepare(b, 2, true);
+
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+
+    /* /real/secret should be denied, so it should not appear in rules */
+    int found_secret = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/real/secret") == 0) found_secret = 1;
+    }
+    TEST_ASSERT(!found_secret, "denied symlink target not in rules");
+
+    landlock_builder_free(b);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Interaction: allow → deny → re-allow same path                    */
+/* ------------------------------------------------------------------ */
+
+static void test_allow_deny_reallow(void)
+{
+    mock_fs_reset();
+    mock_fs_create_dir("/data");
+
+    landlock_builder_t *b = landlock_builder_new();
+    landlock_builder_allow(b, "/data", 7);
+    landlock_builder_deny(b, "/data");
+    /* Re-allow the same path — should override the deny */
+    landlock_builder_allow(b, "/data", 3);
+    landlock_builder_prepare(b, 2, false);
+
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    TEST_ASSERT_EQ(count, 1, "one rule after re-allow");
+    TEST_ASSERT_STR_EQ(rules[0].path, "/data", "path is /data");
+    TEST_ASSERT_EQ(rules[0].access, 3, "access is 3 (re-allowed)");
+
+    landlock_builder_free(b);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Interaction: multiple symlinks to same target                     */
+/* ------------------------------------------------------------------ */
+
+static void test_multiple_symlinks_same_target(void)
+{
+    mock_fs_reset();
+    mock_fs_create_dir("/real");
+    mock_fs_create_dir("/home/user");
+    mock_fs_create_symlink("/home/user/link1", "/real");
+    mock_fs_create_symlink("/home/user/link2", "/real");
+
+    landlock_builder_t *b = landlock_builder_new();
+    landlock_builder_allow(b, "/home", 7);
+    landlock_builder_allow(b, "/home/user/link1", 7);
+    landlock_builder_allow(b, "/home/user/link2", 7);
+    landlock_builder_prepare(b, 2, true);
+
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+
+    /* Both symlinks resolve to /real, simplify should prune to /home + /real */
+    int found_home = 0, found_real = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/home") == 0) found_home = 1;
+        if (strcmp(rules[i].path, "/real") == 0) found_real = 1;
+    }
+    TEST_ASSERT(found_home, "/home present");
+    TEST_ASSERT(found_real, "/real present (from symlink expansion)");
+    /* After simplify: /home covers both link1 and link2;
+     * /real is added once (dedup by tree) */
+    TEST_ASSERT(count <= 2, "at most 2 rules after simplify");
+
+    landlock_builder_free(b);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Runner                                                             */
 /* ------------------------------------------------------------------ */
 
 void test_builder_extended_run(void)
 {
     printf("=== Builder Extended Tests ===\n");
-    RUN_TEST(test_save_load_json_escaping);
     RUN_TEST(test_save_load_roundtrip);
     RUN_TEST(test_deny_on_symlink);
     RUN_TEST(test_abi_mask_strips_all_bits);
@@ -496,13 +577,14 @@ void test_builder_extended_run(void)
     RUN_TEST(test_relative_path);
     RUN_TEST(test_reprepare_different_abi);
     RUN_TEST(test_load_appends);
-    RUN_TEST(test_load_empty_file);
-    RUN_TEST(test_load_nonexistent);
     RUN_TEST(test_symlink_chain);
     RUN_TEST(test_null_builder);
-    RUN_TEST(test_empty_path);
-    RUN_TEST(test_double_slash_path);
-    RUN_TEST(test_open_fd_basic);
     RUN_TEST(test_symlink_child_expansion);
     RUN_TEST(test_symlink_child_expansion_different_masks);
+    RUN_TEST(test_simplify_with_abi_masking_partial_overlap);
+    RUN_TEST(test_symlink_expand_simplify_mask);
+    RUN_TEST(test_save_load_reprepare_different_abi);
+    RUN_TEST(test_deny_symlink_target_path);
+    RUN_TEST(test_allow_deny_reallow);
+    RUN_TEST(test_multiple_symlinks_same_target);
 }

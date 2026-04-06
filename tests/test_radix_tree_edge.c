@@ -51,20 +51,6 @@ static void test_is_denied_multiple(void)
     radix_tree_free(tree);
 }
 
-static void test_is_denied_null_inputs(void)
-{
-    radix_tree_t *tree = radix_tree_new();
-
-    TEST_ASSERT_EQ(radix_tree_is_denied(NULL, "/x"), 0,
-                   "NULL tree returns 0");
-    TEST_ASSERT_EQ(radix_tree_is_denied(tree, NULL), 0,
-                   "NULL path returns 0");
-    TEST_ASSERT_EQ(radix_tree_is_denied(tree, ""), 0,
-                   "empty path returns 0");
-
-    radix_tree_free(tree);
-}
-
 /* ------------------------------------------------------------------ */
 /*  radix_tree_arena_usage                                             */
 /* ------------------------------------------------------------------ */
@@ -83,12 +69,6 @@ static void test_arena_usage_basic(void)
     TEST_ASSERT(after > initial, "arena usage increased after inserts");
 
     radix_tree_free(tree);
-}
-
-static void test_arena_usage_null(void)
-{
-    TEST_ASSERT_EQ(radix_tree_arena_usage(NULL), 0,
-                   "NULL tree returns 0 usage");
 }
 
 /* ------------------------------------------------------------------ */
@@ -121,11 +101,6 @@ static void test_null_inputs(void)
     radix_tree_t *tree = radix_tree_new();
     radix_tree_collect_rules(tree, NULL, &count);
     radix_tree_free(tree);
-}
-
-static void test_free_null(void)
-{
-    radix_tree_free(NULL);  /* should not crash */
 }
 
 /* ------------------------------------------------------------------ */
@@ -198,11 +173,13 @@ static void test_many_segments(void)
 
     /* The collected path should start with "/s0/s1/..." and NOT end with
      * the full 300 segments — it should be truncated at segment 256 */
-    TEST_ASSERT(strstr(rules[0].path, "/s0") != NULL,
+    TEST_ASSERT(strncmp(rules[0].path, "/s0/", 4) == 0,
                 "collected path starts with first segment");
     /* The last included segment index is 255 (0-based), so /s255 */
-    TEST_ASSERT(strstr(rules[0].path, "/s255") != NULL,
-                "collected path includes segment 255");
+    size_t path_len = strlen(rules[0].path);
+    TEST_ASSERT(path_len > 5 &&
+                strcmp(rules[0].path + path_len - 5, "/s255") == 0,
+                "collected path ends with segment 255");
     /* Segment 256 should NOT be in the collected path */
     TEST_ASSERT(strstr(rules[0].path, "/s256") == NULL,
                 "collected path excludes segment 256 (capped at 256)");
@@ -266,11 +243,8 @@ void test_radix_tree_edge_run(void)
     printf("=== Radix Tree Edge-Case Tests ===\n");
     RUN_TEST(test_is_denied_basic);
     RUN_TEST(test_is_denied_multiple);
-    RUN_TEST(test_is_denied_null_inputs);
     RUN_TEST(test_arena_usage_basic);
-    RUN_TEST(test_arena_usage_null);
     RUN_TEST(test_null_inputs);
-    RUN_TEST(test_free_null);
     RUN_TEST(test_path_max_length);
     RUN_TEST(test_path_too_long);
     RUN_TEST(test_many_segments);

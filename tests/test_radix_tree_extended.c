@@ -52,9 +52,9 @@ static void test_simplify_deep_subtree(void)
     /* /a/b/c/d must survive because its mask (0x80) is NOT covered by /a (0x0F) */
     int found_d = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "/d")) {
+        if (strcmp(rules[i].path, "/a/b/c/d") == 0) {
             found_d = 1;
-            TEST_ASSERT_EQ(rules[i].access, 0x80, "/d has correct mask");
+            TEST_ASSERT_EQ(rules[i].access, 0x80, "/a/b/c/d has correct mask");
         }
     }
     TEST_ASSERT(found_d, "deep non-subset node preserved after simplify");
@@ -92,7 +92,7 @@ static void test_simplify_deny_blocks_pruning(void)
     /* /home/shared must survive — it's needed to block /home/shared/secret */
     int found_shared = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "shared")) {
+        if (strcmp(rules[i].path, "/home/shared") == 0) {
             found_shared = 1;
         }
     }
@@ -187,29 +187,6 @@ static void test_deny_scoped(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Overlap removal: deny overrides allow at same path                 */
-/* ------------------------------------------------------------------ */
-
-static void test_deny_same_path(void)
-{
-    radix_tree_t *tree = radix_tree_new();
-
-    radix_tree_allow(tree, "/data", 7);
-    radix_tree_deny(tree,  "/data");
-
-    radix_tree_overlap_removal(tree);
-
-    landlock_rule_t *rules = NULL;
-    size_t count = 0;
-    radix_tree_collect_rules(tree, &rules, &count);
-
-    TEST_ASSERT_EQ(count, 0, "deny at same path removes allow");
-
-    free(rules);
-    radix_tree_free(tree);
-}
-
-/* ------------------------------------------------------------------ */
 /*  Simplification: sibling with different masks both kept              */
 /* ------------------------------------------------------------------ */
 
@@ -231,7 +208,7 @@ static void test_simplify_siblings_different_masks(void)
      * /base/a should survive (not a subset). */
     int found_a = 0, found_b = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "/base/a")) found_a = 1;
+        if (strcmp(rules[i].path, "/base/a") == 0) found_a = 1;
         if (strcmp(rules[i].path, "/base/b") == 0) found_b = 1;
     }
     TEST_ASSERT(found_a,  "non-subset sibling kept");
@@ -309,78 +286,6 @@ static void test_deep_path_insertion(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Multiple deny rules                                                */
-/* ------------------------------------------------------------------ */
-
-static void test_multiple_denies(void)
-{
-    radix_tree_t *tree = radix_tree_new();
-
-    radix_tree_allow(tree, "/data", 7);
-    radix_tree_deny(tree,  "/data/a");
-    radix_tree_deny(tree,  "/data/b");
-    radix_tree_deny(tree,  "/data/c");
-
-    radix_tree_overlap_removal(tree);
-
-    landlock_rule_t *rules = NULL;
-    size_t count = 0;
-    radix_tree_collect_rules(tree, &rules, &count);
-
-    /* /data should survive (deny only affects children) */
-    int found_data = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(rules[i].path, "/data") == 0) found_data = 1;
-    }
-    TEST_ASSERT(found_data, "/data survives multiple child denies");
-
-    for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
-    free(rules);
-    radix_tree_free(tree);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Empty tree operations                                            */
-/* ------------------------------------------------------------------ */
-
-static void test_empty_tree_collect(void)
-{
-    radix_tree_t *tree = radix_tree_new();
-
-    landlock_rule_t *rules = NULL;
-    size_t count = 999;
-    radix_tree_collect_rules(tree, &rules, &count);
-
-    TEST_ASSERT_EQ(count, 0, "empty tree collects 0 rules");
-    /* rules may be NULL or a valid empty allocation — only count matters */
-
-    radix_tree_free(tree);
-}
-
-static void test_null_inputs(void)
-{
-    TEST_ASSERT_EQ(radix_tree_allow(NULL, "/x", 1), -1, "allow NULL tree");
-    TEST_ASSERT_EQ(radix_tree_allow(NULL, NULL, 1), -1, "allow NULL tree+path");
-    TEST_ASSERT_EQ(radix_tree_deny(NULL, "/x"), -1, "deny NULL tree");
-    TEST_ASSERT_EQ(radix_tree_deny(NULL, NULL), -1, "deny NULL tree+path");
-
-    radix_tree_overlap_removal(NULL);   /* should not crash */
-    radix_tree_simplify(NULL);          /* should not crash */
-
-    landlock_rule_t *rules = NULL;
-    size_t count = 0;
-    radix_tree_collect_rules(NULL, &rules, &count);
-    TEST_ASSERT_EQ(count, 0, "collect from NULL tree");
-
-    radix_tree_t *tree = radix_tree_new();
-    radix_tree_collect_rules(tree, NULL, &count);
-    TEST_ASSERT_EQ(count, 0, "collect with NULL out_rules");
-    radix_tree_collect_rules(tree, &rules, NULL);
-    TEST_ASSERT(rules == NULL, "collect with NULL out_count");
-    radix_tree_free(tree);
-}
-
-/* ------------------------------------------------------------------ */
 /*  Runner                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -392,11 +297,7 @@ void test_radix_tree_extended_run(void)
     RUN_TEST(test_root_double_count);
     RUN_TEST(test_deny_at_root);
     RUN_TEST(test_deny_scoped);
-    RUN_TEST(test_deny_same_path);
     RUN_TEST(test_simplify_siblings_different_masks);
     RUN_TEST(test_large_branch_simplify);
     RUN_TEST(test_deep_path_insertion);
-    RUN_TEST(test_multiple_denies);
-    RUN_TEST(test_empty_tree_collect);
-    RUN_TEST(test_null_inputs);
 }

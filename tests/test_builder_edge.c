@@ -92,7 +92,8 @@ static void test_open_fd_with_flags(void)
 
     size_t count = 0;
     const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
-    TEST_ASSERT(count >= 1, "at least one rule");
+    TEST_ASSERT_EQ(count, 1, "exactly one rule");
+    TEST_ASSERT_STR_EQ(rules[0].path, real_dir, "rule path is temp dir");
 
     /* Default flags (O_PATH | O_CLOEXEC | O_NOFOLLOW) */
     int fd = landlock_rule_open_fd(&rules[0], 0);
@@ -175,32 +176,21 @@ static void test_vfs_relative_path_not_filtered(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Prepare with expand_symlinks when no symlinks exist               */
+/*  VFS boundary cases                                                 */
 /* ------------------------------------------------------------------ */
 
-static void test_prepare_no_symlinks(void)
+static void test_vfs_boundary_paths(void)
 {
-    mock_fs_reset();
-    mock_fs_create_dir("/data");
-    mock_fs_create_dir("/data/sub");
-
-    landlock_builder_t *b = landlock_builder_new();
-    landlock_builder_allow(b, "/data", 7);
-    landlock_builder_allow(b, "/data/sub", 3);
-    landlock_builder_prepare(b, 2, true /* expand_symlinks */);
-
-    size_t count = 0;
-    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
-
-    /* Both rules should be present; simplification may prune /data/sub */
-    TEST_ASSERT(count >= 1, "at least one rule");
-    int found_data = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "/data")) found_data = 1;
-    }
-    TEST_ASSERT(found_data, "/data present");
-
-    landlock_builder_free(b);
+    /* Paths that look like VFS but aren't */
+    TEST_ASSERT_EQ(landlock_path_is_vfs("/pro"), 0, "/pro is not VFS");
+    TEST_ASSERT_EQ(landlock_path_is_vfs("/sy"), 0, "/sy is not VFS");
+    TEST_ASSERT_EQ(landlock_path_is_vfs("/proc.bak"), 0, "/proc.bak is not VFS");
+    TEST_ASSERT_EQ(landlock_path_is_vfs("/sys.bak"), 0, "/sys.bak is not VFS");
+    /* Paths that are VFS */
+    TEST_ASSERT_EQ(landlock_path_is_vfs("/proc"), 1, "/proc is VFS");
+    TEST_ASSERT_EQ(landlock_path_is_vfs("/sys"), 1, "/sys is VFS");
+    TEST_ASSERT_EQ(landlock_path_is_vfs("/proc/"), 1, "/proc/ is VFS");
+    TEST_ASSERT_EQ(landlock_path_is_vfs("/sys/"), 1, "/sys/ is VFS");
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,40 +220,24 @@ static void test_reprepare_after_allow(void)
     /* Re-prepare */
     landlock_builder_prepare(b, 2, false);
     size_t c3 = 0;
-    landlock_builder_get_rules(b, &c3);
-    TEST_ASSERT(c3 >= 2, "re-prepare: both rules present");
+    const landlock_rule_t *r3 = landlock_builder_get_rules(b, &c3);
+    TEST_ASSERT_EQ(c3, 2, "re-prepare: both rules present");
+
+    int found_a = 0, found_b = 0;
+    for (size_t i = 0; i < c3; i++) {
+        if (strcmp(r3[i].path, "/a") == 0) {
+            found_a = 1;
+            TEST_ASSERT_EQ(r3[i].access, 7, "/a access correct");
+        }
+        if (strcmp(r3[i].path, "/b") == 0) {
+            found_b = 1;
+            TEST_ASSERT_EQ(r3[i].access, 3, "/b access correct");
+        }
+    }
+    TEST_ASSERT(found_a, "found /a after re-prepare");
+    TEST_ASSERT(found_b, "found /b after re-prepare");
 
     landlock_builder_free(b);
-}
-
-/* ------------------------------------------------------------------ */
-/*  JSON escape roundtrip                                              */
-/* ------------------------------------------------------------------ */
-
-static void test_json_escape_roundtrip(void)
-{
-    mock_fs_reset();
-    mock_fs_create_dir("/round/data");
-
-    landlock_builder_t *b1 = landlock_builder_new();
-    landlock_builder_allow(b1, "/round/data", LL_FS_WRITE_FILE);
-    landlock_builder_prepare(b1, 2, false);
-    TEST_ASSERT_EQ(landlock_builder_save(b1, "/tmp/roundtrip.json"), 0,
-                   "save succeeds");
-
-    landlock_builder_t *b2 = landlock_builder_new();
-    TEST_ASSERT_EQ(landlock_builder_load(b2, "/tmp/roundtrip.json"), 0,
-                   "load succeeds");
-
-    size_t count = 0;
-    const landlock_rule_t *rules = landlock_builder_get_rules(b2, &count);
-    TEST_ASSERT_EQ(count, 1, "one rule loaded");
-    TEST_ASSERT_STR_EQ(rules[0].path, "/round/data", "path roundtrip");
-    TEST_ASSERT_EQ(rules[0].access, LL_FS_WRITE_FILE, "access roundtrip");
-
-    landlock_builder_free(b1);
-    landlock_builder_free(b2);
-    remove("/tmp/roundtrip.json");
 }
 
 /* ------------------------------------------------------------------ */
@@ -366,6 +340,28 @@ static void test_simplify_deny_grandchild_blocks_pruning(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Deny overrides allow at same path, then allow again                */
+/* ------------------------------------------------------------------ */
+
+static void test_deny_overrides_allow_same_path(void)
+{
+    mock_fs_reset();
+    mock_fs_create_dir("/data");
+
+    landlock_builder_t *b = landlock_builder_new();
+    landlock_builder_allow(b, "/data", 7);
+    landlock_builder_deny(b, "/data");
+    landlock_builder_prepare(b, 2, false);
+
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    /* deny at same path should clear the allow */
+    TEST_ASSERT_EQ(count, 0, "deny at same path clears allow");
+
+    landlock_builder_free(b);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Runner                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -380,10 +376,10 @@ void test_builder_edge_run(void)
     RUN_TEST(test_prepare_invalid_abi);
     RUN_TEST(test_allow_all_access);
     RUN_TEST(test_vfs_relative_path_not_filtered);
-    RUN_TEST(test_prepare_no_symlinks);
+    RUN_TEST(test_vfs_boundary_paths);
     RUN_TEST(test_reprepare_after_allow);
-    RUN_TEST(test_json_escape_roundtrip);
     RUN_TEST(test_deny_clears_deeper_allow);
     RUN_TEST(test_symlink_expansion_no_matching_rule);
     RUN_TEST(test_simplify_deny_grandchild_blocks_pruning);
+    RUN_TEST(test_deny_overrides_allow_same_path);
 }

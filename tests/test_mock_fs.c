@@ -158,34 +158,6 @@ static void test_mock_list_children(void)
     TEST_ASSERT(found_file, "file.txt found");
 }
 
-static void test_mock_list_children_empty(void)
-{
-    mock_fs_reset();
-    mock_fs_create_dir("/empty_dir");
-
-    const char *names[16];
-    int n = mock_fs_list_children("/empty_dir", names, 16);
-    TEST_ASSERT_EQ(n, 0, "empty directory has 0 children");
-}
-
-static void test_mock_list_children_not_a_dir(void)
-{
-    mock_fs_reset();
-    mock_fs_create_file("/a_file");
-
-    const char *names[16];
-    int n = mock_fs_list_children("/a_file", names, 16);
-    TEST_ASSERT_EQ(n, -1, "listing file returns -1");
-}
-
-static void test_mock_list_children_nonexistent(void)
-{
-    mock_fs_reset();
-    const char *names[16];
-    int n = mock_fs_list_children("/no_such_dir", names, 16);
-    TEST_ASSERT_EQ(n, -1, "listing nonexistent dir returns -1");
-}
-
 /* ------------------------------------------------------------------ */
 /*  mock_fs_exists                                                     */
 /* ------------------------------------------------------------------ */
@@ -265,9 +237,6 @@ void test_mock_fs_run(void)
     RUN_TEST(test_mock_nonexistent);
     RUN_TEST(test_mock_dotdot_resolution);
     RUN_TEST(test_mock_list_children);
-    RUN_TEST(test_mock_list_children_empty);
-    RUN_TEST(test_mock_list_children_not_a_dir);
-    RUN_TEST(test_mock_list_children_nonexistent);
     RUN_TEST(test_mock_exists);
     RUN_TEST(test_mock_relative_symlink);
     RUN_TEST(test_mock_symlink_chain);

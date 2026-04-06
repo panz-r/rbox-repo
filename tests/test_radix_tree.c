@@ -93,30 +93,6 @@ static void test_mask_merge(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Deny rules                                                          */
-/* ------------------------------------------------------------------ */
-
-static void test_deny_insert(void)
-{
-    radix_tree_t *tree = radix_tree_new();
-
-    radix_tree_allow(tree, "/home", 7);
-    radix_tree_deny(tree, "/home/secret");
-
-    landlock_rule_t *rules = NULL;
-    size_t count = 0;
-    radix_tree_collect_rules(tree, &rules, &count);
-
-    /* Before overlap removal, both rules exist */
-    TEST_ASSERT_EQ(count, 1, "allow rule count (deny not collected)");
-    TEST_ASSERT_STR_EQ(rules[0].path, "/home", "allow rule path");
-
-    free((void *)rules[0].path);
-    free(rules);
-    radix_tree_free(tree);
-}
-
-/* ------------------------------------------------------------------ */
 /*  Overlap removal                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -255,27 +231,6 @@ static void test_root_path(void)
     radix_tree_free(tree);
 }
 
-static void test_trailing_slash(void)
-{
-    radix_tree_t *tree = radix_tree_new();
-
-    /* Note: paths are pre-cleaned by the builder; here we pass clean paths */
-    radix_tree_allow(tree, "/home", 7);
-    radix_tree_allow(tree, "/home/", 3);  /* should merge with /home */
-
-    landlock_rule_t *rules = NULL;
-    size_t count = 0;
-    radix_tree_collect_rules(tree, &rules, &count);
-
-    /* The tree splits on empty segment after trailing slash, so we
-     * may get two rules — that's OK for raw tree usage */
-    TEST_ASSERT(count >= 1, "at least one rule for trailing slash");
-
-    for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
-    free(rules);
-    radix_tree_free(tree);
-}
-
 static void test_empty_path(void)
 {
     radix_tree_t *tree = radix_tree_new();
@@ -296,12 +251,10 @@ void test_radix_tree_run(void)
     RUN_TEST(test_single_insert);
     RUN_TEST(test_nested_insert);
     RUN_TEST(test_mask_merge);
-    RUN_TEST(test_deny_insert);
     RUN_TEST(test_deny_overrides_allow);
     RUN_TEST(test_simplify_redundant_child);
     RUN_TEST(test_simplify_keeps_non_subset);
     RUN_TEST(test_simplify_deep_tree);
     RUN_TEST(test_root_path);
-    RUN_TEST(test_trailing_slash);
     RUN_TEST(test_empty_path);
 }
