@@ -411,6 +411,7 @@ void radix_tree_simplify(radix_tree_t *tree)
         int child_idx;
     } stack[4096];
     int sp = 0;
+    size_t pruned = 0;  /* count terminal nodes removed */
 
     stack[sp].node = tree->root;
     stack[sp].child_idx = 0;
@@ -451,10 +452,30 @@ void radix_tree_simplify(radix_tree_t *tree)
              * subsets of node->access_mask */
             if (!subtree_is_subset(child, node->access_mask)) continue;
 
+            /* Count terminals in child's subtree before pruning */
+            /* BFS to count */
+            struct { radix_node_t *n; } cq[4096];
+            int cq_sp = 0;
+            cq[cq_sp].n = child;
+            cq_sp++;
+            while (cq_sp > 0) {
+                cq_sp--;
+                radix_node_t *cn = cq[cq_sp].n;
+                if (cn->is_terminal && !cn->is_deny) pruned++;
+                radix_node_t **ca = children_array(cn);
+                for (int j = 0; j < cn->num_children && cq_sp < 4096; j++) {
+                    cq[cq_sp].n = ca[j];
+                    cq_sp++;
+                }
+            }
+
             /* Prune child and its entire subtree */
             remove_child_at(node, i);
         }
     }
+
+    if (pruned > tree->num_rules) pruned = tree->num_rules;
+    tree->num_rules -= pruned;
 }
 
 /* ------------------------------------------------------------------ */

@@ -73,6 +73,9 @@ static fs_entry_t *create_entry(const char *path, fs_entry_type_t type)
     return NULL; /* Full */
 }
 
+/** Clean a path (resolve . and .., collapse slashes) */
+static void clean_path(const char *in, char *out, size_t out_size);
+
 /**
  * Resolve a path in the mock filesystem, following symlinks.
  * Returns 0 on success with the resolved path in `out`.
@@ -133,7 +136,10 @@ static int resolve_path(const char *path, char *out, int max_depth)
                 memcpy(dir, target, cpy);
                 dir[cpy] = '\0';
             }
-            return resolve_path(dir, out, max_depth - 1);
+            /* Clean the path to resolve . and .. components */
+            char cleaned[MAX_PATH_LEN];
+            clean_path(dir, cleaned, sizeof(cleaned));
+            return resolve_path(cleaned, out, max_depth - 1);
         } else {
             return resolve_path(target, out, max_depth - 1);
         }

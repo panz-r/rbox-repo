@@ -31,18 +31,23 @@ void arena_free(arena_t *a)
 }
 
 /**
- * Allocate `size` bytes aligned to max_align_t (typically 16).
+ * Allocate `size` bytes aligned to ARENA_ALIGN (16 bytes).
  * If the current block doesn't have room, allocate a new block.
  */
 void *arena_alloc(arena_t *a, size_t size)
 {
     if (size == 0) return NULL;
 
-    /* Align up to max_align_t */
-    const size_t align = sizeof(max_align_t);
-    size_t aligned = (size + align - 1) & ~(align - 1);
+    const size_t align = ARENA_ALIGN;
 
-    /* Ensure we have a block with enough room */
+    /* Align up, guard against overflow in the addition */
+    size_t aligned;
+    if (size > SIZE_MAX - (align - 1)) return NULL;  /* overflow */
+    aligned = (size + align - 1) & ~(align - 1);
+
+    /* Ensure we have a block with enough room.
+     * offset + aligned cannot overflow because aligned <= SIZE_MAX/align*align
+     * and both fit within a 256 KB block. */
     if (!a->head || a->offset + aligned > sizeof(a->head->data)) {
         /* Need a new block */
         arena_block_t *block = malloc(sizeof(arena_block_t));
@@ -60,6 +65,9 @@ void *arena_alloc(arena_t *a, size_t size)
 
 void *arena_calloc(arena_t *a, size_t nmemb, size_t size)
 {
+    /* Overflow check: nmemb * size must not wrap */
+    if (nmemb > 0 && size > SIZE_MAX / nmemb) return NULL;
+
     size_t total = nmemb * size;
     void *ptr = arena_alloc(a, total);
     if (ptr) memset(ptr, 0, total);

@@ -12,6 +12,7 @@
 #define ARENA_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,11 +20,16 @@ extern "C" {
 
 #define ARENA_BLOCK_SIZE (256 * 1024)  /* 256 KB per block */
 
+/* Portable alignment: use 16 as a safe upper bound for max_align_t.
+ * We need the `data` array to start at a 16-byte offset within the block.
+ * `next` is a pointer (8 bytes on 64-bit, 4 on 32-bit).
+ * Padding fills the gap to reach 16 bytes total before `data`. */
+#define ARENA_ALIGN 16
+
 typedef struct arena_block {
     struct arena_block *next;
-    /* Flexible array must be last — but we want a fixed-size inline buffer
-     * to avoid a second allocation.  Use a large array instead. */
-    char data[ARENA_BLOCK_SIZE - sizeof(struct arena_block *)];
+    char _align_pad[ARENA_ALIGN - sizeof(struct arena_block *)];
+    char data[ARENA_BLOCK_SIZE - ARENA_ALIGN];
 } arena_block_t;
 
 typedef struct {

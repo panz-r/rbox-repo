@@ -17,6 +17,10 @@ extern void test_builder_run(void);
 extern void test_mock_fs_run(void);
 extern void test_radix_tree_extended_run(void);
 extern void test_builder_extended_run(void);
+extern void test_vfs_filter_run(void);
+extern void test_arena_run(void);
+extern void test_builder_edge_run(void);
+extern void test_radix_tree_edge_run(void);
 
 int main(void)
 {
@@ -24,16 +28,28 @@ int main(void)
     printf("  liblandlock-builder — Test Suite\n");
     printf("========================================\n\n");
 
+    test_arena_run();
+    printf("\n");
+
     test_mock_fs_run();
     printf("\n");
 
     test_radix_tree_run();
     printf("\n");
 
+    test_radix_tree_edge_run();
+    printf("\n");
+
     test_radix_tree_extended_run();
     printf("\n");
 
+    test_vfs_filter_run();
+    printf("\n");
+
     test_builder_run();
+    printf("\n");
+
+    test_builder_edge_run();
     printf("\n");
 
     test_builder_extended_run();

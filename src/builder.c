@@ -613,21 +613,29 @@ int landlock_builder_save(const landlock_builder_t *b, const char *filename)
     FILE *fp = fopen(filename, "w");
     if (!fp) return -1;
 
-    fprintf(fp, "{\n");
-    fprintf(fp, "  \"abi_version\": %d,\n", b->abi_version);
-    fprintf(fp, "  \"rules\": [\n");
-    for (size_t i = 0; i < b->rule_count; i++) {
+    int ok = 1;
+    ok &= (fprintf(fp, "{\n") >= 0);
+    ok &= (fprintf(fp, "  \"abi_version\": %d,\n", b->abi_version) >= 0);
+    ok &= (fprintf(fp, "  \"rules\": [\n") >= 0);
+    for (size_t i = 0; i < b->rule_count && ok; i++) {
         fprintf(fp, "    { \"path\": ");
         json_write_escaped(fp, b->rules[i].path);
         fprintf(fp, ", \"access\": %" PRIu64 " }",
                 b->rules[i].access);
         if (i + 1 < b->rule_count) fprintf(fp, ",");
-        fprintf(fp, "\n");
+        ok &= (fprintf(fp, "\n") >= 0);
     }
-    fprintf(fp, "  ]\n");
-    fprintf(fp, "}\n");
+    ok &= (fprintf(fp, "  ]\n") >= 0);
+    ok &= (fprintf(fp, "}\n") >= 0);
+    ok &= (fclose(fp) == 0);
 
-    fclose(fp);
+    if (!ok) {
+        /* Best effort: try to remove incomplete file */
+        fclose(fp);
+        unlink(filename);
+        errno = EIO;
+        return -1;
+    }
     return 0;
 }
 
@@ -756,7 +764,28 @@ int landlock_builder_load(landlock_builder_t *b, const char *filename)
     free(json);
 
     /* Collect rules from tree into b->rules */
-    radix_tree_collect_rules(b->tree, &b->rules, &b->rule_count);
+    landlock_rule_t *new_rules = NULL;
+    size_t new_count = 0;
+    radix_tree_collect_rules(b->tree, &new_rules, &new_count);
+
+    if (!new_rules && new_count == 0 &&
+        b->rule_count == 0) {
+        /* Empty policy — valid but empty */
+        b->rules = NULL;
+        b->rule_count = 0;
+    } else if (!new_rules) {
+        /* OOM during collection — don't mark as prepared */
+        errno = ENOMEM;
+        return -1;
+    } else {
+        /* Free any previous rules */
+        for (size_t i = 0; i < b->rule_count; i++) {
+            free((char *)b->rules[i].path);
+        }
+        free(b->rules);
+        b->rules = new_rules;
+        b->rule_count = new_count;
+    }
 
     b->prepared = true;
     return 0;
