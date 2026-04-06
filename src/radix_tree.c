@@ -3,7 +3,7 @@
  * @brief Radix (prefix) tree for Landlock filesystem paths.
  *
  * All node and string memory is arena-allocated for performance.
- * Individual nodes are never freed — the arena is released in bulk.
+ * Children are stored in a sorted array for binary search.
  */
 
 #define _DEFAULT_SOURCE
@@ -25,21 +25,20 @@
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
+static inline bool node_is_terminal(const radix_node_t *n) { return n->flags & RADIX_F_TERMINAL; }
+static inline bool node_is_deny(const radix_node_t *n)     { return n->flags & RADIX_F_DENY; }
+static inline void node_set_terminal(radix_node_t *n)      { n->flags |= RADIX_F_TERMINAL; }
+static inline void node_set_deny(radix_node_t *n)          { n->flags |= RADIX_F_DENY; }
+
 /**
  * Split an absolute path into segments (skip leading '/').
- * Returns number of segments, writes pointers into `out` (caller must
- * ensure `out` has room for at least MAX_PATH_DEPTH entries).
- * Segments are NOT null-terminated — they point into the original
- * string and length is stored in `out_lens`.
+ * Returns number of segments.
  */
 static int split_path(const char *path, const char **out, int *out_lens, int max_out)
 {
     int count = 0;
     const char *p = path;
-
-    /* Skip leading slashes */
     while (*p == '/') p++;
-
     while (*p && count < max_out) {
         const char *start = p;
         while (*p && *p != '/') p++;
@@ -56,103 +55,97 @@ static radix_node_t *node_new(arena_t *a, const char *seg, int seg_len)
 {
     radix_node_t *n = arena_calloc(a, 1, sizeof(*n));
     if (!n) return NULL;
-
-    /* Copy segment into arena */
     n->seg = arena_alloc(a, (size_t)seg_len + 1);
     if (!n->seg) return NULL;
     memcpy(n->seg, seg, (size_t)seg_len);
     n->seg[seg_len] = '\0';
-    n->seg_len = seg_len;
-
-    n->access_mask = 0;
-    n->is_terminal = false;
-    n->is_deny = false;
-    n->children = NULL;      /* will point to inline_children initially */
+    n->seg_len = (uint32_t)seg_len;
+    n->children = NULL;
     n->num_children = 0;
-    n->cap_children = 0;     /* 0 means use inline array */
-
+    n->cap_children = 0;
+    n->flags = 0;
     return n;
 }
 
-/** Get the children array pointer (inline or overflow). */
-static radix_node_t **children_array(radix_node_t *parent)
+/** Get the children array pointer (NULL if none). */
+static inline radix_node_t **children_array(radix_node_t *parent)
 {
-    if (parent->cap_children == 0)
-        return parent->inline_children;
     return parent->children;
 }
 
 /**
- * Grow the children array.  If currently using inline, migrate to an
- * arena-allocated array.  Otherwise double the capacity.
- * Returns 0 on success, -1 on OOM.
- */
-static int grow_children(arena_t *a, radix_node_t *parent)
-{
-    int new_cap;
-    if (parent->cap_children == 0) {
-        /* First time: migrate from inline to arena array of 16 slots */
-        new_cap = 16;
-    } else {
-        new_cap = parent->cap_children * 2;
-    }
-
-    /* Use arena_calloc to zero the new entries beyond the copy range */
-    radix_node_t **new_arr = arena_calloc(a, (size_t)new_cap, sizeof(radix_node_t *));
-    if (!new_arr) return -1;
-
-    /* Copy existing children */
-    radix_node_t **old_arr = children_array(parent);
-    memcpy(new_arr, old_arr, (size_t)parent->num_children * sizeof(radix_node_t *));
-
-    parent->children = new_arr;
-    parent->cap_children = (uint32_t)new_cap;
-    return 0;
-}
-
-/** Add a child to a parent node. */
-static int add_child(arena_t *a, radix_node_t *parent, radix_node_t *child)
-{
-    if (parent->num_children >= parent->cap_children && parent->cap_children > 0) {
-        if (grow_children(a, parent) < 0) return -1;
-    } else if (parent->cap_children == 0 &&
-               parent->num_children >= RADIX_INLINE_CHILDREN) {
-        if (grow_children(a, parent) < 0) return -1;
-    }
-
-    radix_node_t **arr = children_array(parent);
-    arr[parent->num_children++] = child;
-    return 0;
-}
-
-/**
- * Find a child matching the given segment (exact string match).
- * Returns index into children array, or -1.
+ * Binary search for a child by segment.  Children are kept sorted by
+ * segment string for O(log n) lookup.
  */
 static int find_child(radix_node_t *parent, const char *seg, int seg_len)
 {
-    radix_node_t **arr = children_array(parent);
-    for (uint32_t i = 0; i < parent->num_children; i++) {
-        radix_node_t *c = arr[i];
-        if (c->seg_len == seg_len &&
-            memcmp(c->seg, seg, (size_t)seg_len) == 0) {
-            return i;
-        }
+    if (parent->num_children == 0) return -1;
+    radix_node_t **arr = parent->children;
+    int lo = 0, hi = parent->num_children - 1;
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        radix_node_t *c = arr[mid];
+        int cmp;
+        if (c->seg_len == (uint32_t)seg_len)
+            cmp = memcmp(c->seg, seg, (size_t)seg_len);
+        else
+            cmp = (c->seg_len < (uint32_t)seg_len) ? -1 : 1;
+        if (cmp == 0) return mid;
+        if (cmp < 0) lo = mid + 1;
+        else hi = mid - 1;
     }
     return -1;
 }
 
 /**
- * Remove child at index.  With arena allocation we CANNOT free the child
- * node or its subtree — we just compact the array.  The orphaned nodes
- * will be reclaimed when the arena is destroyed.
+ * Insert a child into the sorted children array at the correct position.
+ * Returns the index where the child was inserted.
  */
+static int insert_child_sorted(arena_t *a, radix_node_t *parent, radix_node_t *child)
+{
+    /* Grow if needed */
+    if (parent->num_children >= parent->cap_children) {
+        int new_cap = parent->cap_children == 0 ? 16 : parent->cap_children * 2;
+        radix_node_t **new_arr = arena_calloc(a, (size_t)new_cap, sizeof(radix_node_t *));
+        if (!new_arr) return -1;
+        if (parent->cap_children > 0) {
+            memcpy(new_arr, parent->children,
+                   (size_t)parent->num_children * sizeof(radix_node_t *));
+        }
+        parent->children = new_arr;
+        parent->cap_children = (uint16_t)new_cap;
+    }
+
+    /* Find insertion position via binary search */
+    radix_node_t **arr = parent->children;
+    int lo = 0, hi = parent->num_children - 1;
+    int pos = parent->num_children;
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        int cmp;
+        if (arr[mid]->seg_len == child->seg_len)
+            cmp = memcmp(arr[mid]->seg, child->seg, (size_t)child->seg_len);
+        else
+            cmp = (arr[mid]->seg_len < child->seg_len) ? -1 : 1;
+        if (cmp < 0) lo = mid + 1;
+        else { hi = mid - 1; pos = mid; }
+    }
+
+    /* Shift right to make room */
+    for (int i = parent->num_children; i > pos; i--) {
+        arr[i] = arr[i - 1];
+    }
+    arr[pos] = child;
+    parent->num_children++;
+    return pos;
+}
+
+/** Remove child at index by compacting the array. */
 static void remove_child_at(radix_node_t *parent, int idx)
 {
-    if (idx < 0 || (uint32_t)idx >= parent->num_children) return;
-    /* Shift remaining children */
-    radix_node_t **arr = children_array(parent);
-    for (uint32_t i = (uint32_t)idx; i < parent->num_children - 1; i++) {
+    if (idx < 0 || idx >= parent->num_children) return;
+    radix_node_t **arr = parent->children;
+    for (int i = idx; i < parent->num_children - 1; i++) {
         arr[i] = arr[i + 1];
     }
     parent->num_children--;
@@ -186,70 +179,52 @@ void radix_tree_free(radix_tree_t *tree)
 
 int radix_tree_allow(radix_tree_t *tree, const char *path, uint64_t access)
 {
-    if (!tree || !path || !*path) {
-        errno = EINVAL;
-        return -1;
-    }
+    if (!tree || !path || !*path) { errno = EINVAL; return -1; }
 
-    /* Make a mutable copy of the path for segmentation */
     char path_buf[PATH_MAX];
     size_t path_len = strlen(path);
-    if (path_len >= PATH_MAX) {
-        errno = ENAMETOOLONG;
-        return -1;
-    }
+    if (path_len >= PATH_MAX) { errno = ENAMETOOLONG; return -1; }
     memcpy(path_buf, path, path_len + 1);
 
     const char *segs[256];
     int seg_lens[256];
     int n_segs = split_path(path_buf, segs, seg_lens, 256);
     if (n_segs == 0) {
-        /* Path is just "/" — store at root */
-        bool was_terminal = tree->root->is_terminal;
-        tree->root->is_terminal = true;
+        bool was = node_is_terminal(tree->root);
+        node_set_terminal(tree->root);
         tree->root->access_mask |= access;
-        if (!was_terminal) tree->num_rules++;
+        if (!was) tree->num_rules++;
         return 0;
     }
 
     radix_node_t *cur = tree->root;
-
     for (int i = 0; i < n_segs; i++) {
         int idx = find_child(cur, segs[i], seg_lens[i]);
         if (idx >= 0) {
-            cur = children_array(cur)[idx];
+            cur = cur->children[idx];
         } else {
             radix_node_t *child = node_new(&tree->arena, segs[i], seg_lens[i]);
             if (!child) return -1;
-            if (add_child(&tree->arena, cur, child) < 0) return -1;
+            if (insert_child_sorted(&tree->arena, cur, child) < 0) return -1;
             cur = child;
         }
     }
 
-    /* Mark terminal and merge access mask */
-    bool was_terminal = cur->is_terminal;
-    cur->is_terminal = true;
+    bool was = node_is_terminal(cur);
+    node_set_terminal(cur);
     cur->access_mask |= access;
-    cur->is_deny = false;  /* allow overrides deny flag if path reused */
-    if (!was_terminal) {
-        tree->num_rules++;
-    }
+    cur->flags &= ~RADIX_F_DENY;
+    if (!was) tree->num_rules++;
     return 0;
 }
 
 int radix_tree_deny(radix_tree_t *tree, const char *path)
 {
-    if (!tree || !path || !*path) {
-        errno = EINVAL;
-        return -1;
-    }
+    if (!tree || !path || !*path) { errno = EINVAL; return -1; }
 
     char path_buf[PATH_MAX];
     size_t path_len = strlen(path);
-    if (path_len >= PATH_MAX) {
-        errno = ENAMETOOLONG;
-        return -1;
-    }
+    if (path_len >= PATH_MAX) { errno = ENAMETOOLONG; return -1; }
     memcpy(path_buf, path, path_len + 1);
 
     const char *segs[256];
@@ -257,22 +232,21 @@ int radix_tree_deny(radix_tree_t *tree, const char *path)
     int n_segs = split_path(path_buf, segs, seg_lens, 256);
 
     radix_node_t *cur = tree->root;
-
     for (int i = 0; i < n_segs; i++) {
         int idx = find_child(cur, segs[i], seg_lens[i]);
         if (idx >= 0) {
-            cur = children_array(cur)[idx];
+            cur = cur->children[idx];
         } else {
             radix_node_t *child = node_new(&tree->arena, segs[i], seg_lens[i]);
             if (!child) return -1;
-            if (add_child(&tree->arena, cur, child) < 0) return -1;
+            if (insert_child_sorted(&tree->arena, cur, child) < 0) return -1;
             cur = child;
         }
     }
 
-    cur->is_deny = true;
-    cur->is_terminal = true;
-    cur->access_mask = 0;  /* deny has no access mask */
+    node_set_deny(cur);
+    node_set_terminal(cur);
+    cur->access_mask = 0;
     return 0;
 }
 
@@ -283,23 +257,20 @@ int radix_tree_deny(radix_tree_t *tree, const char *path)
 int radix_tree_is_denied(radix_tree_t *tree, const char *path)
 {
     if (!tree || !tree->root || !path || !*path) return 0;
-
     char path_buf[PATH_MAX];
     size_t path_len = strlen(path);
     if (path_len >= PATH_MAX) return 0;
     memcpy(path_buf, path, path_len + 1);
-
     const char *segs[256];
     int seg_lens[256];
     int n_segs = split_path(path_buf, segs, seg_lens, 256);
-
     radix_node_t *cur = tree->root;
     for (int i = 0; i < n_segs; i++) {
         int idx = find_child(cur, segs[i], seg_lens[i]);
         if (idx < 0) return 0;
-        cur = children_array(cur)[idx];
+        cur = cur->children[idx];
     }
-    return cur->is_deny ? 1 : 0;
+    return node_is_deny(cur) ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -309,34 +280,23 @@ int radix_tree_is_denied(radix_tree_t *tree, const char *path)
 void radix_tree_overlap_removal(radix_tree_t *tree)
 {
     if (!tree || !tree->root) return;
-
-    /* Iterative DFS tracking deny depth */
-    struct {
-        radix_node_t *node;
-        int deny_depth;
-    } stack[4096];
+    struct { radix_node_t *node; int deny_depth; } stack[4096];
     int sp = 0;
-
     stack[sp].node = tree->root;
     stack[sp].deny_depth = 0;
     sp++;
-
     while (sp > 0) {
         sp--;
         radix_node_t *cur = stack[sp].node;
         int deny_depth = stack[sp].deny_depth;
-
-        if (cur->is_deny) deny_depth++;
-
-        if (deny_depth > 0 && cur->is_terminal && !cur->is_deny) {
-            cur->is_terminal = false;
+        if (node_is_deny(cur)) deny_depth++;
+        if (deny_depth > 0 && node_is_terminal(cur) && !node_is_deny(cur)) {
+            cur->flags &= ~RADIX_F_TERMINAL;
             cur->access_mask = 0;
         }
-
-        radix_node_t **arr = children_array(cur);
         for (int i = cur->num_children - 1; i >= 0; i--) {
             if (sp >= 4096) break;
-            stack[sp].node = arr[i];
+            stack[sp].node = cur->children[i];
             stack[sp].deny_depth = deny_depth;
             sp++;
         }
@@ -347,46 +307,24 @@ void radix_tree_overlap_removal(radix_tree_t *tree)
 /*  Prefix simplification                                             */
 /* ------------------------------------------------------------------ */
 
-/**
- * Check if ALL terminal nodes in a subtree have access masks that are
- * subsets of `ancestor_mask`.  Returns false if any deny node is found.
- * Iterative DFS to avoid stack overflow on deep trees.
- */
 static bool subtree_is_subset(const radix_node_t *root, uint64_t ancestor_mask)
 {
     if (!root) return true;
-
-    struct sis_frame {
-        const radix_node_t *node;
-        int child_idx;
-    };
+    struct sis_frame { const radix_node_t *node; int child_idx; };
     struct sis_frame stack[4096];
     int sp = 0;
-
     stack[sp].node = root;
     stack[sp].child_idx = 0;
     sp++;
-
     while (sp > 0) {
         struct sis_frame *top = &stack[sp - 1];
         const radix_node_t *node = top->node;
-
-        /* Deny nodes block pruning */
-        if (node->is_deny) return false;
-
-        /* If this node is terminal, check subset */
-        if (node->is_terminal &&
-            (node->access_mask & ~ancestor_mask) != 0) {
+        if (node_is_deny(node)) return false;
+        if (node_is_terminal(node) && (node->access_mask & ~ancestor_mask) != 0)
             return false;
-        }
-
-        /* Push children */
-        if ((uint32_t)top->child_idx < node->num_children) {
-            if (sp >= 4096) {
-                /* Stack full — can't check deeper.  Conservative: don't prune. */
-                return false;
-            }
-            stack[sp].node = children_array((radix_node_t *)node)[top->child_idx];
+        if (top->child_idx < node->num_children) {
+            if (sp >= 4096) return false;
+            stack[sp].node = node->children[top->child_idx];
             stack[sp].child_idx = 0;
             top->child_idx++;
             sp++;
@@ -397,63 +335,36 @@ static bool subtree_is_subset(const radix_node_t *root, uint64_t ancestor_mask)
     return true;
 }
 
-/**
- * Iterative post-order traversal: if a node's access mask is a superset
- * of ALL descendant terminal nodes' masks (and no deny exists in the
- * subtree), the children can be pruned.
- */
 void radix_tree_simplify(radix_tree_t *tree)
 {
     if (!tree || !tree->root) return;
-
-    struct simplify_frame {
-        radix_node_t *node;
-        int child_idx;
-    } stack[4096];
+    struct simplify_frame { radix_node_t *node; int child_idx; } stack[4096];
     int sp = 0;
-    size_t pruned = 0;  /* count terminal nodes removed */
-
+    size_t pruned = 0;
     stack[sp].node = tree->root;
     stack[sp].child_idx = 0;
     sp++;
-
     while (sp > 0) {
         struct simplify_frame *top = &stack[sp - 1];
         radix_node_t *node = top->node;
-
-        if ((uint32_t)top->child_idx < node->num_children) {
-            if (sp >= 4096) {
-                top->child_idx = node->num_children;
-                continue;
-            }
-            stack[sp].node = children_array(node)[top->child_idx];
+        if (top->child_idx < node->num_children) {
+            if (sp >= 4096) { top->child_idx = node->num_children; continue; }
+            stack[sp].node = node->children[top->child_idx];
             stack[sp].child_idx = 0;
             top->child_idx++;
             sp++;
             continue;
         }
-
-        /* All children processed — post-order visit */
         sp--;
-
-        if (!node->is_terminal || node->access_mask == 0) continue;
-        if (node->is_deny) continue;
-
-        /* Check each child */
-        radix_node_t **arr = children_array(node);
+        if (!node_is_terminal(node) || node->access_mask == 0) continue;
+        if (node_is_deny(node)) continue;
         for (int i = node->num_children - 1; i >= 0; i--) {
-            radix_node_t *child = arr[i];
-
-            if (child->is_deny) continue;
-            if (!child->is_terminal) continue;
+            radix_node_t *child = node->children[i];
+            if (node_is_deny(child)) continue;
+            if (!node_is_terminal(child)) continue;
             if ((child->access_mask & ~node->access_mask) != 0) continue;
-
-            /* Deep check: all terminals in child's subtree must be
-             * subsets of node->access_mask */
             if (!subtree_is_subset(child, node->access_mask)) continue;
-
-            /* Count terminals in child's subtree before pruning */
-            /* BFS to count */
+            /* Count terminals before pruning */
             struct { radix_node_t *n; } cq[4096];
             int cq_sp = 0;
             cq[cq_sp].n = child;
@@ -461,19 +372,15 @@ void radix_tree_simplify(radix_tree_t *tree)
             while (cq_sp > 0) {
                 cq_sp--;
                 radix_node_t *cn = cq[cq_sp].n;
-                if (cn->is_terminal && !cn->is_deny) pruned++;
-                radix_node_t **ca = children_array(cn);
+                if (node_is_terminal(cn) && !node_is_deny(cn)) pruned++;
                 for (int j = 0; j < cn->num_children && cq_sp < 4096; j++) {
-                    cq[cq_sp].n = ca[j];
+                    cq[cq_sp].n = cn->children[j];
                     cq_sp++;
                 }
             }
-
-            /* Prune child and its entire subtree */
             remove_child_at(node, i);
         }
     }
-
     if (pruned > tree->num_rules) pruned = tree->num_rules;
     tree->num_rules -= pruned;
 }
@@ -488,22 +395,12 @@ void radix_tree_collect_rules(radix_tree_t *tree,
 {
     if (!tree || !tree->root || !out_rules || !out_count) return;
 
-    /* Pre-allocate */
     size_t cap = tree->num_rules > 0 ? tree->num_rules : 16;
     *out_rules = calloc(cap, sizeof(landlock_rule_t));
-    if (!*out_rules) {
-        *out_count = 0;
-        return;
-    }
+    if (!*out_rules) { *out_count = 0; return; }
     *out_count = 0;
 
-    /* DFS with path reconstruction */
-    struct {
-        radix_node_t *node;
-        int depth;
-    } stack[4096];
-
-    /* We'll reconstruct paths by keeping a segment stack */
+    struct { radix_node_t *node; int depth; } stack[4096];
     const char *seg_stack[256];
     int seg_len_stack[256];
 
@@ -519,11 +416,10 @@ void radix_tree_collect_rules(radix_tree_t *tree,
 
         if (cur != tree->root) {
             seg_stack[depth - 1] = cur->seg;
-            seg_len_stack[depth - 1] = cur->seg_len;
+            seg_len_stack[depth - 1] = (int)cur->seg_len;
         }
 
-        if (cur->is_terminal && !cur->is_deny && cur->access_mask != 0) {
-            /* Build the full path */
+        if (node_is_terminal(cur) && !node_is_deny(cur) && cur->access_mask != 0) {
             char full_path[PATH_MAX];
             int pos = 0;
             for (int i = 0; i < depth; i++) {
@@ -532,33 +428,23 @@ void radix_tree_collect_rules(radix_tree_t *tree,
                 memcpy(full_path + pos, seg_stack[i], (size_t)seg_len_stack[i]);
                 pos += seg_len_stack[i];
             }
-            if (pos == 0) {
-                full_path[0] = '/';
-                full_path[1] = '\0';
-                pos = 1;
-            } else {
-                full_path[pos] = '\0';
-            }
+            if (pos == 0) { full_path[0] = '/'; full_path[1] = '\0'; pos = 1; }
+            else full_path[pos] = '\0';
 
-            /* Grow output if needed */
             if (*out_count >= cap) {
                 cap *= 2;
-                landlock_rule_t *tmp = realloc(*out_rules,
-                                               cap * sizeof(landlock_rule_t));
+                landlock_rule_t *tmp = realloc(*out_rules, cap * sizeof(landlock_rule_t));
                 if (!tmp) break;
                 *out_rules = tmp;
             }
-
             (*out_rules)[*out_count].path = strdup(full_path);
             (*out_rules)[*out_count].access = cur->access_mask;
             (*out_count)++;
         }
 
-        /* Push children in reverse order so they come out forward */
-        radix_node_t **arr = children_array(cur);
         for (int i = cur->num_children - 1; i >= 0; i--) {
             if (sp >= 4096) break;
-            stack[sp].node = arr[i];
+            stack[sp].node = cur->children[i];
             stack[sp].depth = depth + 1;
             sp++;
         }
@@ -567,6 +453,5 @@ void radix_tree_collect_rules(radix_tree_t *tree,
 
 size_t radix_tree_arena_usage(const radix_tree_t *tree)
 {
-    if (!tree) return 0;
-    return arena_usage(&tree->arena);
+    return tree ? arena_usage(&tree->arena) : 0;
 }

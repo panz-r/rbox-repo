@@ -470,11 +470,9 @@ static void test_symlink_child_expansion_different_masks(void)
     size_t count = 0;
     const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
 
-    int found_src = 0, found_subdir = 0, found_file = 0;
+    int found_src = 0; (void)0;
     for (size_t i = 0; i < count; i++) {
         if (strcmp(rules[i].path, "/src") == 0) found_src = 1;
-        if (strstr(rules[i].path, "subdir")) found_subdir = 1;
-        if (strstr(rules[i].path, "file.txt")) found_file = 1;
     }
     /* All have same mask (READ_FILE), so simplify prunes to just /src */
     TEST_ASSERT(found_src, "/src added via expansion");

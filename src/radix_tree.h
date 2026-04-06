@@ -17,21 +17,35 @@
 extern "C" {
 #endif
 
-/** Inline child capacity — avoids malloc for the common case (≤8 children). */
-#define RADIX_INLINE_CHILDREN 8
-
-/** A single node in the radix tree. */
+/** A single node in the radix tree.
+ *
+ * Memory layout (40 bytes on 64-bit, vs 112 before):
+ *   seg             8  pointer to arena-allocated segment string
+ *   access_mask     8  OR'd access rights if terminal
+ *   seg_len         4  strlen of segment
+ *   num_children    2  current child count (max 65535)
+ *   cap_children    2  capacity of children[] (0 = no array yet)
+ *   children        8  arena-allocated child pointer array (NULL until grown)
+ *   flags           2  bit 0 = is_terminal, bit 1 = is_deny
+ *   --- padding ---  6  struct alignment to 8
+ *
+ * Children are stored sorted by segment pointer for binary search.
+ * This avoids the 64-byte inline_children[] array that wasted space
+ * on every node (most filesystem nodes have 1-3 children).
+ */
 typedef struct radix_node {
-    char            *seg;           /* Path segment (arena-owned, null-terminated). */
-    int              seg_len;       /* Length of segment (strlen). */
-    uint64_t         access_mask;   /* OR'd access rights if terminal. */
-    bool             is_terminal;   /* True if an allow/deny was set here. */
-    bool             is_deny;       /* True if this node is a deny rule. */
-    struct radix_node *inline_children[RADIX_INLINE_CHILDREN];
-    struct radix_node **children;   /* If > INLINE, points to arena-allocated array. */
-    uint32_t           num_children;
-    uint32_t           cap_children;  /* Capacity of `children` (0 = use inline). */
+    char             *seg;          /* Arena-owned null-terminated segment */
+    uint64_t         access_mask;   /* OR'd access rights if terminal */
+    uint32_t         seg_len;       /* Length of segment */
+    uint16_t         num_children;  /* Current child count */
+    uint16_t         cap_children;  /* Capacity of children[] (0 = none) */
+    struct radix_node **children;   /* Arena-allocated sorted array, or NULL */
+    uint16_t         flags;         /* Bit 0 = terminal, bit 1 = deny */
 } radix_node_t;
+
+/* Flag bits */
+#define RADIX_F_TERMINAL 0x01
+#define RADIX_F_DENY     0x02
 
 /** The radix tree, rooted at an implicit empty-segment node. */
 typedef struct radix_tree {

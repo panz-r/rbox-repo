@@ -627,11 +627,9 @@ int landlock_builder_save(const landlock_builder_t *b, const char *filename)
     }
     ok &= (fprintf(fp, "  ]\n") >= 0);
     ok &= (fprintf(fp, "}\n") >= 0);
-    ok &= (fclose(fp) == 0);
+    if (fclose(fp) != 0) ok = 0;
 
     if (!ok) {
-        /* Best effort: try to remove incomplete file */
-        fclose(fp);
         unlink(filename);
         errno = EIO;
         return -1;
