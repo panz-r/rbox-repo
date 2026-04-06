@@ -114,6 +114,13 @@ static void test_deny_on_symlink(void)
     size_t count = 0;
     const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
 
+    /* /home/user must be present (the rule we allowed) */
+    int found_user = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/home/user") == 0) found_user = 1;
+    }
+    TEST_ASSERT(found_user, "/home/user rule present");
+
     /* The symlink target /real/secret should NOT appear in rules */
     int found_secret = 0;
     for (size_t i = 0; i < count; i++) {
@@ -185,12 +192,17 @@ static void test_relative_path(void)
     mock_fs_create_dir("/relative/path");
 
     landlock_builder_t *b = landlock_builder_new();
-    /* With mock fs, relative "path" gets cwd prepended.
-     * Since mock_fs doesn't track real cwd, we use absolute.
-     * Test the API accepts relative paths without crashing. */
+    /* Relative path gets cwd ("/") prepended → "/relative/path" */
     int ret = landlock_builder_allow(b, "relative/path", 7);
-    /* May succeed (cwd prepend) or fail — just check no crash */
-    (void)ret;
+    TEST_ASSERT_EQ(ret, 0, "relative path accepted");
+
+    /* Verify the rule was collected with the normalised absolute path */
+    landlock_builder_prepare(b, 2, false);
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    TEST_ASSERT_EQ(count, 1, "one rule collected");
+    TEST_ASSERT_STR_EQ(rules[0].path, "/relative/path",
+                       "relative path normalised to absolute");
 
     landlock_builder_free(b);
 }
@@ -354,13 +366,21 @@ static void test_empty_path(void)
 static void test_double_slash_path(void)
 {
     mock_fs_reset();
-    mock_fs_create_dir("/double");
+    mock_fs_create_dir("/double/path");
 
     landlock_builder_t *b = landlock_builder_new();
-    /* Path with double slashes should be normalised */
+    /* Path with double slashes should be normalised to /double/path */
     int ret = landlock_builder_allow(b, "//double///path", 7);
-    /* Should not crash; result depends on mock fs */
-    (void)ret;
+    TEST_ASSERT_EQ(ret, 0, "double-slash path accepted");
+
+    /* Verify the normalised path was stored */
+    landlock_builder_prepare(b, 2, false);
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    TEST_ASSERT_EQ(count, 1, "one rule collected");
+    TEST_ASSERT_STR_EQ(rules[0].path, "/double/path",
+                       "slashes collapsed in collected path");
+
     landlock_builder_free(b);
 }
 

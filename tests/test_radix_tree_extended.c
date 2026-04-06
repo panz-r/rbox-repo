@@ -175,8 +175,8 @@ static void test_deny_scoped(void)
 
     int found_public = 0, found_private = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "public"))  found_public = 1;
-        if (strstr(rules[i].path, "private")) found_private = 1;
+        if (strcmp(rules[i].path, "/home/user/public") == 0)  found_public = 1;
+        if (strcmp(rules[i].path, "/home/user/private") == 0) found_private = 1;
     }
     TEST_ASSERT(found_public,  "public survives scoped deny");
     TEST_ASSERT(!found_private, "private is removed by deny");

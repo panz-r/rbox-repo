@@ -175,16 +175,6 @@ static void test_arena_usage(void)
     arena_free(&a);
 }
 
-static void test_arena_usage_null(void)
-{
-    /* Note: arena_usage(NULL) would dereference NULL.
-     * We don't test it; instead we verify normal usage behavior. */
-    arena_t a;
-    arena_init(&a);
-    TEST_ASSERT_EQ(arena_usage(&a), 0, "fresh arena usage is 0");
-    arena_free(&a);
-}
-
 /* ------------------------------------------------------------------ */
 /*  Free and re-use                                                    */
 /* ------------------------------------------------------------------ */

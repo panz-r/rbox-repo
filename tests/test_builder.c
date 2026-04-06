@@ -52,13 +52,21 @@ static void test_builder_allow_and_deny(void)
     size_t count = 0;
     const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
 
+    /* Use exact path matching, not substring */
     int found_secret = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "secret")) {
+        if (strcmp(rules[i].path, "/home/secret") == 0) {
             found_secret = 1;
         }
     }
     TEST_ASSERT(!found_secret, "secret path denied and not in output");
+
+    /* Verify /home survived */
+    int found_home = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/home") == 0) found_home = 1;
+    }
+    TEST_ASSERT(found_home, "/home still present after deny");
 
     landlock_builder_free(b);
 }
@@ -221,6 +229,16 @@ static void test_symlink_loop_termination(void)
     int ret = landlock_builder_prepare(b, 2, true);
     TEST_ASSERT_EQ(ret, 0, "prepare with symlink loop succeeds");
 
+    /* Verify /a is still present (loop shouldn't corrupt the tree) */
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    TEST_ASSERT(count >= 1, "at least one rule after loop handling");
+    int found_a = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/a") == 0) found_a = 1;
+    }
+    TEST_ASSERT(found_a, "/a survives symlink loop preparation");
+
     landlock_builder_free(b);
 }
 
@@ -247,7 +265,10 @@ static void test_save_load(void)
     size_t count = 0;
     const landlock_rule_t *rules = landlock_builder_get_rules(b2, &count);
     TEST_ASSERT_EQ(count, 1, "loaded rule count");
-    (void)rules;
+    TEST_ASSERT_NOT_NULL(rules, "rules pointer is valid");
+    TEST_ASSERT_STR_EQ(rules[0].path, "/tmp_test_policy",
+                       "loaded path matches");
+    TEST_ASSERT_EQ(rules[0].access, 7, "loaded access matches");
 
     landlock_builder_free(b1);
     landlock_builder_free(b2);

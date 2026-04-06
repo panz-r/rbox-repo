@@ -136,16 +136,24 @@ static void test_path_max_length(void)
 {
     radix_tree_t *tree = radix_tree_new();
 
-    /* Build a path close to PATH_MAX */
+    /* Build a path exactly PATH_MAX-1 bytes long (fits in buffer) */
     char path[PATH_MAX];
     memset(path, 'a', sizeof(path) - 1);
     path[0] = '/';
     path[sizeof(path) - 1] = '\0';
 
     int ret = radix_tree_allow(tree, path, 7);
-    /* Should succeed or fail with ENAMETOOLONG */
-    (void)ret;
+    TEST_ASSERT_EQ(ret, 0, "path of PATH_MAX-1 bytes accepted");
 
+    /* Verify the rule was collected correctly */
+    landlock_rule_t *rules = NULL;
+    size_t count = 0;
+    radix_tree_collect_rules(tree, &rules, &count);
+    TEST_ASSERT_EQ(count, 1, "long path rule collected");
+    TEST_ASSERT_STR_EQ(rules[0].path, path, "collected path matches original");
+
+    for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
+    free(rules);
     radix_tree_free(tree);
 }
 
@@ -173,7 +181,7 @@ static void test_many_segments(void)
 {
     radix_tree_t *tree = radix_tree_new();
 
-    /* Build a path with 300 segments (exceeds split_path limit of 256) */
+    /* Build a path with 300 segments (split_path caps at 256) */
     char path[4000];
     int pos = 0;
     for (int i = 0; i < 300; i++) {
@@ -181,13 +189,23 @@ static void test_many_segments(void)
     }
 
     int ret = radix_tree_allow(tree, path, 7);
-    /* split_path caps at 256 segments; tree should still be valid */
     TEST_ASSERT_EQ(ret, 0, "long segment path accepted (capped at 256)");
 
     landlock_rule_t *rules = NULL;
     size_t count = 0;
     radix_tree_collect_rules(tree, &rules, &count);
-    TEST_ASSERT(count >= 1, "at least one rule collected");
+    TEST_ASSERT_EQ(count, 1, "one rule collected (truncated path)");
+
+    /* The collected path should start with "/s0/s1/..." and NOT end with
+     * the full 300 segments — it should be truncated at segment 256 */
+    TEST_ASSERT(strstr(rules[0].path, "/s0") != NULL,
+                "collected path starts with first segment");
+    /* The last included segment index is 255 (0-based), so /s255 */
+    TEST_ASSERT(strstr(rules[0].path, "/s255") != NULL,
+                "collected path includes segment 255");
+    /* Segment 256 should NOT be in the collected path */
+    TEST_ASSERT(strstr(rules[0].path, "/s256") == NULL,
+                "collected path excludes segment 256 (capped at 256)");
 
     for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
     free(rules);

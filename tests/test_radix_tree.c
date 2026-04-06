@@ -46,11 +46,28 @@ static void test_nested_insert(void)
     radix_tree_collect_rules(tree, &rules, &count);
 
     TEST_ASSERT_EQ(count, 3, "rule count after nested insert");
-    /* All three should be present (no simplification yet) */
 
-    free((void *)rules[0].path);
-    free((void *)rules[1].path);
-    free((void *)rules[2].path);
+    /* Verify each specific path and mask */
+    int found_usr = 0, found_lib = 0, found_bin = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/usr") == 0) {
+            found_usr = 1;
+            TEST_ASSERT_EQ(rules[i].access, 7, "/usr mask correct");
+        }
+        if (strcmp(rules[i].path, "/usr/lib") == 0) {
+            found_lib = 1;
+            TEST_ASSERT_EQ(rules[i].access, 3, "/usr/lib mask correct");
+        }
+        if (strcmp(rules[i].path, "/usr/bin") == 0) {
+            found_bin = 1;
+            TEST_ASSERT_EQ(rules[i].access, 1, "/usr/bin mask correct");
+        }
+    }
+    TEST_ASSERT(found_usr, "found /usr");
+    TEST_ASSERT(found_lib, "found /usr/lib");
+    TEST_ASSERT(found_bin, "found /usr/bin");
+
+    for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
     free(rules);
     radix_tree_free(tree);
 }
@@ -67,6 +84,7 @@ static void test_mask_merge(void)
     radix_tree_collect_rules(tree, &rules, &count);
 
     TEST_ASSERT_EQ(count, 1, "rule count after merge");
+    TEST_ASSERT_STR_EQ(rules[0].path, "/home", "merged path is /home");
     TEST_ASSERT_EQ(rules[0].access, 3, "merged access mask");
 
     free((void *)rules[0].path);
@@ -116,13 +134,12 @@ static void test_deny_overrides_allow(void)
     radix_tree_collect_rules(tree, &rules, &count);
 
     /* /home/user should still exist but /home/user/secret should not */
-    int found_secret = 0;
+    int found_user = 0, found_secret = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "secret")) {
-            found_secret = 1;
-            break;
-        }
+        if (strcmp(rules[i].path, "/home/user") == 0) found_user = 1;
+        if (strcmp(rules[i].path, "/home/user/secret") == 0) found_secret = 1;
     }
+    TEST_ASSERT(found_user, "/home/user survives overlap removal");
     TEST_ASSERT(!found_secret, "secret path removed after overlap removal");
 
     for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
@@ -172,6 +189,21 @@ static void test_simplify_keeps_non_subset(void)
     radix_tree_collect_rules(tree, &rules, &count);
 
     TEST_ASSERT_EQ(count, 2, "both rules kept (not subset)");
+
+    /* Verify both specific paths and masks */
+    int found_usr = 0, found_lib = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/usr") == 0) {
+            found_usr = 1;
+            TEST_ASSERT_EQ(rules[i].access, 1, "/usr mask unchanged");
+        }
+        if (strcmp(rules[i].path, "/usr/lib") == 0) {
+            found_lib = 1;
+            TEST_ASSERT_EQ(rules[i].access, 7, "/usr/lib mask unchanged");
+        }
+    }
+    TEST_ASSERT(found_usr, "found /usr");
+    TEST_ASSERT(found_lib, "found /usr/lib");
 
     for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
     free(rules);
