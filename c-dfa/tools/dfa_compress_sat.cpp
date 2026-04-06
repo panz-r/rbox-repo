@@ -56,13 +56,11 @@ static bool sat_verbose = true;
 
 // ============================================================================
 // Bounded SAT Constants
-//
 // ALL SAT instances MUST be bounded by compile-time constants.
 // The totalizer encoding uses O(m log m) auxiliary variables where
 // m = candidate count. To prevent unbounded memory growth:
 //   - MAX_GROUP_SIZE caps per-group characters (limits LITERAL_3 combos)
 //   - MAX_TOTAL_CANDIDATES caps total candidates per SAT instance
-//
 // When bounds are exceeded, the solver falls back to greedy.
 // ============================================================================
 

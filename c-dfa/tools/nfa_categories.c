@@ -5,6 +5,7 @@
  * and category parsing/lookup used during pattern processing.
  */
 
+#define _DEFAULT_SOURCE
 #include "nfa_builder.h"
 #include "../include/dfa_errors.h"
 #include <stdio.h>
@@ -21,8 +22,7 @@ void nfa_category_init_defaults(nfa_builder_context_t* ctx) {
     if (ctx->categories_defined) return;
 
     for (int i = 0; i < CAT_COUNT; i++) {
-        strncpy(ctx->dynamic_category_names[i], default_category_names[i], MAX_CATEGORY_NAME - 1);
-        ctx->dynamic_category_names[i][MAX_CATEGORY_NAME - 1] = '\0';
+        strlcpy(ctx->dynamic_category_names[i], default_category_names[i], MAX_CATEGORY_NAME);
     }
     ctx->dynamic_category_count = CAT_COUNT;
     ctx->categories_defined = true;
@@ -99,12 +99,9 @@ void nfa_category_add_mapping(nfa_builder_context_t* ctx, const char* category,
 
     if (ctx->category_mapping_count < MAX_CATEGORY_MAPPINGS) {
         category_mapping_t* m = &ctx->category_mappings[ctx->category_mapping_count++];
-        strncpy(m->category, category, sizeof(m->category) - 1);
-        m->category[sizeof(m->category) - 1] = '\0';
-        strncpy(m->subcategory, subcategory, sizeof(m->subcategory) - 1);
-        m->subcategory[sizeof(m->subcategory) - 1] = '\0';
-        strncpy(m->operations, operations, sizeof(m->operations) - 1);
-        m->operations[sizeof(m->operations) - 1] = '\0';
+        strlcpy(m->category, category, sizeof(m->category));
+        strlcpy(m->subcategory, subcategory, sizeof(m->subcategory));
+        strlcpy(m->operations, operations, sizeof(m->operations));
         m->acceptance_category = acceptance_cat;
     }
 }
@@ -139,7 +136,6 @@ void nfa_category_parse_mapping(nfa_builder_context_t* ctx, const char* line) {
 
     char category_str[512];
     size_t cat_len = bracket_close - bracket_open - 1;
-    if (cat_len >= sizeof(category_str)) cat_len = sizeof(category_str) - 1;
     strncpy(category_str, bracket_open + 1, cat_len);
     category_str[cat_len] = '\0';
 
@@ -157,18 +153,15 @@ void nfa_category_parse_mapping(nfa_builder_context_t* ctx, const char* line) {
 
     char* tok = strtok(category_str, ":");
     if (tok != NULL) {
-        strncpy(category, tok, sizeof(category) - 1);
-        category[sizeof(category) - 1] = '\0';
+        strlcpy(category, tok, sizeof(category));
     }
     tok = strtok(NULL, ":");
     if (tok != NULL) {
-        strncpy(subcategory, tok, sizeof(subcategory) - 1);
-        subcategory[sizeof(subcategory) - 1] = '\0';
+        strlcpy(subcategory, tok, sizeof(subcategory));
     }
     tok = strtok(NULL, ":");
     if (tok != NULL) {
-        strncpy(operations, tok, sizeof(operations) - 1);
-        operations[sizeof(operations) - 1] = '\0';
+        strlcpy(operations, tok, sizeof(operations));
     }
 
     nfa_category_add_mapping(ctx, category, subcategory, operations, acceptance_cat);

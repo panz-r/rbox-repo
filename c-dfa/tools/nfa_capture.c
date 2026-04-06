@@ -5,6 +5,7 @@
  * and capture marker queuing for transitions.
  */
 
+#define _DEFAULT_SOURCE
 #include "nfa_builder.h"
 #include "../include/dfa_errors.h"
 #include <stdio.h>
@@ -24,8 +25,7 @@ int nfa_capture_get_id(nfa_builder_context_t* ctx, const char* name) {
         return -1;
     }
 
-    strncpy(ctx->capture_map[ctx->capture_count].name, name, MAX_CAPTURE_NAME - 1);
-    ctx->capture_map[ctx->capture_count].name[MAX_CAPTURE_NAME - 1] = '\0';
+    strlcpy(ctx->capture_map[ctx->capture_count].name, name, MAX_CAPTURE_NAME);
     ctx->capture_map[ctx->capture_count].id = ctx->capture_count;
     ctx->capture_map[ctx->capture_count].used = true;
 

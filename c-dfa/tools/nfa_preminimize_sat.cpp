@@ -407,13 +407,13 @@ extern "C" int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead
     
     VERBOSE_PRINT("Starting SAT-based NFA pre-minimization with %d states\n", state_count);
     
-    // Phase 1: Compute initial partitions
+    // Pass 1: Compute initial partitions
     int num_partitions;
     int* partition = compute_initial_partitions(nfa, state_count, dead_states, &num_partitions);
     
     VERBOSE_PRINT("Initial partitions: %d\n", num_partitions);
     
-    // Phase 2: Group states by partition
+    // Pass 2: Group states by partition
     std::map<int, std::vector<int>> partition_groups;
     for (int s = 0; s < state_count; s++) {
         if (!dead_states[s] && partition[s] >= 0) {
@@ -421,7 +421,7 @@ extern "C" int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead
         }
     }
     
-    // Phase 3: SAT verification for each partition
+    // Pass 3: SAT verification for each partition
     std::map<int, int> all_merges;  // state -> representative
     
     for (auto& pg : partition_groups) {
@@ -448,7 +448,7 @@ extern "C" int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead
         }
     }
     
-    // Phase 4: Apply merges
+    // Pass 4: Apply merges
     VERBOSE_PRINT("Applying %zu merges\n", all_merges.size());
     
     for (auto& m : all_merges) {

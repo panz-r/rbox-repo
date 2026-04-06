@@ -1605,15 +1605,12 @@ bool patternMatchesCharClass(const std::string& char_class, const std::string& s
 // ============================================================================
 // InductiveBuilder - Constraint-Propagating Pattern AST Construction
 // ============================================================================
-//
 // At each step, we track:
 //   already matched part , remaining to match
 //   For matching input: aas, ttt
 //   For counter-input:  aaa, geeew
-//
 // We add to pattern something that matches SOME of 'ttt' but NOT all of 'geeew'.
 // The pattern matches part of ttt while matching as little as possible of constraints.
-//
 // Division strategy:
 //   Input:    asfalkjsfha
 //   Counter:  asdggeeeeha
@@ -1841,7 +1838,6 @@ BuildResult buildInductive(const std::vector<std::string>& matching,
 
 // ============================================================================
 // Constraint Subdivision - Distribute counter-inputs among child nodes
-// 
 // For a sequence A+B+C, we can subdivide counter constraints:
 // - A (prefix): Cannot match patterns ending with distinguishing char
 // - B (middle): Cannot match that char directly
@@ -1958,17 +1954,14 @@ void applyConstraintSubdivision(std::shared_ptr<PatternNode> seq_node,
 // ============================================================================
 // PatternFactorization - Rewrite alternations to factor out common prefixes/suffixes
 // ============================================================================
-//
 // Prefix Example: d(7q7q7q|ddd|7qq8q|7qxd7qxd|7qNN7N)
 //   -> d(ddd|(7q7q7q|7qq8q|7qxd7qxd|7qNN7N))
 //   -> d(ddd|7(q7q7q|qq8q|qxd7qxd|qNN7N))
 //   -> d(ddd|7q(7q7q|q8q|xd7qxd|NN7N))
-//
 // Suffix Example: (abc7q|bbc7q|cbc7q)
 //   -> ((abc|bbc|cbc)7q)
 //   -> (((ab|bb|cb)bc)7q)
 //   -> (((a|b|c)bc)7q)
-//
 // This recursively factors common prefixes AND suffixes outside alternations.
 // (Namespace definition continues from forward declaration above)
 

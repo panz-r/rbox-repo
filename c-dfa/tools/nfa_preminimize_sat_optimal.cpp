@@ -565,14 +565,12 @@ static std::set<int> solve_optimal_merges_sat(
     int best_size = greedy_size;
 
     // --- Find maximum via iterative assumption-based solve ---
-    //
     // Totalizer root bits[j] means "count >= j+1".
     // For each target t from greedy_size+1 to n:
     //   Assume root.bits[t] (force count >= t+1)
     //   Solve — SAT means a model of size t+1 exists
     //   Record the model and try t+1
     //   UNSAT means no model of size t+1 exists → current best is optimal
-    //
     // Assumptions are lightweight (incremental, no clause modification).
     for (int t = greedy_size; t < n; t++) {
         // Ask: can we find an independent set of size >= t+1?

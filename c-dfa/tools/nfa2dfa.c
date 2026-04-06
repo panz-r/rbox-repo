@@ -12,6 +12,7 @@
 #include "../include/dfa_format.h"
 #include "../include/multi_target_array.h"
 #include "../include/nfa.h"
+#include "nfa_builder.h"
 #include "dfa_minimize.h"
 #include "dfa_compress.h"
 #include "dfa_layout.h"
@@ -24,7 +25,6 @@
 #endif
 
 // Forward declaration
-int find_symbol_id(char c);
 void nfa_init(void);
 
 static char pattern_identifier[256] = "";
@@ -32,10 +32,6 @@ static bool flag_verbose = false;
 static bool flag_chain = false;  /* Enable chain encoding detection */
 
 #define DEBUG_PRINT(...) do { if (flag_verbose) fprintf(stderr, __VA_ARGS__); } while (0)
-
-// Virtual symbol definitions (must match nfa_builder.h)
-#define VSYM_EPS 257
-#define VSYM_EOS 258
 
 /**
  * Check allocation result and abort on failure
@@ -60,7 +56,7 @@ static int max_states = MAX_STATES;
 
 // ============================================================================
 // NFA-TO-DFA CONVERTER STATE DOCUMENTATION
-// 
+//
 // Legacy global state for CLI tool. Library functions use nfa2dfa_context_t.
 // ============================================================================
 
@@ -226,7 +222,7 @@ void dfa_init(ATTR_UNUSED nfa2dfa_context_t* ctx) {
 
 void epsilon_closure_with_markers(ATTR_UNUSED nfa2dfa_context_t* ctx, int* states, int* count, int max_states,
                                    uint32_t* markers, int* marker_count, int max_markers) {
-    const int epsilon_symbol_id = 257;
+    const int epsilon_symbol_id = VSYM_EPS;
     bool* in_set = alloc_or_abort(calloc(max_states, sizeof(bool)), "epsilon_closure in_set");
     int* stack = alloc_or_abort(malloc(max_states * sizeof(int)), "epsilon_closure stack");
     int top = 0;
@@ -266,13 +262,15 @@ void epsilon_closure_with_markers(ATTR_UNUSED nfa2dfa_context_t* ctx, int* state
             }
         }
     }
+    free(in_set);
+    free(stack);
 }
 
 void epsilon_closure(ATTR_UNUSED nfa2dfa_context_t* ctx, int* states, int* count, int max_states) {
     int epsilon_sid = -1;
     int epsilon_symbol_id = 257;
     for (int s = 0; s < alphabet_size; s++) {
-        if (alphabet[s].symbol_id == 257) { epsilon_sid = s; break; }
+        if (alphabet[s].symbol_id == VSYM_EPS) { epsilon_sid = s; break; }
     }
     if (epsilon_sid < 0) {
         return;
@@ -421,6 +419,7 @@ int dfa_add_state(ATTR_UNUSED nfa2dfa_context_t* ctx, uint8_t category_mask, int
     int bucket = h % DFA_HASH_SIZE;
     int existing = find_dfa_state_hashed(h, sorted, nfa_count, category_mask, first_accepting_pattern);
     if (existing != -1) {
+        free(sorted);
         return existing;
     }
     if (dfa_state_count >= MAX_STATES) { 
@@ -521,11 +520,11 @@ static void collect_transition_markers(ATTR_UNUSED nfa2dfa_context_t* ctx, int s
         }
 
         // Collect VSYM_EOS (258) markers ONLY when processing symbol 258
-        if (sid == 258) {
+        if (sid == VSYM_EOS) {
             int eos_marker_count = 0;
             int eos_sid = -1;
             for (int as = 0; as < alphabet_size; as++) {
-                if (alphabet[as].symbol_id == 258) { eos_sid = as; break; }
+                if (alphabet[as].symbol_id == VSYM_EOS) { eos_sid = as; break; }
             }
             if (eos_sid >= 0) {
                 transition_marker_t* eos_markers = mta_get_markers(&nfa[s].multi_targets, eos_sid, &eos_marker_count);
@@ -668,7 +667,7 @@ void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
         int cur = q[h++];
         for (int i = 0; i < alphabet_size; i++) {
             int symbol = alphabet[i].symbol_id;
-            if (symbol == 257) continue;
+            if (symbol == VSYM_EPS) continue;
 
             int mc = dfa[cur]->nfa_state_count;
             for (int j = 0; j < mc; j++) ms[j] = dfa[cur]->nfa_states[j];
@@ -683,7 +682,7 @@ void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
             if (mc == 0) {
                 int eos_sid = -1;
                 for (int as = 0; as < alphabet_size; as++) {
-                    if (alphabet[as].symbol_id == 258) { eos_sid = as; break; }
+                    if (alphabet[as].symbol_id == VSYM_EOS) { eos_sid = as; break; }
                 }
                 if (eos_sid >= 0 && symbol == alphabet[eos_sid].symbol_id) {
                     store_marker_list(ctx, markers, marker_count);
@@ -772,7 +771,6 @@ void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     //   - Set eos_target to that DFA state
     // - If not accepting but contains an EOS target NFA state:
     //   - Find the accept DFA state with matching category
-    // 
     // NOTE: We allow empty matching for patterns that support it (*, ?, |).
     // The issue was category leakage from is_eos_target states, which we fixed earlier.
     for (int cur = 0; cur < dfa_state_count; cur++) {

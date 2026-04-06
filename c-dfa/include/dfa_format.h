@@ -66,7 +66,7 @@ static inline uint8_t dfa_make_enc(int ow, int cw, int pw) {
 }
 
 /* ============================================================================
- * Header layout (v10)
+ * Header layout
  *
  *  0: magic          (4B)
  *  4: version        (2B)

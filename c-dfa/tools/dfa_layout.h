@@ -39,7 +39,7 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count);
 
 /**
  * Calculate the size of the optimized DFA layout.
- * Uses v9/v10 adaptive field widths determined by encoding.
+ * Uses adaptive field widths determined by encoding.
  * Returns the total size in bytes.
  */
 size_t calculate_optimized_layout_size(

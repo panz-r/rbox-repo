@@ -5,6 +5,7 @@
  * Checks for malformed fragments, unbalanced parentheses, and other issues.
  */
 
+#define _DEFAULT_SOURCE
 #include "nfa_builder.h"
 #include "../include/dfa_errors.h"
 #include <stdio.h>

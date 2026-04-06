@@ -1,15 +1,15 @@
 /**
  * SAT Encoding Unit Tests for DFA Minimization
  *
- * Phase 1: Core Infrastructure
- * Phase 2: Constraint Encoding
- * Phase 3: Full Encoding
- * Phase 4: Stress Tests
+ * Pass 1: Core Infrastructure
+ * Pass 2: Constraint Encoding
+ * Pass 3: Full Encoding
+ * Pass 4: Stress Tests
  *
  * Usage:
  *   ./test_sat_encoding              # Run all tests
- *   ./test_sat_encoding --group 1    # Run phase 1 tests
- *   ./test_sat_encoding --group 2    # Run phase 2 tests
+ *   ./test_sat_encoding --group 1   # Run pass 1 tests
+ *   ./test_sat_encoding --group 2   # Run pass 2 tests
  *   ./test_sat_encoding --verbose   # Verbose output
  */
 
@@ -290,7 +290,7 @@ public:
 };
 
 // ============================================================================
-// Phase 1 Tests: Core Infrastructure
+// Pass 1 Tests: Core Infrastructure
 // ============================================================================
 
 // Test 1.1: Variable Management - single state, single partition
@@ -435,7 +435,7 @@ static void test_exactly_one_partition(void) {
 }
 
 // ============================================================================
-// Phase 2 Tests: Constraint Encoding
+// Pass 2 Tests: Constraint Encoding
 // ============================================================================
 
 // Test 2.1: Accepting vs non-accepting separation
@@ -636,7 +636,7 @@ static void test_start_state_fixed(void) {
 }
 
 // ============================================================================
-// Phase 3 Tests: Full Encoding
+// Pass 3 Tests: Full Encoding
 // ============================================================================
 
 // Test 3.1: 1-state DFA minimization
@@ -715,7 +715,7 @@ static void test_matches_hopcroft_simple(void) {
 }
 
 // ============================================================================
-// Phase 4 Tests: Stress Tests
+// Pass 4 Tests: Stress Tests
 // ============================================================================
 
 // Test 4.1: 10-state chain DFA
@@ -940,7 +940,7 @@ typedef struct {
 } test_entry_t;
 
 static test_entry_t all_tests[] = {
-    // Phase 1: Core Infrastructure
+    // Pass 1: Core Infrastructure
     {"single_state_partition", test_single_state_partition, 1},
     {"two_states_one_partition", test_two_states_one_partition, 1},
     {"two_states_two_partitions", test_two_states_two_partitions, 1},
@@ -948,7 +948,7 @@ static test_entry_t all_tests[] = {
     {"at_least_one_partition", test_at_least_one_partition, 1},
     {"exactly_one_partition", test_exactly_one_partition, 1},
     
-    // Phase 2: Constraint Encoding
+    // Pass 2: Constraint Encoding
     {"accepting_vs_nonaccepting", test_accepting_vs_nonaccepting, 2},
     {"two_accepting_same_cat", test_two_accepting_same_cat, 2},
     {"two_accepting_diff_cat", test_two_accepting_diff_cat, 2},
@@ -957,13 +957,13 @@ static test_entry_t all_tests[] = {
     {"diff_transitions_blocked", test_diff_transitions_blocked, 2},
     {"start_state_fixed", test_start_state_fixed, 2},
     
-    // Phase 3: Full Encoding
+    // Pass 3: Full Encoding
     {"1_state_dfa", test_1_state_dfa, 3},
     {"2_state_no_merge", test_2_state_no_merge, 3},
     {"2_state_merge", test_2_state_merge, 3},
     {"matches_hopcroft_simple", test_matches_hopcroft_simple, 3},
     
-    // Phase 4: Stress Tests
+    // Pass 4: Stress Tests
     {"10_state_dfa", test_10_state_dfa, 4},
     {"two_patterns_no_overlap", test_two_patterns_no_overlap, 4},
     {"12_state_mergeable_dfa", test_12_state_mergeable_dfa, 4},
@@ -991,7 +991,7 @@ int main(int argc, char** argv) {
     printf("=================================================\n\n");
     
     if (current_group > 0) {
-        printf("Running Phase %d tests only\n\n", current_group);
+        printf("Running Pass %d tests only\n\n", current_group);
     }
     
     // Run tests

@@ -146,12 +146,10 @@ int* sat_optimize_condensation_order(
     // === Distance indicator variables ===
     // t_{i,j,d} = (|pos[i] - pos[j]| >= d) for d = 1..k-1
     // Encoding: t_{i,j,d} = ∨_p (x[i][p] ∧ ∨_{q: |p-q|>=d} x[j][q])
-    //
     // Forward implication (positions -> distance):
     //   For each p, q with |p-q| >= d:
     //     x[i][p] ∧ x[j][q] → t_{i,j,d}
     //     CNF: ¬x[i][p] ∨ ¬x[j][q] ∨ t_{i,j,d}
-    //
     // Reverse implication (distance -> positions):
     //   t_{i,j,d} → ∨_{p,q:|p-q|>=d} (x[i][p] ∧ x[j][q])
     //   This is expensive to encode directly. Instead we note that:
@@ -205,7 +203,6 @@ int* sat_optimize_condensation_order(
     // === Cost variables ===
     // Cost = Σ_{i,j} cond[i][j] × Σ_d t_{i,j,d}
     // Because: Σ_d [|p-q| >= d] = |p-q|
-    //
     // We expand: cost_var_count = Σ cond[i][j] × (k-1) 
     // For each threshold variable with weight w, add it w times
     

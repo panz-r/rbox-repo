@@ -5,7 +5,7 @@
  * pattern file reading, and NFA construction from patterns.
  */
 
-#define _GNU_SOURCE
+#define _DEFAULT_SOURCE
 #include "nfa_builder.h"
 #include "../include/dfa_errors.h"
 #include "../include/cdfa_defines.h"
