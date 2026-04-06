@@ -74,6 +74,49 @@ uint64_t landlock_abi_mask(int abi_version)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Virtual filesystem filtering                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Virtual filesystem root prefixes that Landlock cannot enforce rules on.
+ * Landlock operates on regular filesystems; procfs and sysfs are excluded
+ * by the kernel.
+ */
+static const char * const vfs_roots[] = {
+    LL_VFS_PATH_PROC,   /* procfs — process info, not enforceable */
+    LL_VFS_PATH_SYS,    /* sysfs  — kernel objects, not enforceable */
+    NULL
+};
+
+/**
+ * Check whether a path is under a virtual filesystem root.
+ * Returns 1 if yes, 0 if no.
+ */
+int landlock_path_is_vfs(const char *path)
+{
+    if (!path || !*path) return 0;
+
+    /* Fast path: most paths start with '/' */
+    if (path[0] != '/') {
+        /* Relative path — could be anything.  Don't filter. */
+        return 0;
+    }
+
+    for (int i = 0; vfs_roots[i]; i++) {
+        const char *root = vfs_roots[i];
+        size_t root_len = strlen(root);
+
+        /* Match "/proc", "/proc/", "/sys", "/sys/" */
+        if (strncmp(path, root, root_len) == 0) {
+            /* Ensure we match a complete path component */
+            if (path[root_len] == '\0' || path[root_len] == '/')
+                return 1;
+        }
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Path canonicalisation                                             */
 /* ------------------------------------------------------------------ */
 
@@ -411,6 +454,9 @@ int landlock_builder_allow(landlock_builder_t *b, const char *path, uint64_t acc
 {
     if (!b || !path) { errno = EINVAL; return -1; }
 
+    /* Skip virtual filesystem paths — Landlock cannot enforce rules here */
+    if (landlock_path_is_vfs(path)) return 0;
+
     /* Free previous results if any */
     for (size_t i = 0; i < b->rule_count; i++) {
         free((char *)b->rules[i].path);
@@ -444,6 +490,9 @@ int landlock_builder_allow(landlock_builder_t *b, const char *path, uint64_t acc
 int landlock_builder_deny(landlock_builder_t *b, const char *path)
 {
     if (!b || !path) { errno = EINVAL; return -1; }
+
+    /* Skip virtual filesystem paths — Landlock cannot enforce rules here */
+    if (landlock_path_is_vfs(path)) return 0;
 
     for (size_t i = 0; i < b->rule_count; i++) {
         free((char *)b->rules[i].path);

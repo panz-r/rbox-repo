@@ -66,6 +66,18 @@ extern "C" {
 #define LL_FS_ALL  0xFFFFFFFFFFFFFFFFULL
 
 /* ------------------------------------------------------------------ */
+/*  Virtual filesystem prefixes (Landlock cannot enforce these)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Paths under these prefixes are silently ignored by allow()/deny()
+ * because the kernel's Landlock subsystem does not enforce rules on
+ * virtual filesystems (procfs, sysfs, etc.).
+ */
+#define LL_VFS_PATH_PROC  "/proc"
+#define LL_VFS_PATH_SYS   "/sys"
+
+/* ------------------------------------------------------------------ */
 /*  Opaque builder handle                                             */
 /* ------------------------------------------------------------------ */
 
@@ -179,6 +191,19 @@ int landlock_builder_load(landlock_builder_t *b, const char *filename);
  * @return File descriptor on success, -1 on error (errno set).
  */
 int landlock_rule_open_fd(const landlock_rule_t *rule, int flags);
+
+/**
+ * Check whether `path` resides on a virtual filesystem that Landlock
+ * cannot enforce rules on (e.g. /proc, /sys).
+ *
+ * Such paths are silently ignored by landlock_builder_allow() and
+ * landlock_builder_deny().  Callers can use this function to detect
+ * when a rule was skipped.
+ *
+ * @param path  Absolute or relative path to check.
+ * @return 1 if path is on a virtual filesystem, 0 otherwise.
+ */
+int landlock_path_is_vfs(const char *path);
 
 /**
  * Return the ABI bitmask for a given ABI version.

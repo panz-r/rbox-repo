@@ -31,7 +31,8 @@ TEST_SRCS := $(TESTDIR)/test_radix_tree.c \
              $(TESTDIR)/test_main.c \
              $(TESTDIR)/mock_fs.c \
              $(TESTDIR)/test_radix_tree_extended.c \
-             $(TESTDIR)/test_builder_extended.c
+             $(TESTDIR)/test_builder_extended.c \
+             $(TESTDIR)/test_vfs_filter.c
 TEST_OBJS := $(TEST_SRCS:.c=.o)
 TEST_BIN  := $(BUILDDIR)/test_runner
 
