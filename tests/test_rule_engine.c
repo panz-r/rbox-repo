@@ -666,6 +666,14 @@ static void test_rule_engine_layer_count(void)
     soft_ruleset_free(rs);
 }
 
+/* Forward declarations for tests defined after runner */
+static void test_rule_engine_expression_with_layer(void);
+static void test_rule_engine_matched_rule_on_deny(void);
+static void test_rule_engine_matched_rule_on_allow(void);
+static void test_rule_engine_linked_var_rejects_non_template(void);
+static void test_rule_engine_batch_uses_parent_cache(void);
+static void test_rule_engine_expression_layer_binary(void);
+
 /* ------------------------------------------------------------------ */
 /*  Runner                                                             */
 /* ------------------------------------------------------------------ */
@@ -695,4 +703,197 @@ void test_rule_engine_run(void)
     RUN_TEST(test_rule_engine_three_layers_deny_at_bottom);
     RUN_TEST(test_rule_engine_empty_layer_no_constraint);
     RUN_TEST(test_rule_engine_layer_count);
+    RUN_TEST(test_rule_engine_expression_with_layer);
+    RUN_TEST(test_rule_engine_matched_rule_on_deny);
+    RUN_TEST(test_rule_engine_matched_rule_on_allow);
+    RUN_TEST(test_rule_engine_linked_var_rejects_non_template);
+    RUN_TEST(test_rule_engine_batch_uses_parent_cache);
+    RUN_TEST(test_rule_engine_expression_layer_binary);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Expression parser with @layer prefix                                */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_expression_with_layer(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* @0: deny /secret at layer 0 (highest precedence) */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "@0:read::/secret -> DENY", NULL),
+                   0, "parse @0 layer deny");
+
+    /* @1: allow /secret at layer 1 (lower) */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "@1:read::/secret -> R", NULL),
+                   0, "parse @1 layer allow");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_READ,
+        .src_path = "/secret",
+        .dst_path = NULL,
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    TEST_ASSERT_EQ(ret, -13, "@0 layer DENY shadows @1 allow");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  matched_rule in audit log                                           */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_matched_rule_on_deny(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/secret",
+                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "add deny rule");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_READ,
+        .src_path = "/secret",
+        .dst_path = NULL,
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    soft_audit_log_t log;
+    memset(&log, 0, sizeof(log));
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, &log);
+    TEST_ASSERT_EQ(ret, -13, "read denied");
+    TEST_ASSERT(log.matched_rule != NULL, "matched_rule set on deny");
+    TEST_ASSERT_STR_EQ(log.matched_rule, "/secret", "matched_rule is /secret");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_rule_engine_matched_rule_on_allow(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0,
+                   SOFT_RULE_RECURSIVE),
+                   0, "add allow rule");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_READ,
+        .src_path = "/data/file.txt",
+        .dst_path = NULL,
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    soft_audit_log_t log;
+    memset(&log, 0, sizeof(log));
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, &log);
+    TEST_ASSERT(ret > 0, "read allowed");
+    TEST_ASSERT(log.matched_rule != NULL, "matched_rule set on allow");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  linked_path_var validation: reject non-template + linked combo     */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_linked_var_rejects_non_template(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* linked_path_var="DST" with a plain pattern should fail */
+    int ret = soft_ruleset_add_rule(rs, "/data", SOFT_ACCESS_READ,
+                                    SOFT_OP_COPY, "DST", NULL, 0, 0);
+    TEST_ASSERT_EQ(ret, -1, "linked_path_var with non-template pattern rejected");
+
+    /* With ${SRC} it should succeed */
+    ret = soft_ruleset_add_rule(rs, "${SRC}", SOFT_ACCESS_READ,
+                                SOFT_OP_COPY, "SRC", NULL, 0, 0);
+    TEST_ASSERT_EQ(ret, 0, "linked_path_var with ${SRC} pattern accepted");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Batch cache: parent directory hit                                  */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_batch_uses_parent_cache(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/src/...", SOFT_ACCESS_READ,
+                                          SOFT_OP_COPY, NULL, NULL, 0,
+                                          SOFT_RULE_RECURSIVE),
+                   0, "add SRC rule");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/dst/...", SOFT_ACCESS_WRITE,
+                                          SOFT_OP_COPY, NULL, NULL, 0,
+                                          SOFT_RULE_RECURSIVE),
+                   0, "add DST rule");
+
+    /* Build 10 copy operations under /src -> /dst */
+    soft_access_ctx_t ctx_array[10];
+    const soft_access_ctx_t *ctxs[10];
+    int results[10];
+    char src_buf[10][64], dst_buf[10][64];
+
+    for (int i = 0; i < 10; i++) {
+        snprintf(src_buf[i], sizeof(src_buf[i]), "/src/file_%d.txt", i);
+        snprintf(dst_buf[i], sizeof(dst_buf[i]), "/dst/file_%d.txt", i);
+        ctx_array[i].op = SOFT_OP_COPY;
+        ctx_array[i].src_path = src_buf[i];
+        ctx_array[i].dst_path = dst_buf[i];
+        ctx_array[i].subject = NULL;
+        ctx_array[i].uid = 1000;
+        ctxs[i] = &ctx_array[i];
+    }
+
+    int ret = soft_ruleset_check_batch_ctx(rs, ctxs, results, 10);
+    TEST_ASSERT_EQ(ret, 0, "batch succeeds");
+    for (int i = 0; i < 10; i++) {
+        if (results[i] <= 0) {
+            TEST_ASSERT(0, "batch entry should be allowed");
+        }
+    }
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Expression parser with @layer for binary op                         */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_expression_layer_binary(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* @0: allow /src/... for copy, @1: allow /dst/... for copy */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "@0:copy::/src/... -> R", NULL),
+                   0, "@0 copy SRC");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "@1:copy::/dst/... -> W", NULL),
+                   0, "@1 copy DST");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_COPY,
+        .src_path = "/src/file.txt",
+        .dst_path = "/dst/file.txt",
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    /* @0 grants READ, @1 grants WRITE (not READ) → intersection lacks READ */
+    TEST_ASSERT_EQ(ret, -13, "layer 1 doesn't grant READ → copy denied");
+
+    soft_ruleset_free(rs);
 }
