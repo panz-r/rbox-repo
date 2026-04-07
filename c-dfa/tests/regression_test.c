@@ -158,6 +158,20 @@ int main(void) {
              "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::filename] /tmp|file|a\n[safe] ls( (--color=auto )?(-(la|l|a) )?((safe::filename))* )?",
              full_pattern_cases, 3);
     
+    // Bug #8 variant: Alternative spacing pattern
+    // Pattern: ls( --color=auto)?( -(la|l|a))?( ((safe::filename))* )?
+    // Same semantics but different spacing between groups
+    TestCase alt_spacing_cases[] = {
+        { "ls", true, 0x01 },              // ls + nothing
+        { "ls --color=auto", true, 0x01 }, // with --color
+        { "ls -la", true, 0x01 },          // with -la flag
+        { "ls /tmp ", true, 0x01 },        // with filename
+        { "ls --color=auto -l /tmp ", true, 0x01 },  // full optionals
+    };
+    run_group("BUG #8 Variant: alt spacing pattern",
+             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::filename] /tmp|file|a\n[safe] ls( --color=auto)?( -(la|l|a))?( ((safe::filename))* )?",
+             alt_spacing_cases, 5);
+    
     // Working optional group patterns (control tests)
     // Pattern: ls( (ab )?) = ls + (space + (ab)? + space)
     TestCase opt_group_cases[] = {
