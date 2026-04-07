@@ -333,7 +333,7 @@ func BuildBinaries() error {
 	serverBin := filepath.Join(wd, binDir, "readonlybox-server")
 	forceRebuildIfNewer(serverBin, protoLib)
 
-	// rbox-wrap (LD_PRELOAD client)
+	// rbox-wrap
 	if err := runMakeWithCC(filepath.Join(wd, rboxWrapDir), cc); err != nil {
 		return fmt.Errorf("rbox-wrap build failed: %w", err)
 	}

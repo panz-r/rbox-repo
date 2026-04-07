@@ -3,6 +3,8 @@
 #include <string.h>
 #include <pthread.h>
 
+#define CAT_MASK_AUTOALLOW 1
+
 extern const unsigned char readonlybox_dfa_data[];
 extern const size_t readonlybox_dfa_data_size;
 
