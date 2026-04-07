@@ -4,7 +4,7 @@
 /corpus/interesting/
 /corpus/dfa_eval/
 /corpus/pattern_parser/
-
+fuzz_build/
 *.log
 *.profraw
 *.profdata
@@ -16,6 +16,8 @@ leak-*
 # Build artifacts (fuzzer binaries and test programs)
 dfa_eval_fuzzer
 pattern_parse_fuzzer
+dfa_loader_fuzzer
+pipeline_fuzzer
 test_dfa_load
 test_dfa_load2
 *.o

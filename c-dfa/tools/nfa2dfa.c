@@ -1345,7 +1345,7 @@ void write_dfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
     int rule_size  = DFA_RULE_SIZE(enc);
     int lit_size = DFA_PACK_LITERAL_SIZE(enc);
     int rng_size = DFA_PACK_RANGE_SIZE(enc);
-    size_t header_size = DFA_HEADER_SIZE(enc, (uint8_t)id_len);
+    size_t header_size = DFA_HEADER_SIZE(enc, (uint8_t)id_len) + 8;
     
     // Per-state encoding and packed sizes
     int* rule_encoding = calloc(dfa_state_count, sizeof(int));
@@ -1922,6 +1922,16 @@ void write_dfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
             }
         }
     }
+    
+    size_t hs = DFA_HEADER_SIZE(enc, (uint8_t)id_len);
+    uint8_t hdr_copy[hs + 8];
+    memcpy(hdr_copy, raw, hs);
+    memset(hdr_copy + hs, 0, 8);
+    uint32_t crc = crc32c(hdr_copy, hs);
+    uint32_t fnv = FNV_OFFSET_BASIS;
+    for (size_t i = 0; i < hs; i++) { fnv ^= hdr_copy[i]; fnv *= FNV_PRIME; }
+    dfa_fmt_set_checksum_crc32(raw, crc);
+    dfa_fmt_set_checksum_fnv32(raw, fnv);
     
     size_t written = fwrite(raw, 1, total_size, file);
     if (written != total_size) {

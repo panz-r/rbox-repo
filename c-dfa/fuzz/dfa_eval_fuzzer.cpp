@@ -74,19 +74,14 @@ static bool validate_result(const dfa_result_t* result, size_t input_len) {
     return true;
 }
 
-// Try to initialize and evaluate with a DFA blob
+// Try to evaluate strings with a DFA blob
 // Returns: 0 = OK, 1 = bug found, -1 = invalid input (skip)
 static int test_dfa_with_strings(const uint8_t* dfa_data, size_t dfa_size,
                                   const uint8_t* strings_data, size_t strings_size) {
-    // Try to initialize the DFA
-    // dfa_machine_init should handle malformed input gracefully
-    dfa_machine_t machine;
-    if (!dfa_machine_init(&machine, dfa_data, dfa_size)) {
-        // Initialization failed - this is OK, invalid DFA
-        if (g_verbose) {
-            fprintf(stderr, "DEBUG: DFA init failed (invalid DFA)\n");
-        }
-        return -1;  // Skip, not a bug
+    // dfa_eval_with_limit handles invalid DFA gracefully
+    if (g_verbose) {
+        fprintf(stderr, "DEBUG: Testing DFA size %zu with %zu bytes of strings\n",
+                dfa_size, strings_size);
     }
 
     // Parse string data
@@ -125,7 +120,7 @@ static int test_dfa_with_strings(const uint8_t* dfa_data, size_t dfa_size,
         dfa_result_t result;
         memset(&result, 0, sizeof(result));
 
-        bool ok = dfa_machine_evaluate_with_limit(&machine, input, str_len, &result, DFA_MAX_CAPTURES);
+        bool ok = dfa_eval_with_limit(dfa_data, dfa_size, input, str_len, &result, DFA_MAX_CAPTURES);
 
         if (ok) {
             // Validate result sanity
@@ -139,7 +134,6 @@ static int test_dfa_with_strings(const uint8_t* dfa_data, size_t dfa_size,
         }
     }
 
-    dfa_machine_reset(&machine);
     return bugs_found > 0 ? 1 : 0;
 }
 

@@ -5,6 +5,7 @@
 //   2 = initialization error (could not load DFA)
 //   127 = exec/setup error
 
+#define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -150,7 +151,7 @@ int main(int argc, char* argv[]) {
                 size_t cap_len = end - start;
                 char* captured = malloc(cap_len + 1);
                 if (captured) {
-                    strncpy(captured, command + start, cap_len);
+                    strlcpy(captured, command + start, cap_len + 1);
                     captured[cap_len] = '\0';
                     printf(" capture[%d]=%zu-%zu=%s", i, start, end, captured);
                     free(captured);

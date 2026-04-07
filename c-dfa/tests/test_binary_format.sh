@@ -127,6 +127,16 @@ int main(void) {
     dfa_fmt_set_eos_target_count(buf + eos_off, 0);
     dfa_fmt_set_eos_marker_count(buf + eos_off, 0);
     
+    // Compute checksums (v11+)
+    uint8_t hdr_copy[hs + 8];
+    memcpy(hdr_copy, buf, hs);
+    memset(hdr_copy + hs, 0, 8);
+    uint32_t crc = crc32c(hdr_copy, hs);
+    uint32_t fnv = FNV_OFFSET_BASIS;
+    for (size_t i = 0; i < hs; i++) { fnv ^= hdr_copy[i]; fnv *= FNV_PRIME; }
+    dfa_fmt_set_checksum_crc32(buf, crc);
+    dfa_fmt_set_checksum_fnv32(buf, fnv);
+    
     // Test validation
     int ok1 = dfa_eval_validate_id(buf, total, "test_id");
     int ok2 = dfa_eval_validate_id(buf, total, "wrong_id");

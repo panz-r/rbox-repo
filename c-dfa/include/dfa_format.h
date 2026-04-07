@@ -376,6 +376,17 @@ static inline const uint8_t* dfa_fmt_identifier(const uint8_t* d) {
     return d + DFA_OFF_INIT_STATE + 4 * dfa_owb(dfa_fmt_encoding(d));
 }
 
+static inline uint32_t dfa_fmt_checksum_crc32(const uint8_t* d) {
+    int enc = dfa_fmt_encoding(d);
+    uint8_t idl = dfa_fmt_id_len(d);
+    return dfa_r32(d, DFA_HEADER_SIZE(enc, idl));
+}
+static inline uint32_t dfa_fmt_checksum_fnv32(const uint8_t* d) {
+    int enc = dfa_fmt_encoding(d);
+    uint8_t idl = dfa_fmt_id_len(d);
+    return dfa_r32(d, DFA_HEADER_SIZE(enc, idl) + 4);
+}
+
 /* ============================================================================
  * Header accessors (write)
  * ============================================================================ */
@@ -396,6 +407,16 @@ static inline void dfa_fmt_set_eos_offset(uint8_t* d, int enc, uint32_t v) {
 }
 static inline void dfa_fmt_set_pid_offset(uint8_t* d, int enc, uint32_t v) {
     dfa_wow(d, DFA_OFF_INIT_STATE + 3 * dfa_owb(enc), enc, v);
+}
+static inline void dfa_fmt_set_checksum_crc32(uint8_t* d, uint32_t v) {
+    int enc = dfa_fmt_encoding(d);
+    uint8_t idl = dfa_fmt_id_len(d);
+    dfa_w32(d, DFA_HEADER_SIZE(enc, idl), v);
+}
+static inline void dfa_fmt_set_checksum_fnv32(uint8_t* d, uint32_t v) {
+    int enc = dfa_fmt_encoding(d);
+    uint8_t idl = dfa_fmt_id_len(d);
+    dfa_w32(d, DFA_HEADER_SIZE(enc, idl) + 4, v);
 }
 
 /* ============================================================================

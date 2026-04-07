@@ -1,6 +1,7 @@
 // LibFuzzer harness for NFA building (not just validation)
 // Fuzzes nfa_builder's actual NFA construction by building NFA files
 
+#define _DEFAULT_SOURCE
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,14 +37,13 @@ static void init_nfa_builder_path() {
 
     // Get the directory containing the executable
     char exe_dir[PATH_MAX];
-    strncpy(exe_dir, exe_path, sizeof(exe_dir));
-    exe_dir[sizeof(exe_dir)-1] = '\0';
+    strlcpy(exe_dir, exe_path, sizeof(exe_dir));
     char* exe_dir_ptr = dirname(exe_dir);
 
     // Construct path: <exe_dir>/../tools/nfa_builder
     if (realpath(exe_dir_ptr, exe_dir) == NULL) {
         fprintf(stderr, "WARNING: realpath failed for %s: %s\n", exe_dir_ptr, strerror(errno));
-        strncpy(nfa_builder_path_buf, "../tools/nfa_builder", sizeof(nfa_builder_path_buf));
+        strlcpy(nfa_builder_path_buf, "../tools/nfa_builder", sizeof(nfa_builder_path_buf));
     } else {
         snprintf(nfa_builder_path_buf, sizeof(nfa_builder_path_buf), "%s/../tools/nfa_builder", exe_dir);
         // Resolve to absolute path
@@ -52,7 +52,7 @@ static void init_nfa_builder_path() {
             fprintf(stderr, "WARNING: Cannot resolve %s: %s, using unresolved path\n",
                     nfa_builder_path_buf, strerror(errno));
         } else {
-            strncpy(nfa_builder_path_buf, resolved, sizeof(nfa_builder_path_buf));
+            strlcpy(nfa_builder_path_buf, resolved, sizeof(nfa_builder_path_buf));
         }
     }
     NFL_BUILDER_PATH = nfa_builder_path_buf;
@@ -104,7 +104,7 @@ static int run_nfa_builder(const char* pattern_file) {
     int outfd = mkstemp(output_file);
     if (outfd < 0) {
         // Use fallback name
-        strcpy(output_file, "/tmp/nfa_build_fuzzer_out.nfa");
+        strlcpy(output_file, "/tmp/nfa_build_fuzzer_out.nfa", sizeof(output_file));
     } else {
         close(outfd);
         unlink(output_file); // We'll let nfa_builder create it

@@ -63,9 +63,9 @@ make nfa_build_fuzzer
 
 Fuzzes the `dfa_evaluate()` function with random command strings.
 
-**Target:** `c-dfa/src/dfa_eval.c` and `dfa_loader.c`
+**Target:** `c-dfa/src/dfa_eval.c`
 
-**Corpus:** `corpus/seed/dfa_eval/` - seed inputs (real commands, edge cases)
+**Corpus:** `corpus/seed/dfa_binary/` - binary DFA files (see note below)
 
 **Dictionary:** `cmd_dict.txt` - common command tokens to guide mutation
 
@@ -76,8 +76,12 @@ make dfa_eval_fuzzer
 
 **Run:**
 ```bash
-./dfa_eval_fuzzer corpus/seed/dfa_eval -max_len=4096 -jobs=4 -workers=4
+./dfa_eval_fuzzer corpus/seed/dfa_binary -max_len=4096 -jobs=4 -workers=4
 ```
+
+**Corpus Format Note:** The fuzzer expects binary format: `[dfa_size:4][dfa_data][num_strings:2][strings...]`.
+The `dfa_binary` corpus contains raw DFA files that need to be converted to this format.
+Use `generate_dfa_corpus.sh` to regenerate proper corpus files.
 
 **What it tests:**
 - DFA evaluation correctness
@@ -227,13 +231,6 @@ Files are named with LibFuzzer's artifact prefix convention.
 | dfa_eval_fuzzer | Buffer overflows, out-of-bounds reads, invalid state transitions |
 | pattern_parse_fuzzer | Parser crashes, syntax validation failures |
 
-## Known Issues
-
-See `bug_report_nfa_builder.md` for documented crashes in `nfa_builder`:
-- Single-byte inputs (`$`, `[`, `*`, `\xFF`) cause segfaults
-- Root cause: Insufficient input validation
-- Status: Unfixed (regression confirmed)
-
 ## File Structure
 
 ```
@@ -254,5 +251,4 @@ fuzz/
       pattern_parser/
     interesting/              # Coverage-increasing inputs
   logs/                       # Session logs
-  bug_report_nfa_builder.md   # Documented bugs
 ```

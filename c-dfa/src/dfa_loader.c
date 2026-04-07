@@ -39,6 +39,25 @@ static bool validate_dfa_structure(const uint8_t* d, size_t file_size) {
     int enc = dfa_fmt_encoding(d);
     uint8_t idl = dfa_fmt_id_len(d);
     size_t hs = DFA_HEADER_SIZE(enc, idl);
+
+    if (file_size < hs + 8) {
+        ERROR("File too small for checksums (%zu < %zu)", file_size, hs + 8);
+        return false;
+    }
+
+    uint32_t stored_crc = dfa_fmt_checksum_crc32(d);
+    uint32_t stored_fnv = dfa_fmt_checksum_fnv32(d);
+    uint8_t hdr_copy[hs + 8];
+    memcpy(hdr_copy, d, hs);
+    memset(hdr_copy + hs, 0, 8);
+    uint32_t computed_crc = crc32c(hdr_copy, hs);
+    uint32_t computed_fnv = FNV_OFFSET_BASIS;
+    for (size_t i = 0; i < hs; i++) { computed_fnv ^= hdr_copy[i]; computed_fnv *= FNV_PRIME; }
+    if (stored_crc != computed_crc || stored_fnv != computed_fnv) {
+        ERROR("DFA checksum mismatch (corrupted header)");
+        return false;
+    }
+
     uint32_t init = dfa_fmt_initial_state(d);
 
     if ((size_t)init < hs) {

@@ -85,7 +85,7 @@
 /**
  * Current DFA version
  */
-#define DFA_VERSION 10
+#define DFA_VERSION 11
 
 /**
  * State flags
@@ -133,6 +133,25 @@
 
 #define FNV_OFFSET_BASIS 2166136261u
 #define FNV_PRIME        16777619u
+
+/**
+ * CRC32-C (Castagnoli) polynomial for checksum
+ */
+#define CRC32C_POLY 0x82F63B78u
+
+/**
+ * Compute CRC32-C checksum over buffer
+ */
+static inline uint32_t crc32c(const uint8_t* data, size_t len) {
+    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int j = 0; j < 8; j++) {
+            crc = (crc >> 1) ^ (CRC32C_POLY & -(crc & 1u));
+        }
+    }
+    return ~crc;
+}
 
 /* ============================================================================
  * NFA Build-Time Constants

@@ -1,5 +1,6 @@
 #include "dfa_types.h"
 #include "dfa_format.h"
+#include "dfa_errors.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -80,16 +81,48 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint8_t idl = dfa_fmt_id_len(d);
     size_t hs = DFA_HEADER_SIZE(enc, idl);
 
+    if (sz < hs + 8) return false;  // need at least header + 2 checksums
+
+    uint32_t stored_crc = dfa_fmt_checksum_crc32(d);
+    uint32_t stored_fnv = dfa_fmt_checksum_fnv32(d);
+    uint8_t hdr_copy[hs + 8];
+    memcpy(hdr_copy, d, hs);
+    memset(hdr_copy + hs, 0, 8);
+    uint32_t computed_crc = crc32c(hdr_copy, hs);
+    uint32_t computed_fnv = FNV_OFFSET_BASIS;
+    for (size_t i = 0; i < hs; i++) { computed_fnv ^= hdr_copy[i]; computed_fnv *= FNV_PRIME; }
+    if (stored_crc != computed_crc || stored_fnv != computed_fnv) {
+        ERROR("DFA checksum mismatch (corrupted header)");
+        return false;
+    }
+
     uint32_t init = dfa_fmt_initial_state(d);
     if ((size_t)init + DFA_STATE_SIZE_TC(enc, 0) > sz) return false;  // min state size
 
-    /* Get EOS section pointer - validate section header is within bounds */
+    /* Get EOS section pointer - validate section header and size are within bounds */
     uint32_t eos_off = dfa_fmt_eos_offset(d);
-    const uint8_t* eos_section = (eos_off > 0 && eos_off + 4 <= sz) ? d + eos_off : NULL;
+    const uint8_t* eos_section = NULL;
+    if (eos_off > 0 && eos_off <= sz && (size_t)eos_off + DFA_EOS_HEADER_SIZE <= sz) {
+        uint16_t target_count = dfa_fmt_eos_target_count(d + eos_off);
+        uint16_t marker_count = dfa_fmt_eos_marker_count(d + eos_off);
+        size_t eos_data_size = DFA_EOS_HEADER_SIZE +
+            (size_t)target_count * DFA_EOS_TARGET_ENTRY_SIZE(enc) +
+            (size_t)marker_count * DFA_EOS_MARKER_ENTRY_SIZE(enc);
+        if ((size_t)eos_off + eos_data_size <= sz) {
+            eos_section = d + eos_off;
+        }
+    }
 
-    /* Get Pattern ID section pointer - validate section header is within bounds */
+    /* Get Pattern ID section pointer - validate section header and size are within bounds */
     uint32_t pid_off = dfa_fmt_pid_offset(d);
-    const uint8_t* pid_section = (pid_off > 0 && pid_off + 4 <= sz) ? d + pid_off : NULL;
+    const uint8_t* pid_section = NULL;
+    if (pid_off > 0 && pid_off <= sz && (size_t)pid_off + DFA_PID_HEADER_SIZE <= sz) {
+        uint16_t pid_count = dfa_fmt_pid_count(d + pid_off);
+        size_t pid_data_size = DFA_PID_HEADER_SIZE + (size_t)pid_count * DFA_PID_ENTRY_SIZE(enc);
+        if ((size_t)pid_off + pid_data_size <= sz) {
+            pid_section = d + pid_off;
+        }
+    }
 
     /* Empty input: check initial state and EOS */
     if (!len) {
@@ -99,10 +132,12 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         /* Look up EOS target from EOS section */
         uint16_t init_state_idx = 0;  /* Initial state is state 0 */
         uint32_t eos = dfa_fmt_eos_lookup_target(eos_section, enc, init_state_idx);
-        if (eos) {
+        if (eos && (size_t)eos + DFA_STATE_SIZE_TC(enc, 0) <= sz) {
             uint16_t eosc = dfa_fmt_st_tc(d, eos, enc);
-            if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz)
-                cat |= DFA_GET_CATEGORY_MASK(dfa_fmt_st_flags_tc(d, eos, enc, eosc));
+            if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz) {
+                uint16_t eos_flags = dfa_fmt_st_flags_tc(d, eos, enc, eosc);
+                cat |= DFA_GET_CATEGORY_MASK(eos_flags);
+            }
         }
         if (cat) {
             res->matched = true; res->matched_length = 0; res->category_mask = cat;
@@ -119,13 +154,19 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
 
     while (pos < len) {
         unsigned char c = (unsigned char)in[pos];
+        
+        /* First validate cur is within minimal bounds to read tc */
+        if ((size_t)cur < hs || (size_t)cur + DFA_STATE_SIZE_TC(enc, 0) > sz) return false;
+        
+        /* Now read state data - tc must be readable since cur passed minimal bounds check */
         uint16_t tc = dfa_fmt_st_tc(d, cur, enc);
         uint32_t rl = dfa_fmt_st_rules(d, cur, enc);
         uint16_t flags = dfa_fmt_st_flags_tc(d, cur, enc, tc);
+        
+        /* Full bounds check with actual tc value */
+        if ((size_t)cur + DFA_STATE_SIZE_TC(enc, tc) > sz) return false;
+        
         int renc = DFA_GET_RULE_ENC(flags);
-
-        if ((size_t)cur < hs || (size_t)cur + DFA_STATE_SIZE_TC(enc, tc) > sz) return false;
-
         uint32_t nxt = 0; bool found = false;
 
         if (renc == DFA_RULE_ENC_PACKED) {
@@ -219,10 +260,16 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
             }
             // If no chain matched, check for default target
             if (!found) {
-                uint32_t default_tgt = dfa_chain_default_target(chain, enc);
-                if (default_tgt > 0 && default_tgt < sz) {
-                    nxt = default_tgt;
-                    found = true;
+                // Validate chain pointer is still within bounds before accessing default target
+                // The default target comes right after all chain entries
+                size_t chain_off = (size_t)(chain - d);
+                size_t ow_sz = dfa_owb(enc);
+                if (chain_off + ow_sz <= sz) {
+                    uint32_t default_tgt = dfa_chain_default_target(chain, enc);
+                    if (default_tgt > 0 && default_tgt < sz) {
+                        nxt = default_tgt;
+                        found = true;
+                    }
                 }
             }
         } else {
@@ -262,12 +309,15 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     /* Look up EOS target from EOS section */
     uint32_t eos = dfa_fmt_eos_lookup_target(eos_section, enc, cur);
     if (eos) {
-        uint16_t eosc = dfa_fmt_st_tc(d, eos, enc);
-        if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz) {
-            cur = eos; cur_tc = eosc;
-            if (td < MAX_TRACE) tr[td++] = cur;
-            /* Look up pattern_id for new state */
-            wpid = dfa_fmt_pid_lookup(pid_section, enc, cur);
+        /* Validate eos before accessing */
+        if ((size_t)eos + DFA_STATE_SIZE_TC(enc, 0) <= sz) {
+            uint16_t eosc = dfa_fmt_st_tc(d, eos, enc);
+            if ((size_t)eos + DFA_STATE_SIZE_TC(enc, eosc) <= sz) {
+                cur = eos; cur_tc = eosc;
+                if (td < MAX_TRACE) tr[td++] = cur;
+                /* Look up pattern_id for new state */
+                wpid = dfa_fmt_pid_lookup(pid_section, enc, cur);
+            }
         }
     }
 

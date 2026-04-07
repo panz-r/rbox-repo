@@ -57,7 +57,7 @@ NFA_BUILDER_MODULES = $(TOOLS_DIR)/nfa_construct.o \
 # ============================================================================
 
 # Default target: build everything (MUST be first rule)
-all: $(TOOLS) $(TEST) $(LIB) $(EVAL_LIB)
+all: $(TOOLS) $(TEST) $(LIB) $(EVAL_LIB) fuzz-build
 
 # Allow parallel builds with -j
 ifneq ($(MAKECMDGOALS),)
@@ -337,6 +337,7 @@ clean:
 	$(TESTS_DIR)/test_dfa2c_array \
 		$(TEST) $(TEST_SAT) $(LIB) $(EVAL_LIB)
 	rm -f $(TOOLS_DIR)/*.o lib/*.o $(SRC_DIR)/*.o
+	$(MAKE) -C fuzz clean
 
 # Clean including vendor builds
 clean-all: clean

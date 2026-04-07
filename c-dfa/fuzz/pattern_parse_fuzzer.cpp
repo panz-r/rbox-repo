@@ -52,6 +52,7 @@ static char* write_temp_file(const uint8_t* data, size_t size) {
         unlink(tmpl);
         return NULL;
     }
+    // No need to unlink tmpl here - caller will unlink after use
     return filename;
 }
 
