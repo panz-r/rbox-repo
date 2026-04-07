@@ -354,7 +354,7 @@ static void test_deny_overrides_allow_same_path(void)
     landlock_builder_prepare(b, 2, false);
 
     size_t count = 0;
-    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    (void)landlock_builder_get_rules(b, &count);
     /* deny at same path should clear the allow */
     TEST_ASSERT_EQ(count, 0, "deny at same path clears allow");
 

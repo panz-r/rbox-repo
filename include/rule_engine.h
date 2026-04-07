@@ -3,8 +3,8 @@
  * @brief ReadOnlyBox Rule Engine public API (spec v3.0).
  *
  * Supports binary operations (COPY, MOVE, LINK, MOUNT, etc.), path
- * variables (${SRC}, ${DST}), subject constraints, and batched
- * dual-path evaluation.
+ * variables (${SRC}, ${DST}), layered rulesets with precedence,
+ * subject constraints, and batched dual-path evaluation.
  */
 
 #ifndef RULE_ENGINE_H
@@ -50,6 +50,10 @@ typedef enum {
 #define SOFT_ACCESS_LINK_SRC 0x1000  /**< Read source to create a link */
 #define SOFT_ACCESS_MOUNT_SRC 0x2000 /**< Read source for mounting */
 #define SOFT_ACCESS_DENY    (1U << 31)
+#define SOFT_ACCESS_ALL     (SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | \
+                             SOFT_ACCESS_EXEC | SOFT_ACCESS_CREATE | \
+                             SOFT_ACCESS_UNLINK | SOFT_ACCESS_LINK | \
+                             SOFT_ACCESS_MKDIR)
 
 /* ------------------------------------------------------------------ */
 /*  Rule flags                                                         */
@@ -88,6 +92,7 @@ typedef struct {
     int         result;         /**< Final decision: SOFT_ACCESS_* or -EACCES */
     const char *deny_reason;    /**< Human-readable deny reason (if denied) */
     const char *matched_rule;   /**< Pattern of the rule that decided the result */
+    int         deny_layer;     /**< Layer index that caused denial (-1 if allowed) */
 } soft_audit_log_t;
 
 /* ------------------------------------------------------------------ */
@@ -113,11 +118,14 @@ soft_ruleset_t *soft_ruleset_new(void);
 void soft_ruleset_free(soft_ruleset_t *rs);
 
 /* ------------------------------------------------------------------ */
-/*  Rule insertion (programmatic API)                                  */
+/*  Layer management                                                    */
 /* ------------------------------------------------------------------ */
 
 /**
- * Add a rule to the ruleset programmatically.
+ * Add a rule to the ruleset.
+ *
+ * Layers are implicit: rules are added to the default layer (index 0).
+ * To create multiple layers, use soft_ruleset_add_rule_at_layer.
  *
  * @param rs              Ruleset handle.
  * @param pattern         Path pattern (may contain ${SRC}, ${DST}, or
@@ -145,6 +153,40 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
                           uint32_t min_uid,
                           uint32_t flags);
 
+/**
+ * Add a rule to a specific layer in the ruleset.
+ *
+ * Layer 0 has the highest precedence. Rules in layer N are only
+ * consulted if all layers 0..N-1 did not produce a DENY. The final
+ * allowed mode is the intersection of all matching rules across
+ * all non-denying layers.
+ *
+ * @param rs              Ruleset handle.
+ * @param layer           Layer index (0 = highest precedence).
+ * @param pattern         Path pattern.
+ * @param mode            Access mode.
+ * @param op_type         Operation type.
+ * @param linked_path_var Linked path variable ("SRC", "DST", or NULL).
+ * @param subject_regex   Subject regex constraint (NULL = any).
+ * @param min_uid         Minimum UID (0 = any).
+ * @param flags           Rule flags.
+ * @return 0 on success, -1 on failure.
+ */
+int soft_ruleset_add_rule_at_layer(soft_ruleset_t *rs,
+                                   int layer,
+                                   const char *pattern,
+                                   uint32_t mode,
+                                   soft_binary_op_t op_type,
+                                   const char *linked_path_var,
+                                   const char *subject_regex,
+                                   uint32_t min_uid,
+                                   uint32_t flags);
+
+/**
+ * Return the number of layers currently in the ruleset.
+ */
+int soft_ruleset_layer_count(const soft_ruleset_t *rs);
+
 /* ------------------------------------------------------------------ */
 /*  Rule insertion (expression parser)                                 */
 /* ------------------------------------------------------------------ */
@@ -155,7 +197,7 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
  * Format:  op:subject:src_pattern:dst_pattern -> mode
  *
  * Examples:
- *   "cp::/etc/*:/tmp/ -> RW"
+ *   "cp::/etc/\\*:/tmp/ -> RW"
  *   "cp:/usr/bin/cp:${SRC}:${DST} -> RO"
  *   "mount::/dev/sd*:/mnt/usb -> RWX"
  *   "read::/home/user/... -> RO"
@@ -184,6 +226,10 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
 /**
  * Evaluate a single access transaction.
  *
+ * Layers are evaluated from 0 (highest precedence) downward:
+ *   1. If any layer produces DENY, return DENY immediately.
+ *   2. Otherwise, the granted mode is the bitwise AND of all layers.
+ *
  * For unary operations (READ, WRITE, EXEC), ctx->src_path is the
  * target path and ctx->dst_path should be NULL.
  *
@@ -192,6 +238,10 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
  *   - src_path is checked against rules matching the operation or READ
  *   - dst_path is checked against rules matching the operation or WRITE
  *   - Results are intersected; DENY on either side means DENY overall
+ *
+ * Within each layer, static (non-template) rules are evaluated before
+ * template rules, so a static DENY for /etc/shadow will shadow a
+ * template ${SRC}: RO rule.
  *
  * @param rs        Ruleset handle.
  * @param ctx       Access context (operation, paths, subject, UID).

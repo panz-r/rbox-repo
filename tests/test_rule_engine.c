@@ -439,12 +439,229 @@ static void test_rule_engine_audit_log(void)
     int ret = soft_ruleset_check_ctx(rs, &ctx, &log);
     TEST_ASSERT(ret > 0, "read allowed");
     TEST_ASSERT(log.result > 0, "audit log shows positive result");
+    TEST_ASSERT_EQ(log.deny_layer, -1, "audit log deny_layer is -1 on allow");
 
     /* Test denied path */
     ctx.src_path = "/etc/shadow";
     ret = soft_ruleset_check_ctx(rs, &ctx, &log);
     TEST_ASSERT_EQ(ret, -13, "read denied");
     TEST_ASSERT_EQ(log.result, -13, "audit log shows denial");
+    TEST_ASSERT_EQ(log.deny_layer, -1, "deny_layer is -1 when no match");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Layer shadowing: DENY at layer 0 shadows allow at layer 1          */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_layer_deny_shadows_allow(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Layer 0 (highest): DENY /secret */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/secret",
+                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 0 deny");
+
+    /* Layer 1 (lower): allow reading /secret */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/secret",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 1 allow");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_READ,
+        .src_path = "/secret",
+        .dst_path = NULL,
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    TEST_ASSERT_EQ(ret, -13, "layer 0 DENY shadows layer 1 allow");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Layer intersection: allow READ at layer 0, WRITE at layer 1        */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_layer_intersection(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Layer 0: allows READ on /data */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 0 read");
+
+    /* Layer 1: allows WRITE on /data */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data",
+                   SOFT_ACCESS_WRITE, SOFT_OP_WRITE, NULL, NULL, 0, 0),
+                   0, "layer 1 write");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_READ,
+        .src_path = "/data",
+        .dst_path = NULL,
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    /* Layer 0 grants READ, layer 1 grants WRITE (not READ) → intersection
+     * has no READ bit → denied */
+    TEST_ASSERT_EQ(ret, -13, "layer 1 doesn't grant READ → intersection denies");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Both layers grant same mode: intersection allows                   */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_layer_both_allow(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Layer 0: allows READ on /data */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 0 read");
+
+    /* Layer 1: also allows READ on /data */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 1 read");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_READ,
+        .src_path = "/data",
+        .dst_path = NULL,
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    TEST_ASSERT(ret > 0, "both layers allow READ → access granted");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Static DENY shadows template allow in same layer                   */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_static_denies_template(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Static DENY for /etc/shadow */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/etc/shadow",
+                   SOFT_ACCESS_DENY, SOFT_OP_COPY, NULL, NULL, 0, 0),
+                   0, "static deny /etc/shadow");
+
+    /* Template: ${SRC} allows READ for COPY */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "${SRC}",
+                   SOFT_ACCESS_READ, SOFT_OP_COPY, "SRC", NULL, 0,
+                   SOFT_RULE_TEMPLATE),
+                   0, "template ${SRC} read");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_COPY,
+        .src_path = "/etc/shadow",
+        .dst_path = "/tmp/shadow",
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    TEST_ASSERT_EQ(ret, -13, "static DENY /etc/shadow shadows template ${SRC}");
+
+    /* But other paths should still work via template */
+    ctx.src_path = "/home/user/file.txt";
+    ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    /* Note: template ${SRC} matches /home/user/file.txt, but DST /tmp/shadow
+     * has no matching rule, so copy is denied — this is correct behavior */
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Three layers: 0=allow, 1=allow, 2=deny → DENY                     */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_three_layers_deny_at_bottom(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 0 read");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 1 read");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 2, "/data",
+                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 2 deny");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_READ,
+        .src_path = "/data",
+        .dst_path = NULL,
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    /* Layer 0 grants READ, layer 1 grants READ → intersection has READ.
+     * Layer 2 has explicit DENY → DENY short-circuits. */
+    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    TEST_ASSERT_EQ(ret, -13, "layer 2 DENY short-circuits despite layers 0,1");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Empty layer doesn't constrain                                      */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_empty_layer_no_constraint(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Only add rule at layer 1 — layer 0 is implicitly empty */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 1 read");
+
+    soft_access_ctx_t ctx = {
+        .op = SOFT_OP_READ,
+        .src_path = "/data",
+        .dst_path = NULL,
+        .subject = NULL,
+        .uid = 1000
+    };
+
+    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    TEST_ASSERT(ret > 0, "empty layer 0 doesn't constrain, layer 1 allows");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Layer count                                                        */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_layer_count(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 0, "initial layer count is 0");
+
+    soft_ruleset_add_rule_at_layer(rs, 2, "/x", SOFT_ACCESS_READ,
+                                    SOFT_OP_READ, NULL, NULL, 0, 0);
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 3,
+                   "adding at layer 2 creates layers 0,1,2");
 
     soft_ruleset_free(rs);
 }
@@ -471,4 +688,11 @@ void test_rule_engine_run(void)
     RUN_TEST(test_rule_engine_recursive_wildcard);
     RUN_TEST(test_rule_engine_null_inputs);
     RUN_TEST(test_rule_engine_audit_log);
+    RUN_TEST(test_rule_engine_layer_deny_shadows_allow);
+    RUN_TEST(test_rule_engine_layer_intersection);
+    RUN_TEST(test_rule_engine_layer_both_allow);
+    RUN_TEST(test_rule_engine_static_denies_template);
+    RUN_TEST(test_rule_engine_three_layers_deny_at_bottom);
+    RUN_TEST(test_rule_engine_empty_layer_no_constraint);
+    RUN_TEST(test_rule_engine_layer_count);
 }

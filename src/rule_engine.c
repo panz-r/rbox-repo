@@ -2,9 +2,15 @@
  * @file rule_engine.c
  * @brief ReadOnlyBox Rule Engine implementation (spec v3.0).
  *
- * Implements dual-path evaluation with path variables, subject
- * constraints, and batched evaluation.  Internally uses a radix tree
- * for path matching.
+ * Implements layered rulesets with precedence, dual-path evaluation,
+ * path variables, subject constraints, and batched evaluation.
+ *
+ * Layer semantics:
+ *   - Layer 0 has highest precedence.
+ *   - DENY at any layer short-circuits and returns DENY.
+ *   - Allowed mode = bitwise AND across all non-denying layers.
+ *   - Within a layer, static rules are evaluated before template rules
+ *     (so a static /etc/shadow: DENY shadows ${SRC}: RO).
  */
 
 #define _DEFAULT_SOURCE
@@ -22,7 +28,6 @@
 #endif
 
 #include "rule_engine.h"
-#include "radix_tree.h"
 
 /* ------------------------------------------------------------------ */
 /*  Internal rule structure                                            */
@@ -42,14 +47,25 @@ typedef struct {
 } rule_t;
 
 /* ------------------------------------------------------------------ */
+/*  Layer structure                                                     */
+/* ------------------------------------------------------------------ */
+
+#define MAX_RULES_PER_LAYER 2048
+
+typedef struct {
+    rule_t  rules[MAX_RULES_PER_LAYER];
+    int     count;
+} layer_t;
+
+/* ------------------------------------------------------------------ */
 /*  Ruleset structure                                                  */
 /* ------------------------------------------------------------------ */
 
-#define MAX_RULES 4096
+#define MAX_LAYERS 64
 
 struct soft_ruleset {
-    rule_t  rules[MAX_RULES];
-    int     count;
+    layer_t layers[MAX_LAYERS];
+    int     layer_count;
     char    last_error[256];
 };
 
@@ -62,13 +78,14 @@ struct soft_ruleset {
  *
  * Patterns can contain:
  *   - Exact paths: "/usr/bin/cp"
- *   - Wildcards with *: "/etc/*", "/dev/sd*"
+ *   - Wildcards with star: "/etc/", "/dev/sd"
  *   - Recursive with ...: "/home/user/..." (matches any descendant)
  *   - Variables: "${SRC}", "${DST}" (resolved at query time)
  */
 static bool path_matches(const char *pattern, const char *path, bool recursive)
 {
     if (!pattern || !path) return false;
+    (void)recursive;
 
     /* Handle recursive "..." suffix */
     size_t plen = strlen(pattern);
@@ -241,7 +258,7 @@ soft_ruleset_t *soft_ruleset_new(void)
 {
     soft_ruleset_t *rs = calloc(1, sizeof(*rs));
     if (!rs) return NULL;
-    rs->count = 0;
+    rs->layer_count = 0;
     rs->last_error[0] = '\0';
     return rs;
 }
@@ -252,22 +269,47 @@ void soft_ruleset_free(soft_ruleset_t *rs)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Layer access                                                      */
+/* ------------------------------------------------------------------ */
+
+/** Ensure a layer exists (creates layers 0..target if needed). */
+static layer_t *ensure_layer(soft_ruleset_t *rs, int target)
+{
+    if (target < 0 || target >= MAX_LAYERS) return NULL;
+    while (rs->layer_count <= target) {
+        memset(&rs->layers[rs->layer_count], 0, sizeof(layer_t));
+        rs->layer_count++;
+    }
+    return &rs->layers[target];
+}
+
+int soft_ruleset_layer_count(const soft_ruleset_t *rs)
+{
+    if (!rs) return 0;
+    return rs->layer_count;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Rule insertion                                                     */
 /* ------------------------------------------------------------------ */
 
-int soft_ruleset_add_rule(soft_ruleset_t *rs,
-                          const char *pattern,
-                          uint32_t mode,
-                          soft_binary_op_t op_type,
-                          const char *linked_path_var,
-                          const char *subject_regex,
-                          uint32_t min_uid,
-                          uint32_t flags)
+int soft_ruleset_add_rule_at_layer(soft_ruleset_t *rs,
+                                   int layer,
+                                   const char *pattern,
+                                   uint32_t mode,
+                                   soft_binary_op_t op_type,
+                                   const char *linked_path_var,
+                                   const char *subject_regex,
+                                   uint32_t min_uid,
+                                   uint32_t flags)
 {
     if (!rs || !pattern) { errno = EINVAL; return -1; }
-    if (rs->count >= MAX_RULES) { errno = ENOSPC; return -1; }
 
-    rule_t *r = &rs->rules[rs->count];
+    layer_t *lyr = ensure_layer(rs, layer);
+    if (!lyr) { errno = EINVAL; return -1; }
+    if (lyr->count >= MAX_RULES_PER_LAYER) { errno = ENOSPC; return -1; }
+
+    rule_t *r = &lyr->rules[lyr->count];
     memset(r, 0, sizeof(*r));
 
     size_t plen = strlen(pattern);
@@ -296,8 +338,23 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
         r->flags |= SOFT_RULE_TEMPLATE;
     }
 
-    rs->count++;
+    lyr->count++;
     return 0;
+}
+
+int soft_ruleset_add_rule(soft_ruleset_t *rs,
+                          const char *pattern,
+                          uint32_t mode,
+                          soft_binary_op_t op_type,
+                          const char *linked_path_var,
+                          const char *subject_regex,
+                          uint32_t min_uid,
+                          uint32_t flags)
+{
+    /* Default to layer 0 (highest precedence) */
+    return soft_ruleset_add_rule_at_layer(rs, 0, pattern, mode, op_type,
+                                          linked_path_var, subject_regex,
+                                          min_uid, flags);
 }
 
 /* ------------------------------------------------------------------ */
@@ -357,7 +414,6 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
     strncpy(buf, rule_str, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 
-
     /* Find "-> mode" separator */
     char *arrow = strstr(buf, "->");
     if (!arrow) {
@@ -370,7 +426,6 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
     *arrow = '\0';
     char *mode_str = arrow + 2;
     while (*mode_str == ' ') mode_str++;
-
 
     uint32_t mode = parse_mode(mode_str);
 
@@ -481,43 +536,40 @@ static uint32_t op_required_dst_mode(soft_binary_op_t op)
 }
 
 /**
- * Evaluate a single path against all rules.
+ * Evaluate a single path against all rules in one layer.
+ * Static (non-template) rules are evaluated first, then templates.
  * Returns the granted mode or 0 if denied.
  */
-static uint32_t eval_path(const soft_ruleset_t *rs,
-                          const char *path,
-                          soft_binary_op_t op,
-                          const soft_access_ctx_t *ctx)
+static uint32_t eval_layer_path(const layer_t *lyr,
+                                const char *path,
+                                soft_binary_op_t op,
+                                const soft_access_ctx_t *ctx)
 {
     if (!path) return 0;
+    if (!lyr || lyr->count == 0) return 0;
 
     uint32_t granted = 0;
     bool has_deny = false;
 
-
-    for (int i = 0; i < rs->count; i++) {
-        const rule_t *r = &rs->rules[i];
+    /* Pass 1: static (non-template) rules — these have higher priority */
+    for (int i = 0; i < lyr->count; i++) {
+        const rule_t *r = &lyr->rules[i];
+        if (r->flags & SOFT_RULE_TEMPLATE) continue;
 
         /* Check operation compatibility */
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) {
-            fprintf(stderr, "  Rule %d: op_type=%d skipped (op=%d)\n", i, r->op_type, op);
             continue;
         }
 
         /* Check subject constraint */
-        if (!subject_matches(r, ctx->subject)) {
-            fprintf(stderr, "  Rule %d: subject mismatch\n", i);
-            continue;
-        }
+        if (!subject_matches(r, ctx->subject)) continue;
 
         /* Check UID constraint */
         if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
 
         /* Check path match */
-        bool matched = rule_matches_path(r, path, ctx);
-        fprintf(stderr, "  Rule %d: pattern='%s' path_match=%d\n", i, r->pattern, matched);
-        if (!matched) continue;
+        if (!rule_matches_path(r, path, ctx)) continue;
 
         /* Rule matches */
         if (r->mode & SOFT_ACCESS_DENY) {
@@ -527,10 +579,90 @@ static uint32_t eval_path(const soft_ruleset_t *rs,
         granted |= r->mode;
     }
 
-    fprintf(stderr, "  eval_path result: granted=%u deny=%d\n", granted, has_deny);
+    if (has_deny) return 0;
+
+    /* Pass 2: template rules — lower priority, only if no static DENY */
+    for (int i = 0; i < lyr->count; i++) {
+        const rule_t *r = &lyr->rules[i];
+        if (!(r->flags & SOFT_RULE_TEMPLATE)) continue;
+
+        /* Check operation compatibility */
+        if (r->op_type != op && r->op_type != SOFT_OP_READ &&
+            r->op_type != SOFT_OP_WRITE) {
+            continue;
+        }
+
+        /* Check subject constraint */
+        if (!subject_matches(r, ctx->subject)) continue;
+
+        /* Check UID constraint */
+        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+
+        /* Check path match */
+        if (!rule_matches_path(r, path, ctx)) continue;
+
+        /* Rule matches */
+        if (r->mode & SOFT_ACCESS_DENY) {
+            has_deny = true;
+            break;
+        }
+        granted |= r->mode;
+    }
 
     if (has_deny) return 0;
     return granted;
+}
+
+/**
+ * Evaluate one path across all layers (0 = highest precedence).
+ * Returns 0 if any layer DENYs, otherwise returns the bitwise AND
+ * of all layers' granted modes.
+ *
+ * @param out_deny_layer Set to the layer index that caused DENY, or -1.
+ */
+static uint32_t eval_all_layers(const soft_ruleset_t *rs,
+                                const char *path,
+                                soft_binary_op_t op,
+                                const soft_access_ctx_t *ctx,
+                                int *out_deny_layer)
+{
+    if (!path) { if (out_deny_layer) *out_deny_layer = -1; return 0; }
+
+    uint32_t intersection = SOFT_ACCESS_ALL;
+    bool any_layer_matched = false;
+
+    for (int i = 0; i < rs->layer_count; i++) {
+        const layer_t *lyr = &rs->layers[i];
+        if (lyr->count == 0) continue;
+
+        uint32_t granted = eval_layer_path(lyr, path, op, ctx);
+
+        if (granted == 0) {
+            /* Check if this was a DENY (vs. just no match) */
+            bool has_explicit_deny = false;
+            for (int j = 0; j < lyr->count && !has_explicit_deny; j++) {
+                const rule_t *r = &lyr->rules[j];
+                if ((r->mode & SOFT_ACCESS_DENY) &&
+                    subject_matches(r, ctx->subject) &&
+                    rule_matches_path(r, path, ctx)) {
+                    has_explicit_deny = true;
+                }
+            }
+            if (has_explicit_deny) {
+                if (out_deny_layer) *out_deny_layer = i;
+                return 0;
+            }
+            /* No match in this layer — layer doesn't constrain */
+            continue;
+        }
+
+        intersection &= granted;
+        any_layer_matched = true;
+    }
+
+    if (out_deny_layer) *out_deny_layer = -1;
+    if (!any_layer_matched) return 0;
+    return intersection;
 }
 
 int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
@@ -542,63 +674,93 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
     bool is_binary = (ctx->op == SOFT_OP_COPY || ctx->op == SOFT_OP_MOVE ||
                       ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT);
 
-    if (is_binary) {
-        /* Dual-path evaluation */
-        uint32_t src_req = op_required_src_mode(ctx->op);
-        uint32_t dst_req = op_required_dst_mode(ctx->op);
+    int deny_layer = -1;
 
-        uint32_t src_granted = eval_path(rs, ctx->src_path, ctx->op, ctx);
-        if ((src_granted & src_req) != src_req) {
+    if (is_binary) {
+        /* Dual-path evaluation: SRC and DST must both pass */
+        int src_deny = -1, dst_deny = -1;
+
+        uint32_t src_granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx, &src_deny);
+        if (src_deny >= 0) {
             if (out_log) {
                 out_log->result = -EACCES;
-                out_log->deny_reason = "SRC denied or insufficient mode";
+                out_log->deny_reason = "SRC denied by layer";
+                out_log->deny_layer = src_deny;
             }
             return -EACCES;
         }
 
-        uint32_t dst_granted = eval_path(rs, ctx->dst_path, ctx->op, ctx);
+        uint32_t src_req = op_required_src_mode(ctx->op);
+        if ((src_granted & src_req) != src_req) {
+            if (out_log) {
+                out_log->result = -EACCES;
+                out_log->deny_reason = "SRC insufficient mode";
+                out_log->deny_layer = -1;
+            }
+            return -EACCES;
+        }
+
+        uint32_t dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx, &dst_deny);
+        if (dst_deny >= 0) {
+            if (out_log) {
+                out_log->result = -EACCES;
+                out_log->deny_reason = "DST denied by layer";
+                out_log->deny_layer = dst_deny;
+            }
+            return -EACCES;
+        }
+
+        uint32_t dst_req = op_required_dst_mode(ctx->op);
         if ((dst_granted & dst_req) != dst_req) {
             if (out_log) {
                 out_log->result = -EACCES;
-                out_log->deny_reason = "DST denied or insufficient mode";
+                out_log->deny_reason = "DST insufficient mode";
+                out_log->deny_layer = -1;
             }
             return -EACCES;
         }
 
         /* Intersection: most restrictive mode wins */
         uint32_t result = src_granted | dst_granted;
-        if (out_log) out_log->result = (int)result;
+        if (out_log) {
+            out_log->result = (int)result;
+            out_log->deny_layer = -1;
+        }
         return (int)result;
     }
 
     /* Unary operation */
     uint32_t req = op_required_src_mode(ctx->op);
-    uint32_t granted = eval_path(rs, ctx->src_path, ctx->op, ctx);
+    uint32_t granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx, &deny_layer);
 
-    if ((granted & req) != req) {
+    if (deny_layer >= 0) {
         if (out_log) {
             out_log->result = -EACCES;
-            out_log->deny_reason = "Access denied";
+            out_log->deny_reason = "Access denied by layer";
+            out_log->deny_layer = deny_layer;
         }
         return -EACCES;
     }
 
-    if (out_log) out_log->result = (int)granted;
+    if ((granted & req) != req) {
+        if (out_log) {
+            out_log->result = -EACCES;
+            out_log->deny_reason = "Insufficient access mode";
+            out_log->deny_layer = -1;
+        }
+        return -EACCES;
+    }
+
+    if (out_log) {
+        out_log->result = (int)granted;
+        out_log->deny_layer = -1;
+    }
     return (int)granted;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Batch evaluation                                                   */
 /* ------------------------------------------------------------------ */
-
-/* Simple parent-dir cache for batch evaluation */
-typedef struct {
-    char   path[PATH_MAX];
-    uint32_t result;
-    int    valid;
-} dir_cache_entry_t;
-
-#define DIR_CACHE_SIZE 256
 
 int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                                  const soft_access_ctx_t *ctxs[],
@@ -607,46 +769,11 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
 {
     if (!rs || !ctxs || !results || count <= 0) { errno = EINVAL; return -1; }
 
-    dir_cache_entry_t cache[DIR_CACHE_SIZE];
-    memset(cache, 0, sizeof(cache));
-
     for (int i = 0; i < count; i++) {
         const soft_access_ctx_t *ctx = ctxs[i];
         if (!ctx) { results[i] = -EACCES; continue; }
 
-        bool is_binary = (ctx->op == SOFT_OP_COPY || ctx->op == SOFT_OP_MOVE ||
-                          ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT);
-
-        /* Check cache for parent directories */
-        uint32_t src_granted = 0, dst_granted = 0;
-
-        /* Evaluate SRC */
-        if (ctx->src_path) {
-            src_granted = eval_path(rs, ctx->src_path, ctx->op, ctx);
-        }
-
-        if (is_binary && ctx->dst_path) {
-            dst_granted = eval_path(rs, ctx->dst_path, ctx->op, ctx);
-        }
-
-        if (is_binary) {
-            uint32_t src_req = op_required_src_mode(ctx->op);
-            uint32_t dst_req = op_required_dst_mode(ctx->op);
-
-            if ((src_granted & src_req) == src_req &&
-                (dst_granted & dst_req) == dst_req) {
-                results[i] = (int)(src_granted | dst_granted);
-            } else {
-                results[i] = -EACCES;
-            }
-        } else {
-            uint32_t req = op_required_src_mode(ctx->op);
-            if ((src_granted & req) == req) {
-                results[i] = (int)src_granted;
-            } else {
-                results[i] = -EACCES;
-            }
-        }
+        results[i] = soft_ruleset_check_ctx(rs, ctx, NULL);
     }
 
     return 0;
