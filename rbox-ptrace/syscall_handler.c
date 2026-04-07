@@ -148,6 +148,9 @@ static size_t wrapper_prefix_len(char *cmd) {
     return 0;
 }
 
+/* Forward declaration for clear_allowance_set */
+static void clear_allowance_set(AllowanceSet *set);
+
 /* Helper to expire old allowance sets and clear empty ones from a given set */
 static void expire_allowance_set(AllowanceSet *set) {
     if (!set || set->subcommand_count == 0) return;
@@ -159,12 +162,35 @@ static void expire_allowance_set(AllowanceSet *set) {
                         (now.tv_nsec - set->timestamp.tv_nsec) / 1e9;
     if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
         DEBUG_PRINT("ALLOWANCE: expired allowance set for pid\n");
-        for (int j = 0; j < set->subcommand_count; j++) {
-            free(set->subcommands[j]);
-            set->subcommands[j] = NULL;
-        }
-        set->subcommand_count = 0;
-        memset(set->used_mask, 0, sizeof(set->used_mask));
+        clear_allowance_set(set);
+    }
+}
+
+/* Clear all subcommand strings from a set and reset it.
+ * Use this when consuming subcommands or when reusing a slot. */
+static void clear_allowance_set(AllowanceSet *set) {
+    if (!set) return;
+    for (int i = 0; i < set->subcommand_count; i++) {
+        free(set->subcommands[i]);
+        set->subcommands[i] = NULL;
+    }
+    set->subcommand_count = 0;
+    memset(set->used_mask, 0, sizeof(set->used_mask));
+}
+
+/* Expire wrapper chain if older than timeout.
+ * Call this before using wrapper_chain to ensure expired chains are cleaned. */
+static void expire_wrapper_chain(ProcessState *state) {
+    if (!state || !state->wrapper_chain.wrapper_command) return;
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double age_seconds = (now.tv_sec - state->wrapper_chain.timestamp.tv_sec) +
+                        (now.tv_nsec - state->wrapper_chain.timestamp.tv_nsec) / 1e9;
+    if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
+        DEBUG_PRINT("WRAPPER_CHAIN: expired for pid %d\n", state->pid);
+        free(state->wrapper_chain.wrapper_command);
+        state->wrapper_chain.wrapper_command = NULL;
     }
 }
 
@@ -211,11 +237,13 @@ static int consume_allowance(ProcessState *state, const char *subcommand) {
             if (set->subcommands[j] &&
                 strcmp(set->subcommands[j], subcommand) == 0) {
 
-                /* Mark as used */
+                /* Mark as used and free the string (no longer needed) */
                 set->used_mask[word_idx] |= (1 << bit_idx);
+                free(set->subcommands[j]);
+                set->subcommands[j] = NULL;
 
                 if (is_set_fully_used(set)) {
-                    set->subcommand_count = 0;
+                    clear_allowance_set(set);
                 }
 
                 DEBUG_PRINT("ALLOWANCE: using allowance set %d, subcommand '%s'\n",
@@ -248,9 +276,11 @@ static int consume_allowance(ProcessState *state, const char *subcommand) {
                     strcmp(set->subcommands[j], subcommand) == 0) {
 
                     set->used_mask[word_idx] |= (1 << bit_idx);
+                    free(set->subcommands[j]);
+                    set->subcommands[j] = NULL;
 
                     if (is_set_fully_used(set)) {
-                        set->subcommand_count = 0;
+                        clear_allowance_set(set);
                     }
 
                     DEBUG_PRINT("ALLOWANCE: using spillover set %d, subcommand '%s'\n",
@@ -344,21 +374,9 @@ static const char *strip_outermost_wrapper_prefix(const char *full_command,
 static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child_state, const char *subcommand) {
     if (!parent_state) return 0;
 
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-
-    /* No wrapper chain if wrapper_command is NULL */
+    /* Expire wrapper chain if older than timeout */
+    expire_wrapper_chain(parent_state);
     if (!parent_state->wrapper_chain.wrapper_command) {
-        return 0;
-    }
-
-    /* Check timeout - discard chains older than 10 minutes */
-    double age_seconds = (now.tv_sec - parent_state->wrapper_chain.timestamp.tv_sec) +
-                        (now.tv_nsec - parent_state->wrapper_chain.timestamp.tv_nsec) / 1e9;
-    if (age_seconds > ALLOWANCE_TIMEOUT_SECONDS) {
-        DEBUG_PRINT("WRAPPER_CHAIN: expired for pid %d\n", parent_state->pid);
-        free(parent_state->wrapper_chain.wrapper_command);
-        parent_state->wrapper_chain.wrapper_command = NULL;
         return 0;
     }
 
@@ -474,6 +492,9 @@ static int consume_wrapper_chain(ProcessState *parent_state, ProcessState *child
 static void grant_allowance(ProcessState *state, const char *full_command) {
     if (!state) return;
 
+    /* Expire any expired wrapper chain */
+    expire_wrapper_chain(state);
+
     shell_parse_result_t result;
     shell_error_t err;
 
@@ -510,10 +531,15 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
             return;
         }
 
-        /* Store the suffix as a wrapper-chain allowance (do NOT strip quotes).
-         * Quotes carry information about command structure and must be preserved. */
+        /* Store the suffix as a wrapper-chain allowance.
+         * Strip outer surrounding quotes for consistent comparison.
+         * Child's argv never has quotes, so wrapper_command shouldn't either.
+         * This is consistent with extract_sh_c behavior. */
         free(state->wrapper_chain.wrapper_command);
         state->wrapper_chain.wrapper_command = strdup(suffix);
+        if (state->wrapper_chain.wrapper_command) {
+            strip_quotes(state->wrapper_chain.wrapper_command);
+        }
         free(large_buf);
         if (!state->wrapper_chain.wrapper_command) {
             DEBUG_PRINT("WRAPPER_CHAIN: failed to allocate memory for '%s'\n", suffix);
@@ -571,8 +597,7 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
             }
             if (slot) {
                 clock_gettime(CLOCK_MONOTONIC, &slot->timestamp);
-                slot->subcommand_count = 0;
-                memset(slot->used_mask, 0, sizeof(slot->used_mask));
+                clear_allowance_set(slot);
                 DEBUG_PRINT("GRANT_ALLOWANCE: storing subcommands in slot, count=%u\n", inner_result.count);
                 for (uint32_t i = 0; i < inner_result.count && i < SHELL_MAX_SUBCOMMANDS; i++) {
                     uint32_t subcmd_len;
@@ -679,8 +704,7 @@ static void grant_allowance(ProcessState *state, const char *full_command) {
 
     /* Populate the slot */
     clock_gettime(CLOCK_MONOTONIC, &slot->timestamp);
-    slot->subcommand_count = 0;
-    memset(slot->used_mask, 0, sizeof(slot->used_mask));
+    clear_allowance_set(slot);
 
     for (uint32_t i = 0; i < result.count && i < SHELL_MAX_SUBCOMMANDS; i++) {
         uint32_t subcmd_len;

@@ -76,7 +76,7 @@ check-prereqs:
 	@which cppcheck > /dev/null 2>&1 || echo "WARNING: cppcheck not installed (cppcheck target will be skipped)"
 
 # Build DFA from pattern file
-dfa: $(BUILD_DIR) $(DFA_DATA_C)
+dfa: $(BUILD_DIR) $(NFA_FILE) $(DFA_FILE) $(DFA_DATA_C)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
