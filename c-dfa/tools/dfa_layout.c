@@ -15,6 +15,8 @@
 #include "dfa_layout.h"
 
 // MAX_STATES is defined in nfa.h which is included via dfa_minimize.h -> dfa_layout.h
+#define MAX_LAYER 10000
+
 // Thread-local sort key for qsort comparison (safe for single-threaded use)
 static const int* g_layout_sort_key = NULL;
 
@@ -68,7 +70,8 @@ static int* build_forward_depths(build_dfa_state_t** dfa, int state_count) {
             int next = dfa[state]->transitions[c];
             if (next >= 0 && next < state_count && !visited[next]) {
                 visited[next] = true;
-                depths[next] = depths[state] + 1;
+                int d = depths[state] + 1;
+                depths[next] = (d > MAX_LAYER) ? MAX_LAYER : d;
                 queue[tail++] = next;
             }
         }
@@ -76,9 +79,17 @@ static int* build_forward_depths(build_dfa_state_t** dfa, int state_count) {
             int next = (int)dfa[state]->eos_target;
             if (!visited[next]) {
                 visited[next] = true;
-                depths[next] = depths[state] + 1;
+                int d = depths[state] + 1;
+                depths[next] = (d > MAX_LAYER) ? MAX_LAYER : d;
                 queue[tail++] = next;
             }
+        }
+    }
+    
+    // Cap any remaining -1 (unreachable) states to MAX_LAYER
+    for (int i = 0; i < state_count; i++) {
+        if (depths[i] < 0 || depths[i] > MAX_LAYER) {
+            depths[i] = MAX_LAYER;
         }
     }
     
@@ -180,9 +191,17 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
             int pred = preds[state][i];
             if (!visited[pred]) {
                 visited[pred] = true;
-                depths[pred] = depths[state] + 1;
+                int d = depths[state] + 1;
+                depths[pred] = (d > MAX_LAYER) ? MAX_LAYER : d;
                 queue[tail++] = pred;
             }
+        }
+    }
+    
+    // Cap any remaining -1 (unreachable) states to MAX_LAYER
+    for (int i = 0; i < state_count; i++) {
+        if (depths[i] < 0 || depths[i] > MAX_LAYER) {
+            depths[i] = MAX_LAYER;
         }
     }
     
@@ -530,6 +549,7 @@ static void compute_scc_layers(
     while (head < tail) {
         int state = queue[head++];
         int next_layer = scc_layer[state] + 1;
+        if (next_layer > MAX_LAYER) next_layer = MAX_LAYER;
         
         for (int c = 0; c < 256; c++) {
             int next = dfa[state]->transitions[c];
@@ -540,6 +560,15 @@ static void compute_scc_layers(
                     queue[tail++] = next;
                 }
             }
+        }
+    }
+    
+    // Mark any remaining unvisited states with sentinel (MAX_LAYER + 1)
+    // These are states within the SCC that are unreachable from entry points
+    for (int i = 0; i < scc_size; i++) {
+        int s = scc_states[i];
+        if (scc_layer[s] < 0) {
+            scc_layer[s] = MAX_LAYER + 1;
         }
     }
     
@@ -735,7 +764,7 @@ static int* build_scc_affinity_groups(
     }
     
     // Step 5: Build group ID based on topological order
-    int* group_id = malloc(state_count * sizeof(int));
+    int* group_id = calloc(state_count, sizeof(int));
     if (!group_id) {
         free(scc_layer); free(is_entry);
         free_condensation_graph(cond, scc_count);
@@ -797,6 +826,14 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
         return NULL;
     }
     
+    // Count truly unreachable states (not reachable from start AND can't reach accepting)
+    int unreachable_count = 0;
+    for (int i = 0; i < state_count; i++) {
+        if (forward_depths[i] >= MAX_LAYER && backward_depths[i] >= MAX_LAYER) {
+            unreachable_count++;
+        }
+    }
+    
     // Find max depths
     int max_forward = 0, max_backward = 0;
     for (int i = 0; i < state_count; i++) {
@@ -847,13 +884,22 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
         int subkey;
         if (region[i] == REGION_FORWARD) {
             subkey = forward_depths[i];
+            if (subkey > MAX_LAYER) subkey = MAX_LAYER;
         } else if (region[i] == REGION_BACKWARD) {
             subkey = backward_depths[i];
+            if (subkey > MAX_LAYER) subkey = MAX_LAYER;
         } else {
             // Middle region: SCC group in high bits, SCC-internal BFS layer in low bits
             // This groups states by SCC, then orders within SCC by unrolled BFS layer
-            int scc_layer = scc_layers[i] >= 0 ? scc_layers[i] : (forward_depths[i] + backward_depths[i]);
-            subkey = (affinity_groups[i] << 16) | (scc_layer & 0xFFFF);
+            int scc_l = scc_layers[i];
+            // Handle sentinel (MAX_LAYER + 1) by using max depth as fallback
+            if (scc_l < 0 || scc_l > MAX_LAYER) {
+                scc_l = forward_depths[i];
+                if (scc_l < 0) scc_l = backward_depths[i];
+                if (scc_l < 0) scc_l = MAX_LAYER;
+            }
+            if (scc_l > MAX_LAYER) scc_l = MAX_LAYER;
+            subkey = (affinity_groups[i] << 16) | (scc_l & 0xFFFF);
         }
         // Region in bits 30-31, subkey in bits 0-29
         sort_key[i] = (region[i] << 30) | (subkey & 0x3FFFFFFF);

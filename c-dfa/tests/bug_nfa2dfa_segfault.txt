@@ -1,0 +1,11 @@
+# ============================================================================
+# Bug Test: nfa2dfa_advanced segfault with optional group
+# ============================================================================
+# Bug: nfa2dfa_advanced crashes (segfault) when processing an optional group
+# containing 3+ characters followed by a space.
+#
+# Minimal reproduction: ls( (abc )?)
+# ============================================================================
+
+ACCEPTANCE_MAPPING [safe] -> 0
+[safe] ls( (abc )?)

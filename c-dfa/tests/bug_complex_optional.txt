@@ -1,0 +1,10 @@
+# ============================================================================
+# Bug Test: Complex nested optional groups
+# ============================================================================
+# Pattern: ls( (--color=auto )?(-(la|l|a) )?((safe::filename))* )?
+# This pattern contains deeply nested optional groups and should build a proper NFA.
+# ============================================================================
+
+ACCEPTANCE_MAPPING [safe] -> 0
+[fragment:safe::filename] a
+[safe] ls( (--color=auto )?(-(la|l|a) )?((safe::filename))* )?

@@ -275,6 +275,10 @@ $(TESTS_DIR)/test_minimize_integrity: $(TESTS_DIR)/test_minimize_integrity.c $(L
 $(TESTS_DIR)/test_library_api: $(TESTS_DIR)/test_library_api.c $(LIB) $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/test_library_api.c -L. -lreadonlybox_dfa $(LDFLAGS)
 
+# Build regression tests (pattern bug regression tests)
+$(TESTS_DIR)/regression_test: $(TESTS_DIR)/regression_test.c $(LIB) $(INCLUDE_DIR)/*.h
+	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/regression_test.c -L. -lreadonlybox_dfa $(LDFLAGS)
+
 # Build eval-only test (links against libdfa_eval.a only, no builder deps)
 $(TESTS_DIR)/test_eval_only: $(TESTS_DIR)/test_eval_only.c $(EVAL_LIB) $(INCLUDE_DIR)/dfa.h $(INCLUDE_DIR)/dfa_types.h
 	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/test_eval_only.c -L. -ldfa_eval $(LDFLAGS)
@@ -411,7 +415,7 @@ test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity $(TESTS_DIR)/test_li
 	run_suite test-dfa2c; \
 	run_suite test-binary-format; \
 	run_suite test-captures; \
-	run_suite test-patterns; \
+	run_suite test-regression; \
 	echo ""; \
 	if [ $$TOTAL_GROUPS -gt 0 ]; then \
 		echo "SUMMARY: ran $$RUN_SUITES/$$TOTAL_SUITES suites, $$RUN_GROUPS/$$TOTAL_GROUPS groups, $$TOTAL_PASSED/$$TOTAL_TESTS passed"; \
@@ -420,28 +424,63 @@ test: $(TOOLS) $(TEST) $(TESTS_DIR)/test_minimize_integrity $(TESTS_DIR)/test_li
 	fi; \
 	if [ $$FAILED_GROUPS -gt 0 ]; then echo "  $$FAILED_GROUPS group(s) failed to load"; fi
 
-# Pattern regression tests
-test-patterns: $(TOOLS)
+# Pattern regression tests - C version (integrated into test suite)
+test-regression: $(TESTS_DIR)/regression_test
 	@echo ""
 	@echo "================================================="
 	@echo "PATTERN REGRESSION TESTS"
 	@echo "================================================="
-	@echo ""
-	@echo "Testing + quantifier empty string bug..."
-	@./tools/nfa_builder patterns/quantifiers/test_plus_empty_string_bug.txt /tmp/test_plus_bug.nfa 2>/dev/null
-	@./tools/nfa2dfa_advanced /tmp/test_plus_bug.nfa /tmp/test_plus_bug.dfa 2>&1 | grep -v "MINIMIZE" || true
-	@echo "  Testing empty string:"
-	@# Empty string should match category 1 (safe, the * pattern) but NOT category 6 (build, the + pattern)
-	@# Category 1 = safe (bit 0) = 0x01
-	@# Category 6 = build (bit 6) = 0x40
-	@(echo "" | ./tools/dfa_eval_wrapper /tmp/test_plus_bug.dfa "" 2>&1 | grep -q "category=1" && echo "    [PASS] Empty string matches * pattern (category 1)" || echo "    [FAIL] Empty string does not match * pattern")
-	@(echo "" | ./tools/dfa_eval_wrapper /tmp/test_plus_bug.dfa "" 2>&1 | grep -q "category=6" && echo "    [FAIL] Empty string incorrectly matches + pattern (category 6) - BUG!" || echo "    [PASS] Empty string does NOT match + pattern (category 6)")
-	@echo "  Testing valid inputs:"
-	@(./tools/dfa_eval_wrapper /tmp/test_plus_bug.dfa "W0GK" 2>&1 | grep -q "matched=1" && echo "    [PASS] Valid input matches + pattern" || echo "    [FAIL] Valid input does not match + pattern")
-	@(./tools/dfa_eval_wrapper /tmp/test_plus_bug.dfa "mBJV9" 2>&1 | grep -q "matched=1" && echo "    [PASS] Valid input matches * pattern" || echo "    [FAIL] Valid input does not match * pattern")
-	@rm -f /tmp/test_plus_bug.nfa /tmp/test_plus_bug.dfa
-	@echo ""
-	@echo "All pattern tests completed."
+	@./$(TESTS_DIR)/regression_test
+
+# Legacy shell-based pattern tests (for manual testing only)
+test-patterns: $(TOOLS)
+	@FAIL_COUNT=0; \
+	echo ""; \
+	echo "================================================="; \
+	echo "PATTERN REGRESSION TESTS (LEGACY - MANUAL ONLY)"; \
+	echo "================================================="; \
+	echo ""; \
+	echo "Testing = followed by fragment reference bug (Parser bug #6 - FIXED)..."; \
+	printf 'ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::x] a\n[safe] ls( =)?((safe::x))\n' > /tmp/bug_eq_simple.txt; \
+	./tools/nfa_builder /tmp/bug_eq_simple.txt /tmp/bug_eq_simple.nfa 2>/dev/null; \
+	NFA_STATES=$$(grep '^States:' /tmp/bug_eq_simple.nfa | awk '{print $$2}'); \
+	if [ "$$NFA_STATES" -gt 1 ]; then \
+		echo "    [PASS] NFA has $$NFA_STATES states (was 1 before fix)"; \
+	else \
+		echo "    [FAIL] NFA has only $$NFA_STATES states - bug NOT fixed!"; \
+		FAIL_COUNT=$$((FAIL_COUNT + 1)); \
+	fi; \
+	./tools/nfa2dfa_advanced /tmp/bug_eq_simple.nfa /tmp/bug_eq_simple.dfa 2>&1; CRASH=$$?; \
+	if [ $$CRASH -ne 0 ] || [ ! -f /tmp/bug_eq_simple.dfa ]; then \
+		echo "    [FAIL] nfa2dfa_advanced crashed (exit code $$CRASH)"; \
+		FAIL_COUNT=$$((FAIL_COUNT + 1)); \
+	elif (./tools/dfa_eval_wrapper /tmp/bug_eq_simple.dfa "lsa" 2>&1 | grep -q "matched=1"); then \
+		echo "    [PASS] Pattern matches 'lsa'"; \
+	else \
+		echo "    [FAIL] Pattern does not match 'lsa'"; \
+		FAIL_COUNT=$$((FAIL_COUNT + 1)); \
+	fi; \
+	rm -f /tmp/bug_eq_simple.txt /tmp/bug_eq_simple.nfa /tmp/bug_eq_simple.dfa; \
+	echo ""; \
+	echo "Testing nfa2dfa_advanced segfault bug (Bug #7 - NOT FIXED)..."; \
+	./tools/nfa_builder tests/bug_nfa2dfa_segfault.txt /tmp/bug_nfa2dfa.nfa 2>/dev/null; \
+	./tools/nfa2dfa_advanced /tmp/bug_nfa2dfa.nfa /tmp/bug_nfa2dfa.dfa 2>&1; CRASH=$$?; \
+	if [ $$CRASH -ne 0 ] || [ ! -f /tmp/bug_nfa2dfa.dfa ]; then \
+		echo "    [FAIL] nfa2dfa_advanced crashed (exit code $$CRASH)"; \
+	else \
+		echo "    [PASS] nfa2dfa_advanced completed"; \
+	fi; \
+	rm -f /tmp/bug_nfa2dfa.nfa /tmp/bug_nfa2dfa.dfa; \
+	echo ""; \
+	echo "Testing complex nested optional groups (Bug #8 - NOT FIXED)..."; \
+	./tools/nfa_builder tests/bug_complex_optional.txt /tmp/bug_complex.nfa 2>/dev/null; \
+	./tools/nfa2dfa_advanced /tmp/bug_complex.nfa /tmp/bug_complex.dfa 2>&1; CRASH=$$?; \
+	if [ $$CRASH -ne 0 ] || [ ! -f /tmp/bug_complex.dfa ]; then \
+		echo "    [FAIL] nfa2dfa_advanced crashed (exit code $$CRASH)"; \
+	else \
+		echo "    [PASS] nfa2dfa_advanced completed"; \
+	fi; \
+	rm -f /tmp/bug_complex.nfa /tmp/bug_complex.dfa
 
 # Fuzzing targets
 fuzz: fuzz-build

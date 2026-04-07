@@ -1,0 +1,20 @@
+# Bug: = followed by fragment reference in optional group
+# The pattern ls( =)((safe::x)) produces a degenerate NFA with only 1 state
+# while ls(z)((safe::x)) works correctly with 12 states.
+# 
+# Root cause: The parser's position tracking after fragment parsing
+# gets confused when the character before the fragment reference is '='
+
+[CATEGORIES]
+0: safe
+1: caution
+
+[fragment:safe::x] a
+
+# This pattern is BROKEN - do not use as-is
+# [safe] ls( =)((safe::x))
+
+# Working alternatives:
+[safe] ls(z)((safe::x))
+[safe] ls(a)((safe::x))
+[safe] ls(1)((safe::x))

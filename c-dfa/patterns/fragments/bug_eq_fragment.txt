@@ -1,0 +1,89 @@
+# ============================================================================
+# Pattern File for Bug Test: = followed by fragment reference
+# ============================================================================
+# Bug: When '=' immediately precedes a fragment reference '((FRAG))' inside
+# an optional group, the parser produces a degenerate NFA with only 1 state.
+#
+# Example: ls( =)((safe::x)) produces 1 state (BROKEN)
+#          ls(z)((safe::x)) produces ~17 states (WORKS)
+#
+# This test file captures the bug for regression testing.
+# ============================================================================
+
+[CATEGORIES]
+0: safe
+1: caution
+2: modifying
+3: dangerous
+4: network
+5: admin
+6: build
+7: container
+
+ACCEPTANCE_MAPPING [safe] -> 0
+
+[fragment:safe::x] a|b|c
+[fragment:safe::y] x|y|z
+[fragment:safe::filename] filename
+[fragment:safe::eq] =
+[fragment:safe::eqeq] ==
+
+# ============================================================================
+# SECTION 1: Working patterns (control group)
+# These patterns should produce correct NFAs with multiple states
+# ============================================================================
+
+# Character before fragment - various characters (all WORK)
+[safe:test_a] ls(a)((safe::x))
+[safe:test_z] ls(z)((safe::x))
+[safe:test_1] ls(1)((safe::x))
+[safe:test_dash] ls(-)((safe::x))
+[safe:test_amp] ls(&)((safe::x))
+[safe:test_at] ls(@)((safe::x))
+[safe:test_colon] ls(:)((safe::x))
+[safe:test_dot] ls(.)((safe::x))
+
+# Character + fragment reference (no space)
+[safe:test_a2] ls(a)((safe::x))
+[safe:test_z2] ls(z)((safe::x))
+
+# Character in optional group + fragment
+[safe:test_zq] ls(z)?((safe::x))
+[safe:test_aq] ls(a)?((safe::x))
+
+# Fragment reference then character
+[safe:test_fa] ((safe::x))a
+[safe:test_fz] ((safe::x))z
+
+# ============================================================================
+# SECTION 2: Bug patterns - = followed by fragment in optional groups
+# These patterns currently FAIL (produce 1-state NFA) but SHOULD work.
+# When the bug is fixed, these should produce proper multi-state NFAs.
+# ============================================================================
+
+# BUG: = followed by fragment in optional group (all BROKEN - 1 state)
+[safe:test_bug_eq1] ls( =)?((safe::x))
+[safe:test_bug_eq2] ls(=)?((safe::x))
+[safe:test_bug_eq3] ls( =)((safe::x))
+[safe:test_bug_eq4] ls(=)((safe::x))
+
+# ============================================================================
+# SECTION 3: Complex patterns with =
+# ============================================================================
+
+# These should all work when the bug is fixed
+[safe:test_complex1] ls( --color=auto)?
+[safe:test_complex2] ls( --color=auto)?((safe::filename))*
+[safe:test_complex3] ls( (--color=auto )?((safe::filename))*)?
+
+# ============================================================================
+# SECTION 4: Fragments with = in different positions
+# ============================================================================
+
+# = at end of pattern (should work - these work correctly)
+[safe:test_eq_end1] ls x=
+[safe:test_eq_end2] cat file=
+
+# ============================================================================
+# END
+# ============================================================================

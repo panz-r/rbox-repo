@@ -1202,31 +1202,6 @@ static void parse_advanced_pattern(nfa_builder_context_t* ctx, const char* line)
 
     while (*line == ' ' || *line == '\t') line++;
 
-    // Check for scoped fragment definition
-    if (strchr(line, '=') != NULL) {
-        char* eq = strchr(line, '=');
-        char* name_start = (char*)line;
-        char* name_end = eq;
-
-        if (strstr(name_start, "::") != NULL && ctx->fragment_count < MAX_FRAGMENTS) {
-            size_t name_len = name_end - name_start;
-            while (name_len > 0 && (name_start[name_len - 1] == ' ' || name_start[name_len - 1] == '\t')) {
-                name_len--;
-            }
-            if (name_len > 0 && name_len < MAX_FRAGMENT_NAME) {
-                strncpy(ctx->fragments[ctx->fragment_count].name, name_start, name_len);
-                ctx->fragments[ctx->fragment_count].name[name_len] = '\0';
-
-                const char* value_start = eq + 1;
-                while (*value_start == ' ' || *value_start == '\t') value_start++;
-                strncpy(ctx->fragments[ctx->fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
-                ctx->fragments[ctx->fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
-                ctx->fragment_count++;
-            }
-            return;
-        }
-    }
-
     // Parse pattern
     char* arrow = strstr(line, "->");
     if (arrow != NULL) {
