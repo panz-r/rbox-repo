@@ -145,8 +145,8 @@ unsigned long memory_alloc(MemoryContext *ctx, size_t size) {
 }
 
 /* Write a string to traced process memory */
-unsigned long memory_write_string(MemoryContext *ctx, const char *str) {
-    if (!ctx || !str) return 0;
+int memory_write_string(MemoryContext * restrict ctx, const char *str, unsigned long * restrict out_addr) {
+    if (!ctx || !str || !out_addr) return -1;
 
     int len = strlen(str) + 1;
     int words = (len + sizeof(long) - 1) / sizeof(long);
@@ -162,17 +162,17 @@ unsigned long memory_write_string(MemoryContext *ctx, const char *str) {
         if (ptrace(PTRACE_POKEDATA, ctx->pid, addr, word) == -1) {
             DEBUG_PRINT("memory_write_string: ptrace POKEDATA failed at addr=0x%lx: %s\n",
                         addr, strerror(errno));
-            return 0;
+            return -1;
         }
     }
 
-    unsigned long result = ctx->free_addr;
+    *out_addr = ctx->free_addr;
     ctx->free_addr += words * sizeof(long);
-    return result;
+    return 0;
 }
 
 /* Write a pointer to traced process memory at a specific address */
-int memory_write_pointer_at(MemoryContext *ctx, unsigned long addr, unsigned long value) {
+int memory_write_pointer_at(MemoryContext * restrict ctx, unsigned long addr, unsigned long value) {
     if (!ctx || addr == 0) return -1;
     
     errno = 0;
@@ -185,8 +185,8 @@ int memory_write_pointer_at(MemoryContext *ctx, unsigned long addr, unsigned lon
 }
 
 /* Write an array of pointers to traced process memory */
-unsigned long memory_write_pointer_array(MemoryContext *ctx, unsigned long *pointers, int count) {
-    if (!ctx || !pointers || count < 0) return 0;
+int memory_write_pointer_array(MemoryContext * restrict ctx, unsigned long * restrict pointers, int count, unsigned long * restrict out_addr) {
+    if (!ctx || !pointers || count < 0 || !out_addr) return -1;
 
     unsigned long base = ctx->free_addr;
 
@@ -196,7 +196,7 @@ unsigned long memory_write_pointer_array(MemoryContext *ctx, unsigned long *poin
         if (ptrace(PTRACE_POKEDATA, ctx->pid, addr, pointers[i]) == -1) {
             DEBUG_PRINT("memory_write_pointer_array: ptrace POKEDATA failed at addr=0x%lx: %s\n",
                         addr, strerror(errno));
-            return 0;
+            return -1;
         }
     }
 
@@ -206,11 +206,12 @@ unsigned long memory_write_pointer_array(MemoryContext *ctx, unsigned long *poin
     if (ptrace(PTRACE_POKEDATA, ctx->pid, null_addr, 0) == -1) {
         DEBUG_PRINT("memory_write_pointer_array: ptrace POKEDATA NULL terminator failed at addr=0x%lx: %s\n",
                     null_addr, strerror(errno));
-        return 0;
+        return -1;
     }
 
     ctx->free_addr += (count + 1) * sizeof(long);
-    return base;
+    *out_addr = base;
+    return 0;
 }
 
 /* Free memory allocated by read operations */

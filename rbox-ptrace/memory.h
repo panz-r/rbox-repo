@@ -37,17 +37,17 @@ char **memory_read_string_array(pid_t pid, unsigned long addr);
 /* Read a null-terminated array of strings and also store addresses */
 char **memory_read_string_array_with_addrs(pid_t pid, unsigned long addr, unsigned long **out_addrs);
 
-/* Write a string to traced process memory */
-unsigned long memory_write_string(MemoryContext *ctx, const char *str);
+/* Write a string to traced process memory. Returns 0 on success (sets *out_addr), -1 on error. */
+int memory_write_string(MemoryContext * restrict ctx, const char *str, unsigned long * restrict out_addr);
 
 /* Allocate space in traced process memory */
 unsigned long memory_alloc(MemoryContext *ctx, size_t size);
 
-/* Write an array of pointers to traced process memory */
-unsigned long memory_write_pointer_array(MemoryContext *ctx, unsigned long *pointers, int count);
+/* Write an array of pointers to traced process memory. Returns 0 on success (sets *out_addr), -1 on error. */
+int memory_write_pointer_array(MemoryContext * restrict ctx, unsigned long * restrict pointers, int count, unsigned long * restrict out_addr);
 
-/* Write a pointer to traced process memory at a specific address */
-int memory_write_pointer_at(MemoryContext *ctx, unsigned long addr, unsigned long value);
+/* Write a pointer to traced process memory at a specific address. Returns 0 on success, -1 on error. */
+int memory_write_pointer_at(MemoryContext * restrict ctx, unsigned long addr, unsigned long value);
 
 /* Free memory allocated by read operations */
 void memory_free_string(char *str);

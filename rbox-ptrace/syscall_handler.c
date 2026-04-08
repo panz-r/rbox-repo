@@ -621,12 +621,17 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
     const char *message_cmd = "echo 'Permission denied, this command was not executed and had no effects on the system.' >&2; exit 1";
 
     /* Write strings to process memory */
-    unsigned long sh_addr = memory_write_string(&mem_ctx, sh_path);
-    unsigned long dash_c_addr = memory_write_string(&mem_ctx, dash_c);
-    unsigned long cmd_addr = memory_write_string(&mem_ctx, message_cmd);
-
-    if (!sh_addr || !dash_c_addr || !cmd_addr) {
-        LOG_ERROR("Failed to write shell command strings");
+    unsigned long sh_addr, dash_c_addr, cmd_addr, new_argv;
+    if (memory_write_string(&mem_ctx, sh_path, &sh_addr) != 0) {
+        LOG_ERROR("Failed to write shell path");
+        return -1;
+    }
+    if (memory_write_string(&mem_ctx, dash_c, &dash_c_addr) != 0) {
+        LOG_ERROR("Failed to write dash_c");
+        return -1;
+    }
+    if (memory_write_string(&mem_ctx, message_cmd, &cmd_addr) != 0) {
+        LOG_ERROR("Failed to write message command");
         return -1;
     }
 
@@ -637,8 +642,7 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
     argv_ptrs[2] = cmd_addr;
     argv_ptrs[3] = 0;
 
-    unsigned long new_argv = memory_write_pointer_array(&mem_ctx, argv_ptrs, 3);
-    if (!new_argv) {
+    if (memory_write_pointer_array(&mem_ctx, argv_ptrs, 3, &new_argv) != 0) {
         LOG_ERROR("Failed to write argv for shell");
         return -1;
     }
@@ -1501,7 +1505,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
      * We use the original addresses of each string in the child memory. */
     for (int i = 0; i < keep_count; i++) {
         if (memory_write_pointer_at(&mem_ctx, new_envp_addr + i * sizeof(unsigned long),
-                                     new_env_addrs[i]) < 0) {
+                                     new_env_addrs[i]) != 0) {
             DEBUG_PRINT("FILTER: failed to write envp pointer %d\n", i);
             free(new_envp);
             free(new_env_addrs);
@@ -1511,7 +1515,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     }
 
     /* Write NULL terminator */
-    if (memory_write_pointer_at(&mem_ctx, new_envp_addr + keep_count * sizeof(unsigned long), 0) < 0) {
+    if (memory_write_pointer_at(&mem_ctx, new_envp_addr + keep_count * sizeof(unsigned long), 0) != 0) {
         DEBUG_PRINT("FILTER: failed to write envp NULL terminator\n");
         free(new_envp);
         free(new_env_addrs);

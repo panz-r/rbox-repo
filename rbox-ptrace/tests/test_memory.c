@@ -92,8 +92,9 @@ TEST(memory_read_string_array_null_addr) {
  * Test memory_write_string with NULL context
  */
 TEST(memory_write_string_null_context) {
-    unsigned long result = memory_write_string(NULL, "test");
-    ASSERT_EQ(result, 0);
+    unsigned long addr;
+    int result = memory_write_string(NULL, "test", &addr);
+    ASSERT_EQ(result, -1);
     return 0;
 }
 
@@ -101,15 +102,17 @@ TEST(memory_write_string_null_string) {
     MemoryContext ctx;
     memory_init(&ctx, getpid(), 0x7fff0000);
 
-    unsigned long result = memory_write_string(&ctx, NULL);
-    ASSERT_EQ(result, 0);
+    unsigned long addr;
+    int result = memory_write_string(&ctx, NULL, &addr);
+    ASSERT_EQ(result, -1);
     return 0;
 }
 
 TEST(memory_write_pointer_array_null_context) {
     unsigned long pointers[] = {0x1000, 0x2000};
-    unsigned long result = memory_write_pointer_array(NULL, pointers, 2);
-    ASSERT_EQ(result, 0);
+    unsigned long addr;
+    int result = memory_write_pointer_array(NULL, pointers, 2, &addr);
+    ASSERT_EQ(result, -1);
     return 0;
 }
 
@@ -117,8 +120,9 @@ TEST(memory_write_pointer_array_null_pointers) {
     MemoryContext ctx;
     memory_init(&ctx, getpid(), 0x7fff0000);
 
-    unsigned long result = memory_write_pointer_array(&ctx, NULL, 2);
-    ASSERT_EQ(result, 0);
+    unsigned long addr;
+    int result = memory_write_pointer_array(&ctx, NULL, 2, &addr);
+    ASSERT_EQ(result, -1);
     return 0;
 }
 
@@ -127,8 +131,9 @@ TEST(memory_write_pointer_array_negative_count) {
     memory_init(&ctx, getpid(), 0x7fff0000);
 
     unsigned long pointers[] = {0x1000, 0x2000};
-    unsigned long result = memory_write_pointer_array(&ctx, pointers, -1);
-    ASSERT_EQ(result, 0);
+    unsigned long addr;
+    int result = memory_write_pointer_array(&ctx, pointers, -1, &addr);
+    ASSERT_EQ(result, -1);
     return 0;
 }
 
