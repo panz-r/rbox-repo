@@ -203,7 +203,7 @@ static bool build_inverse_graph(build_dfa_state_t** dfa, int state_count, invers
 
     // Count incoming edges
     for (int s = 0; s < state_count; s++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int target = dfa[s]->transitions[c];
             if (target >= 0 && target < state_count) {
                 g->counts[target]++;
@@ -228,7 +228,7 @@ static bool build_inverse_graph(build_dfa_state_t** dfa, int state_count, invers
     }
 
     for (int s = 0; s < state_count; s++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int target = dfa[s]->transitions[c];
             if (target >= 0 && target < state_count) {
                 int idx = g->offsets[target] + g->counts[target]++;
@@ -265,7 +265,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
 
     while (head < tail) {
         int s = queue[head++];
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
             if (t != -1 && !forward_reachable[t]) {
                 forward_reachable[t] = true;
@@ -328,7 +328,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
 
     // Pass 5: Update transitions using the compact map
     for (int s = 0; s < new_count; s++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
             if (t != -1) dfa[s]->transitions[c] = (t < state_count) ? map[t] : -1;
         }
@@ -351,7 +351,7 @@ static bool are_transitions_equivalent(const build_dfa_state_t* s1, const build_
     // For delayed-output Mealy machine minimization:
     // States are equivalent if they have the same transition targets.
     // Markers are stored as lists on merged transitions and disambiguated by accepting state.
-    for (int c = 0; c < 256; c++) {
+    for (int c = 0; c < BYTE_VALUE_MAX; c++) {
         int t1 = s1->transitions[c], t2 = s2->transitions[c];
         if (t1 == -1 && t2 == -1) continue;
         if (t1 == -1 || t2 == -1) return false;
@@ -506,7 +506,7 @@ static int build_minimized_dfa(build_dfa_state_t** dfa, const minimizer_state_t*
     }
 
     for (int s = 0; s < new_count; s++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = new_dfa[s]->transitions[c];
             if (t != -1 && t < old_state_count && state_remap[t] != -1) {
                 new_dfa[s]->transitions[c] = state_remap[t];
@@ -681,7 +681,7 @@ void dfa_minimize_get_stats(dfa_minimize_stats_t* stats) { if(stats) *stats = la
 static bool verify_minimized_dfa(build_dfa_state_t** dfa, int state_count) {
     if (state_count <= 0) return false;
     for (int s = 0; s < state_count; s++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
             if (t != -1 && (t < 0 || t >= state_count)) return false;
         }

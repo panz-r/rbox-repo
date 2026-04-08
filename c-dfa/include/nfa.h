@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include "cdfa_defines.h"
 
-#define MAX_CHARS 256
+#define BYTE_VALUE_MAX 256
 #define MAX_PATTERNS 2048
 #define MAX_TAGS 16
 #define SIGNATURE_TABLE_SIZE 4096

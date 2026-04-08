@@ -297,7 +297,7 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
         case '(': {
             // Check for (*) explicit wildcard syntax
             if (pattern[*pos + 1] == '*' && pattern[*pos + 2] == ')') {
-                int any_sid = VSYM_ANY;
+                int any_sid = VSYM_BYTE_ANY;
                 int anchor = start_state;
                 if (anchor == 0) {
                     anchor = nfa_construct_add_state_with_minimization(ctx, false);
@@ -357,7 +357,7 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
 
         default: {
             if (c == '*') {
-                int any_sid = VSYM_ANY;
+                int any_sid = VSYM_BYTE_ANY;
                 int anchor = start_state;
                 if (anchor == 0) {
                     anchor = nfa_construct_add_state_with_minimization(ctx, false);

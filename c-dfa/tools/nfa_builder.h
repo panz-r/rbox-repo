@@ -15,7 +15,7 @@
 #include "../include/multi_target_array.h"
 
 // Virtual Symbol Mapping
-#define VSYM_ANY   256
+#define VSYM_BYTE_ANY 256  // Note: value matches BYTE_VALUE_MAX intentionally
 #define VSYM_EPS   257
 #define VSYM_EOS   258
 #define VSYM_SPACE 259

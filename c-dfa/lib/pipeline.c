@@ -212,7 +212,7 @@ pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
 // Initialize NFA transitions to -1 (load_nfa_file skips nfa_init in library builds)
 static void init_nfa_array(nfa2dfa_context_t* ctx) {
     for (int i = 0; i < ctx->nfa_state_count; i++) {
-        for (int j = 0; j < 256; j++) {  // MAX_CHARS = 256 (byte values 0-255)
+        for (int j = 0; j < BYTE_VALUE_MAX; j++) {  // BYTE_VALUE_MAX = 256 (byte values 0-255)
             ctx->nfa[i].transitions[j] = -1;
         }
     }

@@ -79,7 +79,7 @@ static bool can_merge(int target1, uint32_t markers1, int target2, uint32_t mark
 int merge_rules_for_state(build_dfa_state_t* state, int max_group_size) {
     // Count transitions by target
     int transition_count = 0;
-    for (int c = 0; c < 256; c++) {
+    for (int c = 0; c < BYTE_VALUE_MAX; c++) {
         if (state->transitions[c] >= 0) {
             transition_count++;
         }
@@ -89,7 +89,7 @@ int merge_rules_for_state(build_dfa_state_t* state, int max_group_size) {
     
     // Group transitions by (target, markers)
     rule_group_t* groups = malloc(transition_count * sizeof(rule_group_t));
-    bool* used = calloc(256, sizeof(bool));
+    bool* used = calloc(BYTE_VALUE_MAX, sizeof(bool));
     
     if (!groups || !used) {
         free(groups);
@@ -99,7 +99,7 @@ int merge_rules_for_state(build_dfa_state_t* state, int max_group_size) {
     
     int group_count = 0;
     
-    for (int c = 0; c < 256; c++) {
+    for (int c = 0; c < BYTE_VALUE_MAX; c++) {
         if (state->transitions[c] < 0 || used[c]) continue;
         
         // Start new group
@@ -151,9 +151,9 @@ static int optimize_ranges_for_state(build_dfa_state_t* state) {
     int last_target = -1;
     uint32_t last_markers = 0;
     
-    for (int c = 0; c <= 256; c++) {  // Include sentinel at 256
-        int target = (c < 256) ? state->transitions[c] : -1;
-        uint32_t markers = (c < 256) ? state->marker_offsets[c] : 0;
+    for (int c = 0; c <= BYTE_VALUE_MAX; c++) {  // Include sentinel at BYTE_VALUE_MAX
+        int target = (c < BYTE_VALUE_MAX) ? state->transitions[c] : -1;
+        uint32_t markers = (c < BYTE_VALUE_MAX) ? state->marker_offsets[c] : 0;
         
         if (target >= 0 && target == last_target && markers == last_markers) {
             // Continue range
@@ -242,7 +242,7 @@ float dfa_estimate_compression(const build_dfa_state_t** dfa, int state_count,
         const build_dfa_state_t* state = dfa[s];
         
         // Count transitions
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             if (state->transitions[c] >= 0) {
                 total_original++;
             }
@@ -273,7 +273,7 @@ int dfa_compress(build_dfa_state_t** dfa, int state_count, const compress_option
     
     // Count original rules
     for (int s = 0; s < state_count; s++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             if (dfa[s]->transitions[c] >= 0) {
                 last_stats.original_rules++;
             }

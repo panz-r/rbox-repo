@@ -66,7 +66,7 @@ static int* build_forward_depths(build_dfa_state_t** dfa, int state_count) {
     
     while (head < tail) {
         int state = queue[head++];
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int next = dfa[state]->transitions[c];
             if (next >= 0 && next < state_count && !visited[next]) {
                 visited[next] = true;
@@ -123,7 +123,7 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
     
     // Count predecessors
     for (int s = 0; s < state_count; s++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
             if (t >= 0 && t < state_count) {
                 pred_count[t]++;
@@ -157,7 +157,7 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
     
     // Fill predecessor arrays
     for (int s = 0; s < state_count; s++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
             if (t >= 0 && t < state_count) {
                 preds[t][pred_count[t]++] = s;
@@ -303,7 +303,7 @@ static int* find_sccs_tarjan(
             
             bool done = true;
             // Process children starting from next_child
-            for (int c = *next_child; c < 256; c++) {
+            for (int c = *next_child; c < BYTE_VALUE_MAX; c++) {
                 int next = dfa[state]->transitions[c];
                 if (next >= 0 && next < state_count) {
                     if (index[next] < 0) {
@@ -327,7 +327,7 @@ static int* find_sccs_tarjan(
             
             // Also check EOS transitions
             if (done) {
-                if (*next_child <= 256) {
+                if (*next_child <= BYTE_VALUE_MAX) {
                     if (dfa[state]->eos_target > 0 && dfa[state]->eos_target < (uint32_t)state_count) {
                         int next = (int)dfa[state]->eos_target;
                         if (index[next] < 0) {
@@ -428,7 +428,7 @@ static int** build_condensation_graph(
     // Count edges between SCCs
     for (int s = 0; s < state_count; s++) {
         int src_scc = scc_id[s];
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
             if (t >= 0 && t < state_count) {
                 int dst_scc = scc_id[t];
@@ -551,7 +551,7 @@ static void compute_scc_layers(
         int next_layer = scc_layer[state] + 1;
         if (next_layer > MAX_LAYER) next_layer = MAX_LAYER;
         
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int next = dfa[state]->transitions[c];
             if (next >= 0 && next < state_count && scc_layer[next] < 0) {
                 // O(1) membership check using scc_id array
@@ -750,7 +750,7 @@ static int* build_scc_affinity_groups(
     is_entry[0] = true;
     for (int s = 0; s < state_count; s++) {
         int sid = scc_id[s];
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
             if (t >= 0 && t < state_count && scc_id[t] != sid) {
                 is_entry[t] = true; // t is entry to its SCC
@@ -983,7 +983,7 @@ static void reorder_states(build_dfa_state_t** dfa, int state_count, const int* 
     
     // Update transition targets to use new positions
     for (int i = 0; i < state_count; i++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int old_target = temp[i]->transitions[c];
             if (old_target >= 0 && old_target < state_count) {
                 temp[i]->transitions[c] = order[old_target];
@@ -1049,7 +1049,7 @@ size_t calculate_optimized_layout_size(
     // Count rules
     int total_rules = 0;
     for (int i = 0; i < state_count; i++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             if (dfa[i]->transitions[c] >= 0) {
                 total_rules++;
             }
@@ -1061,7 +1061,7 @@ size_t calculate_optimized_layout_size(
 
     // Marker data (approximate)
     for (int i = 0; i < state_count; i++) {
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             if (dfa[i]->marker_offsets[c] != 0) {
                 size += 16;  // Approximate marker list size
             }

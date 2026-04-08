@@ -113,19 +113,19 @@ static void construct_alphabet_main(nfa_builder_context_t* ctx) {
     int size = 0;
 
     // 1. Literal Bytes (0-255)
-    for (int i = 0; i < 256; i++) {
+    for (int i = 0; i < BYTE_VALUE_MAX; i++) {
         ctx->alphabet[size].start_char = i;
         ctx->alphabet[size].end_char = i;
         ctx->alphabet[size].symbol_id = i;
         ctx->alphabet[size].is_special = false;
         size++;
     }
-
+    
     // 2. Virtual Symbols (256+)
-    ctx->alphabet[VSYM_ANY].start_char = 0;
-    ctx->alphabet[VSYM_ANY].end_char = 255;
-    ctx->alphabet[VSYM_ANY].symbol_id = VSYM_ANY;
-    ctx->alphabet[VSYM_ANY].is_special = true;
+    ctx->alphabet[VSYM_BYTE_ANY].start_char = 0;
+    ctx->alphabet[VSYM_BYTE_ANY].end_char = 255;
+    ctx->alphabet[VSYM_BYTE_ANY].symbol_id = VSYM_BYTE_ANY;
+    ctx->alphabet[VSYM_BYTE_ANY].is_special = true;
     size++;
 
     ctx->alphabet[VSYM_EPS].start_char = 1;

@@ -752,9 +752,9 @@ void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
 
             int target = dfa_add_state(ctx, mm, temp2, tc2, accept_pattern2, (uint16_t)reachable_accepting_patterns2);
 
-            // Handle both literal symbols (sid < 256) and virtual symbols (VSYM_ANY=256, VSYM_SPACE=259, VSYM_TAB=260)
+            // Handle both literal symbols (sid < BYTE_VALUE_MAX) and virtual symbols (VSYM_BYTE_ANY, VSYM_SPACE, VSYM_TAB)
             int sid = alphabet[i].symbol_id;
-            if (sid < 256 || sid == 256 || sid == 259 || sid == 260) {
+            if (sid < BYTE_VALUE_MAX || sid == VSYM_BYTE_ANY || sid == VSYM_SPACE || sid == VSYM_TAB) {
                 dfa[cur]->transitions[sid] = target;
                 dfa[cur]->marker_offsets[sid] = marker_list_offset;
             }
@@ -882,21 +882,21 @@ void flatten_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
 
     // Identify virtual symbol IDs
     for (int s = 0; s < alphabet_size; s++) {
-        if (alphabet[s].symbol_id == 256) any_sid = s;
-        else if (alphabet[s].symbol_id == 259) space_sid = s;
-        else if (alphabet[s].symbol_id == 260) tab_sid = s;
+        if (alphabet[s].symbol_id == VSYM_BYTE_ANY) any_sid = s;
+        else if (alphabet[s].symbol_id == VSYM_SPACE) space_sid = s;
+        else if (alphabet[s].symbol_id == VSYM_TAB) tab_sid = s;
     }
     
     for (int s = 0; s < dfa_state_count; s++) {
-        int nt[256]; bool any[256]; uint32_t markers[256];
-        for (int i = 0; i < 256; i++) { nt[i] = -1; any[i] = false; markers[i] = 0; }
+        int nt[BYTE_VALUE_MAX]; bool any[BYTE_VALUE_MAX]; uint32_t markers[BYTE_VALUE_MAX];
+        for (int i = 0; i < BYTE_VALUE_MAX; i++) { nt[i] = -1; any[i] = false; markers[i] = 0; }
 
-        uint32_t any_marker = (any_sid != -1) ? dfa[s]->marker_offsets[256] : 0;
+        uint32_t any_marker = (any_sid != -1) ? dfa[s]->marker_offsets[VSYM_BYTE_ANY] : 0;
 
         // First, set specific symbol transitions
         for (int i = 0; i < alphabet_size; i++) {
             int sid = alphabet[i].symbol_id;
-            if (sid < 256 && dfa[s]->transitions[sid] != -1) {
+            if (sid < BYTE_VALUE_MAX && dfa[s]->transitions[sid] != -1) {
                 int t = dfa[s]->transitions[sid];
                 nt[sid] = t;
                 any[sid] = false;
@@ -920,7 +920,7 @@ void flatten_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
         // Finally, override with ANY transition (fills in gaps)
         if (any_sid != -1 && dfa[s]->transitions[any_sid] != -1) {
             int t = dfa[s]->transitions[any_sid];
-            for (int i = 0; i < 256; i++) {
+            for (int i = 0; i < BYTE_VALUE_MAX; i++) {
                 if (nt[i] == -1) {  // Only fill gaps, don't override specific transitions
                     nt[i] = t;
                     any[i] = true;
@@ -930,7 +930,7 @@ void flatten_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
         }
 
         int rc = 0;
-        for (int i = 0; i < 256; i++) {
+        for (int i = 0; i < BYTE_VALUE_MAX; i++) {
             if (nt[i] >= dfa_state_count) {
                 nt[i] = -1;
             }
@@ -939,7 +939,7 @@ void flatten_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
             dfa[s]->marker_offsets[i] = markers[i];
             if (nt[i] != -1) rc++;
         }
-        for (int i = 256; i < MAX_SYMBOLS; i++) {
+        for (int i = BYTE_VALUE_MAX; i < MAX_SYMBOLS; i++) {
             dfa[s]->transitions[i] = -1;
             dfa[s]->marker_offsets[i] = 0;
         }
@@ -999,7 +999,7 @@ static bool follow_chain(int start_char, int start_target, chain_entry_t* out_ch
         int outgoing_char = -1;
         int outgoing_target = -1;
         
-        for (int c = 0; c < 256; c++) {
+        for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             if (dfa[cur]->transitions[c] >= 0) {
                 outgoing_count++;
                 outgoing_char = c;
@@ -1044,14 +1044,14 @@ static int detect_state_chains(int state_idx, chain_entry_t* chains, int max_cha
     
     // Skip states with markers (chain encoding doesn't support markers yet)
     if (dfa[state_idx]->eos_marker_offset != 0) return 0;
-    for (int c = 0; c < 256; c++) {
+    for (int c = 0; c < BYTE_VALUE_MAX; c++) {
         if (dfa[state_idx]->marker_offsets[c] != 0) return 0;
     }
     
     // Count outgoing literal transitions
-    int outgoing[256];
+    int outgoing[BYTE_VALUE_MAX];
     int n_outgoing = 0;
-    for (int c = 0; c < 256; c++) {
+    for (int c = 0; c < BYTE_VALUE_MAX; c++) {
         if (dfa[state_idx]->transitions[c] >= 0) {
             outgoing[n_outgoing++] = c;
         }
@@ -1097,8 +1097,8 @@ static int detect_state_chains(int state_idx, chain_entry_t* chains, int max_cha
 int compress_state_rules(int sidx, intermediate_rule_t* out) {
     int rc = 0, ct = -1, sc = -1;
     // Compress only literal byte transitions (0-255)
-    for (int c = 0; c <= 256; c++) {
-        int t = (c < 256) ? dfa[sidx]->transitions[c] : -1;
+    for (int c = 0; c <= BYTE_VALUE_MAX; c++) {
+        int t = (c < BYTE_VALUE_MAX) ? dfa[sidx]->transitions[c] : -1;
         if (t != ct) {
             if (ct != -1) {
                 out[rc].target_state_index = ct; out[rc].d1 = (uint8_t)sc; out[rc].d2 = (uint8_t)(c - 1); out[rc].d3 = 0;
