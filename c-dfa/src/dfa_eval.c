@@ -381,6 +381,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                     for (uint16_t i = 0; i < n_chains; i++) {
                         size_t chain_off = (size_t)(chain - d);
                         if (chain_off >= sz) break;
+                        if (chain_off + DFA_CHAIN_HEADER_SIZE > sz) break;
                         size_t chain_size = dfa_chain_entry_size(chain, enc);
                         if (chain_off + chain_size > sz) break;
                         if (dfa_chain_target(chain, enc) == to) {
