@@ -279,6 +279,7 @@ static int* find_sccs_tarjan(
         return NULL;
     }
     int dfs_top = 0;
+    const int end_sentinel = BYTE_VALUE_MAX + 1;  // 257: marks all children processed
     
     for (int start = 0; start < state_count; start++) {
         if (index[start] >= 0) continue;
@@ -331,7 +332,7 @@ static int* find_sccs_tarjan(
                     if (dfa[state]->eos_target > 0 && dfa[state]->eos_target < (uint32_t)state_count) {
                         int next = (int)dfa[state]->eos_target;
                         if (index[next] < 0) {
-                            *next_child = 257; // Mark EOS processed
+                            *next_child = end_sentinel; // Mark all children processed
                             if (dfs_top < state_count) {  // Bounds check
                                 dfs_stack[dfs_top * 2] = next;
                                 dfs_stack[dfs_top * 2 + 1] = 0;
