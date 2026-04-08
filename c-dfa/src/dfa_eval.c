@@ -173,16 +173,22 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
             // Packed encoding: iterate variable-stride entries
             uint16_t n_ent = dfa_fmt_st_first_tc(d, cur, enc, tc);
             const uint8_t* entry = d + rl;
+            int lit_size = DFA_PACK_LITERAL_SIZE(enc);
+            int rng_size = DFA_PACK_RANGE_SIZE(enc);
             for (uint16_t i = 0; i < n_ent && !found; i++) {
-                if ((size_t)(entry - d) >= sz) break;
+                size_t entry_off = (size_t)(entry - d);
+                if (entry_off >= sz) break;
+                if (entry_off + 1 > sz) break;
                 if (dfa_pack_is_literal(entry)) {
+                    if (entry_off + lit_size > sz) break;
                     if (c == dfa_pack_lit_char(entry)) {
                         uint32_t tgt = dfa_pack_lit_target(entry, enc);
                         if (tgt >= sz) return false;
                         nxt = tgt; found = true;
                     }
-                    entry += DFA_PACK_LITERAL_SIZE(enc);
+                    entry += lit_size;
                 } else {
+                    if (entry_off + rng_size > sz) break;
                     uint8_t start = dfa_pack_range_start(entry);
                     uint8_t end = dfa_pack_range_end(entry);
                     if (c >= start && c <= end) {
@@ -190,7 +196,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                         if (tgt >= sz) return false;
                         nxt = tgt; found = true;
                     }
-                    entry += DFA_PACK_RANGE_SIZE(enc);
+                    entry += rng_size;
                 }
             }
         } else if (renc == DFA_RULE_ENC_BITMASK) {
@@ -331,8 +337,8 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
         if (wpid && wpid != UINT16_MAX) {
             cap_t stk[MAX_CAP_STK]; int sd = 0;
             uint32_t meta = dfa_fmt_meta_offset(d);
-            int lit = DFA_PACK_LITERAL_SIZE(enc);
-            int rng = DFA_PACK_RANGE_SIZE(enc);
+            int lit_size = DFA_PACK_LITERAL_SIZE(enc);
+            int rng_size = DFA_PACK_RANGE_SIZE(enc);
             for (int t = 1; t < td && (size_t)t <= pos; t++) {
                 uint32_t fo = tr[t-1], to = tr[t];
                 uint16_t ftc = dfa_fmt_st_tc(d, fo, enc);
@@ -345,14 +351,18 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                     uint16_t n_ent = dfa_fmt_st_first_tc(d, fo, enc, ftc);
                     const uint8_t* entry = d + frl;
                     for (uint16_t i = 0; i < n_ent; i++) {
-                        if ((size_t)(entry - d) >= sz) break;
+                        size_t entry_off = (size_t)(entry - d);
+                        if (entry_off >= sz) break;
+                        if (entry_off + 1 > sz) break;
                         bool matched = false;
                         if (dfa_pack_is_literal(entry)) {
+                            if (entry_off + lit_size > sz) break;
                             if (dfa_pack_lit_target(entry, enc) == to) matched = true;
-                            entry += lit;
+                            entry += lit_size;
                         } else {
+                            if (entry_off + rng_size > sz) break;
                             if (dfa_pack_range_target(entry, enc) == to) matched = true;
-                            entry += rng;
+                            entry += rng_size;
                         }
                         if (matched) {
                             size_t marker_off = (size_t)frl + dfa_rl_off_markers(enc);
