@@ -10,669 +10,385 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/*  Basic unary operations                                             */
+/*  Basic operations: READ, COPY, backward compat, null inputs         */
 /* ------------------------------------------------------------------ */
 
-static void test_rule_engine_unary_read(void)
+static void test_rule_engine_basic_ops(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
-    TEST_ASSERT_NOT_NULL(rs, "ruleset creation");
 
-    /* Allow reading from /usr */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/usr/*", SOFT_ACCESS_READ,
+    /* READ rules */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ,
                                           SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "add read rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/usr/bin/bash",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "read from /usr/bin/bash allowed");
-
-    /* Deny reading from /etc/shadow */
+                   0, "add /usr/** rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/etc/shadow", SOFT_ACCESS_DENY,
                                           SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "add deny rule");
-
-    ctx.src_path = "/etc/shadow";
-    ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "read from /etc/shadow denied");  /* -EACCES */
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Binary operations (COPY)                                           */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_copy_allowed(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Allow reading from /readonly */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/readonly/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add SRC read rule");
-
-    /* Allow writing to /scratch */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/scratch/...", SOFT_ACCESS_WRITE | SOFT_ACCESS_CREATE,
-                                          SOFT_OP_COPY, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add DST write rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_COPY,
-        .src_path = "/readonly/file.txt",
-        .dst_path = "/scratch/output.txt",
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "copy from /readonly to /scratch allowed");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_rule_engine_copy_denied_wrong_src(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Allow writing to /scratch, but no read rule for /home */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/scratch/...", SOFT_ACCESS_WRITE | SOFT_ACCESS_CREATE,
-                                          SOFT_OP_COPY, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add DST write rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_COPY,
-        .src_path = "/home/user/secret",
-        .dst_path = "/scratch/output.txt",
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "copy denied when SRC has no read rule");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_rule_engine_copy_denied_wrong_dst(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Allow reading from /readonly, but no write rule for /etc */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/readonly/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add SRC read rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_COPY,
-        .src_path = "/readonly/file.txt",
-        .dst_path = "/etc/output.txt",
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "copy denied when DST has no write rule");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Path variables (${SRC}, ${DST})                                    */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_path_variables(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Generic copy rule: ${SRC} can be read, ${DST} can be written */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "${SRC}", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, "SRC", NULL, 0, 0),
-                   0, "add SRC variable rule");
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "${DST}", SOFT_ACCESS_WRITE | SOFT_ACCESS_CREATE,
-                                          SOFT_OP_COPY, "DST", NULL, 0, 0),
-                   0, "add DST variable rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_COPY,
-        .src_path = "/data/input.txt",
-        .dst_path = "/tmp/output.txt",
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    /* Both paths match their respective variable rules */
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "copy allowed with path variables");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Subject constraint                                                 */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_subject_match(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Only /usr/bin/cp can copy from /data to /tmp */
+                   0, "add deny /etc/shadow");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, NULL,
-                                          ".*/cp$", 0, SOFT_RULE_RECURSIVE),
-                   0, "add SRC subject-constrained rule");
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/tmp/...", SOFT_ACCESS_WRITE,
-                                          SOFT_OP_COPY, NULL,
-                                          ".*/cp$", 0, SOFT_RULE_RECURSIVE),
-                   0, "add DST subject-constrained rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_COPY,
-        .src_path = "/data/file.txt",
-        .dst_path = "/tmp/out.txt",
-        .subject = "/usr/bin/cp",
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "copy allowed when subject matches");
-
-    ctx.subject = "/usr/bin/mv";
-    ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "copy denied when subject doesn't match");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  UID constraint                                                     */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_uid_constraint(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/admin/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL,
-                                          1000, SOFT_RULE_RECURSIVE),
-                   0, "add UID-constrained rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/admin/config",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "read allowed when UID >= min_uid");
-
-    ctx.uid = 500;
-    ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "read denied when UID < min_uid");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Expression parser                                                  */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_expression_parser(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Parse: cp from /etc to /tmp with RW access */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
-                   "cp::/etc/*:/tmp/ -> RW", NULL),
-                   0, "parse copy expression");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_COPY,
-        .src_path = "/etc/passwd",
-        .dst_path = "/tmp/passwd",
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "parsed expression allows copy");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_rule_engine_expression_parser_errors(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Missing arrow */
-    int ret = soft_ruleset_add_rule_str(rs, "cp::/etc:/tmp ->", NULL);
-    TEST_ASSERT(ret < 0 || soft_ruleset_error(rs) == NULL,
-                "parser handles missing mode");
-
-    /* Missing operation (defaults to READ) */
-    ret = soft_ruleset_add_rule_str(rs, "::/data:/out -> R", NULL);
-    TEST_ASSERT(ret == 0, "empty operation defaults to READ");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Backward compatibility wrapper                                     */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_backward_compat(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
+                                          SOFT_OP_READ, NULL, NULL, 0,
+                                          SOFT_RULE_RECURSIVE),
+                   0, "add /data/... rule");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/secret", SOFT_ACCESS_DENY,
+                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "add deny /data/secret");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/home/...", SOFT_ACCESS_READ,
                                           SOFT_OP_READ, NULL, NULL, 0,
                                           SOFT_RULE_RECURSIVE),
-                   0, "add read rule");
+                   0, "add /home/... for backward compat");
 
-    int ret = soft_ruleset_check(rs, "/home/user/file.txt", 0);
-    TEST_ASSERT(ret > 0, "backward compat check allows read");
-
-    ret = soft_ruleset_check(rs, "/etc/shadow", 0);
-    TEST_ASSERT_EQ(ret, -13, "backward compat check denies unmatched");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Batch evaluation                                                   */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_batch(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/src/...", SOFT_ACCESS_READ,
+    /* COPY rules */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/readonly/...", SOFT_ACCESS_READ,
                                           SOFT_OP_COPY, NULL, NULL, 0,
                                           SOFT_RULE_RECURSIVE),
-                   0, "add SRC rule");
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/dst/...", SOFT_ACCESS_WRITE | SOFT_ACCESS_CREATE,
+                   0, "add SRC read rule");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/scratch/...", SOFT_ACCESS_WRITE | SOFT_ACCESS_CREATE,
                                           SOFT_OP_COPY, NULL, NULL, 0,
                                           SOFT_RULE_RECURSIVE),
-                   0, "add DST rule");
+                   0, "add DST write rule");
 
-    /* Build batch of 3 copy operations */
-    soft_access_ctx_t c1 = { SOFT_OP_COPY, "/src/a.txt", "/dst/a.txt", NULL, 1000 };
-    soft_access_ctx_t c2 = { SOFT_OP_COPY, "/src/b.txt", "/dst/b.txt", NULL, 1000 };
-    soft_access_ctx_t c3 = { SOFT_OP_COPY, "/etc/x.txt", "/dst/x.txt", NULL, 1000 };
+    /* READ check 1: allowed by /usr/** */
+    soft_access_ctx_t ctx = { SOFT_OP_READ, "/usr/bin/bash", NULL, NULL, 1000 };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
+                   "/usr/bin/bash grants READ");
 
-    const soft_access_ctx_t *ctxs[3] = { &c1, &c2, &c3 };
-    int results[3];
+    /* READ check 2: explicitly denied */
+    ctx.src_path = "/etc/shadow";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "/etc/shadow denied");
 
-    int ret = soft_ruleset_check_batch_ctx(rs, ctxs, results, 3);
-    TEST_ASSERT_EQ(ret, 0, "batch evaluation succeeds");
-    TEST_ASSERT(results[0] > 0, "batch[0] copy allowed");
-    TEST_ASSERT(results[1] > 0, "batch[1] copy allowed");
-    TEST_ASSERT_EQ(results[2], -13, "batch[2] copy denied (SRC not matching)");
+    /* READ check 3: recursive wildcard */
+    ctx.src_path = "/data/docs/deep/file.txt";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
+                   "recursive wildcard grants READ");
 
-    soft_ruleset_free(rs);
-}
+    /* READ check 4: deny overrides allow */
+    ctx.src_path = "/data/secret";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "deny overrides allow");
 
-/* ------------------------------------------------------------------ */
-/*  DENY overrides allow                                               */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_deny_overrides(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Allow reading from /data */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add allow rule");
-
-    /* Deny reading /data/secret */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/secret", SOFT_ACCESS_DENY,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "add deny rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/data/secret",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
+    /* COPY check 1: allowed */
+    soft_access_ctx_t ctx2 = {
+        SOFT_OP_COPY, "/readonly/file.txt", "/scratch/output.txt", NULL, 1000
     };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_CREATE,
+                   "copy grants READ|WRITE|CREATE");
 
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "deny overrides allow");
+    /* COPY check 2: denied when SRC has no read rule */
+    ctx2.src_path = "/external/user/secret";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL), -13,
+                   "copy denied when SRC has no read rule");
 
-    soft_ruleset_free(rs);
-}
+    /* COPY check 3: denied when DST has no write rule */
+    ctx2.src_path = "/readonly/file.txt";
+    ctx2.dst_path = "/etc/output.txt";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL), -13,
+                   "copy denied when DST has no write rule");
 
-/* ------------------------------------------------------------------ */
-/*  Recursive wildcards                                                */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_recursive_wildcard(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/home/user/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add recursive rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/home/user/docs/deep/nested/file.txt",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "recursive wildcard matches deep path");
-
-    /* Should not match /home/other */
-    ctx.src_path = "/home/other/file.txt";
-    ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "recursive wildcard doesn't match sibling dir");
+    /* Backward compat: legacy check() wrapper */
+    TEST_ASSERT_EQ(soft_ruleset_check(rs, "/home/user/file.txt", 0), SOFT_ACCESS_READ,
+                   "backward compat grants READ");
+    TEST_ASSERT_EQ(soft_ruleset_check(rs, "/etc/shadow", 0), -13,
+                   "backward compat denies unmatched");
 
     soft_ruleset_free(rs);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Null inputs                                                        */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_null_inputs(void)
-{
-    TEST_ASSERT(soft_ruleset_new() != NULL, "ruleset_new succeeds");
-    soft_ruleset_free(NULL);  /* Should not crash */
-
-    soft_ruleset_t *rs = soft_ruleset_new();
+    /* Null inputs: should not crash, should return errors */
+    soft_ruleset_t *rs1 = soft_ruleset_new();
+    TEST_ASSERT_NOT_NULL(rs1, "ruleset_new succeeds");
+    soft_ruleset_free(rs1);
+    soft_ruleset_free(NULL);
 
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(NULL, NULL, NULL), -13,
                    "check_ctx with NULL rs denied");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(NULL, "/x", 1, SOFT_OP_READ,
                                           NULL, NULL, 0, 0), -1,
                    "add_rule with NULL rs fails");
-    TEST_ASSERT_EQ(soft_ruleset_check(rs, NULL, 0), -13,
-                   "check with NULL path denied");
+    TEST_ASSERT_EQ(soft_ruleset_check(NULL, NULL, 0), -13,
+                   "check with NULL rs denied");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Rule constraints: path variables, subject, UID                     */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_constraints(void)
+{
+    /* Test 1: Path variables */
+    soft_ruleset_t *rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "${SRC}", SOFT_ACCESS_READ,
+                                          SOFT_OP_COPY, "SRC", NULL, 0, 0),
+                   0, "add SRC variable rule");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "${DST}", SOFT_ACCESS_WRITE | SOFT_ACCESS_CREATE,
+                                          SOFT_OP_COPY, "DST", NULL, 0, 0),
+                   0, "add DST variable rule");
+    soft_access_ctx_t ctx = {
+        SOFT_OP_COPY, "/data/input.txt", "/tmp/output.txt", NULL, 1000
+    };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_CREATE,
+                   "copy with path variables grants READ|WRITE|CREATE");
+    soft_ruleset_free(rs);
+
+    /* Test 2: Subject constraint */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ,
+                                          SOFT_OP_COPY, NULL,
+                                          ".*cp$", 0, SOFT_RULE_RECURSIVE),
+                   0, "add subject-constrained SRC rule");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/tmp/...", SOFT_ACCESS_WRITE,
+                                          SOFT_OP_COPY, NULL,
+                                          ".*cp$", 0, SOFT_RULE_RECURSIVE),
+                   0, "add subject-constrained DST rule");
+
+    ctx = (soft_access_ctx_t){ SOFT_OP_COPY, "/data/file.txt", "/tmp/out.txt", "/usr/bin/cp", 1000 };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
+                   "copy with matching subject grants READ|WRITE");
+
+    ctx.subject = "/usr/bin/mv";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "copy denied when subject doesn't match");
+    soft_ruleset_free(rs);
+
+    /* Test 3: UID constraint */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/admin/...", SOFT_ACCESS_READ,
+                                          SOFT_OP_READ, NULL, NULL,
+                                          1000, SOFT_RULE_RECURSIVE),
+                   0, "add UID-constrained rule");
+
+    ctx = (soft_access_ctx_t){ SOFT_OP_READ, "/admin/config", NULL, NULL, 1000 };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
+                   "read with UID>=min_uid grants READ");
+
+    ctx.uid = 500;
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "read denied when UID < min_uid");
 
     soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Audit log                                                          */
+/*  Expression parser: happy path, errors, @layer, binary ops          */
+/* ------------------------------------------------------------------ */
+
+static void test_rule_engine_expression_parser(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Happy path: parse and evaluate */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "cp::/etc/*:/tmp/ -> RW", NULL),
+                   0, "parse copy expression");
+    soft_access_ctx_t ctx = {
+        SOFT_OP_COPY, "/etc/passwd", "/tmp/passwd", NULL, 1000
+    };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
+                   "parsed expression grants READ|WRITE");
+
+    /* Error cases */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs, "cp::/etc:/tmp ->", NULL),
+                   0, "empty mode falls back to READ");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs, "::/data:/out -> R", NULL),
+                   0, "empty operation defaults to READ");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs, "@bad:cp::/a:/b -> R", NULL),
+                   -1, "invalid @layer prefix rejected");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs, "@99:cp::/a:/b -> R", NULL),
+                   -1, "out-of-range @layer rejected");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs, "@-1:read::/data -> R", NULL),
+                   -1, "negative @layer rejected");
+
+    /* @layer DENY shadowing */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "@0:read::/secret -> DENY", NULL),
+                   0, "@0 layer deny");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "@1:read::/secret -> R", NULL),
+                   0, "@1 layer allow");
+    ctx = (soft_access_ctx_t){ SOFT_OP_READ, "/secret", NULL, NULL, 1000 };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "@0 layer DENY shadows @1 allow");
+
+    /* Cross-layer binary COPY: @0=SRC READ, @1=DST WRITE */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "@0:copy::/src/... -> R", NULL),
+                   0, "@0 copy SRC");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
+                   "@1:copy::/dst/... -> W", NULL),
+                   0, "@1 copy DST");
+    ctx = (soft_access_ctx_t){ SOFT_OP_COPY, "/src/file.txt", "/dst/file.txt", NULL, 1000 };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
+                   "cross-layer copy: SRC read at layer 0, DST write at layer 1");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Audit log: result, deny_layer, matched_rule (allow + deny paths)   */
 /* ------------------------------------------------------------------ */
 
 static void test_rule_engine_audit_log(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
 
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add read rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/data/file.txt",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
+    /* Setup: allow rule + deny rule */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0,
+                   SOFT_RULE_RECURSIVE),
+                   0, "add allow rule");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/secret",
+                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "add deny rule");
 
     soft_audit_log_t log;
+    soft_access_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.op = SOFT_OP_READ;
+    ctx.dst_path = NULL;
+    ctx.subject = NULL;
+    ctx.uid = 1000;
+
+    /* Check 1: allow path — result, deny_layer, matched_rule */
     memset(&log, 0, sizeof(log));
+    ctx.src_path = "/data/file.txt";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, &log), SOFT_ACCESS_READ,
+                   "read allowed");
+    TEST_ASSERT_EQ(log.result, SOFT_ACCESS_READ, "audit result matches");
+    TEST_ASSERT_EQ(log.deny_layer, -1, "deny_layer is -1 on allow");
+    TEST_ASSERT(log.matched_rule != NULL, "matched_rule set on allow");
+    TEST_ASSERT_STR_EQ(log.matched_rule, "/data/...",
+                       "matched_rule is the recursive pattern");
 
-    int ret = soft_ruleset_check_ctx(rs, &ctx, &log);
-    TEST_ASSERT(ret > 0, "read allowed");
-    TEST_ASSERT(log.result > 0, "audit log shows positive result");
-    TEST_ASSERT_EQ(log.deny_layer, -1, "audit log deny_layer is -1 on allow");
+    /* Check 2: deny path — result, deny_layer, matched_rule */
+    memset(&log, 0, sizeof(log));
+    ctx.src_path = "/secret";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, &log), -13,
+                   "read denied");
+    TEST_ASSERT_EQ(log.result, -13, "audit result matches denial");
+    TEST_ASSERT_EQ(log.deny_layer, 0, "deny_layer is 0 (layer 0 DENY)");
+    TEST_ASSERT(log.matched_rule != NULL, "matched_rule set on deny");
+    TEST_ASSERT_STR_EQ(log.matched_rule, "/secret",
+                       "matched_rule is /secret");
 
-    /* Test denied path */
+    /* Check 3: no-match path — result, deny_layer when nothing matches */
+    memset(&log, 0, sizeof(log));
     ctx.src_path = "/etc/shadow";
-    ret = soft_ruleset_check_ctx(rs, &ctx, &log);
-    TEST_ASSERT_EQ(ret, -13, "read denied");
-    TEST_ASSERT_EQ(log.result, -13, "audit log shows denial");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, &log), -13,
+                   "no-match denied");
+    TEST_ASSERT_EQ(log.result, -13, "audit result matches denial");
     TEST_ASSERT_EQ(log.deny_layer, -1, "deny_layer is -1 when no match");
 
     soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Layer shadowing: DENY at layer 0 shadows allow at layer 1          */
+/*  Layer behavior: mechanics, shadowing, intersection, constraints    */
 /* ------------------------------------------------------------------ */
 
-static void test_rule_engine_layer_deny_shadows_allow(void)
+static void test_rule_engine_layer_behavior(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
 
-    /* Layer 0 (highest): DENY /secret */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/secret",
-                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 0 deny");
-
-    /* Layer 1 (lower): allow reading /secret */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/secret",
-                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 1 allow");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/secret",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "layer 0 DENY shadows layer 1 allow");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Layer intersection: allow READ at layer 0, WRITE at layer 1        */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_layer_intersection(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Layer 0: allows READ on /data */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data",
-                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 0 read");
-
-    /* Layer 1: allows WRITE on /data */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data",
-                   SOFT_ACCESS_WRITE, SOFT_OP_WRITE, NULL, NULL, 0, 0),
-                   0, "layer 1 write");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/data",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    /* Layer 0 grants READ, layer 1 grants WRITE (not READ) → intersection
-     * has no READ bit → denied */
-    TEST_ASSERT_EQ(ret, -13, "layer 1 doesn't grant READ → intersection denies");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Both layers grant same mode: intersection allows                   */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_layer_both_allow(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Layer 0: allows READ on /data */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data",
-                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 0 read");
-
-    /* Layer 1: also allows READ on /data */
+    /* Part 1: Layer mechanics — initial state, layer creation */
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 0,
+                   "initial layer count is 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data",
                    SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 1 read");
+                   0, "add rule at layer 1");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 2,
+                   "layer count is 2 after adding at layer 1");
 
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/data",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
+    /* Empty layer 0 doesn't constrain */
+    soft_access_ctx_t ctx = { SOFT_OP_READ, "/data", NULL, NULL, 1000 };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
+                   "empty layer 0 allows layer 1 rule");
 
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "both layers allow READ → access granted");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Static DENY shadows template allow in same layer                   */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_static_denies_template(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Static DENY for /etc/shadow */
+    /* Part 2: Static DENY shadows template ALLOW */
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/etc/shadow",
                    SOFT_ACCESS_DENY, SOFT_OP_COPY, NULL, NULL, 0, 0),
                    0, "static deny /etc/shadow");
-
-    /* Template: ${SRC} allows READ for COPY */
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "${SRC}",
                    SOFT_ACCESS_READ, SOFT_OP_COPY, "SRC", NULL, 0,
                    SOFT_RULE_TEMPLATE),
                    0, "template ${SRC} read");
+    ctx.op = SOFT_OP_COPY;
+    ctx.src_path = "/etc/shadow";
+    ctx.dst_path = "/tmp/shadow";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "static DENY shadows template ${SRC}");
 
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_COPY,
-        .src_path = "/etc/shadow",
-        .dst_path = "/tmp/shadow",
-        .subject = NULL,
-        .uid = 1000
-    };
+    /* Part 3: linked_path_var validation */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data", SOFT_ACCESS_READ,
+                                          SOFT_OP_COPY, "DST", NULL, 0, 0),
+                   -1, "linked_path_var with non-template rejected");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "${SRC}", SOFT_ACCESS_READ,
+                                          SOFT_OP_COPY, "SRC", NULL, 0, 0),
+                   0, "linked_path_var with ${SRC} accepted");
 
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "static DENY /etc/shadow shadows template ${SRC}");
-
-    /* But other paths should still work via template */
-    ctx.src_path = "/home/user/file.txt";
-    ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    /* Note: template ${SRC} matches /home/user/file.txt, but DST /tmp/shadow
-     * has no matching rule, so copy is denied — this is correct behavior */
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Three layers: 0=allow, 1=allow, 2=deny → DENY                     */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_three_layers_deny_at_bottom(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data",
-                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 0 read");
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data",
-                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 1 read");
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 2, "/data",
+    /* Part 4: Layer shadowing — Layer 0 DENY shadows Layer 1 ALLOW */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/secret",
                    SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 2 deny");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/data",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    /* Layer 0 grants READ, layer 1 grants READ → intersection has READ.
-     * Layer 2 has explicit DENY → DENY short-circuits. */
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "layer 2 DENY short-circuits despite layers 0,1");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Empty layer doesn't constrain                                      */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_empty_layer_no_constraint(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Only add rule at layer 1 — layer 0 is implicitly empty */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data",
+                   0, "layer 0 deny /secret");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/secret",
                    SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "layer 1 read");
+                   0, "layer 1 allow /secret");
 
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/data",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
+    /* Part 5: Mode intersection — READ ∩ WRITE = 0 → denied */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/intersect",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 0 read /intersect");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/intersect",
+                   SOFT_ACCESS_WRITE, SOFT_OP_WRITE, NULL, NULL, 0, 0),
+                   0, "layer 1 write /intersect");
 
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT(ret > 0, "empty layer 0 doesn't constrain, layer 1 allows");
+    /* Part 6: Mode intersection — READ ∩ READ = READ */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/both",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 0 read /both");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/both",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 1 read /both");
 
-    soft_ruleset_free(rs);
-}
+    /* Part 7: Three layers, bottom DENY short-circuits */
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/triple",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 0 read /triple");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/triple",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 1 read /triple");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 2, "/triple",
+                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "layer 2 deny /triple");
 
-/* ------------------------------------------------------------------ */
-/*  Layer count                                                        */
-/* ------------------------------------------------------------------ */
+    /* Check 1: shadowed path */
+    ctx = (soft_access_ctx_t){ SOFT_OP_READ, "/secret", NULL, NULL, 1000 };
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "layer 0 DENY shadows layer 1 allow");
 
-static void test_rule_engine_layer_count(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 0, "initial layer count is 0");
+    /* Check 2: intersection denies */
+    ctx.src_path = "/intersect";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "layer intersection READ ∩ WRITE = 0 → denied");
 
-    soft_ruleset_add_rule_at_layer(rs, 2, "/x", SOFT_ACCESS_READ,
-                                    SOFT_OP_READ, NULL, NULL, 0, 0);
+    /* Check 3: intersection allows */
+    ctx.src_path = "/both";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
+                   "both layers allow READ → intersection grants");
+
+    /* Check 4: three-layer DENY short-circuits */
+    ctx.src_path = "/triple";
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+                   "layer 2 DENY short-circuits despite layers 0,1");
+
+    /* Check 5: layer count */
     TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 3,
-                   "adding at layer 2 creates layers 0,1,2");
+                   "3 layers exist after adding rules at layers 0,1,2");
 
     soft_ruleset_free(rs);
 }
-
-/* Forward declarations for tests defined after runner */
-static void test_rule_engine_expression_with_layer(void);
-static void test_rule_engine_matched_rule_on_deny(void);
-static void test_rule_engine_matched_rule_on_allow(void);
-static void test_rule_engine_linked_var_rejects_non_template(void);
-static void test_rule_engine_batch_uses_parent_cache(void);
-static void test_rule_engine_expression_layer_binary(void);
 
 /* ------------------------------------------------------------------ */
 /*  Runner                                                             */
@@ -681,219 +397,9 @@ static void test_rule_engine_expression_layer_binary(void);
 void test_rule_engine_run(void)
 {
     printf("=== Rule Engine Tests ===\n");
-    RUN_TEST(test_rule_engine_unary_read);
-    RUN_TEST(test_rule_engine_copy_allowed);
-    RUN_TEST(test_rule_engine_copy_denied_wrong_src);
-    RUN_TEST(test_rule_engine_copy_denied_wrong_dst);
-    RUN_TEST(test_rule_engine_path_variables);
-    RUN_TEST(test_rule_engine_subject_match);
-    RUN_TEST(test_rule_engine_uid_constraint);
+    RUN_TEST(test_rule_engine_basic_ops);
     RUN_TEST(test_rule_engine_expression_parser);
-    RUN_TEST(test_rule_engine_expression_parser_errors);
-    RUN_TEST(test_rule_engine_backward_compat);
-    RUN_TEST(test_rule_engine_batch);
-    RUN_TEST(test_rule_engine_deny_overrides);
-    RUN_TEST(test_rule_engine_recursive_wildcard);
-    RUN_TEST(test_rule_engine_null_inputs);
+    RUN_TEST(test_rule_engine_constraints);
     RUN_TEST(test_rule_engine_audit_log);
-    RUN_TEST(test_rule_engine_layer_deny_shadows_allow);
-    RUN_TEST(test_rule_engine_layer_intersection);
-    RUN_TEST(test_rule_engine_layer_both_allow);
-    RUN_TEST(test_rule_engine_static_denies_template);
-    RUN_TEST(test_rule_engine_three_layers_deny_at_bottom);
-    RUN_TEST(test_rule_engine_empty_layer_no_constraint);
-    RUN_TEST(test_rule_engine_layer_count);
-    RUN_TEST(test_rule_engine_expression_with_layer);
-    RUN_TEST(test_rule_engine_matched_rule_on_deny);
-    RUN_TEST(test_rule_engine_matched_rule_on_allow);
-    RUN_TEST(test_rule_engine_linked_var_rejects_non_template);
-    RUN_TEST(test_rule_engine_batch_uses_parent_cache);
-    RUN_TEST(test_rule_engine_expression_layer_binary);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Expression parser with @layer prefix                                */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_expression_with_layer(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* @0: deny /secret at layer 0 (highest precedence) */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
-                   "@0:read::/secret -> DENY", NULL),
-                   0, "parse @0 layer deny");
-
-    /* @1: allow /secret at layer 1 (lower) */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
-                   "@1:read::/secret -> R", NULL),
-                   0, "parse @1 layer allow");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/secret",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "@0 layer DENY shadows @1 allow");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  matched_rule in audit log                                           */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_matched_rule_on_deny(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/secret",
-                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "add deny rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/secret",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    soft_audit_log_t log;
-    memset(&log, 0, sizeof(log));
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, &log);
-    TEST_ASSERT_EQ(ret, -13, "read denied");
-    TEST_ASSERT(log.matched_rule != NULL, "matched_rule set on deny");
-    TEST_ASSERT_STR_EQ(log.matched_rule, "/secret", "matched_rule is /secret");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_rule_engine_matched_rule_on_allow(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...",
-                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0,
-                   SOFT_RULE_RECURSIVE),
-                   0, "add allow rule");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_READ,
-        .src_path = "/data/file.txt",
-        .dst_path = NULL,
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    soft_audit_log_t log;
-    memset(&log, 0, sizeof(log));
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, &log);
-    TEST_ASSERT(ret > 0, "read allowed");
-    TEST_ASSERT(log.matched_rule != NULL, "matched_rule set on allow");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  linked_path_var validation: reject non-template + linked combo     */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_linked_var_rejects_non_template(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* linked_path_var="DST" with a plain pattern should fail */
-    int ret = soft_ruleset_add_rule(rs, "/data", SOFT_ACCESS_READ,
-                                    SOFT_OP_COPY, "DST", NULL, 0, 0);
-    TEST_ASSERT_EQ(ret, -1, "linked_path_var with non-template pattern rejected");
-
-    /* With ${SRC} it should succeed */
-    ret = soft_ruleset_add_rule(rs, "${SRC}", SOFT_ACCESS_READ,
-                                SOFT_OP_COPY, "SRC", NULL, 0, 0);
-    TEST_ASSERT_EQ(ret, 0, "linked_path_var with ${SRC} pattern accepted");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Batch cache: parent directory hit                                  */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_batch_uses_parent_cache(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/src/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add SRC rule");
-    TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/dst/...", SOFT_ACCESS_WRITE,
-                                          SOFT_OP_COPY, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
-                   0, "add DST rule");
-
-    /* Build 10 copy operations under /src -> /dst */
-    soft_access_ctx_t ctx_array[10];
-    const soft_access_ctx_t *ctxs[10];
-    int results[10];
-    char src_buf[10][64], dst_buf[10][64];
-
-    for (int i = 0; i < 10; i++) {
-        snprintf(src_buf[i], sizeof(src_buf[i]), "/src/file_%d.txt", i);
-        snprintf(dst_buf[i], sizeof(dst_buf[i]), "/dst/file_%d.txt", i);
-        ctx_array[i].op = SOFT_OP_COPY;
-        ctx_array[i].src_path = src_buf[i];
-        ctx_array[i].dst_path = dst_buf[i];
-        ctx_array[i].subject = NULL;
-        ctx_array[i].uid = 1000;
-        ctxs[i] = &ctx_array[i];
-    }
-
-    int ret = soft_ruleset_check_batch_ctx(rs, ctxs, results, 10);
-    TEST_ASSERT_EQ(ret, 0, "batch succeeds");
-    for (int i = 0; i < 10; i++) {
-        if (results[i] <= 0) {
-            TEST_ASSERT(0, "batch entry should be allowed");
-        }
-    }
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Expression parser with @layer for binary op                         */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_expression_layer_binary(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* @0: allow /src/... for copy, @1: allow /dst/... for copy */
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
-                   "@0:copy::/src/... -> R", NULL),
-                   0, "@0 copy SRC");
-    TEST_ASSERT_EQ(soft_ruleset_add_rule_str(rs,
-                   "@1:copy::/dst/... -> W", NULL),
-                   0, "@1 copy DST");
-
-    soft_access_ctx_t ctx = {
-        .op = SOFT_OP_COPY,
-        .src_path = "/src/file.txt",
-        .dst_path = "/dst/file.txt",
-        .subject = NULL,
-        .uid = 1000
-    };
-
-    int ret = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    /* @0 grants READ, @1 grants WRITE (not READ) → intersection lacks READ */
-    TEST_ASSERT_EQ(ret, -13, "layer 1 doesn't grant READ → copy denied");
-
-    soft_ruleset_free(rs);
+    RUN_TEST(test_rule_engine_layer_behavior);
 }

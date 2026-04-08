@@ -3,15 +3,9 @@
  * @brief ReadOnlyBox Rule Engine implementation (spec v3.0).
  *
  * Implements layered rulesets with precedence, dual-path evaluation,
- * path variables, subject constraints, and batched evaluation with
- * parent-directory caching.
+ * path variables, subject constraints, and batched evaluation.
  *
- * Layer semantics:
- *   - Layer 0 has highest precedence.
- *   - DENY at any layer short-circuits and returns DENY.
- *   - Allowed mode = bitwise AND across all non-denying layers.
- *   - Within a layer, static rules are evaluated before template rules
- *     (so a static /etc/shadow: DENY shadows ${SRC}: RO).
+ * See rule_engine_compile.c for simplification and compilation logic.
  */
 
 #define _DEFAULT_SOURCE
@@ -22,76 +16,39 @@
 #include <errno.h>
 #include <limits.h>
 #include <sys/param.h>
-#include <stdbool.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
 
 #include "rule_engine.h"
+#include "rule_engine_internal.h"
 
 /* ------------------------------------------------------------------ */
-/*  Internal rule structure                                            */
+/*  Path matching (shared with compile module)                         */
 /* ------------------------------------------------------------------ */
-
-#define MAX_PATTERN_LEN 256
-#define MAX_LINKED_LEN  8
-
-typedef struct {
-    char              pattern[MAX_PATTERN_LEN]; /**< Path pattern */
-    uint32_t          mode;                     /**< SOFT_ACCESS_* or DENY */
-    soft_binary_op_t  op_type;                  /**< Operation this rule applies to */
-    char              linked_path_var[MAX_LINKED_LEN]; /**< "SRC", "DST", or "" */
-    char              subject_regex[128];       /**< Binary path regex, or "" */
-    uint32_t          min_uid;                  /**< Minimum UID */
-    uint32_t          flags;                    /**< Rule flags */
-} rule_t;
-
-/* ------------------------------------------------------------------ */
-/*  Layer structure                                                     */
-/* ------------------------------------------------------------------ */
-
-#define MAX_RULES_PER_LAYER 2048
-
-typedef struct {
-    rule_t  rules[MAX_RULES_PER_LAYER];
-    int     count;
-} layer_t;
-
-/* ------------------------------------------------------------------ */
-/*  Ruleset structure                                                  */
-/* ------------------------------------------------------------------ */
-
-#define MAX_LAYERS 64
-
-struct soft_ruleset {
-    layer_t layers[MAX_LAYERS];
-    int     layer_count;
-    char    last_error[256];
-};
-
-/* ------------------------------------------------------------------ */
-/*  Path matching                                                      */
-/* ------------------------------------------------------------------ */
-
 /**
- * Match a path against a pattern.
+ * Glob-style path matching.
  *
- * Patterns can contain:
- *   - Exact paths: "/usr/bin/cp"
- *   - Wildcards with star: "/etc/", "/dev/sd"
- *   - Recursive with ...: "/home/user/..." (matches any descendant)
- *   - Variables: "${SRC}", "${DST}" (resolved at query time)
+ * Wildcards:
+ *   STAR   matches any sequence of NON-slash characters (single segment)
+ *   DOUBLE matches any sequence of characters INCLUDING slash (multi-segment)
+ *   ... suffix matches any descendant path (recursive)
+ *
+ * Examples:
+ *   /etc/STAR         matches /etc/passwd       but NOT /etc/cron.d/foo
+ *   /etc/DOUBLE       matches /etc/cron.d/foo   and /etc/passwd
+ *   /usr/DOUBLE/lib   matches /usr/lib, /usr/local/lib, /usr/x/y/lib
+ *   /home/STAR/.ssh   matches /home/alice/.ssh  but NOT /home/alice/bob/.ssh
  */
-static bool path_matches(const char *pattern, const char *path)
+bool path_matches(const char *pattern, const char *text)
 {
-    if (!pattern || !path) return false;
+    if (!pattern || !text) return false;
 
     /* Handle recursive "..." suffix */
     size_t plen = strlen(pattern);
     if (plen >= 3 && pattern[plen - 3] == '.' &&
         pattern[plen - 2] == '.' && pattern[plen - 1] == '.') {
-        /* Pattern "/foo/..." matches "/foo" and any descendant */
         char base[MAX_PATTERN_LEN];
         size_t base_len = plen - 3;
         if (base_len > 0 && pattern[base_len - 1] == '/') base_len--;
@@ -99,45 +56,84 @@ static bool path_matches(const char *pattern, const char *path)
         memcpy(base, pattern, base_len);
         base[base_len] = '\0';
 
-        if (strcmp(path, base) == 0) return true;
-        if (strncmp(path, base, base_len) == 0 && path[base_len] == '/') return true;
+        if (strcmp(text, base) == 0) return true;
+        if (strncmp(text, base, base_len) == 0 && text[base_len] == '/') return true;
         return false;
     }
 
-    /* Handle star wildcards */
-    if (strchr(pattern, '*') != NULL) {
-        const char *p = pattern, *t = path;
-        const char *star_p = NULL, *star_t = NULL;
+    if (strchr(pattern, '*') == NULL) {
+        /* No wildcards: exact match or directory prefix */
+        if (strcmp(pattern, text) == 0) return true;
+        size_t plen2 = strlen(pattern);
+        if (plen2 > 0 && pattern[plen2 - 1] == '/')
+            return strncmp(text, pattern, plen2) == 0;
+        return false;
+    }
 
-        while (*t || p < pattern + plen) {
-            if (p < pattern + plen && *p == '*') {
-                star_p = p;
-                star_t = t;
-                p++;
-            } else if (p < pattern + plen && *p == *t) {
-                p++;
-                t++;
-            } else if (star_p) {
-                p = star_p + 1;
-                star_t++;
-                t = star_t;
-            } else {
-                return false;
-            }
+    /* Glob matching with * (single segment) and ** (multi-segment) */
+    const char *p = pattern;
+    const char *t = text;
+    const char *star_p = NULL;  /* position of last * or ** in pattern */
+    const char *match_t = NULL; /* text position right after last star */
+    bool double_star = false;   /* whether star_p points to ** */
+
+    while (*t != '\0') {
+        if (*p == '*' && *(p + 1) == '*') {
+            /* ** matches anything (including /) */
+            double_star = true;
+            star_p = p;
+            match_t = t;
+            p += 2;
+            if (*p == '/') p++;  /* slash after double-star is optional */
+            continue;
         }
-        return true;
+
+        if (*p == '*') {
+            /* * matches anything except / */
+            double_star = false;
+            star_p = p;
+            match_t = t;
+            p++;
+            continue;
+        }
+
+        if (*p == *t) {
+            p++;
+            t++;
+            continue;
+        }
+
+        if (star_p) {
+            /* Backtrack: make the star consume one more character */
+            if (double_star) {
+                /* ** advances text by one (can cross /) */
+                match_t++;
+                t = match_t;
+                p = star_p + 2;
+                if (*p == '/') p++;
+            } else {
+                /* * advances text but cannot cross / */
+                if (*match_t == '/') {
+                    return false;
+                }
+                match_t++;
+                t = match_t;
+                p = star_p + 1;
+            }
+            continue;
+        }
+
+        /* No star to backtrack to: mismatch */
+        return false;
     }
 
-    /* Exact match or prefix for non-recursive */
-    if (strcmp(pattern, path) == 0) return true;
-
-    /* If pattern ends with '/', treat as directory prefix match */
-    size_t plen2 = strlen(pattern);
-    if (plen2 > 0 && pattern[plen2 - 1] == '/') {
-        return strncmp(path, pattern, plen2) == 0;
+    /* Text exhausted. Consume trailing * or ** in pattern. */
+    while (*p == '*') {
+        if (*p == '*' && *(p + 1) == '*') p += 2;
+        else p++;
     }
-
-    return false;
+    if (*p == '/') p++;
+    return *p == '\0';
 }
 
 /**
@@ -191,15 +187,13 @@ static bool match_with_var(const char *pattern, const char *var_name,
 /**
  * Match a rule against a path in the given context.
  */
-static bool rule_matches_path(const rule_t *rule, const char *path,
-                              const soft_access_ctx_t *ctx)
+bool rule_matches_path(const rule_t *rule, const char *path,
+                       const soft_access_ctx_t *ctx)
 {
     if (!rule || !path) return false;
 
-    bool recursive = (rule->flags & SOFT_RULE_RECURSIVE) != 0;
     bool is_template = (rule->flags & SOFT_RULE_TEMPLATE) != 0;
 
-    /* Templated rules resolve variables at query time */
     if (is_template) {
         if (rule->linked_path_var[0] != '\0') {
             return match_with_var(rule->pattern, rule->linked_path_var, ctx);
@@ -212,15 +206,13 @@ static bool rule_matches_path(const rule_t *rule, const char *path,
         }
     }
 
-    /* Static pattern matching */
-    (void)recursive;
     return path_matches(rule->pattern, path);
 }
 
 /**
  * Check subject constraint.
  */
-static bool subject_matches(const rule_t *rule, const char *subject)
+bool subject_matches(const rule_t *rule, const char *subject)
 {
     if (rule->subject_regex[0] == '\0') return true;
     if (!subject) return false;
@@ -242,25 +234,7 @@ static bool subject_matches(const rule_t *rule, const char *subject)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Ruleset management                                                 */
-/* ------------------------------------------------------------------ */
-
-soft_ruleset_t *soft_ruleset_new(void)
-{
-    soft_ruleset_t *rs = calloc(1, sizeof(*rs));
-    if (!rs) return NULL;
-    rs->layer_count = 0;
-    rs->last_error[0] = '\0';
-    return rs;
-}
-
-void soft_ruleset_free(soft_ruleset_t *rs)
-{
-    free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Layer access                                                      */
+/*  Layer management                                                    */
 /* ------------------------------------------------------------------ */
 
 static layer_t *ensure_layer(soft_ruleset_t *rs, int target)
@@ -271,6 +245,55 @@ static layer_t *ensure_layer(soft_ruleset_t *rs, int target)
         rs->layer_count++;
     }
     return &rs->layers[target];
+}
+
+static int layer_add_rule(layer_t *lyr, const rule_t *r)
+{
+    if (!lyr) return -1;
+    if (lyr->count >= lyr->capacity) {
+        int new_cap = lyr->capacity + LAYER_CHUNK;
+        if (new_cap < 0) return -1;
+        rule_t *new_rules = realloc(lyr->rules, (size_t)new_cap * sizeof(rule_t));
+        if (!new_rules) return -1;
+        lyr->rules = new_rules;
+        lyr->capacity = new_cap;
+    }
+    lyr->rules[lyr->count++] = *r;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Ruleset management                                                 */
+/* ------------------------------------------------------------------ */
+
+soft_ruleset_t *soft_ruleset_new(void)
+{
+    soft_ruleset_t *rs = calloc(1, sizeof(*rs));
+    if (!rs) return NULL;
+    rs->layer_count = 0;
+    rs->is_compiled = false;
+    rs->last_error[0] = '\0';
+    return rs;
+}
+
+void soft_ruleset_free(soft_ruleset_t *rs)
+{
+    if (!rs) return;
+    for (int i = 0; i < rs->layer_count; i++) {
+        free(rs->layers[i].rules);
+    }
+    free(rs->effective.rules);
+    free(rs);
+}
+
+size_t soft_ruleset_rule_count(const soft_ruleset_t *rs)
+{
+    if (!rs) return 0;
+    size_t total = 0;
+    for (int i = 0; i < rs->layer_count; i++) {
+        total += (size_t)rs->layers[i].count;
+    }
+    return total;
 }
 
 int soft_ruleset_layer_count(const soft_ruleset_t *rs)
@@ -304,38 +327,38 @@ int soft_ruleset_add_rule_at_layer(soft_ruleset_t *rs,
 
     layer_t *lyr = ensure_layer(rs, layer);
     if (!lyr) { errno = EINVAL; return -1; }
-    if (lyr->count >= MAX_RULES_PER_LAYER) { errno = ENOSPC; return -1; }
 
-    rule_t *r = &lyr->rules[lyr->count];
-    memset(r, 0, sizeof(*r));
+    rule_t r;
+    memset(&r, 0, sizeof(r));
 
     size_t plen = strlen(pattern);
     if (plen >= MAX_PATTERN_LEN) { errno = ENAMETOOLONG; return -1; }
-    memcpy(r->pattern, pattern, plen + 1);
+    memcpy(r.pattern, pattern, plen + 1);
 
-    r->mode = mode;
-    r->op_type = op_type;
-    r->min_uid = min_uid;
-    r->flags = flags;
+    r.mode = mode;
+    r.op_type = op_type;
+    r.min_uid = min_uid;
+    r.flags = flags;
 
     if (linked_path_var) {
         size_t vlen = strlen(linked_path_var);
         if (vlen >= MAX_LINKED_LEN) { errno = EINVAL; return -1; }
-        memcpy(r->linked_path_var, linked_path_var, vlen + 1);
+        memcpy(r.linked_path_var, linked_path_var, vlen + 1);
     }
 
     if (subject_regex) {
         size_t slen = strlen(subject_regex);
-        if (slen >= sizeof(r->subject_regex)) { errno = EINVAL; return -1; }
-        memcpy(r->subject_regex, subject_regex, slen + 1);
+        if (slen >= sizeof(r.subject_regex)) { errno = EINVAL; return -1; }
+        memcpy(r.subject_regex, subject_regex, slen + 1);
     }
 
     if (strstr(pattern, "${SRC}") || strstr(pattern, "${DST}")) {
-        r->flags |= SOFT_RULE_TEMPLATE;
+        r.flags |= SOFT_RULE_TEMPLATE;
     }
 
-    lyr->count++;
-    return 0;
+    int ret = layer_add_rule(lyr, &r);
+    if (ret == 0) soft_ruleset_invalidate(rs);
+    return ret;
 }
 
 int soft_ruleset_add_rule(soft_ruleset_t *rs,
@@ -350,6 +373,24 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
     return soft_ruleset_add_rule_at_layer(rs, 0, pattern, mode, op_type,
                                           linked_path_var, subject_regex,
                                           min_uid, flags);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Custom operation mode registration                                 */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_set_custom_op_modes(soft_ruleset_t *rs,
+                                     int custom_op_index,
+                                     uint32_t required_src,
+                                     uint32_t required_dst)
+{
+    if (!rs) { errno = EINVAL; return -1; }
+    int idx = custom_op_index - SOFT_OP_CUSTOM;
+    if (idx < 0 || idx >= MAX_CUSTOM_OPS) { errno = EINVAL; return -1; }
+    rs->custom_ops[idx].src_required = required_src;
+    rs->custom_ops[idx].dst_required = required_dst;
+    soft_ruleset_invalidate(rs);
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -408,7 +449,6 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
     strncpy(buf, rule_str, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 
-    /* Parse optional @layer: prefix */
     int target_layer = 0;
     char *expr = buf;
     if (buf[0] == '@') {
@@ -420,17 +460,24 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
             return -1;
         }
         *colon = '\0';
-        target_layer = atoi(buf + 1);
-        if (target_layer < 0 || target_layer >= MAX_LAYERS) {
+        char *endptr;
+        long val = strtol(buf + 1, &endptr, 10);
+        if (*endptr != '\0' || endptr == buf + 1) {
             snprintf(rs->last_error, sizeof(rs->last_error),
-                     "Layer %d out of range [0..%d)", target_layer, MAX_LAYERS);
+                     "Invalid @layer prefix: not a number");
             errno = EINVAL;
             return -1;
         }
+        if (val < 0 || val >= MAX_LAYERS) {
+            snprintf(rs->last_error, sizeof(rs->last_error),
+                     "Layer %ld out of range [0..%d)", val, MAX_LAYERS);
+            errno = EINVAL;
+            return -1;
+        }
+        target_layer = (int)val;
         expr = colon + 1;
     }
 
-    /* Find "-> mode" separator */
     char *arrow = strstr(expr, "->");
     if (!arrow) {
         snprintf(rs->last_error, sizeof(rs->last_error),
@@ -445,7 +492,6 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
 
     uint32_t mode = parse_mode(mode_str);
 
-    /* Parse op:subject:src_pattern:dst_pattern */
     char *p = expr;
     char *fields[4] = { NULL, NULL, NULL, NULL };
     int field_count = 0;
@@ -467,6 +513,12 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
     char *src_pattern = fields[2];
     char *dst_pattern = fields[3];
 
+    if (src_pattern) {
+        size_t slen = strlen(src_pattern);
+        while (slen > 0 && src_pattern[slen - 1] == ' ') {
+            src_pattern[--slen] = '\0';
+        }
+    }
     if (dst_pattern) {
         size_t dlen = strlen(dst_pattern);
         while (dlen > 0 && dst_pattern[dlen - 1] == ' ') {
@@ -521,7 +573,7 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
 /*  Evaluation                                                         */
 /* ------------------------------------------------------------------ */
 
-static uint32_t op_required_src_mode(soft_binary_op_t op)
+static uint32_t op_required_src_mode(const soft_ruleset_t *rs, soft_binary_op_t op)
 {
     switch (op) {
     case SOFT_OP_READ:      return SOFT_ACCESS_READ;
@@ -532,11 +584,19 @@ static uint32_t op_required_src_mode(soft_binary_op_t op)
     case SOFT_OP_LINK:      return SOFT_ACCESS_READ | SOFT_ACCESS_LINK;
     case SOFT_OP_MOUNT:     return SOFT_ACCESS_READ | SOFT_ACCESS_MOUNT_SRC;
     case SOFT_OP_CHMOD_CHOWN: return SOFT_ACCESS_WRITE;
+    case SOFT_OP_CUSTOM: {
+        int idx = (int)op - SOFT_OP_CUSTOM;
+        if (rs && idx >= 0 && idx < MAX_CUSTOM_OPS &&
+            rs->custom_ops[idx].src_required != 0) {
+            return rs->custom_ops[idx].src_required;
+        }
+        return SOFT_ACCESS_READ;
+    }
     default:                return SOFT_ACCESS_READ;
     }
 }
 
-static uint32_t op_required_dst_mode(soft_binary_op_t op)
+static uint32_t op_required_dst_mode(const soft_ruleset_t *rs, soft_binary_op_t op)
 {
     switch (op) {
     case SOFT_OP_COPY:      return SOFT_ACCESS_WRITE;
@@ -544,78 +604,21 @@ static uint32_t op_required_dst_mode(soft_binary_op_t op)
     case SOFT_OP_LINK:      return SOFT_ACCESS_WRITE;
     case SOFT_OP_MOUNT:     return SOFT_ACCESS_WRITE;
     case SOFT_OP_CHMOD_CHOWN: return SOFT_ACCESS_WRITE;
+    case SOFT_OP_CUSTOM: {
+        int idx = (int)op - SOFT_OP_CUSTOM;
+        if (rs && idx >= 0 && idx < MAX_CUSTOM_OPS &&
+            rs->custom_ops[idx].dst_required != 0) {
+            return rs->custom_ops[idx].dst_required;
+        }
+        return SOFT_ACCESS_WRITE;
+    }
     default:                return SOFT_ACCESS_WRITE;
     }
 }
 
 /**
- * Evaluate one path against one layer.
- * Static rules first, then templates.
- * Sets out_matched_pattern to the pattern of the matching rule
- * (DENY rule or last matching allow rule), if non-NULL.
- */
-static uint32_t eval_layer_path(const layer_t *lyr,
-                                const char *path,
-                                soft_binary_op_t op,
-                                const soft_access_ctx_t *ctx,
-                                const char **out_matched_pattern)
-{
-    if (!path) { if (out_matched_pattern) *out_matched_pattern = NULL; return 0; }
-    if (!lyr || lyr->count == 0) { if (out_matched_pattern) *out_matched_pattern = NULL; return 0; }
-
-    uint32_t granted = 0;
-    bool has_deny = false;
-
-    /* Pass 1: static rules */
-    for (int i = 0; i < lyr->count; i++) {
-        const rule_t *r = &lyr->rules[i];
-        if (r->flags & SOFT_RULE_TEMPLATE) continue;
-
-        if (r->op_type != op && r->op_type != SOFT_OP_READ &&
-            r->op_type != SOFT_OP_WRITE) continue;
-        if (!subject_matches(r, ctx->subject)) continue;
-        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
-        if (!rule_matches_path(r, path, ctx)) continue;
-
-        if (r->mode & SOFT_ACCESS_DENY) {
-            has_deny = true;
-            if (out_matched_pattern) *out_matched_pattern = r->pattern;
-            break;
-        }
-        granted |= r->mode;
-        if (out_matched_pattern) *out_matched_pattern = r->pattern;
-    }
-
-    if (has_deny) return 0;
-
-    /* Pass 2: template rules */
-    for (int i = 0; i < lyr->count; i++) {
-        const rule_t *r = &lyr->rules[i];
-        if (!(r->flags & SOFT_RULE_TEMPLATE)) continue;
-
-        if (r->op_type != op && r->op_type != SOFT_OP_READ &&
-            r->op_type != SOFT_OP_WRITE) continue;
-        if (!subject_matches(r, ctx->subject)) continue;
-        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
-        if (!rule_matches_path(r, path, ctx)) continue;
-
-        if (r->mode & SOFT_ACCESS_DENY) {
-            has_deny = true;
-            if (out_matched_pattern) *out_matched_pattern = r->pattern;
-            break;
-        }
-        granted |= r->mode;
-        if (out_matched_pattern) *out_matched_pattern = r->pattern;
-    }
-
-    if (has_deny) return 0;
-    return granted;
-}
-
-/**
- * Evaluate one path across all layers.
- * Returns 0 if any layer explicitly DENYs.
- * Otherwise returns the bitwise AND of all matching layers.
+ * Evaluate one path against all descriptive layers.
+ * Used when the ruleset is NOT compiled.
  */
 static uint32_t eval_all_layers(const soft_ruleset_t *rs,
                                 const char *path,
@@ -630,6 +633,20 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
         return 0;
     }
 
+    /* First try the compiled effective ruleset */
+    if (rs->is_compiled && rs->effective.count > 0) {
+        const char *matched = NULL;
+        uint32_t granted = eval_effective_path(&rs->effective, path, op, ctx,
+                                               &matched);
+        if (out_matched_pattern) *out_matched_pattern = matched;
+        if (granted == 0 && matched != NULL) {
+            /* DENY matched in effective ruleset */
+            if (out_deny_layer) *out_deny_layer = 0;
+        }
+        return granted;
+    }
+
+    /* Fall back to layered evaluation */
     uint32_t intersection = SOFT_ACCESS_ALL;
     bool any_layer_matched = false;
     const char *last_pattern = NULL;
@@ -639,17 +656,56 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
         if (lyr->count == 0) continue;
 
         const char *layer_pattern = NULL;
-        uint32_t granted = eval_layer_path(lyr, path, op, ctx, &layer_pattern);
+        uint32_t granted = 0;
+        bool has_deny = false;
 
-        if (granted == 0 && layer_pattern != NULL) {
-            /* Explicit DENY in this layer */
+        /* Pass 1: static rules */
+        for (int j = 0; j < lyr->count; j++) {
+            const rule_t *r = &lyr->rules[j];
+            if (r->flags & SOFT_RULE_TEMPLATE) continue;
+            if (r->op_type != op && r->op_type != SOFT_OP_READ &&
+                r->op_type != SOFT_OP_WRITE) continue;
+            if (!subject_matches(r, ctx->subject)) continue;
+            if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+            if (!rule_matches_path(r, path, ctx)) continue;
+
+            if (r->mode & SOFT_ACCESS_DENY) {
+                has_deny = true;
+                layer_pattern = r->pattern;
+                break;
+            }
+            granted |= r->mode;
+            layer_pattern = r->pattern;
+        }
+
+        if (!has_deny) {
+            /* Pass 2: template rules */
+            for (int j = 0; j < lyr->count; j++) {
+                const rule_t *r = &lyr->rules[j];
+                if (!(r->flags & SOFT_RULE_TEMPLATE)) continue;
+                if (r->op_type != op && r->op_type != SOFT_OP_READ &&
+                    r->op_type != SOFT_OP_WRITE) continue;
+                if (!subject_matches(r, ctx->subject)) continue;
+                if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+                if (!rule_matches_path(r, path, ctx)) continue;
+
+                if (r->mode & SOFT_ACCESS_DENY) {
+                    has_deny = true;
+                    layer_pattern = r->pattern;
+                    break;
+                }
+                granted |= r->mode;
+                layer_pattern = r->pattern;
+            }
+        }
+
+        if (has_deny) {
             if (out_deny_layer) *out_deny_layer = i;
             if (out_matched_pattern) *out_matched_pattern = layer_pattern;
             return 0;
         }
 
         if (layer_pattern != NULL) {
-            /* Layer had a matching rule (allow) */
             intersection &= granted;
             any_layer_matched = true;
             last_pattern = layer_pattern;
@@ -669,7 +725,8 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
     if (!rs || !ctx) { errno = EINVAL; return -EACCES; }
 
     bool is_binary = (ctx->op == SOFT_OP_COPY || ctx->op == SOFT_OP_MOVE ||
-                      ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT);
+                      ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT ||
+                      ctx->op >= SOFT_OP_CUSTOM);
 
     int deny_layer = -1;
     const char *matched_pattern = NULL;
@@ -690,7 +747,7 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             return -EACCES;
         }
 
-        uint32_t src_req = op_required_src_mode(ctx->op);
+        uint32_t src_req = op_required_src_mode(rs, ctx->op);
         if ((src_granted & src_req) != src_req) {
             if (out_log) {
                 out_log->result = -EACCES;
@@ -713,7 +770,7 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             return -EACCES;
         }
 
-        uint32_t dst_req = op_required_dst_mode(ctx->op);
+        uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
         if ((dst_granted & dst_req) != dst_req) {
             if (out_log) {
                 out_log->result = -EACCES;
@@ -733,7 +790,7 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
         return (int)result;
     }
 
-    uint32_t req = op_required_src_mode(ctx->op);
+    uint32_t req = op_required_src_mode(rs, ctx->op);
     uint32_t granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
                                        &deny_layer, &matched_pattern);
 
@@ -778,21 +835,13 @@ typedef struct {
     int      valid;
 } batch_cache_entry_t;
 
-/**
- * Extract the parent directory of a path.
- * "/a/b/c.txt" -> "/a/b"
- * "/a"          -> "/"
- * "/"           -> "/"
- */
 static void parent_dir(const char *path, char *out, size_t out_size)
 {
     if (!path || out_size == 0) { out[0] = '\0'; return; }
 
     size_t len = strlen(path);
-    /* Strip trailing slash */
     while (len > 1 && path[len - 1] == '/') len--;
 
-    /* Find last slash */
     const char *last_slash = NULL;
     for (size_t i = len - 1; i > 0; i--) {
         if (path[i] == '/') { last_slash = path + i; break; }
@@ -810,9 +859,6 @@ static void parent_dir(const char *path, char *out, size_t out_size)
     out[parent_len] = '\0';
 }
 
-/**
- * Look up a path in the batch cache.
- */
 static batch_cache_entry_t *batch_cache_lookup(batch_cache_entry_t *cache,
                                                const char *path)
 {
@@ -823,32 +869,20 @@ static batch_cache_entry_t *batch_cache_lookup(batch_cache_entry_t *cache,
     return NULL;
 }
 
-/**
- * Store a result in the batch cache (evict first invalid entry).
- */
 static void batch_cache_store(batch_cache_entry_t *cache,
                               const char *path,
                               uint32_t granted,
-                              int deny_layer)
+                              int deny_layer,
+                              int *write_pos)
 {
-    /* Find a free slot */
-    for (int i = 0; i < BATCH_CACHE_SIZE; i++) {
-        if (!cache[i].valid) {
-            strncpy(cache[i].path, path, PATH_MAX - 1);
-            cache[i].path[PATH_MAX - 1] = '\0';
-            cache[i].granted = granted;
-            cache[i].deny_layer = deny_layer;
-            cache[i].valid = 1;
-            return;
-        }
-    }
-    /* Cache full: evict entry 0 (oldest) and store there */
-    batch_cache_entry_t *e = &cache[0];
+    int pos = *write_pos;
+    batch_cache_entry_t *e = &cache[pos];
     strncpy(e->path, path, PATH_MAX - 1);
     e->path[PATH_MAX - 1] = '\0';
     e->granted = granted;
     e->deny_layer = deny_layer;
     e->valid = 1;
+    *write_pos = (pos + 1) % BATCH_CACHE_SIZE;
 }
 
 int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
@@ -862,15 +896,16 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
     batch_cache_entry_t dst_cache[BATCH_CACHE_SIZE];
     memset(src_cache, 0, sizeof(src_cache));
     memset(dst_cache, 0, sizeof(dst_cache));
+    int src_write = 0, dst_write = 0;
 
     for (int i = 0; i < count; i++) {
         const soft_access_ctx_t *ctx = ctxs[i];
         if (!ctx) { results[i] = -EACCES; continue; }
 
         bool is_binary = (ctx->op == SOFT_OP_COPY || ctx->op == SOFT_OP_MOVE ||
-                          ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT);
+                          ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT ||
+                          ctx->op >= SOFT_OP_CUSTOM);
 
-        /* Try cache for parent directories first */
         char src_parent[PATH_MAX], dst_parent[PATH_MAX];
         parent_dir(ctx->src_path, src_parent, sizeof(src_parent));
         if (is_binary && ctx->dst_path)
@@ -881,21 +916,21 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
         uint32_t src_granted = 0, dst_granted = 0;
         int src_deny = -1, dst_deny = -1;
 
-        /* Check SRC cache */
         batch_cache_entry_t *src_hit = batch_cache_lookup(src_cache, ctx->src_path);
         batch_cache_entry_t *src_par = batch_cache_lookup(src_cache, src_parent);
         if (src_hit) {
             src_granted = src_hit->granted;
             src_deny = src_hit->deny_layer;
         } else if (src_par) {
-            /* Parent hit: evaluate only the child component against parent result */
             src_granted = src_par->granted;
             src_deny = src_par->deny_layer;
         } else {
             src_granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
                                           &src_deny, NULL);
-            batch_cache_store(src_cache, ctx->src_path, src_granted, src_deny);
-            batch_cache_store(src_cache, src_parent, src_granted, src_deny);
+            batch_cache_store(src_cache, ctx->src_path, src_granted, src_deny,
+                              &src_write);
+            batch_cache_store(src_cache, src_parent, src_granted, src_deny,
+                              &src_write);
         }
 
         if (is_binary && ctx->dst_path) {
@@ -910,8 +945,10 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
             } else {
                 dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
                                               &dst_deny, NULL);
-                batch_cache_store(dst_cache, ctx->dst_path, dst_granted, dst_deny);
-                batch_cache_store(dst_cache, dst_parent, dst_granted, dst_deny);
+                batch_cache_store(dst_cache, ctx->dst_path, dst_granted, dst_deny,
+                                  &dst_write);
+                batch_cache_store(dst_cache, dst_parent, dst_granted, dst_deny,
+                                  &dst_write);
             }
         }
 
@@ -919,8 +956,8 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
             if (src_deny >= 0 || dst_deny >= 0) {
                 results[i] = -EACCES;
             } else {
-                uint32_t src_req = op_required_src_mode(ctx->op);
-                uint32_t dst_req = op_required_dst_mode(ctx->op);
+                uint32_t src_req = op_required_src_mode(rs, ctx->op);
+                uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
                 if ((src_granted & src_req) == src_req &&
                     (dst_granted & dst_req) == dst_req) {
                     results[i] = (int)(src_granted | dst_granted);
@@ -932,7 +969,7 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
             if (src_deny >= 0) {
                 results[i] = -EACCES;
             } else {
-                uint32_t req = op_required_src_mode(ctx->op);
+                uint32_t req = op_required_src_mode(rs, ctx->op);
                 if ((src_granted & req) == req) {
                     results[i] = (int)src_granted;
                 } else {

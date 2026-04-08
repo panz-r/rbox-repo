@@ -53,7 +53,8 @@ typedef enum {
 #define SOFT_ACCESS_ALL     (SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | \
                              SOFT_ACCESS_EXEC | SOFT_ACCESS_CREATE | \
                              SOFT_ACCESS_UNLINK | SOFT_ACCESS_LINK | \
-                             SOFT_ACCESS_MKDIR)
+                             SOFT_ACCESS_MKDIR | SOFT_ACCESS_LINK_SRC | \
+                             SOFT_ACCESS_MOUNT_SRC)
 
 /* ------------------------------------------------------------------ */
 /*  Rule flags                                                         */
@@ -117,29 +118,70 @@ soft_ruleset_t *soft_ruleset_new(void);
  */
 void soft_ruleset_free(soft_ruleset_t *rs);
 
+/**
+ * Return the number of rules across all layers.
+ */
+size_t soft_ruleset_rule_count(const soft_ruleset_t *rs);
+
+/**
+ * Return the number of layers currently in the ruleset.
+ */
+int soft_ruleset_layer_count(const soft_ruleset_t *rs);
+
 /* ------------------------------------------------------------------ */
-/*  Layer management                                                    */
+/*  Compilation / simplification                                       */
 /* ------------------------------------------------------------------ */
 
 /**
- * Add a rule to the ruleset.
+ * Compile the descriptive layered ruleset into a single simplified
+ * effective ruleset.
  *
- * Layers are implicit: rules are added to the default layer (index 0).
- * To create multiple layers, use soft_ruleset_add_rule_at_layer.
+ * Simplification steps:
+ *   1. Cross-layer shadow elimination: rules in lower layers that are
+ *      covered by DENY rules in higher layers are removed.
+ *   2. Mode intersection: identical patterns across layers are merged
+ *      with their modes ANDed together.
+ *   3. Subsumption: rules covered by more general rules with the same
+ *      effective mode are removed.
+ *   4. Sort: DENY rules placed first for fast short-circuit.
+ *
+ * After compilation, soft_ruleset_check_ctx and
+ * soft_ruleset_check_batch_ctx use the simplified effective ruleset
+ * for faster single-pass evaluation.
+ *
+ * Any subsequent call to soft_ruleset_add_rule*() invalidates the
+ * compiled state, falling back to layered evaluation until the next
+ * compile() call.
+ *
+ * @param rs Ruleset handle.
+ * @return 0 on success, -1 on failure.
+ */
+int soft_ruleset_compile(soft_ruleset_t *rs);
+
+/**
+ * Check if the ruleset has a valid compiled effective ruleset.
+ */
+bool soft_ruleset_is_compiled(const soft_ruleset_t *rs);
+
+/* ------------------------------------------------------------------ */
+/*  Rule insertion                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Add a rule to the ruleset (default layer 0).
  *
  * @param rs              Ruleset handle.
  * @param pattern         Path pattern (may contain ${SRC}, ${DST}, or
  *                        "..." for recursive wildcards).
  * @param mode            Access mode (SOFT_ACCESS_READ, etc., or
  *                        SOFT_ACCESS_DENY).
- * @param op_type         Operation this rule applies to
- *                        (SOFT_OP_COPY, SOFT_OP_READ, etc.).
- *                        Use SOFT_OP_READ for unary rules.
- * @param linked_path_var If non-NULL, the path variable this rule
- *                        references for dual-path evaluation (e.g. "DST"
- *                        means: when matching SRC, also check DST).
+ * @param op_type         Operation this rule applies to.
+ * @param linked_path_var If non-NULL and non-empty, the path variable
+ *                        this rule references for template resolution.
+ *                        Only valid with patterns containing ${SRC} or
+ *                        ${DST}; rejected with EINVAL otherwise.
  * @param subject_regex   Optional regex to match the calling binary.
- *                        NULL matches any subject.
+ *                        NULL or "" matches any subject.
  * @param min_uid         Minimum UID for this rule to apply (0 = any).
  * @param flags           Rule flags (SOFT_RULE_RECURSIVE, etc.).
  * @return 0 on success, -1 on failure (errno set).
@@ -158,7 +200,7 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
  *
  * Layer 0 has the highest precedence. Rules in layer N are only
  * consulted if all layers 0..N-1 did not produce a DENY. The final
- * allowed mode is the intersection of all matching rules across
+ * allowed mode is the bitwise AND of all matching rules across
  * all non-denying layers.
  *
  * @param rs              Ruleset handle.
@@ -182,25 +224,41 @@ int soft_ruleset_add_rule_at_layer(soft_ruleset_t *rs,
                                    uint32_t min_uid,
                                    uint32_t flags);
 
+/* ------------------------------------------------------------------ */
+/*  Custom operation mode registration                                 */
+/* ------------------------------------------------------------------ */
+
 /**
- * Return the number of layers currently in the ruleset.
+ * Register required SRC and DST modes for a SOFT_OP_CUSTOM operation.
+ *
+ * By default, SOFT_OP_CUSTOM requires READ for SRC and WRITE for DST.
+ * Call this to override those defaults for a specific custom operation
+ * index (custom_op_index must be >= SOFT_OP_CUSTOM).
+ *
+ * @param rs               Ruleset handle.
+ * @param custom_op_index  The custom operation index to configure.
+ * @param required_src     Required mode bits for SRC path.
+ * @param required_dst     Required mode bits for DST path.
+ * @return 0 on success, -1 on invalid index.
  */
-int soft_ruleset_layer_count(const soft_ruleset_t *rs);
+int soft_ruleset_set_custom_op_modes(soft_ruleset_t *rs,
+                                     int custom_op_index,
+                                     uint32_t required_src,
+                                     uint32_t required_dst);
 
 /* ------------------------------------------------------------------ */
-/*  Rule insertion (expression parser)                                 */
+/*  Expression parser                                                  */
 /* ------------------------------------------------------------------ */
 
 /**
  * Parse and add a rule from an expression string.
  *
- * Format:  op:subject:src_pattern:dst_pattern -> mode
+ * Format:  [@layer:]op:subject:src_pattern:dst_pattern -> mode
  *
  * Examples:
  *   "cp::/etc/\\*:/tmp/ -> RW"
- *   "cp:/usr/bin/cp:${SRC}:${DST} -> RO"
+ *   "@1:cp:/usr/bin/cp:${SRC}:${DST} -> RO"
  *   "mount::/dev/sd*:/mnt/usb -> RWX"
- *   "read::/home/user/... -> RO"
  *
  * @param rs            Ruleset handle.
  * @param rule_str      Expression string.
@@ -255,9 +313,10 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
 /**
  * Evaluate a batch of access transactions efficiently.
  *
- * Reuses parent-directory evaluation results across transactions.
- * If 100 files are copied from /a to /b, the rules for /a and /b
- * are evaluated once and cached for all children.
+ * Uses a parent-directory cache to avoid re-evaluating the same
+ * directory rules thousands of times. If 100 files are copied from
+ * /a to /b, the rules for /a and /b are evaluated once and reused
+ * for all children.
  *
  * @param rs        Ruleset handle.
  * @param ctxs      Array of access contexts (count entries).

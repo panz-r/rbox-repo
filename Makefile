@@ -20,8 +20,8 @@ TESTDIR  := tests
 BUILDDIR := build
 
 # Library sources and objects
-LIB_SRCS := $(SRCDIR)/arena.c $(SRCDIR)/radix_tree.c $(SRCDIR)/builder.c $(SRCDIR)/rule_engine.c
-LIB_OBJS := $(BUILDDIR)/arena.o $(BUILDDIR)/radix_tree.o $(BUILDDIR)/builder.o $(BUILDDIR)/rule_engine.o
+LIB_SRCS := $(SRCDIR)/arena.c $(SRCDIR)/radix_tree.c $(SRCDIR)/builder.c $(SRCDIR)/rule_engine.c $(SRCDIR)/rule_engine_compile.c
+LIB_OBJS := $(BUILDDIR)/arena.o $(BUILDDIR)/radix_tree.o $(BUILDDIR)/builder.o $(BUILDDIR)/rule_engine.o $(BUILDDIR)/rule_engine_compile.o
 LIB      := $(BUILDDIR)/liblandlock-builder.a
 
 # Test sources
@@ -78,7 +78,7 @@ $(TESTDIR)/mock_fs.o: $(TESTDIR)/mock_fs.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Mock-enabled library objects for tests
-MOCK_LIB_OBJS := $(BUILDDIR)/arena_mock.o $(BUILDDIR)/radix_tree_mock.o $(BUILDDIR)/builder_mock.o $(BUILDDIR)/rule_engine_mock.o
+MOCK_LIB_OBJS := $(BUILDDIR)/arena_mock.o $(BUILDDIR)/radix_tree_mock.o $(BUILDDIR)/builder_mock.o $(BUILDDIR)/rule_engine_mock.o $(BUILDDIR)/rule_engine_compile_mock.o
 
 $(TEST_BIN): $(TEST_OBJS) $(MOCK_LIB_OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
@@ -92,7 +92,7 @@ $(BUILDDIR)/benchmark.o: $(TESTDIR)/benchmark.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -DMOCK_FS -DMOCK_FS_INTERNAL -I$(TESTDIR) -c $< -o $@
 
 BENCH_OBJS := $(BUILDDIR)/benchmark.o
-$(BENCH_BIN): $(BENCH_OBJS) $(BUILDDIR)/arena_mock.o $(BUILDDIR)/radix_tree_mock.o $(BUILDDIR)/builder_mock.o $(BUILDDIR)/bench_mock_fs.o | $(BUILDDIR)
+$(BENCH_BIN): $(BENCH_OBJS) $(BUILDDIR)/arena_mock.o $(BUILDDIR)/radix_tree_mock.o $(BUILDDIR)/builder_mock.o $(BUILDDIR)/rule_engine_mock.o $(BUILDDIR)/rule_engine_compile_mock.o $(BUILDDIR)/bench_mock_fs.o | $(BUILDDIR)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
 benchmark: $(BENCH_BIN)
