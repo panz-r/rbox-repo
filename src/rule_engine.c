@@ -185,7 +185,8 @@ static bool match_with_var(const char *pattern, const char *var_name,
 }
 
 /**
- * Match a rule against a path in the given context.
+ * Match a compiled rule against a path in the given context.
+ * Used for dynamic rules (wildcards, recursive, templates).
  */
 bool rule_matches_path(const rule_t *rule, const char *path,
                        const soft_access_ctx_t *ctx)
@@ -272,9 +273,70 @@ soft_ruleset_t *soft_ruleset_new(void)
     if (!rs) return NULL;
     rs->layer_count = 0;
     rs->is_compiled = false;
+    rs->cache_cursor = 0;
     rs->last_error[0] = '\0';
     return rs;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Query result cache (LRU, round-robin eviction)                     */
+/* ------------------------------------------------------------------ */
+
+/** FNV-1a 64-bit hash of a string. */
+static uint64_t fnv1a_str(const char *s)
+{
+    uint64_t h = 14695981039346656037ULL;
+    if (s) {
+        for (; *s; s++) {
+            h ^= (uint8_t)*s;
+            h *= 1099511628211ULL;
+        }
+    }
+    return h;
+}
+
+/** Compute cache key from context fields. */
+static uint64_t ctx_hash(const soft_access_ctx_t *ctx)
+{
+    uint64_t h = fnv1a_str(ctx->src_path);
+    h ^= fnv1a_str(ctx->dst_path);
+    h ^= fnv1a_str(ctx->subject);
+    h *= 1099511628211ULL;
+    return h;
+}
+
+/** Look up cached result. Returns cached value or 0 on miss. */
+static int32_t query_cache_lookup(soft_ruleset_t *rs,
+                                  uint64_t key,
+                                  uint32_t op,
+                                  uint32_t uid)
+{
+    uint32_t idx = (uint32_t)(key % QUERY_CACHE_SIZE);
+    query_cache_entry_t *e = &rs->query_cache[idx];
+    if (e->result != 0 && e->path_hash == key &&
+        e->op == op && e->uid == uid) {
+        return e->result;
+    }
+    return 0; /* miss */
+}
+
+/** Store a result in the cache (round-robin eviction). */
+static void query_cache_store(soft_ruleset_t *rs,
+                              uint64_t key,
+                              uint32_t op,
+                              uint32_t uid,
+                              int32_t result)
+{
+    uint32_t idx = rs->cache_cursor % QUERY_CACHE_SIZE;
+    rs->cache_cursor++;
+    query_cache_entry_t *e = &rs->query_cache[idx];
+    e->path_hash = key;
+    e->op = op;
+    e->uid = uid;
+    e->result = result;
+}
+
+/** Invalidate the entire query cache. */
 
 void soft_ruleset_free(soft_ruleset_t *rs)
 {
@@ -282,7 +344,7 @@ void soft_ruleset_free(soft_ruleset_t *rs)
     for (int i = 0; i < rs->layer_count; i++) {
         free(rs->layers[i].rules);
     }
-    free(rs->effective.rules);
+    eff_free(&rs->effective);
     free(rs);
 }
 
@@ -634,7 +696,7 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
     }
 
     /* First try the compiled effective ruleset */
-    if (rs->is_compiled && rs->effective.count > 0) {
+    if (rs->is_compiled && (rs->effective.static_count > 0 || rs->effective.dynamic_count > 0)) {
         const char *matched = NULL;
         uint32_t granted = eval_effective_path(&rs->effective, path, op, ctx,
                                                &matched);
@@ -724,12 +786,19 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
 {
     if (!rs || !ctx) { errno = EINVAL; return -EACCES; }
 
+    /* Query cache lookup (skip if audit log requested) */
+    if (!out_log) {
+        soft_ruleset_t *mutable = (soft_ruleset_t *)rs; /* safe: cache is internal */
+        uint64_t key = ctx_hash(ctx);
+        int32_t cached = query_cache_lookup(mutable, key, ctx->op, ctx->uid);
+        if (cached != 0) return (int)cached;
+    }
+
     bool is_binary = (ctx->op == SOFT_OP_COPY || ctx->op == SOFT_OP_MOVE ||
                       ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT ||
                       ctx->op >= SOFT_OP_CUSTOM);
 
-    int deny_layer = -1;
-    const char *matched_pattern = NULL;
+    int result;
 
     if (is_binary) {
         int src_deny = -1, dst_deny = -1;
@@ -744,82 +813,92 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                 out_log->deny_layer = src_deny;
                 out_log->matched_rule = src_pattern;
             }
-            return -EACCES;
+            result = -EACCES;
+        } else {
+            uint32_t src_req = op_required_src_mode(rs, ctx->op);
+            if ((src_granted & src_req) != src_req) {
+                if (out_log) {
+                    out_log->result = -EACCES;
+                    out_log->deny_reason = "SRC insufficient mode";
+                    out_log->deny_layer = -1;
+                    out_log->matched_rule = NULL;
+                }
+                result = -EACCES;
+            } else {
+                uint32_t dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
+                                                       &dst_deny, &dst_pattern);
+                if (dst_deny >= 0) {
+                    if (out_log) {
+                        out_log->result = -EACCES;
+                        out_log->deny_reason = "DST denied by layer";
+                        out_log->deny_layer = dst_deny;
+                        out_log->matched_rule = dst_pattern;
+                    }
+                    result = -EACCES;
+                } else {
+                    uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
+                    if ((dst_granted & dst_req) != dst_req) {
+                        if (out_log) {
+                            out_log->result = -EACCES;
+                            out_log->deny_reason = "DST insufficient mode";
+                            out_log->deny_layer = -1;
+                            out_log->matched_rule = NULL;
+                        }
+                        result = -EACCES;
+                    } else {
+                        uint32_t res = src_granted | dst_granted;
+                        if (out_log) {
+                            out_log->result = (int)res;
+                            out_log->deny_layer = -1;
+                            out_log->matched_rule = src_pattern;
+                        }
+                        result = (int)res;
+                    }
+                }
+            }
         }
+    } else {
+        int deny_layer = -1;
+        const char *matched_pattern = NULL;
 
-        uint32_t src_req = op_required_src_mode(rs, ctx->op);
-        if ((src_granted & src_req) != src_req) {
+        uint32_t req = op_required_src_mode(rs, ctx->op);
+        uint32_t granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
+                                           &deny_layer, &matched_pattern);
+
+        if (deny_layer >= 0) {
             if (out_log) {
                 out_log->result = -EACCES;
-                out_log->deny_reason = "SRC insufficient mode";
+                out_log->deny_reason = "Access denied by layer";
+                out_log->deny_layer = deny_layer;
+                out_log->matched_rule = matched_pattern;
+            }
+            result = -EACCES;
+        } else if ((granted & req) != req) {
+            if (out_log) {
+                out_log->result = -EACCES;
+                out_log->deny_reason = "Insufficient access mode";
                 out_log->deny_layer = -1;
                 out_log->matched_rule = NULL;
             }
-            return -EACCES;
-        }
-
-        uint32_t dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
-                                               &dst_deny, &dst_pattern);
-        if (dst_deny >= 0) {
+            result = -EACCES;
+        } else {
             if (out_log) {
-                out_log->result = -EACCES;
-                out_log->deny_reason = "DST denied by layer";
-                out_log->deny_layer = dst_deny;
-                out_log->matched_rule = dst_pattern;
-            }
-            return -EACCES;
-        }
-
-        uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
-        if ((dst_granted & dst_req) != dst_req) {
-            if (out_log) {
-                out_log->result = -EACCES;
-                out_log->deny_reason = "DST insufficient mode";
+                out_log->result = (int)granted;
                 out_log->deny_layer = -1;
-                out_log->matched_rule = NULL;
+                out_log->matched_rule = matched_pattern;
             }
-            return -EACCES;
+            result = (int)granted;
         }
-
-        uint32_t result = src_granted | dst_granted;
-        if (out_log) {
-            out_log->result = (int)result;
-            out_log->deny_layer = -1;
-            out_log->matched_rule = src_pattern;
-        }
-        return (int)result;
     }
 
-    uint32_t req = op_required_src_mode(rs, ctx->op);
-    uint32_t granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
-                                       &deny_layer, &matched_pattern);
-
-    if (deny_layer >= 0) {
-        if (out_log) {
-            out_log->result = -EACCES;
-            out_log->deny_reason = "Access denied by layer";
-            out_log->deny_layer = deny_layer;
-            out_log->matched_rule = matched_pattern;
-        }
-        return -EACCES;
+    /* Store in query cache (only if audit log not requested) */
+    if (!out_log) {
+        soft_ruleset_t *mutable = (soft_ruleset_t *)rs;
+        uint64_t key = ctx_hash(ctx);
+        query_cache_store(mutable, key, ctx->op, ctx->uid, (int32_t)result);
     }
 
-    if ((granted & req) != req) {
-        if (out_log) {
-            out_log->result = -EACCES;
-            out_log->deny_reason = "Insufficient access mode";
-            out_log->deny_layer = -1;
-            out_log->matched_rule = NULL;
-        }
-        return -EACCES;
-    }
-
-    if (out_log) {
-        out_log->result = (int)granted;
-        out_log->deny_layer = -1;
-        out_log->matched_rule = matched_pattern;
-    }
-    return (int)granted;
+    return result;
 }
 
 /* ------------------------------------------------------------------ */

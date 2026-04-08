@@ -19,6 +19,18 @@
 #define MAX_LINKED_LEN  8
 #define MAX_LAYERS      64
 #define MAX_CUSTOM_OPS  16
+#define QUERY_CACHE_SIZE 256    /**< LRU query result cache entries */
+
+/* ------------------------------------------------------------------ */
+/*  Query result cache (round-robin LRU)                               */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    uint64_t path_hash;       /**< FNV-1a hash of (src_path, dst_path, subject) */
+    uint32_t op;              /**< soft_binary_op_t */
+    uint32_t uid;             /**< Caller UID */
+    int32_t  result;          /**< Cached result: SOFT_ACCESS_* or -EACCES, 0=miss */
+} query_cache_entry_t;
 
 /* ------------------------------------------------------------------ */
 /*  Internal rule structure                                            */
@@ -47,15 +59,50 @@ typedef struct {
 } layer_t;
 
 /* ------------------------------------------------------------------ */
-/*  Effective (simplified) ruleset — single flat array, no layers      */
+/*  String arena for compiled ruleset (interned strings)               */
+/* ------------------------------------------------------------------ */
+
+#define STR_ARENA_INIT  4096
+
+typedef struct {
+    char   *buf;
+    size_t  used;
+    size_t  capacity;
+} str_arena_t;
+
+/* ------------------------------------------------------------------ */
+/*  Compiled rule (much smaller than descriptive rule_t: ~48 vs 416)   */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    const char     *pattern;       /**< Interned path pattern */
+    uint32_t        mode;          /**< SOFT_ACCESS_* or DENY */
+    uint32_t        min_uid;       /**< Minimum UID */
+    uint32_t        flags;         /**< Rule flags (RECURSIVE, TEMPLATE) */
+    uint16_t        op_type;       /**< soft_binary_op_t */
+    uint16_t        _pad;
+    const char     *subject_regex;  /**< Interned, or NULL */
+} compiled_rule_t;
+
+/* ------------------------------------------------------------------ */
+/*  Effective (simplified) ruleset — separated by pattern type         */
 /* ------------------------------------------------------------------ */
 
 #define EFF_CHUNK 64
 
 typedef struct {
-    rule_t *rules;
-    int     count;
-    int     capacity;
+    /* Exact/directory static patterns — sorted by pattern for binary search */
+    compiled_rule_t *static_rules;
+    int              static_count;
+    int              static_capacity;
+
+    /* Non-static patterns (wildcards, recursive, templates) — linear scan */
+    compiled_rule_t *dynamic_rules;
+    int              dynamic_count;
+    int              dynamic_capacity;
+
+    /* String arena for interning pattern and subject strings */
+    str_arena_t      strings;
 } effective_ruleset_t;
 
 /* ------------------------------------------------------------------ */
@@ -77,6 +124,8 @@ struct soft_ruleset {
     effective_ruleset_t effective;             /**< Simplified (read-only after compile) */
     bool                is_compiled;           /**< true if effective is valid */
     custom_op_entry_t   custom_ops[MAX_CUSTOM_OPS];
+    query_cache_entry_t query_cache[QUERY_CACHE_SIZE]; /**< LRU query result cache */
+    uint32_t            cache_cursor;          /**< Round-robin cursor for cache eviction */
     char                last_error[256];
 };
 
@@ -85,6 +134,7 @@ struct soft_ruleset {
 /* ------------------------------------------------------------------ */
 
 int soft_ruleset_compile(soft_ruleset_t *rs);
+void eff_free(effective_ruleset_t *eff);
 void soft_ruleset_invalidate(soft_ruleset_t *rs);
 bool soft_ruleset_is_compiled(const soft_ruleset_t *rs);
 
