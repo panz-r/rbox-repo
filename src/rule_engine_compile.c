@@ -87,15 +87,49 @@ static int eff_add_dynamic(effective_ruleset_t *eff, const compiled_rule_t *r)
     return 0;
 }
 
+static int eff_add_spec_static(effective_ruleset_t *eff, const compiled_rule_t *r)
+{
+    if (eff->spec_static_count >= eff->spec_static_capacity) {
+        int new_cap = eff->spec_static_capacity + EFF_CHUNK;
+        compiled_rule_t *new_rules = realloc(eff->spec_static_rules,
+                                             (size_t)new_cap * sizeof(compiled_rule_t));
+        if (!new_rules) return -1;
+        eff->spec_static_rules = new_rules;
+        eff->spec_static_capacity = new_cap;
+    }
+    eff->spec_static_rules[eff->spec_static_count++] = *r;
+    return 0;
+}
+
+static int eff_add_spec_dynamic(effective_ruleset_t *eff, const compiled_rule_t *r)
+{
+    if (eff->spec_dynamic_count >= eff->spec_dynamic_capacity) {
+        int new_cap = eff->spec_dynamic_capacity + EFF_CHUNK;
+        compiled_rule_t *new_rules = realloc(eff->spec_dynamic_rules,
+                                             (size_t)new_cap * sizeof(compiled_rule_t));
+        if (!new_rules) return -1;
+        eff->spec_dynamic_rules = new_rules;
+        eff->spec_dynamic_capacity = new_cap;
+    }
+    eff->spec_dynamic_rules[eff->spec_dynamic_count++] = *r;
+    return 0;
+}
+
 void eff_free(effective_ruleset_t *eff)
 {
     free(eff->static_rules);
     free(eff->dynamic_rules);
+    free(eff->spec_static_rules);
+    free(eff->spec_dynamic_rules);
     arena_free(&eff->strings);
     eff->static_rules = NULL;
     eff->dynamic_rules = NULL;
     eff->static_count = 0;
     eff->dynamic_count = 0;
+    eff->spec_static_rules = NULL;
+    eff->spec_dynamic_rules = NULL;
+    eff->spec_static_count = 0;
+    eff->spec_dynamic_count = 0;
 }
 
 /** Convert a descriptive rule_t to a compiled_rule_t, interning strings. */
@@ -140,7 +174,8 @@ static bool is_static_rule(const rule_t *r)
 
 /** Replace VAR in pattern with the actual path and match (compiled version). */
 static bool compiled_match_with_var(const char *pattern, const char *var_name,
-                                    const soft_access_ctx_t *ctx)
+                                    const soft_access_ctx_t *ctx,
+                                    const char *query_path)
 {
     const char *resolved = NULL;
     if (!var_name || !ctx) return false;
@@ -163,7 +198,7 @@ static bool compiled_match_with_var(const char *pattern, const char *var_name,
     memcpy(resolved_pattern + prefix_len, resolved, strlen(resolved) + 1);
     strcat(resolved_pattern, var_pos + strlen(placeholder));
 
-    return path_matches(resolved_pattern, resolved);
+    return path_matches(resolved_pattern, query_path);
 }
 
 /** Check if compiled rule matches the given path in context. */
@@ -178,10 +213,10 @@ static bool compiled_rule_matches_path(const compiled_rule_t *rule,
     if (is_template) {
         /* Try ${SRC} first, then ${DST} */
         if (strstr(rule->pattern, "${SRC}") != NULL) {
-            return compiled_match_with_var(rule->pattern, "SRC", ctx);
+            return compiled_match_with_var(rule->pattern, "SRC", ctx, path);
         }
         if (strstr(rule->pattern, "${DST}") != NULL) {
-            return compiled_match_with_var(rule->pattern, "DST", ctx);
+            return compiled_match_with_var(rule->pattern, "DST", ctx, path);
         }
     }
 
@@ -317,6 +352,42 @@ bool rule_subsumes(const rule_t *general, const rule_t *specific)
     return true;
 }
 
+/**
+ * Check if a subject-constrained rule is redundant given an unconstrained rule
+ * with the same pattern.
+ *
+ * In PRECEDENCE (mode intersection), a subject-constrained rule is redundant
+ * if the unconstrained rule already grants a SUPERSUBSET of its modes.
+ * Adding more modes via a subject rule can only further restrict (via AND),
+ * never expand — so if the unconstrained rule is more permissive, the subject
+ * rule is a no-op for intersection semantics.
+ *
+ * Example:
+ *   /data/...  READ|WRITE   (no subject)      → grants to ALL subjects
+ *   /data/...  READ|WRITE|EXEC (subject=admin) → grants to admin only
+ *   For admin: (READ|WRITE) ∩ (READ|WRITE|EXEC) = READ|WRITE → same as without subject rule
+ *   → Subject rule is REDUNDANT.
+ *
+ *   /data/...  READ          (no subject)      → grants to ALL subjects
+ *   /data/...  WRITE         (subject=admin)   → grants to admin only
+ *   For admin: READ ∩ WRITE = 0 → DENIED → Subject rule is NOT REDUNDANT.
+ */
+static bool subject_rule_redundant(const rule_t *unconstrained,
+                                   const rule_t *subject_rule)
+{
+    /* Unconstrained rule must have no subject constraint */
+    if (unconstrained->subject_regex[0] != '\0') return false;
+    /* Subject rule must have a subject constraint */
+    if (subject_rule->subject_regex[0] == '\0') return false;
+    /* Same pattern, op, flags, linked_path_var, min_uid */
+    if (strcmp(unconstrained->pattern, subject_rule->pattern) != 0) return false;
+    if (unconstrained->op_type != subject_rule->op_type) return false;
+    if (unconstrained->flags != subject_rule->flags) return false;
+    if (unconstrained->min_uid != subject_rule->min_uid) return false;
+    /* Subject rule mode must be a superset of unconstrained mode */
+    return (subject_rule->mode & unconstrained->mode) == unconstrained->mode;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Compiled subject matching                                           */
 /* ------------------------------------------------------------------ */
@@ -354,9 +425,8 @@ static int compare_rule_by_pattern(const void *a, const void *b)
 }
 
 /**
- * Find all static rules that match the given path.
- * Static rules are exact or directory-prefix patterns (no wildcards).
- * Returns the accumulated mode from all matching rules.
+ * Match PRECEDENCE static rules (exact or directory-prefix).
+ * Uses intersection (AND) semantics: all matching rules must agree.
  */
 static uint32_t match_static_rules(const effective_ruleset_t *eff,
                                    const char *path,
@@ -366,8 +436,9 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
 {
     if (!eff || !path) return 0;
 
-    uint32_t granted = 0;
+    uint32_t granted = SOFT_ACCESS_ALL;
     const char *last_pattern = NULL;
+    bool any_matched = false;
     size_t path_len = strlen(path);
 
     for (int i = 0; i < eff->static_count; i++) {
@@ -377,7 +448,6 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
         if (!compiled_subject_matches(r, ctx->subject)) continue;
         if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
 
-        /* Exact match or directory prefix */
         bool match = false;
         size_t pat_len = strlen(r->pattern);
         if (pat_len == path_len && memcmp(r->pattern, path, pat_len) == 0) {
@@ -389,20 +459,23 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
         }
 
         if (match) {
+            any_matched = true;
             if (r->mode & SOFT_ACCESS_DENY) {
                 if (out_matched_pattern) *out_matched_pattern = r->pattern;
                 return 0; /* DENY short-circuit */
             }
-            granted |= r->mode;
+            granted &= r->mode;
             last_pattern = r->pattern;
         }
     }
 
     if (out_matched_pattern) *out_matched_pattern = last_pattern;
+    if (!any_matched) return 0;
     return granted;
 }
 
-/** Match dynamic rules (wildcards, recursive, templates). */
+/** Match dynamic rules (wildcards, recursive, templates).
+ * Uses intersection (AND) semantics for PRECEDENCE rules. */
 static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
                                     const char *path,
                                     soft_binary_op_t op,
@@ -411,7 +484,7 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
 {
     if (!eff || !path) return 0;
 
-    uint32_t granted = 0;
+    uint32_t granted = SOFT_ACCESS_ALL;
     const char *last_pattern = NULL;
 
     for (int i = 0; i < eff->dynamic_count; i++) {
@@ -426,7 +499,7 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
             if (out_matched_pattern) *out_matched_pattern = r->pattern;
             return 0;
         }
-        granted |= r->mode;
+        granted &= r->mode;
         last_pattern = r->pattern;
     }
 
@@ -438,6 +511,17 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
 /*  Evaluation using effective (compiled) ruleset                      */
 /* ------------------------------------------------------------------ */
 
+static uint32_t match_spec_static(const effective_ruleset_t *eff,
+                                   const char *path,
+                                   soft_binary_op_t op,
+                                   const soft_access_ctx_t *ctx,
+                                   const char **out_matched_pattern);
+static uint32_t match_spec_dynamic(const effective_ruleset_t *eff,
+                                    const char *path,
+                                    soft_binary_op_t op,
+                                    const soft_access_ctx_t *ctx,
+                                    const char **out_matched_pattern);
+
 uint32_t eval_effective_path(const effective_ruleset_t *eff,
                              const char *path,
                              soft_binary_op_t op,
@@ -447,23 +531,48 @@ uint32_t eval_effective_path(const effective_ruleset_t *eff,
     if (!path) { if (out_matched_pattern) *out_matched_pattern = NULL; return 0; }
     if (!eff) { if (out_matched_pattern) *out_matched_pattern = NULL; return 0; }
 
-    /* Phase 1: Static rules — sorted, can use binary search optimization */
-    uint32_t granted = match_static_rules(eff, path, op, ctx, out_matched_pattern);
-    if (granted == 0 && out_matched_pattern != NULL && *out_matched_pattern != NULL)
-        return 0; /* DENY matched in static rules */
+    /* Phase 1: SPECIFICITY — longest match overrides PRECEDENCE */
+    const char *spec_matched = NULL;
+    uint32_t spec_static = match_spec_static(eff, path, op, ctx, &spec_matched);
+    if (spec_static != SPECIFICITY_NO_MATCH) {
+        if (out_matched_pattern) *out_matched_pattern = spec_matched;
+        return spec_static;
+    }
+    uint32_t spec_dynamic = match_spec_dynamic(eff, path, op, ctx, &spec_matched);
+    if (spec_dynamic != SPECIFICITY_NO_MATCH) {
+        if (out_matched_pattern) *out_matched_pattern = spec_matched;
+        return spec_dynamic;
+    }
 
-    /* Phase 2: Dynamic rules — wildcards, recursive, templates */
+    /* Phase 2: PRECEDENCE — current behavior (DENY shadows, mode AND) */
+    const char *static_matched = NULL;
+    uint32_t granted = match_static_rules(eff, path, op, ctx, &static_matched);
+    if (granted == 0 && static_matched != NULL) {
+        if (out_matched_pattern) *out_matched_pattern = static_matched;
+        return 0; /* DENY matched in PRECEDENCE static rules */
+    }
+
     const char *dyn_pattern = NULL;
     uint32_t dyn_granted = match_dynamic_rules(eff, path, op, ctx, &dyn_pattern);
     if (dyn_granted == 0 && dyn_pattern != NULL) {
         if (out_matched_pattern) *out_matched_pattern = dyn_pattern;
-        return 0; /* DENY matched in dynamic rules */
+        return 0; /* DENY matched in PRECEDENCE dynamic rules */
     }
 
-    if (dyn_pattern) {
-        granted |= dyn_granted;
+    /* Combine static and dynamic with intersection (AND semantics) */
+    if (static_matched && dyn_pattern) {
+        /* Both static and dynamic matched — intersect modes */
+        granted &= dyn_granted;
         if (!*out_matched_pattern) *out_matched_pattern = dyn_pattern;
+    } else if (static_matched) {
+        /* Only static matched — result from static */
+        if (out_matched_pattern) *out_matched_pattern = static_matched;
+    } else if (dyn_pattern) {
+        /* Only dynamic matched — result from dynamic */
+        granted = dyn_granted;
+        if (out_matched_pattern) *out_matched_pattern = dyn_pattern;
     }
+    /* Neither matched → granted=0 (no rule matched) */
 
     return granted;
 }
@@ -483,6 +592,94 @@ static int compare_deny_first(const void *a, const void *b)
     return 0;
 }
 
+/** qsort comparison: longest pattern first (for SPECIFICITY) */
+static int compare_rule_by_length(const void *a, const void *b)
+{
+    const compiled_rule_t *ra = (const compiled_rule_t *)a;
+    const compiled_rule_t *rb = (const compiled_rule_t *)b;
+    size_t la = strlen(ra->pattern);
+    size_t lb = strlen(rb->pattern);
+    if (la > lb) return -1;
+    if (la < lb) return 1;
+    return 0;
+}
+
+/**
+ * Match SPECIFICITY static rules (longest match wins).
+ * Returns SPECIFICITY_NO_MATCH if none match, otherwise the matched mode.
+ */
+static uint32_t match_spec_static(const effective_ruleset_t *eff,
+                                   const char *path,
+                                   soft_binary_op_t op,
+                                   const soft_access_ctx_t *ctx,
+                                   const char **out_matched_pattern)
+{
+    if (!eff || !path) return SPECIFICITY_NO_MATCH;
+    size_t path_len = strlen(path);
+
+    for (int i = 0; i < eff->spec_static_count; i++) {
+        const compiled_rule_t *r = &eff->spec_static_rules[i];
+        if (r->op_type != op && r->op_type != SOFT_OP_READ &&
+            r->op_type != SOFT_OP_WRITE) continue;
+        if (!compiled_subject_matches(r, ctx->subject)) continue;
+        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+
+        bool match = false;
+        size_t pat_len = strlen(r->pattern);
+        if (pat_len == path_len && memcmp(r->pattern, path, pat_len) == 0) {
+            match = true;
+        } else if (pat_len < path_len &&
+                   memcmp(r->pattern, path, pat_len) == 0 &&
+                   path[pat_len] == '/') {
+            match = true;
+        }
+
+        if (match) {
+            if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            return r->mode & SOFT_ACCESS_DENY ? 0 : r->mode;
+        }
+    }
+    return SPECIFICITY_NO_MATCH;
+}
+
+/**
+ * Match SPECIFICITY dynamic rules (longest match wins).
+ */
+static uint32_t match_spec_dynamic(const effective_ruleset_t *eff,
+                                    const char *path,
+                                    soft_binary_op_t op,
+                                    const soft_access_ctx_t *ctx,
+                                    const char **out_matched_pattern)
+{
+    if (!eff || !path) return SPECIFICITY_NO_MATCH;
+
+    const char *best_pattern = NULL;
+    size_t best_len = 0;
+    uint32_t best_mode = 0;
+    bool found = false;
+
+    for (int i = 0; i < eff->spec_dynamic_count; i++) {
+        const compiled_rule_t *r = &eff->spec_dynamic_rules[i];
+        if (r->op_type != op && r->op_type != SOFT_OP_READ &&
+            r->op_type != SOFT_OP_WRITE) continue;
+        if (!compiled_subject_matches(r, ctx->subject)) continue;
+        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+        if (!compiled_rule_matches_path(r, path, ctx)) continue;
+
+        size_t pat_len = strlen(r->pattern);
+        if (!found || pat_len > best_len) {
+            best_len = pat_len;
+            best_pattern = r->pattern;
+            best_mode = r->mode;
+            found = true;
+        }
+    }
+
+    if (!found) return SPECIFICITY_NO_MATCH;
+    if (out_matched_pattern) *out_matched_pattern = best_pattern;
+    return best_mode & SOFT_ACCESS_DENY ? 0 : best_mode;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Compilation: descriptive layers → effective compiled ruleset       */
 /* ------------------------------------------------------------------ */
@@ -495,8 +692,7 @@ void soft_ruleset_invalidate(soft_ruleset_t *rs)
         rs->is_compiled = false;
     }
     /* Also invalidate the query cache */
-    rs->cache_cursor = 0;
-    memset(rs->query_cache, 0, sizeof(rs->query_cache));
+    for (uint32_t i = 0; i < QUERY_CACHE_SIZE; i++) rs->query_cache[i].valid = 0;
 }
 
 bool soft_ruleset_is_compiled(const soft_ruleset_t *rs)
@@ -521,8 +717,8 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
         return 0;
     }
 
-    /* Phase 1: Cross-layer shadow elimination */
-    typedef struct { rule_t rule; int layer; } pending_rule_t;
+    /* Phase 1: Cross-layer shadow elimination (PRECEDENCE layers only) */
+    typedef struct { rule_t rule; int layer; layer_type_t type; } pending_rule_t;
     pending_rule_t *pending = calloc((size_t)max_pending, sizeof(pending_rule_t));
     if (!pending) return -1;
     int pending_count = 0;
@@ -531,11 +727,23 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
         const layer_t *lyr = &rs->layers[li];
         for (int ri = 0; ri < lyr->count; ri++) {
             const rule_t *r = &lyr->rules[ri];
+
+            /* SPECIFICITY layers: no shadow elimination, keep all rules */
+            if (lyr->type == LAYER_SPECIFICITY) {
+                pending[pending_count].rule = *r;
+                pending[pending_count].layer = li;
+                pending[pending_count].type = LAYER_SPECIFICITY;
+                pending_count++;
+                continue;
+            }
+
+            /* PRECEDENCE layers: shadow elimination */
             bool shadowed = false;
             if (r->mode & SOFT_ACCESS_DENY) {
                 for (int pi = 0; pi < pending_count && !shadowed; pi++) {
                     const pending_rule_t *pr = &pending[pi];
-                    if (pr->rule.mode & SOFT_ACCESS_DENY &&
+                    if (pr->type == LAYER_PRECEDENCE &&
+                        pr->rule.mode & SOFT_ACCESS_DENY &&
                         rule_constraints_equal(&pr->rule, r) &&
                         pattern_covers(pr->rule.pattern, r->pattern))
                         shadowed = true;
@@ -543,7 +751,8 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
             } else {
                 for (int pi = 0; pi < pending_count && !shadowed; pi++) {
                     const pending_rule_t *pr = &pending[pi];
-                    if (pr->rule.mode & SOFT_ACCESS_DENY &&
+                    if (pr->type == LAYER_PRECEDENCE &&
+                        pr->rule.mode & SOFT_ACCESS_DENY &&
                         pattern_covers(pr->rule.pattern, r->pattern))
                         shadowed = true;
                 }
@@ -551,12 +760,13 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
             if (!shadowed) {
                 pending[pending_count].rule = *r;
                 pending[pending_count].layer = li;
+                pending[pending_count].type = LAYER_PRECEDENCE;
                 pending_count++;
             }
         }
     }
 
-    /* Phase 2: Mode intersection for identical constraint tuples */
+    /* Phase 2: Mode intersection (PRECEDENCE layers only) */
     typedef struct { uint32_t mode; bool used; } group_entry_t;
     group_entry_t *groups = calloc((size_t)pending_count, sizeof(group_entry_t));
     if (!groups) { free(pending); return -1; }
@@ -566,8 +776,10 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
     }
     for (int i = 0; i < pending_count; i++) {
         if (groups[i].used) continue;
+        if (pending[i].type != LAYER_PRECEDENCE) continue;
         for (int j = i + 1; j < pending_count; j++) {
             if (groups[j].used) continue;
+            if (pending[j].type != LAYER_PRECEDENCE) continue;
             if (strcmp(pending[i].rule.pattern, pending[j].rule.pattern) == 0 &&
                 rule_constraints_equal(&pending[i].rule, &pending[j].rule)) {
                 groups[i].mode &= pending[j].rule.mode;
@@ -576,22 +788,55 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
         }
     }
 
-    /* Phase 3: Separate static vs dynamic, subsumption, build effective */
+    /* Phase 3: Separate static vs dynamic, subsumption (PRECEDENCE only),
+     * classify into PRECEDENCE vs SPECIFICITY buckets */
     effective_ruleset_t eff;
     memset(&eff, 0, sizeof(eff));
 
-    /* First pass: mark subsumed rules */
+    /* First pass: mark subsumed rules (PRECEDENCE only) */
     bool *removed = calloc((size_t)pending_count, sizeof(bool));
     if (pending_count > 0 && !removed) { free(groups); free(pending); return -1; }
 
     for (int i = 0; i < pending_count; i++) {
         if (removed[i] || groups[i].used) continue;
+        if (pending[i].type != LAYER_PRECEDENCE) continue;
         if (groups[i].mode == 0) { removed[i] = true; continue; }
         for (int j = 0; j < pending_count; j++) {
             if (i == j || removed[j] || groups[j].used) continue;
+            if (pending[j].type != LAYER_PRECEDENCE) continue;
             if (groups[j].mode == 0) { removed[j] = true; continue; }
-            if (rule_subsumes(&pending[i].rule, &pending[j].rule))
+            /* Standard subsumption: same constraints, broader pattern */
+            if (rule_subsumes(&pending[i].rule, &pending[j].rule)) {
                 removed[j] = true;
+                continue;
+            }
+            /* Subject rule redundancy: unconstrained rule makes subject-constrained
+             * rule redundant if it grants a superset of modes (PRECEDENCE only). */
+            if (subject_rule_redundant(&pending[i].rule, &pending[j].rule)) {
+                removed[j] = true;
+            }
+        }
+    }
+
+    /* SPECIFICITY subject redundancy: for SPECIFICITY layers (replacement semantics),
+     * a subject-constrained rule is redundant only if its mode is EXACTLY EQUAL to
+     * the unconstrained rule's mode. Since SPECIFICITY replaces rather than intersects,
+     * different modes would change behavior for the constrained subjects. */
+    for (int i = 0; i < pending_count; i++) {
+        if (removed[i] || groups[i].used) continue;
+        if (pending[i].type != LAYER_PRECEDENCE) continue;
+        if (pending[i].rule.subject_regex[0] != '\0') continue;  /* only unconstrained */
+        for (int j = 0; j < pending_count; j++) {
+            if (i == j || removed[j] || groups[j].used) continue;
+            if (pending[j].type != LAYER_SPECIFICITY) continue;
+            if (pending[j].rule.subject_regex[0] == '\0') continue;  /* only subject-constrained */
+            /* Same pattern and exact mode match → redundant */
+            if (strcmp(pending[i].rule.pattern, pending[j].rule.pattern) != 0) continue;
+            if (pending[i].rule.op_type != pending[j].rule.op_type) continue;
+            if (pending[i].rule.flags != pending[j].rule.flags) continue;
+            if (pending[i].rule.min_uid != pending[j].rule.min_uid) continue;
+            if (groups[i].mode != groups[j].mode) continue;  /* exact mode match required */
+            removed[j] = true;
         }
     }
 
@@ -608,17 +853,33 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
             return -1;
         }
 
-        if (is_static_rule(&r)) {
-            if (eff_add_static(&eff, &cr) < 0) {
-                free(removed); free(groups); free(pending);
-                eff_free(&eff);
-                return -1;
+        if (pending[i].type == LAYER_SPECIFICITY) {
+            if (is_static_rule(&r)) {
+                if (eff_add_spec_static(&eff, &cr) < 0) {
+                    free(removed); free(groups); free(pending);
+                    eff_free(&eff);
+                    return -1;
+                }
+            } else {
+                if (eff_add_spec_dynamic(&eff, &cr) < 0) {
+                    free(removed); free(groups); free(pending);
+                    eff_free(&eff);
+                    return -1;
+                }
             }
         } else {
-            if (eff_add_dynamic(&eff, &cr) < 0) {
-                free(removed); free(groups); free(pending);
-                eff_free(&eff);
-                return -1;
+            if (is_static_rule(&r)) {
+                if (eff_add_static(&eff, &cr) < 0) {
+                    free(removed); free(groups); free(pending);
+                    eff_free(&eff);
+                    return -1;
+                }
+            } else {
+                if (eff_add_dynamic(&eff, &cr) < 0) {
+                    free(removed); free(groups); free(pending);
+                    eff_free(&eff);
+                    return -1;
+                }
             }
         }
     }
@@ -627,15 +888,25 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
     free(groups);
     free(pending);
 
-    /* Phase 4: Sort static rules by pattern (for potential binary search) */
+    /* Phase 4: Sort PRECEDENCE static rules by pattern */
     if (eff.static_count > 1)
         qsort(eff.static_rules, (size_t)eff.static_count,
               sizeof(compiled_rule_t), compare_rule_by_pattern);
 
-    /* Phase 5: Sort dynamic rules — DENY first for fast short-circuit */
+    /* Phase 5: Sort PRECEDENCE dynamic rules — DENY first */
     if (eff.dynamic_count > 1)
         qsort(eff.dynamic_rules, (size_t)eff.dynamic_count,
               sizeof(compiled_rule_t), compare_deny_first);
+
+    /* Phase 6: Sort SPECIFICITY static rules by pattern length DESC */
+    if (eff.spec_static_count > 1)
+        qsort(eff.spec_static_rules, (size_t)eff.spec_static_count,
+              sizeof(compiled_rule_t), compare_rule_by_length);
+
+    /* Phase 7: Sort SPECIFICITY dynamic rules by pattern length DESC */
+    if (eff.spec_dynamic_count > 1)
+        qsort(eff.spec_dynamic_rules, (size_t)eff.spec_dynamic_count,
+              sizeof(compiled_rule_t), compare_rule_by_length);
 
     rs->effective = eff;
     rs->is_compiled = true;

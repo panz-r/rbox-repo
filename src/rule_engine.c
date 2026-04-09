@@ -160,29 +160,6 @@ static bool pattern_has_var(const char *pattern, const char *var)
 /**
  * Replace VAR in pattern with the actual path and match.
  */
-static bool match_with_var(const char *pattern, const char *var_name,
-                           const soft_access_ctx_t *ctx)
-{
-    const char *resolved = resolve_var(var_name, ctx);
-    if (!resolved) return false;
-
-    char resolved_pattern[MAX_PATTERN_LEN];
-    char placeholder[16];
-    snprintf(placeholder, sizeof(placeholder), "${%s}", var_name);
-
-    const char *var_pos = strstr(pattern, placeholder);
-    if (!var_pos) return false;
-
-    size_t prefix_len = (size_t)(var_pos - pattern);
-    if (prefix_len + strlen(resolved) + strlen(var_pos + strlen(placeholder)) >= MAX_PATTERN_LEN)
-        return false;
-
-    memcpy(resolved_pattern, pattern, prefix_len);
-    strcpy(resolved_pattern + prefix_len, resolved);
-    strcat(resolved_pattern, var_pos + strlen(placeholder));
-
-    return path_matches(resolved_pattern, resolved);
-}
 
 /**
  * Match a compiled rule against a path in the given context.
@@ -196,14 +173,37 @@ bool rule_matches_path(const rule_t *rule, const char *path,
     bool is_template = (rule->flags & SOFT_RULE_TEMPLATE) != 0;
 
     if (is_template) {
+        /* Resolve variable in pattern, then match against the query path */
+        const char *var_name = NULL;
         if (rule->linked_path_var[0] != '\0') {
-            return match_with_var(rule->pattern, rule->linked_path_var, ctx);
+            var_name = rule->linked_path_var;
+        } else if (pattern_has_var(rule->pattern, "SRC")) {
+            var_name = "SRC";
+        } else if (pattern_has_var(rule->pattern, "DST")) {
+            var_name = "DST";
         }
-        if (pattern_has_var(rule->pattern, "SRC")) {
-            return match_with_var(rule->pattern, "SRC", ctx);
-        }
-        if (pattern_has_var(rule->pattern, "DST")) {
-            return match_with_var(rule->pattern, "DST", ctx);
+
+        if (var_name) {
+            const char *resolved = resolve_var(var_name, ctx);
+            if (!resolved) return false;
+
+            char resolved_pattern[MAX_PATTERN_LEN];
+            char placeholder[16];
+            snprintf(placeholder, sizeof(placeholder), "${%s}", var_name);
+
+            const char *var_pos = strstr(rule->pattern, placeholder);
+            if (!var_pos) return false;
+
+            size_t prefix_len = (size_t)(var_pos - rule->pattern);
+            size_t total_len = prefix_len + strlen(resolved) +
+                               strlen(var_pos + strlen(placeholder));
+            if (total_len >= MAX_PATTERN_LEN) return false;
+
+            memcpy(resolved_pattern, rule->pattern, prefix_len);
+            strcpy(resolved_pattern + prefix_len, resolved);
+            strcat(resolved_pattern, var_pos + strlen(placeholder));
+
+            return path_matches(resolved_pattern, path);
         }
     }
 
@@ -273,11 +273,11 @@ soft_ruleset_t *soft_ruleset_new(void)
     if (!rs) return NULL;
     rs->layer_count = 0;
     rs->is_compiled = false;
-    rs->cache_cursor = 0;
     rs->last_error[0] = '\0';
     return rs;
 }
 
+/* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
 /*  Query result cache (LRU, round-robin eviction)                     */
 /* ------------------------------------------------------------------ */
@@ -295,48 +295,72 @@ static uint64_t fnv1a_str(const char *s)
     return h;
 }
 
-/** Compute cache key from context fields. */
-static uint64_t ctx_hash(const soft_access_ctx_t *ctx)
+/** Compute cache key for a single path. */
+static uint64_t path_hash(const char *path)
 {
-    uint64_t h = fnv1a_str(ctx->src_path);
-    h ^= fnv1a_str(ctx->dst_path);
-    h ^= fnv1a_str(ctx->subject);
-    h *= 1099511628211ULL;
-    return h;
+    return fnv1a_str(path);
 }
 
-/** Look up cached result. Returns cached value or 0 on miss. */
-static int32_t query_cache_lookup(soft_ruleset_t *rs,
-                                  uint64_t key,
-                                  uint32_t op,
-                                  uint32_t uid)
+/**
+ * Return the set of access modes that an evaluation with the given op
+ * could have returned.  This is the `eval` mask we store in the cache.
+ *
+ * Unary READ only inspects READ rules, so eval = READ.
+ * Binary COPY inspects COPY+READ+WRITE rules, which can grant any
+ * mode, so eval = ALL.
+ */
+static uint32_t eval_mode_for_op(soft_binary_op_t op)
 {
-    uint32_t idx = (uint32_t)(key % QUERY_CACHE_SIZE);
-    query_cache_entry_t *e = &rs->query_cache[idx];
-    if (e->result != 0 && e->path_hash == key &&
-        e->op == op && e->uid == uid) {
-        return e->result;
+    switch (op) {
+    case SOFT_OP_READ:       return SOFT_ACCESS_READ;
+    case SOFT_OP_WRITE:      return SOFT_ACCESS_WRITE;
+    case SOFT_OP_EXEC:       return SOFT_ACCESS_EXEC;
+    case SOFT_OP_CHMOD_CHOWN: return SOFT_ACCESS_WRITE;
+    case SOFT_OP_COPY:
+    case SOFT_OP_MOVE:
+    case SOFT_OP_LINK:
+    case SOFT_OP_MOUNT:
+    case SOFT_OP_CUSTOM:
+    default:                 return SOFT_ACCESS_ALL;
     }
-    return 0; /* miss */
 }
 
-/** Store a result in the cache (round-robin eviction). */
-static void query_cache_store(soft_ruleset_t *rs,
-                              uint64_t key,
-                              uint32_t op,
-                              uint32_t uid,
-                              int32_t result)
+/** Look up cached result for a single path. Direct-mapped: one entry per path. */
+static query_cache_entry_t *query_cache_lookup(soft_ruleset_t *rs,
+                                                uint64_t phash,
+                                                uint32_t subject_hash,
+                                                uint32_t uid,
+                                                uint32_t required_mode)
 {
-    uint32_t idx = rs->cache_cursor % QUERY_CACHE_SIZE;
-    rs->cache_cursor++;
+    uint32_t idx = (uint32_t)(phash % QUERY_CACHE_SIZE);
     query_cache_entry_t *e = &rs->query_cache[idx];
-    e->path_hash = key;
-    e->op = op;
-    e->uid = uid;
-    e->result = result;
+    if (e->valid && e->path_hash == phash &&
+        e->subject_hash == subject_hash && e->uid == uid &&
+        (e->eval & required_mode) == required_mode) {
+        return e;
+    }
+    return NULL;
 }
 
-/** Invalidate the entire query cache. */
+/** Store a result in the cache (direct-mapped: latest write wins). */
+static void query_cache_store(soft_ruleset_t *rs,
+                              uint64_t phash,
+                              uint32_t subject_hash,
+                              uint32_t uid,
+                              uint32_t granted,
+                              uint32_t eval,
+                              int32_t deny_layer)
+{
+    uint32_t idx = (uint32_t)(phash % QUERY_CACHE_SIZE);
+    query_cache_entry_t *e = &rs->query_cache[idx];
+    e->path_hash = phash;
+    e->subject_hash = subject_hash;
+    e->uid = uid;
+    e->granted = granted;
+    e->eval = eval;
+    e->deny_layer = deny_layer;
+    e->valid = 1;
+}
 
 void soft_ruleset_free(soft_ruleset_t *rs)
 {
@@ -435,6 +459,23 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
     return soft_ruleset_add_rule_at_layer(rs, 0, pattern, mode, op_type,
                                           linked_path_var, subject_regex,
                                           min_uid, flags);
+}
+
+/*  Layer type configuration                                           */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_set_layer_type(soft_ruleset_t *rs,
+                                int layer,
+                                layer_type_t type,
+                                uint32_t mask)
+{
+    if (!rs || layer < 0 || layer >= MAX_LAYERS) { errno = EINVAL; return -1; }
+    layer_t *lyr = ensure_layer(rs, layer);
+    if (!lyr) return -1;
+    lyr->type = type;
+    lyr->mask = mask;
+    soft_ruleset_invalidate(rs);
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -709,13 +750,51 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
     }
 
     /* Fall back to layered evaluation */
+
+    /* Phase 1: SPECIFICITY layers — longest match wins, overrides PRECEDENCE */
+        
+    const char *spec_best_pattern = NULL;
+    size_t spec_best_len = 0;
+    uint32_t spec_best_mode = 0;
+    bool spec_found = false;
+
+    for (int i = 0; i < rs->layer_count; i++) {
+        const layer_t *lyr = &rs->layers[i];
+        if (lyr->count == 0 || lyr->type != LAYER_SPECIFICITY) continue;
+        if (lyr->mask != 0 && !(lyr->mask & op_required_src_mode(rs, op))) continue;
+
+        for (int j = 0; j < lyr->count; j++) {
+            const rule_t *r = &lyr->rules[j];
+            if (r->op_type != op && r->op_type != SOFT_OP_READ &&
+                r->op_type != SOFT_OP_WRITE) continue;
+            if (!subject_matches(r, ctx->subject)) continue;
+            if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+            if (!rule_matches_path(r, path, ctx)) continue;
+
+            size_t pat_len = strlen(r->pattern);
+            if (!spec_found || pat_len > spec_best_len) {
+                spec_best_len = pat_len;
+                spec_best_pattern = r->pattern;
+                spec_best_mode = r->mode;
+                spec_found = true;
+            }
+        }
+    }
+
+    if (spec_found) {
+        if (out_matched_pattern) *out_matched_pattern = spec_best_pattern;
+        if (out_deny_layer) *out_deny_layer = -1; /* SPECIFICITY match, not PRECEDENCE DENY */
+        return spec_best_mode & SOFT_ACCESS_DENY ? 0 : spec_best_mode;
+    }
+
+    /* Phase 2: PRECEDENCE layers — current behavior */
     uint32_t intersection = SOFT_ACCESS_ALL;
     bool any_layer_matched = false;
     const char *last_pattern = NULL;
 
     for (int i = 0; i < rs->layer_count; i++) {
         const layer_t *lyr = &rs->layers[i];
-        if (lyr->count == 0) continue;
+        if (lyr->count == 0 || lyr->type == LAYER_SPECIFICITY) continue;
 
         const char *layer_pattern = NULL;
         uint32_t granted = 0;
@@ -786,26 +865,54 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
 {
     if (!rs || !ctx) { errno = EINVAL; return -EACCES; }
 
-    /* Query cache lookup (skip if audit log requested) */
-    if (!out_log) {
-        soft_ruleset_t *mutable = (soft_ruleset_t *)rs; /* safe: cache is internal */
-        uint64_t key = ctx_hash(ctx);
-        int32_t cached = query_cache_lookup(mutable, key, ctx->op, ctx->uid);
-        if (cached != 0) return (int)cached;
-    }
-
     bool is_binary = (ctx->op == SOFT_OP_COPY || ctx->op == SOFT_OP_MOVE ||
                       ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT ||
                       ctx->op >= SOFT_OP_CUSTOM);
 
+    uint64_t subj_hash = fnv1a_str(ctx->subject);
+    uint32_t eval_mask = eval_mode_for_op(ctx->op);
     int result;
 
+    /* Try cache lookup (skip if audit log requested) */
+    if (!out_log) {
+        soft_ruleset_t *mutable = (soft_ruleset_t *)rs;
+        uint64_t src_hash = path_hash(ctx->src_path);
+        uint32_t src_req = op_required_src_mode(rs, ctx->op);
+        query_cache_entry_t *src_hit = query_cache_lookup(mutable, src_hash,
+                                                           subj_hash, ctx->uid, src_req);
+
+        if (is_binary) {
+            uint64_t dst_hash = path_hash(ctx->dst_path);
+            uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
+            query_cache_entry_t *dst_hit = query_cache_lookup(mutable, dst_hash,
+                                                               subj_hash, ctx->uid, dst_req);
+
+            if (src_hit && dst_hit) {
+                /* Both subqueries cached and cover required modes */
+                if (src_hit->deny_layer >= 0 || dst_hit->deny_layer >= 0)
+                    return -EACCES;
+                if ((src_hit->granted & src_req) != src_req ||
+                    (dst_hit->granted & dst_req) != dst_req)
+                    return -EACCES;
+                return (int)(src_hit->granted | dst_hit->granted);
+            }
+        } else if (src_hit) {
+            /* Unary op, fully cached */
+            if (src_hit->deny_layer >= 0) return -EACCES;
+            uint32_t req = op_required_src_mode(rs, ctx->op);
+            if ((src_hit->granted & req) != req) return -EACCES;
+            return (int)src_hit->granted;
+        }
+    }
+
+    /* Evaluate */
     if (is_binary) {
         int src_deny = -1, dst_deny = -1;
+        uint32_t src_granted = 0, dst_granted = 0;
         const char *src_pattern = NULL, *dst_pattern = NULL;
 
-        uint32_t src_granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
-                                               &src_deny, &src_pattern);
+        src_granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
+                                      &src_deny, &src_pattern);
         if (src_deny >= 0) {
             if (out_log) {
                 out_log->result = -EACCES;
@@ -825,8 +932,8 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                 }
                 result = -EACCES;
             } else {
-                uint32_t dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
-                                                       &dst_deny, &dst_pattern);
+                dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
+                                              &dst_deny, &dst_pattern);
                 if (dst_deny >= 0) {
                     if (out_log) {
                         out_log->result = -EACCES;
@@ -855,6 +962,21 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                         result = (int)res;
                     }
                 }
+            }
+        }
+
+        /* Cache subquery results independently */
+        if (!out_log) {
+            soft_ruleset_t *m = (soft_ruleset_t *)rs;
+            uint64_t sh = path_hash(ctx->src_path);
+            query_cache_store(m, sh, subj_hash, ctx->uid,
+                              src_granted, eval_mask, src_deny);
+            /* Cache DST only if it was evaluated */
+            if (src_deny < 0 &&
+                (src_granted & op_required_src_mode(rs, ctx->op)) == op_required_src_mode(rs, ctx->op)) {
+                uint64_t dh = path_hash(ctx->dst_path);
+                query_cache_store(m, dh, subj_hash, ctx->uid,
+                                  dst_granted, eval_mask, dst_deny);
             }
         }
     } else {
@@ -889,13 +1011,14 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             }
             result = (int)granted;
         }
-    }
 
-    /* Store in query cache (only if audit log not requested) */
-    if (!out_log) {
-        soft_ruleset_t *mutable = (soft_ruleset_t *)rs;
-        uint64_t key = ctx_hash(ctx);
-        query_cache_store(mutable, key, ctx->op, ctx->uid, (int32_t)result);
+        /* Cache unary result */
+        if (!out_log) {
+            soft_ruleset_t *m = (soft_ruleset_t *)rs;
+            uint64_t sh = path_hash(ctx->src_path);
+            query_cache_store(m, sh, subj_hash, ctx->uid,
+                              granted, eval_mask, deny_layer);
+        }
     }
 
     return result;
@@ -1008,8 +1131,10 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                                           &src_deny, NULL);
             batch_cache_store(src_cache, ctx->src_path, src_granted, src_deny,
                               &src_write);
-            batch_cache_store(src_cache, src_parent, src_granted, src_deny,
-                              &src_write);
+            /* Don't cache root parent — it matches everything and causes false hits */
+            if (strcmp(src_parent, "/") != 0)
+                batch_cache_store(src_cache, src_parent, src_granted, src_deny,
+                                  &src_write);
         }
 
         if (is_binary && ctx->dst_path) {
@@ -1026,8 +1151,10 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                                               &dst_deny, NULL);
                 batch_cache_store(dst_cache, ctx->dst_path, dst_granted, dst_deny,
                                   &dst_write);
-                batch_cache_store(dst_cache, dst_parent, dst_granted, dst_deny,
-                                  &dst_write);
+                /* Don't cache root parent */
+                if (strcmp(dst_parent, "/") != 0)
+                    batch_cache_store(dst_cache, dst_parent, dst_granted, dst_deny,
+                                      &dst_write);
             }
         }
 

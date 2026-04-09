@@ -65,6 +65,20 @@ typedef enum {
 #define SOFT_RULE_TEMPLATE   (1U << 2)  /* Contains ${SRC} or ${DST} */
 
 /* ------------------------------------------------------------------ */
+/*  Layer type                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How a layer combines with other layers.
+ *   LAYER_PRECEDENCE (default): DENY shadows lower, mode intersection.
+ *   LAYER_SPECIFICITY: Longest-match wins, overrides PRECEDENCE.
+ */
+typedef enum {
+    LAYER_PRECEDENCE,
+    LAYER_SPECIFICITY,
+} layer_type_t;
+
+/* ------------------------------------------------------------------ */
 /*  Access context                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -227,6 +241,23 @@ int soft_ruleset_add_rule_at_layer(soft_ruleset_t *rs,
 /* ------------------------------------------------------------------ */
 /*  Custom operation mode registration                                 */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Set the type and mode mask for a specific layer.
+ *
+ * @param rs    Ruleset handle.
+ * @param layer Layer index.
+ * @param type  Layer type: LAYER_PRECEDENCE (default) or LAYER_SPECIFICITY.
+ *              SPECIFICITY layers use longest-match semantics: the most
+ *              specific rule overrides PRECEDENCE layers.
+ * @param mask  Bitmask of SOFT_ACCESS_* modes this layer applies.
+ *              0 means "all modes" (default, backward compatible).
+ * @return 0 on success, -1 on invalid index.
+ */
+int soft_ruleset_set_layer_type(soft_ruleset_t *rs,
+                                int layer,
+                                layer_type_t type,
+                                uint32_t mask);
 
 /**
  * Register required SRC and DST modes for a SOFT_OP_CUSTOM operation.

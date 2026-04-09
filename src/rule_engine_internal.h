@@ -20,16 +20,52 @@
 #define MAX_LAYERS      64
 #define MAX_CUSTOM_OPS  16
 #define QUERY_CACHE_SIZE 256    /**< LRU query result cache entries */
+#define SPECIFICITY_NO_MATCH  UINT32_MAX /**< Sentinel: no SPECIFICITY rule matched */
 
 /* ------------------------------------------------------------------ */
-/*  Query result cache (round-robin LRU)                               */
+/*  Layer type                                                         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * How a layer combines with other layers.
+ *   PRECEDENCE  (default): DENY shadows lower, mode intersection.
+ *   SPECIFICITY: Longest-match wins, overrides PRECEDENCE entirely.
+ *                A SPECIFICITY rule that grants mode X returns X
+ *                regardless of PRECEDENCE DENYs. A SPECIFICITY DENY
+ *                (mode=0 or DENY) also overrides PRECEDENCE.
+ */
+
+/* ------------------------------------------------------------------ */
+/*  Query result cache (LRU, round-robin eviction)                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Cache entry keyed on a single path.  Stores what was GRANTED and
+ * what was EVALUATED as two independent mode bitmasks.
+ *
+ *   granted  — SOFT_ACCESS_* bits that were granted
+ *   eval     — SOFT_ACCESS_* bits that were actually evaluated
+ *
+ * A mode bit in `granted` is only meaningful if the same bit is set in
+ * `eval`.  If eval lacks a bit, the corresponding granted bit is
+ * undefined (the evaluation never looked at rules that could produce it).
+ *
+ * Example:
+ *   READ("/a")  →  granted=READ,  eval=READ
+ *   COPY("/a")  →  granted=RWX,   eval=ALL   (COPY matches COPY+READ+WRITE rules)
+ *
+ *   Later, a WRITE("/a") lookup:
+ *     - READ cache entry: eval&WRITE = 0  → miss, must evaluate
+ *     - COPY cache entry: eval&WRITE = W  → hit, return granted&WRITE
+ */
 typedef struct {
-    uint64_t path_hash;       /**< FNV-1a hash of (src_path, dst_path, subject) */
-    uint32_t op;              /**< soft_binary_op_t */
+    uint64_t path_hash;       /**< FNV-1a hash of path */
+    uint32_t subject_hash;    /**< FNV-1a hash of subject string */
     uint32_t uid;             /**< Caller UID */
-    int32_t  result;          /**< Cached result: SOFT_ACCESS_* or -EACCES, 0=miss */
+    uint32_t granted;         /**< SOFT_ACCESS_* bits granted */
+    uint32_t eval;            /**< SOFT_ACCESS_* bits that were evaluated */
+    int32_t  deny_layer;      /**< -1 = no deny, >=0 = denied at this layer */
+    uint8_t  valid;           /**< Non-zero = entry is valid */
 } query_cache_entry_t;
 
 /* ------------------------------------------------------------------ */
@@ -53,9 +89,11 @@ typedef struct {
 #define LAYER_CHUNK 64
 
 typedef struct {
-    rule_t *rules;      /**< Dynamically allocated array */
-    int     count;      /**< Number of rules */
-    int     capacity;   /**< Allocated capacity */
+    rule_t         *rules;      /**< Dynamically allocated array */
+    int             count;      /**< Number of rules */
+    int             capacity;   /**< Allocated capacity */
+    layer_type_t    type;       /**< PRECEDENCE or SPECIFICITY */
+    uint32_t        mask;       /**< Mode filter: 0 = all modes */
 } layer_t;
 
 /* ------------------------------------------------------------------ */
@@ -91,7 +129,7 @@ typedef struct {
 #define EFF_CHUNK 64
 
 typedef struct {
-    /* Exact/directory static patterns — sorted by pattern for binary search */
+    /* PRECEDENCE rules (current behavior: DENY shadows, mode AND) */
     compiled_rule_t *static_rules;
     int              static_count;
     int              static_capacity;
@@ -100,6 +138,15 @@ typedef struct {
     compiled_rule_t *dynamic_rules;
     int              dynamic_count;
     int              dynamic_capacity;
+
+    /* SPECIFICITY rules (longest-match overrides PRECEDENCE) */
+    compiled_rule_t *spec_static_rules;
+    int              spec_static_count;
+    int              spec_static_capacity;
+
+    compiled_rule_t *spec_dynamic_rules;
+    int              spec_dynamic_count;
+    int              spec_dynamic_capacity;
 
     /* String arena for interning pattern and subject strings */
     str_arena_t      strings;
@@ -124,8 +171,7 @@ struct soft_ruleset {
     effective_ruleset_t effective;             /**< Simplified (read-only after compile) */
     bool                is_compiled;           /**< true if effective is valid */
     custom_op_entry_t   custom_ops[MAX_CUSTOM_OPS];
-    query_cache_entry_t query_cache[QUERY_CACHE_SIZE]; /**< LRU query result cache */
-    uint32_t            cache_cursor;          /**< Round-robin cursor for cache eviction */
+    query_cache_entry_t query_cache[QUERY_CACHE_SIZE]; /**< Direct-mapped query result cache */
     char                last_error[256];
 };
 
