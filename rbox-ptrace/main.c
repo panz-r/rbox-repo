@@ -799,6 +799,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "%s: Requesting elevated privileges...\n", g_progname);
         pkexec_set_progname(g_progname);
         int ret = pkexec_launch(argc, argv, cmd_path);
+        free(cmd_path);
         return ret;
     }
 
