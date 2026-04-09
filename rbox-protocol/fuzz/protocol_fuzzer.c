@@ -8,6 +8,7 @@
 
 #include "rbox_protocol.h"
 #include "rbox_protocol_defs.h"
+#include "runtime.h"
 
 // Fuzzer entry point - called by libfuzzer
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t length) {
@@ -34,7 +35,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t length) {
 
     // === Test 4: Checksum calculation ===
     for (size_t len = 1; len <= length && len <= 256; len++) {
-        rbox_calculate_checksum_crc32(0, data, len);
+        rbox_runtime_crc32(0, data, len);
     }
 
     // === Test 5: Command parsing ===

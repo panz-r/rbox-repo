@@ -17,6 +17,7 @@
 #include <time.h>
 
 #include "rbox_protocol.h"
+#include "runtime.h"
 
 /* Consistent error reporting macro */
 #define TEST_ERROR(fmt, ...) fprintf(stderr, "ERROR: " fmt "\n", ##__VA_ARGS__)
@@ -364,7 +365,7 @@ static int test_hickup_bad_magic(void) {
         *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
         *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = 0;
         *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) =
-            rbox_calculate_checksum_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
+            rbox_runtime_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
         write_all(rbox_client_fd(cl), pkt, RBOX_HEADER_SIZE);
         rbox_client_close(cl);
     }
@@ -410,7 +411,7 @@ static int test_hickup_bad_version(void) {
         rbox_build_request(pkt, sizeof(pkt), &plen, "ls", NULL, NULL, 1, args, 0, NULL, NULL);
         *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = 999;
         *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) =
-            rbox_calculate_checksum_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
+            rbox_runtime_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
         write_all(rbox_client_fd(cl), pkt, plen);
         rbox_client_close(cl);
     }

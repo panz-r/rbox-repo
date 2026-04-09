@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "rbox_protocol.h"
+#include "runtime.h"
 
 /* Test header validation - uses canonical library function */
 void test_header_validate(void) {
@@ -71,15 +72,15 @@ void test_checksum(void) {
     printf("Testing checksum...\n");
     
     const char *data = "test data";
-    uint32_t sum1 = rbox_calculate_checksum_crc32(0, data, strlen(data));
-    uint32_t sum2 = rbox_calculate_checksum_crc32(0, data, strlen(data));
+    uint32_t sum1 = rbox_runtime_crc32(0, data, strlen(data));
+    uint32_t sum2 = rbox_runtime_crc32(0, data, strlen(data));
     
     assert(sum1 == sum2);
     printf("  ✓ Checksum is deterministic\n");
     
     /* Different data = different checksum */
     const char *data2 = "other data";
-    uint32_t sum3 = rbox_calculate_checksum_crc32(0, data2, strlen(data2));
+    uint32_t sum3 = rbox_runtime_crc32(0, data2, strlen(data2));
     assert(sum1 != sum3);
     printf("  ✓ Different data = different checksum\n");
     

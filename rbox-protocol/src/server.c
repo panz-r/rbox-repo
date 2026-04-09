@@ -20,6 +20,7 @@
 
 #include "rbox_protocol.h"
 #include "socket.h"
+#include "runtime.h"
 #include "server.h"
 #include "server_cache.h"
 #include "server_response.h"
@@ -377,7 +378,7 @@ static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_
 
 /* Process a completed request: check cache, parse env vars, queue request */
 static void process_completed_request(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
-    uint32_t packet_checksum = (req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
+    uint32_t packet_checksum = (req->command_len > 0) ? rbox_runtime_crc32(0, req->command_data, req->command_len) : 0;
     uint64_t cmd_hash2 = (req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
     uint8_t cached_decision;
     char cached_reason[256];
@@ -790,7 +791,7 @@ static void *server_thread_func(void *arg) {
             size_t resp_len;
             uint32_t cmd_hash = req->cmd_hash;
             uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
-            uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_calculate_checksum_crc32(0, req->command_data, req->command_len) : 0;
+            uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_runtime_crc32(0, req->command_data, req->command_len) : 0;
             rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
                                   cmd_hash, cmd_hash2, dec->fenv_hash, dec->decision, dec->reason, dec->duration);
             char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,

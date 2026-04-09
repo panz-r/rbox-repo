@@ -17,9 +17,6 @@
  * CHECKSUM
  * ============================================================ */
 
-/* Calculate CRC32 checksum - composable, prev_crc=0 for fresh start */
-uint32_t rbox_protocol_checksum_crc32(uint32_t prev_crc, const void *data, size_t len);
-
 /* Two-step 64-bit hash for time-limited decisions */
 uint64_t rbox_protocol_hash64(const char *str, size_t len);
 

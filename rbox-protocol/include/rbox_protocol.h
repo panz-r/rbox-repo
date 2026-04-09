@@ -363,9 +363,6 @@ const char *rbox_strerror(rbox_error_t err);
 /* Validate packet header */
 rbox_error_t rbox_header_validate(const char *packet, size_t len);
 
-/* Calculate CRC32 checksum - composable, prev_crc=0 for fresh start */
-uint32_t rbox_calculate_checksum_crc32(uint32_t prev_crc, const void *data, size_t len);
-
 /* 64-bit command hash - two-step hash for time-limited decisions */
 uint64_t rbox_hash64(const char *str, size_t len);
 

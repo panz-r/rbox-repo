@@ -55,15 +55,6 @@ uint64_t rbox_server_hash64(const char *str, size_t len) {
     return hash ^ (hash2 + 0x9e3779b97f4a7c15ULL);
 }
 
-uint32_t rbox_protocol_checksum_crc32(uint32_t prev_crc, const void *data, size_t len) {
-    return rbox_runtime_crc32(prev_crc, data, len);
-}
-
-/* Wrapper for rbox_calculate_checksum_crc32 (declared in rbox_protocol.h) */
-uint32_t rbox_calculate_checksum_crc32(uint32_t prev_crc, const void *data, size_t len) {
-    return rbox_runtime_crc32(prev_crc, data, len);
-}
-
 /* Generate request ID using runtime's thread-local seed */
 void rbox_protocol_generate_request_id(uint8_t *id_out) {
     if (!id_out) return;

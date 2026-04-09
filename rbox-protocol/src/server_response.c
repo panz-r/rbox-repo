@@ -11,6 +11,7 @@
 #include <sys/epoll.h>
 #include "rbox_protocol.h"
 #include "protocol.h"
+#include "runtime.h"
 #include "server_internal.h"
 #include "server_response.h"
 
@@ -67,9 +68,9 @@ char *rbox_server_build_response(
         pos += bitmap_size;
     }
 
-    uint32_t checksum = rbox_protocol_checksum_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
+    uint32_t checksum = rbox_runtime_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = checksum;
-    uint32_t body_checksum = rbox_protocol_checksum_crc32(0, body, body_len);
+    uint32_t body_checksum = rbox_runtime_crc32(0, body, body_len);
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_BODY_CHECKSUM) = body_checksum;
 
     *out_len = total_len;

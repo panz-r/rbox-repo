@@ -20,6 +20,7 @@
 #include "rbox_protocol.h"
 #include "socket.h"
 #include "protocol.h"
+#include "runtime.h"
 #include "session_internal.h"
 #include "server_response.h"
 
@@ -106,7 +107,7 @@ rbox_error_t rbox_header_validate(const char *packet, size_t len) {
 
     /* Verify checksum at offset 119 - compute CRC over bytes 0-118 only */
     uint32_t stored_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
-    uint32_t calc_checksum = rbox_calculate_checksum_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
+    uint32_t calc_checksum = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
 
     if (stored_checksum != calc_checksum) {
         return RBOX_ERR_CHECKSUM;
@@ -284,11 +285,11 @@ rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
     }
 
     /* Calculate header checksum (bytes 0–118) */
-    uint32_t checksum = rbox_calculate_checksum_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
+    uint32_t checksum = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
     memcpy(packet + RBOX_HEADER_OFFSET_CHECKSUM, &checksum, 4);
 
     /* Calculate body checksum (bytes from RBOX_HEADER_SIZE onward) */
-    uint32_t body_checksum = rbox_calculate_checksum_crc32(0, packet + RBOX_HEADER_SIZE, body_len);
+    uint32_t body_checksum = rbox_runtime_crc32(0, packet + RBOX_HEADER_SIZE, body_len);
     memcpy(packet + RBOX_HEADER_OFFSET_BODY_CHECKSUM, &body_checksum, 4);
 
     *out_len = RBOX_HEADER_SIZE + body_len;
@@ -461,7 +462,7 @@ void rbox_decode_header(const char *packet, size_t len, rbox_decoded_header_t *h
     header->checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
 
     /* Verify header checksum: compute CRC over header bytes 0-118 (excluding checksum at 119) */
-    uint32_t hdr_crc = rbox_calculate_checksum_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
+    uint32_t hdr_crc = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
     if (header->checksum != hdr_crc) {
         memset(header, 0, sizeof(*header));
         return;
