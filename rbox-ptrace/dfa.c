@@ -1,7 +1,6 @@
 #include "dfa.h"
 #include <stdio.h>
 #include <string.h>
-#include <pthread.h>
 
 #include "debug.h"
 
@@ -11,26 +10,17 @@ extern const size_t rbox_ptrace_dfa_size;
 /* Expected DFA identifier - must match pattern file IDENTIFIER */
 static const char* EXPECTED_IDENTIFIER = "rbox-ptrace-cmd-v1";
 
-static pthread_once_t dfa_init_once = PTHREAD_ONCE_INIT;
-static bool g_dfa_initialized = false;
-
-static void dfa_init_once_wrapper(void) {
+int dfa_init(void) {
     if (!dfa_eval_validate_id(rbox_ptrace_dfa, rbox_ptrace_dfa_size, EXPECTED_IDENTIFIER)) {
-        LOG_FATAL("DFA initialization failed: identifier mismatch");
+        fprintf(stderr, "DFA initialization failed: identifier mismatch\n");
+        return -1;
     }
-    g_dfa_initialized = true;
+    return 0;
 }
 
 int dfa_get_category_mask(const char* cmd, uint8_t* out_mask) {
     if (cmd == NULL || cmd[0] == '\0' || out_mask == NULL) {
         if (out_mask) *out_mask = 0;
-        return 0;
-    }
-
-    pthread_once(&dfa_init_once, dfa_init_once_wrapper);
-
-    if (!g_dfa_initialized) {
-        *out_mask = 0;
         return 0;
     }
 
@@ -45,13 +35,6 @@ int dfa_get_category_mask(const char* cmd, uint8_t* out_mask) {
 
 void dfa_debug(const char* cmd) {
     if (cmd == NULL || cmd[0] == '\0') {
-        return;
-    }
-
-    pthread_once(&dfa_init_once, dfa_init_once_wrapper);
-
-    if (!g_dfa_initialized) {
-        LOG_ERROR("DFA not initialized");
         return;
     }
 

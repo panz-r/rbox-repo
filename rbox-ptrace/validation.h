@@ -13,6 +13,9 @@
 #define VALIDATION_DENY     1   /* Command is denied (DFA reject) */
 #define VALIDATION_ASK      2   /* Need to ask server */
 
+/* Initialize DFA - must be called before argument parsing */
+int dfa_init(void);
+
 /* Initialize validation subsystem (DFA, server connection) */
 int validation_init(void);
 

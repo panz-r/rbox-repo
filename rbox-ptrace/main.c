@@ -460,6 +460,12 @@ int main(int argc, char *argv[]) {
     /* Register cleanup function for flagged env names and syslog */
     atexit(cleanup_global_resources);
 
+    /* Initialize DFA before argument parsing - exit on failure */
+    if (dfa_init() != 0) {
+        fprintf(stderr, "%s: failed to initialize DFA\n", g_progname);
+        exit(1);
+    }
+
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
         {"version", no_argument, 0, 'V'},

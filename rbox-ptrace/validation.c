@@ -22,6 +22,7 @@
 #include "debug.h"
 
 /* External DFA functions from the linked library */
+extern int dfa_init(void);
 extern int dfa_get_category_mask(const char *cmd, uint8_t *out_mask);
 
 /* Category bits for decision making */
