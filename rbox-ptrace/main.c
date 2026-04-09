@@ -513,9 +513,16 @@ int main(int argc, char *argv[]) {
             case 'V':
                 printf("%s version 1.0.0\n", g_progname);
                 return 0;
-            case 'u':
-                provided_uid = atoi(optarg);
+            case 'u': {
+                char *end;
+                unsigned long uid = strtoul(optarg, &end, 10);
+                if (end == optarg || *end != '\0') {
+                    LOG_ERROR("Invalid UID: %s", optarg);
+                    return 1;
+                }
+                provided_uid = (uid_t)uid;
                 break;
+            }
             case 'c':
                 provided_cwd = optarg;
                 break;
