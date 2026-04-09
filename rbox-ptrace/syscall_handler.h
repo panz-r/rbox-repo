@@ -12,40 +12,11 @@
 /* Shell tokenizer for parsing commands into subcommands */
 #include "shell_tokenizer.h"
 
-/*
- * Allowance tracking for validated commands.
- * When a command is allowed, child processes can inherit the permission
- * to run subcommands without requiring new server requests.
- *
- * Each process tracks its own allowances and wrapper chain - no global tables.
- * Allowances expire after ALLOWANCE_TIMEOUT_SECONDS (10 minutes).
- *
- * Storage layout:
- * - 2 inline allowance sets (no allocation for common case)
- * - Linked list of 4-slot spillover nodes for processes with many commands
- * - Maximum spillover nodes capped at MAX_SPILLOVER_NODES to prevent unbounded growth
- */
+/* Allowance chain for validated commands */
+#include "trampoline_allowance.h"
+
 #define ALLOWANCE_TIMEOUT_SECONDS 600  /* 10 minutes */
-#define INLINE_ALLOWANCE_SETS 2
-#define SPILLOVER_ALLOWANCE_SETS 4
-#define MAX_SPILLOVER_NODES 16  /* Max spillover nodes per process (64 extra slots max) */
 
-/* One allowance set represents subcommands from one granted command.
- * Multiple sets exist to handle a parent running multiple commands before
- * all children have consumed their allowances. */
-typedef struct AllowanceSet {
-    char *subcommands[SHELL_MAX_SUBCOMMANDS]; /* The subcommands that are allowed */
-    int subcommand_count;
-    struct timespec timestamp;  /* When the allowance was granted (monotonic clock) */
-    int used_mask[(SHELL_MAX_SUBCOMMANDS + 31) / 32]; /* Bitmap of used subcommands */
-} AllowanceSet;
-
-/* Spillover node for additional allowance sets beyond the 2 inline slots.
- * Each node contains SPILLOVER_ALLOWANCE_SETS (4) allowance sets. */
-typedef struct AllowanceSpillover {
-    AllowanceSet sets[SPILLOVER_ALLOWANCE_SETS];
-    struct AllowanceSpillover *next;
-} AllowanceSpillover;
 
 /* Architecture-specific syscall numbers and register access
  * Use system headers for syscall numbers (<sys/syscall.h> provides SYS_execve)
@@ -183,8 +154,6 @@ typedef struct AllowanceSpillover {
  * - Which processes are in the middle of an execve
  * - Which processes have been detached
  * - The original command arguments for validation
- * - Allowances for validated subcommands
- * - Wrapper chain state for prefix-wrapper commands
  *
  * The process table is a dynamic hash table that grows automatically
  * when the load factor exceeds 0.75. It starts at 64 entries and
@@ -203,24 +172,9 @@ typedef struct {
     unsigned long *execve_envp_addrs; /* Original addresses of envp strings in child memory */
     char *last_validated_cmd; /* Last command that was validated for this process */
 
-    /* Allowance tracking for validated subcommands.
-     * When this process runs a command, subcommands are stored here
-     * so child processes can exec them without new server requests.
-     *
-     * Storage: 2 inline sets + linked list of 4-slot spillover nodes.
-     * This handles a parent running multiple commands before children consume. */
-    struct {
-        AllowanceSet inline_sets[INLINE_ALLOWANCE_SETS];  /* No allocation needed */
-        AllowanceSpillover *spillover;  /* Linked list for overflow */
-    } allowances;
+    /* Hierarchical allowance chain for validated commands */
+    AllowSet chains;
 
-    /* Wrapper chain tracking for prefix-wrappers.
-     * When a command with leading wrappers (e.g., "timeout timeout cmd") is allowed,
-     * the wrapper chain is tracked here so children can exec the wrappers. */
-    struct {
-        char *wrapper_command;      /* Full wrapper chain string (e.g., "timeout timeout cmd") */
-        struct timespec timestamp;  /* When the allowance was granted (monotonic clock) */
-    } wrapper_chain;
 } ProcessState;
 
 /* Find process state without creating if not found - for fork event handling */

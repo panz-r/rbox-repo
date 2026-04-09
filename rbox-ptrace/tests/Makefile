@@ -21,6 +21,7 @@ TEST_SRCS = test_main.c \
             test_e2e.c \
             test_sandbox.c \
             test_soft_policy.c \
+            test_trampoline_allowance.c \
             test_utils.c \
             debug.c
 
@@ -36,6 +37,7 @@ SRCS = ../progname.c \
        ../env.c \
        ../pkexec.c \
        ../judge.c \
+       ../trampoline_allowance.c \
        ../build/rbox_ptrace_dfa_data.c \
        ../../shellsplit/src/env_screener.c \
        ../../shellsplit/src/relative_permutation_entropy.c \

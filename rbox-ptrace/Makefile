@@ -46,6 +46,7 @@ SRCS = main.c \
        pkexec.c \
        judge.c \
        soft_policy.c \
+       trampoline_allowance.c \
        $(DFA_DATA_C) \
        ../shellsplit/src/env_screener.c \
        ../shellsplit/src/relative_permutation_entropy.c
