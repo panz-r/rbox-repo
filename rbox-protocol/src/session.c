@@ -92,6 +92,7 @@ void rbox_session_free(rbox_session_t *session) {
     if (!session) return;
     rbox_client_close(session->client);
     free(session->send_buf);
+    rbox_response_free(&session->response);
     free(session->recv_buf);
     free(session->response_data);
     free(session);
@@ -450,6 +451,7 @@ void rbox_session_reset(rbox_session_t *session) {
     if (!session) return;
     if (session->state == RBOX_SESSION_RESPONSE_READY) {
         session->state = RBOX_SESSION_CONNECTED;
+        rbox_response_free(&session->response);
         free(session->response_data);
         session->response_data = NULL;
         session->response_len = 0;
