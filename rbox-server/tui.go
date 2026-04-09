@@ -293,6 +293,7 @@ const (
 	EventCommand
 	EventLog
 	EventRequest
+	EventAddPendingRetry
 )
 
 const (
@@ -321,6 +322,11 @@ type Event struct {
 	ClientID  string
 	Cwd       string
 	EnvVars   []EnvVarInfo // Flagged env vars from request
+	// Fields for EventAddPendingRetry
+	RetryDecision     string
+	RetryReason       string
+	RetryDuration     uint32
+	RetryEnvDecisions []EnvVarDecision
 }
 
 var (
@@ -733,6 +739,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashTimer = 3
 		case EventLog:
 			m.AddLog(msg.Log)
+		case EventAddPendingRetry:
+			// Find the command log for this request
+			var cmdLog *CommandLog
+			for _, c := range m.commands {
+				if c.RequestID == msg.RequestID {
+					cmdLog = c
+					break
+				}
+			}
+			if cmdLog != nil {
+				cmdLog.Decision = "RETRY"
+				cmdLog.IntendedDecision = msg.RetryDecision
+				cmdLog.OriginalReason = msg.RetryReason
+				cmdLog.Duration = msg.RetryDuration
+				cmdLog.EnvDecisions = msg.RetryEnvDecisions
+				m.pendingRetry[msg.RequestID] = cmdLog
+				m.lastDecision = "RETRY"
+				m.lastTime = time.Now()
+				m.flashTimer = FlashTimerSeconds
+			}
 		}
 
 	case time.Time:
@@ -864,9 +890,6 @@ func durationToReason(allow bool, choice int) (decision, reason string, duration
 }
 
 func (m *Model) retryPendingDecisions() {
-	pendingMu.Lock()
-	defer pendingMu.Unlock()
-
 	if len(pendingRequests) >= 100 {
 		fmt.Fprintf(os.Stderr, "ERROR: Too many pending decisions (%d), please restart server\n", len(pendingRequests))
 		os.Exit(1)
@@ -931,18 +954,16 @@ func (m *Model) executeDecision() {
 
 	err := MakeDecision(m.expandedCmd.RequestID, allow, reason, duration, envDecisions)
 	if err != nil {
-		// Decision failed - store for retry with full details
+		// Decision failed - queue event to store for retry
 		fmt.Fprintf(os.Stderr, "Decision failed: %v (will retry)\n", err)
-		m.expandedCmd.Decision = "RETRY"
-		m.expandedCmd.IntendedDecision = decision
-		m.expandedCmd.OriginalReason = reason
-		m.expandedCmd.Duration = duration
-		m.expandedCmd.EnvDecisions = envDecisions
-		m.pendingRetry[m.expandedCmd.RequestID] = m.expandedCmd
-		m.lastDecision = "RETRY"
-		m.lastTime = time.Now()
-		m.flashTimer = FlashTimerSeconds
-		// Don't clear expandedCmd - user moves on to next request
+		m.eventChan <- Event{
+			Type:              EventAddPendingRetry,
+			RequestID:         m.expandedCmd.RequestID,
+			RetryDecision:     decision,
+			RetryReason:       reason,
+			RetryDuration:     duration,
+			RetryEnvDecisions: envDecisions,
+		}
 		return
 	}
 
