@@ -216,13 +216,13 @@ static const char *copy_token(const char *s, char *dst, size_t dst_size)
     const char *end = find_token_end(s);
     const char *p = s;
     size_t n = 0;
-
-    if (*p == '"') p++;
-    while (p < end) {
+    int quoted = (*p == '"');
+    if (quoted) p++;
+    /* For quoted strings, stop before the closing quote */
+    const char *limit = quoted && end > s + 1 && *(end - 1) == '"' ? end - 1 : end;
+    while (p < limit) {
         if (*p == '\\' && *(p + 1)) {
             p++;
-            if (n < dst_size - 1) dst[n++] = *p;
-        } else if (*p == '"' && *(s) == '"') {
             if (n < dst_size - 1) dst[n++] = *p;
         } else {
             if (n < dst_size - 1) dst[n++] = *p;
@@ -515,7 +515,7 @@ int soft_ruleset_write_text(const soft_ruleset_t *rs, char **out_text)
                 buf = new_buf;
             }
 
-            used += (size_t)snprintf(buf + used, capacity - used, "# Layer %d %s", i, type_str);
+            used += (size_t)snprintf(buf + used, capacity - used, "@%d %s", i, type_str);
             if (lyr->mask != 0) {
                 char mask_str[16];
                 mode_to_str(lyr->mask, mask_str, sizeof(mask_str));
@@ -550,9 +550,35 @@ int soft_ruleset_write_text(const soft_ruleset_t *rs, char **out_text)
                 used += (size_t)n;
             }
             if (r->subject_regex[0] != '\0') {
-                n = snprintf(buf + used, capacity - used, " subject:%s", r->subject_regex);
-                if (n < 0 || (size_t)n >= capacity - used) { free(buf); return -1; }
-                used += (size_t)n;
+                /* Check if quoting is needed (contains spaces) */
+                int needs_quote = 0;
+                for (size_t si = 0; r->subject_regex[si]; si++) {
+                    if (isspace((unsigned char)r->subject_regex[si])) {
+                        needs_quote = 1;
+                        break;
+                    }
+                }
+                if (needs_quote) {
+                    n = snprintf(buf + used, capacity - used, " subject:\"");
+                    if (n < 0 || (size_t)n >= capacity - used) { free(buf); return -1; }
+                    used += (size_t)n;
+                    /* Escape backslashes and quotes in the value */
+                    for (size_t si = 0; r->subject_regex[si]; si++) {
+                        char c = r->subject_regex[si];
+                        if (c == '\\' || c == '"') {
+                            if (used + 1 >= capacity) { free(buf); return -1; }
+                            buf[used++] = '\\';
+                        }
+                        if (used + 1 >= capacity) { free(buf); return -1; }
+                        buf[used++] = c;
+                    }
+                    if (used + 1 >= capacity) { free(buf); return -1; }
+                    buf[used++] = '"';
+                } else {
+                    n = snprintf(buf + used, capacity - used, " subject:%s", r->subject_regex);
+                    if (n < 0 || (size_t)n >= capacity - used) { free(buf); return -1; }
+                    used += (size_t)n;
+                }
             }
             if (r->min_uid > 0) {
                 n = snprintf(buf + used, capacity - used, " uid:%u", r->min_uid);

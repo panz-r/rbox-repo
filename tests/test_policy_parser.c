@@ -388,6 +388,284 @@ static void test_parser_file_io(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Quoted subject regex                                                */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_quoted_subject(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Subject regex with spaces requires quoting */
+    const char *text =
+        "/data/** -> R subject:\".*admin user$\"\n";
+
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "parse quoted subject regex");
+
+    /* Verify round-trip serialization */
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize quoted subject");
+    TEST_ASSERT(out_text != NULL, "serialized text is not NULL");
+    TEST_ASSERT(strstr(out_text, "\"") != NULL, "output contains quotes for subject with spaces");
+
+    /* Parse serialized text back */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "parse serialized quoted subject");
+
+    /* Verify behavior matches */
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin user", 1000}, NULL),
+                   soft_ruleset_check_ctx(rs2,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin user", 1000}, NULL),
+                   "quoted subject round-trip produces same result");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edge cases: empty/whitespace input                                  */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_empty_input(void)
+{
+    /* Empty string */
+    soft_ruleset_t *rs1 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs1, "", NULL, NULL), 0, "parse empty string");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs1), 0, "no rules from empty string");
+    soft_ruleset_free(rs1);
+
+    /* Whitespace only */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, "   \n  \n\t\n", NULL, NULL), 0, "parse whitespace only");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs2), 0, "no rules from whitespace");
+    soft_ruleset_free(rs2);
+
+    /* NULL input */
+    soft_ruleset_t *rs3 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs3, NULL, NULL, NULL), -1, "NULL input rejected");
+    soft_ruleset_free(rs3);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edge cases: macro expansion                                         */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_macro_nested(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Macro using another macro in pattern */
+    const char *text =
+        "[BASE] /usr\n"
+        "[BIN] ((BASE))/bin/**\n"
+        "((BIN)) -> R\n";
+
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "parse nested macro expansion");
+
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "nested macro expanded correctly");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_macro_multiple_uses(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Same macro used in multiple rules */
+    const char *text =
+        "[BIN] /usr/bin/**\n"
+        "((BIN)) -> R /read\n"
+        "((BIN)) -> X /exec\n";
+
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "parse multiple uses of same macro");
+
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "first rule with macro works");
+    /* EXEC operation matches both READ and EXEC rules (READ rules match EXEC ops) */
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, "second rule with macro works");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edge cases: all mode characters                                     */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_all_modes(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* All mode characters in one rule */
+    const char *text = "/data/** -> RWXCU\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0, "parse all mode chars");
+
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC | SOFT_ACCESS_CREATE | SOFT_ACCESS_UNLINK,
+                   "all modes granted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_deny_mode(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* DENY alone */
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/secret -> D\n", &line, &err), 0, "parse DENY alone");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/secret", NULL, NULL, 1000}, NULL),
+                   -13, "DENY denies access");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_lowercase_modes(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Lowercase mode chars */
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> rw\n", &line, &err), 0, "parse lowercase modes");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "lowercase modes work");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edge cases: all operation types                                     */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_all_operations(void)
+{
+    const char *ops[] = {"read", "write", "exec", "copy", "move", "link", "mount", "chmod", "custom", NULL};
+
+    for (int i = 0; ops[i]; i++) {
+        soft_ruleset_t *rs = soft_ruleset_new();
+        char text[64];
+        snprintf(text, sizeof(text), "/data/** -> R /%s\n", ops[i]);
+
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
+                       "parse operation");
+
+        soft_ruleset_free(rs);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edge cases: layer boundaries                                        */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_layer_boundaries(void)
+{
+    /* Layer 0 (minimum) */
+    soft_ruleset_t *rs1 = soft_ruleset_new();
+    int line1 = 0;
+    const char *err1 = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs1, "@0 PRECEDENCE\n/data/** -> R\n", &line1, &err1), 0,
+                   "parse layer 0");
+    soft_ruleset_free(rs1);
+
+    /* Layer 63 (maximum) */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    int line2 = 0;
+    const char *err2 = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, "@63 PRECEDENCE\n/data/** -> R\n", &line2, &err2), 0,
+                   "parse layer 63");
+    soft_ruleset_free(rs2);
+
+    /* Layer 64 (out of range) */
+    soft_ruleset_t *rs3 = soft_ruleset_new();
+    int line3 = 0;
+    const char *err3 = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs3, "@64 PRECEDENCE\n/data/** -> R\n", &line3, &err3), -1,
+                   "layer 64 rejected");
+    soft_ruleset_free(rs3);
+
+    /* Negative layer */
+    soft_ruleset_t *rs4 = soft_ruleset_new();
+    int line4 = 0;
+    const char *err4 = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs4, "@-1 PRECEDENCE\n/data/** -> R\n", &line4, &err4), -1,
+                   "negative layer rejected");
+    soft_ruleset_free(rs4);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Round-trip: full features                                           */
+/* ------------------------------------------------------------------ */
+
+static void test_serializer_roundtrip_full(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Layer 0: PRECEDENCE with various features */
+    soft_ruleset_add_rule_at_layer(rs, 0, "${SRC}", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
+        SOFT_OP_COPY, "SRC", ".*cp$", 1000, SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/tmp/...", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+
+    /* Layer 1: SPECIFICITY */
+    soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
+    soft_ruleset_add_rule_at_layer(rs, 1, "/tmp/secret", SOFT_ACCESS_DENY,
+        SOFT_OP_READ, NULL, NULL, 0, 0);
+
+    /* Serialize */
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize full ruleset");
+    TEST_ASSERT(out_text != NULL, "serialized text is not NULL");
+    TEST_ASSERT(strstr(out_text, "PRECEDENCE") != NULL, "output contains PRECEDENCE");
+    TEST_ASSERT(strstr(out_text, "SPECIFICITY") != NULL, "output contains SPECIFICITY");
+
+    /* Parse back */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "parse serialized full ruleset");
+
+    /* Verify layer counts match */
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), soft_ruleset_layer_count(rs2),
+                   "layer count matches after round-trip");
+
+    /* Verify behavior matches for several queries */
+    soft_access_ctx_t ctx1 = {SOFT_OP_COPY, "/data/file.txt", "/tmp/out.txt", "/usr/bin/cp", 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx1, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx1, NULL),
+                   "COPY query matches after round-trip");
+
+    soft_access_ctx_t ctx2 = {SOFT_OP_READ, "/tmp/secret", NULL, NULL, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx2, NULL),
+                   "DENY query matches after round-trip");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -409,4 +687,14 @@ void test_rule_engine_parser_run(void)
     RUN_TEST(test_serializer_layered);
     RUN_TEST(test_serializer_subject_and_uid);
     RUN_TEST(test_parser_file_io);
+    RUN_TEST(test_parser_quoted_subject);
+    RUN_TEST(test_parser_empty_input);
+    RUN_TEST(test_parser_macro_nested);
+    RUN_TEST(test_parser_macro_multiple_uses);
+    RUN_TEST(test_parser_all_modes);
+    RUN_TEST(test_parser_deny_mode);
+    RUN_TEST(test_parser_lowercase_modes);
+    RUN_TEST(test_parser_all_operations);
+    RUN_TEST(test_parser_layer_boundaries);
+    RUN_TEST(test_serializer_roundtrip_full);
 }
