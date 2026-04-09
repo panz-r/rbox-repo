@@ -301,7 +301,12 @@ static int grant_parse_recursive(AllowSet *a, const char *cmd, int after_index, 
         const char *subContinuation = get_command_continuation(continuation, cont_buf, sizeof(cont_buf));
         if (subContinuation && *subContinuation) {
             int current_index = a->vecc;
-            a->vecv[current_index].command = strndup(continuation, strlen(continuation));
+            size_t cont_len = strlen(continuation);
+            a->vecv[current_index].command = malloc(cont_len + 1);
+            if (!a->vecv[current_index].command) {
+                return ALLOWSET_ERR_NOMEM;
+            }
+            strlcpy(a->vecv[current_index].command, continuation, cont_len + 1);
             a->vecv[current_index].after = after_index;
             a->vecc++;
             int ret = grant_parse_recursive(a, continuation, current_index, false);
