@@ -500,9 +500,9 @@ static int run_with_filter(const char *socket_path, const char *command,
     /* Check decision */
     if (!details.valid || details.decision != RBOX_DECISION_ALLOW) {
         if (details.valid && details.decision == RBOX_DECISION_DENY) {
-            printf("DENY %s\n", details.reason[0] ? details.reason : "");
+            fprintf(stderr, "Permission denied, this command was not executed and had no effects on the system.\n");
             free(packet);
-            return EXIT_DENY;
+            return EACCES;
         }
         fprintf(stderr, "%s: invalid server response\n", program_name);
         free(packet);
