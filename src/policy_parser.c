@@ -74,19 +74,19 @@ static int parse_mode_chars(const char *s, uint32_t *mode)
     return (*mode != 0) ? 0 : -1;
 }
 
-static soft_binary_op_t parse_op_type(const char *s)
+static int parse_op_type(const char *s, soft_binary_op_t *out_op)
 {
-    if (!s) return SOFT_OP_READ;
-    if (strcasecmp(s, "read") == 0)       return SOFT_OP_READ;
-    if (strcasecmp(s, "write") == 0)      return SOFT_OP_WRITE;
-    if (strcasecmp(s, "exec") == 0)       return SOFT_OP_EXEC;
-    if (strcasecmp(s, "copy") == 0)       return SOFT_OP_COPY;
-    if (strcasecmp(s, "move") == 0)       return SOFT_OP_MOVE;
-    if (strcasecmp(s, "link") == 0)       return SOFT_OP_LINK;
-    if (strcasecmp(s, "mount") == 0)      return SOFT_OP_MOUNT;
-    if (strcasecmp(s, "chmod") == 0)      return SOFT_OP_CHMOD_CHOWN;
-    if (strcasecmp(s, "custom") == 0)     return SOFT_OP_CUSTOM;
-    return SOFT_OP_READ;  /* default */
+    if (!s) { *out_op = SOFT_OP_READ; return 0; }
+    if (strcasecmp(s, "read") == 0)       { *out_op = SOFT_OP_READ; return 0; }
+    if (strcasecmp(s, "write") == 0)      { *out_op = SOFT_OP_WRITE; return 0; }
+    if (strcasecmp(s, "exec") == 0)       { *out_op = SOFT_OP_EXEC; return 0; }
+    if (strcasecmp(s, "copy") == 0)       { *out_op = SOFT_OP_COPY; return 0; }
+    if (strcasecmp(s, "move") == 0)       { *out_op = SOFT_OP_MOVE; return 0; }
+    if (strcasecmp(s, "link") == 0)       { *out_op = SOFT_OP_LINK; return 0; }
+    if (strcasecmp(s, "mount") == 0)      { *out_op = SOFT_OP_MOUNT; return 0; }
+    if (strcasecmp(s, "chmod") == 0)      { *out_op = SOFT_OP_CHMOD_CHOWN; return 0; }
+    if (strcasecmp(s, "custom") == 0)     { *out_op = SOFT_OP_CUSTOM; return 0; }
+    return -1;  /* unknown operation type */
 }
 
 static const char *op_type_to_str(soft_binary_op_t op)
@@ -181,6 +181,11 @@ static int expand_macros(parser_state_t *st, const char *pattern, char *out,
         iterations++;
     }
 
+    /* Check if there are still unexpanded macro references after 10 iterations */
+    if (iterations >= 10 && strstr(buf, "((") != NULL) {
+        return set_error(NULL, error_msg, line, "Macro expansion depth exceeded (possible circular reference)");
+    }
+
     strncpy(out, buf, out_size - 1);
     return 0;
 }
@@ -252,6 +257,10 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
         memcpy(id, id_start, id_len);
         id[id_len] = '\0';
 
+        /* Validate ID is not empty */
+        if (id_len == 0)
+            return set_error(NULL, error_msg, line_num, "Empty macro ID");
+
         for (size_t i = 0; i < id_len; i++) {
             char c = id[i];
             if (i == 0) {
@@ -282,9 +291,11 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
 
         const char *type_start = skip_ws(endptr);
         char type_buf[32];
-        const char *type_end = find_token_end(type_start);
+        /* Find end of type name (stop at ':' or whitespace) */
+        const char *type_end = type_start;
+        while (*type_end && *type_end != ':' && !isspace((unsigned char)*type_end)) type_end++;
         size_t type_len = (size_t)(type_end - type_start);
-        if (type_len >= sizeof(type_buf))
+        if (type_len == 0 || type_len >= sizeof(type_buf))
             return set_error(NULL, error_msg, line_num, "Invalid layer type");
         memcpy(type_buf, type_start, type_len);
         type_buf[type_len] = '\0';
@@ -317,7 +328,7 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
 
     /* Rule declaration: [@N] PATTERN -> MODE [OP] [subject:REGEX] [uid:NUM] [recursive] */
     int use_layer = st->current_layer;
-    layer_type_t use_type = st->current_type;
+    uint32_t use_mask = st->current_mask;
 
     if (*p == '@') {
         char *endptr;
@@ -325,6 +336,11 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
         if (endptr == p + 1 || layer_id < 0 || layer_id >= MAX_LAYERS)
             return set_error(NULL, error_msg, line_num, "Invalid layer index");
         use_layer = (int)layer_id;
+        /* Use the mask of the target layer, not the current layer */
+        if (use_layer < rs->layer_count && rs->layers[use_layer].type == LAYER_SPECIFICITY)
+            use_mask = rs->layers[use_layer].mask;
+        else
+            use_mask = 0;
         p = skip_ws(endptr);
     }
 
@@ -358,8 +374,8 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
     if (parse_mode_chars(mode_buf, &mode) != 0)
         return set_error(NULL, error_msg, line_num, "Invalid mode chars");
 
-    if (use_type == LAYER_SPECIFICITY && st->current_mask != 0 &&
-        (mode & ~st->current_mask) != 0) {
+    /* Validate rule mode against the target layer's mask */
+    if (use_mask != 0 && (mode & ~use_mask) != 0) {
         return set_error(NULL, error_msg, line_num, "Rule mode exceeds layer mask");
     }
 
@@ -384,7 +400,8 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
                 return set_error(NULL, error_msg, line_num, "Operation type too long");
             memcpy(op_buf, q + 1, op_len);
             op_buf[op_len] = '\0';
-            op_type = parse_op_type(op_buf);
+            if (parse_op_type(op_buf, &op_type) != 0)
+                return set_error(NULL, error_msg, line_num, "Unknown operation type");
             q = op_end;
         } else if (strncmp(q, "subject:", 8) == 0) {
             q = copy_token(q + 8, subject_buf, sizeof(subject_buf));
@@ -399,8 +416,12 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
                 return set_error(NULL, error_msg, line_num, "Invalid uid");
             min_uid = (uint32_t)uid_val;
         } else if (strncmp(q, "recursive", 9) == 0) {
+            /* Ensure it's the full word (not a prefix) */
+            const char *after = q + 9;
+            if (*after != '\0' && *after != '#' && !isspace((unsigned char)*after))
+                return set_error(NULL, error_msg, line_num, "Unknown token");
             flags |= SOFT_RULE_RECURSIVE;
-            q += 9;
+            q = after;
         } else {
             return set_error(NULL, error_msg, line_num, "Unknown token");
         }
@@ -550,10 +571,12 @@ int soft_ruleset_write_text(const soft_ruleset_t *rs, char **out_text)
                 used += (size_t)n;
             }
             if (r->subject_regex[0] != '\0') {
-                /* Check if quoting is needed (contains spaces) */
+                /* Check if quoting is needed (contains spaces, backslashes, or #) */
                 int needs_quote = 0;
                 for (size_t si = 0; r->subject_regex[si]; si++) {
-                    if (isspace((unsigned char)r->subject_regex[si])) {
+                    if (isspace((unsigned char)r->subject_regex[si]) ||
+                        r->subject_regex[si] == '\\' ||
+                        r->subject_regex[si] == '#') {
                         needs_quote = 1;
                         break;
                     }

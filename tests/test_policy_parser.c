@@ -666,6 +666,420 @@ static void test_serializer_roundtrip_full(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Edge cases: error handling                                         */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_macro_id_start_digit(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[1BIN] /usr/bin/**\n", &line, &err), -1,
+                   "macro ID starting with digit rejected");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_unmatched_macro_ref(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[BIN] /usr/bin/**\n((BIN) -> R\n", &line, &err), -1,
+                   "unmatched (( in macro reference rejected");
+    TEST_ASSERT(line == 2, "error on line 2");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_invalid_layer_index(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@64 PRECEDENCE\n/data/** -> R\n", &line, &err), -1,
+                   "layer 64 rejected");
+    TEST_ASSERT(line == 1, "error on line 1");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Escaping and quoting                                                */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_subject_backslash(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Subject regex with backslash (needs quoting in serialization) */
+    const char *subject_regex = ".*admin\\\\user$";
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, subject_regex, 1000, 0);
+
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize subject with backslash");
+
+    /* Verify the serialized output contains quotes */
+    int has_quote = 0;
+    for (const char *p = out_text; *p; p++) {
+        if (*p == '"') { has_quote = 1; break; }
+    }
+    TEST_ASSERT(has_quote, "output contains quotes for backslash");
+
+    /* Parse back and verify round-trip */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, &line, &err), 0,
+                   "parse serialized backslash subject");
+
+    /* Verify behavior matches */
+    const char *test_subject = "/usr/bin/admin\\\\user";
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, test_subject, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx, NULL),
+                   "backslash subject round-trip produces same result");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Parsing edge cases                                                  */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_recursive_prefix(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* recursiveX should not match recursive */
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/... -> R recursiveX\n", &line, &err), -1,
+                   "recursiveX rejected as unknown token");
+    TEST_ASSERT(line == 1, "error on line 1");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_precedence_layer_mask_violation(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* PRECEDENCE layer mask R, but rule grants RW - should fail */
+    const char *text = "@0 PRECEDENCE:R\n/data/** -> RW\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "PRECEDENCE rule exceeding layer mask rejected");
+    TEST_ASSERT(line == 2, "error on line 2");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_precedence_layer_mask_ok(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* PRECEDENCE layer mask RW, rule grants RW - should succeed */
+    const char *text = "@0 PRECEDENCE:RW\n/data/** -> RW\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
+                   "PRECEDENCE rule within layer mask accepted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_subject_hash_roundtrip(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Subject regex with # character */
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, ".*admin#1$", 1000, 0);
+
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize subject with hash");
+
+    /* Verify the serialized output contains quotes */
+    int has_quote = 0;
+    for (const char *p = out_text; *p; p++) {
+        if (*p == '"') { has_quote = 1; break; }
+    }
+    TEST_ASSERT(has_quote, "output contains quotes for subject with hash");
+
+    /* Parse back and verify round-trip */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "parse serialized subject with hash");
+
+    /* Verify behavior matches */
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin#1", 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx, NULL),
+                   "subject with hash round-trip produces same result");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Cross-layer mask handling                                         */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_explicit_layer_ignores_current_mask(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Current layer (implicit 0) has mask R, but explicit @1 rule grants RW
+     * Layer 1 has no mask, so RW should be accepted */
+    const char *text = "@0 PRECEDENCE:R\n@1 SPECIFICITY\n/data/** -> RW\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "explicit layer 1 rule ignores layer 0 mask");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_explicit_layer_respects_own_mask(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Explicit @1 rule with mask R, but grants RW -> should fail */
+    const char *text = "@1 SPECIFICITY:R\n@1 /data/** -> RW\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "explicit layer 1 rule respects layer 1 mask");
+    TEST_ASSERT(line == 2, "error on line 2");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_macro_id_with_underscore(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Macro ID starting with underscore is valid */
+    const char *text = "[_BIN] /usr/bin/**\n((_BIN)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "macro ID starting with underscore accepted");
+
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "underscore macro works");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_macro_id_with_digits_after_start(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Macro ID with digits after first char is valid */
+    const char *text = "[BIN1] /usr/bin/**\n((BIN1)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "macro ID with digits after start accepted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_comment_after_rule(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Comment after a rule on same line */
+    const char *text = "/data/** -> R # this is a comment\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "comment after rule accepted");
+
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "rule with trailing comment works");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Circular macro detection                                            */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_circular_macro_reference(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Circular macro references: A -> B -> A */
+    const char *text = "[A] ((B))\n[B] ((A))\n((A)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "circular macro reference detected");
+    TEST_ASSERT(line == 3, "error on line 3");
+    TEST_ASSERT(err != NULL, "error message set");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Operation type validation                                           */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_unknown_operation_type(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Unknown operation type should be rejected */
+    const char *text = "/data/** -> R /readextra\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "unknown operation type rejected");
+    TEST_ASSERT(line == 1, "error on line 1");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_all_valid_operation_types(void)
+{
+    const char *ops[] = {"read", "write", "exec", "copy", "move", "link", "mount", "chmod", "custom", NULL};
+
+    for (int i = 0; ops[i]; i++) {
+        soft_ruleset_t *rs = soft_ruleset_new();
+        char text[64];
+        snprintf(text, sizeof(text), "/data/** -> R /%s\n", ops[i]);
+
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
+                       "valid operation type");
+
+        soft_ruleset_free(rs);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/*  Layer mask validation                                               */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_layer_mask_violation(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Layer mask R, but rule grants RW - should fail */
+    const char *text = "@1 SPECIFICITY:R\n/data/** -> RW\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "rule exceeding layer mask rejected");
+    TEST_ASSERT(line == 2, "error on line 2");
+    TEST_ASSERT(err != NULL, "error message set");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_layer_mask_ok(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Layer mask R, rule grants R → should succeed */
+    const char *text = "@1 SPECIFICITY:R\n/data/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
+                   "rule within layer mask accepted");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Escaping edge cases                                                 */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_subject_with_quotes(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Subject regex with quotes */
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, ".*\\\"admin\\\"$", 1000, 0);
+
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize subject with quotes");
+
+    /* Parse back and verify round-trip */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "parse serialized subject with quotes");
+
+    /* Verify behavior matches */
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/\\\"admin\\\"", 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx, NULL),
+                   "subject with quotes round-trip produces same result");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Whitespace and formatting                                           */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_extra_whitespace(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Extra whitespace between tokens */
+    const char *text = "/data/**   ->   R   /read   subject:.*cp$   uid:1000   recursive\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "extra whitespace between tokens");
+
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/cp", 1000}, NULL),
+                   SOFT_ACCESS_READ, "rule with extra whitespace works");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_empty_macro_id(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[] /data/**\n", &line, &err), -1,
+                   "empty macro ID rejected");
+    TEST_ASSERT(line == 1, "error on line 1");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -696,5 +1110,26 @@ void test_rule_engine_parser_run(void)
     RUN_TEST(test_parser_lowercase_modes);
     RUN_TEST(test_parser_all_operations);
     RUN_TEST(test_parser_layer_boundaries);
+    RUN_TEST(test_parser_empty_macro_id);
+    RUN_TEST(test_parser_macro_id_start_digit);
+    RUN_TEST(test_parser_unmatched_macro_ref);
+    RUN_TEST(test_parser_invalid_layer_index);
+    RUN_TEST(test_parser_subject_backslash);
+    RUN_TEST(test_parser_layer_mask_violation);
+    RUN_TEST(test_parser_layer_mask_ok);
+    RUN_TEST(test_parser_subject_with_quotes);
+    RUN_TEST(test_parser_extra_whitespace);
+        RUN_TEST(test_parser_recursive_prefix);
+        RUN_TEST(test_parser_precedence_layer_mask_violation);
+        RUN_TEST(test_parser_precedence_layer_mask_ok);
+        RUN_TEST(test_parser_subject_hash_roundtrip);
+        RUN_TEST(test_parser_explicit_layer_ignores_current_mask);
+        RUN_TEST(test_parser_explicit_layer_respects_own_mask);
+        RUN_TEST(test_parser_macro_id_with_underscore);
+        RUN_TEST(test_parser_macro_id_with_digits_after_start);
+        RUN_TEST(test_parser_comment_after_rule);
+        RUN_TEST(test_parser_circular_macro_reference);
+        RUN_TEST(test_parser_unknown_operation_type);
+        RUN_TEST(test_parser_all_valid_operation_types);
     RUN_TEST(test_serializer_roundtrip_full);
 }
