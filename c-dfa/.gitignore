@@ -41,6 +41,7 @@ fuzz-*.log
 # LSP cache
 .cache/
 
+__pycache__/
 # LSP config (should not be committed - user-specific)
 .clangd
 compile_commands.json
