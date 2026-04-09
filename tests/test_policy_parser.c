@@ -968,6 +968,111 @@ static void test_parser_all_valid_operation_types(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Precedence layer mask with explicit @N                            */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_precedence_explicit_layer_mask(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* PRECEDENCE layer 0 with mask R, explicit @0 rule with RW -> should fail */
+    const char *text = "@0 PRECEDENCE:R\n@0 /data/** -> RW\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "PRECEDENCE explicit layer 0 rule respects layer 0 mask");
+    TEST_ASSERT(line == 2, "error on line 2");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_precedence_explicit_layer_mask_ok(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* PRECEDENCE layer 0 with mask RW, explicit @0 rule with RW -> should succeed */
+    const char *text = "@0 PRECEDENCE:RW\n@0 /data/** -> RW\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
+                   "PRECEDENCE explicit layer 0 rule within mask");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Nested macro expansion                                             */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_nested_macro_expansion(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Nested macros: BASE expands to /usr, BIN uses BASE macro */
+    const char *text = "[BASE] /usr\n[BIN] ((BASE))/bin/**\n((BIN)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "nested macro expansion works");
+
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "nested macro expanded correctly");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Subject regex with double quotes round-trip                        */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_subject_with_double_quotes_roundtrip(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Subject regex with double quotes */
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, ".*\\\"admin\\\"$", 1000, 0);
+
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize subject with quotes");
+
+    /* Parse back and verify round-trip */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "parse serialized subject with quotes");
+
+    /* Verify behavior matches */
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/\\\"admin\\\"", 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx, NULL),
+                   "subject with quotes round-trip produces same result");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Deep macro nesting                                                 */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_deep_macro_nesting(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Deep nesting: A->B->C->D->E->F (6 levels, should succeed) */
+    const char *text = "[A] ((B))/a\n[B] ((C))/b\n[C] ((D))/c\n[D] ((E))/d\n[E] ((F))/e\n[F] /base\n((A)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "deep macro nesting (6 levels) works");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
@@ -1131,5 +1236,10 @@ void test_rule_engine_parser_run(void)
         RUN_TEST(test_parser_circular_macro_reference);
         RUN_TEST(test_parser_unknown_operation_type);
         RUN_TEST(test_parser_all_valid_operation_types);
+        RUN_TEST(test_parser_precedence_explicit_layer_mask);
+        RUN_TEST(test_parser_precedence_explicit_layer_mask_ok);
+        RUN_TEST(test_parser_nested_macro_expansion);
+        RUN_TEST(test_parser_subject_with_double_quotes_roundtrip);
+        RUN_TEST(test_parser_deep_macro_nesting);
     RUN_TEST(test_serializer_roundtrip_full);
 }

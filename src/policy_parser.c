@@ -282,67 +282,172 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
         return add_macro(st, id, pattern);
     }
 
-    /* Layer declaration: @N TYPE[:MASK] */
+    /* Layer declaration or rule with explicit layer: @N ... */
     if (*p == '@') {
         char *endptr;
         long layer_id = strtol(p + 1, &endptr, 10);
         if (endptr == p + 1 || layer_id < 0 || layer_id >= MAX_LAYERS)
             return set_error(NULL, error_msg, line_num, "Invalid layer index");
 
-        const char *type_start = skip_ws(endptr);
-        char type_buf[32];
-        /* Find end of type name (stop at ':' or whitespace) */
-        const char *type_end = type_start;
-        while (*type_end && *type_end != ':' && !isspace((unsigned char)*type_end)) type_end++;
-        size_t type_len = (size_t)(type_end - type_start);
-        if (type_len == 0 || type_len >= sizeof(type_buf))
-            return set_error(NULL, error_msg, line_num, "Invalid layer type");
-        memcpy(type_buf, type_start, type_len);
-        type_buf[type_len] = '\0';
-
-        if (strcasecmp(type_buf, "PRECEDENCE") == 0)
-            st->current_type = LAYER_PRECEDENCE;
-        else if (strcasecmp(type_buf, "SPECIFICITY") == 0)
-            st->current_type = LAYER_SPECIFICITY;
-        else
-            return set_error(NULL, error_msg, line_num, "Unknown layer type");
-
-        st->current_mask = 0;
-        if (*type_end == ':') {
-            const char *mask_start = type_end + 1;
-            char mask_buf[32];
-            const char *mask_end = find_token_end(mask_start);
-            size_t mask_len = (size_t)(mask_end - mask_start);
-            if (mask_len >= sizeof(mask_buf))
-                return set_error(NULL, error_msg, line_num, "Invalid layer mask");
-            memcpy(mask_buf, mask_start, mask_len);
-            mask_buf[mask_len] = '\0';
-            if (parse_mode_chars(mask_buf, &st->current_mask) != 0)
-                return set_error(NULL, error_msg, line_num, "Invalid mode chars in layer mask");
+        const char *after_num = skip_ws(endptr);
+        /* Look ahead: is this a layer declaration or a rule?
+         * Layer declarations start with PRECEDENCE or SPECIFICITY.
+         * Rules have a pattern (starts with /, $, or [ for macro refs). */
+        int is_layer_decl = 0;
+        if (strncasecmp(after_num, "PRECEDENCE", 10) == 0) {
+            char c = after_num[10];
+            if (c == '\0' || c == ':' || isspace((unsigned char)c))
+                is_layer_decl = 1;
+        } else if (strncasecmp(after_num, "SPECIFICITY", 11) == 0) {
+            char c = after_num[11];
+            if (c == '\0' || c == ':' || isspace((unsigned char)c))
+                is_layer_decl = 1;
         }
 
-        st->current_layer = (int)layer_id;
-        soft_ruleset_set_layer_type(rs, st->current_layer, st->current_type, st->current_mask);
+        if (is_layer_decl) {
+            /* Layer declaration: @N TYPE[:MASK] */
+            const char *type_start = after_num;
+            char type_buf[32];
+            /* Find end of type name (stop at ':' or whitespace) */
+            const char *type_end = type_start;
+            while (*type_end && *type_end != ':' && !isspace((unsigned char)*type_end)) type_end++;
+            size_t type_len = (size_t)(type_end - type_start);
+            if (type_len == 0 || type_len >= sizeof(type_buf))
+                return set_error(NULL, error_msg, line_num, "Invalid layer type");
+            memcpy(type_buf, type_start, type_len);
+            type_buf[type_len] = '\0';
+
+            if (strcasecmp(type_buf, "PRECEDENCE") == 0)
+                st->current_type = LAYER_PRECEDENCE;
+            else if (strcasecmp(type_buf, "SPECIFICITY") == 0)
+                st->current_type = LAYER_SPECIFICITY;
+            else
+                return set_error(NULL, error_msg, line_num, "Unknown layer type");
+
+            st->current_mask = 0;
+            if (*type_end == ':') {
+                const char *mask_start = type_end + 1;
+                char mask_buf[32];
+                const char *mask_end = find_token_end(mask_start);
+                size_t mask_len = (size_t)(mask_end - mask_start);
+                if (mask_len >= sizeof(mask_buf))
+                    return set_error(NULL, error_msg, line_num, "Invalid layer mask");
+                memcpy(mask_buf, mask_start, mask_len);
+                mask_buf[mask_len] = '\0';
+                if (parse_mode_chars(mask_buf, &st->current_mask) != 0)
+                    return set_error(NULL, error_msg, line_num, "Invalid mode chars in layer mask");
+            }
+
+            st->current_layer = (int)layer_id;
+            soft_ruleset_set_layer_type(rs, st->current_layer, st->current_type, st->current_mask);
+            return 0;
+        }
+
+        /* Rule with explicit layer: [@N] PATTERN -> MODE ... */
+        int use_layer = (int)layer_id;
+        uint32_t use_mask = 0;
+        /* Use the mask of the target layer if it exists */
+        if (use_layer < rs->layer_count)
+            use_mask = rs->layers[use_layer].mask;
+        p = after_num;
+
+        const char *arrow = strstr(p, "->");
+        if (!arrow) return set_error(NULL, error_msg, line_num, "Missing '->' separator");
+
+        char pattern_raw[MAX_PATTERN_LEN];
+        size_t pat_len = (size_t)(arrow - p);
+        if (pat_len >= MAX_PATTERN_LEN)
+            return set_error(NULL, error_msg, line_num, "Pattern too long");
+        memcpy(pattern_raw, p, pat_len);
+        pattern_raw[pat_len] = '\0';
+        while (pat_len > 0 && isspace((unsigned char)pattern_raw[pat_len - 1]))
+            pattern_raw[--pat_len] = '\0';
+
+        char pattern[MAX_PATTERN_LEN];
+        if (expand_macros(st, pattern_raw, pattern, sizeof(pattern), line_num, error_msg) != 0)
+            return -1;
+
+        const char *after_arrow = skip_ws(arrow + 2);
+
+        char mode_buf[32];
+        const char *mode_end = find_token_end(after_arrow);
+        size_t mode_len = (size_t)(mode_end - after_arrow);
+        if (mode_len >= sizeof(mode_buf) || mode_len == 0)
+            return set_error(NULL, error_msg, line_num, "Invalid mode");
+        memcpy(mode_buf, after_arrow, mode_len);
+        mode_buf[mode_len] = '\0';
+
+        uint32_t mode;
+        if (parse_mode_chars(mode_buf, &mode) != 0)
+            return set_error(NULL, error_msg, line_num, "Invalid mode chars");
+
+        /* Validate rule mode against the target layer's mask */
+        if (use_mask != 0 && (mode & ~use_mask) != 0) {
+            return set_error(NULL, error_msg, line_num, "Rule mode exceeds layer mask");
+        }
+
+        /* Parse optional tokens after mode */
+        const char *q = mode_end;
+        soft_binary_op_t op_type = SOFT_OP_READ;
+        const char *subject_regex = NULL;
+        uint32_t min_uid = 0;
+        uint32_t flags = 0;
+        char subject_buf[MAX_PATTERN_LEN];
+        char uid_buf[32];
+
+        while (*q) {
+            q = skip_ws(q);
+            if (*q == '\0' || *q == '#') break;
+
+            if (*q == '/') {
+                const char *op_end = find_token_end(q + 1);
+                size_t op_len = (size_t)(op_end - q - 1);
+                char op_buf[32];
+                if (op_len >= sizeof(op_buf))
+                    return set_error(NULL, error_msg, line_num, "Operation type too long");
+                memcpy(op_buf, q + 1, op_len);
+                op_buf[op_len] = '\0';
+                if (parse_op_type(op_buf, &op_type) != 0)
+                    return set_error(NULL, error_msg, line_num, "Unknown operation type");
+                q = op_end;
+            } else if (strncmp(q, "subject:", 8) == 0) {
+                q = copy_token(q + 8, subject_buf, sizeof(subject_buf));
+                if (*subject_buf == '\0')
+                    return set_error(NULL, error_msg, line_num, "Empty subject regex");
+                subject_regex = subject_buf;
+            } else if (strncmp(q, "uid:", 4) == 0) {
+                q = copy_token(q + 4, uid_buf, sizeof(uid_buf));
+                char *endptr2;
+                long uid_val = strtol(uid_buf, &endptr2, 10);
+                if (endptr2 == uid_buf || uid_val < 0 || uid_val > UINT32_MAX)
+                    return set_error(NULL, error_msg, line_num, "Invalid uid");
+                min_uid = (uint32_t)uid_val;
+            } else if (strncmp(q, "recursive", 9) == 0) {
+                /* Ensure it's the full word (not a prefix) */
+                const char *after = q + 9;
+                if (*after != '\0' && *after != '#' && !isspace((unsigned char)*after))
+                    return set_error(NULL, error_msg, line_num, "Unknown token");
+                flags |= SOFT_RULE_RECURSIVE;
+                q = after;
+            } else {
+                return set_error(NULL, error_msg, line_num, "Unknown token");
+            }
+        }
+
+        if (soft_ruleset_add_rule_at_layer(rs, use_layer, pattern, mode,
+                                           op_type, NULL, subject_regex,
+                                           min_uid, flags) != 0) {
+            return set_error(NULL, error_msg, line_num, "Failed to add rule");
+        }
+
         return 0;
     }
 
-    /* Rule declaration: [@N] PATTERN -> MODE [OP] [subject:REGEX] [uid:NUM] [recursive] */
+    /* Rule without explicit layer: PATTERN -> MODE [OP] [subject:REGEX] [uid:NUM] [recursive] */
+    /* Use the current layer from parser state */
+    {
     int use_layer = st->current_layer;
     uint32_t use_mask = st->current_mask;
-
-    if (*p == '@') {
-        char *endptr;
-        long layer_id = strtol(p + 1, &endptr, 10);
-        if (endptr == p + 1 || layer_id < 0 || layer_id >= MAX_LAYERS)
-            return set_error(NULL, error_msg, line_num, "Invalid layer index");
-        use_layer = (int)layer_id;
-        /* Use the mask of the target layer, not the current layer */
-        if (use_layer < rs->layer_count && rs->layers[use_layer].type == LAYER_SPECIFICITY)
-            use_mask = rs->layers[use_layer].mask;
-        else
-            use_mask = 0;
-        p = skip_ws(endptr);
-    }
 
     const char *arrow = strstr(p, "->");
     if (!arrow) return set_error(NULL, error_msg, line_num, "Missing '->' separator");
@@ -410,13 +515,12 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
             subject_regex = subject_buf;
         } else if (strncmp(q, "uid:", 4) == 0) {
             q = copy_token(q + 4, uid_buf, sizeof(uid_buf));
-            char *endptr;
-            long uid_val = strtol(uid_buf, &endptr, 10);
-            if (endptr == uid_buf || uid_val < 0 || uid_val > UINT32_MAX)
+            char *endptr3;
+            long uid_val = strtol(uid_buf, &endptr3, 10);
+            if (endptr3 == uid_buf || uid_val < 0 || uid_val > UINT32_MAX)
                 return set_error(NULL, error_msg, line_num, "Invalid uid");
             min_uid = (uint32_t)uid_val;
         } else if (strncmp(q, "recursive", 9) == 0) {
-            /* Ensure it's the full word (not a prefix) */
             const char *after = q + 9;
             if (*after != '\0' && *after != '#' && !isspace((unsigned char)*after))
                 return set_error(NULL, error_msg, line_num, "Unknown token");
@@ -434,6 +538,7 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
     }
 
     return 0;
+    }  /* end of implicit layer rule block */
 }
 
 /* ------------------------------------------------------------------ */
