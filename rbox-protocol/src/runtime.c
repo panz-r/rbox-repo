@@ -23,9 +23,6 @@ static int crc32_initialized = 0;
 /* Thread-local random seed */
 static __thread uint32_t g_rand_seed = 0;
 
-/* Client ID (generated once per process) */
-static uint8_t g_client_id[16] = {0};
-static pthread_once_t g_client_id_once = PTHREAD_ONCE_INIT;
 static int runtime_initialized = 0;
 
 static void init_crc32_table(void) {
@@ -44,27 +41,12 @@ static void init_crc32_table(void) {
     crc32_initialized = 1;
 }
 
-static void init_client_id_once(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    
-    /* Generate a unique client ID using timestamp + PID + random */
-    uint64_t id_part1 = ((uint64_t)getpid() << 48) ^ (uint64_t)ts.tv_sec;
-    uint64_t random_part = ((uint64_t)(rand() ^ (rand() << 16)) << 32) ^ (uint64_t)ts.tv_nsec;
-    
-    memcpy(g_client_id, &id_part1, 8);
-    memcpy(g_client_id + 8, &random_part, 8);
-}
-
 static void runtime_init_internal(void) {
     /* Initialize CRC32 table */
     init_crc32_table();
     
     /* Seed random number generator for ID generation */
     srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
-    
-    /* Initialize client ID (will only run once) */
-    pthread_once(&g_client_id_once, init_client_id_once);
     
     runtime_initialized = 1;
 }
@@ -96,16 +78,6 @@ uint32_t rbox_runtime_rand_seed(void) {
         g_rand_seed = (uint32_t)((uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 32) ^ tid);
     }
     return g_rand_seed;
-}
-
-void rbox_runtime_get_client_id(uint8_t *id_out) {
-    if (!runtime_initialized) {
-        runtime_init_internal();
-    }
-    pthread_once(&g_client_id_once, init_client_id_once);
-    if (id_out) {
-        memcpy(id_out, g_client_id, 16);
-    }
 }
 
 /* CRC32 checksum - composable, takes previous CRC value

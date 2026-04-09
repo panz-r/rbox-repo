@@ -68,11 +68,6 @@ void rbox_protocol_generate_request_id(uint8_t *id_out) {
     }
 }
 
-/* Generate client ID - delegates to runtime */
-void rbox_protocol_generate_client_id(uint8_t *id_out) {
-    rbox_runtime_get_client_id(id_out);
-}
-
 /* ============================================================
  * HEADER VALIDATION
  * ============================================================ */

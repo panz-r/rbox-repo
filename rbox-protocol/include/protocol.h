@@ -30,9 +30,6 @@ uint64_t rbox_server_hash64(const char *str, size_t len);
 /* Generate a unique request ID */
 void rbox_protocol_generate_request_id(uint8_t *id_out);
 
-/* Generate a unique client ID */
-void rbox_protocol_generate_client_id(uint8_t *id_out);
-
 /* ============================================================
  * HEADER VALIDATION
  * ============================================================ */
