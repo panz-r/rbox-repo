@@ -485,6 +485,11 @@ static int run_with_filter(const char *socket_path, const char *command,
 
     rbox_response_details_t details;
     rbox_decode_response_details(&header, packet, pkt_len, &details);
+    if (!details.valid) {
+        fprintf(stderr, "%s: invalid response details\n", program_name);
+        free(packet);
+        return EXIT_ERROR;
+    }
 
     rbox_env_decisions_t env_decisions;
     rbox_decode_env_decisions(&header, &details, packet, pkt_len, &env_decisions);
@@ -764,6 +769,14 @@ int main(int argc, char *argv[]) {
 
     rbox_response_details_t details;
     rbox_decode_response_details(&header, packet, pkt_len, &details);
+    if (!details.valid) {
+        fprintf(stderr, "%s: invalid response details\n", program_name);
+        free(packet);
+        free_flagged_envs(flagged_count, flagged_names);
+        free(flagged_scores);
+        free(socket_path);
+        return EXIT_ERROR;
+    }
 
     rbox_env_decisions_t env_decisions;
     rbox_decode_env_decisions(&header, &details, packet, pkt_len, &env_decisions);
@@ -771,14 +784,6 @@ int main(int argc, char *argv[]) {
     rbox_free_env_decisions(&env_decisions);
 
     free(packet);
-
-    if (!details.valid) {
-        fprintf(stderr, "%s: invalid response details\n", program_name);
-        free_flagged_envs(flagged_count, flagged_names);
-        free(flagged_scores);
-        free(socket_path);
-        return EXIT_ERROR;
-    }
 
     if (details.decision == RBOX_DECISION_ALLOW) {
         printf("ALLOW %s\n", details.reason[0] ? details.reason : "");
