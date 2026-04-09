@@ -458,7 +458,9 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
     if (server->request_wake_fd >= 0) {
         uint64_t val = 1;
         ssize_t w = write(server->request_wake_fd, &val, sizeof(val));
-        (void)w;
+        if (w < 0) {
+            DBG("eventfd_write failed: %s", strerror(errno));
+        }
     }
 }
 
@@ -1363,12 +1365,16 @@ void rbox_server_stop(rbox_server_handle_t *server) {
     if (server->request_wake_fd >= 0) {
         uint64_t val = 1;
         ssize_t n = write(server->request_wake_fd, &val, sizeof(val));
-        (void)n;
+        if (n < 0) {
+            DBG("eventfd_write failed: %s", strerror(errno));
+        }
     }
     if (server->wake_fd >= 0) {
         uint64_t val = 1;
         ssize_t n = write(server->wake_fd, &val, sizeof(val));
-        (void)n;
+        if (n < 0) {
+            DBG("eventfd_write failed: %s", strerror(errno));
+        }
     }
     if (server->thread) {
         pthread_join(server->thread, NULL);
