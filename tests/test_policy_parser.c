@@ -1842,6 +1842,110 @@ static void test_parser_api_null_arguments(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Layer mask edge cases                                              */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_deny_rule_with_read_mask(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* DENY mode should exceed R mask */
+    const char *text = "@0 SPECIFICITY:R\n/data/** -> D\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "DENY rule with R mask rejected");
+    TEST_ASSERT(line == 2, "error on line 2");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_deny_rule_with_deny_mask(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* DENY mode should match D mask */
+    const char *text = "@0 SPECIFICITY:D\n/data/** -> D\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
+                   "DENY rule with D mask accepted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_rule_on_undeclared_layer(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* @5 should create layer 5 automatically */
+    const char *text = "@5 /data/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "rule on undeclared layer 5 accepted");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 6, "6 layers created (0-5)");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 1, "1 rule added");
+
+    /* Verify the rule works */
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "rule on layer 5 works");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Serialization round-trip with complex setup                        */
+/* ------------------------------------------------------------------ */
+
+static void test_serializer_roundtrip_with_masks(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Layer 0: PRECEDENCE with mask RW */
+    soft_ruleset_set_layer_type(rs, 0, LAYER_PRECEDENCE, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
+        SOFT_OP_COPY, NULL, NULL, 0, 0);
+
+    /* Layer 1: SPECIFICITY with no mask */
+    soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
+    soft_ruleset_add_rule_at_layer(rs, 1, "/secret", SOFT_ACCESS_DENY,
+        SOFT_OP_READ, NULL, NULL, 0, 0);
+
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize ruleset with masks");
+    TEST_ASSERT(out_text != NULL, "serialized text not NULL");
+
+    /* Verify the output contains mask information */
+    TEST_ASSERT(strstr(out_text, ":") != NULL, "output contains mask separator");
+
+    /* Parse back */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "parse serialized ruleset with masks");
+
+    /* Verify layer count matches */
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs2), 2, "2 layers after round-trip");
+
+    /* Verify behavior matches */
+    soft_access_ctx_t ctx1 = {SOFT_OP_COPY, "/data/file.txt", "/tmp/out.txt", NULL, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx1, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx1, NULL),
+                   "COPY rule round-trip matches");
+
+    soft_access_ctx_t ctx2 = {SOFT_OP_READ, "/secret", NULL, NULL, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx2, NULL),
+                   "DENY rule round-trip matches");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -1933,5 +2037,9 @@ void test_rule_engine_parser_run(void)
         RUN_TEST(test_parser_write_null_out);
         RUN_TEST(test_parser_write_file_null_path);
     RUN_TEST(test_parser_api_null_arguments);
+        RUN_TEST(test_parser_deny_rule_with_read_mask);
+        RUN_TEST(test_parser_deny_rule_with_deny_mask);
+        RUN_TEST(test_parser_rule_on_undeclared_layer);
+        RUN_TEST(test_serializer_roundtrip_with_masks);
     RUN_TEST(test_serializer_roundtrip_full);
 }
