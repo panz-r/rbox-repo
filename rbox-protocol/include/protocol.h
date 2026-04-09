@@ -17,12 +17,6 @@
  * CHECKSUM
  * ============================================================ */
 
-/* Two-step 64-bit hash for time-limited decisions */
-uint64_t rbox_protocol_hash64(const char *str, size_t len);
-
-/* FNV-1a + DJB2 mix for server-side command hash verification */
-uint64_t rbox_server_hash64(const char *str, size_t len);
-
 /* ============================================================
  * ID GENERATION
  * ============================================================ */

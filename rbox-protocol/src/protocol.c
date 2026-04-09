@@ -19,42 +19,6 @@
 #include "protocol.h"
 #include "runtime.h"
 
-/* ============================================================
- * 64-BIT HASH
- * ============================================================ */
-
-uint64_t rbox_protocol_hash64(const char *str, size_t len) {
-    if (!str || len == 0) return 0;
-
-    uint64_t h1 = 0xdeadbeef12345678ULL;
-    uint64_t h2 = 0xa123456789abcdefULL;
-
-    for (size_t i = 0; i < len; i++) {
-        h1 = (h1 * 33) ^ (uint64_t)str[i];
-        h2 = (h2 * 65) ^ (uint64_t)str[i];
-    }
-
-    return h1 ^ (h2 << 32);
-}
-
-/* FNV-1a + DJB2 mix for server-side command hash verification */
-uint64_t rbox_server_hash64(const char *str, size_t len) {
-    if (!str || len == 0) return 0;
-
-    uint64_t hash = 14695981039346656037ULL;
-    for (size_t i = 0; i < len; i++) {
-        hash ^= (uint64_t)(unsigned char)str[i];
-        hash *= 1099511628211ULL;
-    }
-
-    uint64_t hash2 = 5381ULL;
-    for (size_t i = 0; i < len; i++) {
-        hash2 = ((hash2 << 5) + hash2) + (uint64_t)(unsigned char)str[i];
-    }
-
-    return hash ^ (hash2 + 0x9e3779b97f4a7c15ULL);
-}
-
 /* Generate request ID using runtime's thread-local seed */
 void rbox_protocol_generate_request_id(uint8_t *id_out) {
     if (!id_out) return;

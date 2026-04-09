@@ -363,9 +363,6 @@ const char *rbox_strerror(rbox_error_t err);
 /* Validate packet header */
 rbox_error_t rbox_header_validate(const char *packet, size_t len);
 
-/* 64-bit command hash - two-step hash for time-limited decisions */
-uint64_t rbox_hash64(const char *str, size_t len);
-
 /* Initialize library (call once at startup) */
 void rbox_init(void);
 

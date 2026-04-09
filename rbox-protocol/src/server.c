@@ -21,6 +21,7 @@
 #include "rbox_protocol.h"
 #include "socket.h"
 #include "runtime.h"
+#include "packet.h"
 #include "server.h"
 #include "server_cache.h"
 #include "server_response.h"
