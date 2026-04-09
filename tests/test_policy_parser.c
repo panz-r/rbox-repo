@@ -1416,6 +1416,268 @@ static void test_parser_operation_type_case_insensitive(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Subject regex edge cases                                           */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_subject_empty_quoted_string(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Empty quoted subject regex should be rejected */
+    const char *text = "/data/** -> R subject:\"\"\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "empty quoted subject regex rejected");
+    TEST_ASSERT(line == 1, "error on line 1");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_subject_unquoted_with_spaces(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Unquoted subject with spaces: only first word is captured */
+    const char *text = "/data/** -> R subject:.*admin$\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "unquoted subject without spaces accepted");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  UID edge cases                                                     */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_uid_zero(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* UID 0 should be accepted (no restriction) */
+    const char *text = "/data/** -> R uid:0\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "uid:0 accepted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_uid_negative(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Negative UID should be rejected */
+    const char *text = "/data/** -> R uid:-1\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "negative uid rejected");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_uid_overflow(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Very large UID should be rejected */
+    const char *text = "/data/** -> R uid:99999999999999\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "overflow uid rejected");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_uid_non_numeric(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Non-numeric UID should be rejected */
+    const char *text = "/data/** -> R uid:abc\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "non-numeric uid rejected");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Pattern edge cases                                                  */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_pattern_with_hash(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Pattern with # in the middle should be accepted */
+    const char *text = "/data/#temp/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "pattern with # in middle accepted");
+
+    /* Verify the rule works */
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/#temp/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "rule with # in pattern matches");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_pattern_with_spaces(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Pattern with spaces (quoted) */
+    const char *text = "\"/path/with spaces/**\" -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "quoted pattern with spaces accepted");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Mode edge cases                                                     */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_mode_deny_with_other_modes(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* DENY with other modes should still be DENY */
+    const char *text = "/data/** -> DRWX\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "DENY with other modes accepted as DENY");
+
+    /* Verify it's actually DENY */
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   -13, "DENY mode denies access");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_mode_all_chars(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* All mode characters */
+    const char *text = "/data/** -> RWXCU\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "all mode chars accepted");
+
+    /* Verify all modes are granted */
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC | SOFT_ACCESS_CREATE | SOFT_ACCESS_UNLINK,
+                   "all modes granted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_mode_all_lowercase(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* All mode chars in lowercase */
+    const char *text = "/data/** -> rwxcu\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "lowercase mode chars accepted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_mode_mixed_case(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Mixed case mode chars */
+    const char *text = "/data/** -> RwXcU\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "mixed-case mode chars accepted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_mode_invalid_char(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Invalid mode char */
+    const char *text = "/data/** -> RZ\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "invalid mode char rejected");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  File I/O edge cases                                                 */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_file_io_null_path(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, NULL, &line, &err), -1,
+                   "NULL path rejected");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  API edge cases                                                      */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_write_null_rs(void)
+{
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(NULL, &out_text), -1,
+                   "NULL ruleset rejected");
+    TEST_ASSERT(out_text == NULL, "no output for NULL ruleset");
+}
+
+static void test_parser_write_null_out(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, NULL), -1,
+                   "NULL output pointer rejected");
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_write_file_null_path(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_write_file(rs, NULL), -1,
+                   "NULL path rejected");
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
@@ -1610,5 +1872,22 @@ void test_rule_engine_parser_run(void)
         RUN_TEST(test_parser_macro_id_max_length);
         RUN_TEST(test_parser_macro_id_too_long);
         RUN_TEST(test_parser_operation_type_case_insensitive);
+        RUN_TEST(test_parser_subject_empty_quoted_string);
+        RUN_TEST(test_parser_subject_unquoted_with_spaces);
+        RUN_TEST(test_parser_uid_zero);
+        RUN_TEST(test_parser_uid_negative);
+        RUN_TEST(test_parser_uid_overflow);
+        RUN_TEST(test_parser_uid_non_numeric);
+        RUN_TEST(test_parser_pattern_with_hash);
+        RUN_TEST(test_parser_pattern_with_spaces);
+        RUN_TEST(test_parser_mode_deny_with_other_modes);
+        RUN_TEST(test_parser_mode_all_chars);
+        RUN_TEST(test_parser_mode_all_lowercase);
+        RUN_TEST(test_parser_mode_mixed_case);
+        RUN_TEST(test_parser_mode_invalid_char);
+        RUN_TEST(test_parser_file_io_null_path);
+        RUN_TEST(test_parser_write_null_rs);
+        RUN_TEST(test_parser_write_null_out);
+        RUN_TEST(test_parser_write_file_null_path);
     RUN_TEST(test_serializer_roundtrip_full);
 }
