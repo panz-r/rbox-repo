@@ -1070,6 +1070,179 @@ static void test_parser_deep_macro_nesting(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Edge cases: layer declaration parsing                             */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_layer_decl_trailing_ws(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Layer declaration with trailing whitespace */
+    const char *text = "@0 PRECEDENCE  \n/data/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
+                   "layer decl with trailing whitespace");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_layer_mask_empty(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Layer mask with empty value should be rejected */
+    const char *text = "@0 SPECIFICITY:\n/data/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "empty layer mask rejected");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_layer_mask_deny_only(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Layer mask with only DENY: any rule with DENY should be accepted */
+    const char *text = "@0 SPECIFICITY:D\n/data/** -> D\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "DENY-only layer mask accepted");
+
+    /* But RW should fail */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    int line2 = 0;
+    const char *err2 = NULL;
+    const char *text2 = "@1 SPECIFICITY:D\n@1 /data/** -> RW\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text2, &line2, &err2), -1,
+                   "RW rule exceeds DENY-only mask");
+
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+static void test_parser_layer_index_overflow(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Very large layer index should be rejected */
+    const char *text = "@99999999999999 PRECEDENCE\n/data/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "overflow layer index rejected");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edge cases: rule parsing                                            */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_rule_no_mode_after_arrow(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* "->" followed by whitespace/newline with no mode */
+    const char *text = "/data/** -> \n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "empty mode after arrow rejected");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_mode_with_only_deny_and_other_chars(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Mode "DR" should be DENY (DENY overrides all) */
+    const char *text = "/data/** -> DR\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "DR mode accepted (DENY overrides)");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edge cases: serialization                                           */
+/* ------------------------------------------------------------------ */
+
+static void test_serializer_deny_ruleset(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    /* Ruleset with only DENY rules */
+    soft_ruleset_add_rule_at_layer(rs, 0, "/secret", SOFT_ACCESS_DENY,
+        SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/forbidden/**", SOFT_ACCESS_DENY,
+        SOFT_OP_READ, NULL, NULL, 0, 0);
+
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize deny-only ruleset");
+    TEST_ASSERT(out_text != NULL, "serialized text not NULL");
+
+    /* Parse back */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "parse deny-only ruleset");
+
+    /* Verify behavior matches */
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/secret", NULL, NULL, 1000}, NULL),
+                   soft_ruleset_check_ctx(rs2,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/secret", NULL, NULL, 1000}, NULL),
+                   "deny rule round-trip matches");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+static void test_serializer_empty_ruleset(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+
+    char *out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize empty ruleset");
+    TEST_ASSERT(out_text != NULL, "serialized empty text not NULL");
+
+    /* Parse back - should still be empty */
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "parse empty text");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs2), 0, "parsed empty ruleset has 0 rules");
+
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edge cases: file I/O                                               */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_file_io_error(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Parse non-existent file */
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, "/nonexistent/path/file.txt", &line, &err), -1,
+                   "non-existent file rejected");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
@@ -1241,5 +1414,14 @@ void test_rule_engine_parser_run(void)
         RUN_TEST(test_parser_nested_macro_expansion);
         RUN_TEST(test_parser_subject_with_double_quotes_roundtrip);
         RUN_TEST(test_parser_deep_macro_nesting);
+        RUN_TEST(test_parser_layer_decl_trailing_ws);
+        RUN_TEST(test_parser_layer_mask_empty);
+        RUN_TEST(test_parser_layer_mask_deny_only);
+        RUN_TEST(test_parser_layer_index_overflow);
+        RUN_TEST(test_parser_rule_no_mode_after_arrow);
+        RUN_TEST(test_parser_mode_with_only_deny_and_other_chars);
+        RUN_TEST(test_serializer_deny_ruleset);
+        RUN_TEST(test_serializer_empty_ruleset);
+        RUN_TEST(test_parser_file_io_error);
     RUN_TEST(test_serializer_roundtrip_full);
 }
