@@ -1,16 +1,8 @@
 /*
  * test_env_decisions.c - Tests for environment variable decisions
- * 
- * Tests:
- * 1. Basic env decision - server sends 3 env decisions, client verifies via bitmap
- * 2. All allow - all env decisions are ALLOW
- * 3. All deny - all env decisions are DENY
- * 4. Mixed decisions - some allow, some deny
- * 
- * Note: The current client implementation (rbox_blocking_request) does not decode
- * env decisions into rbox_response_t. These tests verify the server-side
- * rbox_server_decide accepts env decisions without error, and basic response
- * fields are correctly returned.
+ *
+ * Tests client-side decoding of env decisions from server response.
+ * Server decides: deny if (index % 3) == 1, allow otherwise.
  */
 
 #include <stdio.h>
@@ -59,21 +51,52 @@ static void *server_worker_env_decisions(void *arg) {
                           ctx->env_decision_count, ctx->env_decision_names, ctx->env_decisions);
     }
 
-    /* NOTE: Do NOT call rbox_server_handle_free here. Caller must do cleanup. */
     return NULL;
 }
 
-/* Test basic env decision - server sends 3 env decisions */
-static int test_basic_env_decisions(void) {
-    const char *path = "/tmp/rbox_test_env_basic.sock";
+/* Helper: create env decision bitmap where deny if (index % 3) == 1 */
+static uint8_t *make_env_decisions(int count) {
+    size_t bitmap_size = (count + 7) / 8;
+    uint8_t *bitmap = calloc(bitmap_size, 1);
+    for (int i = 0; i < count; i++) {
+        if ((i % 3 == 1)) {  /* deny every 3rd */
+            bitmap[i / 8] |= (1 << (i % 8));
+        }
+    }
+    return bitmap;
+}
+
+/* Helper: create env var names array */
+static const char **make_env_names(int count) {
+    const char **names = malloc(count * sizeof(char *));
+    for (int i = 0; i < count; i++) {
+        char *name = malloc(32);
+        snprintf(name, 32, "VAR%d", i);
+        names[i] = name;
+    }
+    return names;
+}
+
+/* Helper: free env names array */
+static void free_env_names(const char **names, int count) {
+    for (int i = 0; i < count; i++) {
+        free((char *)names[i]);
+    }
+    free(names);
+}
+
+/* Test with 1 env var (no denials since 0%3!=1) */
+static int test_env_1_var(void) {
+    const char *path = "/tmp/rbox_test_env_1.sock";
     unlink(path);
 
-    const char *env_names[] = {"PATH", "HOME", "USER"};
-    uint8_t env_decisions[] = {0, 1, 0};  /* PATH=allow, HOME=deny, USER=allow */
+    int env_count = 1;
+    const char **env_names = make_env_names(env_count);
+    uint8_t *env_decisions = make_env_decisions(env_count);
 
     worker_ctx_t ctx = {
         .path = path,
-        .env_decision_count = 3,
+        .env_decision_count = env_count,
         .env_decision_names = env_names,
         .env_decisions = env_decisions,
         .srv = NULL,
@@ -82,22 +105,32 @@ static int test_basic_env_decisions(void) {
     };
 
     pthread_t tid;
-    if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) return -1;
+    if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) {
+        free(env_decisions);
+        free_env_names(env_names, env_count);
+        return -1;
+    }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
+        free(env_decisions);
+        free_env_names(env_names, env_count);
         return -1;
     }
 
-    const char *argv[] = {"ls", "-la"};
+    const char *argv[] = {"ls"};
     rbox_response_t resp = {0};
 
-    rbox_error_t err = rbox_blocking_request(path, "ls", 2, argv, "test", "execve",
-                                             0, NULL, NULL, &resp, 100, 1);
+    rbox_error_t err = rbox_blocking_request(path, "ls", 1, argv, "test", "execve",
+                                             env_count, env_names, (float[]){0.5},
+                                             &resp, 100, 1);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
     rbox_server_handle_free(ctx.srv);
     unlink(path);
+
+    free(env_decisions);
+    free_env_names(env_names, env_count);
 
     if (err != RBOX_OK) {
         TEST_ERROR("blocking_request failed: %d", err);
@@ -105,32 +138,41 @@ static int test_basic_env_decisions(void) {
     }
 
     if (resp.decision != RBOX_DECISION_ALLOW) {
-        TEST_ERROR("expected ALLOW decision, got %d", resp.decision);
+        TEST_ERROR("expected ALLOW, got %d", resp.decision);
+        rbox_response_free(&resp);
         return -1;
     }
 
-    /* Verify reason is "ok" */
-    if (strcmp(resp.reason, "ok") != 0) {
-        TEST_ERROR("expected reason 'ok', got '%s'", resp.reason);
+    /* Verify env decision count */
+    if (rbox_response_env_decision_count(&resp) != env_count) {
+        TEST_ERROR("expected %d env decisions, got %d", env_count, rbox_response_env_decision_count(&resp));
+        rbox_response_free(&resp);
         return -1;
     }
 
-    /* Env decisions are sent by server but client doesn't decode them yet.
-     * We verify the basic request/response works above. */
+    /* Verify: index 0 should be allow (0%3!=1) */
+    if (rbox_response_env_decision(&resp, 0) != 0) {
+        TEST_ERROR("index 0 should be allow (0), got %d", rbox_response_env_decision(&resp, 0));
+        rbox_response_free(&resp);
+        return -1;
+    }
+
+    rbox_response_free(&resp);
     return 0;
 }
 
-/* Test all allow - all env decisions are ALLOW */
-static int test_all_allow(void) {
-    const char *path = "/tmp/rbox_test_env_allow.sock";
+/* Test with 3 env vars (index 1 denied) */
+static int test_env_3_vars(void) {
+    const char *path = "/tmp/rbox_test_env_3.sock";
     unlink(path);
 
-    const char *env_names[] = {"A", "B", "C", "D"};
-    uint8_t env_decisions[] = {0, 0, 0, 0};  /* all allow */
+    int env_count = 3;
+    const char **env_names = make_env_names(env_count);
+    uint8_t *env_decisions = make_env_decisions(env_count);
 
     worker_ctx_t ctx = {
         .path = path,
-        .env_decision_count = 4,
+        .env_decision_count = env_count,
         .env_decision_names = env_names,
         .env_decisions = env_decisions,
         .srv = NULL,
@@ -139,40 +181,78 @@ static int test_all_allow(void) {
     };
 
     pthread_t tid;
-    if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) return -1;
+    if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) {
+        free(env_decisions);
+        free_env_names(env_names, env_count);
+        return -1;
+    }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
+        free(env_decisions);
+        free_env_names(env_names, env_count);
         return -1;
     }
 
-    const char *argv[] = {"echo", "test"};
+    const char *argv[] = {"ls"};
+    float scores[] = {0.5f, 0.6f, 0.7f};
     rbox_response_t resp = {0};
 
-    rbox_error_t err = rbox_blocking_request(path, "echo", 2, argv, "test", "execve",
-                                             0, NULL, NULL, &resp, 100, 1);
+    rbox_error_t err = rbox_blocking_request(path, "ls", 1, argv, "test", "execve",
+                                             env_count, env_names, scores,
+                                             &resp, 100, 1);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
     rbox_server_handle_free(ctx.srv);
     unlink(path);
 
-    if (err != RBOX_OK) return -1;
-    if (resp.decision != RBOX_DECISION_ALLOW) return -1;
+    free(env_decisions);
+    free_env_names(env_names, env_count);
 
+    if (err != RBOX_OK) {
+        TEST_ERROR("blocking_request failed: %d", err);
+        return -1;
+    }
+
+    if (resp.decision != RBOX_DECISION_ALLOW) {
+        TEST_ERROR("expected ALLOW, got %d", resp.decision);
+        rbox_response_free(&resp);
+        return -1;
+    }
+
+    /* Verify env decision count */
+    if (rbox_response_env_decision_count(&resp) != env_count) {
+        TEST_ERROR("expected %d env decisions, got %d", env_count, rbox_response_env_decision_count(&resp));
+        rbox_response_free(&resp);
+        return -1;
+    }
+
+    /* Verify each decision: deny if (index % 3) == 1 */
+    for (int i = 0; i < env_count; i++) {
+        int expected = (i % 3 == 1) ? 1 : 0;
+        if (rbox_response_env_decision(&resp, i) != expected) {
+            TEST_ERROR("index %d: expected %d, got %d", i, expected, rbox_response_env_decision(&resp, i));
+            rbox_response_free(&resp);
+            return -1;
+        }
+    }
+
+    rbox_response_free(&resp);
     return 0;
 }
 
-/* Test all deny - all env decisions are DENY */
-static int test_all_deny(void) {
-    const char *path = "/tmp/rbox_test_env_deny.sock";
+/* Test with 5 env vars (indices 1 and 4 denied) */
+static int test_env_5_vars(void) {
+    const char *path = "/tmp/rbox_test_env_5.sock";
     unlink(path);
 
-    const char *env_names[] = {"SECRET", "PASSWORD", "TOKEN"};
-    uint8_t env_decisions[] = {1, 1, 1};  /* all deny */
+    int env_count = 5;
+    const char **env_names = make_env_names(env_count);
+    uint8_t *env_decisions = make_env_decisions(env_count);
 
     worker_ctx_t ctx = {
         .path = path,
-        .env_decision_count = 3,
+        .env_decision_count = env_count,
         .env_decision_names = env_names,
         .env_decisions = env_decisions,
         .srv = NULL,
@@ -181,40 +261,78 @@ static int test_all_deny(void) {
     };
 
     pthread_t tid;
-    if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) return -1;
+    if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) {
+        free(env_decisions);
+        free_env_names(env_names, env_count);
+        return -1;
+    }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
+        free(env_decisions);
+        free_env_names(env_names, env_count);
         return -1;
     }
 
-    const char *argv[] = {"curl", "-h"};
+    const char *argv[] = {"ls"};
+    float scores[] = {0.5f, 0.6f, 0.7f, 0.8f, 0.9f};
     rbox_response_t resp = {0};
 
-    rbox_error_t err = rbox_blocking_request(path, "curl", 2, argv, "test", "execve",
-                                             0, NULL, NULL, &resp, 100, 1);
+    rbox_error_t err = rbox_blocking_request(path, "ls", 1, argv, "test", "execve",
+                                             env_count, env_names, scores,
+                                             &resp, 100, 1);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
     rbox_server_handle_free(ctx.srv);
     unlink(path);
 
-    if (err != RBOX_OK) return -1;
-    if (resp.decision != RBOX_DECISION_ALLOW) return -1;
+    free(env_decisions);
+    free_env_names(env_names, env_count);
 
+    if (err != RBOX_OK) {
+        TEST_ERROR("blocking_request failed: %d", err);
+        return -1;
+    }
+
+    if (resp.decision != RBOX_DECISION_ALLOW) {
+        TEST_ERROR("expected ALLOW, got %d", resp.decision);
+        rbox_response_free(&resp);
+        return -1;
+    }
+
+    /* Verify env decision count */
+    if (rbox_response_env_decision_count(&resp) != env_count) {
+        TEST_ERROR("expected %d env decisions, got %d", env_count, rbox_response_env_decision_count(&resp));
+        rbox_response_free(&resp);
+        return -1;
+    }
+
+    /* Verify each decision */
+    for (int i = 0; i < env_count; i++) {
+        int expected = (i % 3 == 1) ? 1 : 0;
+        if (rbox_response_env_decision(&resp, i) != expected) {
+            TEST_ERROR("index %d: expected %d, got %d", i, expected, rbox_response_env_decision(&resp, i));
+            rbox_response_free(&resp);
+            return -1;
+        }
+    }
+
+    rbox_response_free(&resp);
     return 0;
 }
 
-/* Test mixed decisions - some allow, some deny */
-static int test_mixed_decisions(void) {
-    const char *path = "/tmp/rbox_test_env_mixed.sock";
+/* Test with 95 env vars (near max) */
+static int test_env_95_vars(void) {
+    const char *path = "/tmp/rbox_test_env_95.sock";
     unlink(path);
 
-    const char *env_names[] = {"SAFE_VAR", "DANGEROUS_VAR", "ANOTHER_SAFE", "SENSITIVE"};
-    uint8_t env_decisions[] = {0, 1, 0, 1};  /* mixed */
+    int env_count = 95;
+    const char **env_names = make_env_names(env_count);
+    uint8_t *env_decisions = make_env_decisions(env_count);
 
     worker_ctx_t ctx = {
         .path = path,
-        .env_decision_count = 4,
+        .env_decision_count = env_count,
         .env_decision_names = env_names,
         .env_decisions = env_decisions,
         .srv = NULL,
@@ -223,30 +341,76 @@ static int test_mixed_decisions(void) {
     };
 
     pthread_t tid;
-    if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) return -1;
+    if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) {
+        free(env_decisions);
+        free_env_names(env_names, env_count);
+        return -1;
+    }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
+        free(env_decisions);
+        free_env_names(env_names, env_count);
         return -1;
     }
 
-    const char *argv[] = {"env"};
+    /* Build scores array */
+    float *scores = malloc(env_count * sizeof(float));
+    for (int i = 0; i < env_count; i++) {
+        scores[i] = 0.5f + (i * 0.005f);
+    }
+
+    const char *argv[] = {"ls"};
     rbox_response_t resp = {0};
 
-    rbox_error_t err = rbox_blocking_request(path, "env", 1, argv, "test", "execve",
-                                             0, NULL, NULL, &resp, 100, 1);
+    rbox_error_t err = rbox_blocking_request(path, "ls", 1, argv, "test", "execve",
+                                             env_count, env_names, scores,
+                                             &resp, 100, 1);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
     rbox_server_handle_free(ctx.srv);
     unlink(path);
 
-    if (err != RBOX_OK) return -1;
-    if (resp.decision != RBOX_DECISION_ALLOW) return -1;
+    free(scores);
+    free(env_decisions);
+    free_env_names(env_names, env_count);
 
+    if (err != RBOX_OK) {
+        TEST_ERROR("blocking_request failed: %d", err);
+        return -1;
+    }
+
+    if (resp.decision != RBOX_DECISION_ALLOW) {
+        TEST_ERROR("expected ALLOW, got %d", resp.decision);
+        rbox_response_free(&resp);
+        return -1;
+    }
+
+    /* Verify env decision count */
+    if (rbox_response_env_decision_count(&resp) != env_count) {
+        TEST_ERROR("expected %d env decisions, got %d", env_count, rbox_response_env_decision_count(&resp));
+        rbox_response_free(&resp);
+        return -1;
+    }
+
+    /* Sample verification: check first, middle, and last indices */
+    int check_indices[] = {0, 1, 2, 47, 48, 94};
+    int num_checks = sizeof(check_indices) / sizeof(check_indices[0]);
+    for (int c = 0; c < num_checks; c++) {
+        int i = check_indices[c];
+        int expected = (i % 3 == 1) ? 1 : 0;
+        if (rbox_response_env_decision(&resp, i) != expected) {
+            TEST_ERROR("index %d: expected %d, got %d", i, expected, rbox_response_env_decision(&resp, i));
+            rbox_response_free(&resp);
+            return -1;
+        }
+    }
+
+    rbox_response_free(&resp);
     return 0;
 }
 
-/* Test zero env decisions - server sends no env decisions */
+/* Test zero env decisions */
 static int test_zero_env_decisions(void) {
     const char *path = "/tmp/rbox_test_env_zero.sock";
     unlink(path);
@@ -272,7 +436,8 @@ static int test_zero_env_decisions(void) {
     rbox_response_t resp = {0};
 
     rbox_error_t err = rbox_blocking_request(path, "pwd", 1, argv, "test", "execve",
-                                             0, NULL, NULL, &resp, 100, 1);
+                                             0, NULL, NULL,
+                                             &resp, 100, 1);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
@@ -281,7 +446,13 @@ static int test_zero_env_decisions(void) {
 
     if (err != RBOX_OK) return -1;
     if (resp.decision != RBOX_DECISION_ALLOW) return -1;
+    if (rbox_response_env_decision_count(&resp) != 0) {
+        TEST_ERROR("expected 0 env decisions, got %d", rbox_response_env_decision_count(&resp));
+        rbox_response_free(&resp);
+        return -1;
+    }
 
+    rbox_response_free(&resp);
     return 0;
 }
 
@@ -291,19 +462,19 @@ int main(void) {
     printf("=== Environment decision tests ===\n\n");
     fflush(stdout);
 
-    RUN_TEST(test_basic_env_decisions, "basic env decision bitmap");
-    RUN_TEST(test_all_allow, "all allow decisions");
-    RUN_TEST(test_all_deny, "all deny decisions");
-    RUN_TEST(test_mixed_decisions, "mixed decisions");
+    RUN_TEST(test_env_1_var, "1 env var");
+    RUN_TEST(test_env_3_vars, "3 env vars");
+    RUN_TEST(test_env_5_vars, "5 env vars");
+    RUN_TEST(test_env_95_vars, "95 env vars");
     RUN_TEST(test_zero_env_decisions, "zero env decisions");
 
     printf("\n=== Results: %d/%d tests passed ===\n", g_pass_count, g_test_count);
     fflush(stdout);
 
-    unlink("/tmp/rbox_test_env_basic.sock");
-    unlink("/tmp/rbox_test_env_allow.sock");
-    unlink("/tmp/rbox_test_env_deny.sock");
-    unlink("/tmp/rbox_test_env_mixed.sock");
+    unlink("/tmp/rbox_test_env_1.sock");
+    unlink("/tmp/rbox_test_env_3.sock");
+    unlink("/tmp/rbox_test_env_5.sock");
+    unlink("/tmp/rbox_test_env_95.sock");
     unlink("/tmp/rbox_test_env_zero.sock");
 
     return (g_pass_count == g_test_count) ? 0 : 1;

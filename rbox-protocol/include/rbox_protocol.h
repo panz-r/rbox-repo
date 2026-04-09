@@ -39,20 +39,6 @@ typedef enum {
  * REQUEST/RESPONSE STRUCTURES
  * ============================================================ */
 
-/* Request structure - owns its data */
-typedef struct {
-    rbox_header_t    header;
-    char            *data;       /* Raw data (args + env, null-separated) */
-    size_t           data_len;  /* Length of data */
-
-    /* Parsed fields (point into data) */
-    char            *command;    /* Command name */
-    char          **argv;       /* Arguments (array of pointers into data) */
-    int              argv_len;  /* Number of arguments */
-    char          **envp;       /* Environment (array of pointers into data) */
-    int              envp_len;  /* Number of env vars */
-} rbox_request_t;
-
 /* Forward declarations for types defined later */
 struct rbox_parse_result;
 typedef struct rbox_parse_result rbox_parse_result_t;
@@ -109,17 +95,13 @@ typedef struct {
 //export rbox_response_env_decision_count
 int rbox_response_env_decision_count(const rbox_response_t *resp);
 
-/* Get env decision name at index (caller frees) */
-//export rbox_response_env_decision_name
-char *rbox_response_env_decision_name(const rbox_response_t *resp, int index);
-
 /* Get env decision at index (0=allow, 1=deny) */
 //export rbox_response_env_decision
 int rbox_response_env_decision(const rbox_response_t *resp, int index);
 
-/* Free env decisions in response */
-//export rbox_response_free_env_decisions
-void rbox_response_free_env_decisions(rbox_response_t *resp);
+/* Free all fields in response */
+//export rbox_response_free
+void rbox_response_free(rbox_response_t *resp);
 
 /* ============================================================
  * LAYERED DECODE UTILITIES
@@ -363,21 +345,6 @@ void rbox_server_stop(rbox_server_handle_t *server);
 /* Free server - must be called after stop() */
 void rbox_server_free(rbox_server_t *server);
 
-/* ============================================================
- * REQUEST PARSING
- * ============================================================ */
-
-/* Read request from client (blocks) */
-rbox_error_t rbox_request_read(rbox_client_t *client, rbox_request_t *request);
-
-/* Free request data */
-void rbox_request_free(rbox_request_t *request);
-
-/* Get command from request (zero-copy) */
-const char *rbox_request_get_command(const rbox_request_t *req);
-
-/* Get argument by index */
-const char *rbox_request_get_arg(const rbox_request_t *req, int index);
 
 /* ============================================================
  * RESPONSE SENDING
@@ -385,53 +352,6 @@ const char *rbox_request_get_arg(const rbox_request_t *req, int index);
 
 /* Send response to client */
 rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *response);
-
-/* ============================================================
- * CHUNKED TRANSFER (Large Packet Support)
- * ============================================================ */
-
-/* Stream state for chunked transfers */
-typedef struct rbox_stream rbox_stream_t;
-
-/* Create a new stream for chunked sending */
-rbox_stream_t *rbox_stream_new(const uint8_t *client_id, const uint8_t *request_id);
-
-/* Free stream */
-void rbox_stream_free(rbox_stream_t *stream);
-
-/* Send chunk to server
- * Returns offset where chunk was placed in buffer
- */
-rbox_error_t rbox_stream_send_chunk(rbox_client_t *client, rbox_stream_t *stream,
-                                    const void *data, size_t len,
-                                    uint32_t flags, uint64_t total_len);
-
-/* Read ACK from server
- * Updates stream->offset on success
- */
-rbox_error_t rbox_stream_read_ack(rbox_client_t *client, rbox_stream_t *stream);
-
-/* Get current stream offset */
-uint64_t rbox_stream_offset(const rbox_stream_t *stream);
-
-/* Server: Create stream state for incoming chunks */
-rbox_stream_t *rbox_server_stream_new(const uint8_t *client_id, const uint8_t *request_id,
-                                       uint64_t total_len);
-
-/* Server: Receive a chunk
- * Returns chunk data and validates offset
- */
-rbox_error_t rbox_server_stream_recv(rbox_client_t *client, rbox_stream_t *stream,
-                                     void *buffer, size_t buf_size,
-                                     size_t *out_chunk_len);
-
-/* Server: Send ACK to client */
-rbox_error_t rbox_server_stream_ack(rbox_client_t *client, rbox_stream_t *stream,
-                                    int32_t status, const char *reason);
-
-/* Server: Complete stream and get final request data */
-rbox_error_t rbox_server_stream_complete(rbox_stream_t *stream,
-                                         rbox_request_t *out_request);
 
 /* ============================================================
  * UTILITY FUNCTIONS

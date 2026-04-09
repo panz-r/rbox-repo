@@ -47,101 +47,6 @@ static void ensure_rand_seed_init(void) {
     }
 }
 
-/* Forward declarations for layered encoding functions */
-static int rbox_decode_request_body(const char *body_buf, size_t body_len,
-                            rbox_request_t *request);
-
-static int rbox_decode_request_body(const char *body_buf, size_t body_len,
-                            rbox_request_t *request) {
-    if (!body_buf || !request) return -1;
-    if (body_len == 0) return -1;
-
-    memset(request, 0, sizeof(*request));
-    request->data = malloc(body_len + 1);  /* +1 for null terminator */
-    if (!request->data) return -1;
-
-    memcpy(request->data, body_buf, body_len);
-    request->data[body_len] = '\0';  /* Null terminate */
-    request->data_len = body_len;
-
-    /* Parse: command\0caller\0syscall\0argv...\0 */
-    char *p = request->data;
-    size_t remaining = body_len;
-
-    /* command - must have at least 1 byte + null terminator */
-    if (remaining < 2) goto parse_error;
-    request->command = p;
-    size_t token_len = strlen(p);
-    if (token_len + 1 > remaining) goto parse_error;
-    p += token_len + 1;
-    remaining -= token_len + 1;
-
-    /* caller (skip) - must have at least 1 byte + null terminator */
-    if (remaining < 1) goto parse_error;
-    if (p[0] != '\0') {
-        token_len = strlen(p);
-        if (token_len + 1 > remaining) goto parse_error;
-        p += token_len + 1;
-        remaining -= token_len + 1;
-    } else {
-        p++;
-        remaining--;
-    }
-
-    /* syscall (skip) - must have at least 1 byte + null terminator */
-    if (remaining < 1) goto parse_error;
-    if (p[0] != '\0') {
-        token_len = strlen(p);
-        if (token_len + 1 > remaining) goto parse_error;
-        p += token_len + 1;
-        remaining -= token_len + 1;
-    } else {
-        p++;
-        remaining--;
-    }
-
-    /* Count and parse argv */
-    char *argv_start = p;
-    int argc = 0;
-    while (remaining > 0 && p[0] != '\0') {
-        token_len = strlen(p);
-        if (token_len + 1 > remaining) goto parse_error;
-        p += token_len + 1;
-        remaining -= token_len + 1;
-        argc++;
-    }
-
-    /* Skip final \0 - need at least 1 byte */
-    if (remaining < 1) goto parse_error;
-    p++;  /* Skip final \0 */
-    remaining--;
-
-    /* Allocate argv array */
-    request->argv = calloc(argc + 1, sizeof(char *));
-    if (!request->argv) {
-        rbox_request_free(request);
-        return -1;
-    }
-
-    /* Fill argv pointers */
-    p = argv_start;
-    for (int i = 0; i < argc; i++) {
-        request->argv[i] = p;
-        p += strlen(p) + 1;
-    }
-    request->argv_len = argc;
-    request->argv[argc] = NULL;
-
-    return 0;
-
-parse_error:
-    /* Clean up on parse error */
-    if (request->data) free(request->data);
-    if (request->argv) free(request->argv);
-    memset(request, 0, sizeof(*request));
-    return -1;
-}
-
 /* ============================================================
  * CHECKSUM
  * ============================================================ */
@@ -227,108 +132,6 @@ const char *rbox_strerror(rbox_error_t err) {
         case RBOX_ERR_MISMATCH: return "Request/response ID mismatch";
         default:                return "Unknown error";
     }
-}
-
-/* Read header from client - validates binary packet format */
-static rbox_error_t read_header(rbox_client_t *client, rbox_header_t *header) {
-    char packet[RBOX_HEADER_SIZE];
-    ssize_t n = rbox_read(rbox_client_fd(client), packet, RBOX_HEADER_SIZE);
-    if (n < 0) {
-        return RBOX_ERR_IO;
-    }
-    if (n != RBOX_HEADER_SIZE) {
-        return RBOX_ERR_TRUNCATED;
-    }
-
-    /* Validate header - checks magic, version, and checksum using binary format */
-    rbox_error_t err = rbox_header_validate(packet, RBOX_HEADER_SIZE);
-    if (err != RBOX_OK) {
-        return err;
-    }
-
-    /* Copy to struct for caller convenience */
-    memcpy(header, packet, RBOX_HEADER_SIZE);
-
-    return RBOX_OK;
-}
-
-static rbox_error_t read_request_data(rbox_client_t *client,
-                                     const rbox_header_t *header,
-                                     rbox_request_t *request) {
-    /* For single-chunk requests, use chunk_len to determine size
-     * For chunked requests, this will be called per-chunk by the stream functions
-     */
-    size_t buf_size = header->chunk_len;
-    if (buf_size == 0) {
-        return RBOX_ERR_IO;  /* No body to read */
-    }
-    if (buf_size > RBOX_CHUNK_MAX) buf_size = RBOX_CHUNK_MAX;
-
-    char *body_buf = malloc(buf_size);
-    if (!body_buf) {
-        return RBOX_ERR_MEMORY;
-    }
-
-    /* Read exactly chunk_len bytes */
-    ssize_t n = rbox_read(rbox_client_fd(client), body_buf, buf_size);
-    if (n <= 0) {
-        free(body_buf);
-        return RBOX_ERR_IO;
-    }
-
-    /* Decode body to request structure */
-    if (rbox_decode_request_body(body_buf, n, request) != 0) {
-        free(body_buf);
-        return RBOX_ERR_IO;
-    }
-
-    free(body_buf);
-    return RBOX_OK;
-}
-
-rbox_error_t rbox_request_read(rbox_client_t *client, rbox_request_t *request) {
-    if (!client || !request) {
-        return RBOX_ERR_INVALID;
-    }
-
-    memset(request, 0, sizeof(*request));
-
-    /* Read header */
-    rbox_error_t err = read_header(client, &request->header);
-    if (err != RBOX_OK) {
-        return err;
-    }
-
-    /* Read data */
-    err = read_request_data(client, &request->header, request);
-    if (err != RBOX_OK) {
-        rbox_request_free(request);
-    }
-
-    return err;
-}
-
-void rbox_request_free(rbox_request_t *request) {
-    if (!request) return;
-    free(request->data);
-    free(request->argv);
-    free(request->envp);
-    memset(request, 0, sizeof(*request));
-}
-
-/* ============================================================
- * REQUEST GETTERS
- * ============================================================ */
-
-const char *rbox_request_get_command(const rbox_request_t *req) {
-    return req ? req->command : NULL;
-}
-
-const char *rbox_request_get_arg(const rbox_request_t *req, int index) {
-    if (!req || index < 0 || index >= req->argv_len) {
-        return NULL;
-    }
-    return req->argv[index];
 }
 
 /* ============================================================
@@ -541,22 +344,19 @@ rbox_error_t validate_response(const char *packet, size_t len,
         }
 
         decision = packet[RBOX_HEADER_SIZE];  /* decision at offset 92 */
-        uint32_t body_chunk_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
-        if (body_chunk_len == 0) {
-            reason_len = 0;
-        } else if (body_chunk_len > 0) {
-            reason_len = body_chunk_len - 1;  /* chunk_len includes decision byte */
-        }
         reason_offset = RBOX_HEADER_SIZE;
+        /* Parse reason string to find actual length (null-terminated) */
+        reason_len = 0;
+        size_t scan_offset = RBOX_HEADER_SIZE + 1;
+        while (scan_offset < len && reason_len < RBOX_RESPONSE_MAX_REASON) {
+            if (packet[scan_offset] == '\0') break;
+            reason_len++;
+            scan_offset++;
+        }
         request_id_offset = RBOX_HEADER_OFFSET_REQUEST_ID;
 
-        /* Validate reason length */
-        if (reason_len > RBOX_RESPONSE_MAX_REASON) {
-            reason_len = RBOX_RESPONSE_MAX_REASON;
-        }
-
         /* Calculate expected total size */
-        size_t expected_len = RBOX_HEADER_SIZE + reason_len;
+        size_t expected_len = RBOX_HEADER_SIZE + 1 + reason_len + 1;  /* decision + reason + null */
         if (len < expected_len) {
             return RBOX_ERR_TRUNCATED;
         }
@@ -610,6 +410,27 @@ rbox_error_t validate_response(const char *packet, size_t len,
 
     /* Duration is not in v1 response - set to 0 (one-shot) */
     out_response->duration = 0;
+
+    /* Decode env decisions from response body (after reason)
+     * Body format: decision(1) + reason(reason_len) + \0 + fenv_hash(4) + env_count(2) + bitmap
+     * In v9, decision is at RBOX_HEADER_SIZE, so env_count is at RBOX_HEADER_SIZE + 1 + reason_len + 1 + 4 = RBOX_HEADER_SIZE + reason_len + 6 */
+    if (version == RBOX_VERSION) {
+        size_t env_offset = RBOX_HEADER_SIZE + 1 + reason_len + 1 + 4;
+        if (len >= env_offset + 2) {
+            uint16_t resp_env_count = *(uint16_t *)(packet + env_offset);
+            if (resp_env_count > 0 && resp_env_count <= 256) {
+                size_t bitmap_size = (resp_env_count + 7) / 8;
+                if (len >= env_offset + 2 + bitmap_size) {
+                    out_response->env_decision_count = resp_env_count;
+                    out_response->env_decisions = malloc(bitmap_size);
+                    if (out_response->env_decisions) {
+                        memcpy(out_response->env_decisions, packet + env_offset + 2, bitmap_size);
+                    }
+                }
+            }
+        }
+    }
+    /* v2 format does not include env decisions */
 
     return RBOX_OK;
 }
@@ -913,6 +734,15 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
     out_response->duration = 0;
     memcpy(out_response->request_id, header.request_id, 16);
 
+    /* Decode env decisions if present */
+    rbox_env_decisions_t env_decisions;
+    memset(&env_decisions, 0, sizeof(env_decisions));
+    rbox_decode_env_decisions(&header, &details, packet, packet_len, &env_decisions);
+    if (env_decisions.valid && env_decisions.env_count > 0 && env_decisions.bitmap) {
+        out_response->env_decision_count = env_decisions.env_count;
+        out_response->env_decisions = env_decisions.bitmap;  /* takes ownership */
+    }
+
     free(packet);
     return RBOX_OK;
 }
@@ -1108,14 +938,16 @@ int rbox_response_env_decision_count(const rbox_response_t *resp) {
     return resp->env_decision_count;
 }
 
-char *rbox_response_env_decision_name(const rbox_response_t *resp, int index) {
-    if (!resp || index < 0 || index >= resp->env_decision_count) return NULL;
-    if (!resp->env_decision_names || !resp->env_decision_names[index]) return NULL;
-    return strdup(resp->env_decision_names[index]);
-}
-
 int rbox_response_env_decision(const rbox_response_t *resp, int index) {
     if (!resp || index < 0 || index >= resp->env_decision_count) return -1;
     if (!resp->env_decisions) return -1;
-    return resp->env_decisions[index];
+    return (resp->env_decisions[index / 8] >> (index % 8)) & 1;
+}
+
+//export rbox_response_free
+void rbox_response_free(rbox_response_t *resp) {
+    if (!resp) return;
+    free(resp->env_decisions);
+    resp->env_decisions = NULL;
+    resp->env_decision_count = 0;
 }

@@ -36,7 +36,6 @@ SRCS = src/socket_io.c \
        src/protocol.c \
        src/runtime.c \
        src/session.c \
-       src/packet_stream.c \
        src/server_client.c \
        src/server_response.c \
        src/server_cache.c \
@@ -57,14 +56,12 @@ TEST_BLOCK_SRC = tests/test_blocking_server.c
 TEST_BLOCK_BIN = test_blocking_server
 TEST_PERSIST_SRC = tests/test_persistent.c
 TEST_PERSIST_BIN = test_persistent
-TEST_STREAM_SRC = tests/test_streaming.c
-TEST_STREAM_BIN = test_streaming
 TEST_ENV_SRC = tests/test_env_decisions.c
 TEST_ENV_BIN = test_env_decisions
 TEST_STRESS_SRC = tests/test_stress.c
 TEST_STRESS_BIN = test_stress
 
-.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-streaming test-env test-stress test-fuzz test-fuzz-1h test-fuzz-4h
+.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-env test-stress test-fuzz test-fuzz-1h test-fuzz-4h
 
 all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
 
@@ -94,28 +91,25 @@ $(SHELLSPLIT_OBJ):
 test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
-	./$(TEST_BASIC_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_BASIC_BIN)
 	@echo ""
 	@echo "=== Running full protocol tests ==="
-	./$(TEST_FULL_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_FULL_BIN)
 	@echo ""
 	@echo "=== Running integration tests ==="
-	./$(TEST_INTEG_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_INTEG_BIN)
 	@echo ""
 	@echo "=== Running blocking server tests ==="
-	./$(TEST_BLOCK_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_BLOCK_BIN)
 	@echo ""
 	@echo "=== Running persistent connection tests ==="
-	./$(TEST_PERSIST_BIN)
-	@echo ""
-	@echo "=== Running streaming tests ==="
-	./$(TEST_STREAM_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_PERSIST_BIN)
 	@echo ""
 	@echo "=== Running env decision tests ==="
-	./$(TEST_ENV_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_ENV_BIN)
 	@echo ""
 	@echo "=== Running stress tests ==="
-	./$(TEST_STRESS_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_STRESS_BIN)
 
 test-fuzz:
 	cd fuzz && make run-10m

@@ -393,19 +393,7 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         return;
     }
 
-    if (rbox_command_parse(req->command_data, req->command_len, &req->parse) != RBOX_OK) {
-        DBG("Failed to parse command from fd %d", fd);
-        size_t resp_len;
-        char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
-            RBOX_DECISION_DENY, "parse error", 0,
-            req->fenv_hash, 0, NULL, &resp_len);
-        if (resp) {
-            send_queue_add(server, fd, resp, resp_len, NULL);
-        }
-        server_request_free(req);
-        return;
-    }
-
+    /* First, find args_end to know where argv ends (before env vars) */
     const char *p = req->command_data;
     const char *args_end = req->command_data;
     while (p < req->command_data + req->command_len) {
@@ -418,6 +406,21 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         }
         p++;
     }
+    size_t args_len = args_end - req->command_data;
+
+    if (rbox_command_parse(req->command_data, args_len, &req->parse) != RBOX_OK) {
+        DBG("Failed to parse command from fd %d", fd);
+        size_t resp_len;
+        char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
+            RBOX_DECISION_DENY, "parse error", 0,
+            req->fenv_hash, 0, NULL, &resp_len);
+        if (resp) {
+            send_queue_add(server, fd, resp, resp_len, NULL);
+        }
+        server_request_free(req);
+        return;
+    }
+
     p = args_end;
     size_t remaining = req->command_len - (p - req->command_data);
     while (remaining > 5) {
