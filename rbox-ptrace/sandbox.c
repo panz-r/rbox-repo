@@ -436,6 +436,8 @@ struct expansion_context {
 
     struct expanded_path *result_paths;
     int result_count;
+
+    int failed;
 };
 
 static void expansion_context_init(struct expansion_context *ctx) {
@@ -454,6 +456,8 @@ static void expansion_context_init(struct expansion_context *ctx) {
 
     ctx->result_paths = NULL;
     ctx->result_count = 0;
+
+    ctx->failed = 0;
 }
 
 static void expansion_context_free(struct expansion_context *ctx) {
@@ -489,19 +493,28 @@ static void expansion_context_free(struct expansion_context *ctx) {
     ctx->result_count = 0;
 }
 
-static void add_expanded_path(struct expansion_context *ctx, const char *path, uint64_t access) {
+static int add_expanded_path(struct expansion_context *ctx, const char *path, uint64_t access) {
+    if (ctx->failed) return -1;
     if (ctx->path_count >= MAX_EXPANDED_PATHS) {
-        return;
+        return 0;
     }
     if (ctx->path_count >= ctx->path_capacity) {
         ctx->path_capacity = ctx->path_capacity ? ctx->path_capacity * 2 : 16;
         struct expanded_path *new_paths = realloc(ctx->paths, ctx->path_capacity * sizeof(struct expanded_path));
-        if (!new_paths) return;
+        if (!new_paths) {
+            ctx->failed = 1;
+            return -1;
+        }
         ctx->paths = new_paths;
     }
     ctx->paths[ctx->path_count].path = strdup(path);
+    if (!ctx->paths[ctx->path_count].path) {
+        ctx->failed = 1;
+        return -1;
+    }
     ctx->paths[ctx->path_count].access = access;
     ctx->path_count++;
+    return 0;
 }
 
 static bool is_under_deny(const char *path, size_t path_len,
@@ -556,15 +569,24 @@ bool sandbox_is_path_prefix(const char *parent, const char *child) {
     return is_path_prefix(parent, child);
 }
 
-static void visited_set_add(struct expansion_context *ctx, const char *path) {
-    if (ctx->visited_count >= MAX_VISITED_PATHS) return;
+static int visited_set_add(struct expansion_context *ctx, const char *path) {
+    if (ctx->failed) return -1;
+    if (ctx->visited_count >= MAX_VISITED_PATHS) return 0;
     if (ctx->visited_count >= ctx->visited_capacity) {
         ctx->visited_capacity = ctx->visited_capacity ? ctx->visited_capacity * 2 : 32;
         char **new_visited = realloc(ctx->visited, ctx->visited_capacity * sizeof(char *));
-        if (!new_visited) return;
+        if (!new_visited) {
+            ctx->failed = 1;
+            return -1;
+        }
         ctx->visited = new_visited;
     }
     ctx->visited[ctx->visited_count++] = strdup(path);
+    if (!ctx->visited[ctx->visited_count - 1]) {
+        ctx->failed = 1;
+        return -1;
+    }
+    return 0;
 }
 
 static bool visited_set_contains(struct expansion_context *ctx, const char *path) {
@@ -576,15 +598,21 @@ static bool visited_set_contains(struct expansion_context *ctx, const char *path
     return false;
 }
 
-static void queue_push(struct expansion_context *ctx, const char *path, uint64_t access) {
+static int queue_push(struct expansion_context *ctx, const char *path, uint64_t access) {
+    if (ctx->failed) return -1;
     if (ctx->queue_size >= ctx->queue_capacity) {
         DEBUG_PRINT("SANDBOX: queue overflow, discarding path '%s'\n", path);
-        return;
+        return 0;
     }
     int idx = (ctx->queue_head + ctx->queue_size) % ctx->queue_capacity;
     ctx->queue[idx].path = strdup(path);
+    if (!ctx->queue[idx].path) {
+        ctx->failed = 1;
+        return -1;
+    }
     ctx->queue[idx].access = access;
     ctx->queue_size++;
+    return 0;
 }
 
 static bool queue_empty(struct expansion_context *ctx) {
@@ -647,6 +675,8 @@ static void scan_dir_for_external_symlinks(struct expansion_context *ctx, const 
 
 static void expand_allow_path_recursive(struct expansion_context *ctx, const char *path, uint64_t access,
                                         struct denied_entry *deny, int deny_count) {
+    if (ctx->failed) return;
+
     DIR *dir = opendir(path);
     if (!dir) {
         DEBUG_PRINT("SANDBOX: cannot open '%s': %s\n", path, strerror(errno));
@@ -711,7 +741,7 @@ static void expand_allow_path_recursive(struct expansion_context *ctx, const cha
     closedir(dir);
 }
 
-static void expand_allow_list(struct expansion_context *ctx, struct allowed_entry *allow, int allow_count,
+static int expand_allow_list(struct expansion_context *ctx, struct allowed_entry *allow, int allow_count,
                        struct denied_entry *deny, int deny_count) {
     for (int i = 0; i < allow_count; i++) {
         if (allow[i].resolved == NULL) continue;
@@ -747,6 +777,8 @@ static void expand_allow_list(struct expansion_context *ctx, struct allowed_entr
     ctx->result_count = ctx->path_count;
     ctx->paths = NULL;
     ctx->path_count = 0;
+
+    return ctx->failed ? -1 : 0;
 }
 
 static struct expanded_path *g_result_paths = NULL;
@@ -761,12 +793,12 @@ static void free_result_paths(void) {
     g_result_count = 0;
 }
 
-void sandbox_expand_paths(struct allowed_entry *allow, int allow_count,
+int sandbox_expand_paths(struct allowed_entry *allow, int allow_count,
                          struct denied_entry *deny, int deny_count) {
     struct expansion_context ctx;
     expansion_context_init(&ctx);
 
-    expand_allow_list(&ctx, allow, allow_count, deny, deny_count);
+    int result = expand_allow_list(&ctx, allow, allow_count, deny, deny_count);
 
     free_result_paths();
     g_result_paths = ctx.result_paths;
@@ -775,6 +807,8 @@ void sandbox_expand_paths(struct allowed_entry *allow, int allow_count,
     ctx.result_count = 0;
 
     expansion_context_free(&ctx);
+
+    return result;
 }
 
 int sandbox_get_expanded_count(void) {
@@ -873,16 +907,13 @@ static int apply_landlock(void) {
     sandbox_simplify_allow_list(&allow_entries, &allow_count);
     sandbox_simplify_deny_list(&deny_entries, &deny_count);
 
-    struct expansion_context ctx;
-    expansion_context_init(&ctx);
-    expand_allow_list(&ctx, allow_entries, allow_count, deny_entries, deny_count);
-
-    free_result_paths();
-    g_result_paths = ctx.result_paths;
-    g_result_count = ctx.result_count;
-    ctx.result_paths = NULL;
-    ctx.result_count = 0;
-    expansion_context_free(&ctx);
+    int expand_result = sandbox_expand_paths(allow_entries, allow_count, deny_entries, deny_count);
+    if (expand_result != 0) {
+        LOG_WARN("Failed to expand Landlock paths, falling back to ptrace enforcement");
+        if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
+        if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
+        return -1;
+    }
 
     if (g_result_count == 0) {
         LOG_FATAL("Hard allow/deny options resulted in no allowed paths - possible configuration error");

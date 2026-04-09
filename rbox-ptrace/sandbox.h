@@ -76,7 +76,7 @@ void apply_sandboxing(void);
 int validate_landlock_paths(void);
 
 /* Test interface for expansion logic */
-void sandbox_expand_paths(struct allowed_entry *allow, int allow_count,
+int sandbox_expand_paths(struct allowed_entry *allow, int allow_count,
                           struct denied_entry *deny, int deny_count);
 
 int sandbox_get_expanded_count(void);
