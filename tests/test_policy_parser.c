@@ -1240,6 +1240,185 @@ static void test_parser_file_io_error(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Ambiguous patterns that look like layer types                     */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_at_layer_with_pattern_looking_like_type(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* @0 /PRECEDENCE -> R should parse as rule with pattern /PRECEDENCE,
+     * not as layer declaration (pattern starts with /, not P) */
+    const char *text = "@0 /PRECEDENCE -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "rule with pattern /PRECEDENCE accepted");
+    TEST_ASSERT_EQ(line, 0, "no error");
+
+    /* Verify the rule was added to layer 0 */
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 1, "layer 0 created");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 1, "rule added");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_layer_decl_no_space(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* @0PRECEDENCE (no space) should be parsed as layer declaration */
+    const char *text = "@0PRECEDENCE\n/data/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "layer decl without space accepted");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  File I/O edge cases                                                */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_file_io_empty_file(void)
+{
+    const char *test_file = "/tmp/test_empty_policy.txt";
+
+    /* Create empty file */
+    FILE *f = fopen(test_file, "w");
+    TEST_ASSERT(f != NULL, "create empty file");
+    fclose(f);
+
+    /* Parse empty file */
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, test_file, &line, &err), 0,
+                   "parse empty file");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "no rules from empty file");
+
+    soft_ruleset_free(rs);
+    unlink(test_file);
+}
+
+static void test_parser_file_io_whitespace_only(void)
+{
+    const char *test_file = "/tmp/test_ws_policy.txt";
+
+    /* Create file with only whitespace */
+    FILE *f = fopen(test_file, "w");
+    TEST_ASSERT(f != NULL, "create whitespace file");
+    fprintf(f, "   \n  \n\t\n");
+    fclose(f);
+
+    /* Parse whitespace-only file */
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, test_file, &line, &err), 0,
+                   "parse whitespace-only file");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "no rules from whitespace");
+
+    soft_ruleset_free(rs);
+    unlink(test_file);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Macro expansion edge cases                                         */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_macro_expands_to_empty(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Macro with whitespace-only pattern should be rejected */
+    const char *text = "[EMPTY] \n((EMPTY)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "macro with whitespace-only pattern rejected");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_macro_id_max_length(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Macro ID at max length (63 chars) */
+    char id[64];
+    memset(id, 'a', 63);
+    id[63] = '\0';
+    char text[200];
+    snprintf(text, sizeof(text), "[%s] /data/**\n((%s)) -> R\n", id, id);
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+                   "macro ID at max length accepted");
+
+    soft_ruleset_free(rs);
+}
+
+static void test_parser_macro_id_too_long(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    int line = 0;
+    const char *err = NULL;
+
+    /* Macro ID too long (64 chars) */
+    char id[65];
+    memset(id, 'a', 64);
+    id[64] = '\0';
+    char text[200];
+    snprintf(text, sizeof(text), "[%s] /data/**\n", id);
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+                   "macro ID too long rejected");
+
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Operation type edge cases                                          */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_operation_type_case_insensitive(void)
+{
+    const char *ops_lower[] = {"read", "write", "exec", "copy", "move", "link", "mount", "chmod", "custom", NULL};
+    const char *ops_upper[] = {"READ", "WRITE", "EXEC", "COPY", "MOVE", "LINK", "MOUNT", "CHMOD", "CUSTOM", NULL};
+    const char *ops_mixed[] = {"ReAd", "WrItE", "ExEc", "CoPy", "MoVe", "LiNk", "MoUnT", "ChMoD", "CuStOm", NULL};
+
+    for (int i = 0; ops_lower[i]; i++) {
+        /* Lower case */
+        soft_ruleset_t *rs1 = soft_ruleset_new();
+        char text1[64];
+        snprintf(text1, sizeof(text1), "/data/** -> R /%s\n", ops_lower[i]);
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs1, text1, NULL, NULL), 0,
+                       "lowercase operation type");
+        soft_ruleset_free(rs1);
+
+        /* Upper case */
+        soft_ruleset_t *rs2 = soft_ruleset_new();
+        char text2[64];
+        snprintf(text2, sizeof(text2), "/data/** -> R /%s\n", ops_upper[i]);
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text2, NULL, NULL), 0,
+                       "uppercase operation type");
+        soft_ruleset_free(rs2);
+
+        /* Mixed case */
+        soft_ruleset_t *rs3 = soft_ruleset_new();
+        char text3[64];
+        snprintf(text3, sizeof(text3), "/data/** -> R /%s\n", ops_mixed[i]);
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs3, text3, NULL, NULL), 0,
+                       "mixed-case operation type");
+        soft_ruleset_free(rs3);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Runner                                                              */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
@@ -1423,5 +1602,13 @@ void test_rule_engine_parser_run(void)
         RUN_TEST(test_serializer_deny_ruleset);
         RUN_TEST(test_serializer_empty_ruleset);
         RUN_TEST(test_parser_file_io_error);
+        RUN_TEST(test_parser_at_layer_with_pattern_looking_like_type);
+        RUN_TEST(test_parser_layer_decl_no_space);
+        RUN_TEST(test_parser_file_io_empty_file);
+        RUN_TEST(test_parser_file_io_whitespace_only);
+        RUN_TEST(test_parser_macro_expands_to_empty);
+        RUN_TEST(test_parser_macro_id_max_length);
+        RUN_TEST(test_parser_macro_id_too_long);
+        RUN_TEST(test_parser_operation_type_case_insensitive);
     RUN_TEST(test_serializer_roundtrip_full);
 }
