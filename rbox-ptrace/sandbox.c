@@ -154,7 +154,16 @@ struct allowed_entry *sandbox_parse_allow_list(const char *env_value, int *out_c
     char *token = strtok_r(copy, ",", &saveptr);
     while (token) {
         char *path = strdup(token);
-        if (!path) goto next_token;
+        if (!path) {
+            for (int i = 0; i < count; i++) {
+                free(entries[i].original);
+                free(entries[i].resolved);
+            }
+            free(entries);
+            free(copy);
+            *out_count = 0;
+            return NULL;
+        }
 
         uint64_t access = sandbox_parse_access_mode("rx");
         char *colon = strrchr(path, ':');
@@ -184,7 +193,14 @@ struct allowed_entry *sandbox_parse_allow_list(const char *env_value, int *out_c
             if (!new_entries) {
                 free(resolved);
                 free(path);
-                goto next_token;
+                for (int i = 0; i < count; i++) {
+                    free(entries[i].original);
+                    free(entries[i].resolved);
+                }
+                free(entries);
+                free(copy);
+                *out_count = 0;
+                return NULL;
             }
             entries = new_entries;
         }
@@ -194,7 +210,6 @@ struct allowed_entry *sandbox_parse_allow_list(const char *env_value, int *out_c
         entries[count].access = access;
         count++;
 
-    next_token:
         token = strtok_r(NULL, ",", &saveptr);
     }
 
@@ -230,7 +245,16 @@ struct denied_entry *sandbox_parse_deny_list(const char *env_value, int *out_cou
     char *token = strtok_r(copy, ",", &saveptr);
     while (token) {
         char *path = strdup(token);
-        if (!path) goto next_token;
+        if (!path) {
+            for (int i = 0; i < count; i++) {
+                free(entries[i].original);
+                free(entries[i].resolved);
+            }
+            free(entries);
+            free(copy);
+            *out_count = 0;
+            return NULL;
+        }
 
         char *resolved = realpath(path, NULL);
         if (!resolved) {
@@ -250,7 +274,14 @@ struct denied_entry *sandbox_parse_deny_list(const char *env_value, int *out_cou
             if (!new_entries) {
                 free(resolved);
                 free(path);
-                goto next_token;
+                for (int i = 0; i < count; i++) {
+                    free(entries[i].original);
+                    free(entries[i].resolved);
+                }
+                free(entries);
+                free(copy);
+                *out_count = 0;
+                return NULL;
             }
             entries = new_entries;
         }
@@ -259,7 +290,6 @@ struct denied_entry *sandbox_parse_deny_list(const char *env_value, int *out_cou
         entries[count].resolved = resolved;
         count++;
 
-    next_token:
         token = strtok_r(NULL, ",", &saveptr);
     }
 
