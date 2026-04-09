@@ -35,6 +35,7 @@ int client_fd_add(rbox_server_handle_t *server, int fd) {
     entry->fd = fd;
     entry->pending_request = NULL;
     entry->header_start_time = 0;
+    entry->body_start_time = 0;
     entry->waiting_for_header = 0;
     entry->last_activity = time(NULL);
     entry->prev = NULL;

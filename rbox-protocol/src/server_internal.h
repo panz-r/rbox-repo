@@ -192,6 +192,7 @@ typedef struct rbox_client_fd_entry {
     int fd;
     rbox_server_request_t *pending_request;  /* Non-null if body is being read */
     time_t header_start_time;                /* When we started waiting for header */
+    time_t body_start_time;                 /* When we started reading body */
     int waiting_for_header;                 /* 1 if we are in header read timeout state */
     time_t last_activity;                   /* Last read/write activity time */
     struct rbox_client_fd_entry *prev;       /* Previous entry in doubly-linked list */

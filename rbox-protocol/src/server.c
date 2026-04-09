@@ -267,6 +267,9 @@ static void pending_request_set(rbox_server_handle_t *server, int fd, rbox_serve
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
     if (entry) {
         entry->pending_request = req;
+        if (req->reading_body && entry->body_start_time == 0) {
+            entry->body_start_time = time(NULL);
+        }
     }
 }
 
@@ -279,6 +282,7 @@ static void pending_request_remove(rbox_server_handle_t *server, int fd) {
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
     if (entry) {
         entry->pending_request = NULL;
+        entry->body_start_time = 0;
     }
 }
 
@@ -1099,7 +1103,7 @@ static void *server_thread_func(void *arg) {
                         close_reason = 1;
                     }
                 } else if (tentry->pending_request && tentry->pending_request->reading_body) {
-                    if (difftime(now, tentry->header_start_time) > (double)server->request_timeout) {
+                    if (difftime(now, tentry->body_start_time) > (double)server->request_timeout) {
                         should_close = 1;
                         close_reason = 2;
                     }
