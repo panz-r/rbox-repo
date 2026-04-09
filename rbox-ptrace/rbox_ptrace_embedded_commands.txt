@@ -133,7 +133,7 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 [autoallow:readonly:git] git count-objects
 
 # File system read-only commands
-[autoallow:readonly:file] ls( (--color=auto )?(-(la|l|a) )?((safe::filename))*)?
+[autoallow:readonly:file] ls( --color=auto)?( -(la|l|a))?( ((safe::filename))*)?
 [autoallow:readonly:file] ls -R
 [autoallow:readonly:file] ls -r
 [autoallow:readonly:file] ls -t
