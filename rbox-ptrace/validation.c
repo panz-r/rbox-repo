@@ -64,7 +64,6 @@ int validation_init(void) {
         const char *env_path = getenv("READONLYBOX_WRAP_PATH");
         if (env_path && env_path[0] && access(env_path, X_OK) == 0) {
             strlcpy(g_wrap_path, env_path, sizeof(g_wrap_path));
-            g_wrap_path[sizeof(g_wrap_path) - 1] = '\0';
         } else {
             char self_path[PATH_MAX];
             ssize_t len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
