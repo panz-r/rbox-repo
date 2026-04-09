@@ -131,7 +131,9 @@ func main() {
 	}
 
 	fmt.Printf("readonlybox-server v1.0 - listening on %s\n", resolvedSocketPath)
-	os.Chmod(resolvedSocketPath, 0666)
+	if err := os.Chmod(resolvedSocketPath, 0666); err != nil {
+		gLogger.Log(1, "Warning: chmod failed: %v", err)
+	}
 
 	policyStr := "auto-allow"
 	if *autoDeny {
