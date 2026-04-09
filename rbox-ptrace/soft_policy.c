@@ -70,6 +70,46 @@ static const struct builtin_rule_def BUILTIN_DENY_RULES[] = {
 
 #define NUM_BUILTIN_DENY_RULES (sizeof(BUILTIN_DENY_RULES) / sizeof(BUILTIN_DENY_RULES[0]))
 
+static int path_matches(const char *rule_path, const char *target_path);
+
+static bool ends_with(const char *str, const char *suffix) {
+    if (!str || !suffix) return false;
+    size_t str_len = strlen(str);
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > str_len) return false;
+    return strcmp(str + str_len - suffix_len, suffix) == 0;
+}
+
+static uint32_t get_parent_access(const soft_policy_t *policy, const char *path) {
+    const char *last_slash = strrchr(path, '/');
+    if (!last_slash || last_slash == path) {
+        return 0;
+    }
+
+    char parent[PATH_MAX];
+    size_t parent_len = last_slash - path;
+    if (parent_len >= sizeof(parent)) {
+        return 0;
+    }
+    memcpy(parent, path, parent_len);
+    parent[parent_len] = '\0';
+
+    uint32_t parent_access = soft_mode_to_access_mask(policy->default_mode);
+    ssize_t best_match_len = -1;
+
+    for (int j = 0; j < policy->count; j++) {
+        if (path_matches(policy->rules[j].path, parent)) {
+            size_t match_len = strlen(policy->rules[j].path);
+            if ((ssize_t)match_len > best_match_len) {
+                best_match_len = (ssize_t)match_len;
+                parent_access = soft_mode_to_access_mask(policy->rules[j].mode);
+            }
+        }
+    }
+
+    return parent_access;
+}
+
 uint32_t soft_mode_to_access_mask(soft_mode_t mode) {
     switch (mode) {
         case SOFT_MODE_DENY:
@@ -342,6 +382,14 @@ int soft_policy_check(const soft_policy_t *policy, const soft_path_mode_t *input
                     best_match_len = (ssize_t)match_len;
                     allowed_access = soft_mode_to_access_mask(policy->rules[j].mode);
                 }
+            }
+        }
+
+        if (ends_with(path, ".lock")) {
+            uint32_t parent_access = get_parent_access(policy, path);
+            if ((best_match_len < 0 || !(allowed_access & SOFT_ACCESS_WRITE)) &&
+                (parent_access & SOFT_ACCESS_READ)) {
+                allowed_access = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
             }
         }
 
