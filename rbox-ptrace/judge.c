@@ -133,49 +133,40 @@ int judge_run(const char *command, const char *caller_info) {
 
             int flagged_count = env_get_flagged_count();
             if (flagged_count > 0) {
-                char env_buf[16384] = {0};
-                char *p = env_buf;
-                size_t rem = sizeof(env_buf) - 1;
-                int truncated = 0;
-
-                for (int i = 0; i < flagged_count && rem > 1; i++) {
+                /* Pre-scan to calculate total size needed */
+                size_t total_len = 0;
+                for (int i = 0; i < flagged_count; i++) {
                     const char *name = env_get_flagged_name(i);
                     if (name) {
                         double score = env_get_flagged_score(i);
                         if (score < -2.0) score = -2.0;
                         if (score > 2.0) score = 2.0;
-                        size_t len = strlen(name);
-                        char score_buf[16];
-                        int n = snprintf(score_buf, sizeof(score_buf), ":%.5f", score);
-                        size_t score_len = (n > 0) ? (size_t)n : 0;
-                        size_t needed = len + score_len;
-
-                        if (rem >= needed) {
-                            memcpy(p, name, len);
-                            p += len;
-                            rem -= len;
-
-                            if (score_len > 0 && score_len < rem) {
-                                memcpy(p, score_buf, score_len);
-                                p += score_len;
-                                rem -= score_len;
-                            }
-
-                            if (rem > 1 && i < flagged_count - 1) {
-                                *p++ = ',';
-                                rem--;
-                            }
-                        } else {
-                            truncated = 1;
-                        }
+                        total_len += strlen(name) + 8;  /* name + ":%.5f" max */
                     }
                 }
-
-                if (env_buf[0]) {
-                    setenv("READONLYBOX_FLAGGED_ENVS", env_buf, 1);
-                }
-                if (truncated) {
-                    fprintf(stderr, "Warning: READONLYBOX_FLAGGED_ENVS was truncated\n");
+                if (total_len > 0) {
+                    char *env_buf = malloc(total_len + 1);
+                    if (env_buf) {
+                        char *p = env_buf;
+                        for (int i = 0; i < flagged_count; i++) {
+                            const char *name = env_get_flagged_name(i);
+                            if (name) {
+                                double score = env_get_flagged_score(i);
+                                if (score < -2.0) score = -2.0;
+                                if (score > 2.0) score = 2.0;
+                                size_t len = strlen(name);
+                                memcpy(p, name, len);
+                                p += len;
+                                p += snprintf(p, 9, ":%.5f", score);
+                                if (i < flagged_count - 1) {
+                                    *p++ = ',';
+                                }
+                            }
+                        }
+                        *p = '\0';
+                        setenv("READONLYBOX_FLAGGED_ENVS", env_buf, 1);
+                        free(env_buf);
+                    }
                 }
             }
 
