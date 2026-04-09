@@ -97,7 +97,7 @@ static int test_build_response(void) {
     char *resp_packet = NULL;
     size_t resp_len = 0;
 
-    rbox_error_t err = rbox_build_response(RBOX_DECISION_ALLOW, "test-ok", 0, 0, 0, NULL, &resp_packet, &resp_len);
+    rbox_error_t err = rbox_build_response(RBOX_DECISION_ALLOW, "test-ok", 0, 0, NULL, &resp_packet, &resp_len);
     ASSERT(err == RBOX_OK, "build response should succeed");
     ASSERT(resp_len > RBOX_HEADER_SIZE, "response should have body");
     ASSERT(resp_packet != NULL, "response packet should be allocated");

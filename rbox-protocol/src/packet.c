@@ -899,7 +899,7 @@ rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *re
 
     size_t pkt_len;
     char *pkt = rbox_server_build_response(NULL, (uint8_t *)response->request_id, 0, response->decision,
-                                   response->reason, response->duration, 0, 0, NULL, &pkt_len);
+                                   response->reason, 0, 0, NULL, &pkt_len);
     if (!pkt) return RBOX_ERR_MEMORY;
 
     ssize_t n = rbox_write(rbox_client_fd(client), pkt, pkt_len);
@@ -911,7 +911,7 @@ rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *re
 /* Public rbox_build_response - builds a response packet (for DFA fast-path)
  * This is the canonical function for building response packets */
 rbox_error_t rbox_build_response(
-    uint8_t decision, const char *reason, uint32_t duration,
+    uint8_t decision, const char *reason,
     uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
     char **out_packet, size_t *out_len) {
 
@@ -920,7 +920,7 @@ rbox_error_t rbox_build_response(
     uint8_t client_id[16] = {0};
     uint8_t request_id[16] = {0};
 
-    char *pkt = rbox_server_build_response(client_id, request_id, 0, decision, reason, duration,
+    char *pkt = rbox_server_build_response(client_id, request_id, 0, decision, reason,
                                      fenv_hash, env_decision_count, env_decisions, out_len);
     if (!pkt) return RBOX_ERR_MEMORY;
 

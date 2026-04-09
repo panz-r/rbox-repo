@@ -627,7 +627,7 @@ int main(int argc, char *argv[]) {
             char *packet = NULL;
             size_t pkt_len = 0;
             rbox_error_t build_err = rbox_build_response(
-                RBOX_DECISION_ALLOW, "DFA fast-path", 0, 0, 0, NULL, &packet, &pkt_len);
+                RBOX_DECISION_ALLOW, "DFA fast-path", 0, 0, NULL, &packet, &pkt_len);
             if (build_err != RBOX_OK || !packet) {
                 fprintf(stderr, "%s: failed to build response packet\n", program_name);
                 return EXIT_ERROR;

@@ -20,12 +20,10 @@ char *rbox_server_build_response(
     uint32_t cmd_hash,
     uint8_t decision,
     const char *reason,
-    uint32_t duration,
     uint32_t fenv_hash,
     int env_decision_count,
     uint8_t *env_decisions,
     size_t *out_len) {
-    (void)duration;
 
     if (!out_len) return NULL;
 

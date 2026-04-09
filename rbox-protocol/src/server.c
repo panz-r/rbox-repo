@@ -384,7 +384,7 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         DBG("Cache hit for request on fd %d", fd);
         size_t resp_len;
         char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
-            cached_decision, cached_reason, cached_duration,
+            cached_decision, cached_reason,
             req->fenv_hash, 0, NULL, &resp_len);
         if (resp) {
             send_queue_add(server, fd, resp, resp_len, NULL);
@@ -412,7 +412,7 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         DBG("Failed to parse command from fd %d", fd);
         size_t resp_len;
         char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
-            RBOX_DECISION_DENY, "parse error", 0,
+            RBOX_DECISION_DENY, "parse error",
             req->fenv_hash, 0, NULL, &resp_len);
         if (resp) {
             send_queue_add(server, fd, resp, resp_len, NULL);
@@ -788,7 +788,7 @@ static void *server_thread_func(void *arg) {
             rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
                                   cmd_hash, cmd_hash2, dec->fenv_hash, dec->decision, dec->reason, dec->duration);
             char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
-                dec->decision, dec->reason, dec->duration,
+                dec->decision, dec->reason,
                 dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
             if (resp) {
                 DBG("Built response of size %zu for fd %d", resp_len, req->fd);

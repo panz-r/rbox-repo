@@ -430,13 +430,13 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
  * Caller must free the packet with free() */
 //export rbox_build_response
 rbox_error_t rbox_build_response(
-    uint8_t decision, const char *reason, uint32_t duration,
+    uint8_t decision, const char *reason,
     uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
     char **out_packet, size_t *out_len);
 
 /* Internal: Build response packet (used by server) */
 char *rbox_build_response_internal(uint8_t *client_id, uint8_t *request_id, uint32_t cmd_hash,
-                           uint8_t decision, const char *reason, uint32_t duration,
+                           uint8_t decision, const char *reason,
                            uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
                            size_t *out_len);
 
