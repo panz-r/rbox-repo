@@ -133,7 +133,6 @@
 #define DFA_RULE_ENC_NORMAL   0  // Fixed-stride rules
 #define DFA_RULE_ENC_BITMASK 1  // Bitmask rules (one per target)
 #define DFA_RULE_ENC_PACKED  2  // Variable-stride packed entries (no markers)
-#define DFA_RULE_ENC_CHAIN   3  // Multi-character literal chains
 
 /* ============================================================================
  * FNV-1a Hash Constants

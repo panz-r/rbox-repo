@@ -221,63 +221,6 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                     nxt = tgt; found = true; break;
                 }
             }
-        } else if (renc == DFA_RULE_ENC_CHAIN) {
-            // Chain encoding: match multi-character literal sequences
-            // Format: [chain_0]...[chain_{n-1}][default_target: OW]
-            // Each chain: [len:2][bytes...][target:OW][markers:4]
-            uint16_t n_chains = dfa_fmt_st_first_tc(d, cur, enc, tc);
-            const uint8_t* chain = d + rl;
-            for (uint16_t i = 0; i < n_chains && !found; i++) {
-                if ((size_t)(chain - d) >= sz) break;
-                uint16_t chain_len = dfa_chain_len(chain);
-                const uint8_t* chain_bytes = dfa_chain_bytes(chain);
-
-                // Check bounds safely - avoid overflow in offset calculation
-                size_t cur_off = (size_t)(chain - d);
-                size_t trailer_sz = DFA_CHAIN_TRAILER_SIZE(enc);
-                if (cur_off > sz ||
-                    DFA_CHAIN_HEADER_SIZE > sz - cur_off ||
-                    chain_len > sz - cur_off - DFA_CHAIN_HEADER_SIZE ||
-                    trailer_sz > sz - cur_off - DFA_CHAIN_HEADER_SIZE - chain_len) break;
-                
-                // Check if remaining input matches chain
-                if (pos + chain_len > len) {
-                    chain = dfa_chain_next(chain, enc);
-                    continue;
-                }
-                
-                bool chain_match = true;
-                for (uint16_t j = 0; j < chain_len; j++) {
-                    if ((unsigned char)in[pos + j] != chain_bytes[j]) {
-                        chain_match = false;
-                        break;
-                    }
-                }
-                
-                if (chain_match) {
-                    uint32_t tgt = dfa_chain_target(chain, enc);
-                    if (tgt >= sz || chain_len == 0) return false;
-                    pos += chain_len - 1;  // -1 because pos++ happens after loop
-                    nxt = tgt;
-                    found = true;
-                    break;
-                }
-                chain = dfa_chain_next(chain, enc);
-            }
-            // If no chain matched, check for default target
-            if (!found) {
-                // Validate chain pointer is still within bounds before accessing default target
-                // The default target comes right after all chain entries
-                size_t chain_off = (size_t)(chain - d);
-                size_t ow_sz = dfa_owb(enc);
-                if (chain_off + ow_sz <= sz) {
-                    uint32_t default_tgt = dfa_chain_default_target(chain, enc);
-                    if (default_tgt > 0 && default_tgt < sz) {
-                        nxt = default_tgt;
-                        found = true;
-                    }
-                }
-            }
         } else {
             // Normal fixed-stride rules
             for (uint16_t i = 0; i < tc; i++) {
@@ -373,24 +316,6 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
                             }
                             break;
                         }
-                    }
-                } else if (frenc == DFA_RULE_ENC_CHAIN) {
-                    // Chain encoding: find which chain was taken
-                    uint16_t n_chains = dfa_fmt_st_first_tc(d, fo, enc, ftc);
-                    const uint8_t* chain = d + frl;
-                    for (uint16_t i = 0; i < n_chains; i++) {
-                        size_t chain_off = (size_t)(chain - d);
-                        if (chain_off >= sz) break;
-                        if (chain_off + DFA_CHAIN_HEADER_SIZE > sz) break;
-                        size_t chain_size = dfa_chain_entry_size(chain, enc);
-                        if (chain_off + chain_size > sz) break;
-                        if (dfa_chain_target(chain, enc) == to) {
-                            uint32_t mk = dfa_chain_markers(chain, enc);
-                            if (mk && meta && mk+4 <= sz)
-                                proc_markers(d, sz, mk, t-1, wpid, cat, stk, &sd, res, mc);
-                            break;
-                        }
-                        chain = dfa_chain_next(chain, enc);
                     }
                 } else {
                     // Normal encoding: iterate fixed-stride rules

@@ -364,13 +364,13 @@ public:
 };
 
 extern "C" {
-int dfa_minimize_sat(build_dfa_state_t* dfa, int state_count) {
+int dfa_minimize_sat(build_dfa_state_t** dfa, int state_count) {
     if (state_count <= 1) return state_count;
 
     // Trap State Synthesis
     std::vector<bool> reaches_accept(state_count, false);
     for (int s = 0; s < state_count; s++) {
-        if (dfa[s].flags & DFA_STATE_ACCEPTING) reaches_accept[s] = true;
+        if (dfa[s]->flags & DFA_STATE_ACCEPTING) reaches_accept[s] = true;
     }
 
     bool changed = true;
@@ -379,12 +379,12 @@ int dfa_minimize_sat(build_dfa_state_t* dfa, int state_count) {
         for (int s = 0; s < state_count; s++) {
             if (reaches_accept[s]) continue;
             for (int c = 0; c < MAX_SYMBOLS; c++) {
-                int t = dfa[s].transitions[c];
+                int t = dfa[s]->transitions[c];
                 if (t >= 0 && t < state_count && reaches_accept[t]) {
                     reaches_accept[s] = true; changed = true; break;
                 }
             }
-            if (!reaches_accept[s] && dfa[s].eos_target != 0 && (int)dfa[s].eos_target < state_count && reaches_accept[dfa[s].eos_target]) {
+            if (!reaches_accept[s] && dfa[s]->eos_target != 0 && (int)dfa[s]->eos_target < state_count && reaches_accept[dfa[s]->eos_target]) {
                 reaches_accept[s] = true; changed = true;
             }
         }
@@ -395,12 +395,12 @@ int dfa_minimize_sat(build_dfa_state_t* dfa, int state_count) {
         if (!reaches_accept[s]) {
             if (trap_state == -1) {
                 trap_state = s;
-                for (int c = 0; c < MAX_SYMBOLS; c++) dfa[s].transitions[c] = s;
-                dfa[s].eos_target = 0;
-                dfa[s].flags &= ~DFA_STATE_ACCEPTING;
+                for (int c = 0; c < MAX_SYMBOLS; c++) dfa[s]->transitions[c] = s;
+                dfa[s]->eos_target = 0;
+                dfa[s]->flags &= ~DFA_STATE_ACCEPTING;
             } else {
-                for (int c = 0; c < MAX_SYMBOLS; c++) dfa[s].transitions[c] = trap_state;
-                dfa[s].eos_target = 0;
+                for (int c = 0; c < MAX_SYMBOLS; c++) dfa[s]->transitions[c] = trap_state;
+                dfa[s]->eos_target = 0;
             }
         }
     }
@@ -410,7 +410,7 @@ int dfa_minimize_sat(build_dfa_state_t* dfa, int state_count) {
 
     if (hop_count <= 1) return hop_count;
 
-    ScalableSATMinimizer minimizer(dfa, hop_count);
+    ScalableSATMinimizer minimizer(*dfa, hop_count);
     return minimizer.run();
 }
 }

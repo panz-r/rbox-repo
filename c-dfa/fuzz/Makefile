@@ -4,8 +4,11 @@
 CXX = /usr/bin/clang++
 CC = /usr/bin/clang
 
-CXXFLAGS = -fsanitize=fuzzer,address,undefined -I../include -g -O1 -fno-omit-frame-pointer
+CXXFLAGS = -fsanitize=fuzzer,address,undefined -I../include -I../vendor/cadical/src -DUSE_CADICAL -g -O1 -fno-omit-frame-pointer
 CFLAGS = -fsanitize=fuzzer,address,undefined -I../include -g -O1 -fno-omit-frame-pointer
+
+# CaDiCaL SAT solver library (built by parent Makefile)
+CADICAL_LIB = ../vendor/cadical/build/libcadical.a
 
 # Build directory for fuzzer-specific objects (isolated from main build)
 FUZZ_BUILD = fuzz_build
@@ -21,10 +24,11 @@ PIPELINE_LIB_OBJS = $(FUZZ_BUILD)/pipeline.o $(FUZZ_BUILD)/build_dfa_state.o \
                      $(FUZZ_BUILD)/nfa_categories.o $(FUZZ_BUILD)/nfa_parser.o \
                      $(FUZZ_BUILD)/nfa_validate.o $(FUZZ_BUILD)/nfa_alphabet.o \
                      $(FUZZ_BUILD)/nfa2dfa.o $(FUZZ_BUILD)/dfa_minimize.o \
-                     $(FUZZ_BUILD)/dfa_minimize_brzozowski.o $(FUZZ_BUILD)/dfa_minimize_sat_stub.o \
+                     $(FUZZ_BUILD)/dfa_minimize_brzozowski.o $(FUZZ_BUILD)/dfa_minimize_sat.o \
                      $(FUZZ_BUILD)/dfa_layout.o $(FUZZ_BUILD)/dfa_compress.o \
-                     $(FUZZ_BUILD)/dfa_compress_sat_stub.o $(FUZZ_BUILD)/nfa_preminimize.o \
-                     $(FUZZ_BUILD)/nfa_preminimize_sat_optimal_stub.o $(FUZZ_BUILD)/dfa_layout_sat_stub.o \
+                     $(FUZZ_BUILD)/dfa_compress_sat.o $(FUZZ_BUILD)/nfa_preminimize.o \
+                     $(FUZZ_BUILD)/nfa_preminimize_sat.o $(FUZZ_BUILD)/nfa_preminimize_windowed.o \
+                     $(FUZZ_BUILD)/nfa_preminimize_sat_optimal.o $(FUZZ_BUILD)/dfa_layout_sat.o \
                      $(FUZZ_BUILD)/pattern_order.o $(FUZZ_BUILD)/multi_target_array.o \
                      $(FUZZ_BUILD)/dfa_machine.o \
                      $(FUZZ_BUILD)/dfa_eval.o $(FUZZ_BUILD)/dfa_loader.o
@@ -52,7 +56,7 @@ nfa_build_fuzzer: nfa_build_fuzzer.cpp
 
 # Pipeline fuzzer - tests full build pipeline with various configurations
 pipeline_fuzzer: pipeline_fuzzer.cpp $(PIPELINE_LIB_OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $< $(PIPELINE_LIB_OBJS) -lm
+	$(CXX) $(CXXFLAGS) -o $@ $< $(PIPELINE_LIB_OBJS) $(CADICAL_LIB) -lstdc++ -lm
 
 # DFA loader fuzzer - tests binary and text DFA loading
 dfa_loader_fuzzer: dfa_loader_fuzzer.cpp $(LIB_OBJS)
@@ -67,6 +71,9 @@ $(FUZZ_BUILD)/%.o: ../lib/%.c
 
 $(FUZZ_BUILD)/%.o: ../tools/%.c
 	$(CC) $(CFLAGS) -DNFABUILDER_NO_MAIN -DNFABUILDER_EXCLUDE_NFA_INIT -DNFA2DFA_BUILDING_LIB -c $< -o $@
+
+$(FUZZ_BUILD)/%.o: ../tools/%.cpp
+	$(CXX) $(CXXFLAGS) -DNFABUILDER_NO_MAIN -DNFABUILDER_EXCLUDE_NFA_INIT -DNFA2DFA_BUILDING_LIB -c $< -o $@
 
 # Run fuzzing with corpus
 run-dfa: dfa_eval_fuzzer

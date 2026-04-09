@@ -48,7 +48,7 @@ CADICAL_DIR = vendor/cadical
 CADICAL_LIB = $(CADICAL_DIR)/build/libcadical.a
 CADICAL_INC = -I$(CADICAL_DIR)/src
 
-TOOLS = $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TOOLS_DIR)/dfa_eval_wrapper $(TOOLS_DIR)/dfa2c_array $(TOOLS_DIR)/dfa_chain_stats
+TOOLS = $(TOOLS_DIR)/nfa_builder $(TOOLS_DIR)/nfa2dfa_advanced $(TOOLS_DIR)/dfa_eval_wrapper $(TOOLS_DIR)/dfa2c_array
 TEST = dfa_test
 
 # NFA builder module objects (for both standalone and nfa2dfa_advanced)
@@ -87,23 +87,26 @@ LIB_OBJS = lib/pipeline.o \
            $(SRC_DIR)/dfa_eval.o \
            $(SRC_DIR)/dfa_loader.o \
            $(SRC_DIR)/dfa_machine.o \
-           $(TOOLS_DIR)/nfa_builder_lib.o \
-           $(NFA_BUILDER_MODULES) \
-           $(TOOLS_DIR)/nfa2dfa.o \
-           $(TOOLS_DIR)/dfa_minimize.o \
-           $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
-           $(TOOLS_DIR)/dfa_minimize_sat_stub.o \
-           $(TOOLS_DIR)/dfa_layout.o \
-           $(TOOLS_DIR)/dfa_compress.o \
-           $(TOOLS_DIR)/dfa_compress_sat_stub.o \
-           $(TOOLS_DIR)/nfa_preminimize.o \
-           $(TOOLS_DIR)/nfa_preminimize_sat_optimal_stub.o \
-           $(TOOLS_DIR)/dfa_layout_sat_stub.o \
-           $(TOOLS_DIR)/pattern_order.o \
-           $(TOOLS_DIR)/multi_target_array.o
+$(TOOLS_DIR)/nfa_builder_lib.o \
+            $(NFA_BUILDER_MODULES) \
+            $(TOOLS_DIR)/nfa2dfa.o \
+            $(TOOLS_DIR)/dfa_minimize.o \
+            $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
+            $(TOOLS_DIR)/dfa_minimize_sat.o \
+            $(TOOLS_DIR)/dfa_layout.o \
+            $(TOOLS_DIR)/dfa_compress.o \
+            $(TOOLS_DIR)/dfa_compress_sat.o \
+            $(TOOLS_DIR)/nfa_preminimize.o \
+            $(TOOLS_DIR)/nfa_preminimize_sat.o \
+            $(TOOLS_DIR)/nfa_preminimize_windowed.o \
+            $(TOOLS_DIR)/nfa_preminimize_sat_optimal.o \
+            $(TOOLS_DIR)/dfa_layout_sat.o \
+            $(TOOLS_DIR)/pattern_order.o \
+            $(TOOLS_DIR)/multi_target_array.o
 
-$(LIB): $(LIB_OBJS)
+$(LIB): $(LIB_OBJS) $(CADICAL_LIB)
 	$(AR) rcs $@ $(LIB_OBJS)
+	ln -sf $(CADICAL_LIB) libcadical.a 2>/dev/null || true
 
 # Eval-only library - just evaluation, no loader/I/O
 EVAL_LIB = libdfa_eval.a
@@ -151,43 +154,20 @@ $(TOOLS_DIR)/dfa_eval_wrapper: $(TOOLS_DIR)/dfa_eval_wrapper.c $(SRC_DIR)/dfa_ev
 $(TOOLS_DIR)/dfa2c_array: $(TOOLS_DIR)/dfa2c_array.c $(INCLUDE_DIR)/dfa_errors.h
 	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/dfa2c_array.c $(LDFLAGS)
 
-$(TOOLS_DIR)/dfa_chain_stats: $(TOOLS_DIR)/dfa_chain_stats.c $(INCLUDE_DIR)/dfa_types.h $(INCLUDE_DIR)/dfa_format.h
-	$(CC) $(CFLAGS) -o $@ $(TOOLS_DIR)/dfa_chain_stats.c $(LDFLAGS)
-
 # CLI version of nfa2dfa.o (includes main)
 $(TOOLS_DIR)/nfa2dfa_cli.o: $(TOOLS_DIR)/nfa2dfa.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -DNFABUILDER_EXCLUDE_NFA_INIT -c -o $@ $<
 
 # Main tool with compression support (links against library + SAT modules)
-$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa_cli.o $(LIB) \
-		$(TOOLS_DIR)/dfa_compress_sat.o \
-		$(TOOLS_DIR)/dfa_layout_sat.o \
-		$(TOOLS_DIR)/nfa_preminimize_sat.o \
-		$(TOOLS_DIR)/nfa_preminimize_windowed.o \
-		$(TOOLS_DIR)/nfa_preminimize_sat_optimal.o \
-		$(CADICAL_LIB)
+$(TOOLS_DIR)/nfa2dfa_advanced: $(TOOLS_DIR)/nfa2dfa_cli.o $(LIB)
 	$(CXX) -o $@ $(TOOLS_DIR)/nfa2dfa_cli.o \
 		-L. -lreadonlybox_dfa \
-		$(TOOLS_DIR)/dfa_compress_sat.o \
-		$(TOOLS_DIR)/dfa_layout_sat.o \
-		$(TOOLS_DIR)/nfa_preminimize_sat.o \
-		$(TOOLS_DIR)/nfa_preminimize_windowed.o \
-		$(TOOLS_DIR)/nfa_preminimize_sat_optimal.o \
-		$(CADICAL_LIB) $(LDFLAGS) -lstdc++
+		$(CADICAL_LIB) \
+		$(LDFLAGS)
 
 # Object files for nfa2dfa (library version - no main)
 $(TOOLS_DIR)/nfa2dfa.o: $(TOOLS_DIR)/nfa2dfa.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -DNFABUILDER_NO_MAIN -DNFABUILDER_EXCLUDE_NFA_INIT -DNFA2DFA_BUILDING_LIB -c -o $@ $<
-
-# SAT stubs for library (C-only build)
-$(TOOLS_DIR)/dfa_compress_sat_stub.o: $(TOOLS_DIR)/dfa_compress_sat_stub.c $(TOOLS_DIR)/dfa_compress.h $(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-$(TOOLS_DIR)/nfa_preminimize_sat_optimal_stub.o: $(TOOLS_DIR)/nfa_preminimize_sat_optimal_stub.c $(TOOLS_DIR)/nfa_preminimize.h $(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -c -o $@ $<
-
-$(TOOLS_DIR)/dfa_layout_sat_stub.o: $(TOOLS_DIR)/dfa_layout_sat_stub.c $(TOOLS_DIR)/dfa_layout_sat.h $(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(TOOLS_DIR)/nfa_builder_lib.o: $(TOOLS_DIR)/nfa_builder_lib.c $(INCLUDE_DIR)/*.h $(TOOLS_DIR)/nfa_builder.h
 	$(CC) $(CFLAGS) -DNFABUILDER_NO_MAIN -c -o $@ $<
@@ -278,20 +258,20 @@ $(CADICAL_LIB):
 
 # Build test binary (links against library for full pipeline support)
 $(TEST): $(SRC_DIR)/dfa_test.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ $(SRC_DIR)/dfa_test.c -L. -lreadonlybox_dfa $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -o $@ $(SRC_DIR)/dfa_test.c -L. -lreadonlybox_dfa $(CADICAL_LIB) $(LDFLAGS) -lstdc++
 
 # Build minimization integrity test
 $(TESTS_DIR)/test_minimize_integrity: $(TESTS_DIR)/test_minimize_integrity.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/test_minimize_integrity.c \
-		-L. -lreadonlybox_dfa $(LDFLAGS)
+		-L. -lreadonlybox_dfa $(CADICAL_LIB) $(LDFLAGS) -lstdc++
 
 # Build library API tests (error handling, concurrent evaluators)
 $(TESTS_DIR)/test_library_api: $(TESTS_DIR)/test_library_api.c $(LIB) $(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/test_library_api.c -L. -lreadonlybox_dfa $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -o $@ $(TESTS_DIR)/test_library_api.c -L. -lreadonlybox_dfa $(CADICAL_LIB) $(LDFLAGS) -lstdc++
 
 # Build regression tests (pattern bug regression tests)
 $(TESTS_DIR)/regression_test: $(TESTS_DIR)/regression_test.c $(LIB) $(INCLUDE_DIR)/*.h
-	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/regression_test.c -L. -lreadonlybox_dfa $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -o $@ $(TESTS_DIR)/regression_test.c -L. -lreadonlybox_dfa $(CADICAL_LIB) $(LDFLAGS) -lstdc++
 
 # Build eval-only test (links against libdfa_eval.a only, no builder deps)
 $(TESTS_DIR)/test_eval_only: $(TESTS_DIR)/test_eval_only.c $(EVAL_LIB) $(INCLUDE_DIR)/dfa.h $(INCLUDE_DIR)/dfa_types.h
@@ -521,37 +501,6 @@ fuzz-clean:
 
 fuzz-rebuild: clean-fuzz fuzz-build
 
-.PHONY: all clean clean-all test test-moore test-hopcroft test-brzozowski test-integrity build-sat test-sat test-sat-full
+.PHONY: all clean clean-all test test-moore test-hopcroft test-brzozowski test-integrity build-sat
 .PHONY: fuzz fuzz-build fuzz-run-dfa fuzz-run-pattern fuzz-run fuzz-clean fuzz-rebuild
 
-# SAT encoding tests
-TEST_SAT = tests/test_sat_encoding
-
-$(TEST_SAT): tests/test_sat_encoding.cpp $(TOOLS_DIR)/dfa_minimize_sat.o \
-        $(TOOLS_DIR)/dfa_minimize.o $(TOOLS_DIR)/dfa_minimize_brzozowski.o \
-        $(INCLUDE_DIR)/*.h $(CADICAL_LIB)
-	$(CXX) $(CXXFLAGS) $(CADICAL_INC) -o $@ tests/test_sat_encoding.cpp \
-		$(TOOLS_DIR)/dfa_minimize_sat.o $(TOOLS_DIR)/dfa_minimize.o \
-		$(TOOLS_DIR)/dfa_minimize_brzozowski.o \
-		$(CADICAL_LIB) $(LDFLAGS) -lstdc++
-
-test-sat: $(TEST_SAT)
-	@echo ""
-	@echo "================================================="
-	@echo "SAT ENCODING TESTS"
-	@echo "================================================="
-	@./$(TEST_SAT)
-
-# Full test suite with SAT minimization (requires CaDiCaL)
-test-sat-full: build-sat $(TEST)
-	@echo ""
-	@echo "================================================="
-	@echo "FULL TEST SUITE WITH SAT MINIMIZATION"
-	@echo "================================================="
-	@./$(TEST) --minimize-sat --test-set A
-	@./$(TEST) --minimize-sat --test-set BC
-	@echo ""
-	@echo "================================================="
-	@echo "MINIMIZATION INTEGRITY (SAT)"
-	@echo "================================================="
-	@./$(TESTS_DIR)/test_minimize_integrity
