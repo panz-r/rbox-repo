@@ -1799,6 +1799,49 @@ static void test_parser_empty_macro_id(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  API NULL argument handling                                          */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_api_null_arguments(void)
+{
+    soft_ruleset_t *rs;
+    char *out;
+
+    /* soft_ruleset_parse_text */
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(NULL, "/data/** -> R\n", NULL, NULL), -1,
+                   "parse_text NULL rs rejected");
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, NULL, NULL, NULL), -1,
+                   "parse_text NULL text rejected");
+    soft_ruleset_free(rs);
+
+    /* soft_ruleset_parse_file */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, NULL, NULL, NULL), -1,
+                   "parse_file NULL path rejected");
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(NULL, "/tmp/test.txt", NULL, NULL), -1,
+                   "parse_file NULL rs rejected");
+    soft_ruleset_free(rs);
+
+    /* soft_ruleset_write_text */
+    TEST_ASSERT_EQ(soft_ruleset_write_text(NULL, &out), -1,
+                   "write_text NULL rs rejected");
+    out = NULL;
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, NULL), -1,
+                   "write_text NULL out rejected");
+    soft_ruleset_free(rs);
+
+    /* soft_ruleset_write_file */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_write_file(rs, NULL), -1,
+                   "write_file NULL path rejected");
+    TEST_ASSERT_EQ(soft_ruleset_write_file(NULL, "/tmp/test.txt"), -1,
+                   "write_file NULL rs rejected");
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -1889,5 +1932,6 @@ void test_rule_engine_parser_run(void)
         RUN_TEST(test_parser_write_null_rs);
         RUN_TEST(test_parser_write_null_out);
         RUN_TEST(test_parser_write_file_null_path);
+    RUN_TEST(test_parser_api_null_arguments);
     RUN_TEST(test_serializer_roundtrip_full);
 }
