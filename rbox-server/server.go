@@ -110,8 +110,8 @@ func main() {
 	flag.Parse()
 
 	// Determine socket path
-	socketPath := getSocketPath(*socketPath, *systemSocket, *userSocket)
-	fmt.Printf("Using socket: %s\n", socketPath)
+	resolvedSocketPath := getSocketPath(*socketPath, *systemSocket, *userSocket)
+	fmt.Printf("Using socket: %s\n", resolvedSocketPath)
 
 	gLogger = NewLogger(*logFile, *logLevel)
 	if gLogger != nil {
@@ -124,14 +124,14 @@ func main() {
 		return
 	}
 
-	server, err := NewRBoxServer(socketPath)
+	server, err := NewRBoxServer(resolvedSocketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("readonlybox-server v1.0 - listening on %s\n", socketPath)
-	os.Chmod(socketPath, 0666)
+	fmt.Printf("readonlybox-server v1.0 - listening on %s\n", resolvedSocketPath)
+	os.Chmod(resolvedSocketPath, 0666)
 
 	policyStr := "auto-allow"
 	if *autoDeny {
