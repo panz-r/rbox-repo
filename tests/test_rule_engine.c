@@ -46,7 +46,7 @@ static void test_rule_engine_basic_ops(void)
                                           SOFT_RULE_RECURSIVE),
                    0, "add DST write rule");
 
-    /* READ check 1: allowed by /usr/** */
+    /* READ check 1: allowed by /usr double-wildcard */
     soft_access_ctx_t ctx = { SOFT_OP_READ, "/usr/bin/bash", NULL, NULL, 1000 };
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
                    "/usr/bin/bash grants READ");
@@ -740,7 +740,7 @@ static void test_rule_engine_uncovered_ops(void)
                    "EXEC grants EXEC");
 
     ctx.src_path = "/bin/unauthorized";
-    /* Still matches /bin/** -> should be allowed */
+    /* Still matches /bin double-wildcard - should be allowed */
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_EXEC,
                    "EXEC: /bin/** matches any file");
 
