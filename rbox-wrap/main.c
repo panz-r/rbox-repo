@@ -122,7 +122,7 @@ static const void *g_dfa_data = NULL;
 static size_t g_dfa_size = 0;
 static int g_dfa_validated = 0;
 
-static const char *program_name = "rbox-wrap";
+static const char *g_program_name = "rbox-wrap";
 
 static void usage(const char *prog) {
     fprintf(stderr, "Usage: %s [options] [--] <command> [args...]\n", prog);
@@ -151,7 +151,7 @@ static void usage(const char *prog) {
 }
 
 static void version_info(void) {
-    fprintf(stderr, "%s v1.0.0\n", program_name);
+    fprintf(stderr, "%s v1.0.0\n", g_program_name);
     fprintf(stderr, "ReadOnlyBox wrapper for executing read-only commands\n");
 }
 
@@ -381,7 +381,7 @@ static int write_all(int fd, const void *data, size_t len) {
 static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clear_env) {
     pid_t pid = fork();
     if (pid < 0) {
-        fprintf(stderr, "%s: fork: %s\n", program_name, strerror(errno));
+        fprintf(stderr, "%s: fork: %s\n", g_program_name, strerror(errno));
         return EXIT_ERROR;
     }
 
@@ -396,7 +396,7 @@ static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clea
             pw = getpwuid(target_uid);
             if (!pw) {
                 fprintf(stderr, "%s: target user %lu does not exist\n",
-                        program_name, (unsigned long)target_uid);
+                        g_program_name, (unsigned long)target_uid);
                 _exit(1);
             }
             home = pw->pw_dir ? pw->pw_dir : "/root";
@@ -421,13 +421,13 @@ static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clea
         if (target_uid != (uid_t)-1 && pw) {
             if (setgid(pw->pw_gid) != 0 || setuid(pw->pw_uid) != 0) {
                 fprintf(stderr, "%s: failed to drop privileges to user %s: %s\n",
-                        program_name, pw->pw_name, strerror(errno));
+                        g_program_name, pw->pw_name, strerror(errno));
                 _exit(1);
             }
         }
 
         execvp(cmd, argv);
-        fprintf(stderr, "%s: %s: %s\n", program_name, cmd, strerror(errno));
+        fprintf(stderr, "%s: %s: %s\n", g_program_name, cmd, strerror(errno));
         _exit(127);
     }
 
@@ -469,7 +469,7 @@ static int run_with_filter(const char *socket_path, const char *command,
 
     if (err != RBOX_OK || !packet) {
         fprintf(stderr, "%s: server request failed for command '%s': %s\n",
-                program_name, command, rbox_strerror(err));
+                g_program_name, command, rbox_strerror(err));
         return EXIT_ERROR;
     }
 
@@ -478,7 +478,7 @@ static int run_with_filter(const char *socket_path, const char *command,
     rbox_decode_header(packet, pkt_len, &header);
 
     if (!header.valid) {
-        fprintf(stderr, "%s: invalid response header\n", program_name);
+        fprintf(stderr, "%s: invalid response header\n", g_program_name);
         free(packet);
         return EXIT_ERROR;
     }
@@ -486,7 +486,7 @@ static int run_with_filter(const char *socket_path, const char *command,
     rbox_response_details_t details;
     rbox_decode_response_details(&header, packet, pkt_len, &details);
     if (!details.valid) {
-        fprintf(stderr, "%s: invalid response details\n", program_name);
+        fprintf(stderr, "%s: invalid response details\n", g_program_name);
         free(packet);
         return EXIT_ERROR;
     }
@@ -509,7 +509,7 @@ static int run_with_filter(const char *socket_path, const char *command,
             free(packet);
             return EACCES;
         }
-        fprintf(stderr, "%s: invalid server response\n", program_name);
+        fprintf(stderr, "%s: invalid server response\n", g_program_name);
         free(packet);
         return EXIT_ERROR;
     }
@@ -531,7 +531,7 @@ int main(int argc, char *argv[]) {
     int mode_clear_env = 0;
     const char *uid_str = NULL;
 
-    program_name = argv[0];
+    g_program_name = argv[0];
 
     static struct option long_options[] = {
         {"judge",        no_argument,       0, 'j'},
@@ -634,11 +634,11 @@ int main(int argc, char *argv[]) {
             rbox_error_t build_err = rbox_build_response(
                 RBOX_DECISION_ALLOW, "DFA fast-path", 0, 0, NULL, &packet, &pkt_len);
             if (build_err != RBOX_OK || !packet) {
-                fprintf(stderr, "%s: failed to build response packet\n", program_name);
+                fprintf(stderr, "%s: failed to build response packet\n", g_program_name);
                 return EXIT_ERROR;
             }
             if (write_all(STDOUT_FILENO, packet, pkt_len) != 0) {
-                fprintf(stderr, "%s: failed to write packet\n", program_name);
+                fprintf(stderr, "%s: failed to write packet\n", g_program_name);
                 free(packet);
                 return EXIT_ERROR;
             }
@@ -647,8 +647,7 @@ int main(int argc, char *argv[]) {
         } else {
             printf("ALLOW DFA fast-path\n");
             if (mode_run) {
-                int ret = run_command(command, cmd_argv, target_uid, mode_clear_env);
-                return ret < 0 ? EXIT_ERROR : ret;
+                return run_command(command, cmd_argv, target_uid, mode_clear_env);
             }
             return EXIT_ALLOW;
         }
@@ -661,7 +660,7 @@ int main(int argc, char *argv[]) {
         const char *env_str = getenv(ENV_FLAGGED_ENVS);
         flagged_count = parse_flagged_envs(env_str, &flagged_names, &flagged_scores);
         if (flagged_count < 0) {
-            fprintf(stderr, "%s: failed to parse flagged envs\n", program_name);
+            fprintf(stderr, "%s: failed to parse flagged envs\n", g_program_name);
             return EXIT_ERROR;
         }
     }
@@ -674,7 +673,7 @@ int main(int argc, char *argv[]) {
     }
     if (strlen(socket_path) >= UNIX_PATH_MAX) {
         fprintf(stderr, "%s: socket path too long (max %d): %s\n",
-                program_name, UNIX_PATH_MAX, socket_path);
+                g_program_name, UNIX_PATH_MAX, socket_path);
         free(socket_path);
         return EXIT_ERROR;
     }
@@ -715,12 +714,12 @@ int main(int argc, char *argv[]) {
         free(socket_path);
 
         if (err != RBOX_OK || !packet) {
-            fprintf(stderr, "%s: %s\n", program_name, rbox_strerror(err));
+            fprintf(stderr, "%s: %s\n", g_program_name, rbox_strerror(err));
             return EXIT_ERROR;
         }
 
         if (write_all(STDOUT_FILENO, packet, pkt_len) != 0) {
-            fprintf(stderr, "%s: failed to write packet\n", program_name);
+            fprintf(stderr, "%s: failed to write packet\n", g_program_name);
             free(packet);
             return EXIT_ERROR;
         }
@@ -748,7 +747,7 @@ int main(int argc, char *argv[]) {
     );
 
     if (err != RBOX_OK || !packet) {
-        fprintf(stderr, "%s: %s\n", program_name, rbox_strerror(err));
+        fprintf(stderr, "%s: %s\n", g_program_name, rbox_strerror(err));
         free_flagged_envs(flagged_count, flagged_names);
         free(flagged_scores);
         free(socket_path);
@@ -759,7 +758,7 @@ int main(int argc, char *argv[]) {
     rbox_decoded_header_t header;
     rbox_decode_header(packet, pkt_len, &header);
     if (!header.valid) {
-        fprintf(stderr, "%s: invalid response header\n", program_name);
+        fprintf(stderr, "%s: invalid response header\n", g_program_name);
         free(packet);
         free_flagged_envs(flagged_count, flagged_names);
         free(flagged_scores);
@@ -770,7 +769,7 @@ int main(int argc, char *argv[]) {
     rbox_response_details_t details;
     rbox_decode_response_details(&header, packet, pkt_len, &details);
     if (!details.valid) {
-        fprintf(stderr, "%s: invalid response details\n", program_name);
+        fprintf(stderr, "%s: invalid response details\n", g_program_name);
         free(packet);
         free_flagged_envs(flagged_count, flagged_names);
         free(flagged_scores);
@@ -800,7 +799,7 @@ int main(int argc, char *argv[]) {
         return EXIT_DENY;
     }
     else {
-        fprintf(stderr, "%s: Unknown decision: %d\n", program_name, details.decision);
+        fprintf(stderr, "%s: Unknown decision: %d\n", g_program_name, details.decision);
         free_flagged_envs(flagged_count, flagged_names);
         free(flagged_scores);
         free(socket_path);
