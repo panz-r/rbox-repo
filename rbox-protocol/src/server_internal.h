@@ -69,7 +69,6 @@ typedef struct rbox_server_decision {
     /* Env decisions (v9) */
     uint32_t fenv_hash;
     int env_decision_count;
-    char **env_decision_names;
     uint8_t *env_decisions;  /* bitmap: bit i = decision for env var i */
 
     struct rbox_server_decision *next;

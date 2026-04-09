@@ -202,20 +202,10 @@ func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, env
 	defer C.free(unsafe.Pointer(cReason))
 
 	var envCount C.int = 0
-	var cEnvNames **C.char = nil
 	var cEnvDecisions *C.uint8_t = nil
 
 	if len(envDecisions) > 0 {
 		envCount = C.int(len(envDecisions))
-
-		envNames := make([]*C.char, len(envDecisions))
-		for i, e := range envDecisions {
-			envNames[i] = C.CString(e.Name)
-			defer func(idx int) {
-				C.free(unsafe.Pointer(envNames[idx]))
-			}(i)
-		}
-		cEnvNames = &envNames[0]
 
 		bitmapSize := (len(envDecisions) + 7) / 8
 		envDecs := make([]C.uint8_t, bitmapSize)
@@ -228,7 +218,7 @@ func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, env
 	}
 
 	err := C.rbox_server_decide(r.cRequest, C.uint8_t(decision), cReason, C.uint32_t(duration),
-		envCount, cEnvNames, cEnvDecisions)
+		envCount, cEnvDecisions)
 	if err != C.RBOX_OK {
 		return fmt.Errorf("decide failed: %s", C.GoString(C.rbox_strerror(err)))
 	}

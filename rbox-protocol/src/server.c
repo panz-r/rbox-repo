@@ -799,10 +799,6 @@ static void *server_thread_func(void *arg) {
                 DBG("Failed to build response for fd %d", req->fd);
                 server_request_free(req);
             }
-            if (dec->env_decision_names) {
-                for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
-                free(dec->env_decision_names);
-            }
             free(dec->env_decisions);
             free(dec);
         }
@@ -1316,7 +1312,7 @@ int rbox_server_is_running(rbox_server_handle_t *server) {
 
 rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     uint8_t decision, const char *reason, uint32_t duration,
-    int env_decision_count, const char **env_decision_names, const uint8_t *env_decisions) {
+    int env_decision_count, const uint8_t *env_decisions) {
     if (!req) return RBOX_ERR_INVALID;
     rbox_server_handle_t *server = req->server;
     if (!server) return RBOX_ERR_INVALID;
@@ -1328,38 +1324,19 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     strncpy(dec->reason, reason ? reason : "", sizeof(dec->reason) - 1);
     dec->duration = duration;
 
-    if (env_decision_count > 0 && env_decision_names && env_decisions) {
+    if (env_decision_count > 0 && env_decisions) {
         dec->env_decision_count = env_decision_count;
-        dec->env_decision_names = calloc(env_decision_count, sizeof(char *));
-        if (!dec->env_decision_names) { free(dec); return RBOX_ERR_MEMORY; }
-        for (int i = 0; i < env_decision_count; i++) {
-            if (env_decision_names[i]) dec->env_decision_names[i] = strdup(env_decision_names[i]);
-        }
         size_t bitmap_size = (env_decision_count + 7) / 8;
         dec->env_decisions = malloc(bitmap_size);
         if (!dec->env_decisions) {
-            for (int i = 0; i < env_decision_count; i++) free(dec->env_decision_names[i]);
-            free(dec->env_decision_names);
             free(dec);
             return RBOX_ERR_MEMORY;
         }
         memcpy(dec->env_decisions, env_decisions, bitmap_size);
         dec->fenv_hash = 0;
-        for (int i = 0; i < env_decision_count; i++) {
-            if (env_decision_names[i]) {
-                const char *s = env_decision_names[i];
-                uint32_t h = 5381;
-                while (*s) h = ((h << 5) + h) + (uint32_t)(unsigned char)*s++;
-                dec->fenv_hash ^= h;
-            }
-        }
     }
 
     if (decision_queue_push(server, dec) != RBOX_OK) {
-        if (dec->env_decision_names) {
-            for (int i = 0; i < dec->env_decision_count; i++) free(dec->env_decision_names[i]);
-            free(dec->env_decision_names);
-        }
         free(dec->env_decisions);
         free(dec);
         return RBOX_ERR_MEMORY;

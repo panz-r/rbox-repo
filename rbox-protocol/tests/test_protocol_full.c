@@ -647,7 +647,7 @@ static void *rbox_server_thread(void *arg) {
         }
 
         /* Send ALLOW decision for any valid request */
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
 
     /* NOTE: Do NOT call rbox_server_handle_free here.

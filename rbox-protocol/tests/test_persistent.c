@@ -55,7 +55,7 @@ static void *server_worker_with_duration(void *arg) {
     while (count < ctx->max_requests) {
         rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
         if (!req) break;  /* Server stopped, exit loop */
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", ctx->duration, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", ctx->duration, 0, NULL);
         
         pthread_mutex_lock(&ctx->count_mutex);
         ctx->decision_count++;
@@ -79,7 +79,7 @@ static void *server_worker_1request(void *arg) {
 
     rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
     if (req) {
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
 
     /* NOTE: Do NOT call rbox_server_stop or rbox_server_handle_free here. Caller must do cleanup. */

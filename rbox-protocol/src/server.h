@@ -37,7 +37,7 @@ int rbox_server_is_running(rbox_server_handle_t *server);
 /* Queue decision to be sent by background thread */
 rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     uint8_t decision, const char *reason, uint32_t duration,
-    int env_decision_count, const char **env_decision_names, const uint8_t *env_decisions);
+    int env_decision_count, const uint8_t *env_decisions);
 
 /* Set connection limits and timeouts */
 void rbox_server_set_limits(rbox_server_handle_t *server, int max_clients, int idle_timeout, int request_timeout);

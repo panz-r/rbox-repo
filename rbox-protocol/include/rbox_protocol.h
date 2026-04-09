@@ -87,8 +87,7 @@ typedef struct {
 
     /* Env decisions from server */
     int env_decision_count;
-    char **env_decision_names;   /* Array of env var names */
-    uint8_t *env_decisions;     /* Array of decisions: 0=allow, 1=deny */
+    uint8_t *env_decisions;     /* Bitmap of decisions: bit N=1 means deny env N */
 } rbox_response_t;
 
 /* Get env decision count from response */
@@ -331,7 +330,7 @@ void rbox_server_request_free(rbox_server_request_t *req);
 //export rbox_server_decide
 rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     uint8_t decision, const char *reason, uint32_t duration,
-    int env_decision_count, const char **env_decision_names, const uint8_t *env_decisions);
+    int env_decision_count, const uint8_t *env_decisions);
 
 /*
  * Signal shutdown and wait for background thread to exit

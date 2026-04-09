@@ -64,7 +64,7 @@ static void *worker_static(void *arg) {
         rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
         if (!req) break;
         (*(ctx->received))++;
-        if (rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL) != RBOX_OK) {
+        if (rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL) != RBOX_OK) {
             errors++;
         }
     }
@@ -334,7 +334,7 @@ static void *server_epoll_allow_static(void *arg) {
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
 
     rbox_server_stop(srv);
@@ -410,7 +410,7 @@ static void *server_epoll_deny_static(void *arg) {
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
-        rbox_server_decide(req, RBOX_DECISION_DENY, "denied", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_DENY, "denied", 0, 0, NULL);
     }
 
     rbox_server_stop(srv);
@@ -458,7 +458,7 @@ static void *server_epoll_allow_two_static(void *arg) {
     for (int i = 0; i < 2; i++) {
         rbox_server_request_t *req = rbox_server_get_request(srv);
         if (req) {
-            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
         }
     }
 
@@ -510,7 +510,7 @@ static void *server_epoll_allow_three_static(void *arg) {
     for (int i = 0; i < 3; i++) {
         rbox_server_request_t *req = rbox_server_get_request(srv);
         if (req) {
-            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
         }
     }
 
@@ -681,7 +681,7 @@ static void *server_epoll_allow_many_static(void *arg) {
     for (int i = 0; i < NUM_REQUESTS; i++) {
         rbox_server_request_t *req = rbox_server_get_request(srv);
         if (req) {
-            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
         }
     }
 

@@ -53,7 +53,7 @@ static void *server_worker_stress(void *arg) {
     while (count < ctx->max_requests) {
         rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
         if (!req) break;
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
         count++;
     }
 
@@ -245,7 +245,7 @@ static int test_signal_graceful_shutdown(void) {
         while (count < 5) {
             rbox_server_request_t *req = rbox_server_get_request(ctx.srv);
             if (!req) break;
-            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+            rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
             count++;
         }
 

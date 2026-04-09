@@ -99,7 +99,7 @@ static void *server_epoll_allow(void *arg) {
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
 
     /* Caller must call rbox_server_stop and rbox_server_handle_free */
@@ -126,7 +126,7 @@ static void *server_epoll_deny(void *arg) {
 
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
-        rbox_server_decide(req, RBOX_DECISION_DENY, "denied", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_DENY, "denied", 0, 0, NULL);
     }
 
     return NULL;
@@ -153,7 +153,7 @@ static void *server_epoll_delayed(void *arg) {
     rbox_server_request_t *req = rbox_server_get_request(srv);
     if (req) {
         usleep(200000);  /* 200ms delay before responding */
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
 
     return NULL;
@@ -294,7 +294,7 @@ static void *rbox_server_thread(void *arg) {
     while (1) {
         rbox_server_request_t *req = rbox_server_get_request(srv);
         if (!req) break;
-        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL, NULL);
+        rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
 
     /* NOTE: Do NOT call rbox_server_handle_free here.

@@ -24,7 +24,6 @@ int g_test_count = 0;
 typedef struct {
     const char *path;
     int env_decision_count;
-    const char **env_decision_names;
     const uint8_t *env_decisions;
     rbox_server_handle_t *srv;
     pthread_mutex_t mutex;
@@ -48,7 +47,7 @@ static void *server_worker_env_decisions(void *arg) {
         rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
         if (!req) break;
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0,
-                          ctx->env_decision_count, ctx->env_decision_names, ctx->env_decisions);
+                          ctx->env_decision_count, ctx->env_decisions);
     }
 
     return NULL;
@@ -66,7 +65,7 @@ static uint8_t *make_env_decisions(int count) {
     return bitmap;
 }
 
-/* Helper: create env var names array */
+/* Helper: create env var names array (for client requests) */
 static const char **make_env_names(int count) {
     const char **names = malloc(count * sizeof(char *));
     for (int i = 0; i < count; i++) {
@@ -91,13 +90,12 @@ static int test_env_1_var(void) {
     unlink(path);
 
     int env_count = 1;
-    const char **env_names = make_env_names(env_count);
+    const char *env_names[] = {"KEY1"};
     uint8_t *env_decisions = make_env_decisions(env_count);
 
     worker_ctx_t ctx = {
         .path = path,
         .env_decision_count = env_count,
-        .env_decision_names = env_names,
         .env_decisions = env_decisions,
         .srv = NULL,
         .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -107,13 +105,11 @@ static int test_env_1_var(void) {
     pthread_t tid;
     if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) {
         free(env_decisions);
-        free_env_names(env_names, env_count);
         return -1;
     }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
         free(env_decisions);
-        free_env_names(env_names, env_count);
         return -1;
     }
 
@@ -130,7 +126,6 @@ static int test_env_1_var(void) {
     unlink(path);
 
     free(env_decisions);
-    free_env_names(env_names, env_count);
 
     if (err != RBOX_OK) {
         TEST_ERROR("blocking_request failed: %d", err);
@@ -167,13 +162,12 @@ static int test_env_3_vars(void) {
     unlink(path);
 
     int env_count = 3;
-    const char **env_names = make_env_names(env_count);
+    const char *env_names[] = {"KEY1", "KEY2", "KEY3"};
     uint8_t *env_decisions = make_env_decisions(env_count);
 
     worker_ctx_t ctx = {
         .path = path,
         .env_decision_count = env_count,
-        .env_decision_names = env_names,
         .env_decisions = env_decisions,
         .srv = NULL,
         .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -183,13 +177,11 @@ static int test_env_3_vars(void) {
     pthread_t tid;
     if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) {
         free(env_decisions);
-        free_env_names(env_names, env_count);
         return -1;
     }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
         free(env_decisions);
-        free_env_names(env_names, env_count);
         return -1;
     }
 
@@ -207,7 +199,6 @@ static int test_env_3_vars(void) {
     unlink(path);
 
     free(env_decisions);
-    free_env_names(env_names, env_count);
 
     if (err != RBOX_OK) {
         TEST_ERROR("blocking_request failed: %d", err);
@@ -247,13 +238,12 @@ static int test_env_5_vars(void) {
     unlink(path);
 
     int env_count = 5;
-    const char **env_names = make_env_names(env_count);
+    const char *env_names[] = {"KEY1", "KEY2", "KEY3", "KEY4", "KEY5"};
     uint8_t *env_decisions = make_env_decisions(env_count);
 
     worker_ctx_t ctx = {
         .path = path,
         .env_decision_count = env_count,
-        .env_decision_names = env_names,
         .env_decisions = env_decisions,
         .srv = NULL,
         .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -263,13 +253,11 @@ static int test_env_5_vars(void) {
     pthread_t tid;
     if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) {
         free(env_decisions);
-        free_env_names(env_names, env_count);
         return -1;
     }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
         free(env_decisions);
-        free_env_names(env_names, env_count);
         return -1;
     }
 
@@ -287,7 +275,6 @@ static int test_env_5_vars(void) {
     unlink(path);
 
     free(env_decisions);
-    free_env_names(env_names, env_count);
 
     if (err != RBOX_OK) {
         TEST_ERROR("blocking_request failed: %d", err);
@@ -333,7 +320,6 @@ static int test_env_95_vars(void) {
     worker_ctx_t ctx = {
         .path = path,
         .env_decision_count = env_count,
-        .env_decision_names = env_names,
         .env_decisions = env_decisions,
         .srv = NULL,
         .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -418,7 +404,6 @@ static int test_zero_env_decisions(void) {
     worker_ctx_t ctx = {
         .path = path,
         .env_decision_count = 0,
-        .env_decision_names = NULL,
         .env_decisions = NULL,
         .srv = NULL,
         .mutex = PTHREAD_MUTEX_INITIALIZER,
