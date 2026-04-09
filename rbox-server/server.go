@@ -133,16 +133,18 @@ func main() {
 	fmt.Printf("readonlybox-server v1.0 - listening on %s\n", socketPath)
 	os.Chmod(socketPath, 0666)
 
-	mode := "quiet (blocked only)"
-	if *veryVerbose {
-		mode = "very verbose (all commands and logs)"
-	} else if *verbose {
-		mode = "verbose (all commands)"
-	}
+	policyStr := "auto-allow"
 	if *autoDeny {
-		mode += " + auto-deny"
+		policyStr = "auto-deny"
 	}
-	fmt.Printf("Mode: %s\n\n", mode)
+	mode := "quiet"
+	if *veryVerbose {
+		mode = "very verbose"
+	} else if *verbose {
+		mode = "verbose"
+	}
+	fmt.Printf("Mode: %s, %s (unknown commands %s)\n\n", mode, policyStr,
+		map[bool]string{true: "denied", false: "allowed"}[*autoDeny])
 
 	// Setup signal handler
 	sigChan := make(chan os.Signal, 1)
@@ -250,40 +252,7 @@ func makeNoninteractiveDecision(cmd string, args []string, autoDeny bool) (uint8
 		return DecisionDeny, "empty command"
 	}
 
-	// Check for dangerous patterns in arguments
-	for _, arg := range args {
-		if arg == "/etc/passwd" || arg == "/etc/shadow" || arg == "/etc/group" {
-			return DecisionDeny, "tries to modify system file"
-		}
-	}
-
-	// Convert to lowercase for matching
-	cmdLower := strings.ToLower(cmd)
-
-	// Read-only commands that are always allowed
-	readOnlyCmds := map[string]bool{
-		"ls": true, "pwd": true, "cd": true, "echo": true, "cat": true,
-		"head": true, "tail": true, "less": true, "more": true, "grep": true,
-		"find": true, "xargs": true, "tr": true, "cut": true, "join": true,
-		"paste": true, "comm": true, "diff": true, "nl": true, "od": true,
-		"base64": true, "strings": true, "env": true, "printenv": true,
-	}
-
-	if readOnlyCmds[cmdLower] {
-		return DecisionAllow, "read-only command"
-	}
-
-	// Block dangerous commands
-	dangerousCmds := map[string]bool{
-		"rm": true, "mv": true, "cp": true, "mkdir": true, "rmdir": true,
-		"ln": true, "chmod": true, "chown": true, "touch": true, "dd": true,
-	}
-
-	if dangerousCmds[cmdLower] {
-		return DecisionDeny, "dangerous command"
-	}
-
-	// Auto-deny unknown commands if flag is set
+	// Auto-deny unknown commands if flag is set, otherwise allow
 	if autoDeny {
 		return DecisionDeny, "unknown command"
 	}

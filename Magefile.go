@@ -392,6 +392,14 @@ func BuildBinaries() error {
 		return fmt.Errorf("readonlybox-server build failed: %w", err)
 	}
 
+	// Set rpath for server binary to find librbox_protocol.so in $ORIGIN/../lib
+	cmd = exec.Command("patchelf", "--set-rpath", "$ORIGIN/../lib", serverBin)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("patchelf set-rpath for server failed: %w", err)
+	}
+
 	// readonlybox-ptrace
 	if err := runMakeWithCC(filepath.Join(wd, rboxPtraceDir), cc); err != nil {
 		return fmt.Errorf("rbox-ptrace build failed: %w", err)
