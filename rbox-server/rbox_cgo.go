@@ -23,6 +23,7 @@ import "C"
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"unsafe"
 )
 
@@ -215,12 +216,19 @@ func (r *RBoxRequest) Decide(decision uint8, reason string, duration uint32, env
 			}
 		}
 		cEnvDecisions = &envDecs[0]
-	}
 
-	err := C.rbox_server_decide(r.cRequest, C.uint8_t(decision), cReason, C.uint32_t(duration),
-		envCount, cEnvDecisions)
-	if err != C.RBOX_OK {
-		return fmt.Errorf("decide failed: %s", C.GoString(C.rbox_strerror(err)))
+		err := C.rbox_server_decide(r.cRequest, C.uint8_t(decision), cReason, C.uint32_t(duration),
+			envCount, cEnvDecisions)
+		runtime.KeepAlive(envDecs)
+		if err != C.RBOX_OK {
+			return fmt.Errorf("decide failed: %s", C.GoString(C.rbox_strerror(err)))
+		}
+	} else {
+		err := C.rbox_server_decide(r.cRequest, C.uint8_t(decision), cReason, C.uint32_t(duration),
+			envCount, cEnvDecisions)
+		if err != C.RBOX_OK {
+			return fmt.Errorf("decide failed: %s", C.GoString(C.rbox_strerror(err)))
+		}
 	}
 
 	r.cRequest = nil
