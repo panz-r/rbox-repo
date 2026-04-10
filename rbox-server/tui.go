@@ -1804,8 +1804,7 @@ func RunTUIMode() {
 		for {
 			req := server.GetRequest()
 			if req == nil {
-				// Server stopped
-				close(model.eventChan)
+				// Server stopped - exit loop, main thread closes channel after p.Run()
 				break
 			}
 
