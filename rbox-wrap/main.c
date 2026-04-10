@@ -411,7 +411,11 @@ static int run_command(const char *cmd, char *argv[], uid_t target_uid, int clea
         }
 
         if (clear_env) {
-            clearenv();
+            if (clearenv() != 0) {
+                fprintf(stderr, "%s: failed to clear environment: %s\n",
+                        g_program_name, strerror(errno));
+                _exit(1);
+            }
             setenv("PATH", "/usr/local/bin:/usr/bin:/bin", 1);
             setenv("HOME", home, 1);
             setenv("USER", user, 1);
