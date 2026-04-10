@@ -785,7 +785,11 @@ int main(int argc, char *argv[]) {
     if (internal_screened && geteuid() == 0) {
         /* Already screened in the first instance; skip to avoid double prompt */
     } else {
-        env_screen();
+        if (env_screen() < 0) {
+            LOG_ERROR("Failed to screen environment");
+            free(cmd_path);
+            return 1;
+        }
     }
 
     /* Initialize validation (socket and wrap paths) before checking pkexec */

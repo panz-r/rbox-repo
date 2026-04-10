@@ -75,8 +75,38 @@ static const char *extract_env_value(const char *entry) {
     return eq ? eq + 1 : "";
 }
 
-/* Screen environment using shellsplit module - ptrace client handles prompting */
-void env_screen(void) {
+/* Helper to add a variable to the unset list with dynamic growth.
+ * Returns 0 on success, -1 on allocation failure. */
+static int add_to_unset(char ***unset_vars, int *unset_count, int *unset_capacity, const char *name) {
+    if (*unset_count >= *unset_capacity) {
+        int new_capacity = *unset_capacity ? *unset_capacity * 2 : 16;
+        char **new_unset = realloc(*unset_vars, new_capacity * sizeof(char *));
+        if (!new_unset) {
+            return -1;
+        }
+        *unset_capacity = new_capacity;
+        *unset_vars = new_unset;
+    }
+
+    (*unset_vars)[*unset_count] = strdup(name);
+    if (!(*unset_vars)[*unset_count]) {
+        return -1;
+    }
+    (*unset_count)++;
+    return 0;
+}
+
+/* Free the unset list */
+static void free_unset_list(char **unset_vars, int unset_count) {
+    for (int i = 0; i < unset_count; i++) {
+        free(unset_vars[i]);
+    }
+    free(unset_vars);
+}
+
+/* Screen environment using shellsplit module - ptrace client handles prompting.
+ * Returns 0 on success, -1 on error (memory allocation failure). */
+int env_screen(void) {
     /* Check if stdin is a terminal - if not, auto-block high-confidence vars */
     int is_terminal = isatty(STDIN_FILENO);
 
@@ -84,7 +114,7 @@ void env_screen(void) {
     int indices_capacity = 32;
     int *indices = malloc(indices_capacity * sizeof(int));
     if (!indices) {
-        return;  /* Memory allocation failed - skip screening */
+        return -1;
     }
     int flagged_count = 0;
 
@@ -100,7 +130,7 @@ void env_screen(void) {
         int *larger = realloc(indices, flagged_count * sizeof(int));
         if (!larger) {
             free(indices);
-            return;  /* Memory allocation failed */
+            return -1;
         }
         indices = larger;
         indices_capacity = flagged_count;
@@ -108,7 +138,7 @@ void env_screen(void) {
 
     if (status != ENV_SCREENER_OK || flagged_count == 0) {
         free(indices);
-        return;
+        return 0;
     }
 
     /* Reset the flagged env names list - we'll add only allowed vars */
@@ -124,18 +154,6 @@ void env_screen(void) {
     char **unset_vars = NULL;
     int unset_capacity = 0;
     int unset_count = 0;
-
-    /* Helper macro to add to unset list with dynamic growth */
-    #define ADD_TO_UNSET(name) do { \
-        if (unset_count >= unset_capacity) { \
-            unset_capacity = unset_capacity ? unset_capacity * 2 : 16; \
-            char **new_unset = realloc(unset_vars, unset_capacity * sizeof(char *)); \
-            if (new_unset) unset_vars = new_unset; \
-        } \
-        if (unset_count < unset_capacity) { \
-            unset_vars[unset_count++] = strdup(name); \
-        } \
-    } while(0)
 
     /* Prompt user for each flagged variable and only add allowed ones */
     int capacity_hit = 0;
@@ -161,13 +179,21 @@ void env_screen(void) {
         if (!is_terminal) {
             /* Non-interactive mode: auto-block high-confidence, allow others */
             if (score > 0.8) {
-                ADD_TO_UNSET(name);
+                if (add_to_unset(&unset_vars, &unset_count, &unset_capacity, name) < 0) {
+                    free_unset_list(unset_vars, unset_count);
+                    free(indices);
+                    return -1;
+                }
                 fprintf(stderr, "   → Auto-blocked (non-interactive): %s\n", name);
             } else {
                 /* Allow low-confidence vars by adding to list */
                 char *dup = strdup(name);
                 if (!dup) {
-                    ADD_TO_UNSET(name);
+                    if (add_to_unset(&unset_vars, &unset_count, &unset_capacity, name) < 0) {
+                        free_unset_list(unset_vars, unset_count);
+                        free(indices);
+                        return -1;
+                    }
                     fprintf(stderr, "   → Auto-blocked (memory allocation failed): %s\n", name);
                     continue;
                 }
@@ -197,7 +223,12 @@ void env_screen(void) {
             /* User allowed this variable */
             char *dup = strdup(name);
             if (!dup) {
-                ADD_TO_UNSET(name);
+                if (add_to_unset(&unset_vars, &unset_count, &unset_capacity, name) < 0) {
+                    free(line);
+                    free_unset_list(unset_vars, unset_count);
+                    free(indices);
+                    return -1;
+                }
                 fprintf(stderr, "   → Blocked (memory allocation failed): %s\n", name);
             } else {
                 g_flagged_envs[g_flagged_env_count].name = dup;
@@ -206,7 +237,12 @@ void env_screen(void) {
             }
         } else {
             /* User blocked this variable or invalid input */
-            ADD_TO_UNSET(name);
+            if (add_to_unset(&unset_vars, &unset_count, &unset_capacity, name) < 0) {
+                free(line);
+                free_unset_list(unset_vars, unset_count);
+                free(indices);
+                return -1;
+            }
             fprintf(stderr, "   → Blocked: %s\n", name);
         }
         free(line);
@@ -224,11 +260,13 @@ void env_screen(void) {
             if (!entry) continue;
             char name[256];
             extract_env_name(entry, name, sizeof(name));
-            ADD_TO_UNSET(name);
+            if (add_to_unset(&unset_vars, &unset_count, &unset_capacity, name) < 0) {
+                free_unset_list(unset_vars, unset_count);
+                free(indices);
+                return -1;
+            }
         }
     }
-
-    #undef ADD_TO_UNSET
 
     /* Now unset all blocked variables (after processing to avoid environ reallocation) */
     for (int i = 0; i < unset_count; i++) {
@@ -241,4 +279,5 @@ void env_screen(void) {
 
     free(indices);
     fprintf(stderr, "\n✓ Environment screened\n");
+    return 0;
 }

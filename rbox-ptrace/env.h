@@ -7,8 +7,9 @@
 
 #include <stdbool.h>
 
-/* Screen environment variables for secrets */
-void env_screen(void);
+/* Screen environment variables for secrets.
+ * Returns 0 on success, -1 on error. */
+int env_screen(void);
 
 /* Get number of flagged environment variables */
 int env_get_flagged_count(void);
