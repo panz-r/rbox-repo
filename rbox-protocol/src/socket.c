@@ -178,28 +178,8 @@ rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_
 
         attempt++;
 
-        /* Calculate delay: exponential backoff with jitter
-         * Use 64-bit arithmetic to prevent overflow */
-        uint64_t max_delay_64 = (uint64_t)base_delay_ms * 64;
-        uint32_t max_delay = (max_delay_64 > UINT32_MAX) ? UINT32_MAX : (uint32_t)max_delay_64;
-
-        /* Compute exponential delay with overflow protection */
-        uint64_t exp_delay_64 = base_delay_ms;
-        for (uint32_t i = 1; i < attempt && exp_delay_64 < UINT64_MAX / 2; i++) {
-            exp_delay_64 *= 2;
-        }
-        uint32_t exp_delay = (exp_delay_64 > UINT32_MAX) ? UINT32_MAX : (uint32_t)exp_delay_64;
-
-        /* Add jitter: random(0..base_delay_ms) - using thread-safe integer arithmetic */
-        uint32_t jitter = (uint32_t)(((uint64_t)base_delay_ms * (uint64_t)rand_r(&g_rand_seed)) / (RAND_MAX + 1ULL));
-
-        uint32_t delay = exp_delay + jitter;
-        if (delay > max_delay) delay = max_delay;
-
-        /* Cap delay (nanosleep handles any value, but cap for sanity) */
-        if (delay > RBOX_MAX_SLEEP_DELAY_MS) {
-            delay = RBOX_MAX_SLEEP_DELAY_MS;
-        }
+        /* Calculate delay using shared retry delay function */
+        uint32_t delay = rbox_calculate_retry_delay(base_delay_ms, attempt, RBOX_MAX_RETRY_DELAY_MS, &g_rand_seed);
 
         /* Sleep for delay using nanosleep (portable, handles any delay value) */
         struct timespec ts = {

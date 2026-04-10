@@ -45,26 +45,6 @@ static int should_retry(rbox_session_t *session) {
     return session->retry_attempt < session->max_retries;
 }
 
-/* Calculate retry delay with exponential backoff + jitter */
-static uint32_t calc_retry_delay(rbox_session_t *session) {
-    uint32_t base = session->base_delay_ms;
-    if (base == 0) return 0;
-
-    uint32_t seed = rbox_runtime_rand_seed();
-
-    uint32_t max_delay = base * 64;
-    uint32_t exp = base;
-    for (uint32_t i = 1; i < session->retry_attempt && exp < UINT32_MAX / 2; i++) {
-        exp *= 2;
-    }
-
-    uint32_t jitter = (uint32_t)((double)base * rand_r(&seed) / (RAND_MAX + 1.0));
-    uint32_t delay = exp + jitter;
-    if (delay > max_delay) delay = max_delay;
-
-    return delay;
-}
-
 /* ============================================================
  * SESSION FUNCTIONS
  * ============================================================ */
@@ -83,6 +63,7 @@ rbox_session_t *rbox_session_new(const char *socket_path,
 
     session->base_delay_ms = base_delay_ms;
     session->max_retries = max_retries;
+    session->retry_seed = rbox_runtime_rand_seed();
     session->state = RBOX_SESSION_DISCONNECTED;
 
     return session;
@@ -168,7 +149,7 @@ rbox_error_t rbox_session_connect(rbox_session_t *session) {
     }
 
     session->retry_attempt++;
-    uint32_t delay = calc_retry_delay(session);
+    uint32_t delay = rbox_calculate_retry_delay(session->base_delay_ms, session->retry_attempt, RBOX_MAX_RETRY_DELAY_MS, &session->retry_seed);
     session->next_retry_time = get_time_ms() + delay;
     session->state = RBOX_SESSION_CONNECTING;
 
@@ -255,7 +236,8 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                     session->client = NULL;
                     if (session->base_delay_ms > 0 && should_retry(session)) {
                         session->retry_attempt++;
-                        session->next_retry_time = get_time_ms() + calc_retry_delay(session);
+                        uint32_t delay = rbox_calculate_retry_delay(session->base_delay_ms, session->retry_attempt, RBOX_MAX_RETRY_DELAY_MS, &session->retry_seed);
+                        session->next_retry_time = get_time_ms() + delay;
                         CDBG("connecting retry scheduled, attempt %d", session->retry_attempt);
                     } else {
                         session->state = RBOX_SESSION_FAILED;
@@ -279,7 +261,8 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                         CDBG("connecting -> failed (no retries left)");
                     } else {
                         session->retry_attempt++;
-                        session->next_retry_time = get_time_ms() + calc_retry_delay(session);
+                        uint32_t delay = rbox_calculate_retry_delay(session->base_delay_ms, session->retry_attempt, RBOX_MAX_RETRY_DELAY_MS, &session->retry_seed);
+                        session->next_retry_time = get_time_ms() + delay;
                         CDBG("connecting retry attempt %d", session->retry_attempt);
                     }
                 } else {
@@ -305,7 +288,8 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                     session->client = NULL;
                     if (session->base_delay_ms > 0 && should_retry(session)) {
                         session->retry_attempt = 1;
-                        session->next_retry_time = get_time_ms() + calc_retry_delay(session);
+                        uint32_t delay = rbox_calculate_retry_delay(session->base_delay_ms, session->retry_attempt, RBOX_MAX_RETRY_DELAY_MS, &session->retry_seed);
+                        session->next_retry_time = get_time_ms() + delay;
                         session->state = RBOX_SESSION_CONNECTING;
                         CDBG("sending -> connecting (retry)");
                     } else {

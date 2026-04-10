@@ -64,6 +64,7 @@ struct rbox_session {
 
     /* Connection retry state */
     uint32_t retry_attempt;
+    uint32_t retry_seed;  /* Persistent seed for retry delay jitter */
     uint64_t next_retry_time;
 };
 

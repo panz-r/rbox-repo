@@ -143,6 +143,14 @@ rbox_client_t *rbox_client_connect(const char *socket_path);
  * max_retries: max attempts (0 = unlimited) */
 rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_delay_ms, uint32_t max_retries);
 
+/* Calculate retry delay with exponential backoff + jitter
+ * base_delay_ms: base delay in ms
+ * attempt: current attempt number (1-based)
+ * max_delay_ms: maximum delay cap in ms (use RBOX_MAX_RETRY_DELAY_MS for standard cap)
+ * seed: pointer to thread-local random seed
+ * Returns delay in milliseconds */
+uint32_t rbox_calculate_retry_delay(uint32_t base_delay_ms, uint32_t attempt, uint32_t max_delay_ms, uint32_t *seed);
+
 /* Close client connection */
 void rbox_client_close(rbox_client_t *client);
 

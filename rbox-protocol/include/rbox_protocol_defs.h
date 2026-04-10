@@ -76,6 +76,12 @@
 #define RBOX_DEFAULT_SOCKET  "/run/readonlybox/readonlybox.sock"
 
 /* ============================================================
+ * RETRY DELAY LIMITS
+ * ============================================================ */
+
+#define RBOX_MAX_RETRY_DELAY_MS 900000  /* 15 minutes in milliseconds */
+
+/* ============================================================
  * HEADER STRUCTURE (127 bytes total)
  * All fields are little-endian
  * ============================================================ */

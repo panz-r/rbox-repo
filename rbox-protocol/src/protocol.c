@@ -19,12 +19,17 @@
 #include "protocol.h"
 #include "runtime.h"
 
-/* Generate request ID using runtime's thread-local seed */
+/* Thread-local seed for request ID generation - initialized on first use */
+static __thread uint32_t g_request_id_seed = 0;
+
+/* Generate request ID using persistent thread-local seed */
 void rbox_protocol_generate_request_id(uint8_t *id_out) {
     if (!id_out) return;
-    unsigned int seed = (unsigned int)rbox_runtime_rand_seed();
+    if (g_request_id_seed == 0) {
+        g_request_id_seed = rbox_runtime_rand_seed();
+    }
     for (int i = 0; i < 16; i += 4) {
-        uint32_t r = rand_r(&seed);
+        uint32_t r = rand_r(&g_request_id_seed);
         id_out[i] = (r >> 24) & 0xFF;
         id_out[i + 1] = (r >> 16) & 0xFF;
         id_out[i + 2] = (r >> 8) & 0xFF;

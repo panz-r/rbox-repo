@@ -12,9 +12,11 @@
 #include <time.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <unistd.h>
 
 #include "runtime.h"
+#include "rbox_protocol_defs.h"
 
 /* CRC32 table - used by protocol.c */
 static uint32_t crc32_table[256];
@@ -91,6 +93,44 @@ uint32_t rbox_runtime_crc32(uint32_t prev_crc, const void *data, size_t len) {
         crc = (crc >> 8) ^ crc32_table[(crc ^ bytes[i]) & 0xFF];
     }
     return crc ^ 0xFFFFFFFF;
+}
+
+/* Calculate retry delay with exponential backoff + jitter
+ * base_delay_ms: base delay in ms
+ * attempt: current attempt number (1-based)
+ * max_delay_ms: maximum delay cap in ms (use RBOX_MAX_RETRY_DELAY_MS for standard cap)
+ * seed: pointer to thread-local random seed (may be updated)
+ * Returns delay in milliseconds */
+uint32_t rbox_calculate_retry_delay(uint32_t base_delay_ms, uint32_t attempt, uint32_t max_delay_ms, uint32_t *seed) {
+    if (base_delay_ms == 0 || attempt == 0) return 0;
+    if (max_delay_ms == 0) max_delay_ms = RBOX_MAX_RETRY_DELAY_MS;
+
+    /* Calculate max_delay with overflow check: max_delay = min(base * 64, max_delay_ms) */
+    uint64_t max_delay_64;
+    if (__builtin_mul_overflow(base_delay_ms, (uint32_t)64, &max_delay_64)) {
+        max_delay_64 = max_delay_ms;
+    } else if (max_delay_64 > max_delay_ms) {
+        max_delay_64 = max_delay_ms;
+    }
+    uint32_t max_delay = (uint32_t)max_delay_64;
+
+    /* Exponential backoff: exp = base * 2^(attempt-1), capped at max_delay/2 */
+    uint64_t exp = base_delay_ms;
+    for (uint32_t i = 1; i < attempt && exp < max_delay / 2; i++) {
+        exp *= 2;
+    }
+    if (exp > max_delay) exp = max_delay;
+
+    /* Jitter: 0..(base + 50ms) using pure integer arithmetic
+     * Adding 50ms ensures meaningful jitter even when base is tiny */
+    uint32_t jitter_range = base_delay_ms + 50;
+    uint32_t jitter = rand_r(seed) % jitter_range;
+
+    /* Delay = exp + jitter, capped at max_delay */
+    uint64_t delay = exp + jitter;
+    if (delay > max_delay) delay = max_delay;
+
+    return (uint32_t)delay;
 }
 
 /* Automatic initialization before main() */
