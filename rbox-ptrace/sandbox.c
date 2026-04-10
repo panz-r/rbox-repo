@@ -325,6 +325,8 @@ void sandbox_simplify_allow_list(struct allowed_entry **entries, int *count) {
             (*entries)[i].resolved = NULL;
         } else {
             if (keep != i) {
+                free((*entries)[keep].original);
+                free((*entries)[keep].resolved);
                 (*entries)[keep] = (*entries)[i];
             }
             keep++;
@@ -359,6 +361,8 @@ void sandbox_simplify_deny_list(struct denied_entry **entries, int *count) {
             (*entries)[i].resolved = NULL;
         } else {
             if (keep != i) {
+                free((*entries)[keep].original);
+                free((*entries)[keep].resolved);
                 (*entries)[keep] = (*entries)[i];
             }
             keep++;
@@ -940,6 +944,7 @@ static int apply_landlock(void) {
     int expand_result = sandbox_expand_paths(allow_entries, allow_count, deny_entries, deny_count);
     if (expand_result != 0) {
         LOG_WARN("Failed to expand Landlock paths, falling back to ptrace enforcement");
+        sandbox_expansion_cleanup();
         if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
         if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
         return -1;
