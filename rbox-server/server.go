@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 )
 
@@ -316,21 +315,18 @@ func makeEnvDecisions(req *RBoxRequest) []EnvVarDecision {
 
 // pendingRequests stores requests for TUI decision
 // These are accessed by MakeDecision() when user responds in TUI
+// Access is synchronized through the TUI event loop
 var pendingRequests = make(map[int]*RBoxRequest)
-var pendingMu sync.RWMutex
 
 // StoreRequest stores a request for later decision
+// Must be called from the TUI event loop
 func StoreRequest(id int, req *RBoxRequest) {
-	pendingMu.Lock()
-	defer pendingMu.Unlock()
 	pendingRequests[id] = req
 }
 
 // MakeDecision sends a decision for a pending request
 // duration: time in seconds for time-limited decision (0 = no time limit)
 func MakeDecision(id int, allowed bool, reason string, duration uint32, envDecisions []EnvVarDecision) error {
-	pendingMu.Lock()
-	defer pendingMu.Unlock()
 	req, ok := pendingRequests[id]
 	if !ok {
 		return fmt.Errorf("request not found")

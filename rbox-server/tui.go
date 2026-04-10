@@ -293,6 +293,7 @@ const (
 	EventCommand
 	EventLog
 	EventRequest
+	EventStoreRequest
 	EventAddPendingRetry
 )
 
@@ -322,6 +323,8 @@ type Event struct {
 	ClientID  string
 	Cwd       string
 	EnvVars   []EnvVarInfo // Flagged env vars from request
+	// Fields for EventStoreRequest
+	Req *RBoxRequest
 	// Fields for EventAddPendingRetry
 	RetryDecision     string
 	RetryReason       string
@@ -739,6 +742,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flashTimer = 3
 		case EventLog:
 			m.AddLog(msg.Log)
+		case EventStoreRequest:
+			StoreRequest(msg.RequestID, msg.Req)
 		case EventAddPendingRetry:
 			// Find the command log for this request
 			var cmdLog *CommandLog
@@ -1832,7 +1837,7 @@ func RunTUIMode() {
 			}
 
 			// Store request for later decision
-			StoreRequest(requestID, req)
+			model.eventChan <- Event{Type: EventStoreRequest, RequestID: requestID, Req: req}
 
 			// Send request event to TUI
 			select {
