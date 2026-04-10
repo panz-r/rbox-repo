@@ -75,7 +75,7 @@ static int* build_forward_depths(build_dfa_state_t** dfa, int state_count) {
                 queue[tail++] = next;
             }
         }
-        if (dfa[state]->eos_target > 0 && dfa[state]->eos_target < (uint32_t)state_count) {
+        if (dfa[state]->eos_target != (uint32_t)-1 && dfa[state]->eos_target < (uint32_t)state_count) {
             int next = (int)dfa[state]->eos_target;
             if (!visited[next]) {
                 visited[next] = true;
@@ -129,7 +129,7 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
                 pred_count[t]++;
             }
         }
-        if (dfa[s]->eos_target > 0 && dfa[s]->eos_target < (uint32_t)state_count) {
+        if (dfa[s]->eos_target != (uint32_t)-1 && dfa[s]->eos_target < (uint32_t)state_count) {
             pred_count[dfa[s]->eos_target]++;
         }
     }
@@ -163,8 +163,11 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
                 preds[t][pred_count[t]++] = s;
             }
         }
-        if (dfa[s]->eos_target > 0 && dfa[s]->eos_target < (uint32_t)state_count) {
-            preds[dfa[s]->eos_target][pred_count[dfa[s]->eos_target]++] = s;
+        if (dfa[s]->eos_target != (uint32_t)-1 && dfa[s]->eos_target < (uint32_t)state_count) {
+            uint32_t eos_idx = dfa[s]->eos_target;
+            if (preds[eos_idx] != NULL) {
+                preds[eos_idx][pred_count[eos_idx]++] = s;
+            }
         }
     }
     
@@ -186,9 +189,19 @@ static int* build_backward_depths(build_dfa_state_t** dfa, int state_count) {
     }
     
     while (head < tail) {
+        if (head >= state_count) { break; }
         int state = queue[head++];
+        if (state < 0 || state >= state_count) {
+            continue;
+        }
+        if (!preds[state]) {
+            continue;
+        }
         for (int i = 0; i < pred_count[state]; i++) {
             int pred = preds[state][i];
+            if (pred < 0 || pred >= state_count) {
+                continue;
+            }
             if (!visited[pred]) {
                 visited[pred] = true;
                 int d = depths[state] + 1;
@@ -273,10 +286,15 @@ static int* find_sccs_tarjan(
     
     // Tarjan's DFS (iterative to handle large graphs)
     int* dfs_stack = malloc(state_count * 2 * sizeof(int)); // (state, next_child_index)
-    if (!dfs_stack) {
+    int* dfs_parent = malloc(state_count * sizeof(int)); // parent state for lowlink propagation
+    if (!dfs_stack || !dfs_parent) {
+        free(dfs_stack); free(dfs_parent);
         free(index); free(lowlink); free(on_stack); free(stack); free(scc_id);
         *scc_count_out = 0;
         return NULL;
+    }
+    for (int i = 0; i < state_count; i++) {
+        dfs_parent[i] = -1;
     }
     int dfs_top = 0;
     const int end_sentinel = BYTE_VALUE_MAX + 1;  // 257: marks all children processed
@@ -287,6 +305,7 @@ static int* find_sccs_tarjan(
         // Start DFS from this state
         dfs_stack[dfs_top * 2] = start;
         dfs_stack[dfs_top * 2 + 1] = 0;
+        dfs_parent[start] = -1;  // root has no parent
         dfs_top++;
         
         while (dfs_top > 0) {
@@ -307,16 +326,17 @@ static int* find_sccs_tarjan(
             for (int c = *next_child; c < BYTE_VALUE_MAX; c++) {
                 int next = dfa[state]->transitions[c];
                 if (next >= 0 && next < state_count) {
-                    if (index[next] < 0) {
-                        // Unvisited child - recurse
-                        *next_child = c + 1;
-                        if (dfs_top < state_count) {  // Bounds check
-                            dfs_stack[dfs_top * 2] = next;
-                            dfs_stack[dfs_top * 2 + 1] = 0;
-                            dfs_top++;
-                        }
-                        done = false;
-                        break;
+            if (index[next] < 0) {
+                // Unvisited child - push current state and recurse
+                *next_child = c + 1;
+                if (dfs_top < state_count) {  // Bounds check
+                    dfs_stack[dfs_top * 2] = next;
+                    dfs_stack[dfs_top * 2 + 1] = 0;
+                    dfs_parent[next] = state;  // track parent for lowlink propagation
+                    dfs_top++;
+                }
+                done = false;
+                break;
                     } else if (on_stack[next]) {
                         // Back edge
                         if (index[next] < lowlink[state]) {
@@ -329,13 +349,14 @@ static int* find_sccs_tarjan(
             // Also check EOS transitions
             if (done) {
                 if (*next_child <= BYTE_VALUE_MAX) {
-                    if (dfa[state]->eos_target > 0 && dfa[state]->eos_target < (uint32_t)state_count) {
+                    if (dfa[state]->eos_target != (uint32_t)-1 && dfa[state]->eos_target < (uint32_t)state_count) {
                         int next = (int)dfa[state]->eos_target;
                         if (index[next] < 0) {
                             *next_child = end_sentinel; // Mark all children processed
                             if (dfs_top < state_count) {  // Bounds check
                                 dfs_stack[dfs_top * 2] = next;
                                 dfs_stack[dfs_top * 2 + 1] = 0;
+                                dfs_parent[next] = state;  // track parent for lowlink propagation
                                 dfs_top++;
                             }
                             done = false;
@@ -352,22 +373,31 @@ static int* find_sccs_tarjan(
                 // All children processed - check if root of SCC
                 if (lowlink[state] == index[state]) {
                     // Found an SCC
-                    if (scc_count >= MAX_SCCS) break;
+                    if (scc_count >= MAX_SCCS) {
+                        // Hit SCC limit - clean up and return error
+                        for (int j = 0; j < scc_count; j++) free(scc_info[j].states);
+                        free(dfs_stack); free(dfs_parent); free(index); free(lowlink); free(on_stack); free(stack); free(scc_id);
+                        *scc_count_out = 0;
+                        return NULL;
+                    }
                     
                     int initial_cap = 64;
                     scc_info[scc_count].states = malloc(initial_cap * sizeof(int));
                     if (!scc_info[scc_count].states) {
-                        // Allocation failed - stop SCC detection
-                        break;
+                        // Allocation failed - clean up all previously found SCCs and return NULL
+                        for (int j = 0; j < scc_count; j++) free(scc_info[j].states);
+                        free(dfs_stack); free(index); free(lowlink); free(on_stack); free(stack); free(scc_id);
+                        *scc_count_out = 0;
+                        return NULL;
                     }
                     scc_info[scc_count].count = 0;
                     scc_info[scc_count].capacity = initial_cap;
-                    
+
                     int s;
                     do {
                         s = stack[--stack_top];
                         on_stack[s] = false;
-                        
+
                         // Grow if needed
                         if (scc_info[scc_count].count >= scc_info[scc_count].capacity) {
                             int new_cap = scc_info[scc_count].capacity * 2;
@@ -376,30 +406,48 @@ static int* find_sccs_tarjan(
                                 new_cap * sizeof(int)
                             );
                             if (!new_states) {
-                                // realloc failed - keep original pointer, stop adding states
-                                break;
+                                // realloc failed - clean up and return NULL
+                                for (int j = 0; j <= scc_count; j++) free(scc_info[j].states);
+                                free(dfs_stack); free(index); free(lowlink); free(on_stack); free(stack); free(scc_id);
+                                *scc_count_out = 0;
+                                return NULL;
                             }
                             scc_info[scc_count].states = new_states;
                             scc_info[scc_count].capacity = new_cap;
                         }
-                        
+
                         scc_info[scc_count].states[scc_info[scc_count].count++] = s;
                         scc_id[s] = scc_count;
                     } while (s != state);
-                    
+
                     scc_count++;
+                }
+                // Propagate lowlink to parent before popping
+                int parent = dfs_parent[state];
+                if (parent >= 0 && lowlink[state] < lowlink[parent]) {
+                    lowlink[parent] = lowlink[state];
                 }
                 dfs_top--;
             }
         }
     }
-    
+
     free(dfs_stack);
+    free(dfs_parent);
     free(index);
     free(lowlink);
     free(on_stack);
     free(stack);
-    
+
+    // Verify all states got a valid SCC ID (should be the case if no allocation failed)
+    for (int s = 0; s < state_count; s++) {
+        if (scc_id[s] < 0) {
+            // State never got an SCC ID - this shouldn't happen with proper error handling
+            // but handle it gracefully by assigning to SCC 0
+            scc_id[s] = 0;
+        }
+    }
+
     *scc_count_out = scc_count;
     return scc_id;
 }
@@ -429,18 +477,22 @@ static int** build_condensation_graph(
     // Count edges between SCCs
     for (int s = 0; s < state_count; s++) {
         int src_scc = scc_id[s];
+        // Safety check: skip states with invalid SCC IDs
+        if (src_scc < 0 || src_scc >= scc_count) continue;
         for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
             if (t >= 0 && t < state_count) {
                 int dst_scc = scc_id[t];
+                if (dst_scc < 0 || dst_scc >= scc_count) continue;
                 if (src_scc != dst_scc) {
                     cond[src_scc][dst_scc]++;
                 }
             }
         }
-        if (dfa[s]->eos_target > 0 && dfa[s]->eos_target < (uint32_t)state_count) {
+        if (dfa[s]->eos_target != (uint32_t)-1 && dfa[s]->eos_target < (uint32_t)state_count) {
             int t = (int)dfa[s]->eos_target;
             int dst_scc = scc_id[t];
+            if (dst_scc < 0 || dst_scc >= scc_count) continue;
             if (src_scc != dst_scc) {
                 cond[src_scc][dst_scc]++;
             }
@@ -583,6 +635,7 @@ static bool can_swap_positions(int** cond, const int* order, int p, int scc_coun
     if (p < 0 || p >= scc_count - 1) return false;
     int scc_a = order[p];
     int scc_b = order[p + 1];
+    if (scc_a < 0 || scc_a >= scc_count || scc_b < 0 || scc_b >= scc_count) return false;
     // Can swap only if there's no edge from scc_b to scc_a (would violate topo order)
     return cond[scc_b][scc_a] == 0;
 }
@@ -593,10 +646,12 @@ static bool can_swap_positions(int** cond, const int* order, int p, int scc_coun
 static long long swap_cost_delta(int** cond, const int* order, const int* pos, int p, int scc_count) {
     int scc_a = order[p];
     int scc_b = order[p + 1];
+    if (scc_a < 0 || scc_a >= scc_count || scc_b < 0 || scc_b >= scc_count) return 0;
     long long delta = 0;
     
     for (int k = 0; k < scc_count; k++) {
         if (k == scc_a || k == scc_b) continue;
+        if (k < 0 || k >= scc_count) continue;
         delta += (long long)cond[k][scc_a] * (abs(pos[k] - (p + 1)) - abs(pos[k] - p));
         delta += (long long)cond[scc_a][k] * (abs((p + 1) - pos[k]) - abs(p - pos[k]));
         delta += (long long)cond[k][scc_b] * (abs(pos[k] - p) - abs(pos[k] - (p + 1)));
@@ -608,11 +663,6 @@ static long long swap_cost_delta(int** cond, const int* order, const int* pos, i
 
 #include "dfa_layout_sat.h"
 
-/**
- * Greedy refinement of topological ordering for condensation DAG.
- * Minimizes Σ cond[i][j] * |pos[i] - pos[j]| (total weighted transition distance).
- * Uses iterative adjacent swap improvement.
- */
 static int* refine_condensation_order(
     int** cond,
     int scc_count,
@@ -624,27 +674,31 @@ static int* refine_condensation_order(
         return order;
     }
     
-    // Copy topological order
     int* order = malloc(scc_count * sizeof(int));
+    if (!order) return NULL;
     memcpy(order, topo_order, scc_count * sizeof(int));
     
-    // Map SCC -> position
     int* pos = malloc(scc_count * sizeof(int));
+    if (!pos) {
+        free(order);
+        return NULL;
+    }
     for (int i = 0; i < scc_count; i++) {
         pos[order[i]] = i;
     }
     
-    // Greedy improvement: try swapping adjacent SCCs
     bool improved = true;
+    int iterations = 0;
     while (improved) {
         improved = false;
+        iterations++;
+        if (iterations > 10000) break;
         for (int p = 0; p < scc_count - 1; p++) {
             if (!can_swap_positions(cond, order, p, scc_count)) continue;
             
             long long delta = swap_cost_delta(cond, order, pos, p, scc_count);
             
             if (delta < 0) {
-                // Swap improves cost
                 int scc_a = order[p];
                 int scc_b = order[p + 1];
                 order[p] = scc_b;
@@ -673,6 +727,7 @@ static int* build_scc_affinity_groups(
 ) {
     if (state_count <= 0) return NULL;
     
+    
     // For small DFAs, SCC analysis is unnecessary - use identity groups
     if (state_count < 8) {
         int* group_id = malloc(state_count * sizeof(int));
@@ -684,12 +739,24 @@ static int* build_scc_affinity_groups(
     }
     
     // Step 1: Find SCCs
-    scc_info_t scc_info[MAX_SCCS];
+    scc_info_t* scc_info = calloc(MAX_SCCS, sizeof(scc_info_t));
+    if (!scc_info) {
+        return NULL;
+    }
     int scc_count = 0;
     int* scc_id = find_sccs_tarjan(dfa, state_count, scc_info, &scc_count);
     if (!scc_id || scc_count == 0) {
         free(scc_id);
         return NULL;
+    }
+    
+    // Validate all states have valid SCC IDs before proceeding
+    for (int s = 0; s < state_count; s++) {
+        if (scc_id[s] < 0 || scc_id[s] >= scc_count) {
+            for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+            free(scc_id);
+            return NULL;
+        }
     }
     
     // Step 2: Build condensation graph
@@ -710,10 +777,14 @@ static int* build_scc_affinity_groups(
     }
     
     // Step 3b: Refine ordering for better cache locality (greedy)
-    int* refined_order = refine_condensation_order(cond, scc_count, topo_order);
+    // Skip for large SCC counts to avoid performance issues
+    int* refined_order = NULL;
+    if (scc_count <= 50) {
+        refined_order = refine_condensation_order(cond, scc_count, topo_order);
+    }
     if (!refined_order) {
-        refined_order = topo_order; // Fallback to topological order
-    } else {
+        refined_order = topo_order;
+    } else if (refined_order != topo_order) {
         free(topo_order);
         topo_order = refined_order;
     }
@@ -743,6 +814,7 @@ static int* build_scc_affinity_groups(
         }
     }
     
+    
     // Step 4: Compute entry states and BFS layers within each SCC
     int* scc_layer = calloc(state_count, sizeof(int));
     bool* is_entry = calloc(state_count, sizeof(bool));
@@ -751,10 +823,16 @@ static int* build_scc_affinity_groups(
     is_entry[0] = true;
     for (int s = 0; s < state_count; s++) {
         int sid = scc_id[s];
+        if (sid < 0 || sid >= scc_count) {
+            continue;  // Safety check
+        }
         for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int t = dfa[s]->transitions[c];
-            if (t >= 0 && t < state_count && scc_id[t] != sid) {
-                is_entry[t] = true; // t is entry to its SCC
+            if (t >= 0 && t < state_count) {
+                int tid = scc_id[t];
+                if (tid >= 0 && tid < scc_count && tid != sid) {
+                    is_entry[t] = true; // t is entry to its SCC
+                }
             }
         }
     }
@@ -803,6 +881,7 @@ static int* build_scc_affinity_groups(
     free(scc_topo_pos);
     free_condensation_graph(cond, scc_count);
     for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+    free(scc_info);
     free(scc_id);
     free(topo_order);
     
@@ -818,6 +897,12 @@ static int* build_scc_affinity_groups(
 int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
     if (state_count <= 0) return NULL;
     
+    // Validate all DFA state pointers
+    for (int i = 0; i < state_count; i++) {
+        if (!dfa[i]) {
+            return NULL;
+        }
+    }
     int* forward_depths = build_forward_depths(dfa, state_count);
     int* backward_depths = build_backward_depths(dfa, state_count);
     
@@ -826,6 +911,7 @@ int* build_state_order_bfs(build_dfa_state_t** dfa, int state_count) {
         free(backward_depths);
         return NULL;
     }
+    
     
     // Count truly unreachable states (not reachable from start AND can't reach accepting)
     int unreachable_count = 0;
@@ -970,6 +1056,16 @@ static void reorder_states(build_dfa_state_t** dfa, int state_count, const int* 
     build_dfa_state_t** temp = malloc(state_count * sizeof(build_dfa_state_t*));
     if (!temp) return;
     
+    // Validate order mapping BEFORE using it
+    for (int i = 0; i < state_count; i++) {
+        if (order[i] < 0 || order[i] >= state_count) {
+            fprintf(stderr, "reorder_states: invalid order[%d] = %d (state_count=%d)\n",
+                    i, order[i], state_count);
+            free(temp);
+            return;
+        }
+    }
+    
     // Create inverse mapping
     int* inverse = create_inverse_order(order, state_count);
     if (!inverse) {
@@ -984,13 +1080,14 @@ static void reorder_states(build_dfa_state_t** dfa, int state_count, const int* 
     
     // Update transition targets to use new positions
     for (int i = 0; i < state_count; i++) {
+        if (!temp[i]) continue;
         for (int c = 0; c < BYTE_VALUE_MAX; c++) {
             int old_target = temp[i]->transitions[c];
             if (old_target >= 0 && old_target < state_count) {
                 temp[i]->transitions[c] = order[old_target];
             }
         }
-        if (temp[i]->eos_target > 0 && temp[i]->eos_target < (uint32_t)state_count) {
+        if (temp[i]->eos_target != (uint32_t)-1 && temp[i]->eos_target < (uint32_t)state_count) {
             temp[i]->eos_target = order[temp[i]->eos_target];
         }
     }

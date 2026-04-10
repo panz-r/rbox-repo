@@ -340,6 +340,7 @@ clean:
 		$(TEST) $(TEST_SAT) $(LIB) $(EVAL_LIB)
 	rm -f $(TOOLS_DIR)/*.o lib/*.o $(SRC_DIR)/*.o
 	$(MAKE) -C fuzz clean
+	$(MAKE) -C testgen clean
 
 # Clean including vendor builds
 clean-all: clean
@@ -501,6 +502,16 @@ fuzz-clean:
 
 fuzz-rebuild: clean-fuzz fuzz-build
 
+# Testgen targets
+testgen: testgen-build
+
+testgen-build:
+	$(MAKE) -C testgen all
+
+testgen-clean:
+	$(MAKE) -C testgen clean
+
 .PHONY: all clean clean-all test test-moore test-hopcroft test-brzozowski test-integrity build-sat
 .PHONY: fuzz fuzz-build fuzz-run-dfa fuzz-run-pattern fuzz-run fuzz-clean fuzz-rebuild
+.PHONY: testgen testgen-build testgen-clean
 

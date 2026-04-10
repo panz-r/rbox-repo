@@ -1940,15 +1940,19 @@ int main(int argc, char* argv[]) {
     
     if (minimize) {
         dfa_min_algo_t algo = dfa_minimize_get_algorithm();
+        fprintf(stderr, "nfa2dfa: before minimize, state_count=%d, algo=%d\n", ctx->dfa_state_count, algo);
         ctx->dfa_state_count = dfa_minimize(ctx->dfa, ctx->dfa_state_count, algo);
+        fprintf(stderr, "nfa2dfa: after minimize, state_count=%d\n", ctx->dfa_state_count);
         // Don't re-flatten after Brzozowski - it already produces correct transitions
         if (algo != DFA_MIN_BRZOZOWSKI) {
             flatten_dfa(ctx);  // Re-flatten with new state indices after minimization
         }
         // Apply cache-optimized layout (now separate from minimization)
         layout_options_t layout_opts = get_default_layout_options();
+        fprintf(stderr, "nfa2dfa: before layout, state_count=%d\n", ctx->dfa_state_count);
         int* order = optimize_dfa_layout(ctx->dfa, ctx->dfa_state_count, &layout_opts);
         if (order) free(order);
+        fprintf(stderr, "nfa2dfa: after layout\n");
     }
     
     if (compress) {
@@ -1958,7 +1962,9 @@ int main(int argc, char* argv[]) {
         dfa_compress(ctx->dfa, ctx->dfa_state_count, &opts);
     }
     
+    fprintf(stderr, "nfa2dfa: before write_dfa_file, state_count=%d\n", ctx->dfa_state_count);
     write_dfa_file(ctx, output_file);
+    fprintf(stderr, "nfa2dfa: after write_dfa_file\n");
     
     nfa2dfa_context_destroy(ctx);
     return 0;
