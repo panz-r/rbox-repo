@@ -62,6 +62,7 @@ char *memory_read_string(pid_t pid, unsigned long addr) {
             char c = (word >> (i * 8)) & 0xFF;
             buffer[offset + i] = c;
             if (c == '\0') {
+                buffer[MEMORY_STRING_MAX - 1] = '\0';
                 return buffer;
             }
         }
