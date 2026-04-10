@@ -584,8 +584,14 @@ static int block_syscall(pid_t pid, USER_REGS *regs) {
 #endif
 
     if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+        if (errno == ESRCH) {
+            DEBUG_PRINT("HANDLER: pid %d already exited (race), skipping block_syscall\n", pid);
+            return 0;
+        }
         perror("ptrace(SETREGS) for block_syscall");
-        kill(pid, SIGKILL);
+        if (kill(pid, 0) == 0) {
+            kill(pid, SIGKILL);
+        }
         return -1;
     }
 
@@ -667,6 +673,10 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
 
     /* Apply changes */
     if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+        if (errno == ESRCH) {
+            DEBUG_PRINT("HANDLER: pid %d already exited (race), skipping block_execve\n", pid);
+            return 0;
+        }
         perror("ptrace(SETREGS)");
         return -1;
     }
@@ -677,8 +687,9 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
 /* Handle syscall entry (before execution) */
 int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
     if (!state) {
-        DEBUG_PRINT("HANDLER: No state for pid=%d\n", pid);
-        return 0;
+        LOG_ERROR("Cannot track process %d - blocking execve", pid);
+        block_execve(pid, regs);
+        return -1;
     }
 
     /* Skip detached processes */
@@ -1576,6 +1587,8 @@ int syscall_handle_exit(pid_t pid, USER_REGS *regs, ProcessState *state) {
             state->execve_argv = NULL;
             memory_free_string_array(state->execve_envp);
             state->execve_envp = NULL;
+            memory_free_ulong_array(state->execve_envp_addrs);
+            state->execve_envp_addrs = NULL;
         }
 
         /* Note: We now detach in syscall_handle_entry when post_redirect_exec is first set,

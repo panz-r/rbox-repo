@@ -52,8 +52,14 @@ int g_verbose_level = 0;
 
 void debug_init(void) {
     if (g_debug_file) return;
-    int fd = open("/tmp/readonlybox-ptrace.log", O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC, 0644);
+    int fd = open("/tmp/readonlybox-ptrace.log", O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC|O_NOFOLLOW, 0600);
     if (fd >= 0) {
+        struct stat st;
+        if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+            close(fd);
+            g_debug_file = stderr;
+            return;
+        }
         g_debug_file = fdopen(fd, "a");
     }
     if (!g_debug_file && fd >= 0) {
@@ -144,15 +150,17 @@ static int restore_environment_from_socket(const char *sock_name) {
         char *next = strchr(line, '\n');
         if (next) *next = '\0';
         if (line[0] != '\0') {
-            char *env_entry = strdup(line);
-            if (!env_entry) {
-                LOG_ERROR("strdup failed for environment variable");
-                free(buf);
-                return -1;
-            }
-            if (putenv(env_entry) != 0) {
-                LOG_WARN("putenv failed for '%s'", env_entry);
-                free(env_entry);
+            /* Validate line format: must contain '=' for a valid env var */
+            char *eq = strchr(line, '=');
+            if (!eq) {
+                LOG_WARN("Ignoring malformed env line (no '='): '%s'", line);
+            } else {
+                /* Use setenv which copies the string, avoiding putenv issues */
+                *eq = '\0';
+                if (setenv(line, eq + 1, 1) != 0) {
+                    LOG_WARN("setenv failed for '%s'", line);
+                }
+                *eq = '=';
             }
         }
         line = next ? next + 1 : NULL;
@@ -272,6 +280,7 @@ static int trace_process(pid_t initial_pid) {
                PTRACE_O_TRACEVFORK |
                PTRACE_O_EXITKILL) < 0) {
         perror("ptrace(SETOPTIONS)");
+        kill(pid, SIGKILL);
         return 1;
     }
 
@@ -370,18 +379,31 @@ static int trace_process(pid_t initial_pid) {
             } else {
                 DEBUG_PRINT("PARENT: pid=%d (%s) fork/clone, resuming child %d\n", pid, parent_exe, (int)child_pid);
                 /* Set options on child for tracing */
-                if (ptrace(PTRACE_SETOPTIONS, (pid_t)child_pid, 0,
-                           PTRACE_O_TRACESYSGOOD |
-                           PTRACE_O_TRACEEXEC |
-                           PTRACE_O_TRACECLONE |
-                           PTRACE_O_TRACEFORK |
-                           PTRACE_O_TRACEVFORK |
-                           PTRACE_O_EXITKILL) < 0) {
-                    DEBUG_PRINT("PARENT: child %d SETOPTIONS failed: %s\n", (int)child_pid, strerror(errno));
-                }
-                /* Resume child - it will stop at next syscall */
-                if (ptrace(PTRACE_SYSCALL, (pid_t)child_pid, 0, 0) < 0) {
-                    DEBUG_PRINT("PARENT: child %d already exited: %s\n", (int)child_pid, strerror(errno));
+                long setopts_ret = ptrace(PTRACE_SETOPTIONS, (pid_t)child_pid, 0,
+                                          PTRACE_O_TRACESYSGOOD |
+                                          PTRACE_O_TRACEEXEC |
+                                          PTRACE_O_TRACECLONE |
+                                          PTRACE_O_TRACEFORK |
+                                          PTRACE_O_TRACEVFORK |
+                                          PTRACE_O_EXITKILL);
+                if (setopts_ret < 0) {
+                    if (errno == ESRCH) {
+                        /* Child already exited before we could set options - this is a race,
+                         * not an error. Clean up process state since PID is no longer valid. */
+                        DEBUG_PRINT("PARENT: child %d already exited (race), skipping options\n", (int)child_pid);
+                        syscall_remove_process_state((pid_t)child_pid);
+                    } else {
+                        DEBUG_PRINT("PARENT: child %d SETOPTIONS failed: %s\n", (int)child_pid, strerror(errno));
+                        /* Only kill if process still exists */
+                        if (kill((pid_t)child_pid, 0) == 0) {
+                            kill((pid_t)child_pid, SIGKILL);
+                        }
+                    }
+                } else {
+                    /* Resume child - it will stop at next syscall */
+                    if (ptrace(PTRACE_SYSCALL, (pid_t)child_pid, 0, 0) < 0) {
+                        DEBUG_PRINT("PARENT: child %d SYSCALL failed: %s\n", (int)child_pid, strerror(errno));
+                    }
                 }
             }
             if (ptrace(PTRACE_SYSCALL, pid, 0, 0) < 0) {
@@ -894,6 +916,7 @@ int main(int argc, char *argv[]) {
                    PTRACE_O_TRACEVFORK |
                    PTRACE_O_EXITKILL) < 0) {
             LOG_ERRNO("ptrace(SETOPTIONS)");
+            kill(attach_pid, SIGKILL);
             syscall_handler_cleanup();
             validation_shutdown();
             free(cmd_path);

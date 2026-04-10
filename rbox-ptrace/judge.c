@@ -157,7 +157,7 @@ int judge_run(const char *command, const char *caller_info) {
                                 size_t len = strlen(name);
                                 memcpy(p, name, len);
                                 p += len;
-                                p += snprintf(p, 9, ":%.5f", score);
+                                p += snprintf(p, 16, ":%.5f", score);
                                 if (i < flagged_count - 1) {
                                     *p++ = ',';
                                 }
