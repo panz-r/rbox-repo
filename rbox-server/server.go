@@ -194,8 +194,10 @@ func main() {
 		// Log request if verbose
 		if *verbose || *veryVerbose {
 			fmt.Printf("Request: %s%s", cmd, callerInfo)
-			for _, arg := range args[1:] {
-				fmt.Printf(" %s", arg)
+			if len(args) > 1 {
+				for _, arg := range args[1:] {
+					fmt.Printf(" %s", arg)
+				}
 			}
 			fmt.Println()
 		}

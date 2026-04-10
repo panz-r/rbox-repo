@@ -453,7 +453,8 @@ func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientI
 
 	// Enforce MaxHistory limit
 	if len(m.commands) > MaxHistory {
-		m.commands = m.commands[len(m.commands)-MaxHistory:]
+		start := len(m.commands) - MaxHistory
+		m.commands = m.commands[start:]
 	}
 
 	// Only select the new command if we're NOT in decision mode (step 2)
@@ -474,7 +475,8 @@ func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientI
 func (m *Model) AddLog(log string) {
 	m.logs = append(m.logs, log)
 	if len(m.logs) > MaxLogs {
-		m.logs = m.logs[len(m.logs)-MaxLogs:]
+		start := len(m.logs) - MaxLogs
+		m.logs = m.logs[start:]
 	}
 }
 
