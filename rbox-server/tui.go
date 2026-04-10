@@ -1847,6 +1847,8 @@ func RunTUIMode() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
+	close(model.eventChan)
+
 	fmt.Println("\nShutting down...")
 	server.Stop()
 	server.Free()
