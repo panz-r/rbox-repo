@@ -1617,8 +1617,8 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		if end > len(wrappedLines) {
 			end = len(wrappedLines)
 		}
-		if start >= len(wrappedLines) {
-			start = len(wrappedLines) - 1
+		if start < 0 || start >= len(wrappedLines) {
+			start = 0
 		}
 		if start < end {
 			visibleLines = wrappedLines[start:end]
