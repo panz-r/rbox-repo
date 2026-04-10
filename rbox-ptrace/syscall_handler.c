@@ -1293,6 +1293,9 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             }
 
 cleanup:
+            for (int i = 0; i < count; i++) {
+                free((void *)inputs[i].path);
+            }
             free(path1);
             free(path2);
             return ret;
