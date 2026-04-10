@@ -163,7 +163,7 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                     memcmp(entry->request_id, request_id, 16) == 0 &&
                     entry->packet_checksum == packet_checksum) {
                     if (decision) *decision = entry->decision;
-                    if (reason) strncpy(reason, entry->reason, 255);
+                    if (reason) strlcpy(reason, entry->reason, 256);
                     if (duration) *duration = entry->duration;
                     cache_lru_move_to_head(cache, entry);
                     pthread_mutex_unlock(&server->cache_mutex);
@@ -180,7 +180,7 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                     entry->cmd_hash2 == cmd_hash2 &&
                     entry->fenv_hash == fenv_hash) {
                     if (decision) *decision = entry->decision;
-                    if (reason) strncpy(reason, entry->reason, 255);
+                    if (reason) strlcpy(reason, entry->reason, 256);
                     if (duration) *duration = entry->duration;
                     cache_lru_move_to_head(cache, entry);
                     pthread_mutex_unlock(&server->cache_mutex);
