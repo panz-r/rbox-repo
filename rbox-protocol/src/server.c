@@ -753,7 +753,12 @@ static void *server_thread_func(void *arg) {
 
     /* Make listen socket non‑blocking */
     int flags = fcntl(server->listen_fd, F_GETFL, 0);
-    fcntl(server->listen_fd, F_SETFL, flags | O_NONBLOCK);
+    if (flags < 0) {
+        return NULL;
+    }
+    if (fcntl(server->listen_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        return NULL;
+    }
 
     server->epoll_fd = epoll_create1(0);
     if (server->epoll_fd < 0) return NULL;
@@ -869,7 +874,14 @@ static void *server_thread_func(void *arg) {
                             break;
                         }
                         flags = fcntl(cl_fd, F_GETFL, 0);
-                        fcntl(cl_fd, F_SETFL, flags | O_NONBLOCK);
+                        if (flags < 0) {
+                            close(cl_fd);
+                            break;
+                        }
+                        if (fcntl(cl_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+                            close(cl_fd);
+                            break;
+                        }
                         if (client_fd_add(server, cl_fd) != 0) {
                             close(cl_fd);
                             break;

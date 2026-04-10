@@ -106,7 +106,16 @@ rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_
 
         /* Set non-blocking */
         int flags = fcntl(client->fd, F_GETFL, 0);
-        fcntl(client->fd, F_SETFL, flags | O_NONBLOCK);
+        if (flags < 0) {
+            close(client->fd);
+            free(client);
+            return NULL;
+        }
+        if (fcntl(client->fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+            close(client->fd);
+            free(client);
+            return NULL;
+        }
 
         /* Connect (non-blocking) */
         struct sockaddr_un addr;
@@ -332,7 +341,14 @@ rbox_client_t *rbox_server_accept(rbox_server_t *server) {
 
     /* Set non-blocking for accepted client socket */
     int flags = fcntl(client_fd, F_GETFL, 0);
-    fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
+    if (flags < 0) {
+        close(client_fd);
+        return NULL;
+    }
+    if (fcntl(client_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(client_fd);
+        return NULL;
+    }
 
     rbox_client_t *client = calloc(1, sizeof(rbox_client_t));
     if (!client) {
