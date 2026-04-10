@@ -1285,7 +1285,10 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
     rbox_decision_node_t *node = atomic_load_explicit(&server->decision_queue.head, memory_order_acquire);
     while (node) {
         rbox_decision_node_t *next = atomic_load_explicit(&node->next, memory_order_acquire);
-        if (node->decision) free(node->decision);
+        if (node->decision) {
+            free(node->decision->env_decisions);
+            free(node->decision);
+        }
         free(node);
         node = next;
     }
