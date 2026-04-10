@@ -553,7 +553,13 @@ int main(int argc, char *argv[]) {
                     return 1;
                 }
                 g_extra_env = new_env;
-                g_extra_env[g_extra_env_count++] = strdup(optarg);
+                char *env_val = strdup(optarg);
+                if (!env_val) {
+                    LOG_ERROR("Failed to allocate memory for --env value");
+                    cleanup_global_resources();
+                    return 1;
+                }
+                g_extra_env[g_extra_env_count++] = env_val;
                 break;
             }
             case 256:
