@@ -439,6 +439,22 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
     if (req->env_var_count > 0) {
         req->env_var_names = calloc(req->env_var_count, sizeof(const char *));
         req->env_var_scores = calloc(req->env_var_count, sizeof(float));
+        if (!req->env_var_names || !req->env_var_scores) {
+            free(req->env_var_names);
+            free(req->env_var_scores);
+            req->env_var_names = NULL;
+            req->env_var_scores = NULL;
+            req->env_var_count = 0;
+            size_t resp_len;
+            char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
+                RBOX_DECISION_DENY, "memory allocation failed",
+                req->fenv_hash, 0, NULL, &resp_len);
+            if (resp) {
+                send_queue_add(server, fd, resp, resp_len, NULL);
+            }
+            server_request_free(req);
+            return;
+        }
         p = args_end;
         remaining = req->command_len - (p - req->command_data);
         int idx = 0;
