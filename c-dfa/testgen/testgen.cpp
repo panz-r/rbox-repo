@@ -1,6 +1,7 @@
 #include "testgen.h"
 #include "pattern_strategies.h"
 #include "pattern_serializer.h"
+#include "command_utils.h"
 #include "expectation_gen.h"
 #include "inductive_builder.h"
 #include <fstream>
@@ -45,40 +46,6 @@ std::string getToolsDir() {
 
 // ============================================================================
 // Command Execution Helper - Captures stdout, stderr, and exit code
-// ============================================================================
-
-struct CommandResult {
-    std::string stdout;
-    std::string stderr;
-    int exit_code;
-};
-
-CommandResult runCommand(const std::string& cmd) {
-    CommandResult result;
-    result.exit_code = 0;
-    
-    // Use popen for simpler stdout capture
-    FILE* fp = popen((cmd + " 2>&1").c_str(), "r");
-    if (!fp) {
-        result.exit_code = -1;
-        return result;
-    }
-    
-    char buf[256];
-    while (fgets(buf, sizeof(buf), fp) != nullptr) {
-        result.stdout += buf;
-    }
-    
-    int status = pclose(fp);
-    if (WIFEXITED(status)) {
-        result.exit_code = WEXITSTATUS(status);
-    } else {
-        result.exit_code = -1;
-    }
-    
-    return result;
-}
-
 // ============================================================================
 // Pattern AST Implementation
 // ============================================================================
