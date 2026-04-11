@@ -393,8 +393,12 @@ static int log_reader_get_counts(int *out_allow, int *out_deny) {
  */
 
 /* Helper to run a command and assert the number of server requests and exit code */
-static int run_and_check(const char *cmd, int expected_exit, int expected_requests) {
+static int run_and_check(const char *cmd, int expected_exit, int expected_requests, int clear_env) {
     /* run_ptrace_impl now always adds sh -c wrapper, so just pass the raw command */
+    if (clear_env) {
+        clearenv();
+    }
+    
     char *args[] = {(char*)cmd, NULL};
     int exit_code;
     int allow_count, deny_count;
@@ -423,41 +427,47 @@ static int run_and_check(const char *cmd, int expected_exit, int expected_reques
 
 TEST(wrapper_chain_simple) {
     /* timeout 1 sh noop : timeout wrapper stripped, sh noop is actual command - 1 request */
-    return run_and_check("timeout 1 sh noop", 0, 1);
+    return run_and_check("timeout 1 sh noop", 0, 1, 1);
 }
 
 TEST(wrapper_chain_nested) {
     /* timeout 1 timeout 1 sh noop : wrappers stripped, sh noop is actual - 1 request */
-    return run_and_check("timeout 1 timeout 1 sh noop", 0, 1);
+    return run_and_check("timeout 1 timeout 1 sh noop", 0, 1, 1);
 }
 
 TEST(wrapper_chain_sh_c_single_quotes) {
     /* sh -c 'sh noop' : sh wrapper stripped, sh noop is actual command - 1 request */
-    return run_and_check("sh -c 'sh noop'", 0, 1);
+    return run_and_check("sh -c 'sh noop'", 0, 1, 1);
 }
 
 TEST(wrapper_chain_sh_c_double_quotes) {
-    return run_and_check("sh -c \"sh noop\"", 0, 1);
+    /* sh -c "sh noop" : same as single quotes */
+    return run_and_check("sh -c \"sh noop\"", 0, 1, 1);
 }
 
 TEST(wrapper_chain_multiple_subcommands) {
     /* sh -c 'sh noop; sh noop' : full command sent once, inner commands auto-granted - 1 request */
-    return run_and_check("sh -c 'sh noop; sh noop'", 0, 1);
+    return run_and_check("sh -c 'sh noop; sh noop'", 0, 1, 1);
 }
 
 TEST(wrapper_chain_no_wrapper) {
     /* sh noop exists, not DFA autoallowed - 1 request */
-    return run_and_check("sh noop", 0, 1);
+    return run_and_check("sh noop", 0, 1, 1);
 }
 
 TEST(wrapper_chain_unknown_wrapper) {
     /* bash -c 'sh noop' : sh (wrapper) + bash (wrapper) = 2 requests */
-    return run_and_check("bash -c 'sh noop'", 0, 2);
+    return run_and_check("bash -c 'sh noop'", 0, 2, 1);
 }
 
 TEST(wrapper_chain_deep_nesting) {
     /* timeout 1 sh -c 'timeout 1 sh noop' : wrappers stripped, sh noop runs - 1 request */
-    return run_and_check("timeout 1 sh -c 'timeout 1 sh noop'", 0, 1);
+    return run_and_check("timeout 1 sh -c 'timeout 1 sh noop'", 0, 1, 1);
+}
+
+TEST(wrapper_chain_duplicate_subcommand) {
+    /* sh -c 'sh noop; sh noop' : full command sent once, inner commands auto-granted - 1 request */
+    return run_and_check("sh -c 'sh noop; sh noop'", 0, 1, 1);
 }
 
 /*
@@ -465,13 +475,6 @@ TEST(wrapper_chain_deep_nesting) {
  * ADVANCED ALLOWANCE TESTS
  * ============================================================================
  */
-
-/* Test that a subcommand can be run twice (two identical entries) and both
- * succeed without extra server requests. */
-TEST(wrapper_chain_duplicate_subcommand) {
-    /* sh -c 'sh noop; sh noop' : full command sent once, inner commands auto-granted - 1 request */
-    return run_and_check("sh -c 'sh noop; sh noop'", 0, 1);
-}
 
 /* Test that after a subcommand allowance is consumed (single entry), a second
  * attempt to run it (in the same shell) will require a new server request.
@@ -503,7 +506,7 @@ TEST(wrapper_chain_allowance_exhaustion) {
  * the inner command's allowances should be granted. */
 TEST(wrapper_chain_wrapper_with_subcommands) {
     /* timeout 1 sh -c 'sh noop; sh noop' : wrappers stripped, sh noop runs - 1 request */
-    return run_and_check("timeout 1 sh -c 'sh noop; sh noop'", 0, 1);
+    return run_and_check("timeout 1 sh -c 'sh noop; sh noop'", 0, 1, 1);
 }
 
 /*
