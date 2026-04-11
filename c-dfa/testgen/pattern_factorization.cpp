@@ -4,6 +4,7 @@
 // ============================================================================
 
 #include "pattern_factorization.h"
+#include "pattern_serializer.h"
 #include <algorithm>  // for std::shuffle
 
 // ============================================================================

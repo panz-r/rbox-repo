@@ -53,9 +53,6 @@ struct PatternNode {
         const std::vector<std::string>& counters = {});
 };
 
-// Serialize PatternNode to string with capture tags
-std::string serializePattern(std::shared_ptr<PatternNode> node);
-
 // Parse pattern string to AST
 std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern);
 
@@ -178,6 +175,7 @@ int run_validation_helpers_tests();
 int run_strategy_tests();
 int run_expectation_gen_tests();
 int run_inductive_builder_tests();
+int run_pattern_serializer_tests();
 
 struct Options {
     int num_tests = 100;

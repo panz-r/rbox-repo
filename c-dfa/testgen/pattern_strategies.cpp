@@ -12,6 +12,7 @@
 
 #include "pattern_strategies.h"
 #include "testgen.h"
+#include "pattern_serializer.h"
 
 #include <algorithm>
 

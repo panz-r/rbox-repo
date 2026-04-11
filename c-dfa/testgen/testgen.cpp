@@ -1,5 +1,6 @@
 #include "testgen.h"
 #include "pattern_strategies.h"
+#include "pattern_serializer.h"
 #include "expectation_gen.h"
 #include "inductive_builder.h"
 #include <fstream>
@@ -475,35 +476,6 @@ EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
     }
 }
 
-// Escape regex special characters in literal values
-std::string escapeRegexSpecial(const std::string& s) {
-    std::string result;
-    for (char c : s) {
-        switch (c) {
-            case '(':
-            case ')':
-            case '|':
-            case '*':
-            case '+':
-            case '?':
-            case '{':
-            case '}':
-            case '[':
-            case ']':
-            case '^':
-            case '$':
-            case '.':
-            case '\\':
-                result += '\\';
-                result += c;
-                break;
-            default:
-                result += c;
-        }
-    }
-    return result;
-}
-
 // Conservative pattern matching check - returns true only if input clearly matches
 // the pattern structure. Used to filter matching_inputs after factorization.
 bool wouldInputMatchPattern(const std::string& input, const std::string& pattern) {
@@ -703,89 +675,6 @@ bool wouldInputMatchPattern(const std::string& input, const std::string& pattern
 }
 
 // Serialize PatternNode to string with capture tags
-std::string serializePattern(std::shared_ptr<PatternNode> node) {
-    if (!node) return "";
-    
-    std::string capture_prefix = node->capture_tag.empty() ? "" : "<" + node->capture_tag + ">";
-    std::string capture_suffix = node->capture_tag.empty() ? "" : "</" + node->capture_tag + ">";
-    std::string begin_only = node->capture_begin_only.empty() ? "" : "<" + node->capture_begin_only + ">";
-    std::string end_only = node->capture_end_only.empty() ? "" : "</" + node->capture_end_only + ">";
-    
-    switch (node->type) {
-        case PatternType::LITERAL:
-            if (!node->fragment_name.empty()) {
-                return begin_only + capture_prefix + "((" + node->fragment_name + "))+" + capture_suffix + end_only;
-            }
-            return begin_only + capture_prefix + escapeRegexSpecial(node->value) + capture_suffix + end_only;
-            
-        case PatternType::OPTIONAL:
-            if (node->quantified) {
-                return "(" + serializePattern(node->quantified) + ")?";
-            }
-            return "(.)?";
-            
-        case PatternType::PLUS_QUANTIFIER:
-            if (node->quantified) {
-                return begin_only + capture_prefix + "(" + serializePattern(node->quantified) + ")+" + capture_suffix + end_only;
-            }
-            return "(.)+";
-            
-        case PatternType::STAR_QUANTIFIER:
-            if (node->quantified) {
-                return begin_only + capture_prefix + "(" + serializePattern(node->quantified) + ")*" + capture_suffix + end_only;
-            }
-            return "(.)*";
-            
-        case PatternType::ALTERNATION: {
-            // If there's a quantifier set on an ALTERNATION node, handle it
-            if (node->quantified) {
-                // Serialize the quantified content
-                std::string inner = "(";
-                for (size_t i = 0; i < node->children.size(); i++) {
-                    if (i > 0) inner += "|";
-                    inner += serializePattern(node->children[i]);
-                }
-                inner += ")";
-                
-                // Determine quantifier from the original node's type field
-                // Note: The type might have been changed to quantifier type, so check that too
-                PatternType actual_type = node->type;
-                
-                if (actual_type == PatternType::PLUS_QUANTIFIER) {
-                    return begin_only + capture_prefix + inner + "+" + capture_suffix + end_only;
-                } else if (actual_type == PatternType::STAR_QUANTIFIER) {
-                    return begin_only + capture_prefix + inner + "*" + capture_suffix + end_only;
-                } else if (actual_type == PatternType::OPTIONAL) {
-                    return begin_only + capture_prefix + inner + "?" + capture_suffix + end_only;
-                }
-                // Fall through to normal alternation
-            }
-            
-            // Normal alternation serialization (no quantifier)
-            std::string result = "(";
-            for (size_t i = 0; i < node->children.size(); i++) {
-                if (i > 0) result += "|";
-                result += serializePattern(node->children[i]);
-            }
-            result += ")";
-            return result;
-        }
-        
-        case PatternType::SEQUENCE: {
-            std::string result;
-            for (const auto& child : node->children) {
-                result += serializePattern(child);
-            }
-            return result;
-        }
-        
-        case PatternType::FRAGMENT_REF:
-            return "((" + node->fragment_name + "))+";
-            
-        default:
-            return node->value;
-    }
-}
 
 // Parse pattern string to AST (simple parser for basic patterns)
 std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {

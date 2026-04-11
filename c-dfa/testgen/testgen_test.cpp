@@ -304,5 +304,8 @@ int main() {
     std::cout << "\n";
     int ib_result = run_inductive_builder_tests();
     
-    return (tests_passed == tests_run && pf_result == 0 && vh_result == 0 && ps_result == 0 && eg_result == 0 && ib_result == 0) ? 0 : 1;
+    std::cout << "\n";
+    int ser_result = run_pattern_serializer_tests();
+    
+    return (tests_passed == tests_run && pf_result == 0 && vh_result == 0 && ps_result == 0 && eg_result == 0 && ib_result == 0 && ser_result == 0) ? 0 : 1;
 }

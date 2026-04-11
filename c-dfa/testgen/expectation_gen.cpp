@@ -5,6 +5,7 @@
 #include "expectation_gen.h"
 #include "testgen.h"
 #include "pattern_strategies.h"
+#include "pattern_serializer.h"
 
 #include <set>
 
