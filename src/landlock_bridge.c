@@ -207,6 +207,14 @@ int soft_ruleset_validate_for_landlock(const soft_ruleset_t *rs,
         const effective_ruleset_t *eff = &rs->effective;
         int idx = 0;
 
+        /* SPECIFICITY rules have different semantics (longest-match-wins)
+         * compared to Landlock's flat allow-list. Reject them. */
+        if (eff->spec_static_count > 0 || eff->spec_dynamic_count > 0) {
+            if (error_msg) *error_msg = "SPECIFICITY layer rules not supported by Landlock (longest-match semantics)";
+            if (error_line) *error_line = 0;
+            return -1;
+        }
+
         /* Check static rules */
         for (int i = 0; i < eff->static_count; i++) {
             const compiled_rule_t *cr = &eff->static_rules[i];
@@ -357,45 +365,6 @@ void soft_landlock_deny_prefixes_free(const char **prefixes)
     free(prefixes);
 }
 
-/**
- * Add a compiled rule to the Landlock builder.
- * Returns 0 on success, 1 if the rule should be tracked as deny-only.
- */
-static int add_compiled_rule_to_ll(landlock_builder_t *b,
-                                   const compiled_rule_t *cr,
-                                   int *deny_count)
-{
-    uint64_t access = soft_access_to_ll_fs(cr->mode);
-
-    /* DENY rules: track but don't add to Landlock (Landlock is allow-only) */
-    if (cr->mode & SOFT_ACCESS_DENY || access == 0) {
-        (*deny_count)++;
-        return 1;  /* signal: track as deny prefix */
-    }
-
-    /* Skip rules with constraints Landlock can't express */
-    if ((cr->subject_regex && cr->subject_regex[0] != '\0') ||
-        cr->min_uid > 0 ||
-        (cr->flags & SOFT_RULE_TEMPLATE)) {
-        return 0;  /* silently skip inexpressible rules */
-    }
-
-    /* Classify pattern */
-    pattern_class_t pc = soft_pattern_classify(cr->pattern);
-    if (pc == PATTERN_WILDCARD) {
-        /* Mid-path wildcards can't be expressed; skip */
-        return 0;
-    }
-
-    /* Convert pattern to Landlock-compatible prefix */
-    const char *prefix = pattern_to_prefix(cr->pattern);
-    if (!prefix || !*prefix) {
-        return 0;
-    }
-
-    return landlock_builder_allow(b, prefix, access) == 0 ? 0 : -1;
-}
-
 landlock_builder_t *soft_ruleset_to_landlock(const soft_ruleset_t *rs,
                                              const char ***deny_prefixes_out)
 {
@@ -412,9 +381,8 @@ landlock_builder_t *soft_ruleset_to_landlock(const soft_ruleset_t *rs,
     if (!b) return NULL;
 
     const effective_ruleset_t *eff = &rs->effective;
-    int deny_count = 0;
 
-    /* Collect deny prefixes for the caller */
+    /* Collect deny prefixes for the caller (only if requested) */
     const char **deny_prefixes = NULL;
     int deny_cap = 0;
     int deny_idx = 0;
@@ -435,48 +403,56 @@ landlock_builder_t *soft_ruleset_to_landlock(const soft_ruleset_t *rs,
         for (int i = 0; i < all_counts[arr]; i++) {
             const compiled_rule_t *cr = &all_rules[arr][i];
 
-            /* Check if this is a deny rule */
-            if ((cr->mode & SOFT_ACCESS_DENY) || soft_access_to_ll_fs(cr->mode) == 0) {
-                /* Track deny prefix */
-                if (deny_idx >= deny_cap) {
-                    deny_cap = deny_cap == 0 ? 16 : deny_cap * 2;
-                    deny_prefixes = realloc(deny_prefixes,
-                                            (deny_cap + 1) * sizeof(char *));
-                    if (!deny_prefixes) {
-                        landlock_builder_free(b);
-                        return NULL;
-                    }
-                }
-                const char *prefix = pattern_to_prefix(cr->pattern);
-                deny_prefixes[deny_idx] = strdup(prefix ? prefix : cr->pattern);
-                if (deny_prefixes[deny_idx]) deny_idx++;
-                deny_count++;
-                continue;
-            }
-
-            /* Check if this rule has constraints Landlock can't express */
+            /* Skip rules with constraints Landlock can't express */
             if ((cr->subject_regex && cr->subject_regex[0] != '\0') ||
                 cr->min_uid > 0 ||
                 (cr->flags & SOFT_RULE_TEMPLATE)) {
                 continue;  /* skip inexpressible rules */
             }
 
-            /* Classify and convert pattern */
+            /* Classify pattern */
             pattern_class_t pc = soft_pattern_classify(cr->pattern);
             if (pc == PATTERN_WILDCARD) {
                 continue;  /* skip mid-path wildcards */
             }
 
+            /* Convert pattern to Landlock-compatible prefix */
+            const char *prefix = pattern_to_prefix(cr->pattern);
+            if (!prefix || !*prefix) {
+                continue;
+            }
+
+            /* Check if this is a deny rule */
+            if ((cr->mode & SOFT_ACCESS_DENY) || soft_access_to_ll_fs(cr->mode) == 0) {
+                /* Add deny to builder so overlap removal subtracts it from allows */
+                landlock_builder_deny(b, prefix);
+
+                /* Also track for caller */
+                if (deny_prefixes_out) {
+                    if (deny_idx >= deny_cap) {
+                        deny_cap = deny_cap == 0 ? 16 : deny_cap * 2;
+                        deny_prefixes = realloc(deny_prefixes,
+                                                (deny_cap + 1) * sizeof(char *));
+                        if (!deny_prefixes) {
+                            landlock_builder_free(b);
+                            soft_landlock_deny_prefixes_free(deny_prefixes);
+                            return NULL;
+                        }
+                    }
+                    deny_prefixes[deny_idx] = strdup(prefix);
+                    if (deny_prefixes[deny_idx]) deny_idx++;
+                }
+                continue;
+            }
+
+            /* Allow rule */
             uint64_t access = soft_access_to_ll_fs(cr->mode);
             if (access == 0) continue;
 
-            const char *prefix = pattern_to_prefix(cr->pattern);
-            if (prefix && *prefix) {
-                if (landlock_builder_allow(b, prefix, access) != 0) {
-                    landlock_builder_free(b);
-                    soft_landlock_deny_prefixes_free(deny_prefixes);
-                    return NULL;
-                }
+            if (landlock_builder_allow(b, prefix, access) != 0) {
+                landlock_builder_free(b);
+                soft_landlock_deny_prefixes_free(deny_prefixes);
+                return NULL;
             }
         }
     }

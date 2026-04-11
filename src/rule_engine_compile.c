@@ -429,18 +429,24 @@ static int compare_rule_by_pattern(const void *a, const void *b)
  * Uses intersection (AND) semantics: all matching rules must agree.
  * Optimized with binary search: find insertion point via binary search,
  * then scan forward for exact matches and backward for prefix matches.
+ *
+ * Returns the granted mode (0 if no rules matched or if DENY).
+ * Sets *out_deny to true only if a DENY rule was matched.
  */
 static uint32_t match_static_rules(const effective_ruleset_t *eff,
                                    const char *path,
                                    soft_binary_op_t op,
                                    const soft_access_ctx_t *ctx,
-                                   const char **out_matched_pattern)
+                                   const char **out_matched_pattern,
+                                   bool *out_deny)
 {
-    if (!eff || !path) return 0;
+    if (out_deny) *out_deny = false;
+    if (!eff || !path) { if (out_matched_pattern) *out_matched_pattern = NULL; return 0; }
 
     uint32_t granted = SOFT_ACCESS_ALL;
     const char *last_pattern = NULL;
     bool any_matched = false;
+    bool deny_matched = false;
     size_t path_len = strlen(path);
 
     /* Binary search for insertion point of path in sorted static rules.
@@ -468,7 +474,9 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
 
         any_matched = true;
         if (r->mode & SOFT_ACCESS_DENY) {
+            deny_matched = true;
             if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            if (out_deny) *out_deny = true;
             return 0; /* DENY short-circuit */
         }
         granted &= r->mode;
@@ -490,7 +498,9 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
 
         any_matched = true;
         if (r->mode & SOFT_ACCESS_DENY) {
+            deny_matched = true;
             if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            if (out_deny) *out_deny = true;
             return 0; /* DENY short-circuit */
         }
         granted &= r->mode;
@@ -499,21 +509,27 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
 
     if (out_matched_pattern) *out_matched_pattern = last_pattern;
     if (!any_matched) return 0;
+    /* granted may be 0 if modes were disjoint — but that's NOT a deny */
+    if (out_deny) *out_deny = deny_matched;
     return granted;
 }
 
 /** Match dynamic rules (wildcards, recursive, templates).
- * Uses intersection (AND) semantics for PRECEDENCE rules. */
+ * Uses intersection (AND) semantics for PRECEDENCE rules.
+ * Sets *out_deny to true only if a DENY rule was matched. */
 static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
                                     const char *path,
                                     soft_binary_op_t op,
                                     const soft_access_ctx_t *ctx,
-                                    const char **out_matched_pattern)
+                                    const char **out_matched_pattern,
+                                    bool *out_deny)
 {
-    if (!eff || !path) return 0;
+    if (out_deny) *out_deny = false;
+    if (!eff || !path) { if (out_matched_pattern) *out_matched_pattern = NULL; return 0; }
 
     uint32_t granted = SOFT_ACCESS_ALL;
     const char *last_pattern = NULL;
+    bool deny_matched = false;
 
     for (int i = 0; i < eff->dynamic_count; i++) {
         const compiled_rule_t *r = &eff->dynamic_rules[i];
@@ -524,7 +540,9 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
         if (!compiled_rule_matches_path(r, path, ctx)) continue;
 
         if (r->mode & SOFT_ACCESS_DENY) {
+            deny_matched = true;
             if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            if (out_deny) *out_deny = true;
             return 0;
         }
         granted &= r->mode;
@@ -532,6 +550,7 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
     }
 
     if (out_matched_pattern) *out_matched_pattern = last_pattern;
+    if (out_deny) *out_deny = deny_matched;
     return granted;
 }
 
@@ -574,15 +593,17 @@ uint32_t eval_effective_path(const effective_ruleset_t *eff,
 
     /* Phase 2: PRECEDENCE — current behavior (DENY shadows, mode AND) */
     const char *static_matched = NULL;
-    uint32_t granted = match_static_rules(eff, path, op, ctx, &static_matched);
-    if (granted == 0 && static_matched != NULL) {
+    bool static_deny = false;
+    uint32_t granted = match_static_rules(eff, path, op, ctx, &static_matched, &static_deny);
+    if (static_deny) {
         if (out_matched_pattern) *out_matched_pattern = static_matched;
         return 0; /* DENY matched in PRECEDENCE static rules */
     }
 
     const char *dyn_pattern = NULL;
-    uint32_t dyn_granted = match_dynamic_rules(eff, path, op, ctx, &dyn_pattern);
-    if (dyn_granted == 0 && dyn_pattern != NULL) {
+    bool dyn_deny = false;
+    uint32_t dyn_granted = match_dynamic_rules(eff, path, op, ctx, &dyn_pattern, &dyn_deny);
+    if (dyn_deny) {
         if (out_matched_pattern) *out_matched_pattern = dyn_pattern;
         return 0; /* DENY matched in PRECEDENCE dynamic rules */
     }

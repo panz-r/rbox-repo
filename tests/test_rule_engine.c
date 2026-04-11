@@ -486,6 +486,33 @@ static void test_rule_engine_layer_behavior(void)
 
     soft_ruleset_free(rs);
 
+    /* Part 7f: Regression test — disjoint mode intersection.
+     * Two rules matching the same path with disjoint modes (READ + WRITE)
+     * produce granted=0. At the API level, this returns -EACCES because
+     * the required mode bit is not in the granted set. This is correct:
+     * the caller asked for READ but got 0 access. The fix ensures that
+     * this is NOT treated as an explicit DENY (which would short-circuit
+     * in multi-layer evaluation), but rather as "no access granted". */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data/file",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   0, "add READ-only rule for /data/file");
+    TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data/file",
+                   SOFT_ACCESS_WRITE, SOFT_OP_WRITE, NULL, NULL, 0, 0),
+                   0, "add WRITE-only rule for /data/file");
+    TEST_ASSERT_EQ(soft_ruleset_compile(rs), 0, "compile disjoint mode rules");
+
+    ctx = (soft_access_ctx_t){ SOFT_OP_READ, "/data/file", NULL, NULL, 1000 };
+    int ret_read = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    /* READ ∩ WRITE = 0, so READ request is denied (no access granted) */
+    TEST_ASSERT_EQ(ret_read, -13, "disjoint modes: READ request denied (granted=0)");
+
+    ctx.op = SOFT_OP_WRITE;
+    int ret_write = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    TEST_ASSERT_EQ(ret_write, -13, "disjoint modes: WRITE request denied (granted=0)");
+
+    soft_ruleset_free(rs);
+
     /* Part 8: SPECIFICITY basic override */
     rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data/...",

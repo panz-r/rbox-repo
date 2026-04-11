@@ -1034,6 +1034,8 @@ typedef struct {
     char     path[PATH_MAX];
     uint32_t granted;
     int      deny_layer;
+    uint32_t subject_hash;  /**< FNV-1a hash of subject string for cache key */
+    uint32_t uid;            /**< Caller UID for cache key */
     int      valid;
 } batch_cache_entry_t;
 
@@ -1062,10 +1064,15 @@ static void parent_dir(const char *path, char *out, size_t out_size)
 }
 
 static batch_cache_entry_t *batch_cache_lookup(batch_cache_entry_t *cache,
-                                               const char *path)
+                                               const char *path,
+                                               uint32_t subject_hash,
+                                               uint32_t uid)
 {
     for (int i = 0; i < BATCH_CACHE_SIZE; i++) {
-        if (cache[i].valid && strcmp(cache[i].path, path) == 0)
+        if (cache[i].valid &&
+            strcmp(cache[i].path, path) == 0 &&
+            cache[i].subject_hash == subject_hash &&
+            cache[i].uid == uid)
             return &cache[i];
     }
     return NULL;
@@ -1075,6 +1082,8 @@ static void batch_cache_store(batch_cache_entry_t *cache,
                               const char *path,
                               uint32_t granted,
                               int deny_layer,
+                              uint32_t subject_hash,
+                              uint32_t uid,
                               int *write_pos)
 {
     int pos = *write_pos;
@@ -1083,6 +1092,8 @@ static void batch_cache_store(batch_cache_entry_t *cache,
     e->path[PATH_MAX - 1] = '\0';
     e->granted = granted;
     e->deny_layer = deny_layer;
+    e->subject_hash = subject_hash;
+    e->uid = uid;
     e->valid = 1;
     *write_pos = (pos + 1) % BATCH_CACHE_SIZE;
 }
@@ -1108,6 +1119,13 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                           ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT ||
                           ctx->op >= SOFT_OP_CUSTOM);
 
+        /* Compute subject hash for cache keying */
+        uint32_t subj_hash = 0;
+        if (ctx->subject) {
+            uint64_t h64 = fnv1a_str(ctx->subject);
+            subj_hash = (uint32_t)(h64 ^ (h64 >> 32));
+        }
+
         char src_parent[PATH_MAX], dst_parent[PATH_MAX];
         parent_dir(ctx->src_path, src_parent, sizeof(src_parent));
         if (is_binary && ctx->dst_path)
@@ -1118,8 +1136,10 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
         uint32_t src_granted = 0, dst_granted = 0;
         int src_deny = -1, dst_deny = -1;
 
-        batch_cache_entry_t *src_hit = batch_cache_lookup(src_cache, ctx->src_path);
-        batch_cache_entry_t *src_par = batch_cache_lookup(src_cache, src_parent);
+        batch_cache_entry_t *src_hit = batch_cache_lookup(src_cache, ctx->src_path,
+                                                          subj_hash, ctx->uid);
+        batch_cache_entry_t *src_par = batch_cache_lookup(src_cache, src_parent,
+                                                          subj_hash, ctx->uid);
         if (src_hit) {
             src_granted = src_hit->granted;
             src_deny = src_hit->deny_layer;
@@ -1130,16 +1150,18 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
             src_granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
                                           &src_deny, NULL);
             batch_cache_store(src_cache, ctx->src_path, src_granted, src_deny,
-                              &src_write);
+                              subj_hash, ctx->uid, &src_write);
             /* Don't cache root parent — it matches everything and causes false hits */
             if (strcmp(src_parent, "/") != 0)
                 batch_cache_store(src_cache, src_parent, src_granted, src_deny,
-                                  &src_write);
+                                  subj_hash, ctx->uid, &src_write);
         }
 
         if (is_binary && ctx->dst_path) {
-            batch_cache_entry_t *dst_hit = batch_cache_lookup(dst_cache, ctx->dst_path);
-            batch_cache_entry_t *dst_par = batch_cache_lookup(dst_cache, dst_parent);
+            batch_cache_entry_t *dst_hit = batch_cache_lookup(dst_cache, ctx->dst_path,
+                                                              subj_hash, ctx->uid);
+            batch_cache_entry_t *dst_par = batch_cache_lookup(dst_cache, dst_parent,
+                                                              subj_hash, ctx->uid);
             if (dst_hit) {
                 dst_granted = dst_hit->granted;
                 dst_deny = dst_hit->deny_layer;
@@ -1150,11 +1172,11 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                 dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
                                               &dst_deny, NULL);
                 batch_cache_store(dst_cache, ctx->dst_path, dst_granted, dst_deny,
-                                  &dst_write);
+                                  subj_hash, ctx->uid, &dst_write);
                 /* Don't cache root parent */
                 if (strcmp(dst_parent, "/") != 0)
                     batch_cache_store(dst_cache, dst_parent, dst_granted, dst_deny,
-                                      &dst_write);
+                                      subj_hash, ctx->uid, &dst_write);
             }
         }
 
