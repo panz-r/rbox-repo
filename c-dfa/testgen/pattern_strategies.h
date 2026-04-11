@@ -7,23 +7,7 @@
 #include <memory>
 #include <random>
 
-// Forward declarations
-struct PatternNode;
-struct Expectation;
-enum class PatternType;
-enum class ExpectationType;
-
-// ============================================================================
-// Pattern Result - Return type for all pattern generation strategies
-// ============================================================================
-
-struct PatternResult {
-    std::string pattern;
-    std::map<std::string, std::string> fragments;
-    std::string proof;
-    std::vector<Expectation> expectations;
-    std::shared_ptr<PatternNode> ast;
-};
+#include "validation_helpers.h"
 
 // ============================================================================
 // Pattern Strategies - 30 pattern generation strategies

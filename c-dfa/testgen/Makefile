@@ -6,11 +6,11 @@ TARGET = testgen
 TEST_TARGET = testgen_test
 
 # Source files - split into multiple compilation units
-SRCS = main.cpp testgen.cpp pattern_strategies.cpp expectation_gen.cpp inductive_builder.cpp pattern_factorization.cpp
+SRCS = main.cpp testgen.cpp pattern_strategies.cpp expectation_gen.cpp inductive_builder.cpp pattern_factorization.cpp validation_helpers.cpp
 OBJS = $(SRCS:.cpp=.o)
 
-# For testing (includes factorization tests)
-TEST_SRCS = testgen_test.cpp testgen_factorization_test.cpp testgen.cpp pattern_strategies.cpp expectation_gen.cpp inductive_builder.cpp pattern_factorization.cpp
+# For testing (includes all unit tests)
+TEST_SRCS = testgen_test.cpp testgen_factorization_test.cpp testgen_validation_test.cpp testgen_strategies_test.cpp testgen_expectation_test.cpp testgen_inductive_builder_test.cpp testgen.cpp pattern_strategies.cpp expectation_gen.cpp inductive_builder.cpp pattern_factorization.cpp validation_helpers.cpp
 TEST_OBJS = $(TEST_SRCS:.cpp=.o)
 
 all: $(TARGET)
@@ -24,7 +24,7 @@ test: $(TEST_TARGET)
 $(TEST_TARGET): $(TEST_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-%.o: %.cpp testgen.h pattern_strategies.h expectation_gen.h inductive_builder.h
+%.o: %.cpp testgen.h pattern_strategies.h expectation_gen.h inductive_builder.h validation_helpers.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:

@@ -174,6 +174,10 @@ struct FactorizationProof {
 };
 
 int run_factorization_tests();
+int run_validation_helpers_tests();
+int run_strategy_tests();
+int run_expectation_gen_tests();
+int run_inductive_builder_tests();
 
 struct Options {
     int num_tests = 100;

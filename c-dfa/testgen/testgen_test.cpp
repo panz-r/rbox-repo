@@ -292,5 +292,17 @@ int main() {
     std::cout << "\n";
     int pf_result = run_factorization_tests();
     
-    return (tests_passed == tests_run && pf_result == 0) ? 0 : 1;
+    std::cout << "\n";
+    int vh_result = run_validation_helpers_tests();
+    
+    std::cout << "\n";
+    int ps_result = run_strategy_tests();
+    
+    std::cout << "\n";
+    int eg_result = run_expectation_gen_tests();
+    
+    std::cout << "\n";
+    int ib_result = run_inductive_builder_tests();
+    
+    return (tests_passed == tests_run && pf_result == 0 && vh_result == 0 && ps_result == 0 && eg_result == 0 && ib_result == 0) ? 0 : 1;
 }
