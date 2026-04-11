@@ -102,6 +102,18 @@ static void test_parser_layer_declaration(void)
                    "layer: implicit state");
     TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 2, "layer: 2 layers created");
     soft_ruleset_free(rs);
+
+    /* Case 3: Multiple layer type changes */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text3 =
+        "@0 PRECEDENCE\n/usr/** -> R\n"
+        "@1 SPECIFICITY\n/data/** -> RW\n"
+        "@2 PRECEDENCE\n/tmp/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text3, &line, &err), 0,
+                   "layer: multiple type changes accepted");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 3, "layer: 3 layers created");
+    soft_ruleset_free(rs);
 }
 
 static void test_parser_layer_mask(void)
@@ -200,6 +212,19 @@ static void test_parser_layer_mask(void)
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
                    SOFT_ACCESS_READ, "mask: rule on layer 5 works");
     soft_ruleset_free(rs);
+
+    /* Case 12: Layer mask with invalid mode chars rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 SPECIFICITY:Z\n/data/** -> R\n", &line, &err), -1,
+                   "mask: invalid mode chars in layer mask rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 13: Rule mode as subset of multi-char mask accepted */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 SPECIFICITY:RWX\n/data/** -> RX\n", NULL, NULL), 0,
+                   "mask: rule subset of multi-char mask accepted");
+    soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
@@ -269,6 +294,35 @@ static void test_parser_macros(void)
     const char *text4 = "[A] ((B))/a\n[B] ((C))/b\n[C] ((D))/c\n[D] ((E))/d\n[E] ((F))/e\n[F] /base\n((A)) -> R\n";
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text4, &line, &err), 0,
                    "macro: deep nesting (6 levels) works");
+    soft_ruleset_free(rs);
+
+    /* Case 5: Macro used before definition rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "((BIN)) -> R\n[BIN] /usr/bin/**\n", &line, &err), -1,
+                   "macro: use before definition rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 6: Duplicate macro ID accepted (first definition wins) */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text5 = "[BIN] /usr/bin/**\n[BIN] /usr/local/bin/**\n((BIN)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text5, &line, &err), 0,
+                   "macro: duplicate ID accepted (first wins)");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/bash", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "macro: first definition used");
+    soft_ruleset_free(rs);
+
+    /* Case 7: Macro reference in pattern combined with wildcard */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text6 = "[BASE] /usr\n((BASE))/bin/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text6, &line, &err), 0,
+                   "macro: ref combined with wildcard accepted");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "macro: combined pattern matches");
     soft_ruleset_free(rs);
 }
 
@@ -497,6 +551,23 @@ static void test_parser_file_io(void)
     TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "file: no rules from whitespace-only file");
     soft_ruleset_free(rs);
     unlink(ws_file);
+
+    /* Case 5: CRLF line endings accepted */
+    const char *crlf_file = "/tmp/test_crlf_policy.txt";
+    f = fopen(crlf_file, "wb");
+    TEST_ASSERT(f != NULL, "file: create CRLF file");
+    fprintf(f, "[BIN] /usr/bin/**\r\n((BIN)) -> X /exec\r\n");
+    fclose(f);
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, crlf_file, &line, &err), 0,
+                   "file: CRLF line endings accepted");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_EXEC,
+                   "file: CRLF parsed rule works");
+    soft_ruleset_free(rs);
+    unlink(crlf_file);
 }
 
 /* ------------------------------------------------------------------ */
@@ -584,6 +655,25 @@ static void test_parser_subject_roundtrip(void)
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx3, NULL),
                    soft_ruleset_check_ctx(rs2, &ctx3, NULL),
                    "subj: backslash round-trip matches");
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+
+    /* Case 5: Subject with all special chars (backslash + quotes + hash) */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, ".*admin\\\\#1$", 1000, 0);
+    out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "subj: serialize mixed special chars");
+    TEST_ASSERT(strstr(out_text, "\"") != NULL, "subj: mixed output contains quotes");
+    rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "subj: parse mixed special chars");
+    const char *test_subject2 = "/usr/bin/admin\\\\#1";
+    soft_access_ctx_t ctx5 = {SOFT_OP_READ, "/data/file.txt", NULL, test_subject2, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx5, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx5, NULL),
+                   "subj: mixed special chars round-trip matches");
     free(out_text);
     soft_ruleset_free(rs);
     soft_ruleset_free(rs2);
@@ -827,8 +917,22 @@ static void test_parser_macro_id_validation(void)
     rs = soft_ruleset_new();
     line = 0; err = NULL;
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[] /data/**\n", &line, &err), -1,
-                   "empty macro ID rejected");
-    TEST_ASSERT(line == 1, "error on line 1");
+                   "macro: empty macro ID rejected");
+    TEST_ASSERT(line == 1, "macro: error on line 1");
+    soft_ruleset_free(rs);
+
+    /* Macro ID with hyphen in middle is rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[BIN-FILE] /usr/bin/**\n", &line, &err), -1,
+                   "macro: hyphen in ID rejected");
+    soft_ruleset_free(rs);
+
+    /* Macro ID with @ in middle is rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[BIN@FILE] /usr/bin/**\n", &line, &err), -1,
+                   "macro: @ in ID rejected");
     soft_ruleset_free(rs);
 }
 
@@ -964,6 +1068,57 @@ static void test_parser_parsing_edge_cases(void)
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, NULL, NULL, NULL), -1,
                    "edge: NULL input rejected");
     soft_ruleset_free(rs);
+
+    /* Case 16: Missing ] in macro definition rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[BIN /usr/bin/**\n", &line, &err), -1,
+                   "syntax: missing ] in macro rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 17: Pattern too long (at MAX_PATTERN_LEN boundary) rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    char long_pat[520];
+    memset(long_pat, 'a', sizeof(long_pat) - 1);
+    long_pat[sizeof(long_pat) - 1] = '\0';
+    char long_text[600];
+    snprintf(long_text, sizeof(long_text), "%s -> R\n", long_pat);
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, long_text, &line, &err), -1,
+                   "syntax: pattern too long rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 18: Multiple recursive flags accepted (idempotent) */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/... -> R recursive recursive\n", NULL, NULL), 0,
+                   "edge: double recursive accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 19: recursive before other options accepted */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/... -> R recursive subject:.*cp$ uid:1000\n", &line, &err), 0,
+                   "edge: recursive before other options accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 20: Success leaves line_number and error_msg unchanged */
+    rs = soft_ruleset_new();
+    int line_save = 42;
+    const char *err_save = "stale";
+    line = line_save;
+    err = err_save;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> R\n", &line, &err), 0,
+                   "edge: success leaves line_number unchanged");
+    TEST_ASSERT_EQ(line, line_save, "edge: line_number unchanged on success");
+    TEST_ASSERT_EQ(err, err_save, "edge: error_msg unchanged on success");
+    soft_ruleset_free(rs);
+
+    /* Case 21: Quoted pattern with escaped quote in pattern */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "\"/path/with\\\"quote/**\" -> R\n", &line, &err), 0,
+                   "edge: quoted pattern with escaped quote accepted");
+    soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1056,6 +1211,62 @@ static void test_parser_constraint_edge_cases(void)
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text4, &line, &err), 0,
                    "constraint: quoted pattern with spaces accepted");
     soft_ruleset_free(rs);
+
+    /* Case 10: Unknown token after mode rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text5 = "/data/** -> R foobar\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text5, &line, &err), -1,
+                   "constraint: unknown token rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 11: Subject with UID but no operation type */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text6 = "/data/** -> R subject:.*admin$ uid:1000\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text6, &line, &err), 0,
+                   "constraint: subject + uid without op type accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 12: UID with leading zeros accepted */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> R uid:007\n", NULL, NULL), 0,
+                   "constraint: uid with leading zeros accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 13: All optional tokens in one rule (op, subject, uid, recursive) */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text7 = "/data/... -> RW /read subject:.*admin$ uid:1000 recursive\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text7, &line, &err), 0,
+                   "constraint: all optional tokens accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 15: Rule with no optional tokens (just pattern and mode) */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> R\n", &line, &err), 0,
+                   "constraint: minimal rule accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 16: All mode characters at once */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> RWXCU\n", NULL, NULL), 0,
+                   "constraint: all mode chars accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 17: UID 4294967295 (UINT_MAX) accepted */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> R uid:4294967295\n", NULL, NULL), 0,
+                   "constraint: UINT_MAX uid accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 18: Multiple rules with different operation types on same pattern */
+    rs = soft_ruleset_new();
+    const char *text8 = "/data/** -> R /read\n/data/** -> W /write\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text8, NULL, NULL), 0,
+                   "constraint: multi-op rules on same pattern accepted");
+    soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1102,6 +1313,60 @@ static void test_parser_null_arguments(void)
     TEST_ASSERT_EQ(soft_ruleset_write_file(NULL, "/tmp/test.txt"), -1,
                    "null: write_file NULL rs rejected");
     soft_ruleset_free(rs);
+
+    /* soft_ruleset_write_file full roundtrip */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    TEST_ASSERT_EQ(soft_ruleset_write_file(rs, "/tmp/test_write_file.tmp"), 0,
+                   "null: write_file success");
+    soft_ruleset_t *rs2 = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs2, "/tmp/test_write_file.tmp", &line, &err), 0,
+                   "null: write_file roundtrip parse");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs2), 1, "null: write_file roundtrip has 1 rule");
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+    unlink("/tmp/test_write_file.tmp");
+
+    /* soft_ruleset_write_file unwritable path rejected */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_write_file(rs, "/nonexistent/dir/file.txt"), -1,
+                   "null: write_file unwritable path rejected");
+    soft_ruleset_free(rs);
+
+    /* soft_ruleset_write_file empty ruleset */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_write_file(rs, "/tmp/test_empty_write.tmp"), 0,
+                   "null: write_file empty ruleset accepted");
+    soft_ruleset_free(rs);
+    unlink("/tmp/test_empty_write.tmp");
+
+    /* soft_ruleset_rule_count and soft_ruleset_layer_count on empty ruleset */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "null: empty ruleset has 0 rules");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 0, "null: empty ruleset has 0 layers");
+    soft_ruleset_free(rs);
+
+    /* Verify that serialize + parse roundtrip for rules with operation types */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ,
+                          SOFT_OP_EXEC, NULL, NULL, 0, 0);
+    out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "null: serialize with exec op");
+    TEST_ASSERT(out_text != NULL, "null: serialize output not NULL");
+    TEST_ASSERT(strstr(out_text, "/exec") != NULL, "null: output contains /exec");
+    rs2 = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, &line, &err), 0,
+                   "null: parse serialized exec op");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/test", NULL, NULL, 1000}, NULL),
+                   soft_ruleset_check_ctx(rs2,
+                   &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/test", NULL, NULL, 1000}, NULL),
+                   "null: exec op roundtrip matches");
+    free(out_text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
 }
 
 /* ------------------------------------------------------------------ */
