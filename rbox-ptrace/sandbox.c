@@ -530,7 +530,8 @@ static void expansion_context_free(struct expansion_context *ctx) {
 static int add_expanded_path(struct expansion_context *ctx, const char *path, uint64_t access) {
     if (ctx->failed) return -1;
     if (ctx->path_count >= MAX_EXPANDED_PATHS) {
-        return 0;
+        ctx->failed = 1;
+        return -1;
     }
     if (ctx->path_count >= ctx->path_capacity) {
         ctx->path_capacity = ctx->path_capacity ? ctx->path_capacity * 2 : 16;
@@ -605,7 +606,10 @@ bool sandbox_is_path_prefix(const char *parent, const char *child) {
 
 static int visited_set_add(struct expansion_context *ctx, const char *path) {
     if (ctx->failed) return -1;
-    if (ctx->visited_count >= MAX_VISITED_PATHS) return 0;
+    if (ctx->visited_count >= MAX_VISITED_PATHS) {
+        ctx->failed = 1;
+        return -1;
+    }
     if (ctx->visited_count >= ctx->visited_capacity) {
         ctx->visited_capacity = ctx->visited_capacity ? ctx->visited_capacity * 2 : 32;
         char **new_visited = realloc(ctx->visited, ctx->visited_capacity * sizeof(char *));
@@ -635,8 +639,8 @@ static bool visited_set_contains(struct expansion_context *ctx, const char *path
 static int queue_push(struct expansion_context *ctx, const char *path, uint64_t access) {
     if (ctx->failed) return -1;
     if (ctx->queue_size >= ctx->queue_capacity) {
-        DEBUG_PRINT("SANDBOX: queue overflow, discarding path '%s'\n", path);
-        return 0;
+        ctx->failed = 1;
+        return -1;
     }
     int idx = (ctx->queue_head + ctx->queue_size) % ctx->queue_capacity;
     ctx->queue[idx].path = strdup(path);
