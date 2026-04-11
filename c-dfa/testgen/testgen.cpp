@@ -135,80 +135,92 @@ std::shared_ptr<PatternNode> PatternNode::createQuantified(std::shared_ptr<Patte
     return node;
 }
 
-// Helper: Create pattern like (a|b|c)+
+// ============================================================================
+// Pattern Factory - Consolidated Quantified Node Creation
+// ============================================================================
+//
+// These functions create quantified pattern nodes. The pattern is:
+// 1. Create a child node (alternation, literal, or fragment)
+// 2. Set the parent's type to the quantifier type
+// 3. Set the parent's quantified field to the child
+// 4. Assign matched_seeds to track which inputs should match
+//
+// Generalized factory functions handle all quantifier types. Convenience
+// wrappers are provided for backward compatibility.
+
+// Create quantified alternation: (alt1|alt2|alt3)+
+std::shared_ptr<PatternNode> createQuantifiedAlternation(
+    const std::vector<std::string>& alts,
+    PatternType type,
+    const std::vector<std::string>& seeds) {
+    
+    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+    for (const auto& alt : alts) {
+        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+    }
+    auto alt_node = PatternNode::createAlternation(alt_nodes, seeds);
+    alt_node->type = type;
+    alt_node->quantified = PatternNode::createAlternation(alt_nodes, seeds);
+    return alt_node;
+}
+
+// Create quantified literal: (literal)+
+std::shared_ptr<PatternNode> createQuantifiedLiteral(
+    const std::string& literal,
+    PatternType type,
+    const std::vector<std::string>& seeds) {
+    
+    auto lit_node = PatternNode::createLiteral(literal, seeds);
+    lit_node->type = type;
+    lit_node->quantified = PatternNode::createLiteral(literal, seeds);
+    return lit_node;
+}
+
+// Create quantified fragment: ((frag))+
+std::shared_ptr<PatternNode> createQuantifiedFragment(
+    const std::string& frag_name,
+    PatternType type,
+    const std::vector<std::string>& seeds) {
+    
+    auto frag_node = PatternNode::createFragment(frag_name, seeds);
+    frag_node->type = type;
+    frag_node->quantified = PatternNode::createFragment(frag_name, seeds);
+    return frag_node;
+}
+
+// Convenience wrappers for quantified alternations
 std::shared_ptr<PatternNode> createAlternationPlus(const std::vector<std::string>& alts, const std::vector<std::string>& seeds) {
-    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
-    for (const auto& alt : alts) {
-        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
-    }
-    auto alt_node = PatternNode::createAlternation(alt_nodes, seeds);
-    alt_node->type = PatternType::PLUS_QUANTIFIER;
-    alt_node->quantified = PatternNode::createAlternation(alt_nodes, seeds);
-    return alt_node;
+    return createQuantifiedAlternation(alts, PatternType::PLUS_QUANTIFIER, seeds);
 }
 
-// Helper: Create pattern like (a|b|c)*
 std::shared_ptr<PatternNode> createAlternationStar(const std::vector<std::string>& alts, const std::vector<std::string>& seeds) {
-    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
-    for (const auto& alt : alts) {
-        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
-    }
-    auto alt_node = PatternNode::createAlternation(alt_nodes, seeds);
-    alt_node->type = PatternType::STAR_QUANTIFIER;
-    alt_node->quantified = PatternNode::createAlternation(alt_nodes, seeds);
-    return alt_node;
+    return createQuantifiedAlternation(alts, PatternType::STAR_QUANTIFIER, seeds);
 }
 
-// Helper: Create pattern like (a|b|c)?
 std::shared_ptr<PatternNode> createAlternationOptional(const std::vector<std::string>& alts, const std::vector<std::string>& seeds) {
-    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
-    for (const auto& alt : alts) {
-        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
-    }
-    auto alt_node = PatternNode::createAlternation(alt_nodes, seeds);
-    alt_node->type = PatternType::OPTIONAL;
-    alt_node->quantified = PatternNode::createAlternation(alt_nodes, seeds);
-    return alt_node;
+    return createQuantifiedAlternation(alts, PatternType::OPTIONAL, seeds);
 }
 
-// Helper: Create pattern like (literal)+
+// Convenience wrappers for quantified literals
 std::shared_ptr<PatternNode> createLiteralPlus(const std::string& literal, const std::vector<std::string>& seeds) {
-    auto lit_node = PatternNode::createLiteral(literal, seeds);
-    lit_node->type = PatternType::PLUS_QUANTIFIER;
-    lit_node->quantified = PatternNode::createLiteral(literal, seeds);
-    return lit_node;
+    return createQuantifiedLiteral(literal, PatternType::PLUS_QUANTIFIER, seeds);
 }
 
-// Helper: Create pattern like (literal)*
 std::shared_ptr<PatternNode> createLiteralStar(const std::string& literal, const std::vector<std::string>& seeds) {
-    auto lit_node = PatternNode::createLiteral(literal, seeds);
-    lit_node->type = PatternType::STAR_QUANTIFIER;
-    lit_node->quantified = PatternNode::createLiteral(literal, seeds);
-    return lit_node;
+    return createQuantifiedLiteral(literal, PatternType::STAR_QUANTIFIER, seeds);
 }
 
-// Helper: Create pattern like (literal)?
 std::shared_ptr<PatternNode> createLiteralOptional(const std::string& literal, const std::vector<std::string>& seeds) {
-    auto lit_node = PatternNode::createLiteral(literal, seeds);
-    lit_node->type = PatternType::OPTIONAL;
-    lit_node->quantified = PatternNode::createLiteral(literal, seeds);
-    return lit_node;
+    return createQuantifiedLiteral(literal, PatternType::OPTIONAL, seeds);
 }
 
-// Helper: Create fragment reference like ((frag))+ 
+// Convenience wrappers for quantified fragments
 std::shared_ptr<PatternNode> createFragmentPlus(const std::string& frag_name, const std::vector<std::string>& seeds) {
-    auto frag_node = PatternNode::createFragment(frag_name, seeds);
-    frag_node->type = PatternType::PLUS_QUANTIFIER;
-    frag_node->quantified = PatternNode::createFragment(frag_name, seeds);
-    return frag_node;
+    return createQuantifiedFragment(frag_name, PatternType::PLUS_QUANTIFIER, seeds);
 }
 
-// Helper: Create fragment reference like ((frag))*
 std::shared_ptr<PatternNode> createFragmentStar(const std::string& frag_name, const std::vector<std::string>& seeds) {
-    auto frag_node = PatternNode::createFragment(frag_name, seeds);
-    frag_node->type = PatternType::STAR_QUANTIFIER;
-    frag_node->quantified = PatternNode::createFragment(frag_name, seeds);
-    return frag_node;
+    return createQuantifiedFragment(frag_name, PatternType::STAR_QUANTIFIER, seeds);
 }
 
 // Helper: Wrap an AST node with capture tags
