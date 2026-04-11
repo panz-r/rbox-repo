@@ -139,11 +139,11 @@ static int compile_rule(effective_ruleset_t *eff, const rule_t *r,
     const char *pat = arena_intern(&eff->strings, r->pattern);
     if (!pat) return -1;
     out->pattern = pat;
+    out->pattern_len = (uint16_t)strlen(r->pattern);
     out->mode = r->mode;
     out->min_uid = r->min_uid;
     out->flags = r->flags;
     out->op_type = (uint16_t)r->op_type;
-    out->_pad = 0;
     if (r->subject_regex[0] != '\0') {
         const char *subj = arena_intern(&eff->strings, r->subject_regex);
         if (!subj) return -1;
@@ -463,7 +463,7 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
     /* Scan forward from lo to find all exact matches. */
     for (int i = lo; i < eff->static_count; i++) {
         const compiled_rule_t *r = &eff->static_rules[i];
-        size_t pat_len = strlen(r->pattern);
+        size_t pat_len = r->pattern_len;
         if (pat_len != path_len) break;  /* past exact matches */
         if (memcmp(r->pattern, path, pat_len) != 0) break;
 
@@ -486,7 +486,7 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
     /* Scan backwards from lo-1 to find prefix matches. */
     for (int i = lo - 1; i >= 0; i--) {
         const compiled_rule_t *r = &eff->static_rules[i];
-        size_t pat_len = strlen(r->pattern);
+        size_t pat_len = r->pattern_len;
         if (pat_len >= path_len) continue;  /* can't be a prefix of shorter path */
         if (memcmp(r->pattern, path, pat_len) != 0 || path[pat_len] != '/')
             continue;
@@ -646,10 +646,8 @@ static int compare_rule_by_length(const void *a, const void *b)
 {
     const compiled_rule_t *ra = (const compiled_rule_t *)a;
     const compiled_rule_t *rb = (const compiled_rule_t *)b;
-    size_t la = strlen(ra->pattern);
-    size_t lb = strlen(rb->pattern);
-    if (la > lb) return -1;
-    if (la < lb) return 1;
+    if (ra->pattern_len > rb->pattern_len) return -1;
+    if (ra->pattern_len < rb->pattern_len) return 1;
     return 0;
 }
 
@@ -674,7 +672,7 @@ static uint32_t match_spec_static(const effective_ruleset_t *eff,
         if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
 
         bool match = false;
-        size_t pat_len = strlen(r->pattern);
+        size_t pat_len = r->pattern_len;
         if (pat_len == path_len && memcmp(r->pattern, path, pat_len) == 0) {
             match = true;
         } else if (pat_len < path_len &&
@@ -715,7 +713,7 @@ static uint32_t match_spec_dynamic(const effective_ruleset_t *eff,
         if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
         if (!compiled_rule_matches_path(r, path, ctx)) continue;
 
-        size_t pat_len = strlen(r->pattern);
+        size_t pat_len = r->pattern_len;
         if (!found || pat_len > best_len) {
             best_len = pat_len;
             best_pattern = r->pattern;
@@ -960,4 +958,204 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
     rs->effective = eff;
     rs->is_compiled = true;
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Binary serialization: save / load compiled ruleset                 */
+/* ------------------------------------------------------------------ */
+
+/* Binary format:
+ *   Header:  magic(4) version(2) flags(2)
+ *   Strings:  str_data_len(4) [string arena data...]
+ *   Counts:  static(4) dynamic(4) spec_static(4) spec_dynamic(4)
+ *   Rules:   mode(4) min_uid(4) flags(4) op_type(2) pattern_len(2)
+ *            pat_off(4) subj_off(4)   [24 bytes per rule]
+ *
+ * String offsets are relative to the start of the string arena data.
+ */
+
+#define COMPILED_MAGIC "RBE\x01"
+#define COMPILED_VERSION 1
+
+int soft_ruleset_save_compiled(const soft_ruleset_t *rs,
+                               void **out_buf,
+                               size_t *out_len)
+{
+    if (!rs || !rs->is_compiled || !out_buf || !out_len) {
+        if (out_buf) *out_buf = NULL;
+        if (out_len) *out_len = 0;
+        errno = EINVAL;
+        return -1;
+    }
+
+    const effective_ruleset_t *eff = &rs->effective;
+    const str_arena_t *sa = &eff->strings;
+
+    size_t hdr_sz = 4 + 2 + 2;
+    size_t str_len_field = 4;
+    size_t str_data_sz = sa->used;
+    size_t rule_sz = 24;
+    size_t rule_count = (size_t)(eff->static_count + eff->dynamic_count +
+                                  eff->spec_static_count + eff->spec_dynamic_count);
+    size_t counts_sz = 16;
+    size_t total = hdr_sz + str_len_field + str_data_sz + counts_sz + rule_count * rule_sz;
+
+    char *buf = malloc(total);
+    if (!buf) { errno = ENOMEM; return -1; }
+
+    char *p = buf;
+
+    /* Header */
+    memcpy(p, COMPILED_MAGIC, 4); p += 4;
+    uint16_t ver = COMPILED_VERSION;
+    memcpy(p, &ver, 2); p += 2;
+    uint16_t flags = 0;
+    memcpy(p, &flags, 2); p += 2;
+
+    /* Strings: length then raw arena data */
+    uint32_t sdl = (uint32_t)sa->used;
+    memcpy(p, &sdl, 4); p += 4;
+    memcpy(p, sa->buf, sa->used); p += sa->used;
+
+    /* Rule counts */
+    uint32_t cnt[4];
+    cnt[0] = (uint32_t)eff->static_count;
+    cnt[1] = (uint32_t)eff->dynamic_count;
+    cnt[2] = (uint32_t)eff->spec_static_count;
+    cnt[3] = (uint32_t)eff->spec_dynamic_count;
+    memcpy(p, cnt, sizeof(cnt)); p += sizeof(cnt);
+
+    /* Write rules */
+    int arr;
+    for (arr = 0; arr < 4; arr++) {
+        const compiled_rule_t *rules;
+        int count;
+        if (arr == 0) { rules = eff->static_rules; count = eff->static_count; }
+        else if (arr == 1) { rules = eff->dynamic_rules; count = eff->dynamic_count; }
+        else if (arr == 2) { rules = eff->spec_static_rules; count = eff->spec_static_count; }
+        else { rules = eff->spec_dynamic_rules; count = eff->spec_dynamic_count; }
+
+        int i;
+        for (i = 0; i < count; i++) {
+            const compiled_rule_t *r = &rules[i];
+            uint32_t mode = r->mode;
+            uint32_t min_uid = r->min_uid;
+            uint32_t flags_r = r->flags;
+            uint16_t op_type = r->op_type;
+            uint16_t pat_len = r->pattern_len;
+            uint32_t pat_off = (uint32_t)(r->pattern - sa->buf);
+            uint32_t subj_off = r->subject_regex ? (uint32_t)(r->subject_regex - sa->buf) : 0;
+            memcpy(p, &mode, 4); p += 4;
+            memcpy(p, &min_uid, 4); p += 4;
+            memcpy(p, &flags_r, 4); p += 4;
+            memcpy(p, &op_type, 2); p += 2;
+            memcpy(p, &pat_len, 2); p += 2;
+            memcpy(p, &pat_off, 4); p += 4;
+            memcpy(p, &subj_off, 4); p += 4;
+        }
+    }
+
+    *out_buf = buf;
+    *out_len = (size_t)(p - buf);
+    return 0;
+}
+
+soft_ruleset_t *soft_ruleset_load_compiled(const void *buf, size_t len)
+{
+    if (!buf || len < 28) { errno = EINVAL; return NULL; }
+
+    const char *p = (const char *)buf;
+    const char *end = p + len;
+
+    /* Header */
+    if (memcmp(p, COMPILED_MAGIC, 4) != 0) { errno = EINVAL; return NULL; }
+    p += 4;
+    uint16_t ver;
+    memcpy(&ver, p, 2); p += 2;
+    if (ver != COMPILED_VERSION) { errno = EINVAL; return NULL; }
+    p += 2;  /* flags */
+
+    /* Strings */
+    if (p + 4 > end) { errno = EINVAL; return NULL; }
+    uint32_t str_data_len;
+    memcpy(&str_data_len, p, 4); p += 4;
+    if (str_data_len == 0 || p + str_data_len > end) { errno = EINVAL; return NULL; }
+    const char *str_data = p;
+    p += str_data_len;
+
+    /* Rule counts */
+    if (p + 16 > end) { errno = EINVAL; return NULL; }
+    uint32_t cnt[4];
+    memcpy(cnt, p, 16); p += 16;
+
+    /* Create ruleset */
+    soft_ruleset_t *rs = soft_ruleset_new();
+    if (!rs) return NULL;
+
+    /* Allocate string arena */
+    str_arena_t *sa = &rs->effective.strings;
+    sa->buf = malloc(str_data_len);
+    if (!sa->buf) { soft_ruleset_free(rs); return NULL; }
+    memcpy(sa->buf, str_data, str_data_len);
+    sa->used = str_data_len;
+    sa->capacity = str_data_len;
+
+    /* Helper macro to read one rule field */
+    #define READ_U32(v) do { if (p + 4 > end) goto fail; memcpy(&(v), p, 4); p += 4; } while (0)
+    #define READ_U16(v) do { if (p + 2 > end) goto fail; memcpy(&(v), p, 2); p += 2; } while (0)
+
+    /* Read rules for each array */
+    int arr;
+    compiled_rule_t **targets[4];
+    int *counts[4];
+    int *capacities[4];
+    effective_ruleset_t *eff = &rs->effective;
+    targets[0] = &eff->static_rules; counts[0] = &eff->static_count; capacities[0] = &eff->static_capacity;
+    targets[1] = &eff->dynamic_rules; counts[1] = &eff->dynamic_count; capacities[1] = &eff->dynamic_capacity;
+    targets[2] = &eff->spec_static_rules; counts[2] = &eff->spec_static_count; capacities[2] = &eff->spec_static_capacity;
+    targets[3] = &eff->spec_dynamic_rules; counts[3] = &eff->spec_dynamic_count; capacities[3] = &eff->spec_dynamic_capacity;
+
+    for (arr = 0; arr < 4; arr++) {
+        int c = (int)cnt[arr];
+        *counts[arr] = c;
+        *capacities[arr] = c;
+        if (c > 0) {
+            *targets[arr] = calloc((size_t)c, sizeof(compiled_rule_t));
+            if (!*targets[arr]) goto fail;
+            int i;
+            for (i = 0; i < c; i++) {
+                compiled_rule_t *r = &(*targets[arr])[i];
+                uint32_t mode, min_uid, flags_r, pat_off, subj_off;
+                uint16_t op_type, pat_len;
+                READ_U32(mode);
+                READ_U32(min_uid);
+                READ_U32(flags_r);
+                READ_U16(op_type);
+                READ_U16(pat_len);
+                READ_U32(pat_off);
+                READ_U32(subj_off);
+                if (pat_off >= str_data_len || (subj_off > 0 && subj_off >= str_data_len))
+                    goto fail;
+                r->mode = mode;
+                r->min_uid = min_uid;
+                r->flags = flags_r;
+                r->op_type = op_type;
+                r->pattern_len = pat_len;
+                r->pattern = sa->buf + pat_off;
+                r->subject_regex = subj_off > 0 ? sa->buf + subj_off : NULL;
+            }
+        } else {
+            *targets[arr] = NULL;
+        }
+    }
+
+    #undef READ_U32
+    #undef READ_U16
+
+    rs->is_compiled = true;
+    return rs;
+
+fail:
+    soft_ruleset_free(rs);
+    return NULL;
 }

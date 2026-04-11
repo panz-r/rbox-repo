@@ -1105,10 +1105,10 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
 {
     if (!rs || !ctxs || !results || count <= 0) { errno = EINVAL; return -1; }
 
-    batch_cache_entry_t src_cache[BATCH_CACHE_SIZE];
-    batch_cache_entry_t dst_cache[BATCH_CACHE_SIZE];
-    memset(src_cache, 0, sizeof(src_cache));
-    memset(dst_cache, 0, sizeof(dst_cache));
+    /* Allocate on heap to avoid ~2 MB stack consumption */
+    batch_cache_entry_t *src_cache = calloc(BATCH_CACHE_SIZE, sizeof(batch_cache_entry_t));
+    batch_cache_entry_t *dst_cache = calloc(BATCH_CACHE_SIZE, sizeof(batch_cache_entry_t));
+    if (!src_cache || !dst_cache) { free(src_cache); free(dst_cache); errno = ENOMEM; return -1; }
     int src_write = 0, dst_write = 0;
 
     for (int i = 0; i < count; i++) {
@@ -1207,6 +1207,8 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
         }
     }
 
+    free(src_cache);
+    free(dst_cache);
     return 0;
 }
 

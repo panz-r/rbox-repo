@@ -118,7 +118,7 @@ typedef struct {
     uint32_t        min_uid;       /**< Minimum UID */
     uint32_t        flags;         /**< Rule flags (RECURSIVE, TEMPLATE) */
     uint16_t        op_type;       /**< soft_binary_op_t */
-    uint16_t        _pad;
+    uint16_t        pattern_len;   /**< strlen(pattern), cached */
     const char     *subject_regex;  /**< Interned, or NULL */
 } compiled_rule_t;
 

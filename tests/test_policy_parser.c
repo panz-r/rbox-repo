@@ -1270,8 +1270,82 @@ static void test_parser_constraint_edge_cases(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  API NULL argument handling                                          */
+/*  Binary serialization: save/load compiled ruleset                   */
 /* ------------------------------------------------------------------ */
+
+static void test_compiled_serialization(void)
+{
+    void *buf = NULL;
+    size_t len = 0;
+
+    /* Case 1: Save and load a simple ruleset */
+    soft_ruleset_t *rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC,
+                          SOFT_OP_EXEC, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ,
+                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+    soft_ruleset_compile(rs);
+
+    TEST_ASSERT_EQ(soft_ruleset_save_compiled(rs, &buf, &len), 0,
+                   "ser_bin: save succeeds");
+    TEST_ASSERT(buf != NULL, "ser_bin: buffer not NULL");
+    TEST_ASSERT(len > 0, "ser_bin: length > 0");
+
+    soft_ruleset_t *rs2 = soft_ruleset_load_compiled(buf, len);
+    TEST_ASSERT(rs2 != NULL, "ser_bin: load succeeds");
+
+    /* Verify behavior matches */
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, NULL),
+                   soft_ruleset_check_ctx(rs2,
+                   &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, NULL),
+                   "ser_bin: EXEC rule matches");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/deep/file.txt", NULL, NULL, 1000}, NULL),
+                   soft_ruleset_check_ctx(rs2,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/deep/file.txt", NULL, NULL, 1000}, NULL),
+                   "ser_bin: recursive rule matches");
+
+    free(buf);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+
+    /* Case 2: NULL/invalid input rejected */
+    TEST_ASSERT(soft_ruleset_load_compiled(NULL, 100) == NULL,
+                "ser_bin: NULL buffer rejected");
+    TEST_ASSERT(soft_ruleset_load_compiled("garbage", 7) == NULL,
+                "ser_bin: garbage data rejected");
+
+    /* Case 3: Uncompiled ruleset rejected */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    TEST_ASSERT_EQ(soft_ruleset_save_compiled(rs, &buf, &len), -1,
+                   "ser_bin: uncompiled ruleset rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 4: Subject/UID constraints roundtrip */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
+                          SOFT_OP_READ, NULL, ".*admin$", 1000, 0);
+    soft_ruleset_compile(rs);
+    TEST_ASSERT_EQ(soft_ruleset_save_compiled(rs, &buf, &len), 0,
+                   "ser_bin: save with constraints");
+    rs2 = soft_ruleset_load_compiled(buf, len);
+    TEST_ASSERT(rs2 != NULL, "ser_bin: load with constraints");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 1000}, NULL),
+                   soft_ruleset_check_ctx(rs2,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 1000}, NULL),
+                   "ser_bin: constraint matches");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/user", 1000}, NULL),
+                   soft_ruleset_check_ctx(rs2,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/user", 1000}, NULL),
+                   "ser_bin: constraint denies same");
+    free(buf);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+}
 
 static void test_parser_null_arguments(void)
 {
@@ -1391,5 +1465,6 @@ void test_rule_engine_parser_run(void)
     RUN_TEST(test_parser_parsing_edge_cases);
     RUN_TEST(test_parser_macro_id_validation);
     RUN_TEST(test_parser_constraint_edge_cases);
+    RUN_TEST(test_compiled_serialization);
     RUN_TEST(test_parser_null_arguments);
 }

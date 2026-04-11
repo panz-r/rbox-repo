@@ -379,6 +379,37 @@ int soft_ruleset_check(const soft_ruleset_t *rs,
                        const char *path,
                        uint32_t mask);
 
+/* ------------------------------------------------------------------ */
+/*  Binary serialization of compiled ruleset                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Serialize the compiled effective ruleset to a binary buffer.
+ *
+ * The output can be loaded back with soft_ruleset_load_compiled()
+ * to skip recompilation from text.  Only valid after compile().
+ *
+ * @param rs       Ruleset handle (must be compiled).
+ * @param out_buf  Rece pointer to allocated buffer (caller must free).
+ * @param out_len  Receives buffer size in bytes.
+ * @return 0 on success, -1 on failure (errno set).
+ */
+int soft_ruleset_save_compiled(const soft_ruleset_t *rs,
+                               void **out_buf,
+                               size_t *out_len);
+
+/**
+ * Load a previously serialized compiled ruleset.
+ *
+ * Bypasses text parsing and compilation.  The loaded ruleset
+ * behaves as if compile() had been called.
+ *
+ * @param buf   Binary buffer from soft_ruleset_save_compiled().
+ * @param len   Buffer size in bytes.
+ * @return New ruleset handle, or NULL on failure (errno set).
+ */
+soft_ruleset_t *soft_ruleset_load_compiled(const void *buf, size_t len);
+
 #ifdef __cplusplus
 }
 #endif
