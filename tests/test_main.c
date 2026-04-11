@@ -23,6 +23,7 @@ extern void test_rule_engine_parser_run(void);
 extern void test_arena_run(void);
 extern void test_builder_edge_run(void);
 extern void test_radix_tree_edge_run(void);
+extern void test_landlock_bridge_run(void);
 
 int main(void)
 {
@@ -59,6 +60,9 @@ int main(void)
     printf("\n");
 
     test_builder_extended_run();
+    printf("\n");
+
+    test_landlock_bridge_run();
     printf("\n");
 
     print_summary();

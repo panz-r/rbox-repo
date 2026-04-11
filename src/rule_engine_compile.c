@@ -427,6 +427,8 @@ static int compare_rule_by_pattern(const void *a, const void *b)
 /**
  * Match PRECEDENCE static rules (exact or directory-prefix).
  * Uses intersection (AND) semantics: all matching rules must agree.
+ * Optimized with binary search: find insertion point via binary search,
+ * then scan forward for exact matches and backward for prefix matches.
  */
 static uint32_t match_static_rules(const effective_ruleset_t *eff,
                                    const char *path,
@@ -441,32 +443,58 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
     bool any_matched = false;
     size_t path_len = strlen(path);
 
-    for (int i = 0; i < eff->static_count; i++) {
+    /* Binary search for insertion point of path in sorted static rules.
+     * This finds where the path would be inserted, which is also the
+     * starting point for exact matches. */
+    int lo = 0, hi = eff->static_count;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        int cmp = strcmp(eff->static_rules[mid].pattern, path);
+        if (cmp < 0) lo = mid + 1;
+        else hi = mid;
+    }
+
+    /* Scan forward from lo to find all exact matches. */
+    for (int i = lo; i < eff->static_count; i++) {
         const compiled_rule_t *r = &eff->static_rules[i];
+        size_t pat_len = strlen(r->pattern);
+        if (pat_len != path_len) break;  /* past exact matches */
+        if (memcmp(r->pattern, path, pat_len) != 0) break;
+
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
         if (!compiled_subject_matches(r, ctx->subject)) continue;
         if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
 
-        bool match = false;
-        size_t pat_len = strlen(r->pattern);
-        if (pat_len == path_len && memcmp(r->pattern, path, pat_len) == 0) {
-            match = true;
-        } else if (pat_len < path_len &&
-                   memcmp(r->pattern, path, pat_len) == 0 &&
-                   path[pat_len] == '/') {
-            match = true;
+        any_matched = true;
+        if (r->mode & SOFT_ACCESS_DENY) {
+            if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            return 0; /* DENY short-circuit */
         }
+        granted &= r->mode;
+        last_pattern = r->pattern;
+    }
 
-        if (match) {
-            any_matched = true;
-            if (r->mode & SOFT_ACCESS_DENY) {
-                if (out_matched_pattern) *out_matched_pattern = r->pattern;
-                return 0; /* DENY short-circuit */
-            }
-            granted &= r->mode;
-            last_pattern = r->pattern;
+    /* Scan backwards from lo-1 to find prefix matches. */
+    for (int i = lo - 1; i >= 0; i--) {
+        const compiled_rule_t *r = &eff->static_rules[i];
+        size_t pat_len = strlen(r->pattern);
+        if (pat_len >= path_len) continue;  /* can't be a prefix of shorter path */
+        if (memcmp(r->pattern, path, pat_len) != 0 || path[pat_len] != '/')
+            continue;
+
+        if (r->op_type != op && r->op_type != SOFT_OP_READ &&
+            r->op_type != SOFT_OP_WRITE) continue;
+        if (!compiled_subject_matches(r, ctx->subject)) continue;
+        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+
+        any_matched = true;
+        if (r->mode & SOFT_ACCESS_DENY) {
+            if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            return 0; /* DENY short-circuit */
         }
+        granted &= r->mode;
+        last_pattern = r->pattern;
     }
 
     if (out_matched_pattern) *out_matched_pattern = last_pattern;
