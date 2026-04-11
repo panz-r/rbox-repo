@@ -767,7 +767,9 @@ static void expand_allow_path_recursive(struct expansion_context *ctx, const cha
                     visited_set_add(ctx, resolved);
                     add_expanded_path(ctx, resolved, access);
                     scan_dir_for_external_symlinks(ctx, resolved, access, deny, deny_count);
-                    expand_allow_path_recursive(ctx, resolved, access, deny, deny_count);
+                    if (has_deny_under(resolved, strlen(resolved), deny, deny_count)) {
+                        expand_allow_path_recursive(ctx, resolved, access, deny, deny_count);
+                    }
                 }
             } else {
                 if (!visited_set_contains(ctx, resolved)) {
