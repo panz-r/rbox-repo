@@ -9,6 +9,8 @@
 #define ALLOWSET_MAX_ENTRIES 256
 #define ALLOWSET_ERR_NOMEM -1
 #define ALLOWSET_ERR_TOOLARGE -2
+#define ALLOWSET_ERR_TOODEEP -3
+#define MAX_RECURSION_DEPTH 128
 #define ALLOWANCE_TIMEOUT_SECONDS 600
 
 /* holds a set of allowances with constraints */

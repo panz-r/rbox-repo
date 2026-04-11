@@ -268,8 +268,12 @@ static int cmd_has_quotes(const char *cmd) {
  * Uses a->veca for capacity tracking (starts at 0, grows to 7, then doubles).
  * Returns 0 on success, negative on error.
  */
-static int grant_parse_recursive(AllowSet *a, const char *cmd, int after_index, bool is_first_call) {
+static int grant_parse_recursive(AllowSet *a, const char *cmd, int after_index, bool is_first_call, int depth) {
     if (!a || !cmd || !*cmd) return 0;
+
+    if (depth > MAX_RECURSION_DEPTH) {
+        goto parse_leaf;
+    }
 
     if (a->vecc >= ALLOWSET_MAX_ENTRIES) {
         return ALLOWSET_ERR_TOOLARGE;
@@ -309,13 +313,15 @@ static int grant_parse_recursive(AllowSet *a, const char *cmd, int after_index, 
             strlcpy(a->vecv[current_index].command, continuation, cont_len + 1);
             a->vecv[current_index].after = after_index;
             a->vecc++;
-            int ret = grant_parse_recursive(a, continuation, current_index, false);
+            int ret = grant_parse_recursive(a, continuation, current_index, false, depth + 1);
             if (ret < 0) return ret;
         } else {
-            int ret = grant_parse_recursive(a, continuation, after_index, false);
+            int ret = grant_parse_recursive(a, continuation, after_index, false, depth + 1);
             if (ret < 0) return ret;
         }
-    } else if (!is_first_call) {
+    }
+parse_leaf:
+    if (!is_first_call) {
         int sub_after = after_index;
         shell_parse_result_t result;
         shell_error_t err = shell_parse_fast(cmd, strlen(cmd), &SHELL_LIMITS_DEFAULT, &result);
@@ -405,7 +411,7 @@ static int grant_parse_recursive(AllowSet *a, const char *cmd, int after_index, 
 int allowset_grant(AllowSet *a, const char *full_command) {
     if (!a || !full_command || !*full_command) return -1;
 
-    int ret = grant_parse_recursive(a, full_command, -1, true);
+    int ret = grant_parse_recursive(a, full_command, -1, true, 0);
 
     if (ret < 0) {
         allowset_deinit(a);
