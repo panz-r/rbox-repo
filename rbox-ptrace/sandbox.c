@@ -1069,8 +1069,8 @@ static int apply_landlock(void) {
 static int apply_no_network(void) {
     if (!getenv("READONLYBOX_NO_NETWORK")) return 0;
 
-#if defined(__i386__)
-    LOG_ERROR("Seccomp network filtering is not supported on i386 (network syscalls use socketcall)");
+#if !defined(__x86_64__) && !defined(__aarch64__) && !defined(__riscv)
+    LOG_ERROR("Seccomp network filtering not supported on this architecture");
     return -1;
 #endif
 

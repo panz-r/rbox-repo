@@ -33,14 +33,6 @@
     #define REG_ARG3(regs)      ((regs)->rdx)
     #define REG_ARG4(regs)      ((regs)->r10)
     #define REG_SP(regs)        ((regs)->rsp)
-#elif __i386__
-    #define USER_REGS           struct user_regs_struct
-    #define REG_SYSCALL(regs)   ((regs)->orig_eax)
-    #define REG_ARG1(regs)      ((regs)->ebx)
-    #define REG_ARG2(regs)      ((regs)->ecx)
-    #define REG_ARG3(regs)      ((regs)->edx)
-    #define REG_ARG4(regs)      ((regs)->esi)
-    #define REG_SP(regs)        ((regs)->esp)
 #elif __aarch64__
     #define USER_REGS           struct user_regs_struct
     #define REG_SYSCALL(regs)   ((regs)->regs[8])   /* x8 = syscall number */

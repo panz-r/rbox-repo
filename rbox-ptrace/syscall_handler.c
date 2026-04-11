@@ -570,9 +570,6 @@ static int block_syscall(pid_t pid, USER_REGS *regs) {
 #ifdef __x86_64__
     regs->rax = -EACCES;
     regs->rip += 2;
-#elif defined(__i386__)
-    regs->eax = -EACCES;
-    regs->eip += 2;
 #elif defined(__aarch64__)
     regs->regs[0] = -EACCES;
     regs->pc += 4;
