@@ -889,8 +889,15 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
             /* Filter environment variables even for DFA-allowed commands */
             if (filter_env_decisions(state, pid, regs) < 0) {
-                /* Filter failed - log but continue (not critical for DFA-allowed) */
-                DEBUG_PRINT("HANDLER: pid=%d env filter failed for '%s', continuing anyway\n", pid, command);
+                /* Filter failed - block the command to be safe */
+                DEBUG_PRINT("HANDLER: pid=%d env filter failed for '%s', blocking\n", pid, command);
+                if (block_execve(pid, regs) < 0) {
+                    kill(pid, SIGKILL);
+                }
+                unsetenv("READONLYBOX_ENV_DECISIONS");
+                unsetenv("READONLYBOX_FLAGGED_ENV_NAMES");
+                free(command);
+                return 0;
             }
 
             /* Clear environment decision variables to prevent leakage to subsequent commands */
