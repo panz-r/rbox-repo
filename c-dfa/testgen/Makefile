@@ -4,9 +4,13 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -I..
 TARGET = testgen
 TEST_TARGET = testgen_test
-SRCS = main.cpp testgen.cpp
+
+# Source files - implementations split between testgen.cpp and pattern_strategies.cpp
+SRCS = main.cpp testgen.cpp pattern_strategies.cpp
 OBJS = $(SRCS:.cpp=.o)
-TEST_SRCS = testgen_test.cpp testgen.cpp
+
+# For testing
+TEST_SRCS = testgen_test.cpp testgen.cpp pattern_strategies.cpp
 TEST_OBJS = $(TEST_SRCS:.cpp=.o)
 
 all: $(TARGET)
@@ -20,7 +24,7 @@ test: $(TEST_TARGET)
 $(TEST_TARGET): $(TEST_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-%.o: %.cpp testgen.h
+%.o: %.cpp testgen.h pattern_strategies.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 clean:
