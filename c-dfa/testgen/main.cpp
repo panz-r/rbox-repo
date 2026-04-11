@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
         std::cout << "  Pattern file: " << pattern_file << "\n";
         
         if (run_tests) {
-            int result = gen.runTests(pattern_file, expectations_file);
+            int result = gen.runTests(tests, pattern_file, expectations_file);
             if (result == 0) total_passed += tests.size();
             else total_failed += tests.size();
         }

@@ -1934,7 +1934,7 @@ void TestGenerator::writeExpectations(const std::vector<TestCase>& tests, const 
     std::cout << "Written expectations: " << filename << "\n";
 }
 
-int TestGenerator::runTests(const std::string& pattern_file, const std::string& expectations_file) {
+int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& pattern_file, const std::string& expectations_file) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa...\n";
     std::cout << std::string(60, '=') << "\n\n";
@@ -1971,7 +1971,6 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
     
     std::cout << "3. Testing patterns...\n";
     
-    std::vector<TestCase>& tests = generated_tests;
     int passed = 0;
     int failed = 0;
     int skipped = 0;
@@ -2329,7 +2328,7 @@ int TestGenerator::runTests(const std::string& pattern_file, const std::string& 
     return failed > 0 ? 1 : 0;
 }
 
-int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std::string& expectations_file) {
+int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const std::string& pattern_file, const std::string& expectations_file) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa (INDIVIDUALLY)...\n";
     std::cout << std::string(60, '=') << "\n\n";
@@ -2347,7 +2346,6 @@ int TestGenerator::runTestsIndividual(const std::string& pattern_file, const std
     // Create failed_cases directory
     mkdir(failed_dir.c_str(), 0755);
     
-    std::vector<TestCase>& tests = generated_tests;
     int passed = 0;
     int failed = 0;
     int skipped = 0;
