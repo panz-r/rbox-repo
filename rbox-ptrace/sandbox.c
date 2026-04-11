@@ -1044,7 +1044,9 @@ static int apply_landlock(void) {
         soft_policy_t *soft = soft_policy_get_global();
         for (int i = 0; i < g_result_count; i++) {
             soft_mode_t mode = landlock_access_to_soft_mode(g_result_paths[i].access);
-            soft_policy_add_rule(soft, g_result_paths[i].path, mode);
+            if (soft_policy_add_rule(soft, g_result_paths[i].path, mode) != 0) {
+                LOG_ERROR("Failed to add soft policy fallback rule for '%s'", g_result_paths[i].path);
+            }
         }
         close(ruleset_fd);
         sandbox_expansion_cleanup();
