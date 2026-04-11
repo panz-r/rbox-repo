@@ -173,6 +173,8 @@ struct FactorizationProof {
     bool valid;                   // Is the factorization valid overall?
 };
 
+int run_factorization_tests();
+
 struct Options {
     int num_tests = 100;
     std::string output_dir = "testgen/output";

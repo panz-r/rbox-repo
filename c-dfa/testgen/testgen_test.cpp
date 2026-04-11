@@ -289,5 +289,8 @@ int main() {
     std::cout << "\n==================\n";
     std::cout << "Results: " << tests_passed << "/" << tests_run << " tests passed\n";
     
-    return tests_passed == tests_run ? 0 : 1;
+    std::cout << "\n";
+    int pf_result = run_factorization_tests();
+    
+    return (tests_passed == tests_run && pf_result == 0) ? 0 : 1;
 }
