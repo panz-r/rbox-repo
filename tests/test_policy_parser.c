@@ -14,38 +14,35 @@
 /*  Basic parsing                                                      */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_basic_rule(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+/* ------------------------------------------------------------------ */
+/*  Basic rule parsing and comments                                    */
+/* ------------------------------------------------------------------ */
 
-    /* Rule grants READ|WRITE for exec operations */
+static void test_parser_basic_rules(void)
+{
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
+
+    /* Case 1: Basic rule with EXEC operation */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs,
                    "/usr/** -> RW /exec\n",
-                   &line, &err), 0, "parse basic rule");
-
-    /* Exec operation requires EXEC mode - RW rule doesn't satisfy it */
+                   &line, &err), 0, "basic: parse EXEC rule");
     soft_access_ctx_t ctx = { SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000 };
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
-                   "RW rule doesn't satisfy EXEC requirement");
-
-    /* But a rule with EXEC mode does satisfy it */
+                   "basic: RW rule doesn't satisfy EXEC");
     soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_EXEC,
                           SOFT_OP_EXEC, NULL, NULL, 0, 0);
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
                    SOFT_ACCESS_EXEC | SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
-                   "EXEC rule grants EXEC for exec (OR with RW rule)");
-
+                   "basic: EXEC rule grants EXEC for exec");
     soft_ruleset_free(rs);
-}
 
-static void test_parser_comments_and_blanks(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
+    /* Case 2: Comments and blank lines */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
     const char *text =
         "# This is a comment\n"
         "\n"
@@ -53,1748 +50,1011 @@ static void test_parser_comments_and_blanks(void)
         "  \n"
         "# Another comment\n"
         "/tmp/... -> RW recursive\n";
-
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "parse with comments and blanks");
-
+                   "basic: parse with comments and blanks");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ, "commented rule works");
+                   SOFT_ACCESS_READ, "basic: commented rule works");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/tmp/deep/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "recursive rule works");
-
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "basic: recursive rule works");
     soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Layer declarations                                                  */
+/*  Layer declarations and implicit layer state                        */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_layer_decl(void)
+static void test_parser_layer_declaration(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
 
+    /* Case 1: Explicit layer declarations */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
     const char *text =
         "@0 PRECEDENCE\n"
         "/data/... -> RW recursive\n"
         "@1 SPECIFICITY\n"
         "/data/secret -> D\n";
-
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "parse layer declarations");
-    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 2, "2 layers created");
-
-    /* Layer 0 grants RW, Layer 1 denies /data/secret → PRECEDENCE intersection:
-     * For /data/file.txt: layer 0 grants RW, layer 1 has no rule → RW
-     * For /data/secret: layer 0 grants RW, layer 1 denies → DENY
-     */
+                   "layer: explicit declarations");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 2, "layer: 2 layers created");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "layer 0 allows /data/file.txt with RW");
-
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "layer: file.txt allowed");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/secret", NULL, NULL, 1000}, NULL),
-                   -13, "layer 1 denies /data/secret");
+                   -13, "layer: secret denied");
+    soft_ruleset_free(rs);
 
+    /* Case 2: Implicit layer state — rules without @N inherit current layer */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text2 =
+        "/usr/** -> R\n"           /* Implicit @0 */
+        "@1 SPECIFICITY\n"
+        "/data/** -> RW\n"         /* Explicit @1 */
+        "/tmp/** -> R\n";          /* Implicit @1 (inherits context) */
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text2, &line, &err), 0,
+                   "layer: implicit state");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 2, "layer: 2 layers created");
     soft_ruleset_free(rs);
 }
 
 static void test_parser_layer_mask(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
 
-    /* SPECIFICITY layer with mask R: rule requesting RW should fail */
-    const char *text =
-        "@1 SPECIFICITY:R\n"
-        "/data/** -> RW\n";
-
-    int ret = soft_ruleset_parse_text(rs, text, &line, &err);
-    TEST_ASSERT_EQ(ret, -1, "rule exceeding mask is rejected");
-    TEST_ASSERT(line != 0, "error line number is set");
-
+    /* Case 1: SPECIFICITY layer with mask R, rule grants RW → fail */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@1 SPECIFICITY:R\n/data/** -> RW\n", &line, &err), -1,
+                   "mask: SPECIFICITY rule exceeds mask rejected");
+    TEST_ASSERT(line != 0, "mask: error line set");
     soft_ruleset_free(rs);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Implicit layer state                                                */
-/* ------------------------------------------------------------------ */
+    /* Case 2: Empty layer mask rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 SPECIFICITY:\n/data/** -> R\n", &line, &err), -1,
+                   "mask: empty mask rejected");
+    soft_ruleset_free(rs);
 
-static void test_parser_implicit_layer(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    /* Case 3: Rule within layer mask accepted */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@1 SPECIFICITY:R\n/data/** -> R\n", NULL, NULL), 0,
+                   "mask: rule within mask accepted");
+    soft_ruleset_free(rs);
 
-    /* Rules without @N prefix should go to current layer */
-    const char *text =
-        "/usr/** -> R\n"           /* Implicit @0 */
-        "@1 SPECIFICITY\n"
-        "/data/** -> RW\n"         /* Explicit @1 */
-        "/tmp/** -> R\n";          /* Implicit @1 (inherits context) */
+    /* Case 4: DENY-only layer mask — DENY accepted, RW rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 SPECIFICITY:D\n/data/** -> D\n", &line, &err), 0,
+                   "mask: DENY-only mask accepted");
+    soft_ruleset_free(rs);
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@1 SPECIFICITY:D\n@1 /data/** -> RW\n", &line, &err), -1,
+                   "mask: RW exceeds DENY-only mask rejected");
+    soft_ruleset_free(rs);
 
+    /* Case 5: DENY mode with R mask rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 SPECIFICITY:R\n/data/** -> D\n", &line, &err), -1,
+                   "mask: DENY exceeds R mask rejected");
+    TEST_ASSERT(line == 2, "mask: error on line 2");
+    soft_ruleset_free(rs);
+
+    /* Case 6: PRECEDENCE layer mask R, rule grants RW → fail */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 PRECEDENCE:R\n/data/** -> RW\n", &line, &err), -1,
+                   "mask: PRECEDENCE rule exceeds mask rejected");
+    TEST_ASSERT(line == 2, "mask: error on line 2");
+    soft_ruleset_free(rs);
+
+    /* Case 7: PRECEDENCE layer mask RW, rule grants RW → succeed */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 PRECEDENCE:RW\n/data/** -> RW\n", NULL, NULL), 0,
+                   "mask: PRECEDENCE rule within mask accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 8: PRECEDENCE explicit @0 rule with mask R, grants RW → fail */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 PRECEDENCE:R\n@0 /data/** -> RW\n", &line, &err), -1,
+                   "mask: explicit @0 rule respects mask rejected");
+    TEST_ASSERT(line == 2, "mask: error on line 2");
+    soft_ruleset_free(rs);
+
+    /* Case 9: Explicit layer 1 rule ignores implicit layer 0 mask */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 PRECEDENCE:R\n@1 SPECIFICITY\n/data/** -> RW\n", &line, &err), 0,
+                   "mask: layer 1 rule ignores layer 0 mask");
+    soft_ruleset_free(rs);
+
+    /* Case 10: Explicit layer 1 rule with mask R, grants RW → fail */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@1 SPECIFICITY:R\n@1 /data/** -> RW\n", &line, &err), -1,
+                   "mask: explicit layer 1 rule respects own mask rejected");
+    TEST_ASSERT(line == 2, "mask: error on line 2");
+    soft_ruleset_free(rs);
+
+    /* Case 11: Rule on undeclared layer creates layers automatically */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text = "@5 /data/** -> R\n";
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "parse with implicit layer state");
-    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 2, "2 layers created");
-
+                   "mask: undeclared layer 5 accepted");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 6, "mask: 6 layers created (0-5)");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 1, "mask: 1 rule added");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "mask: rule on layer 5 works");
     soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Macros                                                              */
+/*  Macro definition, expansion, and validation                       */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_macro_def(void)
+static void test_parser_macros(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
 
-    const char *text =
+    /* Case 1: Macro definitions with EXEC and READ operations */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text1 =
         "[BIN] /usr/bin/**\n"
         "[LIB] /usr/lib/**\n"
         "((BIN)) -> X /exec\n"
         "((LIB)) -> R\n";
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "parse with macro definitions");
-
-    /* /usr/bin/bash should match BIN macro expanded to /usr/bin/wildcard */
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text1, &line, &err), 0,
+                   "macro: parse definitions");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, NULL),
                    SOFT_ACCESS_EXEC,
-                   "macro expanded BIN rule works");
-
-    /* /usr/lib/libfoo.so should match LIB macro expanded to /usr/lib/wildcard */
+                   "macro: BIN rule grants EXEC");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/usr/lib/libfoo.so", NULL, NULL, 1000}, NULL),
                    SOFT_ACCESS_READ,
-                   "macro expanded LIB rule works");
-
+                   "macro: LIB rule grants READ");
     soft_ruleset_free(rs);
-}
 
-static void test_parser_macro_undefined(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    const char *text = "((UNDEFINED)) -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "undefined macro is rejected");
-    TEST_ASSERT(line != 0, "error line number is set");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Subject and UID constraints                                         */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_subject_and_uid(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    const char *text =
-        "/data/** -> R /read subject:.*admin$ uid:1000\n";
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "parse subject and uid");
-
-    /* Matching subject and UID */
+    /* Case 2: Nested macro expansion */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text2 =
+        "[BASE] /usr\n"
+        "[BIN] ((BASE))/bin/**\n"
+        "((BIN)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text2, &line, &err), 0,
+                   "macro: nested expansion works");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 1000}, NULL),
-                   SOFT_ACCESS_READ, "matching subject and UID allowed");
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "macro: nested macro expanded correctly");
+    soft_ruleset_free(rs);
 
-    /* Non-matching subject */
+    /* Case 3: Same macro used in multiple rules */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text3 =
+        "[BIN] /usr/bin/**\n"
+        "((BIN)) -> R /read\n"
+        "((BIN)) -> X /exec\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text3, &line, &err), 0,
+                   "macro: multiple uses work");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/user", 1000}, NULL),
-                   -13, "non-matching subject denied");
-
-    /* Low UID */
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "macro: first rule with macro works");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 500}, NULL),
-                   -13, "low UID denied");
+                   &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, "macro: EXEC rule matches too");
+    soft_ruleset_free(rs);
 
+    /* Case 4: Deep macro nesting (6 levels) */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text4 = "[A] ((B))/a\n[B] ((C))/b\n[C] ((D))/c\n[D] ((E))/d\n[E] ((F))/e\n[F] /base\n((A)) -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text4, &line, &err), 0,
+                   "macro: deep nesting (6 levels) works");
     soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Error handling                                                      */
+/*  Serialization: all roundtrip scenarios                             */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_missing_arrow(void)
+static void test_serializer_roundtrip(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    char *text;
 
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** R\n", &line, &err), -1,
-                   "missing '->' separator is rejected");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_invalid_mode(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> Z\n", &line, &err), -1,
-                   "invalid mode char is rejected");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_invalid_layer_type(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 UNKNOWN\n", &line, &err), -1,
-                   "unknown layer type is rejected");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Serialization                                                       */
-/* ------------------------------------------------------------------ */
-
-static void test_serializer_basic(void)
-{
+    /* Case 1: Basic serialization roundtrip */
     soft_ruleset_t *rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_EXEC,
                           SOFT_OP_EXEC, NULL, NULL, 0, 0);
     soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ,
                           SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
-
-    char *text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "serialize to text");
-    TEST_ASSERT(text != NULL, "output text is not NULL");
-
-    /* Parse the serialized text back */
+    text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "ser: serialize");
+    TEST_ASSERT(text != NULL, "ser: output not NULL");
     soft_ruleset_t *rs2 = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text, NULL, NULL), 0,
-                   "parse serialized text");
-
-    /* Verify rules are identical */
+                   "ser: parse");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, NULL),
                    soft_ruleset_check_ctx(rs2,
                    &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, NULL),
-                   "serialized rules produce same result");
-
+                   "ser: rules produce same result");
     free(text);
     soft_ruleset_free(rs);
     soft_ruleset_free(rs2);
-}
 
-static void test_serializer_layered(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
+    /* Case 2: Layered ruleset roundtrip */
+    rs = soft_ruleset_new();
     soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
     soft_ruleset_add_rule_at_layer(rs, 1, "/data/secret", SOFT_ACCESS_DENY,
                           SOFT_OP_READ, NULL, NULL, 0, 0);
     soft_ruleset_add_rule_at_layer(rs, 0, "/data/...", SOFT_ACCESS_READ,
                           SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
-
-    char *text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "serialize layered ruleset");
-    TEST_ASSERT(strstr(text, "SPECIFICITY") != NULL, "output contains SPECIFICITY");
-
-    /* Parse back and verify behavior */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
+    text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "ser: layered");
+    TEST_ASSERT(strstr(text, "SPECIFICITY") != NULL, "ser: contains SPECIFICITY");
+    rs2 = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text, NULL, NULL), 0,
-                   "parse serialized layered text");
-
+                   "ser: parse layered");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
                    soft_ruleset_check_ctx(rs2,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   "serialized layered rules produce same result");
-
+                   "ser: layered rules match");
     free(text);
     soft_ruleset_free(rs);
     soft_ruleset_free(rs2);
-}
 
-static void test_serializer_subject_and_uid(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
+    /* Case 3: Subject and UID constraints roundtrip */
+    rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
                           SOFT_OP_READ, NULL, ".*admin$", 1000, 0);
-
-    char *text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "serialize with subject and uid");
-    TEST_ASSERT(strstr(text, "subject:") != NULL, "output contains subject");
-    TEST_ASSERT(strstr(text, "uid:") != NULL, "output contains uid");
-
-    /* Parse back */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
+    text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "ser: subject/uid");
+    TEST_ASSERT(strstr(text, "subject:") != NULL, "ser: contains subject");
+    TEST_ASSERT(strstr(text, "uid:") != NULL, "ser: contains uid");
+    rs2 = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text, NULL, NULL), 0,
-                   "parse serialized text with subject and uid");
-
+                   "ser: parse subject/uid");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 1000}, NULL),
                    soft_ruleset_check_ctx(rs2,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 1000}, NULL),
-                   "serialized rules with constraints produce same result");
+                   "ser: constraints match");
+    free(text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
 
+    /* Case 4: Full features roundtrip (PRECEDENCE + SPECIFICITY) */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule_at_layer(rs, 0, "${SRC}", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
+        SOFT_OP_COPY, "SRC", ".*cp$", 1000, SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/tmp/...", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+    soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
+    soft_ruleset_add_rule_at_layer(rs, 1, "/tmp/secret", SOFT_ACCESS_DENY,
+        SOFT_OP_READ, NULL, NULL, 0, 0);
+    text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "ser: full features");
+    TEST_ASSERT(text != NULL, "ser: output not NULL");
+    TEST_ASSERT(strstr(text, "PRECEDENCE") != NULL, "ser: contains PRECEDENCE");
+    TEST_ASSERT(strstr(text, "SPECIFICITY") != NULL, "ser: contains SPECIFICITY");
+    rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text, NULL, NULL), 0,
+                   "ser: parse full");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), soft_ruleset_layer_count(rs2),
+                   "ser: layer count matches");
+    soft_access_ctx_t ctx1 = {SOFT_OP_COPY, "/data/file.txt", "/tmp/out.txt", "/usr/bin/cp", 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx1, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx1, NULL),
+                   "ser: COPY query matches");
+    soft_access_ctx_t ctx2 = {SOFT_OP_READ, "/tmp/secret", NULL, NULL, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx2, NULL),
+                   "ser: DENY query matches");
+    free(text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+
+    /* Case 5: Ruleset with layer masks roundtrip */
+    rs = soft_ruleset_new();
+    soft_ruleset_set_layer_type(rs, 0, LAYER_PRECEDENCE, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
+        SOFT_OP_COPY, NULL, NULL, 0, 0);
+    soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
+    soft_ruleset_add_rule_at_layer(rs, 1, "/secret", SOFT_ACCESS_DENY,
+        SOFT_OP_READ, NULL, NULL, 0, 0);
+    text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "ser: masks");
+    TEST_ASSERT(text != NULL, "ser: masks output not NULL");
+    TEST_ASSERT(strstr(text, ":") != NULL, "ser: masks contains separator");
+    rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text, NULL, NULL), 0,
+                   "ser: parse masks");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs2), 2, "ser: 2 layers after parse");
+    soft_access_ctx_t ctx3 = {SOFT_OP_COPY, "/data/file.txt", "/tmp/out.txt", NULL, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx3, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx3, NULL),
+                   "ser: COPY rule matches");
+    soft_access_ctx_t ctx4 = {SOFT_OP_READ, "/secret", NULL, NULL, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx4, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx4, NULL),
+                   "ser: DENY rule matches");
+    free(text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+
+    /* Case 6: Deny-only ruleset roundtrip */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule_at_layer(rs, 0, "/secret", SOFT_ACCESS_DENY,
+        SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/forbidden/**", SOFT_ACCESS_DENY,
+        SOFT_OP_READ, NULL, NULL, 0, 0);
+    text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "ser: deny-only");
+    TEST_ASSERT(text != NULL, "ser: deny output not NULL");
+    rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text, NULL, NULL), 0,
+                   "ser: parse deny-only");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/secret", NULL, NULL, 1000}, NULL),
+                   soft_ruleset_check_ctx(rs2,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/secret", NULL, NULL, 1000}, NULL),
+                   "ser: deny rule matches");
+    free(text);
+    soft_ruleset_free(rs);
+    soft_ruleset_free(rs2);
+
+    /* Case 7: Empty ruleset roundtrip */
+    rs = soft_ruleset_new();
+    text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &text), 0, "ser: empty");
+    TEST_ASSERT(text != NULL, "ser: empty output not NULL");
+    rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text, NULL, NULL), 0,
+                   "ser: parse empty");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs2), 0, "ser: 0 rules after parse");
     free(text);
     soft_ruleset_free(rs);
     soft_ruleset_free(rs2);
 }
 
 /* ------------------------------------------------------------------ */
-/*  File I/O                                                            */
+/*  File I/O: valid file, error, empty/whitespace                      */
 /* ------------------------------------------------------------------ */
 
 static void test_parser_file_io(void)
 {
     const char *test_file = "/tmp/test_policy.tmp";
     const char *text = "[BIN] /usr/bin/**\n((BIN)) -> X /exec\n";
+    FILE *f;
 
-    /* Write file */
-    FILE *f = fopen(test_file, "w");
-    TEST_ASSERT(f != NULL, "open temp file for write");
+    /* Case 1: Write and parse valid file */
+    f = fopen(test_file, "w");
+    TEST_ASSERT(f != NULL, "file: open temp file for write");
     fprintf(f, "%s", text);
     fclose(f);
-
-    /* Parse file */
     soft_ruleset_t *rs = soft_ruleset_new();
     int line = 0;
     const char *err = NULL;
     TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, test_file, &line, &err), 0,
-                   "parse policy file");
-
+                   "file: parse policy file");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, NULL),
                    SOFT_ACCESS_EXEC,
-                   "parsed file grants EXEC for exec");
-
+                   "file: parsed file grants EXEC");
     soft_ruleset_free(rs);
     unlink(test_file);
+
+    /* Case 2: Non-existent file rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, "/nonexistent/path/file.txt", &line, &err), -1,
+                   "file: non-existent file rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 3: Empty file parsed successfully */
+    const char *empty_file = "/tmp/test_empty_policy.txt";
+    f = fopen(empty_file, "w");
+    TEST_ASSERT(f != NULL, "file: create empty file");
+    fclose(f);
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, empty_file, &line, &err), 0,
+                   "file: empty file accepted");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "file: no rules from empty file");
+    soft_ruleset_free(rs);
+    unlink(empty_file);
+
+    /* Case 4: Whitespace-only file parsed successfully */
+    const char *ws_file = "/tmp/test_ws_policy.txt";
+    f = fopen(ws_file, "w");
+    TEST_ASSERT(f != NULL, "file: create whitespace file");
+    fprintf(f, "   \n  \n\t\n");
+    fclose(f);
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, ws_file, &line, &err), 0,
+                   "file: whitespace-only file accepted");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "file: no rules from whitespace-only file");
+    soft_ruleset_free(rs);
+    unlink(ws_file);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Quoted subject regex                                                */
+/*  Subject regex round-trip with special characters                   */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_quoted_subject(void)
+static void test_parser_subject_roundtrip(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    char *out_text;
+    soft_ruleset_t *rs, *rs2;
+    int line;
+    const char *err;
 
-    /* Subject regex with spaces requires quoting */
-    const char *text =
+    /* Case 1: Parse quoted subject with spaces */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text1 =
         "/data/** -> R subject:\".*admin user$\"\n";
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "parse quoted subject regex");
-
-    /* Verify round-trip serialization */
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize quoted subject");
-    TEST_ASSERT(out_text != NULL, "serialized text is not NULL");
-    TEST_ASSERT(strstr(out_text, "\"") != NULL, "output contains quotes for subject with spaces");
-
-    /* Parse serialized text back */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text1, &line, &err), 0,
+                   "subj: parse quoted subject with spaces");
+    out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "subj: serialize");
+    TEST_ASSERT(out_text != NULL, "subj: output not NULL");
+    TEST_ASSERT(strstr(out_text, "\"") != NULL, "subj: contains quotes");
+    rs2 = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
-                   "parse serialized quoted subject");
-
-    /* Verify behavior matches */
+                   "subj: parse serialized");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin user", 1000}, NULL),
                    soft_ruleset_check_ctx(rs2,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin user", 1000}, NULL),
-                   "quoted subject round-trip produces same result");
-
+                   "subj: round-trip matches");
     free(out_text);
     soft_ruleset_free(rs);
     soft_ruleset_free(rs2);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Edge cases: empty/whitespace input                                  */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_empty_input(void)
-{
-    /* Empty string */
-    soft_ruleset_t *rs1 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs1, "", NULL, NULL), 0, "parse empty string");
-    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs1), 0, "no rules from empty string");
-    soft_ruleset_free(rs1);
-
-    /* Whitespace only */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, "   \n  \n\t\n", NULL, NULL), 0, "parse whitespace only");
-    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs2), 0, "no rules from whitespace");
-    soft_ruleset_free(rs2);
-
-    /* NULL input */
-    soft_ruleset_t *rs3 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs3, NULL, NULL, NULL), -1, "NULL input rejected");
-    soft_ruleset_free(rs3);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Edge cases: macro expansion                                         */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_macro_nested(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Macro using another macro in pattern */
-    const char *text =
-        "[BASE] /usr\n"
-        "[BIN] ((BASE))/bin/**\n"
-        "((BIN)) -> R\n";
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "parse nested macro expansion");
-
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ, "nested macro expanded correctly");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_macro_multiple_uses(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Same macro used in multiple rules */
-    const char *text =
-        "[BIN] /usr/bin/**\n"
-        "((BIN)) -> R /read\n"
-        "((BIN)) -> X /exec\n";
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "parse multiple uses of same macro");
-
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ, "first rule with macro works");
-    /* EXEC operation matches both READ and EXEC rules (READ rules match EXEC ops) */
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_EXEC, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, "second rule with macro works");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Edge cases: all mode characters                                     */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_all_modes(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* All mode characters in one rule */
-    const char *text = "/data/** -> RWXCU\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0, "parse all mode chars");
-
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC | SOFT_ACCESS_CREATE | SOFT_ACCESS_UNLINK,
-                   "all modes granted");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_deny_mode(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* DENY alone */
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/secret -> D\n", &line, &err), 0, "parse DENY alone");
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/secret", NULL, NULL, 1000}, NULL),
-                   -13, "DENY denies access");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_lowercase_modes(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Lowercase mode chars */
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> rw\n", &line, &err), 0, "parse lowercase modes");
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "lowercase modes work");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Edge cases: all operation types                                     */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_all_operations(void)
-{
-    const char *ops[] = {"read", "write", "exec", "copy", "move", "link", "mount", "chmod", "custom", NULL};
-
-    for (int i = 0; ops[i]; i++) {
-        soft_ruleset_t *rs = soft_ruleset_new();
-        char text[64];
-        snprintf(text, sizeof(text), "/data/** -> R /%s\n", ops[i]);
-
-        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
-                       "parse operation");
-
-        soft_ruleset_free(rs);
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/*  Edge cases: layer boundaries                                        */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_layer_boundaries(void)
-{
-    /* Layer 0 (minimum) */
-    soft_ruleset_t *rs1 = soft_ruleset_new();
-    int line1 = 0;
-    const char *err1 = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs1, "@0 PRECEDENCE\n/data/** -> R\n", &line1, &err1), 0,
-                   "parse layer 0");
-    soft_ruleset_free(rs1);
-
-    /* Layer 63 (maximum) */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    int line2 = 0;
-    const char *err2 = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, "@63 PRECEDENCE\n/data/** -> R\n", &line2, &err2), 0,
-                   "parse layer 63");
-    soft_ruleset_free(rs2);
-
-    /* Layer 64 (out of range) */
-    soft_ruleset_t *rs3 = soft_ruleset_new();
-    int line3 = 0;
-    const char *err3 = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs3, "@64 PRECEDENCE\n/data/** -> R\n", &line3, &err3), -1,
-                   "layer 64 rejected");
-    soft_ruleset_free(rs3);
-
-    /* Negative layer */
-    soft_ruleset_t *rs4 = soft_ruleset_new();
-    int line4 = 0;
-    const char *err4 = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs4, "@-1 PRECEDENCE\n/data/** -> R\n", &line4, &err4), -1,
-                   "negative layer rejected");
-    soft_ruleset_free(rs4);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Round-trip: full features                                           */
-/* ------------------------------------------------------------------ */
-
-static void test_serializer_roundtrip_full(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Layer 0: PRECEDENCE with various features */
-    soft_ruleset_add_rule_at_layer(rs, 0, "${SRC}", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
-        SOFT_OP_COPY, "SRC", ".*cp$", 1000, SOFT_RULE_RECURSIVE);
-    soft_ruleset_add_rule_at_layer(rs, 0, "/tmp/...", SOFT_ACCESS_READ,
-        SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
-
-    /* Layer 1: SPECIFICITY */
-    soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
-    soft_ruleset_add_rule_at_layer(rs, 1, "/tmp/secret", SOFT_ACCESS_DENY,
-        SOFT_OP_READ, NULL, NULL, 0, 0);
-
-    /* Serialize */
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize full ruleset");
-    TEST_ASSERT(out_text != NULL, "serialized text is not NULL");
-    TEST_ASSERT(strstr(out_text, "PRECEDENCE") != NULL, "output contains PRECEDENCE");
-    TEST_ASSERT(strstr(out_text, "SPECIFICITY") != NULL, "output contains SPECIFICITY");
-
-    /* Parse back */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
+    /* Case 2: Subject with double quotes */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, ".*\\\"admin\\\"$", 1000, 0);
+    out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "subj: serialize quotes");
+    rs2 = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
-                   "parse serialized full ruleset");
-
-    /* Verify layer counts match */
-    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), soft_ruleset_layer_count(rs2),
-                   "layer count matches after round-trip");
-
-    /* Verify behavior matches for several queries */
-    soft_access_ctx_t ctx1 = {SOFT_OP_COPY, "/data/file.txt", "/tmp/out.txt", "/usr/bin/cp", 1000};
+                   "subj: parse quotes");
+    soft_access_ctx_t ctx1 = {SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/\\\"admin\\\"", 1000};
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx1, NULL),
                    soft_ruleset_check_ctx(rs2, &ctx1, NULL),
-                   "COPY query matches after round-trip");
-
-    soft_access_ctx_t ctx2 = {SOFT_OP_READ, "/tmp/secret", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL),
-                   soft_ruleset_check_ctx(rs2, &ctx2, NULL),
-                   "DENY query matches after round-trip");
-
+                   "subj: quotes round-trip matches");
     free(out_text);
     soft_ruleset_free(rs);
     soft_ruleset_free(rs2);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Edge cases: error handling                                         */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_macro_id_start_digit(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[1BIN] /usr/bin/**\n", &line, &err), -1,
-                   "macro ID starting with digit rejected");
-
+    /* Case 3: Subject with # character */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
+        SOFT_OP_READ, NULL, ".*admin#1$", 1000, 0);
+    out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "subj: serialize hash");
+    TEST_ASSERT(strstr(out_text, "\"") != NULL, "subj: hash output contains quotes");
+    rs2 = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
+                   "subj: parse hash");
+    soft_access_ctx_t ctx2 = {SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin#1", 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx2, NULL),
+                   "subj: hash round-trip matches");
+    free(out_text);
     soft_ruleset_free(rs);
-}
+    soft_ruleset_free(rs2);
 
-static void test_parser_unmatched_macro_ref(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[BIN] /usr/bin/**\n((BIN) -> R\n", &line, &err), -1,
-                   "unmatched (( in macro reference rejected");
-    TEST_ASSERT(line == 2, "error on line 2");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_invalid_layer_index(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@64 PRECEDENCE\n/data/** -> R\n", &line, &err), -1,
-                   "layer 64 rejected");
-    TEST_ASSERT(line == 1, "error on line 1");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Escaping and quoting                                                */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_subject_backslash(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Subject regex with backslash (needs quoting in serialization) */
+    /* Case 4: Subject with backslash */
+    rs = soft_ruleset_new();
     const char *subject_regex = ".*admin\\\\user$";
     soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
         SOFT_OP_READ, NULL, subject_regex, 1000, 0);
-
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize subject with backslash");
-
-    /* Verify the serialized output contains quotes */
-    int has_quote = 0;
-    for (const char *p = out_text; *p; p++) {
-        if (*p == '"') { has_quote = 1; break; }
-    }
-    TEST_ASSERT(has_quote, "output contains quotes for backslash");
-
-    /* Parse back and verify round-trip */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, &line, &err), 0,
-                   "parse serialized backslash subject");
-
-    /* Verify behavior matches */
-    const char *test_subject = "/usr/bin/admin\\\\user";
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, test_subject, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
-                   soft_ruleset_check_ctx(rs2, &ctx, NULL),
-                   "backslash subject round-trip produces same result");
-
-    free(out_text);
-    soft_ruleset_free(rs);
-    soft_ruleset_free(rs2);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Parsing edge cases                                                  */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_recursive_prefix(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* recursiveX should not match recursive */
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/... -> R recursiveX\n", &line, &err), -1,
-                   "recursiveX rejected as unknown token");
-    TEST_ASSERT(line == 1, "error on line 1");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_precedence_layer_mask_violation(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* PRECEDENCE layer mask R, but rule grants RW - should fail */
-    const char *text = "@0 PRECEDENCE:R\n/data/** -> RW\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "PRECEDENCE rule exceeding layer mask rejected");
-    TEST_ASSERT(line == 2, "error on line 2");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_precedence_layer_mask_ok(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* PRECEDENCE layer mask RW, rule grants RW - should succeed */
-    const char *text = "@0 PRECEDENCE:RW\n/data/** -> RW\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
-                   "PRECEDENCE rule within layer mask accepted");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_subject_hash_roundtrip(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Subject regex with # character */
-    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
-        SOFT_OP_READ, NULL, ".*admin#1$", 1000, 0);
-
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize subject with hash");
-
-    /* Verify the serialized output contains quotes */
-    int has_quote = 0;
-    for (const char *p = out_text; *p; p++) {
-        if (*p == '"') { has_quote = 1; break; }
-    }
-    TEST_ASSERT(has_quote, "output contains quotes for subject with hash");
-
-    /* Parse back and verify round-trip */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
+    out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "subj: serialize backslash");
+    TEST_ASSERT(strstr(out_text, "\"") != NULL, "subj: backslash output contains quotes");
+    rs2 = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
-                   "parse serialized subject with hash");
-
-    /* Verify behavior matches */
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin#1", 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
-                   soft_ruleset_check_ctx(rs2, &ctx, NULL),
-                   "subject with hash round-trip produces same result");
-
+                   "subj: parse backslash");
+    const char *test_subject = "/usr/bin/admin\\\\user";
+    soft_access_ctx_t ctx3 = {SOFT_OP_READ, "/data/file.txt", NULL, test_subject, 1000};
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx3, NULL),
+                   soft_ruleset_check_ctx(rs2, &ctx3, NULL),
+                   "subj: backslash round-trip matches");
     free(out_text);
     soft_ruleset_free(rs);
     soft_ruleset_free(rs2);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Cross-layer mask handling                                         */
+/*  Mode and operation type parsing                                    */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_explicit_layer_ignores_current_mask(void)
+static void test_parser_mode_and_operation_types(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
 
-    /* Current layer (implicit 0) has mask R, but explicit @1 rule grants RW
-     * Layer 1 has no mask, so RW should be accepted */
-    const char *text = "@0 PRECEDENCE:R\n@1 SPECIFICITY\n/data/** -> RW\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "explicit layer 1 rule ignores layer 0 mask");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_explicit_layer_respects_own_mask(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Explicit @1 rule with mask R, but grants RW -> should fail */
-    const char *text = "@1 SPECIFICITY:R\n@1 /data/** -> RW\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "explicit layer 1 rule respects layer 1 mask");
-    TEST_ASSERT(line == 2, "error on line 2");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_macro_id_with_underscore(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Macro ID starting with underscore is valid */
-    const char *text = "[_BIN] /usr/bin/**\n((_BIN)) -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "macro ID starting with underscore accepted");
-
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ, "underscore macro works");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_macro_id_with_digits_after_start(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Macro ID with digits after first char is valid */
-    const char *text = "[BIN1] /usr/bin/**\n((BIN1)) -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "macro ID with digits after start accepted");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_comment_after_rule(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Comment after a rule on same line */
-    const char *text = "/data/** -> R # this is a comment\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "comment after rule accepted");
-
+    /* Case 1: All mode characters uppercase — parse and verify access */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> RWXCU\n", &line, &err), 0,
+                   "mode: all uppercase chars accepted");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ, "rule with trailing comment works");
-
+                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC | SOFT_ACCESS_CREATE | SOFT_ACCESS_UNLINK,
+                   "mode: all modes granted");
     soft_ruleset_free(rs);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Circular macro detection                                            */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_circular_macro_reference(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Circular macro references: A -> B -> A */
-    const char *text = "[A] ((B))\n[B] ((A))\n((A)) -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "circular macro reference detected");
-    TEST_ASSERT(line == 3, "error on line 3");
-    TEST_ASSERT(err != NULL, "error message set");
-
+    /* Case 2: Lowercase mode chars */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> rwxcu\n", NULL, NULL), 0,
+                   "mode: lowercase chars accepted");
     soft_ruleset_free(rs);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Operation type validation                                           */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_unknown_operation_type(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Unknown operation type should be rejected */
-    const char *text = "/data/** -> R /readextra\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "unknown operation type rejected");
-    TEST_ASSERT(line == 1, "error on line 1");
-
+    /* Case 3: Mixed case mode chars */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> RwXcU\n", NULL, NULL), 0,
+                   "mode: mixed-case chars accepted");
     soft_ruleset_free(rs);
-}
 
-static void test_parser_all_valid_operation_types(void)
-{
+    /* Case 4: Invalid mode char rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> RZ\n", &line, &err), -1,
+                   "mode: invalid char rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 5: DENY alone */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/secret -> D\n", &line, &err), 0,
+                   "mode: DENY alone accepted");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/secret", NULL, NULL, 1000}, NULL),
+                   -13, "mode: DENY denies access");
+    soft_ruleset_free(rs);
+
+    /* Case 6: DENY with other modes still results in DENY */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> DRWX\n", &line, &err), 0,
+                   "mode: DENY with other modes accepted");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   -13, "mode: DENY with other modes still denies");
+    soft_ruleset_free(rs);
+
+    /* Case 7: All operation types accepted (lowercase, uppercase, mixed) */
     const char *ops[] = {"read", "write", "exec", "copy", "move", "link", "mount", "chmod", "custom", NULL};
+    const char *ops_upper[] = {"READ", "WRITE", "EXEC", "COPY", "MOVE", "LINK", "MOUNT", "CHMOD", "CUSTOM", NULL};
+    const char *ops_mixed[] = {"ReAd", "WrItE", "ExEc", "CoPy", "MoVe", "LiNk", "MoUnT", "ChMoD", "CuStOm", NULL};
 
     for (int i = 0; ops[i]; i++) {
-        soft_ruleset_t *rs = soft_ruleset_new();
-        char text[64];
-        snprintf(text, sizeof(text), "/data/** -> R /%s\n", ops[i]);
+        /* Lowercase */
+        rs = soft_ruleset_new();
+        char text1[64];
+        snprintf(text1, sizeof(text1), "/data/** -> R /%s\n", ops[i]);
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text1, NULL, NULL), 0,
+                       "op: lowercase accepted");
+        soft_ruleset_free(rs);
 
-        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
-                       "valid operation type");
+        /* Uppercase */
+        rs = soft_ruleset_new();
+        char text2[64];
+        snprintf(text2, sizeof(text2), "/data/** -> R /%s\n", ops_upper[i]);
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text2, NULL, NULL), 0,
+                       "op: uppercase accepted");
+        soft_ruleset_free(rs);
 
+        /* Mixed case */
+        rs = soft_ruleset_new();
+        char text3[64];
+        snprintf(text3, sizeof(text3), "/data/** -> R /%s\n", ops_mixed[i]);
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text3, NULL, NULL), 0,
+                       "op: mixed-case accepted");
         soft_ruleset_free(rs);
     }
 }
 
 /* ------------------------------------------------------------------ */
-/*  Precedence layer mask with explicit @N                            */
+/*  Layer and macro syntax edge cases                                 */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_precedence_explicit_layer_mask(void)
+static void test_parser_layer_macro_edge_cases(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
 
-    /* PRECEDENCE layer 0 with mask R, explicit @0 rule with RW -> should fail */
-    const char *text = "@0 PRECEDENCE:R\n@0 /data/** -> RW\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "PRECEDENCE explicit layer 0 rule respects layer 0 mask");
-    TEST_ASSERT(line == 2, "error on line 2");
+    /* Case 1: Layer boundary minimum (0) */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 PRECEDENCE\n/data/** -> R\n", &line, &err), 0,
+                   "edge: layer 0 accepted");
+    soft_ruleset_free(rs);
 
+    /* Case 2: Layer boundary maximum (63) */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@63 PRECEDENCE\n/data/** -> R\n", &line, &err), 0,
+                   "edge: layer 63 accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 3: Layer out of range (64) */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@64 PRECEDENCE\n/data/** -> R\n", &line, &err), -1,
+                   "edge: layer 64 rejected");
+    TEST_ASSERT(line == 1, "edge: error on line 1");
+    soft_ruleset_free(rs);
+
+    /* Case 4: Negative layer */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@-1 PRECEDENCE\n/data/** -> R\n", &line, &err), -1,
+                   "edge: negative layer rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 5: recursiveX should not match recursive */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/... -> R recursiveX\n", &line, &err), -1,
+                   "edge: recursiveX rejected");
+    TEST_ASSERT(line == 1, "edge: error on line 1");
+    soft_ruleset_free(rs);
+
+    /* Case 6: Macro ID starting with digit rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[1BIN] /usr/bin/**\n", &line, &err), -1,
+                   "edge: macro ID starting with digit rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 7: Unmatched macro reference rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[BIN] /usr/bin/**\n((BIN) -> R\n", &line, &err), -1,
+                   "edge: unmatched (( in macro reference rejected");
+    TEST_ASSERT(line == 2, "edge: error on line 2");
+    soft_ruleset_free(rs);
+
+    /* Case 8: @0 /PRECEDENCE -> R parses as rule with pattern /PRECEDENCE */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text1 = "@0 /PRECEDENCE -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text1, &line, &err), 0,
+                   "edge: pattern /PRECEDENCE accepted");
+    TEST_ASSERT_EQ(line, 0, "edge: no error");
+    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 1, "edge: layer 0 created");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 1, "edge: rule added");
+    soft_ruleset_free(rs);
+
+    /* Case 9: @0PRECEDENCE (no space) parsed as layer declaration */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text2 = "@0PRECEDENCE\n/data/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text2, &line, &err), 0,
+                   "edge: decl without space accepted");
     soft_ruleset_free(rs);
 }
 
-static void test_parser_precedence_explicit_layer_mask_ok(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* PRECEDENCE layer 0 with mask RW, explicit @0 rule with RW -> should succeed */
-    const char *text = "@0 PRECEDENCE:RW\n@0 /data/** -> RW\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
-                   "PRECEDENCE explicit layer 0 rule within mask");
-
-    soft_ruleset_free(rs);
-}
-
 /* ------------------------------------------------------------------ */
-/*  Nested macro expansion                                             */
+/*  Macro ID validation                                                */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_nested_macro_expansion(void)
+static void test_parser_macro_id_validation(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
 
-    /* Nested macros: BASE expands to /usr, BIN uses BASE macro */
-    const char *text = "[BASE] /usr\n[BIN] ((BASE))/bin/**\n((BIN)) -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "nested macro expansion works");
-
+    /* Macro ID starting with underscore is valid */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[_BIN] /usr/bin/**\n((_BIN)) -> R\n", &line, &err), 0,
+                   "macro ID starting with underscore accepted");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/usr/bin/gcc", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ, "nested macro expanded correctly");
-
+                   SOFT_ACCESS_READ, "underscore macro works");
     soft_ruleset_free(rs);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Subject regex with double quotes round-trip                        */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_subject_with_double_quotes_roundtrip(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Subject regex with double quotes */
-    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
-        SOFT_OP_READ, NULL, ".*\\\"admin\\\"$", 1000, 0);
-
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize subject with quotes");
-
-    /* Parse back and verify round-trip */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
-                   "parse serialized subject with quotes");
-
-    /* Verify behavior matches */
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/\\\"admin\\\"", 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
-                   soft_ruleset_check_ctx(rs2, &ctx, NULL),
-                   "subject with quotes round-trip produces same result");
-
-    free(out_text);
+    /* Macro ID with digits after first char is valid */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[BIN1] /usr/bin/**\n((BIN1)) -> R\n", &line, &err), 0,
+                   "macro ID with digits after start accepted");
     soft_ruleset_free(rs);
-    soft_ruleset_free(rs2);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Deep macro nesting                                                 */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_deep_macro_nesting(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Deep nesting: A->B->C->D->E->F (6 levels, should succeed) */
-    const char *text = "[A] ((B))/a\n[B] ((C))/b\n[C] ((D))/c\n[D] ((E))/d\n[E] ((F))/e\n[F] /base\n((A)) -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "deep macro nesting (6 levels) works");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Edge cases: layer declaration parsing                             */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_layer_decl_trailing_ws(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Layer declaration with trailing whitespace */
-    const char *text = "@0 PRECEDENCE  \n/data/** -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
-                   "layer decl with trailing whitespace");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_layer_mask_empty(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Layer mask with empty value should be rejected */
-    const char *text = "@0 SPECIFICITY:\n/data/** -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "empty layer mask rejected");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_layer_mask_deny_only(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Layer mask with only DENY: any rule with DENY should be accepted */
-    const char *text = "@0 SPECIFICITY:D\n/data/** -> D\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "DENY-only layer mask accepted");
-
-    /* But RW should fail */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    int line2 = 0;
-    const char *err2 = NULL;
-    const char *text2 = "@1 SPECIFICITY:D\n@1 /data/** -> RW\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text2, &line2, &err2), -1,
-                   "RW rule exceeds DENY-only mask");
-
-    soft_ruleset_free(rs);
-    soft_ruleset_free(rs2);
-}
-
-static void test_parser_layer_index_overflow(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Very large layer index should be rejected */
-    const char *text = "@99999999999999 PRECEDENCE\n/data/** -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "overflow layer index rejected");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Edge cases: rule parsing                                            */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_rule_no_mode_after_arrow(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* "->" followed by whitespace/newline with no mode */
-    const char *text = "/data/** -> \n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "empty mode after arrow rejected");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_mode_with_only_deny_and_other_chars(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Mode "DR" should be DENY (DENY overrides all) */
-    const char *text = "/data/** -> DR\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "DR mode accepted (DENY overrides)");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Edge cases: serialization                                           */
-/* ------------------------------------------------------------------ */
-
-static void test_serializer_deny_ruleset(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Ruleset with only DENY rules */
-    soft_ruleset_add_rule_at_layer(rs, 0, "/secret", SOFT_ACCESS_DENY,
-        SOFT_OP_READ, NULL, NULL, 0, 0);
-    soft_ruleset_add_rule_at_layer(rs, 0, "/forbidden/**", SOFT_ACCESS_DENY,
-        SOFT_OP_READ, NULL, NULL, 0, 0);
-
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize deny-only ruleset");
-    TEST_ASSERT(out_text != NULL, "serialized text not NULL");
-
-    /* Parse back */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
-                   "parse deny-only ruleset");
-
-    /* Verify behavior matches */
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/secret", NULL, NULL, 1000}, NULL),
-                   soft_ruleset_check_ctx(rs2,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/secret", NULL, NULL, 1000}, NULL),
-                   "deny rule round-trip matches");
-
-    free(out_text);
-    soft_ruleset_free(rs);
-    soft_ruleset_free(rs2);
-}
-
-static void test_serializer_empty_ruleset(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize empty ruleset");
-    TEST_ASSERT(out_text != NULL, "serialized empty text not NULL");
-
-    /* Parse back - should still be empty */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
-                   "parse empty text");
-    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs2), 0, "parsed empty ruleset has 0 rules");
-
-    free(out_text);
-    soft_ruleset_free(rs);
-    soft_ruleset_free(rs2);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Edge cases: file I/O                                               */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_file_io_error(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Parse non-existent file */
-    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, "/nonexistent/path/file.txt", &line, &err), -1,
-                   "non-existent file rejected");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Ambiguous patterns that look like layer types                     */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_at_layer_with_pattern_looking_like_type(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* @0 /PRECEDENCE -> R should parse as rule with pattern /PRECEDENCE,
-     * not as layer declaration (pattern starts with /, not P) */
-    const char *text = "@0 /PRECEDENCE -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "rule with pattern /PRECEDENCE accepted");
-    TEST_ASSERT_EQ(line, 0, "no error");
-
-    /* Verify the rule was added to layer 0 */
-    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 1, "layer 0 created");
-    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 1, "rule added");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_layer_decl_no_space(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* @0PRECEDENCE (no space) should be parsed as layer declaration */
-    const char *text = "@0PRECEDENCE\n/data/** -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "layer decl without space accepted");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  File I/O edge cases                                                */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_file_io_empty_file(void)
-{
-    const char *test_file = "/tmp/test_empty_policy.txt";
-
-    /* Create empty file */
-    FILE *f = fopen(test_file, "w");
-    TEST_ASSERT(f != NULL, "create empty file");
-    fclose(f);
-
-    /* Parse empty file */
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, test_file, &line, &err), 0,
-                   "parse empty file");
-    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "no rules from empty file");
-
-    soft_ruleset_free(rs);
-    unlink(test_file);
-}
-
-static void test_parser_file_io_whitespace_only(void)
-{
-    const char *test_file = "/tmp/test_ws_policy.txt";
-
-    /* Create file with only whitespace */
-    FILE *f = fopen(test_file, "w");
-    TEST_ASSERT(f != NULL, "create whitespace file");
-    fprintf(f, "   \n  \n\t\n");
-    fclose(f);
-
-    /* Parse whitespace-only file */
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, test_file, &line, &err), 0,
-                   "parse whitespace-only file");
-    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "no rules from whitespace");
-
-    soft_ruleset_free(rs);
-    unlink(test_file);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Macro expansion edge cases                                         */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_macro_expands_to_empty(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Macro with whitespace-only pattern should be rejected */
-    const char *text = "[EMPTY] \n((EMPTY)) -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "macro with whitespace-only pattern rejected");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_macro_id_max_length(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
 
     /* Macro ID at max length (63 chars) */
-    char id[64];
-    memset(id, 'a', 63);
-    id[63] = '\0';
-    char text[200];
-    snprintf(text, sizeof(text), "[%s] /data/**\n((%s)) -> R\n", id, id);
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    char id63[64];
+    memset(id63, 'a', 63);
+    id63[63] = '\0';
+    char text63[200];
+    snprintf(text63, sizeof(text63), "[%s] /data/**\n((%s)) -> R\n", id63, id63);
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text63, &line, &err), 0,
                    "macro ID at max length accepted");
-
     soft_ruleset_free(rs);
-}
-
-static void test_parser_macro_id_too_long(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
 
     /* Macro ID too long (64 chars) */
-    char id[65];
-    memset(id, 'a', 64);
-    id[64] = '\0';
-    char text[200];
-    snprintf(text, sizeof(text), "[%s] /data/**\n", id);
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    char id64[65];
+    memset(id64, 'a', 64);
+    id64[64] = '\0';
+    char text64[200];
+    snprintf(text64, sizeof(text64), "[%s] /data/**\n", id64);
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text64, &line, &err), -1,
                    "macro ID too long rejected");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Operation type edge cases                                          */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_operation_type_case_insensitive(void)
-{
-    const char *ops_lower[] = {"read", "write", "exec", "copy", "move", "link", "mount", "chmod", "custom", NULL};
-    const char *ops_upper[] = {"READ", "WRITE", "EXEC", "COPY", "MOVE", "LINK", "MOUNT", "CHMOD", "CUSTOM", NULL};
-    const char *ops_mixed[] = {"ReAd", "WrItE", "ExEc", "CoPy", "MoVe", "LiNk", "MoUnT", "ChMoD", "CuStOm", NULL};
-
-    for (int i = 0; ops_lower[i]; i++) {
-        /* Lower case */
-        soft_ruleset_t *rs1 = soft_ruleset_new();
-        char text1[64];
-        snprintf(text1, sizeof(text1), "/data/** -> R /%s\n", ops_lower[i]);
-        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs1, text1, NULL, NULL), 0,
-                       "lowercase operation type");
-        soft_ruleset_free(rs1);
-
-        /* Upper case */
-        soft_ruleset_t *rs2 = soft_ruleset_new();
-        char text2[64];
-        snprintf(text2, sizeof(text2), "/data/** -> R /%s\n", ops_upper[i]);
-        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, text2, NULL, NULL), 0,
-                       "uppercase operation type");
-        soft_ruleset_free(rs2);
-
-        /* Mixed case */
-        soft_ruleset_t *rs3 = soft_ruleset_new();
-        char text3[64];
-        snprintf(text3, sizeof(text3), "/data/** -> R /%s\n", ops_mixed[i]);
-        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs3, text3, NULL, NULL), 0,
-                       "mixed-case operation type");
-        soft_ruleset_free(rs3);
-    }
-}
-
-/* ------------------------------------------------------------------ */
-/*  Subject regex edge cases                                           */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_subject_empty_quoted_string(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Empty quoted subject regex should be rejected */
-    const char *text = "/data/** -> R subject:\"\"\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "empty quoted subject regex rejected");
     TEST_ASSERT(line == 1, "error on line 1");
-
     soft_ruleset_free(rs);
-}
 
-static void test_parser_subject_unquoted_with_spaces(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Unquoted subject with spaces: only first word is captured */
-    const char *text = "/data/** -> R subject:.*admin$\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "unquoted subject without spaces accepted");
-
+    /* Macro ID starting with digit is rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[1BIN] /usr/bin/**\n", &line, &err), -1,
+                   "macro ID starting with digit rejected");
+    TEST_ASSERT(line == 1, "error on line 1");
     soft_ruleset_free(rs);
-}
 
-/* ------------------------------------------------------------------ */
-/*  UID edge cases                                                     */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_uid_zero(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* UID 0 should be accepted (no restriction) */
-    const char *text = "/data/** -> R uid:0\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "uid:0 accepted");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_uid_negative(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Negative UID should be rejected */
-    const char *text = "/data/** -> R uid:-1\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "negative uid rejected");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_uid_overflow(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Very large UID should be rejected */
-    const char *text = "/data/** -> R uid:99999999999999\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "overflow uid rejected");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_uid_non_numeric(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Non-numeric UID should be rejected */
-    const char *text = "/data/** -> R uid:abc\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "non-numeric uid rejected");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Pattern edge cases                                                  */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_pattern_with_hash(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Pattern with # in the middle should be accepted */
-    const char *text = "/data/#temp/** -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "pattern with # in middle accepted");
-
-    /* Verify the rule works */
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/#temp/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ, "rule with # in pattern matches");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_pattern_with_spaces(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Pattern with spaces (quoted) */
-    const char *text = "\"/path/with spaces/**\" -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "quoted pattern with spaces accepted");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Mode edge cases                                                     */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_mode_deny_with_other_modes(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* DENY with other modes should still be DENY */
-    const char *text = "/data/** -> DRWX\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "DENY with other modes accepted as DENY");
-
-    /* Verify it's actually DENY */
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   -13, "DENY mode denies access");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_mode_all_chars(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* All mode characters */
-    const char *text = "/data/** -> RWXCU\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "all mode chars accepted");
-
-    /* Verify all modes are granted */
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC | SOFT_ACCESS_CREATE | SOFT_ACCESS_UNLINK,
-                   "all modes granted");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_mode_all_lowercase(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* All mode chars in lowercase */
-    const char *text = "/data/** -> rwxcu\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "lowercase mode chars accepted");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_mode_mixed_case(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Mixed case mode chars */
-    const char *text = "/data/** -> RwXcU\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "mixed-case mode chars accepted");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_mode_invalid_char(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Invalid mode char */
-    const char *text = "/data/** -> RZ\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "invalid mode char rejected");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  File I/O edge cases                                                 */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_file_io_null_path(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, NULL, &line, &err), -1,
-                   "NULL path rejected");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  API edge cases                                                      */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_write_null_rs(void)
-{
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(NULL, &out_text), -1,
-                   "NULL ruleset rejected");
-    TEST_ASSERT(out_text == NULL, "no output for NULL ruleset");
-}
-
-static void test_parser_write_null_out(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, NULL), -1,
-                   "NULL output pointer rejected");
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_write_file_null_path(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_write_file(rs, NULL), -1,
-                   "NULL path rejected");
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Runner                                                              */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/*  Runner                                                              */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/*  Runner                                                              */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/*  Runner                                                              */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/*  Runner                                                              */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/*  Runner                                                              */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/*  Runner                                                              */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/*  Runner                                                              */
-/* ------------------------------------------------------------------ */
-
-/* ------------------------------------------------------------------ */
-/*  Layer mask validation                                               */
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_layer_mask_violation(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Layer mask R, but rule grants RW - should fail */
-    const char *text = "@1 SPECIFICITY:R\n/data/** -> RW\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "rule exceeding layer mask rejected");
-    TEST_ASSERT(line == 2, "error on line 2");
-    TEST_ASSERT(err != NULL, "error message set");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_layer_mask_ok(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Layer mask R, rule grants R → should succeed */
-    const char *text = "@1 SPECIFICITY:R\n/data/** -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
-                   "rule within layer mask accepted");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Escaping edge cases                                                 */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_subject_with_quotes(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Subject regex with quotes */
-    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
-        SOFT_OP_READ, NULL, ".*\\\"admin\\\"$", 1000, 0);
-
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize subject with quotes");
-
-    /* Parse back and verify round-trip */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
-                   "parse serialized subject with quotes");
-
-    /* Verify behavior matches */
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/\\\"admin\\\"", 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL),
-                   soft_ruleset_check_ctx(rs2, &ctx, NULL),
-                   "subject with quotes round-trip produces same result");
-
-    free(out_text);
-    soft_ruleset_free(rs);
-    soft_ruleset_free(rs2);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Whitespace and formatting                                           */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_extra_whitespace(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* Extra whitespace between tokens */
-    const char *text = "/data/**   ->   R   /read   subject:.*cp$   uid:1000   recursive\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "extra whitespace between tokens");
-
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/cp", 1000}, NULL),
-                   SOFT_ACCESS_READ, "rule with extra whitespace works");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_empty_macro_id(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
+    /* Empty macro ID is rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[] /data/**\n", &line, &err), -1,
                    "empty macro ID rejected");
     TEST_ASSERT(line == 1, "error on line 1");
+    soft_ruleset_free(rs);
+}
 
+/* ------------------------------------------------------------------ */
+/*  Parsing edge cases: syntax errors, comments, whitespace, modes     */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_parsing_edge_cases(void)
+{
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
+
+    /* Syntax errors */
+
+    /* Case 1: Missing '->' separator rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** R\n", &line, &err), -1,
+                   "syntax: missing arrow rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 2: Invalid mode character rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> Z\n", &line, &err), -1,
+                   "syntax: invalid mode rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 3: Unknown layer type rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "@0 UNKNOWN\n", &line, &err), -1,
+                   "syntax: unknown layer type rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 4: Undefined macro reference rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "((UNDEFINED)) -> R\n", &line, &err), -1,
+                   "syntax: undefined macro rejected");
+    TEST_ASSERT(line != 0, "syntax: error line set");
+    soft_ruleset_free(rs);
+
+    /* Case 5: Circular macro reference detected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[A] ((B))\n[B] ((A))\n((A)) -> R\n", &line, &err), -1,
+                   "syntax: circular reference detected");
+    TEST_ASSERT(line == 3, "syntax: error on line 3");
+    TEST_ASSERT(err != NULL, "syntax: error message set");
+    soft_ruleset_free(rs);
+
+    /* Case 6: Macro with whitespace-only pattern rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "[EMPTY] \n((EMPTY)) -> R\n", &line, &err), -1,
+                   "syntax: whitespace-only pattern rejected");
+    soft_ruleset_free(rs);
+
+    /* Valid edge cases */
+
+    /* Case 7: Comment after rule accepted */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text1 = "/data/** -> R # this is a comment\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text1, &line, &err), 0,
+                   "edge: comment after rule accepted");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "edge: rule with comment works");
+    soft_ruleset_free(rs);
+
+    /* Case 8: Extra whitespace between tokens accepted */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text2 = "/data/**   ->   R   /read   subject:.*cp$   uid:1000   recursive\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text2, &line, &err), 0,
+                   "edge: extra whitespace accepted");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/cp", 1000}, NULL),
+                   SOFT_ACCESS_READ, "edge: rule with extra whitespace works");
+    soft_ruleset_free(rs);
+
+    /* Case 9: Unknown operation type rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text3 = "/data/** -> R /readextra\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text3, &line, &err), -1,
+                   "edge: unknown operation rejected");
+    TEST_ASSERT(line == 1, "edge: error on line 1");
+    soft_ruleset_free(rs);
+
+    /* Case 10: Layer declaration with trailing whitespace */
+    rs = soft_ruleset_new();
+    const char *text4 = "@0 PRECEDENCE  \n/data/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text4, NULL, NULL), 0,
+                   "edge: layer decl with trailing whitespace");
+    soft_ruleset_free(rs);
+
+    /* Case 11: DENY mode with other characters (DENY overrides) */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text5 = "/data/** -> DR\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text5, &line, &err), 0,
+                   "edge: DR mode accepted (DENY overrides)");
+    soft_ruleset_free(rs);
+
+    /* Case 12: Empty mode after arrow rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text6 = "/data/** -> \n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text6, &line, &err), -1,
+                   "edge: empty mode after arrow rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 13: Empty string parsed successfully */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "", NULL, NULL), 0,
+                   "edge: empty string accepted");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "edge: no rules from empty");
+    soft_ruleset_free(rs);
+
+    /* Case 14: Whitespace-only parsed successfully */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "   \n  \n\t\n", NULL, NULL), 0,
+                   "edge: whitespace only accepted");
+    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 0, "edge: no rules from whitespace");
+    soft_ruleset_free(rs);
+
+    /* Case 15: NULL input rejected */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, NULL, NULL, NULL), -1,
+                   "edge: NULL input rejected");
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Constraint edge cases: subject, UID, pattern                      */
+/* ------------------------------------------------------------------ */
+
+static void test_parser_constraint_edge_cases(void)
+{
+    soft_ruleset_t *rs;
+    int line;
+    const char *err;
+
+    /* Case 1: Subject and UID constraints — parse and verify */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text0 =
+        "/data/** -> R /read subject:.*admin$ uid:1000\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text0, &line, &err), 0,
+                   "constraint: subject and uid parsed");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 1000}, NULL),
+                   SOFT_ACCESS_READ, "constraint: matching subject and UID allowed");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/user", 1000}, NULL),
+                   -13, "constraint: non-matching subject denied");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 500}, NULL),
+                   -13, "constraint: low UID denied");
+    soft_ruleset_free(rs);
+
+    /* Case 2: Empty quoted subject regex rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text1 = "/data/** -> R subject:\"\"\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text1, &line, &err), -1,
+                   "constraint: empty quoted subject rejected");
+    TEST_ASSERT(line == 1, "constraint: error on line 1");
+    soft_ruleset_free(rs);
+
+    /* Case 3: Unquoted subject without spaces accepted */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text2 = "/data/** -> R subject:.*admin$\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text2, &line, &err), 0,
+                   "constraint: unquoted subject accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 4: UID 0 accepted */
+    rs = soft_ruleset_new();
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> R uid:0\n", NULL, NULL), 0,
+                   "constraint: uid:0 accepted");
+    soft_ruleset_free(rs);
+
+    /* Case 5: Negative UID rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> R uid:-1\n", &line, &err), -1,
+                   "constraint: negative uid rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 6: Overflow UID rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> R uid:99999999999999\n", &line, &err), -1,
+                   "constraint: overflow uid rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 7: Non-numeric UID rejected */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, "/data/** -> R uid:abc\n", &line, &err), -1,
+                   "constraint: non-numeric uid rejected");
+    soft_ruleset_free(rs);
+
+    /* Case 8: Pattern with # in the middle accepted */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text3 = "/data/#temp/** -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text3, &line, &err), 0,
+                   "constraint: # in pattern accepted");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
+                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/#temp/file.txt", NULL, NULL, 1000}, NULL),
+                   SOFT_ACCESS_READ, "constraint: rule with # matches");
+    soft_ruleset_free(rs);
+
+    /* Case 9: Pattern with spaces (quoted) accepted */
+    rs = soft_ruleset_new();
+    line = 0; err = NULL;
+    const char *text4 = "\"/path/with spaces/**\" -> R\n";
+    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text4, &line, &err), 0,
+                   "constraint: quoted pattern with spaces accepted");
     soft_ruleset_free(rs);
 }
 
@@ -1802,144 +1062,46 @@ static void test_parser_empty_macro_id(void)
 /*  API NULL argument handling                                          */
 /* ------------------------------------------------------------------ */
 
-static void test_parser_api_null_arguments(void)
+static void test_parser_null_arguments(void)
 {
     soft_ruleset_t *rs;
-    char *out;
+    char *out_text;
+    int line;
+    const char *err;
 
-    /* soft_ruleset_parse_text */
+    /* soft_ruleset_parse_text NULL args */
     TEST_ASSERT_EQ(soft_ruleset_parse_text(NULL, "/data/** -> R\n", NULL, NULL), -1,
-                   "parse_text NULL rs rejected");
+                   "null: parse_text NULL rs rejected");
     rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, NULL, NULL, NULL), -1,
-                   "parse_text NULL text rejected");
+                   "null: parse_text NULL text rejected");
     soft_ruleset_free(rs);
 
-    /* soft_ruleset_parse_file */
+    /* soft_ruleset_parse_file NULL args */
     rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_file(rs, NULL, NULL, NULL), -1,
-                   "parse_file NULL path rejected");
+                   "null: parse_file NULL path rejected");
     TEST_ASSERT_EQ(soft_ruleset_parse_file(NULL, "/tmp/test.txt", NULL, NULL), -1,
-                   "parse_file NULL rs rejected");
+                   "null: parse_file NULL rs rejected");
     soft_ruleset_free(rs);
 
-    /* soft_ruleset_write_text */
-    TEST_ASSERT_EQ(soft_ruleset_write_text(NULL, &out), -1,
-                   "write_text NULL rs rejected");
-    out = NULL;
+    /* soft_ruleset_write_text NULL args */
+    out_text = NULL;
+    TEST_ASSERT_EQ(soft_ruleset_write_text(NULL, &out_text), -1,
+                   "null: write_text NULL rs rejected");
+    TEST_ASSERT(out_text == NULL, "null: no output for NULL rs");
     rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_write_text(rs, NULL), -1,
-                   "write_text NULL out rejected");
+                   "null: write_text NULL out rejected");
     soft_ruleset_free(rs);
 
-    /* soft_ruleset_write_file */
+    /* soft_ruleset_write_file NULL args */
     rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_write_file(rs, NULL), -1,
-                   "write_file NULL path rejected");
+                   "null: write_file NULL path rejected");
     TEST_ASSERT_EQ(soft_ruleset_write_file(NULL, "/tmp/test.txt"), -1,
-                   "write_file NULL rs rejected");
+                   "null: write_file NULL rs rejected");
     soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Layer mask edge cases                                              */
-/* ------------------------------------------------------------------ */
-
-static void test_parser_deny_rule_with_read_mask(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* DENY mode should exceed R mask */
-    const char *text = "@0 SPECIFICITY:R\n/data/** -> D\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), -1,
-                   "DENY rule with R mask rejected");
-    TEST_ASSERT(line == 2, "error on line 2");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_deny_rule_with_deny_mask(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* DENY mode should match D mask */
-    const char *text = "@0 SPECIFICITY:D\n/data/** -> D\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, NULL, NULL), 0,
-                   "DENY rule with D mask accepted");
-
-    soft_ruleset_free(rs);
-}
-
-static void test_parser_rule_on_undeclared_layer(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-    int line = 0;
-    const char *err = NULL;
-
-    /* @5 should create layer 5 automatically */
-    const char *text = "@5 /data/** -> R\n";
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, text, &line, &err), 0,
-                   "rule on undeclared layer 5 accepted");
-    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs), 6, "6 layers created (0-5)");
-    TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 1, "1 rule added");
-
-    /* Verify the rule works */
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
-                   &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000}, NULL),
-                   SOFT_ACCESS_READ, "rule on layer 5 works");
-
-    soft_ruleset_free(rs);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Serialization round-trip with complex setup                        */
-/* ------------------------------------------------------------------ */
-
-static void test_serializer_roundtrip_with_masks(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Layer 0: PRECEDENCE with mask RW */
-    soft_ruleset_set_layer_type(rs, 0, LAYER_PRECEDENCE, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE);
-    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
-        SOFT_OP_COPY, NULL, NULL, 0, 0);
-
-    /* Layer 1: SPECIFICITY with no mask */
-    soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
-    soft_ruleset_add_rule_at_layer(rs, 1, "/secret", SOFT_ACCESS_DENY,
-        SOFT_OP_READ, NULL, NULL, 0, 0);
-
-    char *out_text = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_write_text(rs, &out_text), 0, "serialize ruleset with masks");
-    TEST_ASSERT(out_text != NULL, "serialized text not NULL");
-
-    /* Verify the output contains mask information */
-    TEST_ASSERT(strstr(out_text, ":") != NULL, "output contains mask separator");
-
-    /* Parse back */
-    soft_ruleset_t *rs2 = soft_ruleset_new();
-    TEST_ASSERT_EQ(soft_ruleset_parse_text(rs2, out_text, NULL, NULL), 0,
-                   "parse serialized ruleset with masks");
-
-    /* Verify layer count matches */
-    TEST_ASSERT_EQ(soft_ruleset_layer_count(rs2), 2, "2 layers after round-trip");
-
-    /* Verify behavior matches */
-    soft_access_ctx_t ctx1 = {SOFT_OP_COPY, "/data/file.txt", "/tmp/out.txt", NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx1, NULL),
-                   soft_ruleset_check_ctx(rs2, &ctx1, NULL),
-                   "COPY rule round-trip matches");
-
-    soft_access_ctx_t ctx2 = {SOFT_OP_READ, "/secret", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx2, NULL),
-                   soft_ruleset_check_ctx(rs2, &ctx2, NULL),
-                   "DENY rule round-trip matches");
-
-    free(out_text);
-    soft_ruleset_free(rs);
-    soft_ruleset_free(rs2);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1952,94 +1114,17 @@ static void test_serializer_roundtrip_with_masks(void)
 void test_rule_engine_parser_run(void)
 {
     printf("=== Policy Parser Tests ===\n");
-    RUN_TEST(test_parser_basic_rule);
-    RUN_TEST(test_parser_comments_and_blanks);
-    RUN_TEST(test_parser_layer_decl);
+    RUN_TEST(test_parser_basic_rules);
+    RUN_TEST(test_parser_layer_declaration);
     RUN_TEST(test_parser_layer_mask);
-    RUN_TEST(test_parser_implicit_layer);
-    RUN_TEST(test_parser_macro_def);
-    RUN_TEST(test_parser_macro_undefined);
-    RUN_TEST(test_parser_subject_and_uid);
-    RUN_TEST(test_parser_missing_arrow);
-    RUN_TEST(test_parser_invalid_mode);
-    RUN_TEST(test_parser_invalid_layer_type);
-    RUN_TEST(test_serializer_basic);
-    RUN_TEST(test_serializer_layered);
-    RUN_TEST(test_serializer_subject_and_uid);
+    RUN_TEST(test_parser_macros);
+    RUN_TEST(test_serializer_roundtrip);
     RUN_TEST(test_parser_file_io);
-    RUN_TEST(test_parser_quoted_subject);
-    RUN_TEST(test_parser_empty_input);
-    RUN_TEST(test_parser_macro_nested);
-    RUN_TEST(test_parser_macro_multiple_uses);
-    RUN_TEST(test_parser_all_modes);
-    RUN_TEST(test_parser_deny_mode);
-    RUN_TEST(test_parser_lowercase_modes);
-    RUN_TEST(test_parser_all_operations);
-    RUN_TEST(test_parser_layer_boundaries);
-    RUN_TEST(test_parser_empty_macro_id);
-    RUN_TEST(test_parser_macro_id_start_digit);
-    RUN_TEST(test_parser_unmatched_macro_ref);
-    RUN_TEST(test_parser_invalid_layer_index);
-    RUN_TEST(test_parser_subject_backslash);
-    RUN_TEST(test_parser_layer_mask_violation);
-    RUN_TEST(test_parser_layer_mask_ok);
-    RUN_TEST(test_parser_subject_with_quotes);
-    RUN_TEST(test_parser_extra_whitespace);
-        RUN_TEST(test_parser_recursive_prefix);
-        RUN_TEST(test_parser_precedence_layer_mask_violation);
-        RUN_TEST(test_parser_precedence_layer_mask_ok);
-        RUN_TEST(test_parser_subject_hash_roundtrip);
-        RUN_TEST(test_parser_explicit_layer_ignores_current_mask);
-        RUN_TEST(test_parser_explicit_layer_respects_own_mask);
-        RUN_TEST(test_parser_macro_id_with_underscore);
-        RUN_TEST(test_parser_macro_id_with_digits_after_start);
-        RUN_TEST(test_parser_comment_after_rule);
-        RUN_TEST(test_parser_circular_macro_reference);
-        RUN_TEST(test_parser_unknown_operation_type);
-        RUN_TEST(test_parser_all_valid_operation_types);
-        RUN_TEST(test_parser_precedence_explicit_layer_mask);
-        RUN_TEST(test_parser_precedence_explicit_layer_mask_ok);
-        RUN_TEST(test_parser_nested_macro_expansion);
-        RUN_TEST(test_parser_subject_with_double_quotes_roundtrip);
-        RUN_TEST(test_parser_deep_macro_nesting);
-        RUN_TEST(test_parser_layer_decl_trailing_ws);
-        RUN_TEST(test_parser_layer_mask_empty);
-        RUN_TEST(test_parser_layer_mask_deny_only);
-        RUN_TEST(test_parser_layer_index_overflow);
-        RUN_TEST(test_parser_rule_no_mode_after_arrow);
-        RUN_TEST(test_parser_mode_with_only_deny_and_other_chars);
-        RUN_TEST(test_serializer_deny_ruleset);
-        RUN_TEST(test_serializer_empty_ruleset);
-        RUN_TEST(test_parser_file_io_error);
-        RUN_TEST(test_parser_at_layer_with_pattern_looking_like_type);
-        RUN_TEST(test_parser_layer_decl_no_space);
-        RUN_TEST(test_parser_file_io_empty_file);
-        RUN_TEST(test_parser_file_io_whitespace_only);
-        RUN_TEST(test_parser_macro_expands_to_empty);
-        RUN_TEST(test_parser_macro_id_max_length);
-        RUN_TEST(test_parser_macro_id_too_long);
-        RUN_TEST(test_parser_operation_type_case_insensitive);
-        RUN_TEST(test_parser_subject_empty_quoted_string);
-        RUN_TEST(test_parser_subject_unquoted_with_spaces);
-        RUN_TEST(test_parser_uid_zero);
-        RUN_TEST(test_parser_uid_negative);
-        RUN_TEST(test_parser_uid_overflow);
-        RUN_TEST(test_parser_uid_non_numeric);
-        RUN_TEST(test_parser_pattern_with_hash);
-        RUN_TEST(test_parser_pattern_with_spaces);
-        RUN_TEST(test_parser_mode_deny_with_other_modes);
-        RUN_TEST(test_parser_mode_all_chars);
-        RUN_TEST(test_parser_mode_all_lowercase);
-        RUN_TEST(test_parser_mode_mixed_case);
-        RUN_TEST(test_parser_mode_invalid_char);
-        RUN_TEST(test_parser_file_io_null_path);
-        RUN_TEST(test_parser_write_null_rs);
-        RUN_TEST(test_parser_write_null_out);
-        RUN_TEST(test_parser_write_file_null_path);
-    RUN_TEST(test_parser_api_null_arguments);
-        RUN_TEST(test_parser_deny_rule_with_read_mask);
-        RUN_TEST(test_parser_deny_rule_with_deny_mask);
-        RUN_TEST(test_parser_rule_on_undeclared_layer);
-        RUN_TEST(test_serializer_roundtrip_with_masks);
-    RUN_TEST(test_serializer_roundtrip_full);
+    RUN_TEST(test_parser_subject_roundtrip);
+    RUN_TEST(test_parser_mode_and_operation_types);
+    RUN_TEST(test_parser_layer_macro_edge_cases);
+    RUN_TEST(test_parser_parsing_edge_cases);
+    RUN_TEST(test_parser_macro_id_validation);
+    RUN_TEST(test_parser_constraint_edge_cases);
+    RUN_TEST(test_parser_null_arguments);
 }

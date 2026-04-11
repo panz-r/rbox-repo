@@ -15,62 +15,81 @@
 #include <fcntl.h>
 
 /* ------------------------------------------------------------------ */
-/*  Save on unprepared builder                                         */
+/*  Builder lifecycle edge cases: save unprepared, invalid ABI, LL_FS_ALL */
 /* ------------------------------------------------------------------ */
 
-static void test_save_unprepared(void)
+static void test_builder_lifecycle_edge_cases(void)
 {
+    landlock_builder_t *b;
+
+    /* Case 1: Save on unprepared builder must fail */
     mock_fs_reset();
     mock_fs_create_dir("/data");
-
-    landlock_builder_t *b = landlock_builder_new();
+    b = landlock_builder_new();
     landlock_builder_allow(b, "/data", 7);
-    /* NOT calling prepare() */
+    TEST_ASSERT_EQ(landlock_builder_save(b, "/tmp/unprepared.json"), -1,
+                   "save on unprepared builder fails");
+    landlock_builder_free(b);
 
-    int ret = landlock_builder_save(b, "/tmp/unprepared.json");
-    TEST_ASSERT_EQ(ret, -1, "save on unprepared builder fails");
+    /* Case 2: Prepare with invalid ABI versions must fail */
+    mock_fs_reset();
+    mock_fs_create_dir("/data");
+    b = landlock_builder_new();
+    landlock_builder_allow(b, "/data", 7);
+    TEST_ASSERT_EQ(landlock_builder_prepare(b, 0, false), -1,
+                   "prepare ABI 0 fails");
+    TEST_ASSERT_EQ(landlock_builder_prepare(b, -1, false), -1,
+                   "prepare ABI -1 fails");
+    TEST_ASSERT_EQ(landlock_builder_prepare(b, 99, false), -1,
+                   "prepare ABI 99 fails");
+    landlock_builder_free(b);
 
+    /* Case 3: Allow with LL_FS_ALL gets masked to ABI v4 */
+    mock_fs_reset();
+    mock_fs_create_dir("/data");
+    b = landlock_builder_new();
+    landlock_builder_allow(b, "/data", LL_FS_ALL);
+    landlock_builder_prepare(b, 4, false);
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    TEST_ASSERT_EQ(count, 1, "one rule");
+    uint64_t expected = landlock_abi_mask(4);
+    TEST_ASSERT_EQ(rules[0].access, expected, "access masked to ABI v4");
     landlock_builder_free(b);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Load empty file                                                    */
+/*  Load failures: empty, nonexistent, malformed                        */
 /* ------------------------------------------------------------------ */
 
-static void test_load_empty_file(void)
+static void test_load_failures(void)
 {
+    landlock_builder_t *b;
+
+    /* Case 1: Empty file */
     FILE *f = fopen("/tmp/empty.json", "w");
     if (f) fclose(f);
-
-    landlock_builder_t *b = landlock_builder_new();
-    int ret = landlock_builder_load(b, "/tmp/empty.json");
-    TEST_ASSERT_EQ(ret, -1, "load empty file fails");
-
+    b = landlock_builder_new();
+    TEST_ASSERT_EQ(landlock_builder_load(b, "/tmp/empty.json"), -1,
+                   "load empty file fails");
     landlock_builder_free(b);
     remove("/tmp/empty.json");
-}
 
-static void test_load_nonexistent(void)
-{
-    landlock_builder_t *b = landlock_builder_new();
-    int ret = landlock_builder_load(b, "/nonexistent/path.json");
-    TEST_ASSERT_EQ(ret, -1, "load nonexistent file fails");
+    /* Case 2: Nonexistent file */
+    b = landlock_builder_new();
+    TEST_ASSERT_EQ(landlock_builder_load(b, "/nonexistent/path.json"), -1,
+                   "load nonexistent file fails");
     landlock_builder_free(b);
-}
 
-static void test_load_malformed_json(void)
-{
-    /* Write JSON missing the abi_version key — parser must fail */
-    FILE *f = fopen("/tmp/malformed.json", "w");
+    /* Case 3: Malformed JSON (missing abi_version key) */
+    f = fopen("/tmp/malformed.json", "w");
     if (f) {
         fprintf(f, "{ \"rules\": [] }");
         fclose(f);
     }
-
-    landlock_builder_t *b = landlock_builder_new();
-    int ret = landlock_builder_load(b, "/tmp/malformed.json");
-    TEST_ASSERT_EQ(ret, -1, "JSON without abi_version rejected");
-
+    b = landlock_builder_new();
+    TEST_ASSERT_EQ(landlock_builder_load(b, "/tmp/malformed.json"), -1,
+                   "JSON without abi_version rejected");
     landlock_builder_free(b);
     remove("/tmp/malformed.json");
 }
@@ -115,78 +134,26 @@ static void test_open_fd_with_flags(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Prepare with ABI version 0 and > LANDLOCK_ABI_MAX                  */
+/*  VFS path classification                                             */
 /* ------------------------------------------------------------------ */
 
-static void test_prepare_invalid_abi(void)
+static void test_vfs_path_classification(void)
 {
-    mock_fs_reset();
-    mock_fs_create_dir("/data");
-
-    landlock_builder_t *b = landlock_builder_new();
-    landlock_builder_allow(b, "/data", 7);
-
-    TEST_ASSERT_EQ(landlock_builder_prepare(b, 0, false), -1,
-                   "prepare ABI 0 fails");
-    TEST_ASSERT_EQ(landlock_builder_prepare(b, -1, false), -1,
-                   "prepare ABI -1 fails");
-    TEST_ASSERT_EQ(landlock_builder_prepare(b, 99, false), -1,
-                   "prepare ABI 99 fails");
-
-    landlock_builder_free(b);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Allow with LL_FS_ALL                                              */
-/* ------------------------------------------------------------------ */
-
-static void test_allow_all_access(void)
-{
-    mock_fs_reset();
-    mock_fs_create_dir("/data");
-
-    landlock_builder_t *b = landlock_builder_new();
-    landlock_builder_allow(b, "/data", LL_FS_ALL);
-    landlock_builder_prepare(b, 4, false);
-
-    size_t count = 0;
-    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
-    TEST_ASSERT_EQ(count, 1, "one rule");
-
-    /* ABI v4 mask should limit the access */
-    uint64_t expected = landlock_abi_mask(4);
-    TEST_ASSERT_EQ(rules[0].access, expected, "access masked to ABI v4");
-
-    landlock_builder_free(b);
-}
-
-/* ------------------------------------------------------------------ */
-/*  VFS relative path not filtered                                     */
-/* ------------------------------------------------------------------ */
-
-static void test_vfs_relative_path_not_filtered(void)
-{
-    /* Relative paths like "proc/bar" should NOT be filtered */
+    /* Relative paths should NOT be classified as VFS */
     TEST_ASSERT_EQ(landlock_path_is_vfs("proc/bar"), 0,
                    "relative 'proc/bar' is not VFS");
     TEST_ASSERT_EQ(landlock_path_is_vfs("sys/foo"), 0,
                    "relative 'sys/foo' is not VFS");
     TEST_ASSERT_EQ(landlock_path_is_vfs("./proc"), 0,
                    "relative './proc' is not VFS");
-}
 
-/* ------------------------------------------------------------------ */
-/*  VFS boundary cases                                                 */
-/* ------------------------------------------------------------------ */
-
-static void test_vfs_boundary_paths(void)
-{
-    /* Paths that look like VFS but aren't */
+    /* Near-miss paths should NOT be classified as VFS */
     TEST_ASSERT_EQ(landlock_path_is_vfs("/pro"), 0, "/pro is not VFS");
     TEST_ASSERT_EQ(landlock_path_is_vfs("/sy"), 0, "/sy is not VFS");
     TEST_ASSERT_EQ(landlock_path_is_vfs("/proc.bak"), 0, "/proc.bak is not VFS");
     TEST_ASSERT_EQ(landlock_path_is_vfs("/sys.bak"), 0, "/sys.bak is not VFS");
-    /* Paths that are VFS */
+
+    /* Exact VFS paths should be classified as VFS */
     TEST_ASSERT_EQ(landlock_path_is_vfs("/proc"), 1, "/proc is VFS");
     TEST_ASSERT_EQ(landlock_path_is_vfs("/sys"), 1, "/sys is VFS");
     TEST_ASSERT_EQ(landlock_path_is_vfs("/proc/"), 1, "/proc/ is VFS");
@@ -241,36 +208,67 @@ static void test_reprepare_after_allow(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Overlap removal: deny at intermediate path clears deeper allow    */
+/*  Deny behavior during overlap removal and simplify                 */
 /* ------------------------------------------------------------------ */
 
-static void test_deny_clears_deeper_allow(void)
+static void test_deny_behavior(void)
 {
+    landlock_builder_t *b;
+    size_t count;
+
+    /* Case 1: Deny at intermediate path clears deeper allow */
     mock_fs_reset();
     mock_fs_create_dir("/a");
     mock_fs_create_dir("/a/b");
     mock_fs_create_dir("/a/b/c");
-
-    landlock_builder_t *b = landlock_builder_new();
+    b = landlock_builder_new();
     landlock_builder_allow(b, "/a/b/c", 7);
     landlock_builder_deny(b, "/a/b");
     landlock_builder_allow(b, "/a", 7);
     landlock_builder_prepare(b, 2, false);
-
-    size_t count = 0;
-    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
-
+    count = 0;
+    const landlock_rule_t *rules1 = landlock_builder_get_rules(b, &count);
     int found_c = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strstr(rules[i].path, "/a/b/c")) found_c = 1;
+        if (strstr(rules1[i].path, "/a/b/c")) found_c = 1;
     }
-    TEST_ASSERT(!found_c, "deeper allow cleared by intermediate deny");
+    TEST_ASSERT(!found_c, "intermediate: deeper allow cleared by intermediate deny");
     int found_a = 0;
     for (size_t i = 0; i < count; i++) {
-        if (strcmp(rules[i].path, "/a") == 0) found_a = 1;
+        if (strcmp(rules1[i].path, "/a") == 0) found_a = 1;
     }
-    TEST_ASSERT(found_a, "/a survives");
+    TEST_ASSERT(found_a, "intermediate: /a survives");
+    landlock_builder_free(b);
 
+    /* Case 2: Deny at same path clears allow */
+    mock_fs_reset();
+    mock_fs_create_dir("/data");
+    b = landlock_builder_new();
+    landlock_builder_allow(b, "/data", 7);
+    landlock_builder_deny(b, "/data");
+    landlock_builder_prepare(b, 2, false);
+    count = 0;
+    (void)landlock_builder_get_rules(b, &count);
+    TEST_ASSERT_EQ(count, 0, "same: deny at same path clears allow");
+    landlock_builder_free(b);
+
+    /* Case 3: Simplify with deny grandchild blocks pruning */
+    mock_fs_reset();
+    mock_fs_create_dir("/a");
+    mock_fs_create_dir("/a/b");
+    mock_fs_create_dir("/a/b/secret");
+    b = landlock_builder_new();
+    landlock_builder_allow(b, "/a", 7);
+    landlock_builder_allow(b, "/a/b", 7);
+    landlock_builder_deny(b, "/a/b/secret");
+    landlock_builder_prepare(b, 2, false);
+    count = 0;
+    const landlock_rule_t *rules3 = landlock_builder_get_rules(b, &count);
+    int found_b = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules3[i].path, "/a/b") == 0) found_b = 1;
+    }
+    TEST_ASSERT(found_b, "simplify: child with deny grandchild not pruned");
     landlock_builder_free(b);
 }
 
@@ -292,71 +290,18 @@ static void test_symlink_expansion_no_matching_rule(void)
     size_t count = 0;
     const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
 
-    /* /unrelated must be present (the rule we allowed) */
     int found_unrelated = 0;
     for (size_t i = 0; i < count; i++) {
         if (strcmp(rules[i].path, "/unrelated") == 0) found_unrelated = 1;
     }
-    TEST_ASSERT(found_unrelated, "/unrelated rule present");
+    TEST_ASSERT(found_unrelated, "no match: /unrelated rule present");
 
-    /* /real/target should NOT appear — symlink source not under any rule */
     int found_target = 0;
     for (size_t i = 0; i < count; i++) {
         if (strstr(rules[i].path, "/real/target")) found_target = 1;
     }
     TEST_ASSERT(!found_target,
-                "symlink target not added when source has no matching rule");
-
-    landlock_builder_free(b);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Simplify with child that has a deny grandchild                     */
-/* ------------------------------------------------------------------ */
-
-static void test_simplify_deny_grandchild_blocks_pruning(void)
-{
-    mock_fs_reset();
-    mock_fs_create_dir("/a");
-    mock_fs_create_dir("/a/b");
-    mock_fs_create_dir("/a/b/secret");
-
-    landlock_builder_t *b = landlock_builder_new();
-    landlock_builder_allow(b, "/a", 7);
-    landlock_builder_allow(b, "/a/b", 7);
-    landlock_builder_deny(b, "/a/b/secret");
-    landlock_builder_prepare(b, 2, false);
-
-    size_t count = 0;
-    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
-
-    int found_b = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (strcmp(rules[i].path, "/a/b") == 0) found_b = 1;
-    }
-    TEST_ASSERT(found_b, "child with deny grandchild not pruned");
-
-    landlock_builder_free(b);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Deny overrides allow at same path, then allow again                */
-/* ------------------------------------------------------------------ */
-
-static void test_deny_overrides_allow_same_path(void)
-{
-    mock_fs_reset();
-    mock_fs_create_dir("/data");
-
-    landlock_builder_t *b = landlock_builder_new();
-    landlock_builder_allow(b, "/data", 7);
-    landlock_builder_deny(b, "/data");
-    landlock_builder_prepare(b, 2, false);
-
-    size_t count = 0;
-    (void)landlock_builder_get_rules(b, &count);
-    /* deny at same path should clear the allow */
-    TEST_ASSERT_EQ(count, 0, "deny at same path clears allow");
+                "no match: symlink target not added when source has no matching rule");
 
     landlock_builder_free(b);
 }
@@ -368,18 +313,11 @@ static void test_deny_overrides_allow_same_path(void)
 void test_builder_edge_run(void)
 {
     printf("=== Builder Edge-Case Tests ===\n");
-    RUN_TEST(test_save_unprepared);
-    RUN_TEST(test_load_malformed_json);
-    RUN_TEST(test_load_empty_file);
-    RUN_TEST(test_load_nonexistent);
+    RUN_TEST(test_builder_lifecycle_edge_cases);
+    RUN_TEST(test_load_failures);
     RUN_TEST(test_open_fd_with_flags);
-    RUN_TEST(test_prepare_invalid_abi);
-    RUN_TEST(test_allow_all_access);
-    RUN_TEST(test_vfs_relative_path_not_filtered);
-    RUN_TEST(test_vfs_boundary_paths);
+    RUN_TEST(test_vfs_path_classification);
     RUN_TEST(test_reprepare_after_allow);
-    RUN_TEST(test_deny_clears_deeper_allow);
+    RUN_TEST(test_deny_behavior);
     RUN_TEST(test_symlink_expansion_no_matching_rule);
-    RUN_TEST(test_simplify_deny_grandchild_blocks_pruning);
-    RUN_TEST(test_deny_overrides_allow_same_path);
 }

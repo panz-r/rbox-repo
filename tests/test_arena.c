@@ -11,95 +11,77 @@
 #include <stdint.h>
 
 /* ------------------------------------------------------------------ */
-/*  Basic allocation                                                  */
+/*  Basic allocation, zero alloc, strdup                               */
 /* ------------------------------------------------------------------ */
 
-static void test_arena_basic_alloc(void)
+static void test_arena_simple_alloc(void)
 {
     arena_t a;
+
+    /* Case 1: Basic allocations return distinct pointers */
     arena_init(&a);
-
     void *p1 = arena_alloc(&a, 64);
-    TEST_ASSERT_NOT_NULL(p1, "64-byte alloc succeeds");
-
+    TEST_ASSERT_NOT_NULL(p1, "basic: 64-byte alloc succeeds");
     void *p2 = arena_alloc(&a, 128);
-    TEST_ASSERT_NOT_NULL(p2, "128-byte alloc succeeds");
-    TEST_ASSERT(p1 != p2, "two allocs return different pointers");
+    TEST_ASSERT_NOT_NULL(p2, "basic: 128-byte alloc succeeds");
+    TEST_ASSERT(p1 != p2, "basic: two allocs return different pointers");
+    arena_free(&a);
 
+    /* Case 2: alloc(0) returns NULL */
+    arena_init(&a);
+    void *p3 = arena_alloc(&a, 0);
+    TEST_ASSERT(p3 == NULL, "basic: alloc(0) returns NULL");
+    arena_free(&a);
+
+    /* Case 3: strdup duplicates string */
+    arena_init(&a);
+    const char *s = "hello, world!";
+    char *d = arena_strdup(&a, s);
+    TEST_ASSERT_NOT_NULL(d, "basic: strdup succeeds");
+    TEST_ASSERT_STR_EQ(d, s, "basic: strdup content matches");
     arena_free(&a);
 }
+
+/* ------------------------------------------------------------------ */
+/*  calloc: overflow guard + zeroed memory                            */
+/* ------------------------------------------------------------------ */
+
+static void test_arena_calloc(void)
+{
+    arena_t a;
+    uint64_t *p;
+
+    /* Case 1: Overflow guard — nmemb * size wraps */
+    arena_init(&a);
+    void *p1 = arena_calloc(&a, SIZE_MAX, 2);
+    TEST_ASSERT(p1 == NULL, "calloc: overflow returns NULL");
+    arena_free(&a);
+
+    /* Case 2: Valid calloc returns zeroed memory */
+    arena_init(&a);
+    p = arena_calloc(&a, 10, sizeof(uint64_t));
+    TEST_ASSERT_NOT_NULL(p, "calloc: succeeds");
+    for (int i = 0; i < 10; i++) {
+        TEST_ASSERT_EQ(p[i], 0, "calloc: zeroed memory");
+    }
+    arena_free(&a);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Alignment                                                          */
+/* ------------------------------------------------------------------ */
 
 static void test_arena_alignment(void)
 {
     arena_t a;
     arena_init(&a);
 
-    /* Allocate various sizes and check alignment */
     for (int i = 0; i < 100; i++) {
         void *p = arena_alloc(&a, (size_t)(i + 1));
-        TEST_ASSERT_NOT_NULL(p, "alloc succeeds");
+        TEST_ASSERT_NOT_NULL(p, "align: alloc succeeds");
         TEST_ASSERT_EQ((uintptr_t)p % ARENA_ALIGN, 0,
-                       "pointer is ARENA_ALIGN-aligned");
+                       "align: pointer is ARENA_ALIGN-aligned");
     }
-
-    arena_free(&a);
-}
-
-static void test_arena_zero_alloc(void)
-{
-    arena_t a;
-    arena_init(&a);
-
-    void *p = arena_alloc(&a, 0);
-    TEST_ASSERT(p == NULL, "alloc(0) returns NULL");
-
-    arena_free(&a);
-}
-
-/* ------------------------------------------------------------------ */
-/*  calloc overflow guard                                             */
-/* ------------------------------------------------------------------ */
-
-static void test_arena_calloc_overflow(void)
-{
-    arena_t a;
-    arena_init(&a);
-
-    /* Trigger overflow: nmemb * size would wrap */
-    void *p = arena_calloc(&a, SIZE_MAX, 2);
-    TEST_ASSERT(p == NULL, "calloc overflow returns NULL");
-
-    arena_free(&a);
-}
-
-static void test_arena_calloc_zeroes(void)
-{
-    arena_t a;
-    arena_init(&a);
-
-    uint64_t *p = arena_calloc(&a, 10, sizeof(uint64_t));
-    TEST_ASSERT_NOT_NULL(p, "calloc succeeds");
-
-    for (int i = 0; i < 10; i++) {
-        TEST_ASSERT_EQ(p[i], 0, "calloc zeroed memory");
-    }
-
-    arena_free(&a);
-}
-
-/* ------------------------------------------------------------------ */
-/*  strdup / memdup                                                    */
-/* ------------------------------------------------------------------ */
-
-static void test_arena_strdup(void)
-{
-    arena_t a;
-    arena_init(&a);
-
-    const char *s = "hello, world!";
-    char *d = arena_strdup(&a, s);
-    TEST_ASSERT_NOT_NULL(d, "strdup succeeds");
-    TEST_ASSERT_STR_EQ(d, s, "strdup content matches");
 
     arena_free(&a);
 }
@@ -162,12 +144,9 @@ static void test_arena_free_and_reuse(void)
 void test_arena_run(void)
 {
     printf("=== Arena Allocator Tests ===\n");
-    RUN_TEST(test_arena_basic_alloc);
+    RUN_TEST(test_arena_simple_alloc);
+    RUN_TEST(test_arena_calloc);
     RUN_TEST(test_arena_alignment);
-    RUN_TEST(test_arena_zero_alloc);
-    RUN_TEST(test_arena_calloc_overflow);
-    RUN_TEST(test_arena_calloc_zeroes);
-    RUN_TEST(test_arena_strdup);
     RUN_TEST(test_arena_multi_block);
     RUN_TEST(test_arena_free_and_reuse);
 }

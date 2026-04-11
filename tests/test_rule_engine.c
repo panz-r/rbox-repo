@@ -828,17 +828,20 @@ static void test_rule_engine_uncovered_ops(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Query cache: verify cached results match fresh evaluation          */
+/*  Query cache: warmup, lookup, reuse, stress                         */
 /* ------------------------------------------------------------------ */
 
 static void test_rule_engine_query_cache(void)
 {
-    /* Build a ruleset with varied rules to exercise cache thoroughly */
-    soft_ruleset_t *rs = soft_ruleset_new();
+    soft_ruleset_t *rs;
+    int r;
+
+    /* Part 1: Cache warmup and cross-query reuse */
+    rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/data/...",
                    SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0,
                    SOFT_RULE_RECURSIVE),
-                   0, "PRECEDENCE deny /data/...");
+                   0, "cache: PRECEDENCE deny /data/...");
     soft_ruleset_add_rule_at_layer(rs, 0, "/public",
                    SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
     soft_ruleset_add_rule_at_layer(rs, 0, "/bin/**", SOFT_ACCESS_EXEC,
@@ -846,95 +849,68 @@ static void test_rule_engine_query_cache(void)
     soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/data/project/**",
                    SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "SPECIFICITY /data/project/**");
+                   0, "cache: SPECIFICITY /data/project/**");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/tmp/...",
                    SOFT_ACCESS_WRITE, SOFT_OP_COPY, NULL, NULL, 0,
                    SOFT_RULE_RECURSIVE),
-                   0, "SPECIFICITY /tmp/... COPY WRITE");
+                   0, "cache: SPECIFICITY /tmp/... COPY WRITE");
 
-    /* Build a set of test queries */
     typedef struct {
         soft_access_ctx_t ctx;
         int expected;
     } query_t;
 
     query_t queries[] = {
-        /* READ queries */
         { {SOFT_OP_READ, "/public", NULL, NULL, 1000}, SOFT_ACCESS_READ },
         { {SOFT_OP_READ, "/data/project/a.txt", NULL, NULL, 1000}, SOFT_ACCESS_READ },
         { {SOFT_OP_READ, "/data/other/x.txt", NULL, NULL, 1000}, -13 },
         { {SOFT_OP_READ, "/data/project/deep/file.txt", NULL, NULL, 1000}, SOFT_ACCESS_READ },
-
-        /* EXEC queries */
         { {SOFT_OP_EXEC, "/bin/bash", NULL, NULL, 1000}, SOFT_ACCESS_EXEC },
         { {SOFT_OP_EXEC, "/bin/ls", NULL, NULL, 1000}, SOFT_ACCESS_EXEC },
         { {SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, -13 },
-
-        /* COPY queries */
         { {SOFT_OP_COPY, "/data/project/a.txt", "/tmp/x.txt", NULL, 1000}, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
         { {SOFT_OP_COPY, "/data/other/x.txt", "/tmp/y.txt", NULL, 1000}, -13 },
         { {SOFT_OP_COPY, "/data/project/a.txt", "/tmp/y.txt", NULL, 1000}, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
         { {SOFT_OP_COPY, "/data/project/b.txt", "/tmp/x.txt", NULL, 1000}, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
-
-        /* WRITE queries */
         { {SOFT_OP_WRITE, "/tmp/x.txt", NULL, NULL, 1000}, SOFT_ACCESS_WRITE },
         { {SOFT_OP_WRITE, "/tmp/y.txt", NULL, NULL, 1000}, SOFT_ACCESS_WRITE },
     };
-
     const int N = sizeof(queries) / sizeof(queries[0]);
 
-    /* Phase 1: Warm up cache by running each query once */
+    /* Warm up cache */
     for (int i = 0; i < N; i++) {
         soft_ruleset_check_ctx(rs, &queries[i].ctx, NULL);
-        TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &queries[i].ctx, NULL), queries[i].expected, "cache query match");
+        TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &queries[i].ctx, NULL), queries[i].expected, "cache: warmup match");
     }
-
-    /* Phase 2: Re-run every query — all should hit cache and produce identical results */
+    /* Re-run — all should hit cache */
     for (int i = 0; i < N; i++) {
         soft_ruleset_check_ctx(rs, &queries[i].ctx, NULL);
-        TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &queries[i].ctx, NULL), queries[i].expected, "cache query match");
+        TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &queries[i].ctx, NULL), queries[i].expected, "cache: rerun match");
     }
-
-    /* Phase 3: Cross-query reuse tests */
-
-    /* Test: READ warms cache with eval=READ, then COPY reuses SRC */
+    /* Cross-query reuse: READ warms cache, COPY reuses SRC */
     soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_READ, "/data/project/r1.txt", NULL, NULL, 1000}, NULL);
-    /* Now COPY uses same SRC — should reuse cached READ result for SRC */
-    int r1 = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_COPY, "/data/project/r1.txt", "/tmp/z.txt", NULL, 1000}, NULL);
-    TEST_ASSERT_EQ(r1, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
-                   "COPY reuses READ-cached SRC");
-
-    /* Test: COPY warms cache with eval=ALL, then READ reuses */
+    r = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_COPY, "/data/project/r1.txt", "/tmp/z.txt", NULL, 1000}, NULL);
+    TEST_ASSERT_EQ(r, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "cache: COPY reuses READ-cached SRC");
+    /* COPY warms with eval=ALL, READ reuses */
     soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_COPY, "/data/project/r2.txt", "/tmp/r2.txt", NULL, 1000}, NULL);
-    int r2 = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_READ, "/data/project/r2.txt", NULL, NULL, 1000}, NULL);
-    TEST_ASSERT_EQ(r2, SOFT_ACCESS_READ,
-                   "READ reuses COPY-cached entry (eval=ALL covers READ)");
-
-    /* Test: COPY warms cache with eval=ALL, then WRITE reuses */
-    int r3 = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_WRITE, "/tmp/r2.txt", NULL, NULL, 1000}, NULL);
-    TEST_ASSERT_EQ(r3, SOFT_ACCESS_WRITE,
-                   "WRITE reuses COPY-cached entry (eval=ALL covers WRITE)");
-
-    /* Test: Cross-path reuse — both paths individually cached but never together */
+    r = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_READ, "/data/project/r2.txt", NULL, NULL, 1000}, NULL);
+    TEST_ASSERT_EQ(r, SOFT_ACCESS_READ, "cache: READ reuses COPY-cached entry");
+    /* COPY warms with eval=ALL, WRITE reuses */
+    r = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_WRITE, "/tmp/r2.txt", NULL, NULL, 1000}, NULL);
+    TEST_ASSERT_EQ(r, SOFT_ACCESS_WRITE, "cache: WRITE reuses COPY-cached entry");
+    /* Cross-path reuse: SRC from query 1, DST from query 2 */
     soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_COPY, "/data/project/a.txt", "/tmp/w1.txt", NULL, 1000}, NULL);
     soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_COPY, "/data/project/b.txt", "/tmp/w2.txt", NULL, 1000}, NULL);
-    int r4 = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_COPY, "/data/project/a.txt", "/tmp/w2.txt", NULL, 1000}, NULL);
-    TEST_ASSERT_EQ(r4, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
-                   "COPY reuses SRC from query 1, DST from query 2");
-
-    /* Test: Denied path cached */
+    r = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_COPY, "/data/project/a.txt", "/tmp/w2.txt", NULL, 1000}, NULL);
+    TEST_ASSERT_EQ(r, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "cache: COPY reuses SRC+DST from different queries");
+    /* Denied path cached */
     int d1 = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_READ, "/data/denied/x.txt", NULL, NULL, 1000}, NULL);
     int d2 = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_READ, "/data/denied/x.txt", NULL, NULL, 1000}, NULL);
-    TEST_ASSERT_EQ(d1, -13, "denied path first eval");
-    TEST_ASSERT_EQ(d2, -13, "denied path cached");
-
-    /* Test: Batch after cache warm */
-    const char *batch_paths[] = {
-        "/public", "/data/project/batch.txt", "/data/other/batch.txt",
-    };
-    const int batch_expected[] = {
-        SOFT_ACCESS_READ, SOFT_ACCESS_READ, -13,
-    };
+    TEST_ASSERT_EQ(d1, -13, "cache: denied path first eval");
+    TEST_ASSERT_EQ(d2, -13, "cache: denied path cached");
+    /* Batch after cache warm */
+    const char *batch_paths[] = { "/public", "/data/project/batch.txt", "/data/other/batch.txt" };
+    const int batch_expected[] = { SOFT_ACCESS_READ, SOFT_ACCESS_READ, -13 };
     soft_access_ctx_t batch_ctx[3];
     const soft_access_ctx_t *batch_ctxs[3];
     int batch_results[3];
@@ -945,114 +921,92 @@ static void test_rule_engine_query_cache(void)
         batch_ctx[i].uid = 1000;
         batch_ctxs[i] = &batch_ctx[i];
     }
-    TEST_ASSERT_EQ(soft_ruleset_check_batch_ctx(rs, batch_ctxs, batch_results, 3), 0,
-                   "batch after cache warm succeeds");
+    TEST_ASSERT_EQ(soft_ruleset_check_batch_ctx(rs, batch_ctxs, batch_results, 3), 0, "cache: batch succeeds");
     for (int i = 0; i < 3; i++) {
         if (batch_results[i] != batch_expected[i]) {
-            TEST_ASSERT_EQ(batch_results[i], batch_expected[i],
-                           "batch result mismatch");
+            TEST_ASSERT_EQ(batch_results[i], batch_expected[i], "cache: batch result mismatch");
         }
     }
-
     soft_ruleset_free(rs);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Query cache: verify lookup logic correctness                       */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_query_cache_lookup(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
-    /* Build a simple ruleset */
+    /* Part 2: Lookup logic — subject, UID, eval mask, invalidation */
+    rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
                                           SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE),
-                   0, "add READ/WRITE rule");
+                   0, "lookup: add READ/WRITE rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/exec/**", SOFT_ACCESS_EXEC,
                                           SOFT_OP_EXEC, NULL, NULL, 0, 0),
-                   0, "add EXEC rule");
+                   0, "lookup: add EXEC rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/secret", SOFT_ACCESS_DENY,
                                           SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "add DENY rule");
+                   0, "lookup: add DENY rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/admin/...", SOFT_ACCESS_READ,
                                           SOFT_OP_READ, NULL, ".*admin$", 0, SOFT_RULE_RECURSIVE),
-                   0, "add subject-constrained rule");
+                   0, "lookup: add subject-constrained rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/uid/...", SOFT_ACCESS_READ,
                                           SOFT_OP_READ, NULL, NULL, 1000, SOFT_RULE_RECURSIVE),
-                   0, "add UID-constrained rule");
+                   0, "lookup: add UID-constrained rule");
 
-    /* Test 1: Subject differentiation — same path, different subject */
+    /* Subject differentiation */
     soft_access_ctx_t ctx = { SOFT_OP_READ, "/admin/config", NULL, "/usr/bin/admin", 1000 };
     int r1 = soft_ruleset_check_ctx(rs, &ctx, NULL);
     ctx.subject = "/usr/bin/user";
     int r2 = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(r1, SOFT_ACCESS_READ, "admin subject allowed");
-    TEST_ASSERT_EQ(r2, -13, "non-admin subject denied");
+    TEST_ASSERT_EQ(r1, SOFT_ACCESS_READ, "lookup: admin subject allowed");
+    TEST_ASSERT_EQ(r2, -13, "lookup: non-admin subject denied");
 
-    /* Test 2: UID differentiation — same path, different UID */
+    /* UID differentiation */
     ctx.subject = NULL;
     ctx.src_path = "/uid/config";
     ctx.uid = 1000;
     int r3 = soft_ruleset_check_ctx(rs, &ctx, NULL);
     ctx.uid = 500;
     int r4 = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(r3, SOFT_ACCESS_READ, "UID>=1000 allowed");
-    TEST_ASSERT_EQ(r4, -13, "UID<1000 denied");
+    TEST_ASSERT_EQ(r3, SOFT_ACCESS_READ, "lookup: UID>=1000 allowed");
+    TEST_ASSERT_EQ(r4, -13, "lookup: UID<1000 denied");
 
-    /* Test 3: Direct-mapped cache — 500 queries with varying hash slots, all correct */
+    /* 500 direct-mapped cache queries */
     int collision_count = 0;
     for (int i = 0; i < 500; i++) {
         char path[64];
         snprintf(path, sizeof(path), "/data/coll_%04d.txt", i);
         soft_access_ctx_t c = { SOFT_OP_READ, path, NULL, NULL, 1000 };
         int ret = soft_ruleset_check_ctx(rs, &c, NULL);
-        /* All /data/coll_*.txt paths match /data/... READ|WRITE rule */
-        int expected = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
-        if (ret != expected) collision_count++;
+        if (ret != (SOFT_ACCESS_READ | SOFT_ACCESS_WRITE)) collision_count++;
     }
-    TEST_ASSERT_EQ(collision_count, 0, "all 500 cache queries produce correct results");
+    TEST_ASSERT_EQ(collision_count, 0, "lookup: 500 cache queries correct");
 
-    /* Test 4: eval mask — READ cached (eval=READ), EXEC query needs EXEC → miss */
+    /* Eval mask: READ cached, EXEC query misses */
     soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_READ, "/exec/bash", NULL, NULL, 1000}, NULL);
     int r5 = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_EXEC, "/exec/bash", NULL, NULL, 1000}, NULL);
-    TEST_ASSERT_EQ(r5, SOFT_ACCESS_EXEC, "EXEC evaluates independently (eval=READ does not cover EXEC)");
+    TEST_ASSERT_EQ(r5, SOFT_ACCESS_EXEC, "lookup: EXEC evaluates independently");
 
-    /* Test 5: Cache invalidation on rule addition */
+    /* Cache invalidation on rule addition */
     soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_READ, "/data/cached.txt", NULL, NULL, 1000}, NULL);
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/cached.txt", SOFT_ACCESS_DENY,
                                           SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "add deny for cached path");
+                   0, "lookup: add deny for cached path");
     int r6 = soft_ruleset_check_ctx(rs, &(soft_access_ctx_t){SOFT_OP_READ, "/data/cached.txt", NULL, NULL, 1000}, NULL);
-    TEST_ASSERT_EQ(r6, -13, "cache invalidated: new DENY takes effect");
-
+    TEST_ASSERT_EQ(r6, -13, "lookup: cache invalidated");
     soft_ruleset_free(rs);
-}
 
-/* ------------------------------------------------------------------ */
-/*  Query cache: large-scale warmup stress test                        */
-/* ------------------------------------------------------------------ */
-
-static void test_rule_engine_query_cache_stress(void)
-{
-    soft_ruleset_t *rs = soft_ruleset_new();
-
+    /* Part 3: Large-scale stress test */
+    rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/deny/...", SOFT_ACCESS_DENY,
                    SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE),
-                   0, "deny layer");
+                   0, "stress: deny layer");
     soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/allow/**", SOFT_ACCESS_READ,
                    SOFT_OP_READ, NULL, NULL, 0, 0),
-                   0, "allow SPECIFICITY");
+                   0, "stress: allow SPECIFICITY");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/tmp/...", SOFT_ACCESS_WRITE,
                    SOFT_OP_COPY, NULL, NULL, 0, SOFT_RULE_RECURSIVE),
-                   0, "COPY write rule");
+                   0, "stress: COPY write rule");
 
-    /* Phase 1: Warm cache with 200 unique queries */
+    /* Warm cache with 200 unique queries */
     char src_paths[200][64];
     char dst_paths[200][64];
     int first_results[200];
-
     for (int i = 0; i < 200; i++) {
         snprintf(src_paths[i], sizeof(src_paths[i]), "/allow/file_%04d.txt", i);
         snprintf(dst_paths[i], sizeof(dst_paths[i]), "/tmp/out_%04d.txt", i);
@@ -1064,8 +1018,7 @@ static void test_rule_engine_query_cache_stress(void)
                 &(soft_access_ctx_t){SOFT_OP_COPY, src_paths[i], dst_paths[i], NULL, 1000}, NULL);
         }
     }
-
-    /* Phase 2: Re-run — all must match */
+    /* Re-run — all must match */
     int mismatch = 0;
     for (int i = 0; i < 200; i++) {
         int second;
@@ -1078,37 +1031,32 @@ static void test_rule_engine_query_cache_stress(void)
         }
         if (second != first_results[i]) mismatch++;
     }
-    TEST_ASSERT_EQ(mismatch, 0, "all 200 warmed queries produce identical cached results");
+    TEST_ASSERT_EQ(mismatch, 0, "stress: 200 warmed queries match");
 
-    /* Phase 3: Denied paths still denied after cache warm */
+    /* Denied paths still denied after cache warm */
     int deny_mismatch = 0;
     for (int i = 0; i < 50; i++) {
         char path[64];
         snprintf(path, sizeof(path), "/deny/file_%04d.txt", i);
-        int r = soft_ruleset_check_ctx(rs,
+        r = soft_ruleset_check_ctx(rs,
             &(soft_access_ctx_t){SOFT_OP_READ, path, NULL, NULL, 1000}, NULL);
         if (r != -13) deny_mismatch++;
     }
-    TEST_ASSERT_EQ(deny_mismatch, 0, "all 50 denied paths still denied after cache warm");
+    TEST_ASSERT_EQ(deny_mismatch, 0, "stress: 50 denied paths still denied");
 
-    /* Phase 4: Cross-query reuse — shared SRC across many COPY queries */
+    /* Cross-query reuse — shared SRC across many COPY queries */
     int cross_mismatch = 0;
     for (int i = 0; i < 100; i++) {
         char shared_src[64], unique_dst[64];
         snprintf(shared_src, sizeof(shared_src), "/allow/shared_%02d.txt", i / 10);
         snprintf(unique_dst, sizeof(unique_dst), "/tmp/unique_%04d.txt", i);
-
-        /* READ shared_src first → caches with eval=READ */
         soft_ruleset_check_ctx(rs,
             &(soft_access_ctx_t){SOFT_OP_READ, shared_src, NULL, NULL, 1000}, NULL);
-
-        /* COPY with same SRC → reuses cached READ for SRC */
-        int r = soft_ruleset_check_ctx(rs,
+        r = soft_ruleset_check_ctx(rs,
             &(soft_access_ctx_t){SOFT_OP_COPY, shared_src, unique_dst, NULL, 1000}, NULL);
         if (r != (SOFT_ACCESS_READ | SOFT_ACCESS_WRITE)) cross_mismatch++;
     }
-    TEST_ASSERT_EQ(cross_mismatch, 0, "all 100 cross-query reuse tests correct");
-
+    TEST_ASSERT_EQ(cross_mismatch, 0, "stress: 100 cross-query reuse tests correct");
     soft_ruleset_free(rs);
 }
 
@@ -1123,6 +1071,4 @@ void test_rule_engine_run(void)
     RUN_TEST(test_rule_engine_layer_behavior);
     RUN_TEST(test_rule_engine_uncovered_ops);
     RUN_TEST(test_rule_engine_query_cache);
-    RUN_TEST(test_rule_engine_query_cache_lookup);
-    RUN_TEST(test_rule_engine_query_cache_stress);
 }
