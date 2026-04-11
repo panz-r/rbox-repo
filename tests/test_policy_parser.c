@@ -1306,24 +1306,43 @@ static void test_compiled_serialization(void)
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/deep/file.txt", NULL, NULL, 1000}, NULL),
                    "ser_bin: recursive rule matches");
 
+    /* Case 2: Corrupted checksum rejected (before freeing buf) */
+    void *buf_copy = malloc(len);
+    TEST_ASSERT(buf_copy != NULL, "ser_bin: buffer copy allocated");
+    memcpy(buf_copy, buf, len);
+    /* Flip a byte in the payload -- both hashes should catch this */
+    ((char *)buf_copy)[10] ^= 0xFF;
+    TEST_ASSERT(soft_ruleset_load_compiled(buf_copy, len) == NULL,
+                "ser_bin: corrupted payload rejected");
+    /* Restore and corrupt CRC-32 only -- FNV-1a should catch this */
+    ((char *)buf_copy)[10] ^= 0xFF;
+    ((char *)buf_copy)[len - 7] ^= 0xFF;
+    TEST_ASSERT(soft_ruleset_load_compiled(buf_copy, len) == NULL,
+                "ser_bin: corrupted CRC-32 caught by FNV-1a");
+    /* Restore and corrupt FNV-1a only -- CRC-32 should catch this */
+    ((char *)buf_copy)[len - 7] ^= 0xFF;
+    ((char *)buf_copy)[len - 3] ^= 0xFF;
+    TEST_ASSERT(soft_ruleset_load_compiled(buf_copy, len) == NULL,
+                "ser_bin: corrupted FNV-1a caught by CRC-32");
+    free(buf_copy);
     free(buf);
     soft_ruleset_free(rs);
     soft_ruleset_free(rs2);
 
-    /* Case 2: NULL/invalid input rejected */
+    /* Case 3: NULL/invalid input rejected */
     TEST_ASSERT(soft_ruleset_load_compiled(NULL, 100) == NULL,
                 "ser_bin: NULL buffer rejected");
     TEST_ASSERT(soft_ruleset_load_compiled("garbage", 7) == NULL,
                 "ser_bin: garbage data rejected");
 
-    /* Case 3: Uncompiled ruleset rejected */
+    /* Case 4: Uncompiled ruleset rejected */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
     TEST_ASSERT_EQ(soft_ruleset_save_compiled(rs, &buf, &len), -1,
                    "ser_bin: uncompiled ruleset rejected");
     soft_ruleset_free(rs);
 
-    /* Case 4: Subject/UID constraints roundtrip */
+    /* Case 5: Subject/UID constraints roundtrip */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
                           SOFT_OP_READ, NULL, ".*admin$", 1000, 0);
