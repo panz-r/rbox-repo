@@ -439,7 +439,7 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
     p = args_end;
     size_t remaining = req->command_len - (p - req->command_data);
     while (remaining > 5) {
-        size_t name_len = strlen(p);
+        size_t name_len = strnlen(p, remaining);
         if (name_len == 0 || name_len > remaining - 4) break;
         req->env_var_count++;
         p += name_len + 1 + 4;
@@ -468,7 +468,7 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         remaining = req->command_len - (p - req->command_data);
         int idx = 0;
         while (remaining > 5 && idx < req->env_var_count) {
-            size_t name_len = strlen(p);
+            size_t name_len = strnlen(p, remaining);
             req->env_var_names[idx] = p;  /* pointer into command_data, no copy */
             memcpy(&req->env_var_scores[idx], p + name_len + 1, 4);
             const char *s = req->env_var_names[idx];
@@ -859,6 +859,7 @@ static void *server_thread_func(void *arg) {
                 DBG("Built response of size %zu for fd %d", resp_len, req->fd);
                 if (send_queue_add(server, req->fd, resp, resp_len, req) != 0) {
                     DBG("send_queue_add failed for fd %d", req->fd);
+                    req = NULL;
                 }
             } else {
                 DBG("Failed to build response for fd %d", req->fd);
