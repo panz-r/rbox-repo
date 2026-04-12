@@ -297,26 +297,39 @@ static void pending_request_remove(rbox_server_handle_t *server, int fd) {
  *  -1 - error (EOF or other error)
  */
 static int read_body_nonblocking(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
-    size_t remaining = req->body_expected - req->body_received;
-    if (remaining == 0) return 1;
+    if (req->body_expected == req->body_received) return 1;
 
-    ssize_t n = rbox_read_nonblocking(fd, req->command_data + req->body_received, remaining);
-    if (n == -2) {
-        DBG("read_body_nonblocking: EOF on fd %d", fd);
-        return -1;
-    }
-    if (n < 0) {
-        DBG("read_body_nonblocking: error on fd %d: %s", fd, strerror(errno));
-        return -1;
-    }
-    if (n == 0) {
-        return 0;
-    }
-    req->body_received += n;
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
-    if (entry) entry->last_activity = time(NULL);
-    DBG("read_body_nonblocking: read %zd bytes, total now %zu/%zu", n, req->body_received, req->body_expected);
-    return (req->body_received == req->body_expected) ? 1 : 0;
+
+    while (req->body_received < req->body_expected) {
+        size_t remaining = req->body_expected - req->body_received;
+        ssize_t n = rbox_read_nonblocking(fd, req->command_data + req->body_received, remaining);
+        if (n == -2) {
+            DBG("read_body_nonblocking: EOF on fd %d", fd);
+            return -1;
+        }
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                DBG("read_body_nonblocking: EAGAIN on fd %d, returning partial", fd);
+                return 0;
+            }
+            DBG("read_body_nonblocking: error on fd %d: %s", fd, strerror(errno));
+            return -1;
+        }
+        if (n == 0) {
+            DBG("read_body_nonblocking: peer closed on fd %d", fd);
+            return -1;
+        }
+        req->body_received += (size_t)n;
+        if (entry) entry->last_activity = time(NULL);
+        DBG("read_body_nonblocking: read %zd bytes, total now %zu/%zu", n, req->body_received, req->body_expected);
+        if ((size_t)n < remaining) {
+            DBG("read_body_nonblocking: partial read %zd/%zu, returning for now", n, remaining);
+            return 0;
+        }
+    }
+    DBG("read_body_nonblocking: body complete %zu bytes", req->body_received);
+    return 1;
 }
 
 /* Attempt to read chunked body data for a pending request.
@@ -555,6 +568,8 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
                 }
                 entry->request = NULL;
                 send_pool_put(server, entry);
+            } else {
+                DBG("send_pending_locked: partial write, trying to drain remaining %zu bytes", entry->len - entry->offset);
             }
         }
     }
