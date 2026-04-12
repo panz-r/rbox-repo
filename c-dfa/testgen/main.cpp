@@ -75,6 +75,7 @@ int main(int argc, char* argv[]) {
     
     int total_passed = 0;
     int total_failed = 0;
+    int total_skipped = 0;
     int file_num = 0;
     
     for (int file_num = 0; file_num < num_files; file_num++) {
@@ -100,16 +101,19 @@ int main(int argc, char* argv[]) {
         std::cout << "  Pattern file: " << pattern_file << "\n";
         
         if (run_tests) {
-            int result = gen.runTests(tests, cwd_str, getToolsDir(), pattern_file, expectations_file);
-            if (result == 0) total_passed += tests.size();
-            else total_failed += tests.size();
+            int batch_passed = 0, batch_failed = 0, batch_skipped = 0;
+            gen.runTests(tests, cwd_str, getToolsDir(), pattern_file, expectations_file,
+                        &batch_passed, &batch_failed, &batch_skipped);
+            total_passed += batch_passed;
+            total_failed += batch_failed;
+            total_skipped += batch_skipped;
         }
     }
     
     if (!run_tests) {
         std::cout << "\nSkipping test run (use -r to execute)\n";
     } else {
-        std::cout << "\n=== TOTAL: " << total_passed << " passed, " << total_failed << " failed ===\n";
+        std::cout << "\n=== TOTAL: " << total_passed << " passed, " << total_failed << " failed, " << total_skipped << " skipped ===\n";
     }
     
     return 0;

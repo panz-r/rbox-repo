@@ -1612,7 +1612,7 @@ void TestGenerator::writeExpectations(const std::vector<TestCase>& tests, const 
     std::cout << "Written expectations: " << filename << "\n";
 }
 
-int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file) {
+int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file, int* passed_out, int* failed_out, int* skipped_out) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa...\n";
     std::cout << std::string(60, '=') << "\n\n";
@@ -1995,10 +1995,13 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
     }
     
     std::cout << "\nResults: " << passed << " passed, " << failed << " failed, " << skipped << " skipped\n";
+    if (passed_out) *passed_out = passed;
+    if (failed_out) *failed_out = failed;
+    if (skipped_out) *skipped_out = skipped;
     return failed > 0 ? 1 : 0;
 }
 
-int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file) {
+int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file, int* passed_out, int* failed_out, int* skipped_out) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa (INDIVIDUALLY)...\n";
     std::cout << std::string(60, '=') << "\n\n";
@@ -2205,6 +2208,9 @@ int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const 
     }
     
     std::cout << "\nResults: " << passed << " passed, " << failed << " failed, " << skipped << " skipped\n";
+    if (passed_out) *passed_out = passed;
+    if (failed_out) *failed_out = failed;
+    if (skipped_out) *skipped_out = skipped;
     if (failed > 0) {
         std::cout << "Failed cases saved to: " << failed_dir << "/\n";
     }

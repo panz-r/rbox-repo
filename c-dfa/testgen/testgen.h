@@ -193,8 +193,8 @@ public:
     std::vector<TestCase> generate();
     void writePatternFile(const std::vector<TestCase>& tests, const std::string& filename);
     void writeExpectations(const std::vector<TestCase>& tests, const std::string& filename);
-    int runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file);
-    int runTestsIndividual(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file);
+    int runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file, int* passed_out = nullptr, int* failed_out = nullptr, int* skipped_out = nullptr);
+    int runTestsIndividual(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file, int* passed_out = nullptr, int* failed_out = nullptr, int* skipped_out = nullptr);
     void setTestsPerBatch(int count) { tests_per_batch_override = count; }
     
     std::string categoryToString(Category cat);
