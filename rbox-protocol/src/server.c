@@ -677,6 +677,10 @@ int epoll_del(int epoll_fd, int fd) {
  * ============================================================ */
 
 static int decision_queue_push(rbox_server_handle_t *server, rbox_server_decision_t *dec) {
+    /* Reject new decisions if server is stopping to prevent memory leaks */
+    if (!atomic_load(&server->running)) {
+        return RBOX_ERR_INVALID;
+    }
     rbox_decision_queue_t *q = &server->decision_queue;
     rbox_decision_node_t *node = malloc(sizeof(*node));
     if (!node) return RBOX_ERR_MEMORY;
