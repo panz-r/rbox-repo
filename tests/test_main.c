@@ -24,6 +24,17 @@ extern void test_arena_run(void);
 extern void test_builder_edge_run(void);
 extern void test_radix_tree_edge_run(void);
 extern void test_landlock_bridge_run(void);
+extern void test_compilation_core_run(void);
+extern void test_compilation_advanced_run(void);
+extern void test_compilation_internal_run(void);
+extern void test_compilation_remaining2_run(void);
+extern void test_compilation_remaining3_run(void);
+extern void test_compilation_final_gaps_run(void);
+extern void test_compilation_extra_run(void);
+extern void test_compilation_gaps_run(void);
+extern void test_compilation_binary_run(void);
+extern void test_compilation_layered_run(void);
+extern void test_compilation_stress_run(void);
 
 int main(void)
 {
@@ -63,6 +74,39 @@ int main(void)
     printf("\n");
 
     test_landlock_bridge_run();
+    printf("\n");
+
+    test_compilation_core_run();
+    printf("\n");
+
+    test_compilation_advanced_run();
+    printf("\n");
+
+    test_compilation_internal_run();
+    printf("\n");
+
+    test_compilation_remaining2_run();
+    printf("\n");
+
+    test_compilation_remaining3_run();
+    printf("\n");
+
+    test_compilation_final_gaps_run();
+    printf("\n");
+
+    test_compilation_extra_run();
+    printf("\n");
+
+    test_compilation_gaps_run();
+    printf("\n");
+
+    test_compilation_binary_run();
+    printf("\n");
+
+    test_compilation_layered_run();
+    printf("\n");
+
+    test_compilation_stress_run();
     printf("\n");
 
     print_summary();

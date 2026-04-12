@@ -223,69 +223,78 @@ static bool compiled_rule_matches_path(const compiled_rule_t *rule,
     return path_matches(rule->pattern, path);
 }
 
+bool pattern_covers_classified(const char *a, size_t la, bool a_rec, bool a_star,
+                                const char *b, size_t lb, bool b_rec, bool b_star);
+
 bool pattern_covers(const char *a, const char *b)
 {
     if (!a || !b) return false;
     if (strcmp(a, b) == 0) return true;
 
-    bool a_rec = (strlen(a) >= 3 && a[strlen(a) - 3] == '.' &&
-                  a[strlen(a) - 2] == '.' && a[strlen(a) - 1] == '.');
-    bool b_rec = (strlen(b) >= 3 && b[strlen(b) - 3] == '.' &&
-                  b[strlen(b) - 2] == '.' && b[strlen(b) - 1] == '.');
+    size_t la = strlen(a);
+    size_t lb = strlen(b);
+    bool a_rec = (la >= 3 && a[la - 3] == '.' &&
+                  a[la - 2] == '.' && a[la - 1] == '.');
+    bool b_rec = (lb >= 3 && b[lb - 3] == '.' &&
+                  b[lb - 2] == '.' && b[lb - 1] == '.');
     bool a_star = (strchr(a, '*') != NULL && !a_rec);
     bool b_star = (strchr(b, '*') != NULL && !b_rec);
 
+    return pattern_covers_classified(a, la, a_rec, a_star, b, lb, b_rec, b_star);
+}
+
+/** Fast-path variant of pattern_covers using pre-classified pattern metadata.
+ * Eliminates redundant strlen/strchr calls and stack allocations for the
+ * common case where both patterns are static (no wildcards, no "..."). */
+bool pattern_covers_classified(const char *a, size_t la, bool a_rec, bool a_star,
+                                const char *b, size_t lb, bool b_rec, bool b_star)
+{
+    if (strcmp(a, b) == 0) return true;
+
+    /* Common case: both static — neither covers the other */
+    if (!a_rec && !a_star && !b_rec && !b_star) return false;
+
     if (a_rec && b_rec) {
-        char base_a[MAX_PATTERN_LEN], base_b[MAX_PATTERN_LEN];
-        size_t la = strlen(a) - 3;
-        size_t lb = strlen(b) - 3;
-        if (la > 0 && a[la - 1] == '/') la--;
-        if (lb > 0 && b[lb - 1] == '/') lb--;
-        if (la >= MAX_PATTERN_LEN) la = MAX_PATTERN_LEN - 1;
-        if (lb >= MAX_PATTERN_LEN) lb = MAX_PATTERN_LEN - 1;
-        memcpy(base_a, a, la); base_a[la] = '\0';
-        memcpy(base_b, b, lb); base_b[lb] = '\0';
-        if (strcmp(base_a, base_b) == 0) return true;
-        return strncmp(base_b, base_a, la) == 0 &&
-               (base_b[la] == '/' || base_b[la] == '\0');
+        size_t base_a_len = la - 3;
+        size_t base_b_len = lb - 3;
+        if (base_a_len > 0 && a[base_a_len - 1] == '/') base_a_len--;
+        if (base_b_len > 0 && b[base_b_len - 1] == '/') base_b_len--;
+        if (base_a_len == base_b_len)
+            return memcmp(a, b, base_a_len) == 0;
+        if (base_b_len < base_a_len)
+            return memcmp(b, a, base_b_len) == 0 &&
+                   (a[base_b_len] == '/' || a[base_b_len] == '\0');
+        return memcmp(a, b, base_a_len) == 0 &&
+               (b[base_a_len] == '/' || b[base_a_len] == '\0');
     }
 
     if (a_rec && !b_rec) {
-        char base_a[MAX_PATTERN_LEN];
-        size_t la = strlen(a) - 3;
-        if (la > 0 && a[la - 1] == '/') la--;
-        if (la >= MAX_PATTERN_LEN) la = MAX_PATTERN_LEN - 1;
-        memcpy(base_a, a, la); base_a[la] = '\0';
-        if (strcmp(base_a, b) == 0) return true;
+        size_t base_a_len = la - 3;
+        if (base_a_len > 0 && a[base_a_len - 1] == '/') base_a_len--;
+        if (lb == base_a_len && memcmp(b, a, lb) == 0) return true;
         if (b_star) {
-            char base_b[MAX_PATTERN_LEN];
             const char *star = strchr(b, '*');
             size_t prefix_len = (size_t)(star - b);
-            if (prefix_len >= MAX_PATTERN_LEN) prefix_len = MAX_PATTERN_LEN - 1;
-            memcpy(base_b, b, prefix_len);
-            base_b[prefix_len] = '\0';
-            return strncmp(base_b, base_a, la) == 0 ||
-                   strncmp(base_a, base_b, prefix_len) == 0;
+            if (prefix_len > 0 && b[prefix_len - 1] == '/') prefix_len--;
+            if (prefix_len <= base_a_len && memcmp(b, a, prefix_len) == 0) return true;
+            if (base_a_len <= prefix_len && memcmp(a, b, base_a_len) == 0) return true;
         }
-        return strncmp(b, base_a, la) == 0 &&
-               (b[la] == '/' || b[la] == '\0');
+        return lb >= base_a_len && memcmp(b, a, base_a_len) == 0 &&
+               (b[base_a_len] == '/' || b[base_a_len] == '\0');
     }
 
     if (a_rec && b_star) {
-        char base_a[MAX_PATTERN_LEN];
-        size_t la = strlen(a) - 3;
-        if (la > 0 && a[la - 1] == '/') la--;
-        if (la >= MAX_PATTERN_LEN) la = MAX_PATTERN_LEN - 1;
-        memcpy(base_a, a, la); base_a[la] = '\0';
-        char base_b[MAX_PATTERN_LEN];
+        size_t base_a_len = la - 3;
+        if (base_a_len > 0 && a[base_a_len - 1] == '/') base_a_len--;
         const char *star = strchr(b, '*');
         size_t prefix_len = (size_t)(star - b);
         if (prefix_len > 0 && b[prefix_len - 1] == '/') prefix_len--;
-        if (prefix_len >= MAX_PATTERN_LEN) prefix_len = MAX_PATTERN_LEN - 1;
-        memcpy(base_b, b, prefix_len); base_b[prefix_len] = '\0';
-        if (strcmp(base_a, base_b) == 0) return true;
-        return strncmp(base_b, base_a, la) == 0 &&
-               (base_b[la] == '/' || base_b[la] == '\0');
+        if (prefix_len == base_a_len && memcmp(b, a, prefix_len) == 0) return true;
+        if (prefix_len < base_a_len)
+            return memcmp(b, a, prefix_len) == 0 &&
+                   (a[prefix_len] == '/' || a[prefix_len] == '\0');
+        return memcmp(a, b, base_a_len) == 0 &&
+               (b[base_a_len] == '/' || b[base_a_len] == '\0');
     }
 
     if (b_rec) return false;
@@ -303,7 +312,7 @@ bool pattern_covers(const char *a, const char *b)
         size_t pre_b = (size_t)(star_b - b);
 
         if (pre_a > pre_b) return false;
-        if (strncmp(a, b, pre_a) != 0) return false;
+        if (memcmp(a, b, pre_a) != 0) return false;
 
         const char *suf_a = star_a + (a_double ? 2 : 1);
         const char *suf_b = star_b + (b_double ? 2 : 1);
@@ -748,6 +757,28 @@ bool soft_ruleset_is_compiled(const soft_ruleset_t *rs)
     return rs->is_compiled;
 }
 
+/* Comparator for sorting pending rules by (layer, pattern, is_deny) */
+typedef struct {
+    rule_t   rule;
+    int      layer;
+    layer_type_t type;
+    uint16_t pat_len;       /**< strlen(pattern), cached */
+    uint8_t  is_rec;        /**< pattern ends with "..." */
+    uint8_t  has_wildcard;  /**< pattern contains '*' */
+} pending_rule_t;
+static int cmp_pending(const void *a, const void *b)
+{
+    const pending_rule_t *pa = (const pending_rule_t *)a;
+    const pending_rule_t *pb = (const pending_rule_t *)b;
+    if (pa->layer != pb->layer) return pa->layer - pb->layer;
+    int pc = strcmp(pa->rule.pattern, pb->rule.pattern);
+    if (pc != 0) return pc;
+    /* DENY (bit 31 set) before ALLOW */
+    int a_deny = (pa->rule.mode & SOFT_ACCESS_DENY) != 0;
+    int b_deny = (pb->rule.mode & SOFT_ACCESS_DENY) != 0;
+    return a_deny - b_deny;
+}
+
 int soft_ruleset_compile(soft_ruleset_t *rs)
 {
     if (!rs) { errno = EINVAL; return -1; }
@@ -764,8 +795,7 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
         return 0;
     }
 
-    /* Phase 1: Cross-layer shadow elimination (PRECEDENCE layers only) */
-    typedef struct { rule_t rule; int layer; layer_type_t type; } pending_rule_t;
+    /* Phase 1: Collect all rules with cached pattern metadata */
     pending_rule_t *pending = calloc((size_t)max_pending, sizeof(pending_rule_t));
     if (!pending) return -1;
     int pending_count = 0;
@@ -774,46 +804,87 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
         const layer_t *lyr = &rs->layers[li];
         for (int ri = 0; ri < lyr->count; ri++) {
             const rule_t *r = &lyr->rules[ri];
-
-            /* SPECIFICITY layers: no shadow elimination, keep all rules */
-            if (lyr->type == LAYER_SPECIFICITY) {
-                pending[pending_count].rule = *r;
-                pending[pending_count].layer = li;
-                pending[pending_count].type = LAYER_SPECIFICITY;
-                pending_count++;
-                continue;
-            }
-
-            /* PRECEDENCE layers: shadow elimination */
-            bool shadowed = false;
-            if (r->mode & SOFT_ACCESS_DENY) {
-                for (int pi = 0; pi < pending_count && !shadowed; pi++) {
-                    const pending_rule_t *pr = &pending[pi];
-                    if (pr->type == LAYER_PRECEDENCE &&
-                        pr->rule.mode & SOFT_ACCESS_DENY &&
-                        rule_constraints_equal(&pr->rule, r) &&
-                        pattern_covers(pr->rule.pattern, r->pattern))
-                        shadowed = true;
-                }
-            } else {
-                for (int pi = 0; pi < pending_count && !shadowed; pi++) {
-                    const pending_rule_t *pr = &pending[pi];
-                    if (pr->type == LAYER_PRECEDENCE &&
-                        pr->rule.mode & SOFT_ACCESS_DENY &&
-                        pattern_covers(pr->rule.pattern, r->pattern))
-                        shadowed = true;
-                }
-            }
-            if (!shadowed) {
-                pending[pending_count].rule = *r;
-                pending[pending_count].layer = li;
-                pending[pending_count].type = LAYER_PRECEDENCE;
-                pending_count++;
-            }
+            pending_rule_t *pp = &pending[pending_count];
+            pp->rule = *r;
+            pp->layer = li;
+            pp->type = lyr->type;
+            /* Cache pattern metadata to avoid recomputing in pattern_covers */
+            size_t pl = strlen(r->pattern);
+            pp->pat_len = (uint16_t)pl;
+            pp->is_rec = (pl >= 3 && r->pattern[pl-1] == '.' &&
+                          r->pattern[pl-2] == '.' && r->pattern[pl-3] == '.');
+            pp->has_wildcard = (strchr(r->pattern, '*') != NULL);
+            pending_count++;
         }
     }
 
-    /* Phase 2: Mode intersection (PRECEDENCE layers only) */
+    /* Phase 1b: Sort by (layer ASC, pattern ASC, is_deny ASC) so that:
+     *   - Earlier layers (higher precedence) sort first
+     *   - Prefix patterns sort before their extensions
+     *   - DENY rules sort before ALLOW for same (layer, pattern)
+     * This limits shadow elimination and subsumption to local windows. */
+    if (pending_count > 1)
+        qsort(pending, (size_t)pending_count, sizeof(pending_rule_t), cmp_pending);
+
+    /* Phase 1a: Single-pass shadow elimination.
+     * For each rule i, scan DENY rules backward from i-1.  Since sorted,
+     * DENY rules from layers ≤ layer[i] with prefix-matching patterns are
+     * adjacent.  Break when pattern[j] can't be a prefix of pattern[i]. */
+    int write = 0;
+    for (int i = 0; i < pending_count; i++) {
+        bool shadowed = false;
+        if (pending[i].type == LAYER_PRECEDENCE) {
+            uint16_t pat_i_len = pending[i].pat_len;
+            const char *pat_i = pending[i].rule.pattern;
+            for (int j = i - 1; j >= 0; j--) {
+                if (pending[j].type != LAYER_PRECEDENCE) continue;
+                if (pending[j].layer > pending[i].layer) continue;
+                /* If DENY pattern is longer than rule i, it can't be a prefix */
+                if (pending[j].pat_len > pat_i_len) continue;
+                if (!(pending[j].rule.mode & SOFT_ACCESS_DENY)) continue;
+                /* Fast prefix check using cached length */
+                if (pending[j].pat_len < pat_i_len &&
+                    pending[j].rule.pattern[pending[j].pat_len] != '/')
+                    continue;  /* not a directory prefix */
+                if (pending[j].pat_len < pat_i_len &&
+                    memcmp(pending[j].rule.pattern, pat_i, pending[j].pat_len) != 0)
+                    continue;  /* not a prefix at all */
+                /* DENY rule from earlier or same layer — check coverage using
+                 * cached metadata to avoid recomputing strlen/strchr. */
+                if (rule_constraints_equal(&pending[j].rule, &pending[i].rule) &&
+                    pattern_covers_classified(pending[j].rule.pattern, pending[j].pat_len,
+                                              pending[j].is_rec, pending[j].has_wildcard,
+                                              pat_i, pat_i_len, pending[i].is_rec,
+                                              pending[i].has_wildcard)) {
+                    shadowed = true;
+                    break;
+                }
+                /* For non-identical-constraint rules, only check pattern coverage
+                 * for ALLOW rules (DENY-duplicates are already handled above). */
+                if (!(pending[i].rule.mode & SOFT_ACCESS_DENY) &&
+                    pattern_covers_classified(pending[j].rule.pattern, pending[j].pat_len,
+                                              pending[j].is_rec, pending[j].has_wildcard,
+                                              pat_i, pat_i_len, pending[i].is_rec,
+                                              pending[i].has_wildcard)) {
+                    shadowed = true;
+                    break;
+                }
+                /* If DENY pattern is not a prefix of rule i's pattern,
+                 * no earlier rule can be a prefix either (sorted order). */
+                if (strncmp(pending[j].rule.pattern, pat_i, pat_i_len) != 0)
+                    break;
+            }
+        }
+        if (!shadowed) {
+            pending[write] = pending[i];
+            write++;
+        }
+    }
+    pending_count = write;
+
+    /* Phase 2: Mode intersection (PRECEDENCE layers only).
+     * After sorting, identical patterns are adjacent — only scan forward
+     * while patterns match. */
     typedef struct { uint32_t mode; bool used; } group_entry_t;
     group_entry_t *groups = calloc((size_t)pending_count, sizeof(group_entry_t));
     if (!groups) { free(pending); return -1; }
@@ -824,11 +895,13 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
     for (int i = 0; i < pending_count; i++) {
         if (groups[i].used) continue;
         if (pending[i].type != LAYER_PRECEDENCE) continue;
+        /* Only compare against adjacent rules with identical pattern */
         for (int j = i + 1; j < pending_count; j++) {
             if (groups[j].used) continue;
             if (pending[j].type != LAYER_PRECEDENCE) continue;
-            if (strcmp(pending[i].rule.pattern, pending[j].rule.pattern) == 0 &&
-                rule_constraints_equal(&pending[i].rule, &pending[j].rule)) {
+            if (strcmp(pending[i].rule.pattern, pending[j].rule.pattern) != 0)
+                break;  /* patterns diverge → no more matches possible */
+            if (rule_constraints_equal(&pending[i].rule, &pending[j].rule)) {
                 groups[i].mode &= pending[j].rule.mode;
                 groups[j].used = true;
             }
@@ -840,7 +913,10 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
     effective_ruleset_t eff;
     memset(&eff, 0, sizeof(eff));
 
-    /* First pass: mark subsumed rules (PRECEDENCE only) */
+    /* First pass: mark subsumed rules (PRECEDENCE only).
+     * After sorting by pattern, rule i can only subsume rule j where j > i
+     * and pattern[j] starts with pattern[i].  Once pattern[j] diverges
+     * past pattern[i] lexicographically, no further j can be subsumed. */
     bool *removed = calloc((size_t)pending_count, sizeof(bool));
     if (pending_count > 0 && !removed) { free(groups); free(pending); return -1; }
 
@@ -848,10 +924,17 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
         if (removed[i] || groups[i].used) continue;
         if (pending[i].type != LAYER_PRECEDENCE) continue;
         if (groups[i].mode == 0) { removed[i] = true; continue; }
-        for (int j = 0; j < pending_count; j++) {
-            if (i == j || removed[j] || groups[j].used) continue;
+        uint16_t pat_i_len = pending[i].pat_len;
+        const char *pat_i = pending[i].rule.pattern;
+        for (int j = i + 1; j < pending_count; j++) {
+            if (removed[j] || groups[j].used) continue;
             if (pending[j].type != LAYER_PRECEDENCE) continue;
             if (groups[j].mode == 0) { removed[j] = true; continue; }
+            /* Lexicographic divergence: if pattern[j] doesn't start with pattern[i],
+             * no subsequent pattern will either (sorted order). */
+            if (pending[j].pat_len < pat_i_len ||
+                strncmp(pending[j].rule.pattern, pat_i, pat_i_len) != 0)
+                break;
             /* Standard subsumption: same constraints, broader pattern */
             if (rule_subsumes(&pending[i].rule, &pending[j].rule)) {
                 removed[j] = true;
@@ -867,18 +950,22 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
 
     /* SPECIFICITY subject redundancy: for SPECIFICITY layers (replacement semantics),
      * a subject-constrained rule is redundant only if its mode is EXACTLY EQUAL to
-     * the unconstrained rule's mode. Since SPECIFICITY replaces rather than intersects,
-     * different modes would change behavior for the constrained subjects. */
+     * the unconstrained rule's mode. After sorting by (layer, pattern, is_deny),
+     * rules with the same pattern are adjacent. */
     for (int i = 0; i < pending_count; i++) {
         if (removed[i] || groups[i].used) continue;
         if (pending[i].type != LAYER_PRECEDENCE) continue;
         if (pending[i].rule.subject_regex[0] != '\0') continue;  /* only unconstrained */
-        for (int j = 0; j < pending_count; j++) {
-            if (i == j || removed[j] || groups[j].used) continue;
+        uint16_t pat_i_len = pending[i].pat_len;
+        const char *pat_i = pending[i].rule.pattern;
+        /* Scan forward for rules with identical pattern */
+        for (int j = i + 1; j < pending_count; j++) {
+            if (pending[j].pat_len != pat_i_len ||
+                memcmp(pending[j].rule.pattern, pat_i, pat_i_len) != 0)
+                break;  /* past all rules with this pattern */
             if (pending[j].type != LAYER_SPECIFICITY) continue;
             if (pending[j].rule.subject_regex[0] == '\0') continue;  /* only subject-constrained */
             /* Same pattern and exact mode match → redundant */
-            if (strcmp(pending[i].rule.pattern, pending[j].rule.pattern) != 0) continue;
             if (pending[i].rule.op_type != pending[j].rule.op_type) continue;
             if (pending[i].rule.flags != pending[j].rule.flags) continue;
             if (pending[i].rule.min_uid != pending[j].rule.min_uid) continue;
