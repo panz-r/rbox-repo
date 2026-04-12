@@ -273,6 +273,8 @@ CoordinatedMutationResult CharSubstituteCoordOp::apply(const TestCaseCore& origi
     
     Expectation e;
     e.type = ExpectationType::MATCH_EXACT;
+    e.input = updated_matching[0];
+    e.expected_match = "yes";
     e.description = "Char substitution at pos " + std::to_string(pos);
     result.mutated_tc.expectations.add(e);
     
@@ -378,9 +380,11 @@ CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& origi
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -392,6 +396,8 @@ CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& origi
     
     Expectation e;
     e.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Nested quantifier: at least one required";
     e.meta["mutation"] = "NEST_QUANTIFIER_COORD";
     result.mutated_tc.expectations.add(e);
@@ -443,9 +449,11 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -457,6 +465,8 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     
     Expectation e;
     e.type = ExpectationType::REPETITION_MIN_COUNT;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Extended sequence with '" + std::string(1, extra) + "'";
     e.meta["mutation"] = "EXTEND_SEQUENCE_COORD";
     result.mutated_tc.expectations.add(e);
@@ -466,7 +476,7 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     return result;
 }
 
-    CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
     
@@ -504,9 +514,11 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -518,6 +530,8 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     
     Expectation e;
     e.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Deeper nesting: at least one required";
     e.meta["mutation"] = "DEEPEN_NESTING_COORD";
     result.mutated_tc.expectations.add(e);
@@ -989,8 +1003,18 @@ CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, s
     result.valid = true;
     result.proof = original.proof + " | CUT_BASED(type=" + std::to_string(mutation_type) + ")";
     
+    std::string sample_input;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            sample_input = node.value;
+            break;
+        }
+    }
+    
     Expectation e;
     e.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Cut-based mutation at SEQUENCE boundary";
     e.meta["mutation"] = "CUT_BASED";
     result.mutated_tc.expectations.add(e);
@@ -1106,9 +1130,11 @@ CoordinatedMutationResult RemoveQuantifierCoordOp::apply(const TestCaseCore& ori
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -1120,6 +1146,8 @@ CoordinatedMutationResult RemoveQuantifierCoordOp::apply(const TestCaseCore& ori
     
     Expectation e;
     e.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Removed quantifier wrapper";
     e.meta["mutation"] = "REMOVE_QUANTIFIER_COORD";
     result.mutated_tc.expectations.add(e);
@@ -1309,9 +1337,11 @@ CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore&
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -1323,6 +1353,8 @@ CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore&
     
     Expectation e;
     e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Flattened quantified alternation";
     e.meta["mutation"] = "FLATTEN_QUANTIFIED_ALT_COORD";
     result.mutated_tc.expectations.add(e);
@@ -1382,9 +1414,11 @@ CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& or
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -1396,6 +1430,8 @@ CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& or
     
     Expectation e;
     e.type = ExpectationType::FRAGMENT_NESTED;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Unwrapped fragment references to literal placeholder";
     e.meta["mutation"] = "UNWRAP_FRAGMENT_REF_COORD";
     result.mutated_tc.expectations.add(e);
@@ -1444,9 +1480,11 @@ CoordinatedMutationResult SequenceToAlternationCoordOp::apply(const TestCaseCore
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -1458,6 +1496,8 @@ CoordinatedMutationResult SequenceToAlternationCoordOp::apply(const TestCaseCore
     
     Expectation e;
     e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Converted sequence to alternation";
     e.meta["mutation"] = "SEQUENCE_TO_ALTERNATION_COORD";
     result.mutated_tc.expectations.add(e);
@@ -1503,9 +1543,11 @@ CoordinatedMutationResult QuantifyAlternationCoordOp::apply(const TestCaseCore& 
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -1519,6 +1561,8 @@ CoordinatedMutationResult QuantifyAlternationCoordOp::apply(const TestCaseCore& 
     
     Expectation e;
     e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Quantified alternation with " + std::string(1, quant_name[0]);
     e.meta["mutation"] = "QUANTIFY_ALTERNATION_COORD";
     result.mutated_tc.expectations.add(e);
@@ -1568,9 +1612,11 @@ CoordinatedMutationResult PrefixSuffixAlternationCoordOp::apply(const TestCaseCo
     }
     
     bool has_matching = false;
+    std::string sample_input;
     for (auto& node : result.mutated_tc.inputs.nodes) {
         if (node.categories.count("matching")) {
             has_matching = true;
+            sample_input = node.value;
             break;
         }
     }
@@ -1582,6 +1628,8 @@ CoordinatedMutationResult PrefixSuffixAlternationCoordOp::apply(const TestCaseCo
     
     Expectation e;
     e.type = ExpectationType::MATCH_EXACT;
+    e.input = sample_input;
+    e.expected_match = "yes";
     e.description = "Added prefix/suffix to alternation";
     e.meta["mutation"] = "PREFIX_SUFFIX_ALT_COORD";
     e.meta["prefix"] = prefix;
