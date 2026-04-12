@@ -17,6 +17,54 @@
 
 #include "rbox_protocol.h"
 
+
+/*
+ * Checked write - handles partial writes and EINTR.
+ * Returns bytes written, or -1 on error.
+ */
+static inline ssize_t checked_write(int fd, const void *buf, size_t len) {
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, (const char *)buf + written, len - written);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1;
+        written += n;
+    }
+    return (ssize_t)written;
+}
+
+/*
+ * Checked read - handles partial reads and EINTR.
+ * Returns bytes read, or -1 on error (including EOF).
+ */
+static inline ssize_t checked_read(int fd, void *buf, size_t len) {
+    size_t read_bytes = 0;
+    while (read_bytes < len) {
+        ssize_t n = read(fd, (char *)buf + read_bytes, len - read_bytes);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) break;  /* EOF */
+        read_bytes += n;
+    }
+    return (ssize_t)read_bytes;
+}
+
+/*
+ * Drain remaining data from fd until EOF.
+ * Used when we don't care about the content.
+ */
+static inline void drain_fd(int fd) {
+    char buf[256];
+    while (read(fd, buf, sizeof(buf)) > 0) {
+        /* discard */
+    }
+}
+
 /* Thread function pointer type */
 typedef void *(*thread_func_t)(void*);
 
@@ -138,7 +186,7 @@ static void *client_misbehave_garbage(void *arg) {
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
     connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-    (void)write(fd, "GARBAGE DATA NOT A PACKET", 25);
+    checked_write(fd, "GARBAGE DATA NOT A PACKET", 25);
     close(fd);
     return NULL;
 }
@@ -155,7 +203,7 @@ static void *client_misbehave_bad_magic(void *arg) {
     memset(pkt, 0, RBOX_HEADER_SIZE);
     *(uint32_t *)(pkt + 0) = 0xDEADBEEF;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
-    (void)write(fd, pkt, RBOX_HEADER_SIZE);
+    checked_write(fd, pkt, RBOX_HEADER_SIZE);
     close(fd);
     return NULL;
 }
@@ -170,7 +218,7 @@ static void *client_misbehave_truncated_header(void *arg) {
     connect(fd, (struct sockaddr *)&addr, sizeof(addr));
     char pkt[10];
     memset(pkt, 0, 10);
-    (void)write(fd, pkt, 10);
+    checked_write(fd, pkt, 10);
     close(fd);
     return NULL;
 }
@@ -188,7 +236,7 @@ static void *client_misbehave_truncated_body(void *arg) {
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = 50;
-    (void)write(fd, pkt, RBOX_HEADER_SIZE + 25);
+    checked_write(fd, pkt, RBOX_HEADER_SIZE + 25);
     close(fd);
     return NULL;
 }
@@ -207,9 +255,9 @@ static void *client_misbehave_too_large(void *arg) {
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = 2 * 1024 * 1024;
-    (void)write(fd, pkt, RBOX_HEADER_SIZE);
+    checked_write(fd, pkt, RBOX_HEADER_SIZE);
     char resp[4096];
-    (void)read(fd, resp, sizeof(resp));
+    checked_read(fd, resp, sizeof(resp));
     close(fd);
     return NULL;
 }
@@ -243,7 +291,7 @@ static void *client_with_reconnect(void *arg) {
             usleep(CLIENT_DELAY_US);
             continue;
         }
-        (void)write(fd, pkt, pkt_len);
+        checked_write(fd, pkt, pkt_len);
 
         char resp[4096];
         ssize_t n = read(fd, resp, sizeof(resp));
@@ -283,11 +331,11 @@ static void *client_misbehave_multiple_requests(void *arg) {
         size_t pkt_len;
         const char *args[] = { cmd };
         rbox_build_request(pkt, sizeof(pkt), &pkt_len, cmd, NULL, NULL, 1, args, 0, NULL, NULL);
-        (void)write(fd, pkt, pkt_len);
+        checked_write(fd, pkt, pkt_len);
     }
     char resp[4096];
     for (int i = 0; i < 3; i++) {
-        (void)read(fd, resp, sizeof(resp));
+        checked_read(fd, resp, sizeof(resp));
     }
     close(fd);
     return NULL;

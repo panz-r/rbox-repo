@@ -25,6 +25,54 @@
 #include "rbox_protocol.h"
 #include "test_common.h"
 
+/*
+ * Checked write - handles partial writes and EINTR.
+ * Returns bytes written, or -1 on error.
+ */
+static inline ssize_t checked_write(int fd, const void *buf, size_t len) {
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fd, (const char *)buf + written, len - written);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1;
+        written += n;
+    }
+    return (ssize_t)written;
+}
+
+/*
+ * Checked read - handles partial reads and EINTR.
+ * Returns bytes read, or -1 on error (including EOF).
+ */
+static inline ssize_t checked_read(int fd, void *buf, size_t len) {
+    size_t read_bytes = 0;
+    while (read_bytes < len) {
+        ssize_t n = read(fd, (char *)buf + read_bytes, len - read_bytes);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) break;  /* EOF */
+        read_bytes += n;
+    }
+    return (ssize_t)read_bytes;
+}
+
+/*
+ * Drain remaining data from fd until EOF.
+ * Used when we don't care about the content.
+ */
+static inline void drain_fd(int fd) {
+    char buf[256];
+    while (read(fd, buf, sizeof(buf)) > 0) {
+        /* discard */
+    }
+}
+
+
 int g_pass_count = 0;
 int g_test_count = 0;
 
@@ -204,7 +252,7 @@ static int test_server_timeout_partial(void) {
 
     /* Send single char to partial wake server */
     char c = 'A';
-    write(rbox_client_fd(cl), &c, 1);
+    checked_write(rbox_client_fd(cl), &c, 1);
 
     /* Close without sending complete request */
     rbox_client_close(cl);
@@ -586,14 +634,14 @@ static int test_partial_header_timeout(void) {
     char partial[64];
     memset(partial, 0, sizeof(partial));
     *(uint32_t *)partial = 0x524F424F;  /* RBOX_MAGIC but wrong */
-    write(sock, partial, 32);
+    checked_write(sock, partial, 32);
 
     /* Wait for server to timeout and close connection */
     usleep(200000);  /* 200ms - longer than server timeout */
 
     /* Try to read - should get EOF or error since server closed */
     char buf[128];
-    (void)read(sock, buf, sizeof(buf));
+    checked_read(sock, buf, sizeof(buf));
     close(sock);
 
     rbox_server_stop(ctx.srv);
