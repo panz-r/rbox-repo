@@ -193,8 +193,8 @@ public:
     std::vector<TestCase> generate();
     void writePatternFile(const std::vector<TestCase>& tests, const std::string& filename);
     void writeExpectations(const std::vector<TestCase>& tests, const std::string& filename);
-    int runTests(const std::vector<TestCase>& tests, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file);
-    int runTestsIndividual(const std::vector<TestCase>& tests, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file);
+    int runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file);
+    int runTestsIndividual(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file);
     void setTestsPerBatch(int count) { tests_per_batch_override = count; }
     
     std::string categoryToString(Category cat);
@@ -222,14 +222,8 @@ public:
 private:
     Options opts;
     std::mt19937 rng;
-    std::vector<TestCase> generated_tests;
     int global_failed_count = 0;  // Persist across batches for saving failed cases
     int tests_per_batch_override = 0;  // Override for tests per batch
-    
-    static const std::vector<std::string> COMMANDS;
-    static const std::vector<std::string> FLAGS;
-    static const std::vector<std::string> FILE_EXTS;
-    static const std::map<std::string, std::string> FRAGMENTS;
     
     std::string makeLiteralPattern(const std::vector<std::string>& parts);
     std::string makeMediumPattern(const std::vector<std::string>& parts, 

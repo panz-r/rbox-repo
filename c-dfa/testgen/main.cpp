@@ -2,6 +2,7 @@
 #include <string>
 #include <cstring>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <libgen.h>
 #include "testgen.h"
 #include "command_utils.h"
@@ -55,6 +56,14 @@ int main(int argc, char* argv[]) {
     std::cout << "TestGen - Grammar-based test case generator for c-dfa\n";
     std::cout << "====================================================\n\n";
     
+    // Get current working directory for passing to runTests
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) == nullptr) {
+        std::cerr << "Cannot get current directory\n";
+        return 1;
+    }
+    std::string cwd_str = cwd;
+    
     // Create output directory
     mkdir(output_dir.c_str(), 0755);
     
@@ -91,7 +100,7 @@ int main(int argc, char* argv[]) {
         std::cout << "  Pattern file: " << pattern_file << "\n";
         
         if (run_tests) {
-            int result = gen.runTests(tests, getToolsDir(), pattern_file, expectations_file);
+            int result = gen.runTests(tests, cwd_str, getToolsDir(), pattern_file, expectations_file);
             if (result == 0) total_passed += tests.size();
             else total_failed += tests.size();
         }
