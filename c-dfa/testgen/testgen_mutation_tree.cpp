@@ -109,24 +109,11 @@ void MutationTree::grow(
     
     std::vector<TestCaseCore> candidates;
     
-    auto mutations = mutation_engine.mutate(from->tc.ast, branching_factor, rng);
-    for (auto& m : mutations) {
-        if (m.success) {
-            TestCaseCore child = from->tc;
-            child.ast = m.ast;
-            child.proof += " | " + m.description;
-            candidates.push_back(child);
-        }
-    }
-    
-    auto generations = generation_engine.generate(from->tc.ast, branching_factor, rng);
-    for (auto& g : generations) {
-        if (g.success) {
-            TestCaseCore child = from->tc;
-            child.ast = g.ast;
-            child.fragments.insert(g.new_fragments.begin(), g.new_fragments.end());
-            child.proof += " | " + g.description;
-            candidates.push_back(child);
+    // Use coordinated mutation operators - these plan the complete mutation atomically
+    auto coordinated_results = coordinated_engine.mutate(from->tc, branching_factor, rng);
+    for (auto& cr : coordinated_results) {
+        if (cr.valid) {
+            candidates.push_back(cr.mutated_tc);
         }
     }
     

@@ -9,232 +9,114 @@
 namespace TestGen {
 
 // ============================================================================
-// Mutation Operators - Local changes to existing patterns
+// Coordinated Mutation Operators - ONE atomic planned change
+//
+// Each operator plans the COMPLETE mutation as ONE atomic transformation:
+// - pattern_change + input_changes + counter_changes + expectation_changes
+// - All must be planned TOGETHER to produce a passing test case
+// - Reject (return invalid) if a coherent passing plan can't be produced
+//
+// The mutation IS the plan - reasoning is part of the mutation
 // ============================================================================
 
-enum class MutationType {
+enum class CoordinatedMutationType {
     CHAR_SUBSTITUTE,
-    CHAR_INSERT,
-    CHAR_DELETE,
-    CLASS_EXPAND,
-    CLASS_REDUCE,
-    QUANTIFIER_GREEDY_LAZY,
-    OPTIONAL_INSERT,
-    GROUP_INSERT,
-    GROUP_REMOVE,
-    ESCAPE_INSERT,
-    ESCAPE_REMOVE,
-};
-
-struct MutationResult {
-    std::shared_ptr<PatternNode> ast;
-    std::string description;
-    bool success;
-};
-
-class MutationOperator {
-public:
-    virtual ~MutationOperator() = default;
-    
-    virtual MutationType type() const = 0;
-    virtual MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const = 0;
-    virtual std::string name() const = 0;
-};
-
-class CharSubstituteOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::CHAR_SUBSTITUTE; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "CHAR_SUBSTITUTE"; }
-};
-
-class CharInsertOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::CHAR_INSERT; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "CHAR_INSERT"; }
-};
-
-class CharDeleteOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::CHAR_DELETE; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "CHAR_DELETE"; }
-};
-
-class ClassExpandOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::CLASS_EXPAND; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "CLASS_EXPAND"; }
-};
-
-class ClassReduceOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::CLASS_REDUCE; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "CLASS_REDUCE"; }
-};
-
-class QuantifierGreedyLazyOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::QUANTIFIER_GREEDY_LAZY; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "QUANTIFIER_GREEDY_LAZY"; }
-};
-
-class OptionalInsertOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::OPTIONAL_INSERT; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "OPTIONAL_INSERT"; }
-};
-
-class GroupInsertOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::GROUP_INSERT; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "GROUP_INSERT"; }
-};
-
-class GroupRemoveOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::GROUP_REMOVE; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "GROUP_REMOVE"; }
-};
-
-class EscapeInsertOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::ESCAPE_INSERT; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "ESCAPE_INSERT"; }
-};
-
-class EscapeRemoveOp : public MutationOperator {
-public:
-    MutationType type() const override { return MutationType::ESCAPE_REMOVE; }
-    MutationResult apply(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "ESCAPE_REMOVE"; }
-};
-
-class MutationEngine {
-public:
-    MutationEngine();
-    
-    std::vector<MutationResult> mutate(
-        std::shared_ptr<PatternNode> ast,
-        size_t max_mutations,
-        std::mt19937& rng
-    ) const;
-    
-    static std::vector<std::unique_ptr<MutationOperator>> allOperators();
-    
-private:
-    std::vector<std::unique_ptr<MutationOperator>> operators;
-};
-
-// ============================================================================
-// Generation Operators - Adds elements, grows patterns
-// ============================================================================
-
-enum class GenerationType {
     ADD_ALTERNATIVE,
-    EXTEND_SEQUENCE,
     NEST_QUANTIFIER,
-    ADD_PREFIX,
-    ADD_SUFFIX,
-    LITERAL_TO_FRAGMENT,
-    SPLIT_ALTERNATION,
+    EXTEND_SEQUENCE,
     DEEPEN_NESTING,
+    SPLIT_ALTERNATION,
 };
 
-struct GenerationResult {
-    std::shared_ptr<PatternNode> ast;
-    std::map<std::string, std::string> new_fragments;
-    std::string description;
-    bool success;
+struct CoordinatedMutationResult {
+    TestCaseCore mutated_tc;
+    std::string proof;
+    bool valid;
 };
 
-class GenerationOperator {
+class CoordinatedMutationOperator {
 public:
-    virtual ~GenerationOperator() = default;
+    virtual ~CoordinatedMutationOperator() = default;
     
-    virtual GenerationType type() const = 0;
-    virtual GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const = 0;
+    virtual CoordinatedMutationType type() const = 0;
     virtual std::string name() const = 0;
+    virtual CoordinatedMutationResult apply(
+        const TestCaseCore& original,
+        std::mt19937& rng
+    ) const = 0;
+    virtual bool isGeneralizing() const = 0;
 };
 
-class AddAlternativeOp : public GenerationOperator {
+class CharSubstituteCoordOp : public CoordinatedMutationOperator {
 public:
-    GenerationType type() const override { return GenerationType::ADD_ALTERNATIVE; }
-    GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "ADD_ALTERNATIVE"; }
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::CHAR_SUBSTITUTE; }
+    std::string name() const override { return "CHAR_SUBSTITUTE_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
-class ExtendSequenceOp : public GenerationOperator {
+class AddAlternativeCoordOp : public CoordinatedMutationOperator {
 public:
-    GenerationType type() const override { return GenerationType::EXTEND_SEQUENCE; }
-    GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "EXTEND_SEQUENCE"; }
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::ADD_ALTERNATIVE; }
+    std::string name() const override { return "ADD_ALTERNATIVE_COORD"; }
+    bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
-class NestQuantifierOp : public GenerationOperator {
+class NestQuantifierCoordOp : public CoordinatedMutationOperator {
 public:
-    GenerationType type() const override { return GenerationType::NEST_QUANTIFIER; }
-    GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "NEST_QUANTIFIER"; }
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::NEST_QUANTIFIER; }
+    std::string name() const override { return "NEST_QUANTIFIER_COORD"; }
+    bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
-class AddPrefixOp : public GenerationOperator {
+class ExtendSequenceCoordOp : public CoordinatedMutationOperator {
 public:
-    GenerationType type() const override { return GenerationType::ADD_PREFIX; }
-    GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "ADD_PREFIX"; }
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::EXTEND_SEQUENCE; }
+    std::string name() const override { return "EXTEND_SEQUENCE_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
-class AddSuffixOp : public GenerationOperator {
+class DeepenNestingCoordOp : public CoordinatedMutationOperator {
 public:
-    GenerationType type() const override { return GenerationType::ADD_SUFFIX; }
-    GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "ADD_SUFFIX"; }
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::DEEPEN_NESTING; }
+    std::string name() const override { return "DEEPEN_NESTING_COORD"; }
+    bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
-class LiteralToFragmentOp : public GenerationOperator {
+class SplitAlternationCoordOp : public CoordinatedMutationOperator {
 public:
-    GenerationType type() const override { return GenerationType::LITERAL_TO_FRAGMENT; }
-    GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "LITERAL_TO_FRAGMENT"; }
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::SPLIT_ALTERNATION; }
+    std::string name() const override { return "SPLIT_ALTERNATION_COORD"; }
+    bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
-class SplitAlternationOp : public GenerationOperator {
+class CutBasedCoordOp : public CoordinatedMutationOperator {
 public:
-    GenerationType type() const override { return GenerationType::SPLIT_ALTERNATION; }
-    GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "SPLIT_ALTERNATION"; }
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::EXTEND_SEQUENCE; }
+    std::string name() const override { return "CUT_BASED_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
-class DeepenNestingOp : public GenerationOperator {
+class CoordinatedMutationEngine {
 public:
-    GenerationType type() const override { return GenerationType::DEEPEN_NESTING; }
-    GenerationResult generate(std::shared_ptr<PatternNode> ast, std::mt19937& rng) const override;
-    std::string name() const override { return "DEEPEN_NESTING"; }
-};
-
-class GenerationEngine {
-public:
-    GenerationEngine();
+    CoordinatedMutationEngine();
     
-    std::vector<GenerationResult> generate(
-        std::shared_ptr<PatternNode> ast,
-        size_t max_variants,
+    std::vector<CoordinatedMutationResult> mutate(
+        const TestCaseCore& tc,
+        size_t max_results,
         std::mt19937& rng
     ) const;
     
-    static std::vector<std::unique_ptr<GenerationOperator>> allOperators();
+    static std::vector<std::unique_ptr<CoordinatedMutationOperator>> allOperators();
     
 private:
-    std::vector<std::unique_ptr<GenerationOperator>> operators;
+    std::vector<std::unique_ptr<CoordinatedMutationOperator>> operators;
 };
 
 } // namespace TestGen

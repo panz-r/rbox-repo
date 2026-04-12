@@ -5,6 +5,7 @@
 #include "expectation_gen.h"
 #include "inductive_builder.h"
 #include "edge_case_gen.h"
+#include "testgen_mutation_tree.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -608,13 +609,41 @@ std::vector<TestCase> TestGenerator::generate() {
     std::set<std::string> all_used_inputs;
     
     for (int i = 0; i < max_tests; i++) {
-        tests.push_back(generateTestCase(i, all_used_inputs));
+        TestCase base_tc = generateTestCase(i, all_used_inputs);
+        
         // Add this test case's inputs to the global set
-        for (const auto& inp : tests.back().matching_inputs) {
+        for (const auto& inp : base_tc.matching_inputs) {
             all_used_inputs.insert(inp);
         }
-        for (const auto& inp : tests.back().counter_inputs) {
+        for (const auto& inp : base_tc.counter_inputs) {
             all_used_inputs.insert(inp);
+        }
+        
+        tests.push_back(base_tc);
+        
+        // Generate mutations of this test case using coordinated mutation operators
+        // Each mutated case is a complete (pattern, inputs, counters, expectations) that's coherent
+        TestGen::CoordinatedMutationEngine coord_engine;
+        TestGen::TestCaseCore base_core = TestGen::TestCaseCore::fromOldTestCase(base_tc);
+        
+        auto mutations = coord_engine.mutate(base_core, 10, rng);
+        for (auto& mut_result : mutations) {
+            if (mut_result.valid) {
+                TestCase mutated_tc = mut_result.mutated_tc.toOldTestCase(tests.size());
+                mutated_tc.category = base_tc.category;
+                mutated_tc.counter_category = base_tc.counter_category;
+                mutated_tc.proof = base_tc.proof + " -> " + mut_result.proof;
+                
+                // Add mutated case's inputs to global set
+                for (const auto& inp : mutated_tc.matching_inputs) {
+                    all_used_inputs.insert(inp);
+                }
+                for (const auto& inp : mutated_tc.counter_inputs) {
+                    all_used_inputs.insert(inp);
+                }
+                
+                tests.push_back(mutated_tc);
+            }
         }
     }
     return tests;

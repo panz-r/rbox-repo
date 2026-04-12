@@ -99,8 +99,7 @@ public:
 private:
     MutationTreeNode* root_;
     DFACoverageTracker* coverage;
-    MutationEngine mutation_engine;
-    GenerationEngine generation_engine;
+    CoordinatedMutationEngine coordinated_engine;
     
     std::vector<TestCaseCore> scoreAndRank(
         const std::vector<TestCaseCore>& candidates,

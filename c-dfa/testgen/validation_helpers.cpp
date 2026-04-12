@@ -62,6 +62,7 @@ bool patternMatchesCharClass(const std::string& char_class, const std::string& s
     }
     return !str.empty();
 }
+
 // Create quantified alternation: (alt1|alt2|alt3)+
 std::shared_ptr<PatternNode> createQuantifiedAlternation(
     const std::vector<std::string>& alts,
