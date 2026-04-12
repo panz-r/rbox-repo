@@ -210,6 +210,8 @@ CoordinatedMutationResult CharSubstituteCoordOp::apply(const TestCaseCore& origi
     
     if (!original.ast) return result;
     
+    if (containsFragmentRef(original.ast)) return result;
+    
     if (original.ast->type == PatternType::ALTERNATION ||
         original.ast->type == PatternType::PLUS_QUANTIFIER ||
         original.ast->type == PatternType::STAR_QUANTIFIER ||
@@ -282,6 +284,9 @@ CoordinatedMutationResult AddAlternativeCoordOp::apply(const TestCaseCore& origi
     CoordinatedMutationResult result;
     result.valid = false;
     
+    if (!original.ast) return result;
+    if (containsFragmentRef(original.ast)) return result;
+    
     auto ast_copy = copyNode(original.ast);
     auto first_alt = findTopLevelLiteral(ast_copy);
     if (!first_alt) {
@@ -343,6 +348,8 @@ CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& origi
     
     if (!original.ast) return result;
     
+    if (containsFragmentRef(original.ast)) return result;
+    
     auto copy = copyNode(original.ast);
     if (!copy) return result;
     
@@ -399,6 +406,9 @@ CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& origi
 CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
+    
+    if (!original.ast) return result;
+    if (containsFragmentRef(original.ast)) return result;
     
     std::vector<std::shared_ptr<PatternNode>> literals;
     if (!findTopLevelLiterals(original.ast, literals) || literals.empty()) {
@@ -463,6 +473,8 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     result.valid = false;
     
     if (!original.ast) return result;
+    
+    if (containsFragmentRef(original.ast)) return result;
     
     auto copy = copyNode(original.ast);
     if (!copy) return result;
@@ -989,16 +1001,14 @@ CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, s
 }
 
 CoordinatedMutationEngine::CoordinatedMutationEngine() {
-    // CharSubstituteCoordOp disabled - requires sophisticated coordinated constraint solving
-    // AddAlternativeCoordOp disabled - corrupts AST structure
-    // NestQuantifierCoordOp and DeepenNestingCoordOp disabled - propagate incorrect matched_seeds
-    // operators.push_back(std::make_unique<CharSubstituteCoordOp>());
-    // operators.push_back(std::make_unique<AddAlternativeCoordOp>());
-    // operators.push_back(std::make_unique<NestQuantifierCoordOp>());
-    // operators.push_back(std::make_unique<ExtendSequenceCoordOp>());
-    // operators.push_back(std::make_unique<DeepenNestingCoordOp>());
+    operators.push_back(std::make_unique<CharSubstituteCoordOp>());
+    operators.push_back(std::make_unique<AddAlternativeCoordOp>());
+    operators.push_back(std::make_unique<NestQuantifierCoordOp>());
+    operators.push_back(std::make_unique<ExtendSequenceCoordOp>());
+    operators.push_back(std::make_unique<DeepenNestingCoordOp>());
     operators.push_back(std::make_unique<CutBasedCoordOp>());
-    // operators.push_back(std::make_unique<SplitAlternationCoordOp>());  // Always returns invalid
+    // SplitAlternationCoordOp always returns invalid
+    // operators.push_back(std::make_unique<SplitAlternationCoordOp>());
 }
 
 std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(
