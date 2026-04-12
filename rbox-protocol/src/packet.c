@@ -164,19 +164,33 @@ rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
     }
 
     /* Estimate required capacity: header + command + caller + syscall + argv + env vars.
-       Each env var: name + null + 4 bytes score. */
-    size_t needed = RBOX_HEADER_SIZE + strlen(command) + 1;
-    if (caller) needed += strlen(caller) + 1;
-    else needed += 1;  /* empty caller */
-    if (syscall) needed += strlen(syscall) + 1;
-    else needed += 1;  /* empty syscall */
-    for (int i = 0; i < argc; i++) {
-        if (argv[i]) needed += strlen(argv[i]) + 1;
+       Each env var: name + null + 4 bytes score. Use checked arithmetic to prevent overflow. */
+    size_t needed = RBOX_HEADER_SIZE;
+    size_t addend = strlen(command) + 1;
+    if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
+    if (caller) {
+        addend = strlen(caller) + 1;
+        if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
+    } else {
+        if (__builtin_add_overflow(needed, 1, &needed)) return RBOX_ERR_INVALID;
     }
-    needed += 1; /* final null after argv */
+    if (syscall) {
+        addend = strlen(syscall) + 1;
+        if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
+    } else {
+        if (__builtin_add_overflow(needed, 1, &needed)) return RBOX_ERR_INVALID;
+    }
+    for (int i = 0; i < argc; i++) {
+        if (argv[i]) {
+            addend = strlen(argv[i]) + 1;
+            if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
+        }
+    }
+    if (__builtin_add_overflow(needed, 1, &needed)) return RBOX_ERR_INVALID;
     for (int i = 0; i < env_var_count; i++) {
         if (env_var_names[i]) {
-            needed += strlen(env_var_names[i]) + 1 + 4;
+            addend = strlen(env_var_names[i]) + 1 + 4;
+            if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
         }
     }
     if (capacity < needed) {
