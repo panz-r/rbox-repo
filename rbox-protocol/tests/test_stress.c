@@ -593,7 +593,7 @@ static int test_partial_header_timeout(void) {
 
     /* Try to read - should get EOF or error since server closed */
     char buf[128];
-    ssize_t n = read(sock, buf, sizeof(buf));
+    (void)read(sock, buf, sizeof(buf));
     close(sock);
 
     rbox_server_stop(ctx.srv);

@@ -89,16 +89,6 @@ static int connect_with_timeout(int fd, const struct sockaddr *addr, socklen_t a
     return 0;
 }
 
-/* Wait for socket to be readable (event-based instead of sleep)
- * Returns: 1 if socket became readable, 0 if timeout, -1 on error */
-static int wait_for_readable(int fd, int timeout_ms) {
-    struct pollfd pfd = { .fd = fd, .events = POLLIN };
-    int ret = poll(&pfd, 1, timeout_ms);
-    if (ret < 0) return -1;
-    if (ret == 0) return 0;
-    return (pfd.revents & POLLIN) ? 1 : 0;
-}
-
 /* Checked pthread_create - fails test on error */
 static int checked_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                                   void *(*start_routine)(void *), void *arg) {
@@ -1018,7 +1008,6 @@ static int test_too_large_command(void) {
     }
 
     request_args_t good_args[3];
-    static const char *valid_args[] = {""};
     for (int i = 0; i < 3; i++) {
         good_args[i].path = SOCKET_PATH;
         good_args[i].cmd = "valid";

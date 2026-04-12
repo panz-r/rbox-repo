@@ -1149,6 +1149,7 @@ static void *server_thread_func(void *arg) {
 
             if (should_close) {
                 int fd = tentry->fd;
+                (void)close_reason;  /* unused when DBG is disabled */
                 DBG("Timeout check: fd %d reason %d, closing", fd, close_reason);
                 pthread_mutex_unlock(&server->client_fd_mutex);
                 client_connection_close(server, fd);

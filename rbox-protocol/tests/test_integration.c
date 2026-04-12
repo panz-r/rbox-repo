@@ -588,32 +588,6 @@ cleanup:
     unlink(path);
     return result;
 }
-/* Server that reads request and then closes the connection without responding */
-static void *server_drop_and_close(void *arg) {
-    server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
-    const char *path = thread_arg->socket_path;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
-    if (!srv) return NULL;
-
-    if (rbox_server_handle_listen(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-    if (rbox_server_start(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-
-    thread_arg->server = srv;
-
-    rbox_server_request_t *req = rbox_server_get_request(srv);
-    if (req) {
-        /* Discard the request – server is stopping, cleanup will happen automatically */
-    }
-
-    /* Caller must call rbox_server_stop and rbox_server_handle_free */
-    return NULL;
-}
 
 /* Test 8b: RETRY_UNTIL_SUCCESS - client retries until server responds */
 static int test_retry_until_success(void) {
