@@ -88,7 +88,12 @@ char *rbox_server_build_telemetry_response(
     if (!out_len) return NULL;
 
     char reason[64];
-    int reason_len = snprintf(reason, sizeof(reason), "ALLOW:%u DENY:%u\n", allow_count, deny_count);
+    int snprinted = snprintf(reason, sizeof(reason), "ALLOW:%u DENY:%u\n", allow_count, deny_count);
+    size_t reason_len = (snprinted < 0) ? 0 : (size_t)snprinted;
+    if (reason_len >= sizeof(reason)) {
+        reason_len = sizeof(reason) - 1;
+    }
+    reason[reason_len] = '\0';
 
     size_t body_len = 1 + reason_len + 1;
 
