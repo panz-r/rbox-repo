@@ -1003,6 +1003,7 @@ rbox_error_t rbox_telemetry_get_stats(
     struct sockaddr_un addr = {0};
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
 
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
         close(fd);

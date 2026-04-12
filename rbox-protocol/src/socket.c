@@ -122,6 +122,7 @@ rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_
         memset(&addr, 0, sizeof(addr));
         addr.sun_family = AF_UNIX;
         strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+        addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
 
         int ret = connect(client->fd, (struct sockaddr *)&addr, sizeof(addr));
         if (ret < 0 && errno != EINPROGRESS) {
@@ -227,6 +228,7 @@ rbox_server_t *rbox_server_new(const char *socket_path) {
     if (!server) return NULL;
 
     strncpy(server->socket_path, socket_path, sizeof(server->socket_path) - 1);
+    server->socket_path[sizeof(server->socket_path) - 1] = '\0';
 
     /* Create socket */
     server->fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -245,6 +247,7 @@ rbox_server_t *rbox_server_new(const char *socket_path) {
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
 
     if (bind(server->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         close(server->fd);
