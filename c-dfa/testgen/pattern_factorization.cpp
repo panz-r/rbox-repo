@@ -1057,7 +1057,9 @@ std::shared_ptr<PatternNode> copyPatternNode(std::shared_ptr<PatternNode> node) 
     auto copy = std::make_shared<PatternNode>();
     copy->type = node->type;
     copy->value = node->value;
-    copy->fragment_name = node->fragment_name;
+    if (node->type == PatternType::FRAGMENT_REF) {
+        copy->fragment_name = node->fragment_name;
+    }
     copy->matched_seeds = node->matched_seeds;
     copy->counter_seeds = node->counter_seeds;
     copy->capture_tag = node->capture_tag;
@@ -1669,6 +1671,15 @@ std::shared_ptr<PatternNode> extractFragmentRewrite(
     
     switch (node->type) {
         case PatternType::LITERAL: {
+            // Skip literals with unbalanced parentheses
+            int paren_depth = 0;
+            for (char c : node->value) {
+                if (c == '(') paren_depth++;
+                else if (c == ')') paren_depth--;
+                if (paren_depth < 0) break;
+            }
+            if (paren_depth != 0) return node;
+            
             // 8% chance to extract literal to fragment
             if (node->value.length() >= 3 && chance_dist(rng) < 8) {
                 std::string frag_name = "frag" + std::to_string(rng() % 1000);

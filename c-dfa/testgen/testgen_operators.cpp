@@ -26,7 +26,9 @@ static std::shared_ptr<PatternNode> copyNode(std::shared_ptr<PatternNode> node) 
     auto copy = std::make_shared<PatternNode>();
     copy->type = node->type;
     copy->value = node->value;
-    copy->fragment_name = node->fragment_name;
+    if (node->type == PatternType::FRAGMENT_REF) {
+        copy->fragment_name = node->fragment_name;
+    }
     copy->capture_tag = node->capture_tag;
     copy->capture_begin_only = node->capture_begin_only;
     copy->capture_end_only = node->capture_end_only;
@@ -52,6 +54,28 @@ static bool containsFragmentRef(std::shared_ptr<PatternNode> node) {
         if (containsFragmentRef(child)) return true;
     }
     return false;
+}
+
+static bool hasBalancedParens(const std::string& s) {
+    int depth = 0;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            i++;
+            continue;
+        }
+        if (s[i] == '(') depth++;
+        else if (s[i] == ')') {
+            depth--;
+            if (depth < 0) return false;
+        }
+    }
+    return depth == 0;
+}
+
+static bool isValidPattern(std::shared_ptr<PatternNode> node) {
+    if (!node) return false;
+    std::string serialized = serializePattern(node);
+    return hasBalancedParens(serialized);
 }
 
 static bool patternMatchesPlus(const std::string& content, const std::string& str) {
@@ -1042,6 +1066,8 @@ CoordinatedMutationResult ExtendAlternationCoordOp::apply(const TestCaseCore& or
     mutated_ast->children = ast_copy->children;
     mutated_ast->children.push_back(new_alt);
     
+    if (!isValidPattern(mutated_ast)) return result;
+    
     std::vector<std::string> new_seeds = ast_copy->matched_seeds;
     new_seeds.push_back(new_alt_val);
     mutated_ast->matched_seeds = new_seeds;
@@ -1181,6 +1207,8 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         auto mutated_ast = copyNode(original.ast);
         mutated_ast->children[alt_idx] = alt_node;
         
+        if (!isValidPattern(mutated_ast)) return result;
+        
         for (auto& node : original.inputs.nodes) {
             if (node.categories.count("matching")) {
                 if (wouldMatchPattern(node.value, mutated_ast)) {
@@ -1239,6 +1267,8 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         auto mutated_ast = copyNode(original.ast);
         mutated_ast->children[alt_idx] = alt_node;
+        
+        if (!isValidPattern(mutated_ast)) return result;
         
         for (auto& node : original.inputs.nodes) {
             if (node.categories.count("matching")) {
@@ -1664,7 +1694,9 @@ std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(
     for (auto& op : operators) {
         auto result = op->apply(tc, rng);
         if (result.valid) {
-            all_results.push_back(result);
+            if (isValidPattern(result.mutated_tc.ast)) {
+                all_results.push_back(result);
+            }
         }
     }
     

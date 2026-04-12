@@ -43,9 +43,6 @@ std::string serializePattern(std::shared_ptr<PatternNode> node) {
     
     switch (node->type) {
         case PatternType::LITERAL:
-            if (!node->fragment_name.empty()) {
-                return begin_only + capture_prefix + "((" + node->fragment_name + "))+" + capture_suffix + end_only;
-            }
             return begin_only + capture_prefix + escapeRegexSpecial(node->value) + capture_suffix + end_only;
             
         case PatternType::OPTIONAL:
