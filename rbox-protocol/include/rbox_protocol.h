@@ -349,9 +349,6 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
 //export rbox_server_stop
 void rbox_server_stop(rbox_server_handle_t *server);
 
-/* Free server - must be called after stop() */
-void rbox_server_free(rbox_server_t *server);
-
 
 /* ============================================================
  * RESPONSE SENDING
