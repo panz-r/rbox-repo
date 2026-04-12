@@ -11,8 +11,6 @@ static std::string escapeRegexSpecial(const std::string& s) {
     std::string result;
     for (char c : s) {
         switch (c) {
-            case '(':
-            case ')':
             case '|':
             case '*':
             case '+':

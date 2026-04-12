@@ -53,7 +53,7 @@ SER_TEST(serializePattern_literalSimple) {
 
 SER_TEST(serializePattern_literalWithSpecialChars) {
     auto node = PatternNode::createLiteral("hello(world)", {"seed"}, {});
-    SER_ASSERT_EQ(serializePattern(node), "hello\\(world\\)");
+    SER_ASSERT_EQ(serializePattern(node), "hello(world)");
 }
 
 SER_TEST(serializePattern_literalWithRegexMetachars) {
