@@ -26,11 +26,6 @@ int rbox_client_fd(const rbox_client_t *client);
 ssize_t rbox_read(int fd, void *buf, size_t len);
 ssize_t rbox_write(int fd, const void *buf, size_t len);
 
-/* Read with timeout - for server use to prevent indefinite blocking
- * Returns: bytes read (0 on timeout), -1 on error, -2 on peer closed
- */
-ssize_t rbox_read_timeout(int fd, void *buf, size_t len, int timeout_ms);
-
 /* Non-blocking read - reads what's available, returns immediately
  * Returns: bytes read (0 if no data available), -1 on error, -2 on peer closed
  * NOTE: EINTR is treated as "would block" and returns 0 (caller polls again)
