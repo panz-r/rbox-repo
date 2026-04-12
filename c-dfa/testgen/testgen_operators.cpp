@@ -998,16 +998,613 @@ CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, s
     return result;
 }
 
+CoordinatedMutationResult ExtendAlternationCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+    
+    if (!original.ast) return result;
+    if (containsFragmentRef(original.ast)) return result;
+    
+    if (original.ast->type != PatternType::ALTERNATION) return result;
+    
+    auto ast_copy = copyNode(original.ast);
+    if (!ast_copy) return result;
+    
+    std::string new_alt_val = randomAlpha(2, rng);
+    auto new_alt = PatternNode::createLiteral(new_alt_val);
+    
+    auto mutated_ast = std::make_shared<PatternNode>();
+    mutated_ast->type = PatternType::ALTERNATION;
+    mutated_ast->children = ast_copy->children;
+    mutated_ast->children.push_back(new_alt);
+    
+    std::vector<std::string> new_seeds = ast_copy->matched_seeds;
+    new_seeds.push_back(new_alt_val);
+    mutated_ast->matched_seeds = new_seeds;
+    mutated_ast->counter_seeds = ast_copy->counter_seeds;
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        }
+    }
+    result.mutated_tc.inputs.add(new_alt_val, {"matching"});
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter")) {
+            if (wouldMatchPattern(node.value, mutated_ast)) {
+                return result;
+            }
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+    
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            has_matching = true;
+            break;
+        }
+    }
+    if (!has_matching) return result;
+    
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | EXTEND_ALT(+" + new_alt_val + ")";
+    
+    Expectation e;
+    e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+    e.description = "Extended alternation with '" + new_alt_val + "'";
+    e.meta["alternative"] = new_alt_val;
+    e.meta["mutation"] = "EXTEND_ALTERNATION_COORD";
+    result.mutated_tc.expectations.add(e);
+    
+    result.valid = true;
+    result.proof = "Extended alternation: " + new_alt_val;
+    return result;
+}
+
+CoordinatedMutationResult RemoveQuantifierCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+    
+    if (!original.ast) return result;
+    
+    if (original.ast->type != PatternType::PLUS_QUANTIFIER &&
+        original.ast->type != PatternType::STAR_QUANTIFIER &&
+        original.ast->type != PatternType::OPTIONAL) {
+        return result;
+    }
+    
+    if (!original.ast->quantified) return result;
+    
+    auto mutated_ast = copyNode(original.ast->quantified);
+    if (!mutated_ast) return result;
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            std::string mutated_val = node.value;
+            if (node.value.size() > 1) {
+                int pos = std::uniform_int_distribution<int>(0, node.value.size() - 1)(rng);
+                mutated_val = node.value.substr(0, pos) + node.value.substr(pos + 1);
+            }
+            if (wouldMatchPattern(mutated_val, mutated_ast)) {
+                result.mutated_tc.inputs.add(mutated_val, {"matching"});
+            } else {
+                result.mutated_tc.inputs.add(node.value, {"matching"});
+            }
+        }
+    }
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter")) {
+            if (wouldMatchPattern(node.value, mutated_ast)) {
+                return result;
+            }
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+    
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            has_matching = true;
+            break;
+        }
+    }
+    if (!has_matching) return result;
+    
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | REMOVE_QUANTIFIER";
+    
+    Expectation e;
+    e.type = ExpectationType::QUANTIFIER_PLUS_MINONE;
+    e.description = "Removed quantifier wrapper";
+    e.meta["mutation"] = "REMOVE_QUANTIFIER_COORD";
+    result.mutated_tc.expectations.add(e);
+    
+    result.valid = true;
+    result.proof = "Unwrapped quantifier";
+    return result;
+}
+
+CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+    
+    if (!original.ast) return result;
+    if (original.ast->type != PatternType::ALTERNATION) return result;
+    if (original.ast->children.size() < 2) return result;
+    
+    size_t alt_idx = std::uniform_int_distribution<size_t>(0, original.ast->children.size() - 1)(rng);
+    auto alt_node = copyNode(original.ast->children[alt_idx]);
+    if (!alt_node) return result;
+    
+    if (alt_node->type == PatternType::LITERAL && !alt_node->value.empty()) {
+        int pos = std::uniform_int_distribution<int>(0, alt_node->value.size() - 1)(rng);
+        char old_char = alt_node->value[pos];
+        char new_char;
+        do {
+            new_char = randomAlpha(1, rng)[0];
+        } while (new_char == old_char);
+        alt_node->value[pos] = new_char;
+        
+        auto mutated_ast = copyNode(original.ast);
+        mutated_ast->children[alt_idx] = alt_node;
+        
+        for (auto& node : original.inputs.nodes) {
+            if (node.categories.count("matching")) {
+                if (wouldMatchPattern(node.value, mutated_ast)) {
+                    result.mutated_tc.inputs.add(node.value, {"matching"});
+                }
+            }
+        }
+        
+        for (auto& node : original.inputs.nodes) {
+            if (node.categories.count("counter")) {
+                if (wouldMatchPattern(node.value, mutated_ast)) {
+                    return result;
+                }
+                result.mutated_tc.inputs.add(node.value, {"counter"});
+            }
+        }
+        
+        bool has_matching = false;
+        std::string sample_input;
+        for (auto& node : result.mutated_tc.inputs.nodes) {
+            if (node.categories.count("matching")) {
+                has_matching = true;
+                sample_input = node.value;
+                break;
+            }
+        }
+        if (!has_matching) return result;
+        
+        result.mutated_tc.ast = mutated_ast;
+        result.mutated_tc.fragments = original.fragments;
+        result.mutated_tc.proof = original.proof + " | ALTER_ALT(" + std::string(1, old_char) + "→" + std::string(1, new_char) + ")";
+        
+        Expectation e;
+        e.type = ExpectationType::MATCH_EXACT;
+        e.input = sample_input;
+        e.expected_match = "yes";
+        e.description = "Altered alternative at index " + std::to_string(alt_idx);
+        e.meta["mutation"] = "ALTER_ALTERNATIVE_COORD";
+        result.mutated_tc.expectations.add(e);
+        
+        result.valid = true;
+        result.proof = "Char substitute in alternative";
+        return result;
+    }
+    
+    if (alt_node->type == PatternType::SEQUENCE && !alt_node->children.empty()) {
+        char extra = randomAlpha(1, rng)[0];
+        
+        auto first_lit = alt_node->children[0];
+        if (first_lit && first_lit->type == PatternType::LITERAL && !first_lit->value.empty()) {
+            first_lit->value += extra;
+        } else {
+            auto new_lit = PatternNode::createLiteral(std::string(1, extra));
+            alt_node->children.insert(alt_node->children.begin(), new_lit);
+        }
+        
+        auto mutated_ast = copyNode(original.ast);
+        mutated_ast->children[alt_idx] = alt_node;
+        
+        for (auto& node : original.inputs.nodes) {
+            if (node.categories.count("matching")) {
+                if (wouldMatchPattern(node.value, mutated_ast)) {
+                    result.mutated_tc.inputs.add(node.value, {"matching"});
+                }
+            }
+        }
+        
+        for (auto& node : original.inputs.nodes) {
+            if (node.categories.count("counter")) {
+                if (wouldMatchPattern(node.value, mutated_ast)) {
+                    return result;
+                }
+                result.mutated_tc.inputs.add(node.value, {"counter"});
+            }
+        }
+        
+        bool has_matching = false;
+        std::string sample_input;
+        for (auto& node : result.mutated_tc.inputs.nodes) {
+            if (node.categories.count("matching")) {
+                has_matching = true;
+                sample_input = node.value;
+                break;
+            }
+        }
+        if (!has_matching) return result;
+        
+        result.mutated_tc.ast = mutated_ast;
+        result.mutated_tc.fragments = original.fragments;
+        result.mutated_tc.proof = original.proof + " | ALTER_ALT_EXTEND(+" + std::string(1, extra) + ")";
+        
+        Expectation e;
+        e.type = ExpectationType::REPETITION_MIN_COUNT;
+        e.input = sample_input;
+        e.expected_match = "yes";
+        e.description = "Extended alternative sequence at index " + std::to_string(alt_idx);
+        e.meta["mutation"] = "ALTER_ALTERNATIVE_COORD";
+        result.mutated_tc.expectations.add(e);
+        
+        result.valid = true;
+        result.proof = "Extended alternative sequence";
+        return result;
+    }
+    
+    return result;
+}
+
+CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+    
+    if (!original.ast) return result;
+    
+    if (original.ast->type != PatternType::PLUS_QUANTIFIER &&
+        original.ast->type != PatternType::STAR_QUANTIFIER) {
+        return result;
+    }
+    
+    if (!original.ast->quantified || original.ast->quantified->type != PatternType::ALTERNATION) {
+        return result;
+    }
+    
+    auto alt_node = original.ast->quantified;
+    std::vector<std::shared_ptr<PatternNode>> new_alts;
+    
+    for (auto& child : alt_node->children) {
+        if (child && child->type == PatternType::LITERAL && !child->value.empty()) {
+            auto quantified_child = PatternNode::createQuantified(child, original.ast->type);
+            new_alts.push_back(quantified_child);
+        } else {
+            new_alts.push_back(child);
+        }
+    }
+    
+    if (new_alts.empty()) return result;
+    
+    auto mutated_ast = std::make_shared<PatternNode>();
+    mutated_ast->type = PatternType::ALTERNATION;
+    mutated_ast->children = new_alts;
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        }
+    }
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter")) {
+            if (wouldMatchPattern(node.value, mutated_ast)) {
+                return result;
+            }
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+    
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            has_matching = true;
+            break;
+        }
+    }
+    if (!has_matching) return result;
+    
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | FLATTEN_QUANTIFIED_ALT";
+    
+    Expectation e;
+    e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+    e.description = "Flattened quantified alternation";
+    e.meta["mutation"] = "FLATTEN_QUANTIFIED_ALT_COORD";
+    result.mutated_tc.expectations.add(e);
+    
+    result.valid = true;
+    result.proof = "Flattened quantified alternation to alternation of quantified items";
+    return result;
+}
+
+CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+    
+    if (!original.ast) return result;
+    
+    bool has_fragment_ref = containsFragmentRef(original.ast);
+    if (!has_fragment_ref) return result;
+    
+    auto mutated_ast = copyNode(original.ast);
+    if (!mutated_ast) return result;
+    
+    std::string placeholder = "X";
+    
+    std::function<void(std::shared_ptr<PatternNode>)> replace_fragment_refs = 
+        [&](std::shared_ptr<PatternNode> node) {
+        if (!node) return;
+        
+        if (node->type == PatternType::FRAGMENT_REF || !node->fragment_name.empty()) {
+            node->type = PatternType::LITERAL;
+            node->value = placeholder;
+            node->fragment_name.clear();
+            node->children.clear();
+            node->quantified.reset();
+        }
+        
+        if (node->quantified) replace_fragment_refs(node->quantified);
+        for (auto& child : node->children) replace_fragment_refs(child);
+    };
+    
+    replace_fragment_refs(mutated_ast);
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            if (wouldMatchPattern(node.value, mutated_ast)) {
+                result.mutated_tc.inputs.add(node.value, {"matching"});
+            }
+        }
+    }
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter")) {
+            if (wouldMatchPattern(node.value, mutated_ast)) {
+                return result;
+            }
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+    
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            has_matching = true;
+            break;
+        }
+    }
+    if (!has_matching) return result;
+    
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | UNWRAP_FRAGMENT_REF";
+    
+    Expectation e;
+    e.type = ExpectationType::FRAGMENT_NESTED;
+    e.description = "Unwrapped fragment references to literal placeholder";
+    e.meta["mutation"] = "UNWRAP_FRAGMENT_REF_COORD";
+    result.mutated_tc.expectations.add(e);
+    
+    result.valid = true;
+    result.proof = "Unwrapped fragment references to literal placeholder";
+    return result;
+}
+
+CoordinatedMutationResult SequenceToAlternationCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+    
+    if (!original.ast) return result;
+    if (original.ast->type != PatternType::SEQUENCE) return result;
+    if (original.ast->children.size() < 2) return result;
+    
+    std::vector<std::shared_ptr<PatternNode>> alt_items;
+    
+    for (auto& child : original.ast->children) {
+        if (child && child->type == PatternType::LITERAL && !child->value.empty()) {
+            auto quantified = PatternNode::createQuantified(child, PatternType::PLUS_QUANTIFIER);
+            alt_items.push_back(quantified);
+        } else {
+            alt_items.push_back(child);
+        }
+    }
+    
+    auto mutated_ast = std::make_shared<PatternNode>();
+    mutated_ast->type = PatternType::ALTERNATION;
+    mutated_ast->children = alt_items;
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        }
+    }
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter")) {
+            if (wouldMatchPattern(node.value, mutated_ast)) {
+                return result;
+            }
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+    
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            has_matching = true;
+            break;
+        }
+    }
+    if (!has_matching) return result;
+    
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | SEQ_TO_ALT";
+    
+    Expectation e;
+    e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+    e.description = "Converted sequence to alternation";
+    e.meta["mutation"] = "SEQUENCE_TO_ALTERNATION_COORD";
+    result.mutated_tc.expectations.add(e);
+    
+    result.valid = true;
+    result.proof = "Converted sequence to alternation of quantified items";
+    return result;
+}
+
+CoordinatedMutationResult QuantifyAlternationCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+    
+    if (!original.ast) return result;
+    if (containsFragmentRef(original.ast)) return result;
+    
+    if (original.ast->type != PatternType::ALTERNATION) return result;
+    
+    auto ast_copy = copyNode(original.ast);
+    if (!ast_copy) return result;
+    
+    PatternType quant_types[] = {
+        PatternType::PLUS_QUANTIFIER,
+        PatternType::STAR_QUANTIFIER,
+        PatternType::OPTIONAL
+    };
+    int idx = std::uniform_int_distribution<int>(0, 2)(rng);
+    auto mutated_ast = PatternNode::createQuantified(ast_copy, quant_types[idx]);
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        }
+    }
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter")) {
+            if (wouldMatchPattern(node.value, mutated_ast)) {
+                return result;
+            }
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+    
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            has_matching = true;
+            break;
+        }
+    }
+    if (!has_matching) return result;
+    
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    
+    std::string quant_name = (idx == 0) ? "+" : (idx == 1) ? "*" : "?";
+    result.mutated_tc.proof = original.proof + " | QUANTIFY_ALT(" + quant_name + ")";
+    
+    Expectation e;
+    e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+    e.description = "Quantified alternation with " + std::string(1, quant_name[0]);
+    e.meta["mutation"] = "QUANTIFY_ALTERNATION_COORD";
+    result.mutated_tc.expectations.add(e);
+    
+    result.valid = true;
+    result.proof = "Quantified alternation with " + std::string(1, quant_name[0]);
+    return result;
+}
+
+CoordinatedMutationResult PrefixSuffixAlternationCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+    
+    if (!original.ast) return result;
+    if (containsFragmentRef(original.ast)) return result;
+    
+    if (original.ast->type != PatternType::ALTERNATION) return result;
+    
+    auto ast_copy = copyNode(original.ast);
+    if (!ast_copy) return result;
+    
+    std::string prefix = randomAlpha(1, rng) + randomAlpha(1, rng);
+    std::string suffix = randomAlpha(1, rng) + randomAlpha(1, rng);
+    
+    std::vector<std::shared_ptr<PatternNode>> seq_children;
+    seq_children.push_back(PatternNode::createLiteral(prefix, {prefix}));
+    seq_children.push_back(ast_copy);
+    seq_children.push_back(PatternNode::createLiteral(suffix, {suffix}));
+    
+    auto mutated_ast = PatternNode::createSequence(seq_children);
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            std::string with_affix = prefix + node.value + suffix;
+            result.mutated_tc.inputs.add(with_affix, {"matching"});
+        }
+    }
+    
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter")) {
+            std::string with_affix = prefix + node.value + suffix;
+            if (wouldMatchPattern(with_affix, mutated_ast)) {
+                return result;
+            }
+            result.mutated_tc.inputs.add(with_affix, {"counter"});
+        }
+    }
+    
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            has_matching = true;
+            break;
+        }
+    }
+    if (!has_matching) return result;
+    
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | PREFIX_SUFFIX_ALT(+" + prefix + ", +" + suffix + ")";
+    
+    Expectation e;
+    e.type = ExpectationType::MATCH_EXACT;
+    e.description = "Added prefix/suffix to alternation";
+    e.meta["mutation"] = "PREFIX_SUFFIX_ALT_COORD";
+    e.meta["prefix"] = prefix;
+    e.meta["suffix"] = suffix;
+    result.mutated_tc.expectations.add(e);
+    
+    result.valid = true;
+    result.proof = "Added prefix/suffix to alternation";
+    return result;
+}
+
 CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<CharSubstituteCoordOp>());
-    operators.push_back(std::make_unique<AddAlternativeCoordOp>());
     operators.push_back(std::make_unique<NestQuantifierCoordOp>());
     operators.push_back(std::make_unique<ExtendSequenceCoordOp>());
-    // DeepenNestingCoordOp is identical to NestQuantifierCoordOp
-    // operators.push_back(std::make_unique<DeepenNestingCoordOp>());
     operators.push_back(std::make_unique<CutBasedCoordOp>());
-    // SplitAlternationCoordOp always returns invalid
-    // operators.push_back(std::make_unique<SplitAlternationCoordOp>());
+    operators.push_back(std::make_unique<AlterAlternativeCoordOp>());
+    operators.push_back(std::make_unique<RemoveQuantifierCoordOp>());
+    operators.push_back(std::make_unique<FlattenQuantifiedAltCoordOp>());
+    operators.push_back(std::make_unique<UnwrapFragmentRefCoordOp>());
+    operators.push_back(std::make_unique<SequenceToAlternationCoordOp>());
+    operators.push_back(std::make_unique<QuantifyAlternationCoordOp>());
+    operators.push_back(std::make_unique<PrefixSuffixAlternationCoordOp>());
 }
 
 std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(
@@ -1015,14 +1612,53 @@ std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(
     size_t max_results,
     std::mt19937& rng
 ) const {
-    std::vector<CoordinatedMutationResult> results;
+    std::vector<CoordinatedMutationResult> all_results;
     for (auto& op : operators) {
         auto result = op->apply(tc, rng);
         if (result.valid) {
-            results.push_back(result);
-            if (results.size() >= max_results) break;
+            all_results.push_back(result);
         }
     }
+    
+    if (all_results.empty()) return {};
+    if (all_results.size() <= max_results) return all_results;
+    
+    std::vector<double> weights;
+    for (auto& result : all_results) {
+        double w = 1.0;
+        if (result.proof.find("CHAR_SUB") != std::string::npos) {
+            w = 1.0;
+        } else if (result.proof.find("QUANTIFY_ALT") != std::string::npos ||
+                   result.proof.find("PREFIX_SUFFIX_ALT") != std::string::npos) {
+            w = 10.0;
+        } else if (result.proof.find("ALTER_ALT") != std::string::npos) {
+            w = 5.0;
+        } else if (result.proof.find("NEST_Q") != std::string::npos ||
+                   result.proof.find("EXTEND_SEQUENCE") != std::string::npos ||
+                   result.proof.find("FLATTEN") != std::string::npos) {
+            w = 8.0;
+        }
+        weights.push_back(w);
+    }
+    
+    std::discrete_distribution<size_t> dist(weights.begin(), weights.end());
+    std::vector<CoordinatedMutationResult> results;
+    std::set<size_t> used;
+    
+    for (size_t i = 0; i < max_results; i++) {
+        size_t idx = dist(rng);
+        if (used.count(idx)) {
+            for (size_t j = 0; j < all_results.size(); j++) {
+                if (used.count(j) == 0) {
+                    idx = j;
+                    break;
+                }
+            }
+        }
+        used.insert(idx);
+        results.push_back(all_results[idx]);
+    }
+    
     return results;
 }
 

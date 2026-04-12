@@ -26,6 +26,12 @@ enum class CoordinatedMutationType {
     EXTEND_SEQUENCE,
     DEEPEN_NESTING,
     SPLIT_ALTERNATION,
+    EXTEND_ALTERNATION,
+    REMOVE_QUANTIFIER,
+    ALTER_ALTERNATIVE,
+    FLATTEN_QUANTIFIED_ALT,
+    UNWRAP_FRAGMENT_REF,
+    SEQUENCE_TO_ALTERNATION,
 };
 
 struct CoordinatedMutationResult {
@@ -100,6 +106,70 @@ public:
     CoordinatedMutationType type() const override { return CoordinatedMutationType::EXTEND_SEQUENCE; }
     std::string name() const override { return "CUT_BASED_COORD"; }
     bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+class ExtendAlternationCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::EXTEND_ALTERNATION; }
+    std::string name() const override { return "EXTEND_ALTERNATION_COORD"; }
+    bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+class RemoveQuantifierCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::REMOVE_QUANTIFIER; }
+    std::string name() const override { return "REMOVE_QUANTIFIER_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+class AlterAlternativeCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::ALTER_ALTERNATIVE; }
+    std::string name() const override { return "ALTER_ALTERNATIVE_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+class FlattenQuantifiedAltCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::FLATTEN_QUANTIFIED_ALT; }
+    std::string name() const override { return "FLATTEN_QUANTIFIED_ALT_COORD"; }
+    bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+class UnwrapFragmentRefCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::UNWRAP_FRAGMENT_REF; }
+    std::string name() const override { return "UNWRAP_FRAGMENT_REF_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+class SequenceToAlternationCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::SEQUENCE_TO_ALTERNATION; }
+    std::string name() const override { return "SEQUENCE_TO_ALTERNATION_COORD"; }
+    bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+class QuantifyAlternationCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::NEST_QUANTIFIER; }
+    std::string name() const override { return "QUANTIFY_ALTERNATION_COORD"; }
+    bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+class PrefixSuffixAlternationCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::EXTEND_SEQUENCE; }
+    std::string name() const override { return "PREFIX_SUFFIX_ALT_COORD"; }
+    bool isGeneralizing() const override { return true; }
     CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
