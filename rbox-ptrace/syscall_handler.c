@@ -1334,67 +1334,110 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
 
     /* Parse decisions: format is "index:decision,index:decision,..."
      * where decision is 0=allow, 1=deny
-     * Uses strict parsing - abort on any malformed input */
-    int decisions[256] = {0};  /* index -> decision */
+     * First pass: collect all entries to size our array */
+    typedef struct { int idx; int decision; } DecisionEntry;
+    DecisionEntry *entries = NULL;
+    int entry_capacity = 16;
+    int entry_count = 0;
     int max_index = -1;
     int parse_error = 0;
 
+    entries = malloc(entry_capacity * sizeof(DecisionEntry));
+    if (!entries) return -1;
+
     const char *p = env_decisions_str;
     while (*p) {
-        /* Parse index - must be non-negative integer */
+        if (entry_count >= entry_capacity) {
+            entry_capacity *= 2;
+            DecisionEntry *new_entries = realloc(entries, entry_capacity * sizeof(DecisionEntry));
+            if (!new_entries) {
+                free(entries);
+                return -1;
+            }
+            entries = new_entries;
+        }
         char *end;
         long idx = strtol(p, &end, 10);
-        if (end == p || idx < 0 || idx >= 256) { parse_error = 1; break; }
+        if (end == p || idx < 0) { parse_error = 1; break; }
         if (*end != ':') { parse_error = 1; break; }
         p = end + 1;
 
-        /* Parse decision - must be 0 or 1 */
         int decision = *p - '0';
         if (decision != 0 && decision != 1) { parse_error = 1; break; }
         p++;
 
-        /* Must be either comma (more entries) or null (end) */
         if (*p == ',') {
             p++;
-        } else if (*p == '\0') {
-            /* Valid end of string */
-            decisions[(int)idx] = decision;
-            if ((int)idx > max_index) max_index = (int)idx;
-            break;
-        } else {
+        } else if (*p != '\0') {
             parse_error = 1; break;
         }
 
-        decisions[(int)idx] = decision;
+        entries[entry_count].idx = (int)idx;
+        entries[entry_count].decision = decision;
+        entry_count++;
         if ((int)idx > max_index) max_index = (int)idx;
     }
 
-    /* Abort on parse error - reject potentially malicious/malformed input */
     if (parse_error) {
         DEBUG_PRINT("FILTER: env decision parse error, rejecting\n");
+        free(entries);
         return -1;
     }
 
-    if (max_index < 0) return 0;
+    if (entry_count == 0 || max_index < 0) {
+        free(entries);
+        return 0;
+    }
 
-    /* Get flagged env var names from environment */
+    /* Build sparse array indexed by idx for O(1) lookup */
+    int *decisions = calloc(max_index + 1, sizeof(int));
+    if (!decisions) {
+        free(entries);
+        return -1;
+    }
+    for (int i = 0; i < entry_count; i++) {
+        decisions[entries[i].idx] = entries[i].decision;
+    }
+    free(entries);
+
     const char *env_names_str = getenv("READONLYBOX_FLAGGED_ENV_NAMES");
-    char *flagged_names[256] = {0};
+    char **flagged_names = NULL;
     int flagged_count = 0;
 
     if (!env_names_str || strlen(env_names_str) == 0) {
         DEBUG_PRINT("FILTER: no flagged env var names available\n");
+        free(decisions);
         return 0;
     }
 
-    /* Parse names from environment */
+    /* Parse names from environment - first pass to count */
     char buf[4096];
     strlcpy(buf, env_names_str, sizeof(buf));
 
     char *saveptr;
     char *token = strtok_r(buf, ",", &saveptr);
-    while (token && flagged_count < 256) {
-        flagged_names[flagged_count++] = token;
+    while (token) {
+        flagged_count++;
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+
+    if (flagged_count == 0) {
+        free(decisions);
+        return 0;
+    }
+
+    flagged_names = calloc(flagged_count, sizeof(char *));
+    if (!flagged_names) {
+        free(decisions);
+        return -1;
+    }
+
+    /* Second pass: actually parse the names */
+    strlcpy(buf, env_names_str, sizeof(buf));
+    int i = 0;
+    token = strtok_r(buf, ",", &saveptr);
+    while (token) {
+        flagged_names[i++] = token;
         token = strtok_r(NULL, ",", &saveptr);
     }
 
@@ -1434,12 +1477,11 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
 
         /* Check if this var is in flagged list and denied */
         int denied = 0;
-        for (int j = 0; j < flagged_count && j <= max_index; j++) {
+        for (int j = 0; j < flagged_count; j++) {
             if (decisions[j] == 1 && flagged_names[j]) {
+                size_t flagged_len = strlen(flagged_names[j]);
                 if (strncmp(state->execve_envp[i], flagged_names[j], name_len) == 0 &&
-                    (flagged_names[j][name_len] == '\0' || flagged_names[j][name_len] == '=')) {
-                    /* This env var is denied */
-                    DEBUG_PRINT("FILTER: removing denied env var '%s'\n", state->execve_envp[i]);
+                    (name_len == flagged_len || state->execve_envp[i][name_len] == '=')) {
                     denied = 1;
                     break;
                 }
@@ -1456,6 +1498,10 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     }
     new_envp[new_idx] = NULL;
     new_env_addrs[new_idx] = 0;
+
+    /* Free sparse decisions array - we only needed it for O(1) lookup */
+    free(decisions);
+    free(flagged_names);
 
     /* Keep pointers to old state for cleanup on failure */
     char **old_envp = state->execve_envp;
