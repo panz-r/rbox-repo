@@ -651,12 +651,28 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
         return RBOX_ERR_INVALID;
     }
 
-    /* Build request packet using canonical layered function */
-    char packet[4096];
+    /* Build request packet using canonical layered function.
+     * Use 64KB stack buffer first; fall back to heap if request is larger. */
+    char stack_buf[65536];
+    char *packet = stack_buf;
     size_t packet_len;
-    rbox_error_t err = rbox_build_request(packet, sizeof(packet), &packet_len, command, caller, syscall, argc, argv, env_var_count, env_var_names, env_var_scores);
+    rbox_error_t err = rbox_build_request(packet, sizeof(stack_buf), &packet_len, command, caller, syscall, argc, argv, env_var_count, env_var_names, env_var_scores);
     if (err != RBOX_OK) {
-        return err;
+        /* If buffer was too small, allocate dynamically and retry.
+         * rbox_build_request returns RBOX_ERR_INVALID when capacity is insufficient.
+         * We need to allocate based on the estimated size - the function populates
+         * out_len with the actual size needed even on failure. */
+        if (err == RBOX_ERR_INVALID && packet_len > sizeof(stack_buf)) {
+            packet = malloc(packet_len);
+            if (!packet) return RBOX_ERR_MEMORY;
+            err = rbox_build_request(packet, packet_len, &packet_len, command, caller, syscall, argc, argv, env_var_count, env_var_names, env_var_scores);
+            if (err != RBOX_OK) {
+                free(packet);
+                return err;
+            }
+        } else {
+            return err;
+        }
     }
 
     /* Extract the actual request ID from the packet (the one that will be sent) */
@@ -666,6 +682,7 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
     /* Send request */
     ssize_t sent = rbox_write(rbox_client_fd(client), packet, packet_len);
     if (sent != (ssize_t)packet_len) {
+        if (packet != stack_buf) free(packet);
         return RBOX_ERR_IO;
     }
 
@@ -673,6 +690,7 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
     char response_buf[512];
     ssize_t resp_len = read_response(rbox_client_fd(client), response_buf, sizeof(response_buf));
     if (resp_len <= 0) {
+        if (packet != stack_buf) free(packet);
         return RBOX_ERR_IO;
     }
 
@@ -680,10 +698,10 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
     err = validate_response(response_buf, resp_len, request_id, response);
     if (err != RBOX_OK) {
         response->decision = RBOX_DECISION_UNKNOWN;
-        return err;
     }
 
-    return RBOX_OK;
+    if (packet != stack_buf) free(packet);
+    return err;
 }
 
 /* ============================================================
