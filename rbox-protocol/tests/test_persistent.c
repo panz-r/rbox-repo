@@ -304,10 +304,11 @@ static int test_cache_hit(void) {
 
     if (count != 1) {
         TEST_ERROR("expected 1 decision (cache hit), got %d", count);
-        return -1;
     }
 
-    return 0;
+    pthread_mutex_destroy(&ctx.count_mutex);
+
+    return (count == 1) ? 0 : -1;
 }
 
 int main(void) {
