@@ -163,12 +163,35 @@ rbox_error_t rbox_session_send_request(rbox_session_t *session,
     if (!session || !command) return RBOX_ERR_INVALID;
     if (session->state != RBOX_SESSION_CONNECTED) return RBOX_ERR_INVALID;
 
-    char tmp[8192];
+    char tmp[65536];
     size_t tmp_len;
     rbox_error_t err = rbox_build_request(tmp, sizeof(tmp), &tmp_len,
         command, caller, syscall, argc, argv,
         env_var_count, env_var_names, env_var_scores);
     if (err != RBOX_OK) {
+        if (err == RBOX_ERR_INVALID && tmp_len > sizeof(tmp)) {
+            char *buf = malloc(tmp_len);
+            if (!buf) {
+                session->state = RBOX_SESSION_FAILED;
+                session->error = RBOX_ERR_MEMORY;
+                return RBOX_ERR_MEMORY;
+            }
+            err = rbox_build_request(buf, tmp_len, &tmp_len,
+                command, caller, syscall, argc, argv,
+                env_var_count, env_var_names, env_var_scores);
+            if (err != RBOX_OK) {
+                free(buf);
+                session->state = RBOX_SESSION_FAILED;
+                session->error = err;
+                return err;
+            }
+            memcpy(session->request_id, buf + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
+            session->send_buf = buf;
+            session->send_len = tmp_len;
+            session->send_offset = 0;
+            session->state = RBOX_SESSION_SENDING;
+            return RBOX_OK;
+        }
         session->state = RBOX_SESSION_FAILED;
         session->error = err;
         return err;
@@ -374,10 +397,14 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                             session->state = RBOX_SESSION_RESPONSE_READY;
                             CDBG("waiting: response ready");
                         } else if (err == RBOX_ERR_MISMATCH || err == RBOX_ERR_IO) {
+                            free(session->recv_buf);
+                            session->recv_buf = NULL;
                             session->state = RBOX_SESSION_FAILED;
                             session->error = err;
                             CDBG("waiting: validation error (%d) -> failed", err);
                         } else {
+                            free(session->recv_buf);
+                            session->recv_buf = NULL;
                             session->state = RBOX_SESSION_FAILED;
                             session->error = err;
                             CDBG("waiting: validation error (%d) -> failed", err);
