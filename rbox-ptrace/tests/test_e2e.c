@@ -118,7 +118,7 @@ static int start_all_servers(void) {
             }
         }
 
-        execl(server_path, server_path, "-q", "-socket", g_autodeny_socket_path, "--auto-deny", NULL);
+        execl(server_path, server_path, "-socket", g_autodeny_socket_path, "--auto-deny", NULL);
         perror("DEBUG: autodeny execl failed");
         _exit(1);
     }
@@ -143,7 +143,7 @@ static int start_all_servers(void) {
             }
         }
 
-        execl(server_path, server_path, "-vv", "-socket", g_autoallow_socket_path, NULL);
+        execl(server_path, server_path, "-socket", g_autoallow_socket_path, NULL);
         perror("DEBUG: autoallow execl failed");
         _exit(1);
     }
@@ -224,12 +224,6 @@ static int run_ptrace_impl(char *const argv[], int *exit_code, ServerType server
 
     if (pid == 0) {
         /* Child - run ptrace client */
-        int dev_null = open("/dev/null", O_WRONLY);
-        if (dev_null >= 0) {
-            dup2(dev_null, STDOUT_FILENO);
-            dup2(dev_null, STDERR_FILENO);
-            close(dev_null);
-        }
 
         /* Prepend test directory to PATH so test commands like 'noop' are found */
         const char *test_dir = getenv("TEST_DIR");
@@ -254,15 +248,21 @@ static int run_ptrace_impl(char *const argv[], int *exit_code, ServerType server
         int arg_count = 0;
         while (argv[arg_count]) arg_count++;
 
-        char **new_argv = malloc((arg_count + 5) * sizeof(char *));
+        char log_path[256];
+        snprintf(log_path, sizeof(log_path), "/tmp/test-ptrace-%d.log", (int)getpid());
+
+        char **new_argv = malloc((arg_count + 8) * sizeof(char *));
         new_argv[0] = (char *)ptrace_path;
-        new_argv[1] = "--no-pkexec";
-        new_argv[2] = "sh";
-        new_argv[3] = "-c";
+        new_argv[1] = "--log-file";
+        new_argv[2] = log_path;
+        new_argv[3] = "-v";
+        new_argv[4] = "--no-pkexec";
+        new_argv[5] = "sh";
+        new_argv[6] = "-c";
         for (int i = 0; i < arg_count; i++) {
-            new_argv[i + 4] = argv[i];
+            new_argv[i + 7] = argv[i];
         }
-        new_argv[arg_count + 4] = NULL;
+        new_argv[arg_count + 7] = NULL;
 
         execvp(ptrace_path, new_argv);
         _exit(127);
@@ -306,11 +306,11 @@ static int run_ptrace_landlock(char *const argv[], int *exit_code,
  * 
  * These functions use server telemetry to track ALLOW/DENY counts.
  * Tests should:
- *   1. Call log_reader_checkpoint() BEFORE running a command
+ *   1. Call telemetry_checkpoint() BEFORE running a command
  *   2. Run the command via run_ptrace_autoallow()
- *   3. Call log_reader_get_counts() to get counts since checkpoint
+ *   3. Call telemetry_get_counts() to get counts since checkpoint
  */
-static void log_reader_checkpoint(void) {
+static void telemetry_checkpoint(void) {
     int allow = 0;
     int deny = 0;
     server_get_stats(g_autoallow_socket_path, &allow, &deny);
@@ -318,7 +318,7 @@ static void log_reader_checkpoint(void) {
     g_checkpoint_deny = deny;
 }
 
-static int log_reader_get_counts(int *out_allow, int *out_deny) {
+static int telemetry_get_counts(int *out_allow, int *out_deny) {
     int allow = 0;
     int deny = 0;
     server_get_stats(g_autoallow_socket_path, &allow, &deny);
@@ -404,14 +404,14 @@ static int run_and_check(const char *cmd, int expected_exit, int expected_reques
     int allow_count, deny_count;
 
     /* CHECKPOINT: mark current position in log reader before running command */
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     
     if (run_ptrace_autoallow(args, &exit_code) != 0) {
         return 1;
     }
     
     /* GET_COUNTS: get delta since checkpoint */
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     
     if (exit_code != expected_exit) {
@@ -488,10 +488,10 @@ TEST(wrapper_chain_allowance_exhaustion) {
     int exit_code;
     int allow_count, deny_count;
 
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     if (run_ptrace_autoallow(args, &exit_code) != 0) return 1;
     if (exit_code != 0) return 1;
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     /* Expect 2 requests (multi-use allowance not yet implemented) */
     if (req_count != 2) {
@@ -521,10 +521,10 @@ TEST(safe_command_ls) {
     int exit_code;
     int allow_count, deny_count;
 
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     CHECK_EQ(result, run_ptrace_autodeny(args, &exit_code), 0);
     CHECK_EQ(result, exit_code, 0);
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     CHECK_EQ(result, req_count, 0);
     return result;
@@ -536,10 +536,10 @@ TEST(safe_command_echo) {
     int exit_code;
     int allow_count, deny_count;
 
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     CHECK_EQ(result, run_ptrace_autodeny(args, &exit_code), 0);
     CHECK_EQ(result, exit_code, 0);
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     CHECK_EQ(result, req_count, 0);
     return result;
@@ -557,10 +557,10 @@ TEST(safe_command_cat) {
     int exit_code;
     int allow_count, deny_count;
 
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     CHECK_EQ(result, run_ptrace_autodeny(args, &exit_code), 0);
     CHECK_EQ(result, exit_code, 0);
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     CHECK_EQ(result, req_count, 0);
 
@@ -574,10 +574,10 @@ TEST(safe_command_pwd) {
     int exit_code;
     int allow_count, deny_count;
 
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     CHECK_EQ(result, run_ptrace_autodeny(args, &exit_code), 0);
     CHECK_EQ(result, exit_code, 0);
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     CHECK_EQ(result, req_count, 0);
     return result;
@@ -589,10 +589,10 @@ TEST(safe_command_date) {
     int exit_code;
     int allow_count, deny_count;
 
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     CHECK_EQ(result, run_ptrace_autodeny(args, &exit_code), 0);
     CHECK_EQ(result, exit_code, 0);
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     CHECK_EQ(result, req_count, 0);
     return result;
@@ -663,11 +663,11 @@ TEST(autoallow_safe_command) {
     int allow_count, deny_count;
     int exit_code;
     char *args[] = {"sh noop", NULL};
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     if (run_ptrace_autoallow(args, &exit_code) != 0) return 1;
     /* sh noop should succeed */
     if (exit_code != 0) return 1;
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     /* sh noop = 1 request */
     if (req_count != 1) {
@@ -687,11 +687,11 @@ TEST(autoallow_dangerous_command) {
     fclose(f);
 
     char *args[] = {"rm /tmp/test_e2e_autoallow_rm.txt", NULL};
-    log_reader_checkpoint();
+    telemetry_checkpoint();
     if (run_ptrace_autoallow(args, &exit_code) != 0) return 1;
     /* The server should allow it, so exit code 0 */
     if (exit_code != 0) return 1;
-    log_reader_get_counts(&allow_count, &deny_count);
+    telemetry_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
     /* sh -c wrapper stripped, rm is one command = 1 request */
     if (req_count != 1) {

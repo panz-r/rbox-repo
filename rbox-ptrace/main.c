@@ -49,10 +49,12 @@
 /* Debug file pointer - defined here, used by DEBUG_PRINT in all files */
 FILE *g_debug_file = NULL;
 int g_verbose_level = 0;
+static const char *g_custom_log_file = NULL;
 
 void debug_init(void) {
     if (g_debug_file) return;
-    int fd = open("/tmp/readonlybox-ptrace.log", O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC|O_NOFOLLOW, 0600);
+    const char *log_path = g_custom_log_file ? g_custom_log_file : "/tmp/readonlybox-ptrace.log";
+    int fd = open(log_path, O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC|O_NOFOLLOW, 0600);
     if (fd >= 0) {
         struct stat st;
         if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
@@ -233,6 +235,7 @@ static void print_usage(void) {
     fprintf(stderr, "    --soft-deny <path>                   (blocks all access)\n");
     fprintf(stderr, "  Example: --soft-allow /home/user:rwx --soft-deny /home/user/secret\n");
     fprintf(stderr, "  --soft-debug         Enable soft policy debug output\n");
+    fprintf(stderr, "  --log-file <path>    Write debug output to specified file (default: /tmp/readonlybox-ptrace.log)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "  -h, --help           Show this help\n");
     fprintf(stderr, "  -v                   Enable verbose output (use -vv or -vvv for more verbosity)\n");
@@ -520,6 +523,8 @@ int main(int argc, char *argv[]) {
         {"soft-debug", no_argument, 0, 268},
         /* Abstract socket for environment passing (used by pkexec helper) */
         {"env-socket", required_argument, 0, 269},
+        /* Custom debug log file path */
+        {"log-file", required_argument, 0, 270},
         {0, 0, 0, 0}
     };
 
@@ -718,6 +723,10 @@ int main(int argc, char *argv[]) {
                 /* Abstract socket name for environment passing from pkexec helper */
                 g_env_socket = optarg;
                 break;
+            case 270:
+                /* Custom debug log file path */
+                g_custom_log_file = optarg;
+                break;
             default:
                 print_usage();
                 return 1;
@@ -745,7 +754,7 @@ int main(int argc, char *argv[]) {
     privilege_init(provided_uid, provided_cwd);
 
     if (g_verbose_level > 0) {
-        fprintf(stderr, "logging to /tmp/readonlybox-ptrace.log\n");
+        fprintf(stderr, "logging to %s\n", g_custom_log_file ? g_custom_log_file : "/tmp/readonlybox-ptrace.log");
     }
 
     /* Validate soft policy rules before requesting auth via pkexec.
