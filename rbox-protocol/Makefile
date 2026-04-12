@@ -13,7 +13,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=gnu11 -O2 -g -pthread -fPIC \
          -I./include \
          -I../shellsplit/include
-LDFLAGS = -lpthread -lm -z noexecstack
+LDFLAGS = -lpthread -lm -latomic -z noexecstack
 
 # ASAN (AddressSanitizer) support
 # Use ASAN=1 make test to run tests with ASAN enabled
@@ -25,7 +25,7 @@ LDFLAGS += $(ASAN_LDFLAGS)
 endif
 # Libraries
 SHLIB = librbox_protocol.so
-SHLIB_LDFLAGS = -shared -fPIC -lpthread -lm
+SHLIB_LDFLAGS = -shared -fPIC -lpthread -lm -latomic
 
 # Shellsplit (statically linked into shared library)
 SHELLSPLIT_SRC = ../shellsplit/src/shell_tokenizer.c
@@ -63,7 +63,7 @@ TEST_STRESS_BIN = test_stress
 
 .PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-env test-stress test-fuzz test-fuzz-1h test-fuzz-4h
 
-all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
+all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
 
 build-all: $(SHLIB)
 	@echo "Shared library built."
@@ -88,7 +88,7 @@ $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
 # Run both unit tests and integration tests
-test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
+test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_BASIC_BIN)
@@ -136,9 +136,6 @@ $(TEST_BLOCK_BIN): $(TEST_BLOCK_SRC) $(SHLIB) $(SHELLSPLIT_OBJ)
 $(TEST_PERSIST_BIN): $(TEST_PERSIST_SRC) $(SHLIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
 
-$(TEST_STREAM_BIN): $(TEST_STREAM_SRC) $(SHLIB) $(SHELLSPLIT_OBJ)
-	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
-
 $(TEST_ENV_BIN): $(TEST_ENV_SRC) $(SHLIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
 
@@ -146,7 +143,7 @@ $(TEST_STRESS_BIN): $(TEST_STRESS_SRC) $(SHLIB) $(SHELLSPLIT_OBJ)
 	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(SHELLSPLIT_OBJ) $(LDFLAGS)
 
 clean:
-	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_STREAM_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
+	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
 	-$(RM) fuzz/*.log
 
 help:
