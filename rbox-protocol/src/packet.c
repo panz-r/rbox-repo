@@ -635,26 +635,28 @@ static ssize_t read_response(int fd, char *buf, size_t max_len) {
         body_len = RBOX_CHUNK_MAX;
     }
 
-    /* Calculate total response size */
-    size_t total_len = RBOX_HEADER_SIZE + body_len;
-    if (total_len > max_len) {
-        total_len = max_len;
+    /* Calculate total response size and validate against buffer capacity */
+    size_t expected_len = RBOX_HEADER_SIZE + body_len;
+    if (expected_len > max_len) {
+        return -1;
     }
 
     /* Copy header to buffer */
     memcpy(buf, header, RBOX_HEADER_SIZE);
 
     /* Read remaining body */
-    if (total_len > RBOX_HEADER_SIZE) {
-        size_t remaining = total_len - RBOX_HEADER_SIZE;
+    if (expected_len > RBOX_HEADER_SIZE) {
+        size_t remaining = expected_len - RBOX_HEADER_SIZE;
         n = rbox_read(fd, buf + RBOX_HEADER_SIZE, remaining);
         if (n < 0) {
             return -1;
         }
-        total_len = RBOX_HEADER_SIZE + n;
+        if ((size_t)n < remaining) {
+            return -1;
+        }
     }
 
-    return (ssize_t)total_len;
+    return (ssize_t)expected_len;
 }
 
 rbox_error_t rbox_client_send_request(rbox_client_t *client,
