@@ -30,14 +30,14 @@ ssize_t rbox_read_nonblocking(int fd, void *buf, size_t len) {
         return -1;
     }
 
-    /* Try to read immediately without waiting */
-    ssize_t n = read(fd, buf, len);
+    /* Try to read immediately without waiting - loop on EINTR */
+    ssize_t n;
+    do {
+        n = read(fd, buf, len);
+    } while (n < 0 && errno == EINTR);
     if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return 0;  /* Would block, nothing read */
-        }
-        if (errno == EINTR) {
-            return 0;  /* Interrupted, nothing read */
         }
         return -1;  /* Real error */
     }
@@ -60,13 +60,14 @@ ssize_t rbox_write_nonblocking(int fd, const void *buf, size_t len, size_t *io_o
         return 0;  /* Already wrote everything */
     }
 
-    ssize_t n = write(fd, buf + offset, len - offset);
+    /* Loop on EINTR to handle interrupted syscalls */
+    ssize_t n;
+    do {
+        n = write(fd, buf + offset, len - offset);
+    } while (n < 0 && errno == EINTR);
     if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return 0;  /* Would block */
-        }
-        if (errno == EINTR) {
-            return 0;  /* Interrupted */
         }
         return -1;  /* Real error */
     }
@@ -80,7 +81,10 @@ ssize_t rbox_write_nonblocking(int fd, const void *buf, size_t len, size_t *io_o
 
 int rbox_pollin(int fd, int timeout_ms) {
     struct pollfd pfd = { .fd = fd, .events = POLLIN };
-    int ret = poll(&pfd, 1, timeout_ms);
+    int ret;
+    do {
+        ret = poll(&pfd, 1, timeout_ms);
+    } while (ret < 0 && errno == EINTR);
     if (ret < 0) {
         return -1;
     }
@@ -92,7 +96,10 @@ int rbox_pollin(int fd, int timeout_ms) {
 
 int rbox_pollout(int fd, int timeout_ms) {
     struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-    int ret = poll(&pfd, 1, timeout_ms);
+    int ret;
+    do {
+        ret = poll(&pfd, 1, timeout_ms);
+    } while (ret < 0 && errno == EINTR);
     if (ret < 0) {
         return -1;
     }
