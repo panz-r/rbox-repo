@@ -25,25 +25,6 @@
 
 #include <libgen.h>
 
-std::string getToolsDir() {
-    // Try to find tools directory relative to this executable
-    // First check if we're in testgen/ subdirectory
-    char exe_path[4096];
-    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (len != -1) {
-        exe_path[len] = '\0';
-        std::string exe_dir = dirname(exe_path);
-        // If running from testgen/, tools are in parent directory
-        if (exe_dir.find("testgen") != std::string::npos) {
-            return exe_dir + "/../tools";
-        }
-        // Otherwise assume tools are in subdirectory
-        return exe_dir + "/tools";
-    }
-    // Fallback: assume current directory
-    return "./tools";
-}
-
 // ============================================================================
 // Command Execution Helper - Captures stdout, stderr, and exit code
 // ============================================================================
@@ -1934,7 +1915,7 @@ void TestGenerator::writeExpectations(const std::vector<TestCase>& tests, const 
     std::cout << "Written expectations: " << filename << "\n";
 }
 
-int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& pattern_file, const std::string& expectations_file) {
+int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa...\n";
     std::cout << std::string(60, '=') << "\n\n";
@@ -1947,8 +1928,6 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
     std::string abs_cwd = cwd;
     std::string abs_pattern = abs_cwd + "/" + pattern_file;
     std::string output_dir = abs_pattern.substr(0, abs_pattern.rfind('/'));
-    
-    std::string tools_dir = getToolsDir();
     
     std::cout << "1. Building NFA...\n";
     std::string nfa_file = output_dir + "/test.nfa";
@@ -2328,7 +2307,7 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
     return failed > 0 ? 1 : 0;
 }
 
-int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const std::string& pattern_file, const std::string& expectations_file) {
+int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa (INDIVIDUALLY)...\n";
     std::cout << std::string(60, '=') << "\n\n";
@@ -2372,7 +2351,6 @@ int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const 
         std::string nfa_file = output_dir + "/temp.nfa";
         std::string dfa_file = output_dir + "/temp.dfa";
         
-        std::string tools_dir = getToolsDir();
         CommandResult nfa_res = runCommand(tools_dir + "/nfa_builder " + temp_pattern + " " + nfa_file);
         if (nfa_res.exit_code != 0 || !nfa_res.stderr.empty()) { 
             std::cout << "   FAIL #" << i << ": nfa_builder failed (exit=" << nfa_res.exit_code << ")\n";

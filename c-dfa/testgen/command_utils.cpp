@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <unistd.h>
+#include <libgen.h>
 
 CommandResult runCommand(const std::string& cmd) {
     CommandResult result;
@@ -31,4 +32,18 @@ CommandResult runCommand(const std::string& cmd) {
     }
     
     return result;
+}
+
+std::string getToolsDir() {
+    char exe_path[4096];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len != -1) {
+        exe_path[len] = '\0';
+        std::string exe_dir = dirname(exe_path);
+        if (exe_dir.find("testgen") != std::string::npos) {
+            return exe_dir + "/../tools";
+        }
+        return exe_dir + "/tools";
+    }
+    return "./tools";
 }

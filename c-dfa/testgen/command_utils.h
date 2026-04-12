@@ -10,5 +10,6 @@ struct CommandResult {
 };
 
 CommandResult runCommand(const std::string& cmd);
+std::string getToolsDir();
 
 #endif // COMMAND_UTILS_H
