@@ -176,6 +176,7 @@ struct rbox_server_request {
     int reading_chunk_header;       /* 1 if expecting a chunk header (for chunked) */
     uint32_t current_chunk_len;     /* Size of the current chunk being read */
     uint32_t current_chunk_received;/* Bytes of current chunk already read */
+    uint32_t current_chunk_checksum;/* Expected body_checksum for current chunk */
     uint32_t last_flags;            /* Flags from most recent chunk header (RBOX_FLAG_LAST) */
 
     /* Internal buffer for small requests (reduces allocation overhead) */

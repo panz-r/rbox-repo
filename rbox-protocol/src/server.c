@@ -17,6 +17,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 
 #include "rbox_protocol.h"
 #include "socket.h"
@@ -340,9 +341,11 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
             if (entry) entry->last_activity = time(NULL);
             uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
             uint32_t flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
+            uint32_t body_checksum = *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
             if (chunk_len > RBOX_CHUNK_MAX) return -1;
             req->current_chunk_len = chunk_len;
             req->current_chunk_received = 0;
+            req->current_chunk_checksum = body_checksum;
             req->last_flags = flags;
             req->reading_chunk_header = 0;
             if (chunk_len == 0) {
@@ -363,6 +366,11 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
         rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
         if (entry) entry->last_activity = time(NULL);
         if (req->current_chunk_received == req->current_chunk_len) {
+            uint32_t computed_crc = rbox_runtime_crc32(0, req->command_data + req->body_received - req->current_chunk_len, req->current_chunk_len);
+            if (computed_crc != req->current_chunk_checksum) {
+                DBG("Chunk body checksum mismatch: expected %u, got %u", req->current_chunk_checksum, computed_crc);
+                return -1;
+            }
             req->reading_chunk_header = 1;
             if (req->last_flags & RBOX_FLAG_LAST) {
                 req->command_data[req->body_received] = '\0';
