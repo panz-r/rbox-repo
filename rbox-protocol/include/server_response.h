@@ -12,6 +12,7 @@
 #define RBOX_SERVER_RESPONSE_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* Forward declaration */
 typedef struct rbox_server_request rbox_server_request_t;
@@ -28,6 +29,13 @@ char *rbox_server_build_response(
     uint32_t fenv_hash,
     int env_decision_count,
     uint8_t *env_decisions,
+    size_t *out_len);
+
+char *rbox_server_build_telemetry_response(
+    const uint8_t *client_id,
+    const uint8_t *request_id,
+    uint32_t allow_count,
+    uint32_t deny_count,
     size_t *out_len);
 
 #endif /* RBOX_SERVER_RESPONSE_H */

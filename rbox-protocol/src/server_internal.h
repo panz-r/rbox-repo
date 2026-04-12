@@ -107,6 +107,7 @@ typedef struct rbox_server_send_entry {
     rbox_server_request_t *request;  /* Associated request to free after send */
     char internal_buf[512];        /* Inline buffer for small responses */
     int using_internal_buf;        /* 1 if data points to internal_buf */
+    uint8_t decision;              /* Decision type for telemetry tracking */
     struct rbox_server_send_entry *next; /* Free list link */
 } rbox_server_send_entry_t;
 
@@ -273,6 +274,12 @@ struct rbox_server_handle {
     pthread_mutex_t client_fd_mutex;
     rbox_client_fd_entry_t *client_fds;
     int active_client_count; /* Number of active clients */
+
+    /* Telemetry counters */
+    atomic_uint telemetry_allow_queued;
+    atomic_uint telemetry_deny_queued;
+    atomic_uint telemetry_allow_sent;
+    atomic_uint telemetry_deny_sent;
 
     /* Connection limits and timeouts */
     int max_clients;               /* 0 = unlimited */

@@ -531,6 +531,12 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
             DBG("send_pending_locked: wrote %zd bytes on fd %d, offset now %zu/%zu", w, entry->fd, entry->offset, entry->len);
             if (entry->offset == entry->len) {
                 DBG("send_pending_locked: fully sent response for fd %d", entry->fd);
+                uint8_t sent_decision = (uint8_t)entry->data[RBOX_HEADER_SIZE];
+                if (sent_decision == RBOX_DECISION_ALLOW) {
+                    atomic_fetch_add(&server->telemetry_allow_sent, 1);
+                } else if (sent_decision == RBOX_DECISION_DENY) {
+                    atomic_fetch_add(&server->telemetry_deny_sent, 1);
+                }
                 send_queue_dequeue(client_entry);
                 if (entry->request) {
                     entry->request->fd = -1;
@@ -603,7 +609,8 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
                                uint8_t *client_id, uint8_t *request_id, uint32_t *cmd_hash,
                                uint32_t *fenv_hash,
                                char *caller, size_t caller_len, char *syscall, size_t syscall_len,
-                               uint32_t *chunk_len, uint32_t *flags, uint64_t *total_len) {
+                               uint32_t *chunk_len, uint32_t *flags, uint64_t *total_len,
+                               uint32_t *msg_type) {
     char header[RBOX_HEADER_SIZE];
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
     ssize_t n = rbox_read_nonblocking(fd, header, RBOX_HEADER_SIZE);
@@ -626,6 +633,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
     if (magic != RBOX_MAGIC || version != RBOX_VERSION) return -1;
     if (rbox_header_validate(header, RBOX_HEADER_SIZE) != RBOX_OK) return -1;
     if (entry) entry->last_activity = time(NULL);
+    *msg_type = *(uint32_t *)(header + RBOX_HEADER_OFFSET_TYPE);
     memcpy(client_id, header + RBOX_HEADER_OFFSET_CLIENT_ID, 16);
     memcpy(request_id, header + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
     *cmd_hash = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CMD_HASH);
@@ -953,13 +961,13 @@ static void *server_thread_func(void *arg) {
 
                     /* No pending request – read header */
                     uint8_t client_id[16], request_id[16];
-                    uint32_t cmd_hash, fenv_hash, chunk_len, flags;
+                    uint32_t cmd_hash, fenv_hash, chunk_len, flags, msg_type;
                     uint64_t total_len;
                     char caller[RBOX_MAX_CALLER_LEN + 1];
                     char syscall[RBOX_MAX_SYSCALL_LEN + 1];
 
                     int hdr_result = server_read_header(server, cl_fd, client_id, request_id, &cmd_hash, &fenv_hash,
-                        caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len, &flags, &total_len);
+                        caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len, &flags, &total_len, &msg_type);
                     if (hdr_result == 1) {
                         DBG("No data available on fd %d, skipping", cl_fd);
                         goto next_event;
@@ -967,6 +975,25 @@ static void *server_thread_func(void *arg) {
                         DBG("Header read failed on fd %d, cleaning up", cl_fd);
                         client_connection_close(server, cl_fd);
                         closed = 1;
+                        goto next_event;
+                    }
+
+                    /* Handle telemetry request */
+                    if (msg_type == RBOX_MSG_TELEMETRY) {
+                        DBG("Telemetry request from fd %d", cl_fd);
+                        char resp_reason[32];
+                        snprintf(resp_reason, sizeof(resp_reason), "ALLOW:%u DENY:%u\n",
+                            (unsigned)atomic_load(&server->telemetry_allow_sent),
+                            (unsigned)atomic_load(&server->telemetry_deny_sent));
+                        size_t resp_len;
+                        char *resp = rbox_server_build_telemetry_response(
+                            client_id, request_id,
+                            atomic_load(&server->telemetry_allow_sent),
+                            atomic_load(&server->telemetry_deny_sent),
+                            &resp_len);
+                        if (resp) {
+                            send_queue_add(server, cl_fd, resp, resp_len, NULL);
+                        }
                         goto next_event;
                     }
 
@@ -1238,6 +1265,12 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
 
     srv->wake_fd = eventfd(0, EFD_NONBLOCK);
     if (srv->wake_fd < 0) srv->wake_fd = -1;
+
+    atomic_init(&srv->telemetry_allow_queued, 0);
+    atomic_init(&srv->telemetry_deny_queued, 0);
+    atomic_init(&srv->telemetry_allow_sent, 0);
+    atomic_init(&srv->telemetry_deny_sent, 0);
+
     return srv;
 }
 
@@ -1363,6 +1396,12 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     dec->decision = decision;
     strncpy(dec->reason, reason ? reason : "", sizeof(dec->reason) - 1);
     dec->duration = duration;
+
+    if (decision == RBOX_DECISION_ALLOW) {
+        atomic_fetch_add(&server->telemetry_allow_queued, 1);
+    } else if (decision == RBOX_DECISION_DENY) {
+        atomic_fetch_add(&server->telemetry_deny_queued, 1);
+    }
 
     if (env_decision_count > 0 && env_decisions) {
         dec->env_decision_count = env_decision_count;

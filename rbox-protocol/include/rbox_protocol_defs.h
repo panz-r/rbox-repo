@@ -27,6 +27,7 @@
 #define RBOX_MSG_CHUNK   2   /* Subsequent chunk */
 #define RBOX_MSG_COMPLETE 3  /* All chunks received */
 #define RBOX_MSG_ABORT   4   /* Client aborted */
+#define RBOX_MSG_TELEMETRY 5 /* Telemetry stats query */
 
 /* ============================================================
  * CALLER/SYSCALL LIMITS (max 15 chars each, stored in 4 bits)

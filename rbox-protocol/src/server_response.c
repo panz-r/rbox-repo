@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/epoll.h>
@@ -67,6 +68,54 @@ char *rbox_server_build_response(
         memcpy(body + pos, env_decisions, bitmap_size);
         pos += bitmap_size;
     }
+
+    uint32_t checksum = rbox_runtime_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = checksum;
+    uint32_t body_checksum = rbox_runtime_crc32(0, body, body_len);
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_BODY_CHECKSUM) = body_checksum;
+
+    *out_len = total_len;
+    return pkt;
+}
+
+char *rbox_server_build_telemetry_response(
+    const uint8_t *client_id,
+    const uint8_t *request_id,
+    uint32_t allow_count,
+    uint32_t deny_count,
+    size_t *out_len) {
+
+    if (!out_len) return NULL;
+
+    char reason[64];
+    int reason_len = snprintf(reason, sizeof(reason), "ALLOW:%u DENY:%u\n", allow_count, deny_count);
+
+    size_t body_len = 1 + reason_len + 1;
+
+    size_t total_len = RBOX_HEADER_SIZE + body_len;
+    char *pkt = malloc(total_len);
+    if (!pkt) return NULL;
+    memset(pkt, 0, total_len);
+
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
+    if (client_id) memcpy(pkt + RBOX_HEADER_OFFSET_CLIENT_ID, client_id, 16);
+    if (request_id) memcpy(pkt + RBOX_HEADER_OFFSET_REQUEST_ID, request_id, 16);
+    memset(pkt + RBOX_HEADER_OFFSET_SERVER_ID, 'S', 16);
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_TYPE) = 0;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_FLAGS) = 0;
+    *(uint64_t *)(pkt + RBOX_HEADER_OFFSET_OFFSET) = 0;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = body_len;
+    *(uint64_t *)(pkt + RBOX_HEADER_OFFSET_TOTAL_LEN) = body_len;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CMD_HASH) = 0;
+    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_FENV_HASH) = 0;
+
+    char *body = pkt + RBOX_HEADER_SIZE;
+    size_t pos = 0;
+    body[pos++] = RBOX_DECISION_UNKNOWN;
+    memcpy(body + pos, reason, reason_len);
+    pos += reason_len;
+    body[pos++] = '\0';
 
     uint32_t checksum = rbox_runtime_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
     *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = checksum;

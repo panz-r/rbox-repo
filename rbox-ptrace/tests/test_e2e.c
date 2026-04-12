@@ -24,6 +24,7 @@
 #include <dirent.h>
 
 #include "test_utils.h"
+#include <rbox_protocol.h>
 
 /* Test counter */
 static int tests_run = 0;
@@ -38,39 +39,9 @@ static char g_autoallow_socket_path[256] = "";
 static pid_t g_autodeny_server_pid = 0;
 static pid_t g_autoallow_server_pid = 0;
 
-/*
- * Log Reader State - tracks ALLOW/DENY counts from both servers via pipes.
- *
- * Architecture:
- *   Autoallow Server ──pipe1──▶ Log Reader ◀──pipe2─── Autodeny Server
- *                                  │
- *              parent_to_log[1] ──▶│◀── log_to_parent[0]
- *                                  │
- *                              Test Runner
- *
- * The log reader parses machine-readable output (ALLOW:/DENY:) from both
- * servers and maintains counts. Parent sends commands (CHECKPOINT/GET_COUNTS)
- * via pipe, log reader sends responses back via another pipe.
- */
-typedef struct {
-    int allow_count;      /* Total ALLOW lines seen */
-    int deny_count;       /* Total DENY lines seen */
-    int checkpoint_allow; /* ALLOW count at last checkpoint */
-    int checkpoint_deny;  /* DENY count at last checkpoint */
-    int pipe1_fd;         /* Pipe from autoallow server (read end) */
-    int pipe2_fd;         /* Pipe from autodeny server (read end) */
-    int write_fd1;        /* Pipe1 write end (in parent, for server) */
-    int write_fd2;        /* Pipe2 write end (in parent, for server) */
-    int parent_to_log[2]; /* Parent to log reader commands */
-    int log_to_parent[2]; /* Log reader to parent responses */
-    pid_t pid;            /* Log reader process PID */
-} LogReaderState;
-
-static LogReaderState g_log_reader = {0};
-
-/* Forward declarations */
-static int log_reader_get_counts(int *out_allow, int *out_deny);
-static void log_reader_checkpoint(void);
+/* Telemetry checkpoint state */
+static uint32_t g_checkpoint_allow = 0;
+static uint32_t g_checkpoint_deny = 0;
 
 /* Cleanup function called at exit to stop any remaining servers */
 static void cleanup_servers_now(void) {
@@ -94,247 +65,49 @@ static void server_cleanup_signal(int sig) {
 }
 
 /*
- * Log Reader Process - reads ALLOW/DENY lines from server pipes,
- * maintains counts. Parent communicates via pipes.
- *
- * Architecture:
- *   Autoallow Server ──pipe1──▶ Log Reader ◀──pipe2─── Autodeny Server
- *                                  │
- *              parent_to_log[1] ──▶│◀── log_to_parent[0]
- *                                  │
- *                              Test Runner
- *
- * Commands from parent:
- *   CHECKPOINT - save current counts as checkpoint
- *   GET_COUNTS - get counts since last checkpoint, format: "ALLOW:<count> DENY:<count>\n"
+ * Telemetry stats query function
+ * Returns allow/deny counts from server via telemetry protocol
  */
-static int start_log_reader_process(LogReaderState *state) {
-    /* Create pipe1: autoallow stdout → log reader stdin */
-    int pipe1[2];
-    if (pipe(pipe1) < 0) return -1;
-    
-    /* Create pipe2: autodeny stdout → log reader */
-    int pipe2[2];
-    if (pipe(pipe2) < 0) {
-        close(pipe1[0]); close(pipe1[1]);
+static int server_get_stats(const char *socket_path, int *out_allow, int *out_deny) {
+    uint32_t allow = 0;
+    uint32_t deny = 0;
+    rbox_error_t err = rbox_telemetry_get_stats(socket_path, &allow, &deny);
+    if (err != RBOX_OK) {
         return -1;
     }
-    
-    /* Create pipes for parent <-> log reader communication */
-    if (pipe(state->parent_to_log) < 0) {
-        close(pipe1[0]); close(pipe1[1]);
-        close(pipe2[0]); close(pipe2[1]);
-        return -1;
-    }
-    if (pipe(state->log_to_parent) < 0) {
-        close(pipe1[0]); close(pipe1[1]);
-        close(pipe2[0]); close(pipe2[1]);
-        close(state->parent_to_log[0]); close(state->parent_to_log[1]);
-        return -1;
-    }
-    
-    /* Fork log reader process */
-    pid_t log_pid = fork();
-    if (log_pid < 0) {
-        close(pipe1[0]); close(pipe1[1]);
-        close(pipe2[0]); close(pipe2[1]);
-        close(state->parent_to_log[0]); close(state->parent_to_log[1]);
-        close(state->log_to_parent[0]); close(state->log_to_parent[1]);
-        return -1;
-    }
-    
-    if (log_pid == 0) {
-        /* Child: log reader process */
-        /* Close unnecessary ends */
-        close(pipe1[1]);  /* Close write ends of server pipes */
-        close(pipe2[1]);
-        close(state->parent_to_log[1]);  /* Close write end of parent->log */
-        close(state->log_to_parent[0]);   /* Close read end of log->parent */
-        
-        /* Set non-blocking on server pipes */
-        fcntl(pipe1[0], F_SETFL, O_NONBLOCK);
-        fcntl(pipe2[0], F_SETFL, O_NONBLOCK);
-        
-        /* Initialize counts */
-        int allow_count = 0;
-        int deny_count = 0;
-        int checkpoint_allow = 0;
-        int checkpoint_deny = 0;
-        
-        /* Read loop */
-        char line[1024];
-        char cmd[64];
-        int running = 1;
-        int pipe1_eof = 0;
-        int pipe2_eof = 0;
-        
-        while (running) {
-            fd_set read_fds;
-            FD_ZERO(&read_fds);
-            int max_fd = -1;
-            
-            if (!pipe1_eof) { FD_SET(pipe1[0], &read_fds); max_fd = (max_fd < pipe1[0]) ? pipe1[0] : max_fd; }
-            if (!pipe2_eof) { FD_SET(pipe2[0], &read_fds); max_fd = (max_fd < pipe2[0]) ? pipe2[0] : max_fd; }
-            FD_SET(state->parent_to_log[0], &read_fds);  /* Command pipe from parent */
-            if (state->parent_to_log[0] > max_fd) max_fd = state->parent_to_log[0];
-            
-            struct timeval tv = {0, 100000}; /* 100ms timeout */
-            int ready = select(max_fd + 1, &read_fds, NULL, NULL, &tv);
-            
-            if (ready > 0) {
-                /* Read from pipe1 (autoallow server) */
-                if (!pipe1_eof && FD_ISSET(pipe1[0], &read_fds)) {
-                    ssize_t n = read(pipe1[0], line, sizeof(line) - 1);
-                    if (n > 0) {
-                        line[n] = '\0';
-                        /* Count only machine-readable format: ALLOW:command (no space after colon) */
-                        char *p = line;
-                        while ((p = strstr(p, "ALLOW:"))) {
-                            /* Only count if NOT followed by space (verbose has "ALLOW: command") */
-                            if (p[6] != ' ') { allow_count++; }
-                            p += 6;
-                        }
-                        p = line;
-                        while ((p = strstr(p, "DENY:"))) {
-                            /* Only count if NOT followed by space (verbose has "DENY: command") */
-                            if (p[5] != ' ') { deny_count++; }
-                            p += 5;
-                        }
-                    } else if (n == 0) {
-                        pipe1_eof = 1;
-                    }
-                }
-                
-                /* Read from pipe2 (autodeny server) */
-                if (!pipe2_eof && FD_ISSET(pipe2[0], &read_fds)) {
-                    ssize_t n = read(pipe2[0], line, sizeof(line) - 1);
-                    if (n > 0) {
-                        line[n] = '\0';
-                        /* Count only machine-readable format: DENY:command (no space after colon) */
-                        char *p = line;
-                        while ((p = strstr(p, "ALLOW:"))) {
-                            if (p[6] != ' ') { allow_count++; }
-                            p += 6;
-                        }
-                        p = line;
-                        while ((p = strstr(p, "DENY:"))) {
-                            if (p[5] != ' ') { deny_count++; }
-                            p += 5;
-                        }
-                    } else if (n == 0) {
-                        pipe2_eof = 1;
-                    }
-                }
-                
-                /* Read command from parent */
-                if (FD_ISSET(state->parent_to_log[0], &read_fds)) {
-                    ssize_t n = read(state->parent_to_log[0], cmd, sizeof(cmd) - 1);
-                    if (n > 0) {
-                        cmd[n] = '\0';
-                        /* Remove trailing newline */
-                        char *nl = strchr(cmd, '\n');
-                        if (nl) *nl = '\0';
-                        
-                        if (strcmp(cmd, "CHECKPOINT") == 0) {
-                            checkpoint_allow = allow_count;
-                            checkpoint_deny = deny_count;
-                            /* Respond */
-                            write(state->log_to_parent[1], "OK\n", 3);
-                        } else if (strcmp(cmd, "GET_COUNTS") == 0) {
-                            char resp[64];
-                            int delta_allow = allow_count - checkpoint_allow;
-                            int delta_deny = deny_count - checkpoint_deny;
-                            snprintf(resp, sizeof(resp), "ALLOW:%d DENY:%d\n", delta_allow, delta_deny);
-                            write(state->log_to_parent[1], resp, strlen(resp));
-                        }
-                    }
-                }
-            }
-            
-            /* Exit when both server pipes are EOF and no more commands expected */
-            if (pipe1_eof && pipe2_eof) {
-                /* Check if parent closed command pipe */
-                fd_set test_fds;
-                FD_ZERO(&test_fds);
-                FD_SET(state->parent_to_log[0], &test_fds);
-                struct timeval ttv = {0, 0};
-                if (select(state->parent_to_log[0] + 1, &test_fds, NULL, NULL, &ttv) == 0) {
-                    /* No data available, parent likely closed */
-                    running = 0;
-                }
-            }
-        }
-        
-        close(pipe1[0]);
-        close(pipe2[0]);
-        close(state->parent_to_log[0]);
-        close(state->log_to_parent[1]);
-        _exit(0);
-    }
-    
-    /* Parent */
-    state->pid = log_pid;
-    state->pipe1_fd = pipe1[0];
-    state->pipe2_fd = pipe2[0];
-    state->write_fd1 = pipe1[1];
-    state->write_fd2 = pipe2[1];
-    
-    /* Close child ends in parent */
-    close(pipe1[0]);
-    close(pipe2[0]);
-    close(state->parent_to_log[0]);  /* Close read end of parent->log */
-    close(state->log_to_parent[1]); /* Close write end of log->parent */
-    
+    *out_allow = (int)allow;
+    *out_deny = (int)deny;
     return 0;
 }
 
-/* Start both servers (autodeny and autoallow) with log reader */
+/* Start both servers (autodeny and autoallow) */
 static int start_all_servers(void) {
     /*
      * Setup: Start a SINGLE autoallow and SINGLE autodeny server for the
-     * entire test suite. Both servers output machine-readable logs via
-     * pipes to a log reader process.
+     * entire test suite. Both servers accept telemetry queries.
      *
      * Set TEST_DIR so that test commands like 'noop' can be found in PATH.
      */
     {
         char test_dir[512];
-        /* Get the directory where the test binary is located */
         snprintf(test_dir, sizeof(test_dir), "%s", getcwd(NULL, 0));
         setenv("TEST_DIR", test_dir, 1);
         fprintf(stderr, "DEBUG: TEST_DIR=%s\n", test_dir);
     }
-    
-    /*
-     *
-     * Architecture:
-     *   Autoallow Server ──pipe1──▶ Log Reader ◀──pipe2─── Autodeny Server
-     *                                                    │
-     *                              Test Runner ◀──socket─┘
-     *
-     * The log reader parses ALLOW/DENY lines from both servers and maintains
-     * counts. Tests query the log reader via Unix socket to get counts.
-     */
-    
-    /* Start log reader process first */
-    if (start_log_reader_process(&g_log_reader) < 0) {
-        fprintf(stderr, "DEBUG: failed to start log reader\n");
-        return -1;
-    }
-    
+
     /* Generate socket paths */
     snprintf(g_autodeny_socket_path, sizeof(g_autodeny_socket_path),
              "/tmp/robox-test-autodeny-%d.sock", (int)getpid());
     snprintf(g_autoallow_socket_path, sizeof(g_autoallow_socket_path),
              "/tmp/robox-test-autoallow-%d.sock", (int)getpid());
-    
-    /* Fork autodeny server - stdout/stderr goes to pipe2 (log reader) */
+
+    /* Fork autodeny server */
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
         return -1;
     }
-    
+
     if (pid == 0) {
         /* Child - start autodeny server */
         const char *server_path = "../../bin/readonlybox-server";
@@ -344,28 +117,22 @@ static int start_all_servers(void) {
                 server_path = "readonlybox-server";
             }
         }
-        
-        /* Redirect stdout and stderr to pipe2 write end */
-        dup2(g_log_reader.write_fd2, STDOUT_FILENO);
-        dup2(g_log_reader.write_fd2, STDERR_FILENO);
-        close(g_log_reader.write_fd2);
-        close(g_log_reader.write_fd1);  /* Don't use pipe1 */
-        
-        execl(server_path, server_path, "-q", "-socket", g_autodeny_socket_path, "--auto-deny", "--log-reader", NULL);
+
+        execl(server_path, server_path, "-q", "-socket", g_autodeny_socket_path, "--auto-deny", NULL);
         perror("DEBUG: autodeny execl failed");
         _exit(1);
     }
-    
+
     g_autodeny_server_pid = pid;
-    
-    /* Fork autoallow server - stdout/stderr goes to pipe1 (log reader) */
+
+    /* Fork autoallow server */
     pid = fork();
     if (pid < 0) {
         kill(g_autodeny_server_pid, SIGTERM);
         waitpid(g_autodeny_server_pid, NULL, 0);
         return -1;
     }
-    
+
     if (pid == 0) {
         /* Child - start autoallow server */
         const char *server_path = "../../bin/readonlybox-server";
@@ -375,38 +142,28 @@ static int start_all_servers(void) {
                 server_path = "readonlybox-server";
             }
         }
-        
-        /* Redirect stdout and stderr to pipe1 write end */
-        dup2(g_log_reader.write_fd1, STDOUT_FILENO);
-        dup2(g_log_reader.write_fd1, STDERR_FILENO);
-        close(g_log_reader.write_fd1);
-        close(g_log_reader.write_fd2);  /* Don't use pipe2 */
-        
-        execl(server_path, server_path, "-vv", "-socket", g_autoallow_socket_path, "--log-reader", NULL);
+
+        execl(server_path, server_path, "-vv", "-socket", g_autoallow_socket_path, NULL);
         perror("DEBUG: autoallow execl failed");
         _exit(1);
     }
-    
+
     g_autoallow_server_pid = pid;
-    
-    /* Close parent's pipe write ends - servers have them now */
-    close(g_log_reader.write_fd1);
-    close(g_log_reader.write_fd2);
-    
+
     /* Wait for both sockets to be created */
     for (int i = 0; i < 50; i++) {
         if (access(g_autodeny_socket_path, F_OK) == 0 &&
             access(g_autoallow_socket_path, F_OK) == 0) break;
         usleep(100000);
     }
-    
+
     fprintf(stderr, "DEBUG: autodeny socket: %s (%s)\n",
             g_autodeny_socket_path,
             (access(g_autodeny_socket_path, F_OK) == 0) ? "OK" : "FAILED");
     fprintf(stderr, "DEBUG: autoallow socket: %s (%s)\n",
             g_autoallow_socket_path,
             (access(g_autoallow_socket_path, F_OK) == 0) ? "OK" : "FAILED");
-    
+
     return 0;
 }
 
@@ -421,11 +178,6 @@ static void stop_all_servers(void) {
         kill(g_autoallow_server_pid, SIGTERM);
         waitpid(g_autoallow_server_pid, NULL, 0);
         g_autoallow_server_pid = 0;
-    }
-    if (g_log_reader.pid > 0) {
-        kill(g_log_reader.pid, SIGTERM);
-        waitpid(g_log_reader.pid, NULL, 0);
-        g_log_reader.pid = 0;
     }
 }
 
@@ -502,12 +254,6 @@ static int run_ptrace_impl(char *const argv[], int *exit_code, ServerType server
         int arg_count = 0;
         while (argv[arg_count]) arg_count++;
 
-        /* Close log reader pipes in child to avoid interference with exec */
-        if (g_log_reader.parent_to_log[0] > 0) close(g_log_reader.parent_to_log[0]);
-        if (g_log_reader.parent_to_log[1] > 0) close(g_log_reader.parent_to_log[1]);
-        if (g_log_reader.log_to_parent[0] > 0) close(g_log_reader.log_to_parent[0]);
-        if (g_log_reader.log_to_parent[1] > 0) close(g_log_reader.log_to_parent[1]);
-
         char **new_argv = malloc((arg_count + 5) * sizeof(char *));
         new_argv[0] = (char *)ptrace_path;
         new_argv[1] = "--no-pkexec";
@@ -556,32 +302,28 @@ static int run_ptrace_landlock(char *const argv[], int *exit_code,
 }
 
 /*
- * Log Reader Query Functions
+ * Telemetry Query Functions
  * 
- * The log reader process tracks ALLOW/DENY counts from both servers.
+ * These functions use server telemetry to track ALLOW/DENY counts.
  * Tests should:
  *   1. Call log_reader_checkpoint() BEFORE running a command
  *   2. Run the command via run_ptrace_autoallow()
  *   3. Call log_reader_get_counts() to get counts since checkpoint
  */
 static void log_reader_checkpoint(void) {
-    /* Send CHECKPOINT command to log reader */
-    write(g_log_reader.parent_to_log[1], "CHECKPOINT\n", 11);
-    /* Read response */
-    char resp[64];
-    read(g_log_reader.log_to_parent[0], resp, sizeof(resp));
+    int allow = 0;
+    int deny = 0;
+    server_get_stats(g_autoallow_socket_path, &allow, &deny);
+    g_checkpoint_allow = allow;
+    g_checkpoint_deny = deny;
 }
 
 static int log_reader_get_counts(int *out_allow, int *out_deny) {
-    /* Send GET_COUNTS command to log reader */
-    write(g_log_reader.parent_to_log[1], "GET_COUNTS\n", 12);
-    /* Read response: "ALLOW:<count> DENY:<count>\n" */
-    char resp[64];
-    ssize_t n = read(g_log_reader.log_to_parent[0], resp, sizeof(resp));
-    if (n > 0) {
-        resp[n] = '\0';
-        sscanf(resp, "ALLOW:%d DENY:%d", out_allow, out_deny);
-    }
+    int allow = 0;
+    int deny = 0;
+    server_get_stats(g_autoallow_socket_path, &allow, &deny);
+    *out_allow = (int)(allow - g_checkpoint_allow);
+    *out_deny = (int)(deny - g_checkpoint_deny);
     return 0;
 }
 

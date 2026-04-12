@@ -371,6 +371,14 @@ const char *rbox_strerror(rbox_error_t err);
 /* Validate packet header */
 rbox_error_t rbox_header_validate(const char *packet, size_t len);
 
+/* Telemetry stats query
+ * Returns: RBOX_OK on success, error code on failure
+ * On success: *out_allow and *out_deny contain cumulative decision counts */
+rbox_error_t rbox_telemetry_get_stats(
+    const char *socket_path,
+    uint32_t *out_allow,
+    uint32_t *out_deny);
+
 /* Initialize library (call once at startup) */
 void rbox_init(void);
 

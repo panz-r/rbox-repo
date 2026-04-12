@@ -952,3 +952,99 @@ void rbox_response_free(rbox_response_t *resp) {
     resp->env_decisions = NULL;
     resp->env_decision_count = 0;
 }
+
+/* Telemetry stats query - connects to server and requests stats */
+rbox_error_t rbox_telemetry_get_stats(
+    const char *socket_path,
+    uint32_t *out_allow,
+    uint32_t *out_deny) {
+
+    if (!socket_path || !out_allow || !out_deny) {
+        return RBOX_ERR_INVALID;
+    }
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return RBOX_ERR_IO;
+
+    struct sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+
+    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        close(fd);
+        return RBOX_ERR_IO;
+    }
+
+    uint8_t header[RBOX_HEADER_SIZE] = {0};
+    *(uint32_t *)(header + 0) = RBOX_MAGIC;
+    *(uint32_t *)(header + 4) = RBOX_VERSION;
+    *(uint32_t *)(header + 56) = RBOX_MSG_TELEMETRY;
+
+    uint32_t checksum = rbox_runtime_crc32(0, header, RBOX_HEADER_OFFSET_CHECKSUM);
+    *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHECKSUM) = checksum;
+    *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM) = 0;
+
+    if (write(fd, header, RBOX_HEADER_SIZE) != RBOX_HEADER_SIZE) {
+        close(fd);
+        return RBOX_ERR_IO;
+    }
+
+    uint8_t resp_header[RBOX_HEADER_SIZE];
+    ssize_t n = rbox_read(fd, resp_header, RBOX_HEADER_SIZE);
+    if (n != RBOX_HEADER_SIZE) {
+        close(fd);
+        return RBOX_ERR_IO;
+    }
+
+    uint32_t resp_magic = *(uint32_t *)resp_header;
+    if (resp_magic != RBOX_MAGIC) {
+        close(fd);
+        return RBOX_ERR_IO;
+    }
+
+    uint32_t resp_chunk_len = *(uint32_t *)(resp_header + RBOX_HEADER_OFFSET_CHUNK_LEN);
+    if (resp_chunk_len > 4096) {
+        close(fd);
+        return RBOX_ERR_IO;
+    }
+
+    size_t total_resp_len = RBOX_HEADER_SIZE + resp_chunk_len;
+    char *resp_body = malloc(total_resp_len);
+    if (!resp_body) {
+        close(fd);
+        return RBOX_ERR_MEMORY;
+    }
+    memcpy(resp_body, resp_header, RBOX_HEADER_SIZE);
+
+    size_t remaining = resp_chunk_len;
+    size_t pos = RBOX_HEADER_SIZE;
+    while (remaining > 0) {
+        n = rbox_read(fd, resp_body + pos, remaining);
+        if (n <= 0) {
+            free(resp_body);
+            close(fd);
+            return RBOX_ERR_IO;
+        }
+        pos += n;
+        remaining -= n;
+    }
+
+    uint32_t reason_len = resp_chunk_len - 1;
+    if (reason_len > 1024) reason_len = 1024;
+
+    char reason[1025];
+    size_t copy_len = reason_len < sizeof(reason) - 1 ? reason_len : sizeof(reason) - 1;
+    memcpy(reason, resp_body + RBOX_HEADER_SIZE + 1, copy_len);
+    reason[copy_len] = '\0';
+
+    free(resp_body);
+    close(fd);
+
+    uint32_t allow = 0, deny = 0;
+    sscanf(reason, "ALLOW:%u DENY:%u", &allow, &deny);
+
+    *out_allow = allow;
+    *out_deny = deny;
+
+    return RBOX_OK;
+}
