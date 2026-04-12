@@ -201,11 +201,14 @@ typedef struct rbox_client_fd_entry {
     rbox_send_queue_t send_queue;           /* Lock-free MPSC send queue */
 } rbox_client_fd_entry_t;
 
-/* Request pool - lock-free free list (Treiber stack) */
-#define RBOX_REQUEST_POOL_SIZE 256
+/* Request pool - simple free list (NOT thread-safe)
+ * NOTE: This pool is used exclusively from the server thread.
+ * All access is from server_thread_func - no external threads
+ * access this pool, so no atomic operations or locking needed. */
+#define RBOX_REQUEST_POOL_SIZE 10
 typedef struct rbox_request_pool {
-    _Atomic(rbox_server_request_t *) free_list;
-    _Atomic(size_t) available;
+    rbox_server_request_t *free_list;
+    size_t available;
     size_t max_requests;
 } rbox_request_pool_t;
 
@@ -215,11 +218,14 @@ rbox_server_request_t *request_pool_get(rbox_server_handle_t *server);
 void request_pool_put(rbox_server_handle_t *server, rbox_server_request_t *req);
 void request_pool_destroy(rbox_server_handle_t *server);
 
-/* Send entry pool - lock-free free list (Treiber stack) */
-#define RBOX_SEND_POOL_SIZE 1024
+/* Send entry pool - simple free list (NOT thread-safe)
+ * NOTE: This pool is used exclusively from the server thread.
+ * All access is from server_thread_func - no external threads
+ * access this pool, so no atomic operations or locking needed. */
+#define RBOX_SEND_POOL_SIZE 10
 typedef struct rbox_send_pool {
-    _Atomic(rbox_server_send_entry_t *) free_list;
-    _Atomic(size_t) available;
+    rbox_server_send_entry_t *free_list;
+    size_t available;
     size_t max_entries;
 } rbox_send_pool_t;
 
