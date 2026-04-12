@@ -129,11 +129,11 @@ static bool wouldMatchPattern(const std::string& input, std::shared_ptr<PatternN
         case PatternType::SEQUENCE: {
             if (pattern->children.empty()) return false;
             std::string remaining = input;
-            for (auto& child : pattern->children) {
+            for (size_t i = 0; i < pattern->children.size(); ++i) {
                 bool matched = false;
                 for (size_t len = 0; len <= remaining.size(); ++len) {
                     std::string prefix = remaining.substr(0, len);
-                    if (wouldMatchPattern(prefix, child)) {
+                    if (wouldMatchPattern(prefix, pattern->children[i])) {
                         remaining = remaining.substr(len);
                         matched = true;
                         break;
@@ -141,7 +141,7 @@ static bool wouldMatchPattern(const std::string& input, std::shared_ptr<PatternN
                 }
                 if (!matched) return false;
             }
-            return remaining.empty() ? true : (wouldMatchPattern(remaining, pattern->children.back()) ? true : false);
+            return remaining.empty();
         }
         case PatternType::FRAGMENT_REF:
             return false;
@@ -302,9 +302,7 @@ CoordinatedMutationResult AddAlternativeCoordOp::apply(const TestCaseCore& origi
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("matching")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
-                result.mutated_tc.inputs.add(node.value, {"matching"});
-            }
+            result.mutated_tc.inputs.add(node.value, {"matching"});
         }
     }
     
@@ -1005,7 +1003,8 @@ CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<AddAlternativeCoordOp>());
     operators.push_back(std::make_unique<NestQuantifierCoordOp>());
     operators.push_back(std::make_unique<ExtendSequenceCoordOp>());
-    operators.push_back(std::make_unique<DeepenNestingCoordOp>());
+    // DeepenNestingCoordOp is identical to NestQuantifierCoordOp
+    // operators.push_back(std::make_unique<DeepenNestingCoordOp>());
     operators.push_back(std::make_unique<CutBasedCoordOp>());
     // SplitAlternationCoordOp always returns invalid
     // operators.push_back(std::make_unique<SplitAlternationCoordOp>());
