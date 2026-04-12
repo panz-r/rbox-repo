@@ -30,11 +30,28 @@ static std::shared_ptr<PatternNode> copyNode(std::shared_ptr<PatternNode> node) 
     copy->capture_tag = node->capture_tag;
     copy->capture_begin_only = node->capture_begin_only;
     copy->capture_end_only = node->capture_end_only;
-    copy->matched_seeds = node->matched_seeds;
-    copy->counter_seeds = node->counter_seeds;
     if (node->quantified) copy->quantified = copyNode(node->quantified);
     for (auto& child : node->children) copy->children.push_back(copyNode(child));
     return copy;
+}
+
+static void clearNodeSeeds(std::shared_ptr<PatternNode> node) {
+    if (!node) return;
+    node->matched_seeds.clear();
+    node->counter_seeds.clear();
+    if (node->quantified) clearNodeSeeds(node->quantified);
+    for (auto& child : node->children) clearNodeSeeds(child);
+}
+
+static bool containsFragmentRef(std::shared_ptr<PatternNode> node) {
+    if (!node) return false;
+    if (node->type == PatternType::FRAGMENT_REF) return true;
+    if (!node->fragment_name.empty()) return true;
+    if (node->quantified && containsFragmentRef(node->quantified)) return true;
+    for (auto& child : node->children) {
+        if (containsFragmentRef(child)) return true;
+    }
+    return false;
 }
 
 static bool patternMatchesPlus(const std::string& content, const std::string& str) {
@@ -773,6 +790,10 @@ static std::vector<CutPosition> findSequenceCuts(std::shared_ptr<PatternNode> no
         auto pre_seq = PatternNode::createSequence(pre_children);
         auto post_seq = PatternNode::createSequence(post_children);
         
+        if (containsFragmentRef(pre_seq) || containsFragmentRef(post_seq) || containsFragmentRef(node->children[cut_idx])) {
+            continue;
+        }
+        
         std::vector<std::string> pre_ins, post_ins;
         bool all_inputs_valid = true;
         
@@ -862,18 +883,23 @@ static std::shared_ptr<PatternNode> buildMutatedPattern(const CutPosition& cut, 
     mutated->type = PatternType::SEQUENCE;
     
     for (auto& child : cut.pre_children) {
+        clearNodeSeeds(child);
         mutated->children.push_back(child);
     }
     
     if (mutation_type == 0) {
+        clearNodeSeeds(cut.middle_node);
         mutated->children.push_back(PatternNode::createQuantified(cut.middle_node, PatternType::PLUS_QUANTIFIER));
     } else if (mutation_type == 1) {
+        clearNodeSeeds(cut.middle_node);
         mutated->children.push_back(PatternNode::createQuantified(cut.middle_node, PatternType::STAR_QUANTIFIER));
     } else {
+        clearNodeSeeds(cut.middle_node);
         mutated->children.push_back(cut.middle_node);
     }
     
     for (auto& child : cut.post_children) {
+        clearNodeSeeds(child);
         mutated->children.push_back(child);
     }
     
@@ -915,10 +941,13 @@ CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, s
         mutated_ast = std::make_shared<PatternNode>();
         mutated_ast->type = PatternType::SEQUENCE;
         for (auto& child : cut.pre_children) {
+            clearNodeSeeds(child);
             mutated_ast->children.push_back(child);
         }
+        clearNodeSeeds(cut.middle_node);
         mutated_ast->children.push_back(PatternNode::createQuantified(ext_seq, PatternType::PLUS_QUANTIFIER));
         for (auto& child : cut.post_children) {
+            clearNodeSeeds(child);
             mutated_ast->children.push_back(child);
         }
     }
@@ -961,11 +990,13 @@ CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, s
 
 CoordinatedMutationEngine::CoordinatedMutationEngine() {
     // CharSubstituteCoordOp disabled - requires sophisticated coordinated constraint solving
+    // AddAlternativeCoordOp disabled - corrupts AST structure
+    // NestQuantifierCoordOp and DeepenNestingCoordOp disabled - propagate incorrect matched_seeds
     // operators.push_back(std::make_unique<CharSubstituteCoordOp>());
-    // operators.push_back(std::make_unique<AddAlternativeCoordOp>());  // Disabled - corrupts AST structure
-    operators.push_back(std::make_unique<NestQuantifierCoordOp>());
-    operators.push_back(std::make_unique<ExtendSequenceCoordOp>());
-    operators.push_back(std::make_unique<DeepenNestingCoordOp>());
+    // operators.push_back(std::make_unique<AddAlternativeCoordOp>());
+    // operators.push_back(std::make_unique<NestQuantifierCoordOp>());
+    // operators.push_back(std::make_unique<ExtendSequenceCoordOp>());
+    // operators.push_back(std::make_unique<DeepenNestingCoordOp>());
     operators.push_back(std::make_unique<CutBasedCoordOp>());
     // operators.push_back(std::make_unique<SplitAlternationCoordOp>());  // Always returns invalid
 }

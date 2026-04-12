@@ -305,8 +305,8 @@ std::shared_ptr<PatternNode> factorAlternation(
             }
             
             if (group_alts.size() == 1) {
-                // Single alternative in group - keep as literal with ORIGINAL seeds
-                auto lit = PatternNode::createLiteral(group_alts[0], group_seeds, all_counter_seeds);
+                // Single alternative in group - keep as literal with its seed only
+                auto lit = PatternNode::createLiteral(group_alts[0], {group_seeds[0]}, all_counter_seeds);
                 new_children.push_back(lit);
                 new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
             } else {
@@ -398,7 +398,7 @@ std::shared_ptr<PatternNode> factorAlternation(
                 
                 // Create inner alternation
                 auto inner_alt = PatternNode::createAlternation(inner_children, inner_seeds, all_counter_seeds);
-                inner_alt->matched_seeds = group_seeds;
+                inner_alt->matched_seeds = inner_seeds;
                 inner_alt->counter_seeds = all_counter_seeds;
                 
                 // If we have empty remainder, wrap in optional to make it cleaner

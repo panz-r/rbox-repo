@@ -1214,6 +1214,10 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
         result.proof += "    Pattern: " + before + "\n";
         result.proof += "    Constraint: must-match(" + std::to_string(before_match) + "), must-not-match(" + std::to_string(before_counters) + ")\n";
         
+        // Save AST before factorization in case we need to revert
+        auto pre_factor_ast = result.ast ? PatternFactorization::copyPatternNode(result.ast) : nullptr;
+        bool factorization_failed = false;
+        
         // Apply factorization with detailed proof generation
         FactorizationProof factor_proof;
         factor_proof.before = before;
@@ -1299,46 +1303,53 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
             if (invalid_count > 0) {
                 result.proof += "    STATUS: FACTORIZATION BUG DETECTED - " + 
                               std::to_string(invalid_count) + " input(s) don't match factored pattern\n";
+                factorization_failed = true;
             } else {
                 result.proof += "    STATUS: All inputs verified to match\n";
             }
         }
         
-        // Apply complex rewrites (char classes, optional groups, nested quantifiers)
-        std::string pre_complex = serializePattern(result.ast);
-        auto [rewritten_ast, fragment_defs] = PatternFactorization::applyComplexRewrites(
-            result.ast, rng, result.proof);
-        result.ast = rewritten_ast;
-        // Add any fragment definitions to BOTH result and tc
-        for (const auto& [name, def] : fragment_defs) {
-            result.fragments[name] = def;
-            tc.fragments[name] = def;  // Also add to tc for pattern file output
-        }
-        std::string after_complex = serializePattern(result.ast);
-        
-        // Apply random star quantifier insertion (20% chance to trigger)
-        // DEEP COPY the AST before star insertion for comparison
-        std::string pre_star_pattern = serializePattern(result.ast);
-        std::shared_ptr<PatternNode> pre_star_ast = PatternFactorization::copyPatternNode(result.ast);  // Deep copy!
-        
-        result.ast = PatternFactorization::applyRandomStars(result.ast, rng);
-        std::string after_stars = serializePattern(result.ast);
-        
-        if (pre_star_pattern != after_stars) {
-            // Use AST comparison to detect specific star insertions
-            std::string star_details = PatternFactorization::detectStarInsertions(
-                pre_star_ast, result.ast, "root");
-            
-            result.proof += "  [Star insertion]\n";
-            result.proof += "    Pattern: " + pre_star_pattern + " -> " + after_stars + "\n";
-            if (!star_details.empty()) {
-                result.proof += star_details;
-            } else {
-                result.proof += "    (Star transformations detected but structure differed)\n";
+        // If factorization failed, revert to pre-factorization AST and skip rewrites
+        if (factorization_failed && pre_factor_ast) {
+            result.proof += "  [REVERT] Factization produced invalid pattern, using pre-factorization version\n";
+            result.ast = pre_factor_ast;
+        } else {
+            // Apply complex rewrites (char classes, optional groups, nested quantifiers)
+            std::string pre_complex = serializePattern(result.ast);
+            auto [rewritten_ast, fragment_defs] = PatternFactorization::applyComplexRewrites(
+                result.ast, rng, result.proof);
+            result.ast = rewritten_ast;
+            // Add any fragment definitions to BOTH result and tc
+            for (const auto& [name, def] : fragment_defs) {
+                result.fragments[name] = def;
+                tc.fragments[name] = def;  // Also add to tc for pattern file output
             }
-        }
+            std::string after_complex = serializePattern(result.ast);
         
-        tc.pattern = after_stars;
+            // Apply random star quantifier insertion (20% chance to trigger)
+            // DEEP COPY the AST before star insertion for comparison
+            std::string pre_star_pattern = serializePattern(result.ast);
+            std::shared_ptr<PatternNode> pre_star_ast = PatternFactorization::copyPatternNode(result.ast);  // Deep copy!
+        
+            result.ast = PatternFactorization::applyRandomStars(result.ast, rng);
+            std::string after_stars = serializePattern(result.ast);
+        
+            if (pre_star_pattern != after_stars) {
+                // Use AST comparison to detect specific star insertions
+                std::string star_details = PatternFactorization::detectStarInsertions(
+                    pre_star_ast, result.ast, "root");
+            
+                result.proof += "  [Star insertion]\n";
+                result.proof += "    Pattern: " + pre_star_pattern + " -> " + after_stars + "\n";
+                if (!star_details.empty()) {
+                    result.proof += star_details;
+                } else {
+                    result.proof += "    (Star transformations detected but structure differed)\n";
+                }
+            }
+        
+            tc.pattern = after_stars;
+        }
     }
     
     // Use the AST's matched_seeds which contains all inputs that validly match
