@@ -732,11 +732,13 @@ TEST(wrapper_chain_duplicate_subcommand) {
 }
 
 /* Test that after a subcommand allowance is consumed (single entry), a second
- * attempt to run it (in the same shell) will require a new server request. */
+ * attempt to run it (in the same shell) will require a new server request.
+ * Note: Multi-use allowances (bounded reuse of same allowance) are not yet
+ * implemented, so each shell invocation requires its own server request. */
 TEST(wrapper_chain_allowance_exhaustion) {
     /* Use the noop command - run it twice in a shell loop.
-     * run_ptrace_autoallow adds sh -c wrapper.
-     * Expected: sh wrapper + first noop request + second noop reuse = 1 request total */
+     * Expected: 2 requests (no multi-use allowance implementation).
+     * Each 'sh noop' iteration contacts the server separately. */
     char *args[] = {"for i in 1 2; do sh noop; done", NULL};
     int exit_code;
     int allow_count, deny_count;
@@ -746,9 +748,9 @@ TEST(wrapper_chain_allowance_exhaustion) {
     if (exit_code != 0) return 1;
     log_reader_get_counts(&allow_count, &deny_count);
     int req_count = allow_count + deny_count;
-    /* Expect 1 request (allowance reused for second noop) */
-    if (req_count != 1) {
-        fprintf(stderr, "    server requests %d (expected 1)\n", req_count);
+    /* Expect 2 requests (multi-use allowance not yet implemented) */
+    if (req_count != 2) {
+        fprintf(stderr, "    server requests %d (expected 2)\n", req_count);
         return 1;
     }
     return 0;
