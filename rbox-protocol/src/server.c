@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <sys/poll.h>
 #include <sys/epoll.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -1430,14 +1431,21 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     atomic_store_explicit(&srv->request_queue.head, req_dummy, memory_order_relaxed);
     atomic_store_explicit(&srv->request_queue.tail, req_dummy, memory_order_relaxed);
     srv->request_wake_fd = eventfd(0, EFD_NONBLOCK);
-    if (srv->request_wake_fd < 0) srv->request_wake_fd = -1;
+    if (srv->request_wake_fd < 0) {
+        request_pool_destroy(srv);
+        send_pool_destroy(srv);
+        pthread_mutex_destroy(&srv->cache_mutex);
+        pthread_mutex_destroy(&srv->client_fd_mutex);
+        close(srv->listen_fd);
+        free(srv);
+        return NULL;
+    }
 
     rbox_decision_node_t *dummy = malloc(sizeof(*dummy));
     if (!dummy) {
+        close(srv->request_wake_fd);
         request_pool_destroy(srv);
         send_pool_destroy(srv);
-        if (srv->request_wake_fd >= 0) close(srv->request_wake_fd);
-        free(req_dummy);
         pthread_mutex_destroy(&srv->cache_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
         close(srv->listen_fd);
@@ -1450,7 +1458,16 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     atomic_store_explicit(&srv->decision_queue.tail, dummy, memory_order_relaxed);
 
     srv->wake_fd = eventfd(0, EFD_NONBLOCK);
-    if (srv->wake_fd < 0) srv->wake_fd = -1;
+    if (srv->wake_fd < 0) {
+        close(srv->request_wake_fd);
+        request_pool_destroy(srv);
+        send_pool_destroy(srv);
+        pthread_mutex_destroy(&srv->cache_mutex);
+        pthread_mutex_destroy(&srv->client_fd_mutex);
+        close(srv->listen_fd);
+        free(srv);
+        return NULL;
+    }
 
     atomic_init(&srv->telemetry_allow_queued, 0);
     atomic_init(&srv->telemetry_deny_queued, 0);
