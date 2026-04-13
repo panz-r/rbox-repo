@@ -217,6 +217,11 @@ rbox_error_t rbox_session_send_raw(rbox_session_t *session, const char *data, si
     if (!session || !data || len == 0) return RBOX_ERR_INVALID;
     if (session->state != RBOX_SESSION_CONNECTED) return RBOX_ERR_INVALID;
 
+    /* Extract and store request_id from packet for response validation */
+    if (len >= RBOX_HEADER_OFFSET_REQUEST_ID + 16) {
+        memcpy(session->request_id, data + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
+    }
+
     free(session->send_buf);
     session->send_buf = malloc(len);
     if (!session->send_buf) {
