@@ -375,6 +375,11 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
             uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
             uint32_t flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
             uint32_t body_checksum = *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
+            uint8_t *chunk_request_id = (uint8_t *)(header + 24);
+            if (memcmp(req->original_request_id, chunk_request_id, 16) != 0) {
+                DBG("Chunk request_id mismatch");
+                return -1;
+            }
             if (chunk_len > RBOX_CHUNK_MAX) return -1;
             if (req->body_received + chunk_len > req->body_expected) return -1;
             req->current_chunk_len = chunk_len;
@@ -1214,6 +1219,7 @@ static void *server_thread_func(void *arg) {
                         req->fd = cl_fd;
                         memcpy(req->client_id, client_id, 16);
                         memcpy(req->request_id, request_id, 16);
+                        memcpy(req->original_request_id, request_id, 16);
                         req->cmd_hash = cmd_hash;
                         req->server = server;
                         req->fenv_hash = fenv_hash;

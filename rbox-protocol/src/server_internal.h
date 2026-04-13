@@ -152,6 +152,7 @@ struct rbox_server_request {
     int fd;                         /* Client socket fd */
     uint8_t client_id[16];          /* Client identifier */
     uint8_t request_id[16];         /* Request identifier */
+    uint8_t original_request_id[16]; /* Original request_id from first chunk (for chunked) */
     uint32_t cmd_hash;              /* Command hash for verification */
     rbox_server_handle_t *server;   /* Back-pointer to server */
 
