@@ -628,8 +628,24 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
  * REQUEST HELPERS
  * ============================================================ */
 
+void rbox_server_request_free(rbox_server_request_t *req) {
+    server_request_free(req);
+}
+
 void server_request_free(rbox_server_request_t *req) {
     if (!req) return;
+    if (req->command_data && !req->using_internal_buf) {
+        free(req->command_data);
+        req->command_data = NULL;
+    }
+    if (req->env_var_names) {
+        free(req->env_var_names);
+        req->env_var_names = NULL;
+    }
+    if (req->env_var_scores) {
+        free(req->env_var_scores);
+        req->env_var_scores = NULL;
+    }
     request_pool_put(req->server, req);
 }
 
