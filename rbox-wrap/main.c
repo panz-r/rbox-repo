@@ -467,9 +467,10 @@ static int run_with_filter(const char *socket_path, const char *command,
         flagged_scores,
         &packet,
         &pkt_len,
-        RBOX_RETRY_BASE_DELAY_MS,
-        RBOX_RETRY_MAX_RETRIES
-    );
+            RBOX_RETRY_BASE_DELAY_MS,
+            RBOX_RETRY_MAX_RETRIES,
+            0
+        );
 
     if (err != RBOX_OK || !packet) {
         fprintf(stderr, "%s: server request failed for command '%s': %s\n",
@@ -710,7 +711,8 @@ int main(int argc, char *argv[]) {
             &packet,
             &pkt_len,
             RBOX_RETRY_BASE_DELAY_MS,
-            RBOX_RETRY_MAX_RETRIES
+            RBOX_RETRY_MAX_RETRIES,
+            0
         );
 
         free_flagged_envs(flagged_count, flagged_names);
@@ -746,9 +748,10 @@ int main(int argc, char *argv[]) {
         flagged_scores,
         &packet,
         &pkt_len,
-        RBOX_RETRY_BASE_DELAY_MS,
-        RBOX_RETRY_MAX_RETRIES
-    );
+            RBOX_RETRY_BASE_DELAY_MS,
+            RBOX_RETRY_MAX_RETRIES,
+            0
+        );
 
     if (err != RBOX_OK || !packet) {
         fprintf(stderr, "%s: %s\n", g_program_name, rbox_strerror(err));

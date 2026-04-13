@@ -780,7 +780,7 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
     rbox_error_t err = rbox_blocking_request_raw(socket_path, command, argc, argv,
         caller, syscall,
         env_var_count, env_var_names, env_var_scores,
-        &packet, &packet_len, base_delay_ms, max_retries);
+        &packet, &packet_len, base_delay_ms, max_retries, 0);
 
     if (err != RBOX_OK || !packet || packet_len == 0) {
         return err ? err : RBOX_ERR_IO;
@@ -820,13 +820,15 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
 }
 
 /* Extended version that returns raw response packet (for --bin mode)
- * Has proper retry logic like rbox_blocking_request */
+ * Has proper retry logic like rbox_blocking_request
+ * timeout_ms: 0 means no timeout (wait forever), otherwise max wait in milliseconds
+ */
 rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     const char *command, int argc, const char **argv,
     const char *caller, const char *syscall,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
     char **out_packet, size_t *out_packet_len,
-    uint32_t base_delay_ms, uint32_t max_retries) {
+    uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms) {
 
     if (!socket_path || !command || !out_packet || !out_packet_len) {
         return RBOX_ERR_INVALID;
@@ -836,6 +838,8 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     *out_packet_len = 0;
 
     uint32_t attempt = 0;
+    uint64_t start_time = (timeout_ms > 0) ? get_time_ms() : 0;
+    uint64_t deadline = (timeout_ms > 0) ? start_time + timeout_ms : 0;
 
     while (1) {
         /* Build request packet */
@@ -922,6 +926,11 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
 
                 case RBOX_SESSION_WAITING:
                 case RBOX_SESSION_RESPONSE_READY: {
+                    if (timeout_ms > 0 && get_time_ms() > deadline) {
+                        rbox_session_free(session);
+                        free(packet);
+                        return RBOX_ERR_IO;
+                    }
                     short events;
                     int fd = rbox_session_pollfd(session, &events);
                     if (fd >= 0) {

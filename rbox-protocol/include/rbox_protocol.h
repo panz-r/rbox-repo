@@ -420,6 +420,7 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
 /* Extended version that returns raw response packet (for --bin mode)
  * Caller must free the returned packet with free()
  * Returns packet starting from magic (includes full header)
+ * timeout_ms: 0 means no timeout (wait forever), otherwise max wait in milliseconds
  */
 //export rbox_blocking_request_raw
 rbox_error_t rbox_blocking_request_raw(const char *socket_path,
@@ -427,7 +428,7 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     const char *caller, const char *syscall,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
     char **out_packet, size_t *out_packet_len,
-    uint32_t base_delay_ms, uint32_t max_retries);
+    uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms);
 
 /* ============================================================
  * RESPONSE PACKET BUILDING (For DFA fast-path and testing)
