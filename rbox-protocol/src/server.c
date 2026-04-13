@@ -474,6 +474,7 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
     p = args_end;
     size_t remaining = req->command_len - (p - req->command_data);
     while (remaining > 5) {
+        if (p >= req->command_data + req->command_len) break;
         size_t name_len = strnlen(p, remaining);
         if (name_len == 0 || name_len > remaining - 4) break;
         req->env_var_count++;
