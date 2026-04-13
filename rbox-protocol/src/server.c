@@ -1506,6 +1506,7 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
 
     if (decision_queue_push(server, dec) != RBOX_OK) {
         free(dec->env_decisions);
+        server_request_free(dec->request);
         free(dec);
         return RBOX_ERR_MEMORY;
     }
