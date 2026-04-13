@@ -25,14 +25,6 @@
 void rbox_protocol_generate_request_id(uint8_t *id_out);
 
 /* ============================================================
- * HEADER VALIDATION
- * ============================================================ */
-
-/* Validate packet header
- * Returns: RBOX_OK if valid, error code otherwise */
-int rbox_protocol_validate_header(const char *packet, size_t len);
-
-/* ============================================================
  * LIBRARY INITIALIZATION
  * ============================================================ */
 

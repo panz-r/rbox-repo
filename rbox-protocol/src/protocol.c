@@ -38,25 +38,6 @@ void rbox_protocol_generate_request_id(uint8_t *id_out) {
 }
 
 /* ============================================================
- * HEADER VALIDATION
- * ============================================================ */
-
-int rbox_protocol_validate_header(const char *packet, size_t len) {
-    if (!packet || len < RBOX_HEADER_SIZE) return RBOX_ERR_TRUNCATED;
-
-    uint32_t magic = *(uint32_t *)packet;
-    uint32_t version = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_VERSION);
-    if (magic != RBOX_MAGIC) return RBOX_ERR_MAGIC;
-    if (version != RBOX_VERSION) return RBOX_ERR_VERSION;
-
-    uint32_t stored_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
-    uint32_t computed_checksum = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
-    if (stored_checksum != computed_checksum) return RBOX_ERR_CHECKSUM;
-
-    return RBOX_OK;
-}
-
-/* ============================================================
  * PACKET DECODING
  * ============================================================ */
 
