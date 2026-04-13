@@ -59,6 +59,60 @@ rbox_client_t *rbox_client_connect(const char *socket_path) {
     return rbox_client_connect_retry(socket_path, 0, 0);
 }
 
+/* Non-blocking connect - initiates connection and returns immediately.
+ * Does not retry. Caller should use session heartbeat for retry logic.
+ * Returns: connected client (if connect succeeded immediately), or NULL.
+ * On EINPROGRESS, returns client with state that caller must poll. */
+rbox_client_t *rbox_client_connect_nb(const char *socket_path) {
+    if (!socket_path) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    rbox_client_t *client = calloc(1, sizeof(rbox_client_t));
+    if (!client) return NULL;
+
+    size_t len = strlen(socket_path);
+    if (len >= sizeof(client->socket_path)) len = sizeof(client->socket_path) - 1;
+    memcpy(client->socket_path, socket_path, len);
+    client->socket_path[len] = '\0';
+
+    client->fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (client->fd < 0) {
+        free(client);
+        return NULL;
+    }
+
+    int flags = fcntl(client->fd, F_GETFL, 0);
+    if (flags < 0) {
+        close(client->fd);
+        free(client);
+        return NULL;
+    }
+    if (fcntl(client->fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(client->fd);
+        free(client);
+        return NULL;
+    }
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    int ret = connect(client->fd, (struct sockaddr *)&addr, sizeof(addr));
+    if (ret == 0) {
+        return client;
+    }
+    if (ret < 0 && errno == EINPROGRESS) {
+        return client;
+    }
+    close(client->fd);
+    free(client);
+    return NULL;
+}
+
 /* Connect with retry using exponential backoff and jitter
  *
  * Parameters:

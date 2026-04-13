@@ -137,7 +137,7 @@ rbox_error_t rbox_session_connect(rbox_session_t *session) {
         session->client = NULL;
     }
 
-    session->client = rbox_client_connect(session->socket_path);
+    session->client = rbox_client_connect_nb(session->socket_path);
     if (session->client) {
         session->state = RBOX_SESSION_CONNECTED;
         session->retry_attempt = 0;
@@ -302,7 +302,7 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                     break;
                 }
                 CDBG("connecting timeout, retrying connection");
-                session->client = rbox_client_connect(session->socket_path);
+                session->client = rbox_client_connect_nb(session->socket_path);
                 if (!session->client) {
                     if (!should_retry(session)) {
                         session->state = RBOX_SESSION_FAILED;

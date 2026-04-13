@@ -144,6 +144,10 @@ rbox_client_t *rbox_client_connect(const char *socket_path);
  * max_retries: max attempts (0 = unlimited) */
 rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_delay_ms, uint32_t max_retries);
 
+/* Non-blocking connect - initiates connection and returns immediately.
+ * Does not retry. Caller manages connection state via session heartbeat. */
+rbox_client_t *rbox_client_connect_nb(const char *socket_path);
+
 /* Calculate retry delay with exponential backoff + jitter
  * base_delay_ms: base delay in ms
  * attempt: current attempt number (1-based)
