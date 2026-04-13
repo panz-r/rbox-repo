@@ -33,6 +33,7 @@ typedef enum {
     RBOX_ERR_IO        = -6,  /* Socket I/O error */
     RBOX_ERR_MEMORY    = -7,  /* Memory allocation failed */
     RBOX_ERR_MISMATCH  = -8,  /* Request/response ID mismatch (stale response) */
+    RBOX_ERR_TIMEOUT   = -9,  /* Response timeout */
 } rbox_error_t;
 
 /* ============================================================

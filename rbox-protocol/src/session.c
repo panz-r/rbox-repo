@@ -65,8 +65,15 @@ rbox_session_t *rbox_session_new(const char *socket_path,
     session->max_retries = max_retries;
     session->retry_seed = rbox_runtime_rand_seed();
     session->state = RBOX_SESSION_DISCONNECTED;
+    session->timeout_ms = 0;
+    session->request_start_time = 0;
 
     return session;
+}
+
+void rbox_session_set_timeout(rbox_session_t *session, uint32_t timeout_ms) {
+    if (!session) return;
+    session->timeout_ms = timeout_ms;
 }
 
 void rbox_session_free(rbox_session_t *session) {
@@ -351,6 +358,19 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                         break;
                     }
                     session->recv_len = 0;
+                    session->request_start_time = get_time_ms();
+                }
+
+                if (session->timeout_ms > 0 && session->request_start_time > 0) {
+                    uint64_t elapsed = get_time_ms() - session->request_start_time;
+                    if (elapsed > session->timeout_ms) {
+                        CDBG("waiting: response timeout after %lu ms", elapsed);
+                        free(session->recv_buf);
+                        session->recv_buf = NULL;
+                        session->state = RBOX_SESSION_FAILED;
+                        session->error = RBOX_ERR_TIMEOUT;
+                        break;
+                    }
                 }
 
                 size_t space = session->recv_capacity - session->recv_len;

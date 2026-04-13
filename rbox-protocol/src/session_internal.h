@@ -26,6 +26,9 @@ rbox_error_t validate_response(const char *packet, size_t len,
                                const uint8_t *expected_request_id,
                                rbox_response_t *out_response);
 
+/* Set response timeout (defined in session.c) */
+void rbox_session_set_timeout(rbox_session_t *session, uint32_t timeout_ms);
+
 /*
  * Session structure - shared between packet.c and session.c
  */
@@ -34,6 +37,7 @@ struct rbox_session {
     char socket_path[256];
     uint32_t base_delay_ms;
     uint32_t max_retries;
+    uint32_t timeout_ms;             /* Response timeout (0 = no timeout) */
 
     /* Socket */
     rbox_client_t *client;
@@ -44,6 +48,7 @@ struct rbox_session {
 
     /* Request tracking */
     uint8_t request_id[16];
+    uint64_t request_start_time;      /* Time when request was sent (for timeout) */
 
     /* Send state (non-blocking) */
     char   *send_buf;
