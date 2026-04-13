@@ -96,6 +96,7 @@ static void cache_evict_lru(rbox_server_handle_t *server) {
     cache->slots[idx] = NULL;
     cache->count--;
 
+    free(old->env_decisions);
     free(old);
 
     if (cache->tombstone_count > RBOX_RESPONSE_CACHE_SIZE / 4) {
@@ -139,7 +140,8 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                             uint32_t packet_checksum,
                             uint32_t cmd_hash, uint64_t cmd_hash2,
                             uint32_t fenv_hash,
-                            uint8_t *decision, char *reason, uint32_t *duration) {
+                            uint8_t *decision, char *reason, uint32_t *duration,
+                            int *env_decision_count, uint8_t **env_decisions) {
     if (!server) return 0;
     pthread_mutex_lock(&server->cache_mutex);
     rbox_response_cache_t *cache = &server->cache;
@@ -165,6 +167,12 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                     if (decision) *decision = entry->decision;
                     if (reason) snprintf(reason, 256, "%s", entry->reason);
                     if (duration) *duration = entry->duration;
+                    if (env_decision_count) *env_decision_count = entry->env_decision_count;
+                    if (env_decisions && entry->env_decisions) {
+                        size_t bitmap_size = (entry->env_decision_count + 7) / 8;
+                        *env_decisions = malloc(bitmap_size);
+                        if (*env_decisions) memcpy(*env_decisions, entry->env_decisions, bitmap_size);
+                    }
                     cache_lru_move_to_head(cache, entry);
                     pthread_mutex_unlock(&server->cache_mutex);
                     return 1;
@@ -182,6 +190,12 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                     if (decision) *decision = entry->decision;
                     if (reason) snprintf(reason, 256, "%s", entry->reason);
                     if (duration) *duration = entry->duration;
+                    if (env_decision_count) *env_decision_count = entry->env_decision_count;
+                    if (env_decisions && entry->env_decisions) {
+                        size_t bitmap_size = (entry->env_decision_count + 7) / 8;
+                        *env_decisions = malloc(bitmap_size);
+                        if (*env_decisions) memcpy(*env_decisions, entry->env_decisions, bitmap_size);
+                    }
                     cache_lru_move_to_head(cache, entry);
                     pthread_mutex_unlock(&server->cache_mutex);
                     return 1;
@@ -201,7 +215,8 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
                              uint32_t packet_checksum,
                              uint32_t cmd_hash, uint64_t cmd_hash2,
                              uint32_t fenv_hash,
-                             uint8_t decision, const char *reason, uint32_t duration) {
+                             uint8_t decision, const char *reason, uint32_t duration,
+                             int env_decision_count, uint8_t *env_decisions) {
     if (!server) return;
     pthread_mutex_lock(&server->cache_mutex);
     rbox_response_cache_t *cache = &server->cache;
@@ -231,6 +246,15 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
     entry->duration = duration;
     entry->timestamp = time(NULL);
     entry->expires_at = (duration > 0) ? entry->timestamp + duration : 0;
+
+    if (env_decision_count > 0 && env_decisions) {
+        entry->env_decision_count = env_decision_count;
+        size_t bitmap_size = (env_decision_count + 7) / 8;
+        entry->env_decisions = malloc(bitmap_size);
+        if (entry->env_decisions) {
+            memcpy(entry->env_decisions, env_decisions, bitmap_size);
+        }
+    }
 
     /* Unified hash for all entries - command fields only */
     entry->key_hash = compute_cache_key_hash(cmd_hash, cmd_hash2, fenv_hash);

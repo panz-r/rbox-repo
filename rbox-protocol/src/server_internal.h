@@ -44,6 +44,10 @@ typedef struct rbox_response_cache_entry {
     time_t timestamp;
     time_t expires_at;
 
+    /* Env decisions (v9) */
+    int env_decision_count;
+    uint8_t *env_decisions;       /* bitmap: bit i = decision for env var i */
+
     /* LRU list pointers */
     struct rbox_response_cache_entry *lru_prev;
     struct rbox_response_cache_entry *lru_next;
