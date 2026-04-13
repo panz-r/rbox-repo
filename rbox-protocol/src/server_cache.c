@@ -260,9 +260,51 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
     entry->key_hash = compute_cache_key_hash(cmd_hash, cmd_hash2, fenv_hash);
 
     uint32_t index = entry->key_hash % RBOX_RESPONSE_CACHE_SIZE;
-    while (cache->slot_state[index] == RBOX_CACHE_SLOT_OCCUPIED) {
+    uint32_t start = index;
+    do {
+        if (cache->slot_state[index] == RBOX_CACHE_SLOT_OCCUPIED) {
+            rbox_response_cache_entry_t *existing = cache->slots[index];
+            if (existing->key_hash == entry->key_hash &&
+                existing->cmd_hash == entry->cmd_hash &&
+                existing->cmd_hash2 == entry->cmd_hash2 &&
+                existing->fenv_hash == entry->fenv_hash) {
+                existing->decision = entry->decision;
+                snprintf(existing->reason, sizeof(existing->reason), "%.*s", 254, entry->reason);
+                existing->duration = entry->duration;
+                existing->timestamp = entry->timestamp;
+                existing->expires_at = entry->expires_at;
+                free(existing->env_decisions);
+                existing->env_decision_count = entry->env_decision_count;
+                if (entry->env_decision_count > 0 && entry->env_decisions) {
+                    size_t bitmap_size = (entry->env_decision_count + 7) / 8;
+                    existing->env_decisions = malloc(bitmap_size);
+                    if (existing->env_decisions) {
+                        memcpy(existing->env_decisions, entry->env_decisions, bitmap_size);
+                    }
+                } else {
+                    existing->env_decisions = NULL;
+                }
+                cache_lru_remove(cache, existing);
+                cache_lru_move_to_head(cache, existing);
+                free(entry);
+                pthread_mutex_unlock(&server->cache_mutex);
+                return;
+            }
+        } else if (cache->slot_state[index] == RBOX_CACHE_SLOT_EMPTY || 
+                   cache->slot_state[index] == RBOX_CACHE_SLOT_TOMBSTONE) {
+            break;
+        }
         index = (index + 1) % RBOX_RESPONSE_CACHE_SIZE;
+    } while (index != start);
+
+    if (cache->count == RBOX_RESPONSE_CACHE_SIZE) {
+        cache_evict_lru(server);
+        index = entry->key_hash % RBOX_RESPONSE_CACHE_SIZE;
+        while (cache->slot_state[index] == RBOX_CACHE_SLOT_OCCUPIED) {
+            index = (index + 1) % RBOX_RESPONSE_CACHE_SIZE;
+        }
     }
+
     cache->slots[index] = entry;
     cache->slot_state[index] = RBOX_CACHE_SLOT_OCCUPIED;
     cache->count++;
