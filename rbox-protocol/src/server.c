@@ -343,25 +343,22 @@ static int read_body_nonblocking(rbox_server_handle_t *server, int fd, rbox_serv
 static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
     while (1) {
         if (req->reading_chunk_header) {
-            /* Incremental chunk header read using per-client buffer.
-             * The main header read already reset header_bytes_read to 0
-             * after completing, so the buffer is free for chunk headers. */
-            rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
-            if (!entry) return -1;
-
-            while (entry->header_bytes_read < RBOX_HEADER_SIZE) {
+            /* Incremental chunk header read using per-request buffer. */
+            while (req->chunk_header_bytes_read < RBOX_HEADER_SIZE) {
                 ssize_t n = rbox_read_nonblocking(fd,
-                                entry->header_buf + entry->header_bytes_read,
-                                RBOX_HEADER_SIZE - entry->header_bytes_read);
+                                req->chunk_header_buf + req->chunk_header_bytes_read,
+                                RBOX_HEADER_SIZE - req->chunk_header_bytes_read);
                 if (n == 0) return -1;      /* EOF */
                 if (n == -1) return 0;      /* EAGAIN – partial, wait */
                 if (n == -2) return -1;     /* error */
-                entry->header_bytes_read += (size_t)n;
-                entry->last_activity = get_time_ms();
+                req->chunk_header_bytes_read += (size_t)n;
+                rbox_client_fd_entry_t *centry = client_fd_find(server, fd);
+                if (centry) centry->last_activity = get_time_ms();
             }
 
             /* Full chunk header received – validate */
-            char *header = entry->header_buf;
+            char *header = req->chunk_header_buf;
+            req->chunk_header_bytes_read = 0;
             uint32_t magic = *(uint32_t *)header;
             uint32_t version = *(uint32_t *)(header + 4);
             if (magic != RBOX_MAGIC || version != RBOX_VERSION) return -1;
@@ -371,7 +368,10 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
                 DBG("Chunk header checksum mismatch");
                 return -1;
             }
-            if (entry) entry->last_activity = get_time_ms();
+            {
+                rbox_client_fd_entry_t *hentry = client_fd_find(server, fd);
+                if (hentry) hentry->last_activity = get_time_ms();
+            }
             uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
             uint32_t flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
             uint32_t body_checksum = *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
@@ -387,7 +387,6 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
             req->current_chunk_checksum = body_checksum;
             req->last_flags = flags;
             req->reading_chunk_header = 0;
-            entry->header_bytes_read = 0;   /* Reset for next chunk header */
             if (chunk_len == 0) {
                 req->reading_chunk_header = 1;
                 continue;

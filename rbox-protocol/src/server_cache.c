@@ -35,6 +35,7 @@ void rbox_server_cache_destroy(rbox_server_handle_t *server) {
     rbox_response_cache_t *cache = &server->cache;
     for (int i = 0; i < RBOX_RESPONSE_CACHE_SIZE; i++) {
         if (cache->slot_state[i] == RBOX_CACHE_SLOT_OCCUPIED && cache->slots[i]) {
+            free(cache->slots[i]->env_decisions);
             free(cache->slots[i]);
         }
     }
@@ -303,6 +304,7 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
                         memcpy(existing->env_decisions, entry->env_decisions, bitmap_size);
                     } else {
                         existing->env_decision_count = 0;
+                        existing->env_decisions = NULL;
                     }
                 } else {
                     existing->env_decisions = NULL;

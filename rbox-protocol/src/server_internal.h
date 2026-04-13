@@ -180,6 +180,8 @@ struct rbox_server_request {
     /* Chunked transfer state */
     int is_chunked;                 /* 1 if this is a chunked transfer */
     int reading_chunk_header;       /* 1 if expecting a chunk header (for chunked) */
+    char chunk_header_buf[RBOX_HEADER_SIZE];  /* Partial chunk header buffer */
+    size_t chunk_header_bytes_read;           /* Bytes of chunk header currently buffered */
     uint32_t current_chunk_len;     /* Size of the current chunk being read */
     uint32_t current_chunk_received;/* Bytes of current chunk already read */
     uint32_t current_chunk_checksum;/* Expected body_checksum for current chunk */

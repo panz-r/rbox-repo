@@ -391,14 +391,11 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                                 session->recv_buf + session->recv_len, space);
                 CDBG("waiting: read_nonblocking returned %zd", n);
                 if (n == 0) {
-                    /* EOF - peer closed */
-                    if (session->recv_len < RBOX_HEADER_SIZE) {
-                        session->state = RBOX_SESSION_FAILED;
-                        session->error = RBOX_ERR_IO;
-                        CDBG("waiting: EOF without enough data -> failed");
-                        break;
-                    }
-                    CDBG("waiting: EOF but have data, will validate");
+                    /* EOF - peer closed, always fatal */
+                    session->state = RBOX_SESSION_FAILED;
+                    session->error = RBOX_ERR_IO;
+                    CDBG("waiting: EOF -> failed");
+                    break;
                 } else if (n == -1) {
                     CDBG("waiting: no data (EAGAIN)");
                     break;
