@@ -350,6 +350,12 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
             uint32_t magic = *(uint32_t *)header;
             uint32_t version = *(uint32_t *)(header + 4);
             if (magic != RBOX_MAGIC || version != RBOX_VERSION) return -1;
+            uint32_t stored_checksum = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHECKSUM);
+            uint32_t computed_checksum = rbox_runtime_crc32(0, header, RBOX_HEADER_OFFSET_CHECKSUM);
+            if (stored_checksum != computed_checksum) {
+                DBG("Chunk header checksum mismatch");
+                return -1;
+            }
             rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
             if (entry) entry->last_activity = time(NULL);
             uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
