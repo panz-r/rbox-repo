@@ -198,7 +198,7 @@ rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
         return RBOX_ERR_INVALID;
     }
 
-    memset(packet, 0, capacity);
+    memset(packet, 0, RBOX_HEADER_SIZE + (needed - RBOX_HEADER_SIZE));
 
     /* Encode body: command\0caller\0syscall\0argv[0]\0...\0\0 env_name\0score... */
     size_t pos = RBOX_HEADER_SIZE;
