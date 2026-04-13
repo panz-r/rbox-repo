@@ -320,6 +320,12 @@ static int read_body_nonblocking(rbox_server_handle_t *server, int fd, rbox_serv
         if (entry) entry->last_activity = time(NULL);
     }
     DBG("read_body_nonblocking: body complete %zu bytes", req->body_received);
+    uint32_t computed_crc = rbox_runtime_crc32(0, req->command_data, req->body_received);
+    if (computed_crc != req->body_checksum) {
+        DBG("Single-chunk body checksum mismatch: expected %u, got %u",
+            req->body_checksum, computed_crc);
+        return -1;
+    }
     req->command_data[req->body_received] = '\0';
     return 1;
 }
@@ -1226,6 +1232,7 @@ static void *server_thread_func(void *arg) {
                         req->reading_body = 1;
                         req->body_expected = chunk_len;
                         req->body_received = 0;
+                        req->body_checksum = *(uint32_t *)(entry->header_buf + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
                         req->is_chunked = 0;
                         req->reading_chunk_header = 0;
                         req->current_chunk_len = 0;

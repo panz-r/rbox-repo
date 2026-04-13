@@ -174,6 +174,7 @@ struct rbox_server_request {
     int reading_body;               /* 1 if waiting for body data */
     size_t body_expected;          /* Total body bytes expected */
     size_t body_received;           /* Bytes received so far */
+    uint32_t body_checksum;         /* Expected body_checksum from header */
 
     /* Chunked transfer state */
     int is_chunked;                 /* 1 if this is a chunked transfer */
