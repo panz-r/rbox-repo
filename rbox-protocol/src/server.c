@@ -1384,6 +1384,10 @@ rbox_error_t rbox_server_handle_listen(rbox_server_handle_t *server) {
 void rbox_server_handle_free(rbox_server_handle_t *server) {
     if (!server) return;
 
+    if (atomic_load(&server->running)) {
+        rbox_server_stop(server);
+    }
+
     /* Drain and free any pending requests in the lock-free queue */
     rbox_request_node_t *req_node = atomic_load_explicit(&server->request_queue.head, memory_order_acquire);
     while (req_node) {
