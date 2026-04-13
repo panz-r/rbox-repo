@@ -1626,7 +1626,10 @@ const char *rbox_server_request_syscall(const rbox_server_request_t *req) {
 
 int rbox_server_request_is_stop(const rbox_server_request_t *req) {
     if (!req || !req->command_data) return 0;
-    return (strcmp(req->command_data, "__RBOX_STOP__") == 0);
+    const char *stop_cmd = "__RBOX_STOP__";
+    size_t stop_len = 14;
+    if (req->command_len < stop_len) return 0;
+    return (memcmp(req->command_data, stop_cmd, stop_len) == 0);
 }
 
 int rbox_server_request_env_var_count(const rbox_server_request_t *req) {
