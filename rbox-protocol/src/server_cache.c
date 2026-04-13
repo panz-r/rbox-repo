@@ -265,6 +265,8 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
         entry->env_decisions = malloc(bitmap_size);
         if (entry->env_decisions) {
             memcpy(entry->env_decisions, env_decisions, bitmap_size);
+        } else {
+            entry->env_decision_count = 0;
         }
     }
 
