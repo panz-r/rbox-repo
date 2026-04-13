@@ -223,22 +223,4 @@ typedef struct __attribute__((packed)) {
     uint32_t body_checksum;                /* Body checksum */
 } rbox_header_t;
 
-typedef struct __attribute__((packed)) {
-    uint32_t magic;
-    uint8_t  server_id[16];
-    uint8_t  client_id[16];
-    uint8_t  request_id[16];
-    uint64_t offset;
-    int32_t  status;
-    uint32_t reason_len;
-} rbox_ack_t;
-
-typedef struct __attribute__((packed)) {
-    uint32_t magic;
-    uint8_t  server_id[16];
-    uint32_t request_id;
-    uint8_t  decision;
-    uint32_t reason_len;
-} rbox_response_header_t;
-
 #endif /* RBOX_PROTOCOL_DEFS_H */
