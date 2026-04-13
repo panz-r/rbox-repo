@@ -194,10 +194,8 @@ void client_connection_close(rbox_server_handle_t *server, int fd) {
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
     if (!entry) return;
 
-    if (entry->pending_request) {
-        server_request_free(entry->pending_request);
-        entry->pending_request = NULL;
-    }
+    /* Mark as closed before freeing to prevent use-after-free on any dangling pointers */
+    entry->pending_request = NULL;
 
     cleanup_pending_sends(server, fd);
 
