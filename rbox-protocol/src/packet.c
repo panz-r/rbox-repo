@@ -454,6 +454,8 @@ rbox_error_t validate_response(const char *packet, size_t len,
                     out_response->env_decisions = malloc(bitmap_size);
                     if (out_response->env_decisions) {
                         memcpy(out_response->env_decisions, packet + env_offset + 2, bitmap_size);
+                    } else {
+                        out_response->env_decision_count = 0;
                     }
                 }
             }
