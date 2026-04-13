@@ -1632,6 +1632,11 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
         atomic_fetch_add(&server->telemetry_deny_queued, 1);
     }
 
+    if (env_decision_count < 0 || env_decision_count > 4096) {
+        free(dec);
+        return RBOX_ERR_INVALID;
+    }
+
     if (env_decision_count > 0 && env_decisions) {
         dec->env_decision_count = env_decision_count;
         size_t bitmap_size = (env_decision_count + 7) / 8;
@@ -1641,7 +1646,6 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
             return RBOX_ERR_MEMORY;
         }
         memcpy(dec->env_decisions, env_decisions, bitmap_size);
-        dec->fenv_hash = 0;
     }
 
     if (decision_queue_push(server, dec) != RBOX_OK) {
