@@ -427,11 +427,23 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                         CDBG("waiting: chunk_len exceeds max -> failed");
                         break;
                     }
-                    size_t total_needed = RBOX_HEADER_SIZE + hdr.chunk_len;
+                    size_t total_needed;
+                    if (__builtin_add_overflow(RBOX_HEADER_SIZE, hdr.chunk_len, &total_needed)) {
+                        session->state = RBOX_SESSION_FAILED;
+                        session->error = RBOX_ERR_INVALID;
+                        CDBG("waiting: chunk_len overflow -> failed");
+                        break;
+                    }
                     if (total_needed > RBOX_MAX_TOTAL_SIZE) {
                         session->state = RBOX_SESSION_FAILED;
                         session->error = RBOX_ERR_INVALID;
                         CDBG("waiting: total_needed exceeds max -> failed");
+                        break;
+                    }
+                    if (total_needed > 10 * 1024 * 1024) {
+                        session->state = RBOX_SESSION_FAILED;
+                        session->error = RBOX_ERR_INVALID;
+                        CDBG("waiting: total_needed exceeds 10MB -> failed");
                         break;
                     }
                     if (total_needed > session->recv_capacity) {
