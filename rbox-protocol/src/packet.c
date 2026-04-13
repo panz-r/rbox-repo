@@ -359,7 +359,7 @@ rbox_error_t validate_response(const char *packet, size_t len,
         }
 
         decision = packet[RBOX_HEADER_SIZE];  /* decision at offset 92 */
-        reason_offset = RBOX_HEADER_SIZE;
+        reason_offset = RBOX_HEADER_SIZE + 1;  /* reason starts after decision byte */
         /* Parse reason string to find actual length (null-terminated) */
         reason_len = 0;
         size_t scan_offset = RBOX_HEADER_SIZE + 1;
