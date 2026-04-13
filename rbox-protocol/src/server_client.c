@@ -22,6 +22,9 @@
 /* epoll helper - defined in server.c, declared in server_internal.h */
 extern int epoll_del(int epoll_fd, int fd);
 
+/* Time helper - defined in server.c */
+extern uint64_t get_time_ms(void);
+
 /* ============================================================
  * CLIENT FD TRACKING
  * ============================================================ */
@@ -37,7 +40,7 @@ int client_fd_add(rbox_server_handle_t *server, int fd) {
     entry->header_start_time = 0;
     entry->body_start_time = 0;
     entry->waiting_for_header = 0;
-    entry->last_activity = time(NULL);
+    entry->last_activity = get_time_ms();
     entry->header_bytes_read = 0;
     entry->prev = NULL;
 
