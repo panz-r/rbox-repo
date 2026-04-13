@@ -221,13 +221,25 @@ rbox_error_t rbox_session_send_request(rbox_session_t *session,
 }
 
 rbox_error_t rbox_session_send_raw(rbox_session_t *session, const char *data, size_t len) {
-    if (!session || !data || len == 0) return RBOX_ERR_INVALID;
+    if (!session || !data || len < RBOX_HEADER_SIZE) return RBOX_ERR_INVALID;
     if (session->state != RBOX_SESSION_CONNECTED) return RBOX_ERR_INVALID;
 
+    uint32_t magic = *(uint32_t *)data;
+    uint32_t version = *(uint32_t *)(data + 4);
+    if (magic != RBOX_MAGIC || version != RBOX_VERSION) return RBOX_ERR_INVALID;
+
+    uint32_t stored_checksum = *(uint32_t *)(data + RBOX_HEADER_OFFSET_CHECKSUM);
+    uint32_t computed_checksum = rbox_runtime_crc32(0, data, RBOX_HEADER_OFFSET_CHECKSUM);
+    if (stored_checksum != computed_checksum) return RBOX_ERR_INVALID;
+
+    uint32_t chunk_len = *(uint32_t *)(data + RBOX_HEADER_OFFSET_CHUNK_LEN);
+    if (chunk_len > RBOX_CHUNK_MAX) return RBOX_ERR_INVALID;
+
+    uint64_t total_len = *(uint64_t *)(data + RBOX_HEADER_OFFSET_TOTAL_LEN);
+    if (chunk_len > total_len) return RBOX_ERR_INVALID;
+
     /* Extract and store request_id from packet for response validation */
-    if (len >= RBOX_HEADER_OFFSET_REQUEST_ID + 16) {
-        memcpy(session->request_id, data + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
-    }
+    memcpy(session->request_id, data + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
 
     free(session->send_buf);
     session->send_buf = malloc(len);
