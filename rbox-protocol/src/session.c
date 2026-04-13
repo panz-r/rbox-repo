@@ -383,6 +383,19 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                         break;
                     }
                     size_t total_needed = RBOX_HEADER_SIZE + hdr.chunk_len;
+                    if (total_needed > session->recv_capacity) {
+                        char *new_buf = realloc(session->recv_buf, total_needed);
+                        if (!new_buf) {
+                            free(session->recv_buf);
+                            session->recv_buf = NULL;
+                            session->state = RBOX_SESSION_FAILED;
+                            session->error = RBOX_ERR_MEMORY;
+                            CDBG("waiting: realloc failed -> failed");
+                            break;
+                        }
+                        session->recv_buf = new_buf;
+                        session->recv_capacity = total_needed;
+                    }
                     if (session->recv_len >= total_needed) {
                         rbox_response_t resp;
                         rbox_error_t err = validate_response(session->recv_buf,
