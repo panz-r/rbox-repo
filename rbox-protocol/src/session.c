@@ -269,7 +269,7 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
             break;
 
         case RBOX_SESSION_CONNECTING:
-            if (events & POLLOUT) {
+            if (events & POLLOUT && session->client) {
                 int fd = rbox_client_fd(session->client);
                 int so_error;
                 socklen_t optlen = sizeof(so_error);
