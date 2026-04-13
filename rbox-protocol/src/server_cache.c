@@ -282,6 +282,12 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
                 existing->cmd_hash == entry->cmd_hash &&
                 existing->cmd_hash2 == entry->cmd_hash2 &&
                 existing->fenv_hash == entry->fenv_hash) {
+                if (existing->expires_at > 0 && entry->expires_at == 0) {
+                    free(entry->env_decisions);
+                    free(entry);
+                    pthread_mutex_unlock(&server->cache_mutex);
+                    return;
+                }
                 existing->decision = entry->decision;
                 snprintf(existing->reason, sizeof(existing->reason), "%.*s", 254, entry->reason);
                 existing->duration = entry->duration;
@@ -294,9 +300,12 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
                     existing->env_decisions = malloc(bitmap_size);
                     if (existing->env_decisions) {
                         memcpy(existing->env_decisions, entry->env_decisions, bitmap_size);
+                    } else {
+                        existing->env_decision_count = 0;
                     }
                 } else {
                     existing->env_decisions = NULL;
+                    existing->env_decision_count = 0;
                 }
                 cache_lru_remove(cache, existing);
                 cache_lru_move_to_head(cache, existing);
