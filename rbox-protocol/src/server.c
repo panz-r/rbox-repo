@@ -1074,6 +1074,36 @@ static void *server_thread_func(void *arg) {
                         goto next_event;
                     }
 
+                    /* Handle abort request */
+                    if (msg_type == RBOX_MSG_ABORT) {
+                        DBG("ABORT request from fd %d", cl_fd);
+                        client_connection_close(server, cl_fd);
+                        closed = 1;
+                        goto next_event;
+                    }
+
+                    /* Handle log message */
+                    if (msg_type == RBOX_MSG_LOG) {
+                        DBG("LOG message from fd %d, discarding", cl_fd);
+                        goto next_event;
+                    }
+
+                    /* Handle chunk (intermediate) - should come after FIRST */
+                    if (msg_type == RBOX_MSG_CHUNK) {
+                        DBG("Unexpected RBOX_MSG_CHUNK without FIRST on fd %d", cl_fd);
+                        client_connection_close(server, cl_fd);
+                        closed = 1;
+                        goto next_event;
+                    }
+
+                    /* Handle complete */
+                    if (msg_type == RBOX_MSG_COMPLETE) {
+                        DBG("Unexpected RBOX_MSG_COMPLETE on fd %d", cl_fd);
+                        client_connection_close(server, cl_fd);
+                        closed = 1;
+                        goto next_event;
+                    }
+
                     /* Check if this is a chunked transfer */
                     int is_chunked = (flags & RBOX_FLAG_FIRST) && chunk_len < total_len;
 
