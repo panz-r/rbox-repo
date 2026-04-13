@@ -703,7 +703,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
         syscall[copy_len] = '\0';
     }
     *chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
-    if (*chunk_len > 1024 * 1024) return -1;
+    if (*chunk_len > RBOX_CHUNK_MAX) return -1;
     *flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
     *total_len = *(uint64_t *)(header + RBOX_HEADER_OFFSET_TOTAL_LEN);
     if (*chunk_len > *total_len) return -1;
