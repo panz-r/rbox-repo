@@ -1458,6 +1458,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         pthread_mutex_destroy(&srv->cache_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
         close(srv->listen_fd);
+        unlink(srv->socket_path);
         free(srv);
         return NULL;
     }
@@ -1486,6 +1487,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         pthread_mutex_destroy(&srv->cache_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
         close(srv->listen_fd);
+        unlink(srv->socket_path);
         free(srv);
         return NULL;
     }
