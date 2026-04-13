@@ -407,6 +407,15 @@ rbox_error_t validate_response(const char *packet, size_t len,
         }
     }
 
+    /* Validate body checksum if body exists */
+    if (len > RBOX_HEADER_SIZE) {
+        uint32_t stored_body_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
+        uint32_t computed_body_checksum = rbox_runtime_crc32(0, packet + RBOX_HEADER_SIZE, len - RBOX_HEADER_SIZE);
+        if (stored_body_checksum != computed_body_checksum) {
+            return RBOX_ERR_CHECKSUM;
+        }
+    }
+
     /* Populate response */
     memset(out_response, 0, sizeof(*out_response));
     out_response->decision = decision;
