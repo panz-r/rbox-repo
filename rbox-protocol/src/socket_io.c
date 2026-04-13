@@ -132,7 +132,7 @@ ssize_t rbox_read(int fd, void *buf, size_t len) {
             return -1;  /* Real error */
         }
         if (n == 0) {
-            return 0;  /* EOF - peer closed */
+            return total_read > 0 ? (ssize_t)total_read : 0;  /* EOF - return partial data */
         }
         total_read += n;
     }
@@ -184,7 +184,7 @@ ssize_t rbox_read_exact(int fd, void *buf, size_t len) {
             return -1;  /* Real error */
         }
         if (n == 0) {
-            return 0;  /* EOF - peer closed */
+            return total_read > 0 ? (ssize_t)total_read : 0;  /* EOF - return partial data */
         }
         total_read += n;
     }
