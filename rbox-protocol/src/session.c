@@ -237,6 +237,7 @@ rbox_error_t rbox_session_send_raw(rbox_session_t *session, const char *data, si
 
     uint64_t total_len = *(uint64_t *)(data + RBOX_HEADER_OFFSET_TOTAL_LEN);
     if (chunk_len > total_len) return RBOX_ERR_INVALID;
+    if (total_len > RBOX_MAX_TOTAL_SIZE) return RBOX_ERR_INVALID;
 
     /* Extract and store request_id from packet for response validation */
     memcpy(session->request_id, data + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
