@@ -44,11 +44,8 @@ static void init_crc32_table(void) {
 
 static void runtime_init_internal(void) {
     pthread_once(&crc32_once, init_crc32_table);
-    
-    signal(SIGPIPE, SIG_IGN);
-    
-    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
-    
+    /* Note: Do NOT call srand() here - library uses rand_r internally and
+     * should not affect the application's global random state */
     runtime_initialized = 1;
 }
 
