@@ -408,7 +408,19 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                         CDBG("waiting: invalid header -> failed");
                         break;
                     }
+                    if (hdr.chunk_len > RBOX_CHUNK_MAX) {
+                        session->state = RBOX_SESSION_FAILED;
+                        session->error = RBOX_ERR_INVALID;
+                        CDBG("waiting: chunk_len exceeds max -> failed");
+                        break;
+                    }
                     size_t total_needed = RBOX_HEADER_SIZE + hdr.chunk_len;
+                    if (total_needed > RBOX_MAX_TOTAL_SIZE) {
+                        session->state = RBOX_SESSION_FAILED;
+                        session->error = RBOX_ERR_INVALID;
+                        CDBG("waiting: total_needed exceeds max -> failed");
+                        break;
+                    }
                     if (total_needed > session->recv_capacity) {
                         char *new_buf = realloc(session->recv_buf, total_needed);
                         if (!new_buf) {
