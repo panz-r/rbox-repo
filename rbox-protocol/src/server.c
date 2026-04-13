@@ -584,7 +584,8 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
                 entry->request = NULL;
                 send_pool_put(server, entry);
             } else {
-                DBG("send_pending_locked: partial write, trying to drain remaining %zu bytes", entry->len - entry->offset);
+                DBG("send_pending_locked: partial write, waiting for EPOLLOUT");
+                return;
             }
         }
     }
