@@ -114,7 +114,12 @@ uint32_t rbox_calculate_retry_delay(uint32_t base_delay_ms, uint32_t attempt, ui
     /* Exponential backoff: exp = base * 2^(attempt-1), capped at max_delay/2 */
     uint64_t exp = base_delay_ms;
     for (uint32_t i = 1; i < attempt && exp < max_delay / 2; i++) {
-        exp *= 2;
+        uint64_t new_exp;
+        if (__builtin_mul_overflow(exp, 2, &new_exp)) {
+            exp = max_delay;
+            break;
+        }
+        exp = new_exp;
     }
     if (exp > max_delay) exp = max_delay;
 
