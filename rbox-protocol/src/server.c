@@ -480,7 +480,7 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
     while (remaining > 5) {
         if (p >= req->command_data + req->command_len) break;
         size_t name_len = strnlen(p, remaining);
-        if (name_len == 0 || name_len > remaining - 4) break;
+        if (name_len == 0 || name_len + 5 > remaining) break;
         req->env_var_count++;
         p += name_len + 1 + 4;
         remaining -= name_len + 1 + 4;
