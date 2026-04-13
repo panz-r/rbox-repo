@@ -702,12 +702,31 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
         return RBOX_ERR_IO;
     }
 
-    /* Read response */
-    char response_buf[512];
-    ssize_t resp_len = read_response(rbox_client_fd(client), response_buf, sizeof(response_buf));
+    /* Read response - use 64KB stack buffer with malloc fallback */
+    char resp_buf[65536];
+    char *response_buf = resp_buf;
+    size_t resp_capacity = sizeof(resp_buf);
+    char *dyn_buf = NULL;
+
+    ssize_t resp_len = read_response(rbox_client_fd(client), response_buf, resp_capacity);
     if (resp_len <= 0) {
+        if (dyn_buf) free(dyn_buf);
         if (packet != stack_buf) free(packet);
         return RBOX_ERR_IO;
+    }
+
+    /* If response was truncated at buffer size, realloc and read remainder */
+    if (resp_len == (ssize_t)resp_capacity && response_buf == resp_buf) {
+        dyn_buf = malloc(resp_capacity * 2);
+        if (dyn_buf) {
+            memcpy(dyn_buf, resp_buf, resp_len);
+            response_buf = dyn_buf;
+            resp_capacity *= 2;
+            ssize_t more_len = read_response(rbox_client_fd(client), 
+                                              response_buf + resp_len, 
+                                              resp_capacity - resp_len);
+            if (more_len > 0) resp_len += more_len;
+        }
     }
 
     /* Validate response with the extracted request_id */
@@ -716,6 +735,7 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
         response->decision = RBOX_DECISION_UNKNOWN;
     }
 
+    if (dyn_buf) free(dyn_buf);
     if (packet != stack_buf) free(packet);
     return err;
 }
