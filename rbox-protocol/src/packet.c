@@ -1107,6 +1107,14 @@ rbox_error_t rbox_telemetry_get_stats(
         remaining -= n;
     }
 
+    uint32_t stored_checksum = *(uint32_t *)(resp_body + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
+    uint32_t computed_checksum = rbox_runtime_crc32(0, resp_body + RBOX_HEADER_SIZE, resp_chunk_len);
+    if (stored_checksum != computed_checksum) {
+        free(resp_body);
+        close(fd);
+        return RBOX_ERR_IO;
+    }
+
     uint32_t reason_len = resp_chunk_len - 1;
     if (reason_len > 1024) reason_len = 1024;
 
