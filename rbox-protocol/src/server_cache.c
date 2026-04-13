@@ -284,6 +284,11 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
                 existing->cmd_hash == entry->cmd_hash &&
                 existing->cmd_hash2 == entry->cmd_hash2 &&
                 existing->fenv_hash == entry->fenv_hash) {
+                /* Timed entry (expires_at > 0) is stronger than one-shot (expires_at == 0).
+                 * A one-shot request with the same command AND identical env decisions
+                 * does not replace the timed entry - the one-shot is discarded.
+                 * This ensures timed entries persist for their full duration even when
+                 * a client requests the same command with one-shot semantics. */
                 if (existing->expires_at > 0 && entry->expires_at == 0) {
                     free(entry->env_decisions);
                     free(entry);
