@@ -374,6 +374,7 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
             uint32_t flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
             uint32_t body_checksum = *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
             if (chunk_len > RBOX_CHUNK_MAX) return -1;
+            if (req->body_received + chunk_len > req->body_expected) return -1;
             req->current_chunk_len = chunk_len;
             req->current_chunk_received = 0;
             req->current_chunk_checksum = body_checksum;
