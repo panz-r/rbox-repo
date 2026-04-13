@@ -754,6 +754,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
 }
 
 int epoll_del(int epoll_fd, int fd) {
+    if (epoll_fd < 0) return 0;
     struct epoll_event ev = {0};
     return epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &ev);
 }
@@ -1354,6 +1355,7 @@ static void *server_thread_func(void *arg) {
     client_fd_close_all(server);
     DBG("Exiting server thread (running=%d)", atomic_load(&server->running));
     close(server->epoll_fd);
+    server->epoll_fd = -1;
     return NULL;
 }
 
@@ -1365,6 +1367,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     if (!socket_path) return NULL;
     rbox_server_handle_t *srv = calloc(1, sizeof(*srv));
     if (!srv) return NULL;
+    srv->epoll_fd = -1;
     strncpy(srv->socket_path, socket_path, sizeof(srv->socket_path) - 1);
     srv->listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (srv->listen_fd < 0) { free(srv); return NULL; }
