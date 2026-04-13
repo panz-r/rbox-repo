@@ -1413,11 +1413,15 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         return NULL;
     }
     if (pthread_mutex_init(&srv->cache_mutex, NULL) != 0) {
+        close(srv->listen_fd);
+        unlink(socket_path);
         free(srv);
         return NULL;
     }
     if (pthread_mutex_init(&srv->client_fd_mutex, NULL) != 0) {
         pthread_mutex_destroy(&srv->cache_mutex);
+        close(srv->listen_fd);
+        unlink(socket_path);
         free(srv);
         return NULL;
     }
