@@ -179,6 +179,7 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                 }
             } else {
                 if (entry->expires_at > 0 && now > entry->expires_at) {
+                    cache_lru_remove(cache, entry);
                     cache->slot_state[index] = RBOX_CACHE_SLOT_TOMBSTONE;
                     cache->tombstone_count++;
                     free(entry->env_decisions);
