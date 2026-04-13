@@ -386,6 +386,11 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
             }
             req->reading_chunk_header = 1;
             if (req->last_flags & RBOX_FLAG_LAST) {
+                if (req->body_received != req->body_expected) {
+                    DBG("Chunked body truncated: expected %zu, got %zu",
+                        req->body_expected, req->body_received);
+                    return -1;
+                }
                 req->command_data[req->body_received] = '\0';
                 return 1;
             }
