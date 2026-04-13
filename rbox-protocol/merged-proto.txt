@@ -266,6 +266,7 @@ void rbox_protocol_init(void);
 #define RBOX_CHUNK_MAX       65536  /* 64KB max chunk size */
 #define RBOX_STREAM_TIMEOUT  30     /* Stream timeout in seconds */
 #define RBOX_MAX_TOTAL_SIZE  (1024 * 1024)  /* 1MB max total */
+#define RBOX_MAX_REQUEST_QUEUE_DEPTH 1034  /* max pending requests */
 
 /* ============================================================
  * ACK STATUS CODES
@@ -862,6 +863,7 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
 /* Extended version that returns raw response packet (for --bin mode)
  * Caller must free the returned packet with free()
  * Returns packet starting from magic (includes full header)
+ * timeout_ms: 0 means no timeout (wait forever), otherwise max wait in milliseconds
  */
 //export rbox_blocking_request_raw
 rbox_error_t rbox_blocking_request_raw(const char *socket_path,
@@ -869,7 +871,7 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     const char *caller, const char *syscall,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
     char **out_packet, size_t *out_packet_len,
-    uint32_t base_delay_ms, uint32_t max_retries);
+    uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms);
 
 /* ============================================================
  * RESPONSE PACKET BUILDING (For DFA fast-path and testing)
@@ -1012,6 +1014,12 @@ void rbox_session_reset(rbox_session_t *session);
  * After disconnecting, you can call rbox_session_connect() to reconnect,
  * or call rbox_session_free() to clean up. */
 void rbox_session_disconnect(rbox_session_t *session);
+
+/* Set response timeout for session (0 = no timeout)
+ *
+ * Must be called after rbox_session_new() and before connecting.
+ * Default is 0 (no timeout). */
+void rbox_session_set_timeout(rbox_session_t *session, uint32_t timeout_ms);
 
 /* Attempt to connect (for non-blocking start)
  *
@@ -1625,6 +1633,7 @@ struct rbox_server_request {
     int fd;                         /* Client socket fd */
     uint8_t client_id[16];          /* Client identifier */
     uint8_t request_id[16];         /* Request identifier */
+    uint8_t original_request_id[16]; /* Original request_id from first chunk (for chunked) */
     uint32_t cmd_hash;              /* Command hash for verification */
     rbox_server_handle_t *server;   /* Back-pointer to server */
 
@@ -1652,6 +1661,8 @@ struct rbox_server_request {
     /* Chunked transfer state */
     int is_chunked;                 /* 1 if this is a chunked transfer */
     int reading_chunk_header;       /* 1 if expecting a chunk header (for chunked) */
+    char chunk_header_buf[RBOX_HEADER_SIZE];  /* Partial chunk header buffer */
+    size_t chunk_header_bytes_read;           /* Bytes of chunk header currently buffered */
     uint32_t current_chunk_len;     /* Size of the current chunk being read */
     uint32_t current_chunk_received;/* Bytes of current chunk already read */
     uint32_t current_chunk_checksum;/* Expected body_checksum for current chunk */
@@ -1747,6 +1758,7 @@ struct rbox_server_handle {
 
     /* Request queue - lock-free MPSC (Michael & Scott) */
     rbox_request_queue_t request_queue;
+    _Atomic size_t request_queue_depth;
     int request_wake_fd;          /* eventfd to wake consumers */
 
     /* Decision queue - lock-free MPSC (Michael & Scott) */
@@ -2093,6 +2105,7 @@ rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
         }
     }
     if (capacity < needed) {
+        *out_len = needed;
         return RBOX_ERR_INVALID;
     }
 
@@ -2178,8 +2191,8 @@ rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
     memcpy(packet + 64, &offset, 8);
     memcpy(packet + 72, &chunk_len, 4);
     memcpy(packet + 76, &total_len, 8);
-    /* Set cmd_hash (optional, can be 0) */
-    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CMD_HASH) = 0;
+    uint32_t cmd_hash = rbox_runtime_crc32(0, command, strlen(command));
+    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CMD_HASH) = cmd_hash;
     /* Set fenv_hash */
     *(uint32_t *)(packet + RBOX_HEADER_OFFSET_FENV_HASH) = fenv_hash;
 
@@ -2353,6 +2366,8 @@ rbox_error_t validate_response(const char *packet, size_t len,
                     out_response->env_decisions = malloc(bitmap_size);
                     if (out_response->env_decisions) {
                         memcpy(out_response->env_decisions, packet + env_offset + 2, bitmap_size);
+                    } else {
+                        out_response->env_decision_count = 0;
                     }
                 }
             }
@@ -2676,7 +2691,7 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
     rbox_error_t err = rbox_blocking_request_raw(socket_path, command, argc, argv,
         caller, syscall,
         env_var_count, env_var_names, env_var_scores,
-        &packet, &packet_len, base_delay_ms, max_retries);
+        &packet, &packet_len, base_delay_ms, max_retries, 0);
 
     if (err != RBOX_OK || !packet || packet_len == 0) {
         return err ? err : RBOX_ERR_IO;
@@ -2716,13 +2731,15 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
 }
 
 /* Extended version that returns raw response packet (for --bin mode)
- * Has proper retry logic like rbox_blocking_request */
+ * Has proper retry logic like rbox_blocking_request
+ * timeout_ms: 0 means no timeout (wait forever), otherwise max wait in milliseconds
+ */
 rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     const char *command, int argc, const char **argv,
     const char *caller, const char *syscall,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
     char **out_packet, size_t *out_packet_len,
-    uint32_t base_delay_ms, uint32_t max_retries) {
+    uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms) {
 
     if (!socket_path || !command || !out_packet || !out_packet_len) {
         return RBOX_ERR_INVALID;
@@ -2732,6 +2749,8 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     *out_packet_len = 0;
 
     uint32_t attempt = 0;
+    uint64_t start_time = (timeout_ms > 0) ? get_time_ms() : 0;
+    uint64_t deadline = (timeout_ms > 0) ? start_time + timeout_ms : 0;
 
     while (1) {
         /* Build request packet */
@@ -2811,6 +2830,11 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
 
                 case RBOX_SESSION_WAITING:
                 case RBOX_SESSION_RESPONSE_READY: {
+                    if (timeout_ms > 0 && get_time_ms() > deadline) {
+                        rbox_session_free(session);
+                        free(packet);
+                        return RBOX_ERR_IO;
+                    }
                     short events;
                     int fd = rbox_session_pollfd(session, &events);
                     if (fd >= 0) {
@@ -3315,11 +3339,8 @@ static void init_crc32_table(void) {
 
 static void runtime_init_internal(void) {
     pthread_once(&crc32_once, init_crc32_table);
-    
-    signal(SIGPIPE, SIG_IGN);
-    
-    srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
-    
+    /* Note: Do NOT call srand() here - library uses rand_r internally and
+     * should not affect the application's global random state */
     runtime_initialized = 1;
 }
 
@@ -3433,6 +3454,7 @@ static void destructor_rbox_runtime(void) {
 #include <errno.h>
 #include <sys/poll.h>
 #include <sys/epoll.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/eventfd.h>
@@ -3773,12 +3795,15 @@ static int read_body_nonblocking(rbox_server_handle_t *server, int fd, rbox_serv
 static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
     while (1) {
         if (req->reading_chunk_header) {
-            char header[RBOX_HEADER_SIZE];
-            ssize_t n = rbox_read_nonblocking(fd, header, RBOX_HEADER_SIZE);
-            if (n == 0) return 0;
-            if (n == -2) return -1;
-            if (n < 0) return -1;
-            if (n != RBOX_HEADER_SIZE) return -1;
+            while (req->chunk_header_bytes_read < RBOX_HEADER_SIZE) {
+                ssize_t n = rbox_read_nonblocking(fd, req->chunk_header_buf + req->chunk_header_bytes_read, RBOX_HEADER_SIZE - req->chunk_header_bytes_read);
+                if (n == 0) return 0;
+                if (n == -2) return -1;
+                if (n < 0) return -1;
+                req->chunk_header_bytes_read += (size_t)n;
+            }
+            char *header = req->chunk_header_buf;
+            req->chunk_header_bytes_read = 0;
             uint32_t magic = *(uint32_t *)header;
             uint32_t version = *(uint32_t *)(header + 4);
             if (magic != RBOX_MAGIC || version != RBOX_VERSION) return -1;
@@ -3792,7 +3817,17 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
             if (entry) entry->last_activity = get_time_ms();
             uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
             uint32_t flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
+            uint64_t chunk_offset = *(uint64_t *)(header + RBOX_HEADER_OFFSET_OFFSET);
+            if (chunk_offset != req->body_received) {
+                DBG("Chunk offset mismatch: expected %zu, got %lu", req->body_received, chunk_offset);
+                return -1;
+            }
             uint32_t body_checksum = *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
+            uint8_t *chunk_request_id = (uint8_t *)(header + 24);
+            if (memcmp(req->original_request_id, chunk_request_id, 16) != 0) {
+                DBG("Chunk request_id mismatch");
+                return -1;
+            }
             if (chunk_len > RBOX_CHUNK_MAX) return -1;
             if (req->body_received + chunk_len > req->body_expected) return -1;
             req->current_chunk_len = chunk_len;
@@ -3944,8 +3979,9 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
     }
 
     if (request_queue_push(server, req) != 0) {
-        DBG("Failed to push request to queue for fd %d", fd);
+        DBG("Request queue full, closing connection for fd %d", fd);
         server_request_free(req);
+        client_connection_close(server, fd);
         return;
     }
     if (server->request_wake_fd >= 0) {
@@ -4173,6 +4209,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
 }
 
 int epoll_del(int epoll_fd, int fd) {
+    if (epoll_fd < 0) return 0;
     struct epoll_event ev = {0};
     return epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, &ev);
 }
@@ -4237,6 +4274,10 @@ static rbox_server_decision_t *decision_queue_pop(rbox_server_handle_t *server) 
 
 /* Lock-free enqueue for request queue */
 static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_t *req) {
+    size_t depth = atomic_load_explicit(&server->request_queue_depth, memory_order_relaxed);
+    if (depth >= RBOX_MAX_REQUEST_QUEUE_DEPTH) {
+        return -1;
+    }
     rbox_request_queue_t *q = &server->request_queue;
     rbox_request_node_t *node = malloc(sizeof(*node));
     if (!node) return -1;
@@ -4259,6 +4300,7 @@ static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_
                                                   memory_order_release, memory_order_relaxed);
         }
     }
+    atomic_store_explicit(&server->request_queue_depth, depth + 1, memory_order_relaxed);
     return 0;
 }
 
@@ -4277,6 +4319,7 @@ static rbox_server_request_t *request_queue_pop(rbox_server_handle_t *server) {
                                                   memory_order_acquire, memory_order_relaxed)) {
             rbox_server_request_t *req = next->request;
             next->request = NULL;
+            atomic_fetch_sub_explicit(&server->request_queue_depth, 1, memory_order_relaxed);
             free(head);
             return req;
         }
@@ -4569,6 +4612,7 @@ static void *server_thread_func(void *arg) {
                         req->fd = cl_fd;
                         memcpy(req->client_id, client_id, 16);
                         memcpy(req->request_id, request_id, 16);
+                        memcpy(req->original_request_id, request_id, 16);
                         req->cmd_hash = cmd_hash;
                         req->server = server;
                         req->fenv_hash = fenv_hash;
@@ -4771,6 +4815,7 @@ static void *server_thread_func(void *arg) {
     client_fd_close_all(server);
     DBG("Exiting server thread (running=%d)", atomic_load(&server->running));
     close(server->epoll_fd);
+    server->epoll_fd = -1;
     return NULL;
 }
 
@@ -4782,6 +4827,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     if (!socket_path) return NULL;
     rbox_server_handle_t *srv = calloc(1, sizeof(*srv));
     if (!srv) return NULL;
+    srv->epoll_fd = -1;
     strncpy(srv->socket_path, socket_path, sizeof(srv->socket_path) - 1);
     srv->listen_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (srv->listen_fd < 0) { free(srv); return NULL; }
@@ -4801,12 +4847,22 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
             return NULL;
         }
     }
+    if (chmod(socket_path, 0666) < 0) {
+        close(srv->listen_fd);
+        unlink(socket_path);
+        free(srv);
+        return NULL;
+    }
     if (pthread_mutex_init(&srv->cache_mutex, NULL) != 0) {
+        close(srv->listen_fd);
+        unlink(socket_path);
         free(srv);
         return NULL;
     }
     if (pthread_mutex_init(&srv->client_fd_mutex, NULL) != 0) {
         pthread_mutex_destroy(&srv->cache_mutex);
+        close(srv->listen_fd);
+        unlink(socket_path);
         free(srv);
         return NULL;
     }
@@ -4837,14 +4893,21 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     atomic_store_explicit(&srv->request_queue.head, req_dummy, memory_order_relaxed);
     atomic_store_explicit(&srv->request_queue.tail, req_dummy, memory_order_relaxed);
     srv->request_wake_fd = eventfd(0, EFD_NONBLOCK);
-    if (srv->request_wake_fd < 0) srv->request_wake_fd = -1;
+    if (srv->request_wake_fd < 0) {
+        request_pool_destroy(srv);
+        send_pool_destroy(srv);
+        pthread_mutex_destroy(&srv->cache_mutex);
+        pthread_mutex_destroy(&srv->client_fd_mutex);
+        close(srv->listen_fd);
+        free(srv);
+        return NULL;
+    }
 
     rbox_decision_node_t *dummy = malloc(sizeof(*dummy));
     if (!dummy) {
+        close(srv->request_wake_fd);
         request_pool_destroy(srv);
         send_pool_destroy(srv);
-        if (srv->request_wake_fd >= 0) close(srv->request_wake_fd);
-        free(req_dummy);
         pthread_mutex_destroy(&srv->cache_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
         close(srv->listen_fd);
@@ -4857,7 +4920,16 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     atomic_store_explicit(&srv->decision_queue.tail, dummy, memory_order_relaxed);
 
     srv->wake_fd = eventfd(0, EFD_NONBLOCK);
-    if (srv->wake_fd < 0) srv->wake_fd = -1;
+    if (srv->wake_fd < 0) {
+        close(srv->request_wake_fd);
+        request_pool_destroy(srv);
+        send_pool_destroy(srv);
+        pthread_mutex_destroy(&srv->cache_mutex);
+        pthread_mutex_destroy(&srv->client_fd_mutex);
+        close(srv->listen_fd);
+        free(srv);
+        return NULL;
+    }
 
     atomic_init(&srv->telemetry_allow_queued, 0);
     atomic_init(&srv->telemetry_deny_queued, 0);
@@ -4991,6 +5063,7 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     if (!dec) return RBOX_ERR_MEMORY;
     dec->request = req;
     dec->decision = decision;
+    dec->fenv_hash = req->fenv_hash;
     strncpy(dec->reason, reason ? reason : "", sizeof(dec->reason) - 1);
     dec->duration = duration;
 
@@ -4998,6 +5071,11 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
         atomic_fetch_add(&server->telemetry_allow_queued, 1);
     } else if (decision == RBOX_DECISION_DENY) {
         atomic_fetch_add(&server->telemetry_deny_queued, 1);
+    }
+
+    if (env_decision_count < 0 || env_decision_count > 4096) {
+        free(dec);
+        return RBOX_ERR_INVALID;
     }
 
     if (env_decision_count > 0 && env_decisions) {
@@ -5009,7 +5087,6 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
             return RBOX_ERR_MEMORY;
         }
         memcpy(dec->env_decisions, env_decisions, bitmap_size);
-        dec->fenv_hash = 0;
     }
 
     if (decision_queue_push(server, dec) != RBOX_OK) {
@@ -5148,6 +5225,7 @@ void rbox_server_cache_destroy(rbox_server_handle_t *server) {
     rbox_response_cache_t *cache = &server->cache;
     for (int i = 0; i < RBOX_RESPONSE_CACHE_SIZE; i++) {
         if (cache->slot_state[i] == RBOX_CACHE_SLOT_OCCUPIED && cache->slots[i]) {
+            free(cache->slots[i]->env_decisions);
             free(cache->slots[i]);
         }
     }
@@ -5292,6 +5370,7 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                 }
             } else {
                 if (entry->expires_at > 0 && now > entry->expires_at) {
+                    cache_lru_remove(cache, entry);
                     cache->slot_state[index] = RBOX_CACHE_SLOT_TOMBSTONE;
                     cache->tombstone_count++;
                     free(entry->env_decisions);
@@ -5301,8 +5380,12 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                     if (cache->tombstone_count > RBOX_RESPONSE_CACHE_SIZE / 4) {
                         cache_rebuild(server);
                     }
-                    pthread_mutex_unlock(&server->cache_mutex);
-                    return 0;
+                    index = (index + 1) % RBOX_RESPONSE_CACHE_SIZE;
+                    if (index == start) {
+                        pthread_mutex_unlock(&server->cache_mutex);
+                        return 0;
+                    }
+                    continue;
                 }
                 if (entry->key_hash == key_hash &&
                     entry->cmd_hash == cmd_hash &&
@@ -5374,6 +5457,8 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
         entry->env_decisions = malloc(bitmap_size);
         if (entry->env_decisions) {
             memcpy(entry->env_decisions, env_decisions, bitmap_size);
+        } else {
+            entry->env_decision_count = 0;
         }
     }
 
@@ -5389,6 +5474,12 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
                 existing->cmd_hash == entry->cmd_hash &&
                 existing->cmd_hash2 == entry->cmd_hash2 &&
                 existing->fenv_hash == entry->fenv_hash) {
+                if (existing->expires_at > 0 && entry->expires_at == 0) {
+                    free(entry->env_decisions);
+                    free(entry);
+                    pthread_mutex_unlock(&server->cache_mutex);
+                    return;
+                }
                 existing->decision = entry->decision;
                 snprintf(existing->reason, sizeof(existing->reason), "%.*s", 254, entry->reason);
                 existing->duration = entry->duration;
@@ -5401,9 +5492,13 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
                     existing->env_decisions = malloc(bitmap_size);
                     if (existing->env_decisions) {
                         memcpy(existing->env_decisions, entry->env_decisions, bitmap_size);
+                    } else {
+                        existing->env_decision_count = 0;
+                        existing->env_decisions = NULL;
                     }
                 } else {
                     existing->env_decisions = NULL;
+                    existing->env_decision_count = 0;
                 }
                 cache_lru_remove(cache, existing);
                 cache_lru_move_to_head(cache, existing);
@@ -5463,6 +5558,9 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
 /* epoll helper - defined in server.c, declared in server_internal.h */
 extern int epoll_del(int epoll_fd, int fd);
 
+/* Time helper - defined in server.c */
+extern uint64_t get_time_ms(void);
+
 /* ============================================================
  * CLIENT FD TRACKING
  * ============================================================ */
@@ -5478,7 +5576,7 @@ int client_fd_add(rbox_server_handle_t *server, int fd) {
     entry->header_start_time = 0;
     entry->body_start_time = 0;
     entry->waiting_for_header = 0;
-    entry->last_activity = time(NULL);
+    entry->last_activity = get_time_ms();
     entry->header_bytes_read = 0;
     entry->prev = NULL;
 
@@ -5722,6 +5820,8 @@ char *rbox_server_build_response(
     size_t *out_len) {
 
     if (!out_len) return NULL;
+
+    if (env_decision_count < 0 || env_decision_count > 4096) return NULL;
 
     size_t reason_len = reason ? strlen(reason) : 0;
     if (reason_len > RBOX_RESPONSE_MAX_REASON) reason_len = RBOX_RESPONSE_MAX_REASON;
@@ -6064,6 +6164,7 @@ rbox_error_t rbox_session_send_raw(rbox_session_t *session, const char *data, si
 
     uint64_t total_len = *(uint64_t *)(data + RBOX_HEADER_OFFSET_TOTAL_LEN);
     if (chunk_len > total_len) return RBOX_ERR_INVALID;
+    if (total_len > RBOX_MAX_TOTAL_SIZE) return RBOX_ERR_INVALID;
 
     /* Extract and store request_id from packet for response validation */
     memcpy(session->request_id, data + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
@@ -6096,7 +6197,7 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
             break;
 
         case RBOX_SESSION_CONNECTING:
-            if (events & POLLOUT) {
+            if (events & POLLOUT && session->client) {
                 int fd = rbox_client_fd(session->client);
                 int so_error;
                 socklen_t optlen = sizeof(so_error);
@@ -6218,13 +6319,10 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                                 session->recv_buf + session->recv_len, space);
                 CDBG("waiting: read_nonblocking returned %zd", n);
                 if (n == -2) {
-                    if (session->recv_len < RBOX_HEADER_SIZE) {
-                        session->state = RBOX_SESSION_FAILED;
-                        session->error = RBOX_ERR_IO;
-                        CDBG("waiting: EOF without enough data -> failed");
-                        break;
-                    }
-                    CDBG("waiting: EOF but have data, will validate");
+                    session->state = RBOX_SESSION_FAILED;
+                    session->error = RBOX_ERR_IO;
+                    CDBG("waiting: EOF -> failed");
+                    break;
                 } else if (n < 0) {
                     session->state = RBOX_SESSION_FAILED;
                     session->error = RBOX_ERR_IO;
@@ -6264,12 +6362,6 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                         session->state = RBOX_SESSION_FAILED;
                         session->error = RBOX_ERR_INVALID;
                         CDBG("waiting: total_needed exceeds max -> failed");
-                        break;
-                    }
-                    if (total_needed > 10 * 1024 * 1024) {
-                        session->state = RBOX_SESSION_FAILED;
-                        session->error = RBOX_ERR_INVALID;
-                        CDBG("waiting: total_needed exceeds 10MB -> failed");
                         break;
                     }
                     if (total_needed > session->recv_capacity) {

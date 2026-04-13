@@ -1081,7 +1081,7 @@ rbox_error_t rbox_telemetry_get_stats(
     *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHECKSUM) = checksum;
     *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM) = 0;
 
-    if (write(fd, header, RBOX_HEADER_SIZE) != RBOX_HEADER_SIZE) {
+    if (rbox_write_exact(fd, header, RBOX_HEADER_SIZE) != (ssize_t)RBOX_HEADER_SIZE) {
         close(fd);
         return RBOX_ERR_IO;
     }

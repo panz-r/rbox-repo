@@ -11,6 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/epoll.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -326,7 +327,7 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
             break;
 
         case RBOX_SESSION_SENDING:
-            if (events & POLLOUT) {
+            if (events & (POLLOUT | EPOLLERR | POLLERR)) {
                 int fd = rbox_client_fd(session->client);
                 ssize_t n = rbox_write_nonblocking(fd,
                     session->send_buf, session->send_len, &session->send_offset);
