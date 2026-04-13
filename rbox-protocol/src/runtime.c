@@ -20,7 +20,7 @@
 
 /* CRC32 table - used by protocol.c */
 static uint32_t crc32_table[256];
-static int crc32_initialized = 0;
+static pthread_once_t crc32_once = PTHREAD_ONCE_INIT;
 
 /* Thread-local random seed */
 static __thread uint32_t g_rand_seed = 0;
@@ -28,7 +28,6 @@ static __thread uint32_t g_rand_seed = 0;
 static int runtime_initialized = 0;
 
 static void init_crc32_table(void) {
-    if (crc32_initialized) return;
     for (int i = 0; i < 256; i++) {
         uint32_t crc = (uint32_t)i;
         for (int j = 0; j < 8; j++) {
@@ -40,12 +39,10 @@ static void init_crc32_table(void) {
         }
         crc32_table[i] = crc;
     }
-    crc32_initialized = 1;
 }
 
 static void runtime_init_internal(void) {
-    /* Initialize CRC32 table */
-    init_crc32_table();
+    pthread_once(&crc32_once, init_crc32_table);
     
     /* Seed random number generator for ID generation */
     srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
