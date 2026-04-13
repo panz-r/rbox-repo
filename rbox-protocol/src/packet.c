@@ -963,6 +963,14 @@ rbox_error_t rbox_build_response(
     return RBOX_OK;
 }
 
+char *rbox_build_response_internal(uint8_t *client_id, uint8_t *request_id, uint32_t cmd_hash,
+                           uint8_t decision, const char *reason,
+                           uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
+                           size_t *out_len) {
+    return rbox_server_build_response(client_id, request_id, cmd_hash, decision, reason,
+                                     fenv_hash, env_decision_count, env_decisions, out_len);
+}
+
 
 /* ============================================================
  * RESPONSE ENV DECISION FUNCTIONS
