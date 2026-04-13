@@ -277,6 +277,7 @@ struct rbox_server_handle {
 
     /* Request queue - lock-free MPSC (Michael & Scott) */
     rbox_request_queue_t request_queue;
+    _Atomic size_t request_queue_depth;
     int request_wake_fd;          /* eventfd to wake consumers */
 
     /* Decision queue - lock-free MPSC (Michael & Scott) */

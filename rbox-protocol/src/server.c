@@ -374,6 +374,11 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
             }
             uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
             uint32_t flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
+            uint64_t chunk_offset = *(uint64_t *)(header + RBOX_HEADER_OFFSET_OFFSET);
+            if (chunk_offset != req->body_received) {
+                DBG("Chunk offset mismatch: expected %zu, got %lu", req->body_received, chunk_offset);
+                return -1;
+            }
             uint32_t body_checksum = *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
             uint8_t *chunk_request_id = (uint8_t *)(header + 24);
             if (memcmp(req->original_request_id, chunk_request_id, 16) != 0) {
@@ -528,8 +533,9 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
     }
 
     if (request_queue_push(server, req) != 0) {
-        DBG("Failed to push request to queue for fd %d", fd);
+        DBG("Request queue full, closing connection for fd %d", fd);
         server_request_free(req);
+        client_connection_close(server, fd);
         return;
     }
     if (server->request_wake_fd >= 0) {
@@ -825,6 +831,10 @@ static rbox_server_decision_t *decision_queue_pop(rbox_server_handle_t *server) 
 
 /* Lock-free enqueue for request queue */
 static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_t *req) {
+    size_t depth = atomic_load_explicit(&server->request_queue_depth, memory_order_relaxed);
+    if (depth >= RBOX_MAX_REQUEST_QUEUE_DEPTH) {
+        return -1;
+    }
     rbox_request_queue_t *q = &server->request_queue;
     rbox_request_node_t *node = malloc(sizeof(*node));
     if (!node) return -1;
@@ -847,6 +857,7 @@ static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_
                                                   memory_order_release, memory_order_relaxed);
         }
     }
+    atomic_store_explicit(&server->request_queue_depth, depth + 1, memory_order_relaxed);
     return 0;
 }
 
@@ -865,6 +876,7 @@ static rbox_server_request_t *request_queue_pop(rbox_server_handle_t *server) {
                                                   memory_order_acquire, memory_order_relaxed)) {
             rbox_server_request_t *req = next->request;
             next->request = NULL;
+            atomic_fetch_sub_explicit(&server->request_queue_depth, 1, memory_order_relaxed);
             free(head);
             return req;
         }
@@ -1606,6 +1618,7 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     if (!dec) return RBOX_ERR_MEMORY;
     dec->request = req;
     dec->decision = decision;
+    dec->fenv_hash = req->fenv_hash;
     strncpy(dec->reason, reason ? reason : "", sizeof(dec->reason) - 1);
     dec->duration = duration;
 

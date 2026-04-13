@@ -52,6 +52,7 @@
 #define RBOX_CHUNK_MAX       65536  /* 64KB max chunk size */
 #define RBOX_STREAM_TIMEOUT  30     /* Stream timeout in seconds */
 #define RBOX_MAX_TOTAL_SIZE  (1024 * 1024)  /* 1MB max total */
+#define RBOX_MAX_REQUEST_QUEUE_DEPTH 1034  /* max pending requests */
 
 /* ============================================================
  * ACK STATUS CODES
