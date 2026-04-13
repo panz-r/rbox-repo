@@ -67,6 +67,10 @@ void client_fd_remove(rbox_server_handle_t *server, int fd) {
     rbox_client_fd_entry_t *entry = server->client_fds;
     while (entry) {
         if (entry->fd == fd) {
+            if (entry->pending_request) {
+                server_request_free(entry->pending_request);
+                entry->pending_request = NULL;
+            }
             if (entry->prev) {
                 entry->prev->next = entry->next;
             } else {
