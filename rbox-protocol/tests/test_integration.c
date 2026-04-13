@@ -917,6 +917,76 @@ cleanup:
     return result;
 }
 
+/* Test: PARTIAL_HEADER_RECOVERY - partial header delivery with edge-triggered epoll
+ * Validates that the server correctly handles a header split across multiple writes.
+ * Before the fix: server freezes because edge-triggered epoll doesn't re-notify
+ * for data already in the socket buffer after returning EAGAIN.
+ * After the fix: drain loop reads until EAGAIN; server correctly reads the
+ * complete header when the rest arrives. */
+static int test_partial_header_recovery(void) {
+    const char *path = "/tmp/rbox_test_partial_header.sock";
+    unlink(path);
+    int result = -1;
+
+    /* Start server that processes requests */
+    server_thread_arg_t arg = { .socket_path = path, .server = NULL };
+    pthread_t tid;
+    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &arg) != 0) goto cleanup;
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+
+    /* Connect raw socket */
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) goto stop_server;
+    struct sockaddr_un addr = { .sun_family = AF_UNIX };
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(fd);
+        goto stop_server;
+    }
+
+    /* Build a valid request packet */
+    char full_packet[8192];
+    size_t packet_len;
+    const char *args[] = {"-la"};
+    rbox_build_request(full_packet, sizeof(full_packet), &packet_len,
+                       "ls", NULL, NULL, 1, args, 0, NULL, NULL);
+
+    /* Send first half of header (64 of 127 bytes) */
+    size_t first_half = 64;
+    if (write_all(fd, full_packet, first_half) < 0) {
+        close(fd);
+        goto stop_server;
+    }
+    usleep(10000);  /* 10ms gap to force separate kernel buffer fills */
+
+    /* Send remaining bytes (rest of header + body) */
+    if (write_all(fd, full_packet + first_half, packet_len - first_half) < 0) {
+        close(fd);
+        goto stop_server;
+    }
+
+    /* Read response (blocking – server thread processes and responds) */
+    char response[4096];
+    ssize_t n = read(fd, response, sizeof(response));
+    close(fd);
+
+    if (n > (ssize_t)RBOX_HEADER_SIZE) {
+        uint32_t magic = *(uint32_t *)response;
+        uint8_t decision = response[RBOX_HEADER_SIZE];
+        if (magic == RBOX_MAGIC && decision == RBOX_DECISION_ALLOW) {
+            result = 0;
+        }
+    }
+
+stop_server:
+    if (arg.server) rbox_server_stop(arg.server);
+    pthread_join(tid, NULL);
+    if (arg.server) rbox_server_handle_free(arg.server);
+cleanup:
+    unlink(path);
+    return result;
+}
+
 /* ============================================================================
  * Main
  * ============================================================================ */
@@ -948,6 +1018,7 @@ int main(void) {
     RUN_TEST(test_zero_env_vars, "zero environment variables");
 
     RUN_TEST(test_session_api, "non-blocking session API");
+    RUN_TEST(test_partial_header_recovery, "PARTIAL_HEADER_RECOVERY");
 
     printf("\n=== Results: %d/%d tests passed ===\n", pass_count, test_count);
     fflush(stdout);

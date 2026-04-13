@@ -38,6 +38,7 @@ int client_fd_add(rbox_server_handle_t *server, int fd) {
     entry->body_start_time = 0;
     entry->waiting_for_header = 0;
     entry->last_activity = time(NULL);
+    entry->header_bytes_read = 0;
     entry->prev = NULL;
 
     rbox_send_node_t *dummy = malloc(sizeof(*dummy));

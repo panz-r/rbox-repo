@@ -201,6 +201,8 @@ typedef struct rbox_client_fd_entry {
     time_t body_start_time;                 /* When we started reading body */
     int waiting_for_header;                 /* 1 if we are in header read timeout state */
     time_t last_activity;                   /* Last read/write activity time */
+    char header_buf[RBOX_HEADER_SIZE];      /* Partial header buffer for incremental reads */
+    size_t header_bytes_read;              /* Bytes of header currently in buffer */
     struct rbox_client_fd_entry *prev;       /* Previous entry in doubly-linked list */
     struct rbox_client_fd_entry *next;       /* Next entry in doubly-linked list */
     rbox_send_queue_t send_queue;           /* Lock-free MPSC send queue */
