@@ -1383,8 +1383,15 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
             return NULL;
         }
     }
-    pthread_mutex_init(&srv->cache_mutex, NULL);
-    pthread_mutex_init(&srv->client_fd_mutex, NULL);
+    if (pthread_mutex_init(&srv->cache_mutex, NULL) != 0) {
+        free(srv);
+        return NULL;
+    }
+    if (pthread_mutex_init(&srv->client_fd_mutex, NULL) != 0) {
+        pthread_mutex_destroy(&srv->cache_mutex);
+        free(srv);
+        return NULL;
+    }
     atomic_flag_clear(&srv->stop_flag);
     srv->client_fds = NULL;
     srv->active_client_count = 0;
