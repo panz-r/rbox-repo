@@ -1045,6 +1045,12 @@ rbox_error_t rbox_telemetry_get_stats(
         return RBOX_ERR_IO;
     }
 
+    rbox_error_t hdr_err = rbox_header_validate((char *)resp_header, RBOX_HEADER_SIZE);
+    if (hdr_err != RBOX_OK) {
+        close(fd);
+        return RBOX_ERR_IO;
+    }
+
     uint32_t resp_chunk_len = *(uint32_t *)(resp_header + RBOX_HEADER_OFFSET_CHUNK_LEN);
     if (resp_chunk_len > 4096) {
         close(fd);
