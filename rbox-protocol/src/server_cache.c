@@ -179,7 +179,15 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                 }
             } else {
                 if (entry->expires_at > 0 && now > entry->expires_at) {
-                    cache_evict_lru(server);
+                    cache->slot_state[index] = RBOX_CACHE_SLOT_TOMBSTONE;
+                    cache->tombstone_count++;
+                    free(entry->env_decisions);
+                    free(entry);
+                    cache->slots[index] = NULL;
+                    cache->count--;
+                    if (cache->tombstone_count > RBOX_RESPONSE_CACHE_SIZE / 4) {
+                        cache_rebuild(server);
+                    }
                     pthread_mutex_unlock(&server->cache_mutex);
                     return 0;
                 }
