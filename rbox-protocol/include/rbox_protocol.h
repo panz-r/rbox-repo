@@ -571,6 +571,12 @@ void rbox_session_reset(rbox_session_t *session);
  * or call rbox_session_free() to clean up. */
 void rbox_session_disconnect(rbox_session_t *session);
 
+/* Set response timeout for session (0 = no timeout)
+ *
+ * Must be called after rbox_session_new() and before connecting.
+ * Default is 0 (no timeout). */
+void rbox_session_set_timeout(rbox_session_t *session, uint32_t timeout_ms);
+
 /* Attempt to connect (for non-blocking start)
  *
  * Call this to initiate connection. Then poll for POLLOUT
