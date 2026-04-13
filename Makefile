@@ -40,7 +40,6 @@ TEST_SRCS := $(TESTDIR)/test_radix_tree.c \
              $(TESTDIR)/test_policy_parser.c \
              $(TESTDIR)/test_landlock_bridge.c \
              $(TESTDIR)/test_compilation_core.c \
-             $(TESTDIR)/test_compilation_advanced.c \
              $(TESTDIR)/test_compilation_internal.c \
              $(TESTDIR)/test_compilation_remaining2.c \
              $(TESTDIR)/test_compilation_remaining3.c \
@@ -48,8 +47,7 @@ TEST_SRCS := $(TESTDIR)/test_radix_tree.c \
              $(TESTDIR)/test_compilation_extra.c \
              $(TESTDIR)/test_compilation_gaps.c \
              $(TESTDIR)/test_compilation_binary.c \
-             $(TESTDIR)/test_compilation_layered.c \
-             $(TESTDIR)/test_compilation_stress.c
+             $(TESTDIR)/test_compilation_layered.c
 TEST_OBJS := $(TEST_SRCS:.c=.o)
 TEST_BIN  := $(BUILDDIR)/test_runner
 

@@ -45,32 +45,45 @@ bool path_matches(const char *pattern, const char *text)
 {
     if (!pattern || !text) return false;
 
-    /* Handle recursive "..." suffix */
     size_t plen = strlen(pattern);
+    size_t tlen = strlen(text);
+
+    /* Fast path: recursive "..." suffix — prefix match only */
     if (plen >= 3 && pattern[plen - 3] == '.' &&
         pattern[plen - 2] == '.' && pattern[plen - 1] == '.') {
-        char base[MAX_PATTERN_LEN];
         size_t base_len = plen - 3;
         if (base_len > 0 && pattern[base_len - 1] == '/') base_len--;
         if (base_len >= MAX_PATTERN_LEN) base_len = MAX_PATTERN_LEN - 1;
-        memcpy(base, pattern, base_len);
-        base[base_len] = '\0';
 
-        if (strcmp(text, base) == 0) return true;
-        if (strncmp(text, base, base_len) == 0 && text[base_len] == '/') return true;
+        if (tlen == base_len && memcmp(text, pattern, base_len) == 0) return true;
+        if (tlen > base_len && memcmp(text, pattern, base_len) == 0 &&
+            text[base_len] == '/') return true;
         return false;
     }
 
+    /* Fast path: no wildcards — exact match or directory prefix */
     if (strchr(pattern, '*') == NULL) {
-        /* No wildcards: exact match or directory prefix */
-        if (strcmp(pattern, text) == 0) return true;
-        size_t plen2 = strlen(pattern);
-        if (plen2 > 0 && pattern[plen2 - 1] == '/')
-            return strncmp(text, pattern, plen2) == 0;
+        if (plen == tlen && memcmp(pattern, text, plen) == 0) return true;
+        if (plen > 0 && pattern[plen - 1] == '/')
+            return tlen >= plen && memcmp(text, pattern, plen) == 0;
         return false;
     }
 
-    /* Glob matching with * (single segment) and ** (multi-segment) */
+    /* Fast path: prefix pattern ending with / ** -- simple prefix check */
+    if (plen >= 3 && pattern[plen - 3] == '/' &&
+        pattern[plen - 2] == '*' && pattern[plen - 1] == '*') {
+        size_t prefix_len = plen - 3;
+        if (tlen == prefix_len && memcmp(text, pattern, prefix_len) == 0) return true;
+        if (tlen > prefix_len && memcmp(text, pattern, prefix_len) == 0 &&
+            text[prefix_len] == '/') return true;
+        return false;
+    }
+
+    /* Fast path: single-level wildcard ending with / * -- exact match only
+     * (can't determine single-segment match without full glob, but for the
+     * common case of exact segment match, check prefix first) */
+
+    /* Full glob matching with * (single segment) and ** (multi-segment) */
     const char *p = pattern;
     const char *t = text;
     const char *star_p = NULL;  /* position of last * or ** in pattern */
@@ -1029,9 +1042,10 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
 /* ------------------------------------------------------------------ */
 
 #define BATCH_CACHE_SIZE 256
+#define BATCH_CACHE_PATH_LEN 512  /* Max path length for cache entries */
 
 typedef struct {
-    char     path[PATH_MAX];
+    char     path[BATCH_CACHE_PATH_LEN];
     uint32_t granted;
     int      deny_layer;
     uint32_t subject_hash;  /**< FNV-1a hash of subject string for cache key */
@@ -1088,8 +1102,8 @@ static void batch_cache_store(batch_cache_entry_t *cache,
 {
     int pos = *write_pos;
     batch_cache_entry_t *e = &cache[pos];
-    strncpy(e->path, path, PATH_MAX - 1);
-    e->path[PATH_MAX - 1] = '\0';
+    strncpy(e->path, path, BATCH_CACHE_PATH_LEN - 1);
+    e->path[BATCH_CACHE_PATH_LEN - 1] = '\0';
     e->granted = granted;
     e->deny_layer = deny_layer;
     e->subject_hash = subject_hash;
@@ -1105,10 +1119,24 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
 {
     if (!rs || !ctxs || !results || count <= 0) { errno = EINVAL; return -1; }
 
-    /* Allocate on heap to avoid ~2 MB stack consumption */
-    batch_cache_entry_t *src_cache = calloc(BATCH_CACHE_SIZE, sizeof(batch_cache_entry_t));
-    batch_cache_entry_t *dst_cache = calloc(BATCH_CACHE_SIZE, sizeof(batch_cache_entry_t));
-    if (!src_cache || !dst_cache) { free(src_cache); free(dst_cache); errno = ENOMEM; return -1; }
+    /* Use stack allocation for small batches (avoids malloc overhead).
+     * BATCH_CACHE_SIZE (256) * 532 bytes = ~136KB per cache, ~272KB total.
+     * This fits comfortably on typical 8MB stacks. */
+    batch_cache_entry_t src_cache_stack[BATCH_CACHE_SIZE];
+    batch_cache_entry_t dst_cache_stack[BATCH_CACHE_SIZE];
+    batch_cache_entry_t *src_cache, *dst_cache;
+    int use_stack = (count <= 64);  /* Stack for small batches */
+
+    if (use_stack) {
+        src_cache = src_cache_stack;
+        dst_cache = dst_cache_stack;
+        memset(src_cache, 0, sizeof(src_cache_stack));
+        memset(dst_cache, 0, sizeof(dst_cache_stack));
+    } else {
+        src_cache = calloc(BATCH_CACHE_SIZE, sizeof(batch_cache_entry_t));
+        dst_cache = calloc(BATCH_CACHE_SIZE, sizeof(batch_cache_entry_t));
+        if (!src_cache || !dst_cache) { free(src_cache); free(dst_cache); errno = ENOMEM; return -1; }
+    }
     int src_write = 0, dst_write = 0;
 
     for (int i = 0; i < count; i++) {
@@ -1207,8 +1235,11 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
         }
     }
 
-    free(src_cache);
-    free(dst_cache);
+    /* Only free heap-allocated caches */
+    if (!use_stack) {
+        free(src_cache);
+        free(dst_cache);
+    }
     return 0;
 }
 

@@ -55,6 +55,17 @@ static void arena_free(str_arena_t *a)
     a->capacity = 0;
 }
 
+/** Shrink arena buffer to exact used size (call after all interning is done). */
+static void arena_shrink(str_arena_t *a)
+{
+    if (!a->buf || a->used >= a->capacity) return;
+    char *new_buf = realloc(a->buf, a->used);
+    if (new_buf) {
+        a->buf = new_buf;
+        a->capacity = a->used;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Effective ruleset helpers                                          */
 /* ------------------------------------------------------------------ */
@@ -1041,6 +1052,9 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
     if (eff.spec_dynamic_count > 1)
         qsort(eff.spec_dynamic_rules, (size_t)eff.spec_dynamic_count,
               sizeof(compiled_rule_t), compare_rule_by_length);
+
+    /* Shrink string arena to exact used size (eliminates unused capacity) */
+    arena_shrink(&eff.strings);
 
     rs->effective = eff;
     rs->is_compiled = true;

@@ -87,6 +87,14 @@ pattern_class_t soft_pattern_classify(const char *pattern)
     return PATTERN_EXACT;
 }
 
+/** Check if pattern ends with /* (single-star suffix). */
+static bool is_single_star_suffix(const char *pattern)
+{
+    if (!pattern) return false;
+    size_t len = strlen(pattern);
+    return len >= 2 && pattern[len - 2] == '/' && pattern[len - 1] == '*';
+}
+
 /* ------------------------------------------------------------------ */
 /*  Strip trailing wildcards to get the prefix path                   */
 /* ------------------------------------------------------------------ */
@@ -142,188 +150,112 @@ static const char *pattern_to_prefix(const char *pattern)
 /*  Landlock compatibility validation                                 */
 /* ------------------------------------------------------------------ */
 
-/**
- * Check a single rule for Landlock compatibility.
- * Returns 0 if compatible, -1 if not (with error_msg set).
- */
-static int validate_rule(const rule_t *r, int rule_idx,
-                         const char **error_msg, int *error_line)
+/** Human-readable messages indexed by negating the enum value. */
+const char *const landlock_compat_error_msgs[] = {
+    [-LANDLOCK_COMPAT_OK]           = "Compatible with Landlock",
+    [-LANDLOCK_COMPAT_SUBJECT]      = "Subject constraint not supported by Landlock",
+    [-LANDLOCK_COMPAT_UID]          = "UID constraint not supported by Landlock",
+    [-LANDLOCK_COMPAT_TEMPLATE]     = "Dual-path operation (COPY/MOVE/LINK/MOUNT) not supported by Landlock",
+    [-LANDLOCK_COMPAT_WILDCARD]     = "Mid-path wildcard (*) cannot be expressed in Landlock",
+    [-LANDLOCK_COMPAT_SPECIFICITY]  = "SPECIFICITY layer rules not supported by Landlock (longest-match semantics)",
+    [-LANDLOCK_COMPAT_LAYER_MASK]   = "Layer mode mask not supported by Landlock",
+    [-LANDLOCK_COMPAT_SINGLE_STAR]  = "Single-star suffix (/*) cannot be expressed in Landlock",
+    [-LANDLOCK_COMPAT_NULL_RULESET] = "NULL ruleset",
+    [-LANDLOCK_COMPAT_COMPILE_FAIL] = "Compilation failed during validation",
+};
+
+/* ------------------------------------------------------------------ */
+/*  Internal: validate a single compiled rule, return error enum      */
+/* ------------------------------------------------------------------ */
+
+static landlock_compat_error_t validate_compiled_rule(const compiled_rule_t *cr,
+                                                       int *error_line)
 {
-    /* Subject constraints cannot be expressed in Landlock */
-    if (r->subject_regex[0] != '\0') {
-        *error_msg = "subject constraint not supported by Landlock";
-        if (error_line) *error_line = rule_idx;
-        return -1;
-    }
-
-    /* UID constraints cannot be expressed in Landlock */
-    if (r->min_uid > 0) {
-        *error_msg = "UID constraint not supported by Landlock";
-        if (error_line) *error_line = rule_idx;
-        return -1;
-    }
-
-    /* Binary operations (COPY, MOVE, etc.) with ${SRC}/${DST} templates
-     * cannot be expressed as single-path Landlock rules */
-    if (r->linked_path_var[0] != '\0') {
-        *error_msg = "dual-path operation (COPY/MOVE/LINK/MOUNT) not supported by Landlock";
-        if (error_line) *error_line = rule_idx;
-        return -1;
-    }
-
-    /* Non-trivial operation types: Landlock only knows file access rights,
-     * not syscall intent. Rules with specific op types other than READ/WRITE/EXEC
-     * may not map correctly. We warn but don't reject. */
-
-    /* Wildcards in the middle of patterns cannot be prefix-matched */
-    pattern_class_t pc = soft_pattern_classify(r->pattern);
-    if (pc == PATTERN_WILDCARD) {
-        *error_msg = "mid-path wildcard (*) cannot be expressed in Landlock";
-        if (error_line) *error_line = rule_idx;
-        return -1;
-    }
-
-    return 0;
+    if (cr->subject_regex && cr->subject_regex[0] != '\0')
+        return LANDLOCK_COMPAT_SUBJECT;
+    if (cr->min_uid > 0)
+        return LANDLOCK_COMPAT_UID;
+    if (cr->flags & SOFT_RULE_TEMPLATE)
+        return LANDLOCK_COMPAT_TEMPLATE;
+    if (is_single_star_suffix(cr->pattern))
+        return LANDLOCK_COMPAT_SINGLE_STAR;
+    pattern_class_t pc = soft_pattern_classify(cr->pattern);
+    if (pc == PATTERN_WILDCARD)
+        return LANDLOCK_COMPAT_WILDCARD;
+    (void)error_line;  /* caller sets the rule index */
+    return LANDLOCK_COMPAT_OK;
 }
 
-int soft_ruleset_validate_for_landlock(const soft_ruleset_t *rs,
-                                       const char **error_msg,
-                                       int *error_line)
+/**
+ * Check a single descriptive rule for Landlock compatibility.
+ * Returns LANDLOCK_COMPAT_OK if compatible, or a negative error code.
+ */
+static landlock_compat_error_t validate_descriptive_rule(const rule_t *r,
+                                                          int *error_line)
+{
+    if (r->subject_regex[0] != '\0')
+        return LANDLOCK_COMPAT_SUBJECT;
+    if (r->min_uid > 0)
+        return LANDLOCK_COMPAT_UID;
+    if (r->linked_path_var[0] != '\0')
+        return LANDLOCK_COMPAT_TEMPLATE;
+    if (is_single_star_suffix(r->pattern))
+        return LANDLOCK_COMPAT_SINGLE_STAR;
+    pattern_class_t pc = soft_pattern_classify(r->pattern);
+    if (pc == PATTERN_WILDCARD)
+        return LANDLOCK_COMPAT_WILDCARD;
+    (void)error_line;
+    return LANDLOCK_COMPAT_OK;
+}
+
+landlock_compat_error_t soft_ruleset_validate_for_landlock_ex(
+        const soft_ruleset_t *rs, int *error_line)
 {
     if (!rs) {
-        if (error_msg) *error_msg = "NULL ruleset";
-        return -1;
+        if (error_line) *error_line = 0;
+        return LANDLOCK_COMPAT_NULL_RULESET;
     }
-
-    static const char *static_msgs[] = {
-        "subject constraint not supported by Landlock",
-        "UID constraint not supported by Landlock",
-        "dual-path operation (COPY/MOVE/LINK/MOUNT) not supported by Landlock",
-        "mid-path wildcard (*) cannot be expressed in Landlock",
-    };
 
     /* If compiled, check the effective ruleset */
     if (rs->is_compiled) {
         const effective_ruleset_t *eff = &rs->effective;
         int idx = 0;
 
-        /* SPECIFICITY rules have different semantics (longest-match-wins)
-         * compared to Landlock's flat allow-list. Reject them. */
+        /* SPECIFICITY rules have different semantics (longest-match-wins) */
         if (eff->spec_static_count > 0 || eff->spec_dynamic_count > 0) {
-            if (error_msg) *error_msg = "SPECIFICITY layer rules not supported by Landlock (longest-match semantics)";
             if (error_line) *error_line = 0;
-            return -1;
+            return LANDLOCK_COMPAT_SPECIFICITY;
         }
 
         /* Check static rules */
         for (int i = 0; i < eff->static_count; i++) {
-            const compiled_rule_t *cr = &eff->static_rules[i];
-            /* Recompute from the rule fields */
-            if (cr->subject_regex && cr->subject_regex[0] != '\0') {
-                if (error_msg) *error_msg = static_msgs[0];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            if (cr->min_uid > 0) {
-                if (error_msg) *error_msg = static_msgs[1];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            if (cr->flags & SOFT_RULE_TEMPLATE) {
-                if (error_msg) *error_msg = static_msgs[2];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            pattern_class_t pc = soft_pattern_classify(cr->pattern);
-            if (pc == PATTERN_WILDCARD) {
-                if (error_msg) *error_msg = static_msgs[3];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
+            landlock_compat_error_t e = validate_compiled_rule(&eff->static_rules[i], error_line);
+            if (e != LANDLOCK_COMPAT_OK) { if (error_line) *error_line = idx; return e; }
             idx++;
         }
 
         /* Check dynamic rules */
         for (int i = 0; i < eff->dynamic_count; i++) {
-            const compiled_rule_t *cr = &eff->dynamic_rules[i];
-            if (cr->subject_regex && cr->subject_regex[0] != '\0') {
-                if (error_msg) *error_msg = static_msgs[0];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            if (cr->min_uid > 0) {
-                if (error_msg) *error_msg = static_msgs[1];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            if (cr->flags & SOFT_RULE_TEMPLATE) {
-                if (error_msg) *error_msg = static_msgs[2];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            pattern_class_t pc = soft_pattern_classify(cr->pattern);
-            if (pc == PATTERN_WILDCARD) {
-                if (error_msg) *error_msg = static_msgs[3];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
+            landlock_compat_error_t e = validate_compiled_rule(&eff->dynamic_rules[i], error_line);
+            if (e != LANDLOCK_COMPAT_OK) { if (error_line) *error_line = idx; return e; }
             idx++;
         }
 
-        /* Check SPECIFICITY rules */
+        /* Check SPECIFICITY static rules (already rejected above, but check for completeness) */
         for (int i = 0; i < eff->spec_static_count; i++) {
-            const compiled_rule_t *cr = &eff->spec_static_rules[i];
-            if (cr->subject_regex && cr->subject_regex[0] != '\0') {
-                if (error_msg) *error_msg = static_msgs[0];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            if (cr->min_uid > 0) {
-                if (error_msg) *error_msg = static_msgs[1];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            if (cr->flags & SOFT_RULE_TEMPLATE) {
-                if (error_msg) *error_msg = static_msgs[2];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            pattern_class_t pc = soft_pattern_classify(cr->pattern);
-            if (pc == PATTERN_WILDCARD) {
-                if (error_msg) *error_msg = static_msgs[3];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
+            landlock_compat_error_t e = validate_compiled_rule(&eff->spec_static_rules[i], error_line);
+            if (e != LANDLOCK_COMPAT_OK) { if (error_line) *error_line = idx; return e; }
             idx++;
         }
 
+        /* Check SPECIFICITY dynamic rules */
         for (int i = 0; i < eff->spec_dynamic_count; i++) {
-            const compiled_rule_t *cr = &eff->spec_dynamic_rules[i];
-            if (cr->subject_regex && cr->subject_regex[0] != '\0') {
-                if (error_msg) *error_msg = static_msgs[0];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            if (cr->min_uid > 0) {
-                if (error_msg) *error_msg = static_msgs[1];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            if (cr->flags & SOFT_RULE_TEMPLATE) {
-                if (error_msg) *error_msg = static_msgs[2];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
-            pattern_class_t pc = soft_pattern_classify(cr->pattern);
-            if (pc == PATTERN_WILDCARD) {
-                if (error_msg) *error_msg = static_msgs[3];
-                if (error_line) *error_line = idx;
-                return -1;
-            }
+            landlock_compat_error_t e = validate_compiled_rule(&eff->spec_dynamic_rules[i], error_line);
+            if (e != LANDLOCK_COMPAT_OK) { if (error_line) *error_line = idx; return e; }
             idx++;
         }
 
-        return 0;
+        return LANDLOCK_COMPAT_OK;
     }
 
     /* Not compiled: check descriptive layers */
@@ -333,24 +265,47 @@ int soft_ruleset_validate_for_landlock(const soft_ruleset_t *rs,
 
         /* Layer masks cannot be expressed in Landlock */
         if (lyr->mask != 0) {
-            if (error_msg) *error_msg = "layer mode mask not supported by Landlock";
             if (error_line) *error_line = rule_idx;
-            return -1;
+            return LANDLOCK_COMPAT_LAYER_MASK;
         }
 
         /* SPECIFICITY layer semantics differ from Landlock's flat model */
         if (lyr->type == LAYER_SPECIFICITY && lyr->count > 0) {
-            /* Not a hard rejection, but worth noting */
+            if (error_line) *error_line = rule_idx;
+            return LANDLOCK_COMPAT_SPECIFICITY;
         }
 
         for (int r = 0; r < lyr->count; r++) {
-            if (validate_rule(&lyr->rules[r], rule_idx, error_msg, error_line) != 0)
-                return -1;
+            landlock_compat_error_t e = validate_descriptive_rule(&lyr->rules[r], error_line);
+            if (e != LANDLOCK_COMPAT_OK) {
+                if (error_line) *error_line = rule_idx;
+                return e;
+            }
             rule_idx++;
         }
     }
 
-    return 0;
+    return LANDLOCK_COMPAT_OK;
+}
+
+int soft_ruleset_validate_for_landlock(const soft_ruleset_t *rs,
+                                       landlock_compat_error_t *error_code,
+                                       const char **error_msg,
+                                       int *error_line)
+{
+    landlock_compat_error_t e = soft_ruleset_validate_for_landlock_ex(rs, error_line);
+    if (error_code) *error_code = e;
+    if (error_msg) {
+        if (e == LANDLOCK_COMPAT_OK) {
+            *error_msg = NULL;
+        } else {
+            int idx = -e;
+            *error_msg = (idx >= 0 && idx < (int)(sizeof(landlock_compat_error_msgs) / sizeof(landlock_compat_error_msgs[0])))
+                         ? landlock_compat_error_msgs[idx]
+                         : "Unknown Landlock incompatibility";
+        }
+    }
+    return (e == LANDLOCK_COMPAT_OK) ? 0 : -1;
 }
 
 /* ------------------------------------------------------------------ */

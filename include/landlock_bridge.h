@@ -42,6 +42,32 @@ uint64_t soft_access_to_ll_fs(uint32_t soft_mask);
 /* ------------------------------------------------------------------ */
 
 /**
+ * Structured error codes for Landlock compatibility validation.
+ *
+ * Each value identifies a specific reason why a ruleset cannot be
+ * translated to Landlock.  Callers can use these codes to produce
+ * user-friendly error messages or to automatically fix the policy.
+ */
+typedef enum {
+    LANDLOCK_COMPAT_OK            =  0,  /**< Compatible with Landlock. */
+    LANDLOCK_COMPAT_SUBJECT       = -1,  /**< Rule has subject_regex constraint. */
+    LANDLOCK_COMPAT_UID           = -2,  /**< Rule has min_uid > 0 constraint. */
+    LANDLOCK_COMPAT_TEMPLATE      = -3,  /**< Rule uses ${SRC}/${DST} template. */
+    LANDLOCK_COMPAT_WILDCARD      = -4,  /**< Pattern has mid-path * wildcard. */
+    LANDLOCK_COMPAT_SPECIFICITY   = -5,  /**< Layer uses SPECIFICITY type. */
+    LANDLOCK_COMPAT_LAYER_MASK    = -6,  /**< Layer has a mode mask (e.g. PRECEDENCE:RW). */
+    LANDLOCK_COMPAT_SINGLE_STAR   = -7,  /**< Pattern ends with /* (single-star suffix). */
+    LANDLOCK_COMPAT_NULL_RULESET  = -8,  /**< NULL ruleset passed. */
+    LANDLOCK_COMPAT_COMPILE_FAIL  = -9,  /**< Compilation failed during validation. */
+} landlock_compat_error_t;
+
+/**
+ * Human-readable description for each landlock_compat_error_t value.
+ * Indexed by negating the enum value (e.g. [-LANDLOCK_COMPAT_SUBJECT]).
+ */
+extern const char *const landlock_compat_error_msgs[];
+
+/**
  * Check whether a ruleset can be faithfully translated to Landlock.
  *
  * Landlock cannot express:
@@ -52,15 +78,34 @@ uint64_t soft_access_to_ll_fs(uint32_t soft_mask);
  *   - Layer masks (SPECIFICITY:R, PRECEDENCE:RW)
  *
  * @param rs          Ruleset handle (compiled or uncompiled).
+ * @param error_code  If non-NULL, receives a landlock_compat_error_t value
+ *                    (LANDLOCK_COMPAT_OK on success, negative on failure).
  * @param error_msg   If non-NULL and the ruleset is incompatible,
  *                    receives a static string describing the issue.
  * @param error_line  If non-NULL, receives the approximate rule index
  *                    that caused the incompatibility.
  * @return 0 if the ruleset can be translated, -1 if not.
+ *
+ * @see soft_ruleset_validate_for_landlock_ex() for the enum-returning variant.
  */
 int soft_ruleset_validate_for_landlock(const soft_ruleset_t *rs,
+                                       landlock_compat_error_t *error_code,
                                        const char **error_msg,
                                        int *error_line);
+
+/**
+ * Extended validation that returns a structured error code.
+ *
+ * This is the preferred API for new code.  The legacy
+ * soft_ruleset_validate_for_landlock() is a thin wrapper around this.
+ *
+ * @param rs          Ruleset handle (compiled or uncompiled).
+ * @param error_line  If non-NULL, receives the approximate rule index
+ *                    that caused the incompatibility.
+ * @return LANDLOCK_COMPAT_OK on success, or a negative error code.
+ */
+landlock_compat_error_t soft_ruleset_validate_for_landlock_ex(
+        const soft_ruleset_t *rs, int *error_line);
 
 /* ------------------------------------------------------------------ */
 /*  Translation                                                       */
