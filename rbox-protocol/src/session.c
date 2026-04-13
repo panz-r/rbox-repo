@@ -350,6 +350,7 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                     free(session->send_buf);
                     session->send_buf = NULL;
                     session->state = RBOX_SESSION_WAITING;
+                    session->request_start_time = get_time_ms();
                     CDBG("sending -> waiting");
                 }
             }
