@@ -20,8 +20,8 @@ TESTDIR  := tests
 BUILDDIR := build
 
 # Library sources and objects
-LIB_SRCS := $(SRCDIR)/arena.c $(SRCDIR)/radix_tree.c $(SRCDIR)/builder.c $(SRCDIR)/rule_engine.c $(SRCDIR)/rule_engine_compile.c $(SRCDIR)/policy_parser.c $(SRCDIR)/landlock_bridge.c
-LIB_OBJS := $(BUILDDIR)/arena.o $(BUILDDIR)/radix_tree.o $(BUILDDIR)/builder.o $(BUILDDIR)/rule_engine.o $(BUILDDIR)/rule_engine_compile.o $(BUILDDIR)/policy_parser.o $(BUILDDIR)/landlock_bridge.o
+LIB_SRCS := $(SRCDIR)/arena.c $(SRCDIR)/radix_tree.c $(SRCDIR)/builder.c $(SRCDIR)/rule_engine.c $(SRCDIR)/rule_engine_compile.c $(SRCDIR)/rule_engine_diff.c $(SRCDIR)/policy_parser.c $(SRCDIR)/landlock_bridge.c
+LIB_OBJS := $(BUILDDIR)/arena.o $(BUILDDIR)/radix_tree.o $(BUILDDIR)/builder.o $(BUILDDIR)/rule_engine.o $(BUILDDIR)/rule_engine_compile.o $(BUILDDIR)/rule_engine_diff.o $(BUILDDIR)/policy_parser.o $(BUILDDIR)/landlock_bridge.o
 LIB      := $(BUILDDIR)/liblandlock-builder.a
 
 # Test sources
@@ -48,7 +48,8 @@ TEST_SRCS := $(TESTDIR)/test_radix_tree.c \
              $(TESTDIR)/test_compilation_gaps.c \
              $(TESTDIR)/test_compilation_binary.c \
              $(TESTDIR)/test_compilation_layered.c \
-             $(TESTDIR)/test_fuzz_edge.c
+             $(TESTDIR)/test_fuzz_edge.c \
+             $(TESTDIR)/test_ruleset_management.c
 TEST_OBJS := $(TEST_SRCS:.c=.o)
 TEST_BIN  := $(BUILDDIR)/test_runner
 
@@ -90,7 +91,7 @@ $(TESTDIR)/mock_fs.o: $(TESTDIR)/mock_fs.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Mock-enabled library objects for tests
-MOCK_LIB_OBJS := $(BUILDDIR)/arena_mock.o $(BUILDDIR)/radix_tree_mock.o $(BUILDDIR)/builder_mock.o $(BUILDDIR)/rule_engine_mock.o $(BUILDDIR)/rule_engine_compile_mock.o $(BUILDDIR)/policy_parser_mock.o $(BUILDDIR)/landlock_bridge_mock.o
+MOCK_LIB_OBJS := $(BUILDDIR)/arena_mock.o $(BUILDDIR)/radix_tree_mock.o $(BUILDDIR)/builder_mock.o $(BUILDDIR)/rule_engine_mock.o $(BUILDDIR)/rule_engine_compile_mock.o $(BUILDDIR)/rule_engine_diff_mock.o $(BUILDDIR)/policy_parser_mock.o $(BUILDDIR)/landlock_bridge_mock.o
 
 $(TEST_BIN): $(TEST_OBJS) $(MOCK_LIB_OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
@@ -104,7 +105,7 @@ $(BUILDDIR)/benchmark.o: $(TESTDIR)/benchmark.c | $(BUILDDIR)
 	$(CC) $(CFLAGS) -DMOCK_FS -DMOCK_FS_INTERNAL -I$(TESTDIR) -c $< -o $@
 
 BENCH_OBJS := $(BUILDDIR)/benchmark.o
-$(BENCH_BIN): $(BENCH_OBJS) $(BUILDDIR)/arena_mock.o $(BUILDDIR)/radix_tree_mock.o $(BUILDDIR)/builder_mock.o $(BUILDDIR)/rule_engine_mock.o $(BUILDDIR)/rule_engine_compile_mock.o $(BUILDDIR)/policy_parser_mock.o $(BUILDDIR)/landlock_bridge_mock.o $(BUILDDIR)/bench_mock_fs.o | $(BUILDDIR)
+$(BENCH_BIN): $(BENCH_OBJS) $(BUILDDIR)/arena_mock.o $(BUILDDIR)/radix_tree_mock.o $(BUILDDIR)/builder_mock.o $(BUILDDIR)/rule_engine_mock.o $(BUILDDIR)/rule_engine_compile_mock.o $(BUILDDIR)/rule_engine_diff_mock.o $(BUILDDIR)/policy_parser_mock.o $(BUILDDIR)/landlock_bridge_mock.o $(BUILDDIR)/bench_mock_fs.o | $(BUILDDIR)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
 benchmark: $(BENCH_BIN)

@@ -1244,6 +1244,493 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
 }
 
 /* ------------------------------------------------------------------ */
+/*  Rule enumeration / inspection                                      */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_get_rule_info(const soft_ruleset_t *rs, int index,
+                               soft_rule_info_t *out)
+{
+    if (!rs || !out || index < 0) { errno = EINVAL; return -1; }
+
+    int remaining = index;
+    for (int i = 0; i < rs->layer_count; i++) {
+        const layer_t *lyr = &rs->layers[i];
+        if (remaining < lyr->count) {
+            const rule_t *r = &lyr->rules[remaining];
+            out->pattern = r->pattern;
+            out->mode = r->mode;
+            out->op_type = r->op_type;
+            out->linked_path_var = (r->linked_path_var[0] != '\0') ? r->linked_path_var : NULL;
+            out->subject_regex = (r->subject_regex[0] != '\0') ? r->subject_regex : NULL;
+            out->min_uid = r->min_uid;
+            out->flags = r->flags;
+            out->layer = i;
+            return 0;
+        }
+        remaining -= lyr->count;
+    }
+
+    errno = EINVAL;
+    return -1;
+}
+
+int soft_ruleset_get_layer_info(const soft_ruleset_t *rs, int layer,
+                                soft_layer_info_t *out)
+{
+    if (!rs || !out || layer < 0 || layer >= rs->layer_count) {
+        errno = EINVAL; return -1;
+    }
+
+    const layer_t *lyr = &rs->layers[layer];
+    out->type = lyr->type;
+    out->mask = lyr->mask;
+    out->count = lyr->count;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Rule removal                                                       */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_remove_rule(soft_ruleset_t *rs,
+                             int layer,
+                             const char *pattern,
+                             uint32_t mode,
+                             soft_binary_op_t op_type)
+{
+    if (!rs || !pattern || layer < 0 || layer >= rs->layer_count) {
+        errno = EINVAL; return -1;
+    }
+
+    layer_t *lyr = &rs->layers[layer];
+    for (int i = 0; i < lyr->count; i++) {
+        rule_t *r = &lyr->rules[i];
+        if (strcmp(r->pattern, pattern) == 0 &&
+            r->mode == mode && r->op_type == op_type) {
+            /* Remove by shifting remaining rules down */
+            memmove(&lyr->rules[i], &lyr->rules[i + 1],
+                    (size_t)(lyr->count - i - 1) * sizeof(rule_t));
+            lyr->count--;
+            soft_ruleset_invalidate(rs);
+            return 0;
+        }
+    }
+
+    errno = ENOENT;
+    return -1;
+}
+
+int soft_ruleset_remove_rule_at_index(soft_ruleset_t *rs,
+                                      int layer,
+                                      int index)
+{
+    if (!rs || layer < 0 || layer >= rs->layer_count) {
+        errno = EINVAL; return -1;
+    }
+
+    layer_t *lyr = &rs->layers[layer];
+    if (index < 0 || index >= lyr->count) {
+        errno = EINVAL; return -1;
+    }
+
+    memmove(&lyr->rules[index], &lyr->rules[index + 1],
+            (size_t)(lyr->count - index - 1) * sizeof(rule_t));
+    lyr->count--;
+    soft_ruleset_invalidate(rs);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Ruleset cloning                                                    */
+/* ------------------------------------------------------------------ */
+
+soft_ruleset_t *soft_ruleset_clone(const soft_ruleset_t *rs)
+{
+    if (!rs) { errno = EINVAL; return NULL; }
+
+    soft_ruleset_t *new_rs = calloc(1, sizeof(*new_rs));
+    if (!new_rs) return NULL;
+
+    new_rs->layer_count = rs->layer_count;
+    new_rs->is_compiled = false;  /* Start uncompiled */
+    memcpy(new_rs->last_error, rs->last_error, sizeof(new_rs->last_error));
+    memcpy(new_rs->custom_ops, rs->custom_ops, sizeof(new_rs->custom_ops));
+
+    for (int i = 0; i < rs->layer_count; i++) {
+        const layer_t *src_lyr = &rs->layers[i];
+        layer_t *dst_lyr = &new_rs->layers[i];
+
+        dst_lyr->type = src_lyr->type;
+        dst_lyr->mask = src_lyr->mask;
+        dst_lyr->count = src_lyr->count;
+        dst_lyr->capacity = src_lyr->capacity;
+
+        if (src_lyr->count > 0 && src_lyr->rules) {
+            dst_lyr->rules = malloc((size_t)src_lyr->capacity * sizeof(rule_t));
+            if (!dst_lyr->rules) {
+                soft_ruleset_free(new_rs);
+                return NULL;
+            }
+            memcpy(dst_lyr->rules, src_lyr->rules,
+                   (size_t)src_lyr->count * sizeof(rule_t));
+        }
+    }
+
+    return new_rs;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Ruleset merging and insertion                                      */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_merge(soft_ruleset_t *dest, const soft_ruleset_t *src)
+{
+    if (!dest || !src) { errno = EINVAL; return -1; }
+
+    for (int i = 0; i < src->layer_count; i++) {
+        const layer_t *src_lyr = &src->layers[i];
+        if (src_lyr->count == 0) continue;
+
+        layer_t *dest_lyr = ensure_layer(dest, i);
+        if (!dest_lyr) return -1;
+
+        /* Append all rules from src layer */
+        for (int j = 0; j < src_lyr->count; j++) {
+            if (layer_add_rule(dest_lyr, &src_lyr->rules[j]) < 0) return -1;
+        }
+
+        /* Override layer type/mask from src */
+        dest_lyr->type = src_lyr->type;
+        dest_lyr->mask = src_lyr->mask;
+    }
+
+    soft_ruleset_invalidate(dest);
+    return 0;
+}
+
+int soft_ruleset_insert_ruleset(soft_ruleset_t *dest,
+                                const soft_ruleset_t *src,
+                                int depth)
+{
+    if (!dest || !src || depth < 0) { errno = EINVAL; return -1; }
+
+    for (int i = 0; i < src->layer_count; i++) {
+        int target_layer = i + depth;
+        if (target_layer >= MAX_LAYERS) { errno = EINVAL; return -1; }
+
+        const layer_t *src_lyr = &src->layers[i];
+        if (src_lyr->count == 0) continue;
+
+        layer_t *dest_lyr = ensure_layer(dest, target_layer);
+        if (!dest_lyr) return -1;
+
+        for (int j = 0; j < src_lyr->count; j++) {
+            if (layer_add_rule(dest_lyr, &src_lyr->rules[j]) < 0) return -1;
+        }
+
+        dest_lyr->type = src_lyr->type;
+        dest_lyr->mask = src_lyr->mask;
+    }
+
+    soft_ruleset_invalidate(dest);
+    return 0;
+}
+
+int soft_ruleset_merge_at_layer(soft_ruleset_t *dest,
+                                const soft_ruleset_t *src,
+                                int target_layer)
+{
+    if (!dest || !src || target_layer < 0) { errno = EINVAL; return -1; }
+
+    for (int i = 0; i < src->layer_count; i++) {
+        int dest_layer = target_layer + i;
+        if (dest_layer >= MAX_LAYERS) { errno = EINVAL; return -1; }
+
+        const layer_t *src_lyr = &src->layers[i];
+        if (src_lyr->count == 0) continue;
+
+        layer_t *dest_lyr = ensure_layer(dest, dest_layer);
+        if (!dest_lyr) return -1;
+
+        for (int j = 0; j < src_lyr->count; j++) {
+            if (layer_add_rule(dest_lyr, &src_lyr->rules[j]) < 0) return -1;
+        }
+
+        dest_lyr->type = src_lyr->type;
+        dest_lyr->mask = src_lyr->mask;
+    }
+
+    soft_ruleset_invalidate(dest);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Meld variants (ownership transfer, no deep copy)                   */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_meld(soft_ruleset_t *dest, soft_ruleset_t *src)
+{
+    if (!dest || !src) { errno = EINVAL; return -1; }
+
+    for (int i = 0; i < src->layer_count; i++) {
+        layer_t *src_lyr = &src->layers[i];
+        if (src_lyr->count == 0 && src_lyr->rules == NULL) continue;
+
+        layer_t *dest_lyr = ensure_layer(dest, i);
+        if (!dest_lyr) return -1;
+
+        /* If dest layer is empty, take ownership directly */
+        if (dest_lyr->count == 0 && dest_lyr->rules == NULL) {
+            dest_lyr->rules = src_lyr->rules;
+            dest_lyr->count = src_lyr->count;
+            dest_lyr->capacity = src_lyr->capacity;
+            src_lyr->rules = NULL;
+            src_lyr->count = 0;
+            src_lyr->capacity = 0;
+        } else {
+            /* Dest has rules already — append and free src's array */
+            for (int j = 0; j < src_lyr->count; j++) {
+                if (layer_add_rule(dest_lyr, &src_lyr->rules[j]) < 0) {
+                    free(src_lyr->rules);
+                    src_lyr->rules = NULL;
+                    return -1;
+                }
+            }
+            free(src_lyr->rules);
+            src_lyr->rules = NULL;
+            src_lyr->count = 0;
+            src_lyr->capacity = 0;
+        }
+
+        dest_lyr->type = src_lyr->type;
+        dest_lyr->mask = src_lyr->mask;
+    }
+
+    src->layer_count = 0;
+    soft_ruleset_invalidate(dest);
+    return 0;
+}
+
+int soft_ruleset_meld_ruleset(soft_ruleset_t *dest,
+                              soft_ruleset_t *src,
+                              int depth)
+{
+    if (!dest || !src || depth < 0) { errno = EINVAL; return -1; }
+
+    for (int i = 0; i < src->layer_count; i++) {
+        int target_layer = i + depth;
+        if (target_layer >= MAX_LAYERS) { errno = EINVAL; return -1; }
+
+        layer_t *src_lyr = &src->layers[i];
+        if (src_lyr->count == 0 && src_lyr->rules == NULL) continue;
+
+        layer_t *dest_lyr = ensure_layer(dest, target_layer);
+        if (!dest_lyr) return -1;
+
+        if (dest_lyr->count == 0 && dest_lyr->rules == NULL) {
+            dest_lyr->rules = src_lyr->rules;
+            dest_lyr->count = src_lyr->count;
+            dest_lyr->capacity = src_lyr->capacity;
+            src_lyr->rules = NULL;
+            src_lyr->count = 0;
+            src_lyr->capacity = 0;
+        } else {
+            for (int j = 0; j < src_lyr->count; j++) {
+                if (layer_add_rule(dest_lyr, &src_lyr->rules[j]) < 0) {
+                    free(src_lyr->rules);
+                    src_lyr->rules = NULL;
+                    return -1;
+                }
+            }
+            free(src_lyr->rules);
+            src_lyr->rules = NULL;
+            src_lyr->count = 0;
+            src_lyr->capacity = 0;
+        }
+
+        dest_lyr->type = src_lyr->type;
+        dest_lyr->mask = src_lyr->mask;
+    }
+
+    src->layer_count = 0;
+    soft_ruleset_invalidate(dest);
+    return 0;
+}
+
+int soft_ruleset_meld_at_layer(soft_ruleset_t *dest,
+                               soft_ruleset_t *src,
+                               int target_layer)
+{
+    if (!dest || !src || target_layer < 0) { errno = EINVAL; return -1; }
+
+    for (int i = 0; i < src->layer_count; i++) {
+        int dest_layer = target_layer + i;
+        if (dest_layer >= MAX_LAYERS) { errno = EINVAL; return -1; }
+
+        layer_t *src_lyr = &src->layers[i];
+        if (src_lyr->count == 0 && src_lyr->rules == NULL) continue;
+
+        layer_t *dest_lyr = ensure_layer(dest, dest_layer);
+        if (!dest_lyr) return -1;
+
+        if (dest_lyr->count == 0 && dest_lyr->rules == NULL) {
+            dest_lyr->rules = src_lyr->rules;
+            dest_lyr->count = src_lyr->count;
+            dest_lyr->capacity = src_lyr->capacity;
+            src_lyr->rules = NULL;
+            src_lyr->count = 0;
+            src_lyr->capacity = 0;
+        } else {
+            for (int j = 0; j < src_lyr->count; j++) {
+                if (layer_add_rule(dest_lyr, &src_lyr->rules[j]) < 0) {
+                    free(src_lyr->rules);
+                    src_lyr->rules = NULL;
+                    return -1;
+                }
+            }
+            free(src_lyr->rules);
+            src_lyr->rules = NULL;
+            src_lyr->count = 0;
+            src_lyr->capacity = 0;
+        }
+
+        dest_lyr->type = src_lyr->type;
+        dest_lyr->mask = src_lyr->mask;
+    }
+
+    src->layer_count = 0;
+    soft_ruleset_invalidate(dest);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Layer shifting (shared by meld and insert)                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Shift existing dest layers >= target_layer UP by src_layers positions.
+ * Iterates backwards to avoid overwriting data still needed.
+ * Returns new layer_count, or -1 if new_end exceeds MAX_LAYERS.
+ */
+static int shift_layers_up(soft_ruleset_t *dest, int src_layers, int target_layer)
+{
+    int dest_end = dest->layer_count;
+    int new_end = (target_layer >= dest_end)
+                  ? (target_layer + src_layers)
+                  : (dest_end + src_layers);
+    if (new_end > MAX_LAYERS) return -1;
+
+    for (int i = dest_end - 1; i >= target_layer; i--) {
+        layer_t *dst = &dest->layers[i + src_layers];
+        layer_t *src_slot = &dest->layers[i];
+        *dst = *src_slot;
+        memset(src_slot, 0, sizeof(layer_t));
+    }
+
+    /* Zero any gap between old dest_end and target_layer */
+    for (int i = dest_end; i < target_layer; i++) {
+        memset(&dest->layers[i], 0, sizeof(layer_t));
+    }
+
+    return new_end;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Meld (ownership transfer)                                          */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_meld_into(soft_ruleset_t *dest,
+                           soft_ruleset_t *src,
+                           int target_layer)
+{
+    if (!dest || !src || target_layer < 0) { errno = EINVAL; return -1; }
+    if (src->layer_count == 0) return 0;  /* nothing to meld */
+
+    int src_layers = src->layer_count;
+    int new_end = shift_layers_up(dest, src_layers, target_layer);
+    if (new_end < 0) return -1;
+
+    /* Move src's layers into the gap — pointer ownership transfer. */
+    for (int i = 0; i < src_layers; i++) {
+        int dest_layer = target_layer + i;
+        layer_t *dest_lyr = &dest->layers[dest_layer];
+        layer_t *src_lyr  = &src->layers[i];
+
+        *dest_lyr = *src_lyr;
+        /* Zero out src so soft_ruleset_free(src) won't double-free. */
+        memset(src_lyr, 0, sizeof(layer_t));
+    }
+
+    src->layer_count = 0;
+    dest->layer_count = new_end;
+    soft_ruleset_invalidate(dest);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Insert (clone + meld)                                              */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_insert_at_layer(soft_ruleset_t *dest,
+                                 const soft_ruleset_t *src,
+                                 int target_layer)
+{
+    if (!dest || !src || target_layer < 0) { errno = EINVAL; return -1; }
+    if (src->layer_count == 0) return 0;
+
+    /* Clone src's layers so we own the memory, then meld the clone. */
+    int src_layers = src->layer_count;
+
+    /* Allocate a temporary ruleset to hold cloned layers. */
+    layer_t *clone_layers = calloc((size_t)src_layers, sizeof(layer_t));
+    if (!clone_layers) return -1;
+
+    /* Deep-copy each src layer. */
+    for (int i = 0; i < src_layers; i++) {
+        const layer_t *src_lyr = &src->layers[i];
+        layer_t *clone = &clone_layers[i];
+        clone->type = src_lyr->type;
+        clone->mask = src_lyr->mask;
+        clone->count = src_lyr->count;
+        clone->capacity = src_lyr->capacity;
+
+        if (src_lyr->count > 0 && src_lyr->rules) {
+            clone->rules = malloc((size_t)src_lyr->capacity * sizeof(rule_t));
+            if (!clone->rules) {
+                /* Rollback: free already-allocated clones. */
+                for (int j = 0; j < i; j++)
+                    free(clone_layers[j].rules);
+                free(clone_layers);
+                return -1;
+            }
+            memcpy(clone->rules, src_lyr->rules,
+                   (size_t)src_lyr->count * sizeof(rule_t));
+        }
+    }
+
+    /* Shift dest layers to make room. */
+    int new_end = shift_layers_up(dest, src_layers, target_layer);
+    if (new_end < 0) {
+        for (int i = 0; i < src_layers; i++)
+            free(clone_layers[i].rules);
+        free(clone_layers);
+        return -1;
+    }
+
+    /* Move cloned layers into dest. */
+    for (int i = 0; i < src_layers; i++) {
+        dest->layers[target_layer + i] = clone_layers[i];
+        /* Don't free clone_layers[i].rules — now owned by dest. */
+        clone_layers[i].rules = NULL;  /* prevent dangling free below */
+    }
+    free(clone_layers);
+
+    dest->layer_count = new_end;
+    soft_ruleset_invalidate(dest);
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Backward compatibility                                             */
 /* ------------------------------------------------------------------ */
 

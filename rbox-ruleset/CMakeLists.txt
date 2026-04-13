@@ -34,6 +34,7 @@ add_library(landlock-builder STATIC
     src/builder.c
     src/rule_engine.c
     src/rule_engine_compile.c
+    src/rule_engine_diff.c
     src/policy_parser.c
     src/landlock_bridge.c
 )
@@ -89,6 +90,7 @@ set(TEST_SOURCES
     tests/test_compilation_binary.c
     tests/test_compilation_layered.c
     tests/test_fuzz_edge.c
+    tests/test_ruleset_management.c
 )
 
 add_executable(test_runner ${TEST_SOURCES})

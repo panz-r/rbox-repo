@@ -380,6 +380,331 @@ int soft_ruleset_check(const soft_ruleset_t *rs,
                        uint32_t mask);
 
 /* ------------------------------------------------------------------ */
+/*  Rule info (enumeration / inspection)                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Snapshot of a single rule's attributes for inspection.
+ * Returned by soft_ruleset_get_rule_info().
+ * Strings are borrowed from the ruleset (do not free).
+ */
+typedef struct {
+    const char         *pattern;           /**< Path pattern (borrowed) */
+    uint32_t            mode;              /**< SOFT_ACCESS_* or DENY */
+    soft_binary_op_t    op_type;           /**< Operation type */
+    const char         *linked_path_var;   /**< "SRC", "DST", or NULL */
+    const char         *subject_regex;     /**< Subject regex, or NULL */
+    uint32_t            min_uid;           /**< Minimum UID */
+    uint32_t            flags;             /**< SOFT_RULE_* flags */
+    int                 layer;             /**< Layer index */
+} soft_rule_info_t;
+
+/**
+ * Metadata about a layer.
+ */
+typedef struct {
+    layer_type_t    type;      /**< LAYER_PRECEDENCE or LAYER_SPECIFICITY */
+    uint32_t        mask;      /**< Mode filter (0 = all modes) */
+    int             count;     /**< Number of rules in this layer */
+} soft_layer_info_t;
+
+/**
+ * Get information about a rule at a linear index.
+ *
+ * Rules are indexed linearly across all layers (layer 0 first, then
+ * layer 1, etc.).  Use soft_ruleset_rule_count() for the total.
+ *
+ * @param rs    Ruleset handle.
+ * @param index Linear index (0..rule_count-1).
+ * @param out   Receives rule info.  Strings are borrowed (do not free).
+ * @return 0 on success, -1 on invalid index.
+ */
+int soft_ruleset_get_rule_info(const soft_ruleset_t *rs, int index,
+                               soft_rule_info_t *out);
+
+/**
+ * Get metadata about a specific layer.
+ *
+ * @param rs     Ruleset handle.
+ * @param layer  Layer index.
+ * @param out    Receives layer info.
+ * @return 0 on success, -1 on invalid index.
+ */
+int soft_ruleset_get_layer_info(const soft_ruleset_t *rs, int layer,
+                                soft_layer_info_t *out);
+
+/* ------------------------------------------------------------------ */
+/*  Rule removal                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Remove a rule matching the given attributes from the specified layer.
+ *
+ * Searches for the first rule in the layer that matches pattern, mode,
+ * and op_type exactly.  If multiple identical rules exist, only the
+ * first is removed.
+ *
+ * Invalidates compiled state.
+ *
+ * @param rs        Ruleset handle.
+ * @param layer     Layer index.
+ * @param pattern   Exact pattern to match.
+ * @param mode      Exact mode to match.
+ * @param op_type   Exact operation type to match.
+ * @return 0 on success, -1 if no matching rule found.
+ */
+int soft_ruleset_remove_rule(soft_ruleset_t *rs,
+                             int layer,
+                             const char *pattern,
+                             uint32_t mode,
+                             soft_binary_op_t op_type);
+
+/**
+ * Remove a rule by its position within a layer.
+ *
+ * Invalidates compiled state.
+ *
+ * @param rs     Ruleset handle.
+ * @param layer  Layer index.
+ * @param index  Rule index within the layer (0..count-1).
+ * @return 0 on success, -1 on invalid layer or index.
+ */
+int soft_ruleset_remove_rule_at_index(soft_ruleset_t *rs,
+                                      int layer,
+                                      int index);
+
+/* ------------------------------------------------------------------ */
+/*  Ruleset merging and insertion                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Clone a ruleset (deep copy).
+ *
+ * Creates a new ruleset with all layers and rules copied from the
+ * source.  The cloned ruleset is NOT compiled (starts in descriptive
+ * mode) even if the source was compiled.
+ *
+ * @param rs Source ruleset handle.
+ * @return New ruleset handle, or NULL on failure (errno set).
+ *         Caller must free with soft_ruleset_free().
+ */
+soft_ruleset_t *soft_ruleset_clone(const soft_ruleset_t *rs);
+
+/**
+ * Merge all rules from src into dest, preserving layer indices.
+ *
+ * Rules from src at layer N are appended to dest's layer N.  If dest
+ * doesn't have that layer yet, it is created.  Layer types and masks
+ * from src override dest for overlapping layers.
+ *
+ * Invalidates dest compiled state.
+ *
+ * @param dest Destination ruleset handle.
+ * @param src  Source ruleset handle (unchanged).
+ * @return 0 on success, -1 on failure (errno set).
+ */
+int soft_ruleset_merge(soft_ruleset_t *dest, const soft_ruleset_t *src);
+
+/**
+ * Insert all rules from src into dest, shifted by depth layers.
+ *
+ * Rules from src at layer N are inserted into dest at layer N+depth.
+ * Existing dest rules keep their original layer numbers (no shift).
+ * This is useful for nesting a ruleset at a specific precedence depth.
+ *
+ * Invalidates dest compiled state.
+ *
+ * @param dest   Destination ruleset handle.
+ * @param src    Source ruleset handle (unchanged).
+ * @param depth  Number of layers to shift src rules by.
+ * @return 0 on success, -1 on failure (e.g., depth would exceed MAX_LAYERS).
+ */
+int soft_ruleset_insert_ruleset(soft_ruleset_t *dest,
+                                const soft_ruleset_t *src,
+                                int depth);
+
+/**
+ * Merge src into dest so that src's layer 0 becomes target_layer.
+ *
+ * All rules from src are re-layered: src layer N → dest layer
+ * target_layer+N.  This is useful for inserting a complete ruleset
+ * at a specific precedence point in dest.
+ *
+ * Invalidates dest compiled state.
+ *
+ * @param dest         Destination ruleset handle.
+ * @param src          Source ruleset handle (unchanged).
+ * @param target_layer Layer in dest where src's layer 0 should land.
+ * @return 0 on success, -1 on failure (e.g., would exceed MAX_LAYERS).
+ */
+int soft_ruleset_merge_at_layer(soft_ruleset_t *dest,
+                                const soft_ruleset_t *src,
+                                int target_layer);
+
+/**
+ * Move all layers from src into dest, merging at corresponding indices
+ * (ownership transfer, no deep copy).
+ *
+ * Like soft_ruleset_merge(), but instead of copying src's rules, the
+ * rule arrays are transferred.  After this call, src is left in a
+ * valid but empty state.
+ *
+ * @param dest Destination ruleset handle.
+ * @param src  Source ruleset handle (consumed — left empty).
+ * @return 0 on success, -1 on failure (errno set).
+ */
+int soft_ruleset_meld(soft_ruleset_t *dest, soft_ruleset_t *src);
+
+/**
+ * Move all layers from src into dest, shifted by depth (ownership transfer).
+ *
+ * Like soft_ruleset_insert_ruleset(), but transfers ownership of src's
+ * rule arrays instead of copying them.
+ *
+ * @param dest   Destination ruleset handle.
+ * @param src    Source ruleset handle (consumed — left empty).
+ * @param depth  Number of layers to shift src rules by.
+ * @return 0 on success, -1 on failure.
+ */
+int soft_ruleset_meld_ruleset(soft_ruleset_t *dest,
+                              soft_ruleset_t *src,
+                              int depth);
+
+/**
+ * Move all layers from src into dest at target_layer (ownership transfer).
+ *
+ * Like soft_ruleset_merge_at_layer(), but transfers ownership of src's
+ * rule arrays instead of copying them.
+ *
+ * @param dest         Destination ruleset handle.
+ * @param src          Source ruleset handle (consumed — left empty).
+ * @param target_layer Layer in dest where src's layer 0 should land.
+ * @return 0 on success, -1 on failure.
+ */
+int soft_ruleset_meld_at_layer(soft_ruleset_t *dest,
+                               soft_ruleset_t *src,
+                               int target_layer);
+
+/**
+ * Insert all rules from src into dest at target_layer, shifting
+ * existing dest layers upward.
+ *
+ * All dest layers at index ≥ target_layer are shifted up by
+ * src->layer_count positions.  Src's layers are then copied in:
+ *   src layer 0  → dest layer target_layer
+ *   src layer 1  → dest layer target_layer + 1
+ *   ...
+ *
+ * Example: dest has layers [0, 1, 2], src has 3 layers, insert at 1.
+ *   Result: [dest0, src0, src1, src2, dest1→4, dest2→5]
+ *
+ * Src is not modified.  For an ownership-taking variant, see
+ * soft_ruleset_meld_into().
+ *
+ * Invalidates dest compiled state.
+ *
+ * @param dest          Destination ruleset handle.
+ * @param src           Source ruleset handle (unchanged).
+ * @param target_layer  Layer index in dest where src's layer 0 lands.
+ * @return 0 on success, -1 on failure (e.g., would exceed MAX_LAYERS).
+ */
+int soft_ruleset_insert_at_layer(soft_ruleset_t *dest,
+                                 const soft_ruleset_t *src,
+                                 int target_layer);
+
+/**
+ * Move all layers from src into dest at target_layer, taking ownership
+ * of src's internal rule arrays (no deep copy).
+ *
+ * Like soft_ruleset_insert_at_layer(), but instead of cloning src's
+ * rules, the rule arrays are transferred to dest.  After this call,
+ * src is left in a valid but empty state (safe to free, but its rules
+ * now belong to dest).
+ *
+ * This is useful when loading or building a temporary ruleset that will
+ * be combined into a larger one — avoids malloc overhead.
+ *
+ * Example: dest has layers [0, 1, 2], src has 3 layers, meld at 1.
+ *   Result: [dest0, src0, src1, src2, dest1→4, dest2→5]
+ *   src is left with 0 layers.
+ *
+ * Invalidates dest compiled state.
+ *
+ * @param dest          Destination ruleset handle.
+ * @param src           Source ruleset handle (consumed — left empty).
+ * @param target_layer  Layer index in dest where src's layer 0 lands.
+ * @return 0 on success, -1 on failure (e.g., would exceed MAX_LAYERS).
+ */
+int soft_ruleset_meld_into(soft_ruleset_t *dest,
+                           soft_ruleset_t *src,
+                           int target_layer);
+
+/* ------------------------------------------------------------------ */
+/*  Ruleset diff                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Type of change detected in a ruleset diff. */
+typedef enum {
+    DIFF_RULE_ADDED,     /**< Rule exists in B but not A */
+    DIFF_RULE_REMOVED,   /**< Rule exists in A but not B */
+    DIFF_RULE_MODIFIED,  /**< Rule exists in both but attributes differ */
+    DIFF_RULE_UNCHANGED, /**< Rule is identical in both */
+} soft_diff_type_t;
+
+/**
+ * Description of a single rule difference.
+ *
+ * rule_a and rule_b point to internal rule data in the respective
+ * rulesets.  They are valid only until the ruleset is modified or freed.
+ */
+typedef struct {
+    soft_diff_type_t      type;
+    int                   layer_a;   /**< Layer in A (-1 if added) */
+    int                   layer_b;   /**< Layer in B (-1 if removed) */
+    const soft_rule_info_t *rule_a;  /**< NULL if added */
+    const soft_rule_info_t *rule_b;  /**< NULL if removed */
+} soft_rule_diff_t;
+
+/**
+ * Summary of a ruleset diff operation.
+ */
+typedef struct {
+    soft_rule_diff_t *changes;  /**< Array of all differences (caller must not free) */
+    int               count;    /**< Number of entries in changes[] */
+    int               capacity; /**< Allocated capacity of changes[] */
+    int               added;    /**< Count of DIFF_RULE_ADDED */
+    int               removed;  /**< Count of DIFF_RULE_REMOVED */
+    int               modified; /**< Count of DIFF_RULE_MODIFIED */
+    int               unchanged;/**< Count of DIFF_RULE_UNCHANGED */
+} soft_ruleset_diff_t;
+
+/**
+ * Compare two rulesets and produce a diff report.
+ *
+ * Rules are compared layer by layer, then by (pattern, mode, op_type,
+ * subject_regex, min_uid, flags).  A rule is considered MODIFIED if
+ * the same pattern+op exists in both rulesets but with different
+ * attributes.
+ *
+ * @param a     First ruleset (may be NULL — treated as empty).
+ * @param b     Second ruleset (may be NULL — treated as empty).
+ * @param out   Receives the diff report.  The changes[] array points
+ *              to internally allocated memory; free with
+ *              soft_ruleset_diff_free().
+ * @return 0 on success, -1 on failure (errno set).
+ */
+int soft_ruleset_diff(const soft_ruleset_t *a,
+                      const soft_ruleset_t *b,
+                      soft_ruleset_diff_t *out);
+
+/**
+ * Free a diff report produced by soft_ruleset_diff().
+ *
+ * @param diff  Diff report to free (NULL is safe).
+ */
+void soft_ruleset_diff_free(soft_ruleset_diff_t *diff);
+
+/* ------------------------------------------------------------------ */
 /*  Binary serialization of compiled ruleset                            */
 /* ------------------------------------------------------------------ */
 
