@@ -329,6 +329,7 @@ static int read_body_nonblocking(rbox_server_handle_t *server, int fd, rbox_serv
         }
     }
     DBG("read_body_nonblocking: body complete %zu bytes", req->body_received);
+    req->command_data[req->body_received] = '\0';
     return 1;
 }
 
