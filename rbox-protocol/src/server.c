@@ -11,6 +11,7 @@
 #include <sys/poll.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/eventfd.h>
 #include <time.h>
@@ -1315,13 +1316,13 @@ static void *server_thread_func(void *arg) {
             if (server->request_timeout > 0) {
                 if (tentry->waiting_for_header && tentry->header_start_time > 0) {
                     uint64_t elapsed = now - tentry->header_start_time;
-                    if (elapsed > server->request_timeout * 1000) {
+                    if (elapsed > (uint64_t)server->request_timeout * 1000) {
                         should_close = 1;
                         close_reason = 1;
                     }
                 } else if (tentry->pending_request && tentry->pending_request->reading_body) {
                     uint64_t elapsed = now - tentry->body_start_time;
-                    if (elapsed > server->request_timeout * 1000) {
+                    if (elapsed > (uint64_t)server->request_timeout * 1000) {
                         should_close = 1;
                         close_reason = 2;
                     }
@@ -1330,7 +1331,7 @@ static void *server_thread_func(void *arg) {
 
             if (!should_close && server->client_idle_timeout > 0 && !tentry->pending_request) {
                 uint64_t idle = now - tentry->last_activity;
-                if (idle > server->client_idle_timeout * 1000) {
+                if (idle > (uint64_t)server->client_idle_timeout * 1000) {
                     should_close = 1;
                     close_reason = 3;
                 }
@@ -1386,6 +1387,12 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
             free(srv);
             return NULL;
         }
+    }
+    if (chmod(socket_path, 0666) < 0) {
+        close(srv->listen_fd);
+        unlink(socket_path);
+        free(srv);
+        return NULL;
     }
     if (pthread_mutex_init(&srv->cache_mutex, NULL) != 0) {
         free(srv);
