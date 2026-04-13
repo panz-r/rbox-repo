@@ -188,8 +188,12 @@ int rbox_server_cache_lookup(rbox_server_handle_t *server,
                     if (cache->tombstone_count > RBOX_RESPONSE_CACHE_SIZE / 4) {
                         cache_rebuild(server);
                     }
-                    pthread_mutex_unlock(&server->cache_mutex);
-                    return 0;
+                    index = (index + 1) % RBOX_RESPONSE_CACHE_SIZE;
+                    if (index == start) {
+                        pthread_mutex_unlock(&server->cache_mutex);
+                        return 0;
+                    }
+                    continue;
                 }
                 if (entry->key_hash == key_hash &&
                     entry->cmd_hash == cmd_hash &&
