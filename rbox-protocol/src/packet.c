@@ -279,8 +279,8 @@ rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
     memcpy(packet + 64, &offset, 8);
     memcpy(packet + 72, &chunk_len, 4);
     memcpy(packet + 76, &total_len, 8);
-    /* Set cmd_hash (optional, can be 0) */
-    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CMD_HASH) = 0;
+    uint32_t cmd_hash = rbox_runtime_crc32(0, command, strlen(command));
+    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CMD_HASH) = cmd_hash;
     /* Set fenv_hash */
     *(uint32_t *)(packet + RBOX_HEADER_OFFSET_FENV_HASH) = fenv_hash;
 
