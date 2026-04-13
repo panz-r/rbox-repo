@@ -163,8 +163,8 @@ static void test_rule_engine_constraints(void)
                    "read with UID>=min_uid grants READ");
 
     ctx.uid = 500;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
-                   "read denied when UID < min_uid");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
+                   "read undetermined when UID < min_uid");
 
     soft_ruleset_free(rs);
 }
@@ -276,9 +276,9 @@ static void test_rule_engine_audit_log(void)
     /* Check 3: no-match path — result, deny_layer when nothing matches */
     memset(&log, 0, sizeof(log));
     ctx.src_path = "/etc/shadow";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, &log), -13,
-                   "no-match denied");
-    TEST_ASSERT_EQ(log.result, -13, "audit result matches denial");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, &log), 0,
+                   "no-match undetermined");
+    TEST_ASSERT_EQ(log.result, 0, "audit result is 0 for no-match");
     TEST_ASSERT_EQ(log.deny_layer, -1, "deny_layer is -1 when no match");
 
     soft_ruleset_free(rs);
@@ -443,19 +443,19 @@ static void test_rule_engine_layer_behavior(void)
                    "compiled: subject+UID match grants access");
 
     su_ctx.subject = "/usr/bin/user";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &su_ctx, NULL), -13,
-                   "compiled: subject mismatch denies");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &su_ctx, NULL), 0,
+                   "compiled: subject mismatch undetermined");
 
     su_ctx.subject = "/usr/bin/admin";
     su_ctx.uid = 500;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &su_ctx, NULL), -13,
-                   "compiled: UID below threshold denies");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &su_ctx, NULL), 0,
+                   "compiled: UID below threshold undetermined");
 
     /* Part 7d: backward compat check() on compiled ruleset */
     TEST_ASSERT_EQ(soft_ruleset_check(rs, "/both", 0), SOFT_ACCESS_READ,
                    "compiled: backward compat check() works");
-    TEST_ASSERT_EQ(soft_ruleset_check(rs, "/nonexistent", 0), -13,
-                   "compiled: backward compat check() denies unmatched");
+    TEST_ASSERT_EQ(soft_ruleset_check(rs, "/nonexistent", 0), 0,
+                   "compiled: backward compat check() undetermined");
 
     /* Part 7e: PRECEDENCE compiled batch with mixed allow/deny */
     const char *b_paths[] = {
@@ -617,8 +617,8 @@ static void test_rule_engine_layer_behavior(void)
                    "SPECIFICITY-only allows matching path");
 
     ctx.src_path = "/other/file.txt";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
-                   "SPECIFICITY-only denies non-matching path");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
+                   "SPECIFICITY-only undetermined for non-matching path");
 
     soft_ruleset_free(rs);
 
@@ -772,8 +772,8 @@ static void test_rule_engine_uncovered_ops(void)
                    "EXEC: /bin/** matches any file");
 
     ctx.src_path = "/usr/bin/bash";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
-                   "EXEC denied: /usr/bin not covered by /bin/**");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
+                   "EXEC undetermined: /usr/bin not covered by /bin/**");
     soft_ruleset_free(rs);
 
     /* Test 4: CHMOD_CHOWN — requires WRITE on target */
@@ -786,8 +786,8 @@ static void test_rule_engine_uncovered_ops(void)
                    "CHMOD_CHOWN grants WRITE");
 
     ctx.src_path = "/readonly/file.txt";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
-                   "CHMOD_CHOWN denied: /readonly not covered");
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
+                   "CHMOD_CHOWN undetermined: /readonly not covered");
     soft_ruleset_free(rs);
 
     /* Test 5: CUSTOM operation with custom mode registration */
@@ -894,7 +894,7 @@ static void test_rule_engine_query_cache(void)
         { {SOFT_OP_READ, "/data/project/deep/file.txt", NULL, NULL, 1000}, SOFT_ACCESS_READ },
         { {SOFT_OP_EXEC, "/bin/bash", NULL, NULL, 1000}, SOFT_ACCESS_EXEC },
         { {SOFT_OP_EXEC, "/bin/ls", NULL, NULL, 1000}, SOFT_ACCESS_EXEC },
-        { {SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, -13 },
+        { {SOFT_OP_EXEC, "/usr/bin/bash", NULL, NULL, 1000}, 0 },
         { {SOFT_OP_COPY, "/data/project/a.txt", "/tmp/x.txt", NULL, 1000}, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
         { {SOFT_OP_COPY, "/data/other/x.txt", "/tmp/y.txt", NULL, 1000}, -13 },
         { {SOFT_OP_COPY, "/data/project/a.txt", "/tmp/y.txt", NULL, 1000}, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
@@ -980,7 +980,7 @@ static void test_rule_engine_query_cache(void)
     ctx.subject = "/usr/bin/user";
     int r2 = soft_ruleset_check_ctx(rs, &ctx, NULL);
     TEST_ASSERT_EQ(r1, SOFT_ACCESS_READ, "lookup: admin subject allowed");
-    TEST_ASSERT_EQ(r2, -13, "lookup: non-admin subject denied");
+    TEST_ASSERT_EQ(r2, 0, "lookup: non-admin subject undetermined");
 
     /* UID differentiation */
     ctx.subject = NULL;
@@ -990,7 +990,7 @@ static void test_rule_engine_query_cache(void)
     ctx.uid = 500;
     int r4 = soft_ruleset_check_ctx(rs, &ctx, NULL);
     TEST_ASSERT_EQ(r3, SOFT_ACCESS_READ, "lookup: UID>=1000 allowed");
-    TEST_ASSERT_EQ(r4, -13, "lookup: UID<1000 denied");
+    TEST_ASSERT_EQ(r4, 0, "lookup: UID<1000 undetermined");
 
     /* 500 direct-mapped cache queries */
     int collision_count = 0;

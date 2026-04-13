@@ -363,6 +363,13 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
  *   1. If any layer produces DENY, return DENY immediately.
  *   2. Otherwise, the granted mode is the bitwise AND of all layers.
  *
+ * Return values:
+ *   > 0        — SOFT_ACCESS_* bitmask granted by matching rules
+ *   == 0       — no rules matched this path (undetermined; caller
+ *                should apply their default policy)
+ *   -EACCES    — access explicitly denied by a matching rule, or
+ *                rules matched but granted insufficient mode bits
+ *
  * For unary operations (READ, WRITE, EXEC), ctx->src_path is the
  * target path and ctx->dst_path should be NULL.
  *
@@ -371,6 +378,7 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
  *   - src_path is checked against rules matching the operation or READ
  *   - dst_path is checked against rules matching the operation or WRITE
  *   - Results are intersected; DENY on either side means DENY overall
+ *   - If neither path matched any rule, returns 0 (undetermined)
  *
  * Within each layer, static (non-template) rules are evaluated before
  * template rules, so a static DENY for /etc/shadow will shadow a
@@ -379,7 +387,7 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
  * @param rs        Ruleset handle.
  * @param ctx       Access context (operation, paths, subject, UID).
  * @param out_log   Optional audit log output.
- * @return SOFT_ACCESS_* granted, or -EACCES if denied.
+ * @return SOFT_ACCESS_* granted, 0 if no rules matched, or -EACCES if denied.
  */
 int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                            const soft_access_ctx_t *ctx,

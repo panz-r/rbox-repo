@@ -50,13 +50,9 @@
  * `eval`.  If eval lacks a bit, the corresponding granted bit is
  * undefined (the evaluation never looked at rules that could produce it).
  *
- * Example:
- *   READ("/a")  →  granted=READ,  eval=READ
- *   COPY("/a")  →  granted=RWX,   eval=ALL   (COPY matches COPY+READ+WRITE rules)
- *
- *   Later, a WRITE("/a") lookup:
- *     - READ cache entry: eval&WRITE = 0  → miss, must evaluate
- *     - COPY cache entry: eval&WRITE = W  → hit, return granted&WRITE
+ * The `any_matched` flag distinguishes "no rules matched" (granted=0,
+ * any_matched=0 → undetermined, caller applies default) from "rules
+ * matched but granted 0" (granted=0, any_matched=1 → denied).
  */
 typedef struct {
     uint64_t path_hash;       /**< FNV-1a hash of path */
@@ -66,6 +62,7 @@ typedef struct {
     uint32_t eval;            /**< SOFT_ACCESS_* bits that were evaluated */
     int32_t  deny_layer;      /**< -1 = no deny, >=0 = denied at this layer */
     uint8_t  valid;           /**< Non-zero = entry is valid */
+    uint8_t  any_matched;     /**< Non-zero = at least one rule matched */
 } query_cache_entry_t;
 
 /* ------------------------------------------------------------------ */

@@ -141,7 +141,7 @@ static void test_subject_constraints_and_redunancy(void)
 
     /* NULL subject with regex present -> denied */
     ctx.subject = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_exact: NULL subject denied when regex present");
 
     soft_ruleset_free(rs);
@@ -159,7 +159,7 @@ static void test_subject_constraints_and_redunancy(void)
 
     /* Subject ending with "sudo" doesn't match */
     ctx.subject = "/usr/bin/sudo";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_suffix: 'sudo' doesn't match 'admin'");
 
     soft_ruleset_free(rs);
@@ -177,7 +177,7 @@ static void test_subject_constraints_and_redunancy(void)
 
     /* Partial prefix denied */
     ctx.subject = "/usr/bin";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_exact: partial prefix denied");
 
     soft_ruleset_free(rs);
@@ -300,7 +300,7 @@ static void test_binary_search_and_exact_boundaries(void)
                           SOFT_OP_READ, NULL, NULL, 0, 0);
     soft_ruleset_compile(rs);
     soft_access_ctx_t ctx = {SOFT_OP_READ, "/aaa", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "binsearch_before: no match when query before all rules");
     soft_ruleset_free(rs);
 
@@ -316,7 +316,7 @@ static void test_binary_search_and_exact_boundaries(void)
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
                    "exact_length: longer path matches as prefix");
     ctx.src_path = "/data/file";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "exact_length: shorter path doesn't match");
     soft_ruleset_free(rs);
 }
@@ -348,7 +348,7 @@ static void test_pattern_boundary_and_universal_matching(void)
     different[254] = 'z';
     different[255] = '\0';
     ctx.src_path = different;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "max_len_exact: different last char doesn't match");
 
     /* Shorter prefix doesn't match */
@@ -356,7 +356,7 @@ static void test_pattern_boundary_and_universal_matching(void)
     memcpy(shorter, pattern, 10);
     shorter[10] = '\0';
     ctx.src_path = shorter;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "max_len_exact: shorter prefix doesn't match");
 
     soft_ruleset_free(rs);

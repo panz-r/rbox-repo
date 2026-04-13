@@ -1143,10 +1143,10 @@ static void test_parser_constraint_edge_cases(void)
                    SOFT_ACCESS_READ, "constraint: matching subject and UID allowed");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/user", 1000}, NULL),
-                   -13, "constraint: non-matching subject denied");
+                   0, "constraint: non-matching subject undetermined");
     TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs,
                    &(soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, "/usr/bin/admin", 500}, NULL),
-                   -13, "constraint: low UID denied");
+                   0, "constraint: low UID undetermined");
     soft_ruleset_free(rs);
 
     /* Case 2: Empty quoted subject regex rejected */

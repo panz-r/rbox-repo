@@ -91,7 +91,7 @@ static void test_subject_constraint_edge_cases(void)
 
     /* Subject with "admin" in middle doesn't match */
     ctx.subject = "/usr/bin/admin_extra";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_anchor: admin_extra doesn't match .*admin$");
 
     soft_ruleset_free(rs);
@@ -109,7 +109,7 @@ static void test_subject_constraint_edge_cases(void)
 
     /* Similar but longer */
     ctx.subject = "/usr/bin/sudo/extra";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_exact_match: longer subject denied");
 
     soft_ruleset_free(rs);
@@ -187,7 +187,7 @@ static void test_deny_rules_and_uid_edge_cases(void)
 
     /* UID 0 < 1000 -> denied */
     ctx = (soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 0};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "uid_root: root denied with min_uid=1000");
 
     /* UID 1000 allowed */
@@ -286,7 +286,7 @@ static void test_query_cache_and_many_layers(void)
     /* Different subject - denied (different cache entry) */
     ctx.subject = "/usr/bin/user";
     int result2 = soft_ruleset_check_ctx(rs, &ctx, NULL);
-    TEST_ASSERT_EQ(result2, -13, "cache_subject: user denied");
+    TEST_ASSERT_EQ(result2, 0, "cache_subject: user denied");
 
     /* Admin again - should hit cache */
     ctx.subject = "/usr/bin/admin";

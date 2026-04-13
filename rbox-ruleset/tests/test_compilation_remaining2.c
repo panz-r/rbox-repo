@@ -62,7 +62,7 @@ static void test_binary_ops_complex_constraints(void)
 
     /* READ with non-matching subject */
     ctx.subject = "/usr/bin/user";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "binary_complex: READ with non-matching subject denied");
 
     soft_ruleset_free(rs);
@@ -80,7 +80,7 @@ static void test_binary_ops_complex_constraints(void)
 
     /* READ with low UID */
     ctx.uid = 500;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "binary_complex: READ with low UID denied");
 
     soft_ruleset_free(rs);

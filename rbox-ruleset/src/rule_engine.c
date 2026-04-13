@@ -363,7 +363,8 @@ static void query_cache_store(soft_ruleset_t *rs,
                               uint32_t uid,
                               uint32_t granted,
                               uint32_t eval,
-                              int32_t deny_layer)
+                              int32_t deny_layer,
+                              uint8_t any_matched)
 {
     uint32_t idx = (uint32_t)(phash % QUERY_CACHE_SIZE);
     query_cache_entry_t *e = &rs->query_cache[idx];
@@ -373,6 +374,7 @@ static void query_cache_store(soft_ruleset_t *rs,
     e->granted = granted;
     e->eval = eval;
     e->deny_layer = deny_layer;
+    e->any_matched = any_matched;
     e->valid = 1;
 }
 
@@ -1045,6 +1047,9 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                 mutable->stats_cache_hits += 2;
                 if (src_hit->deny_layer >= 0 || dst_hit->deny_layer >= 0)
                     return -EACCES;
+                /* If neither sub-query matched any rule, return undetermined */
+                if (!src_hit->any_matched && !dst_hit->any_matched)
+                    return 0;
                 if ((src_hit->granted & src_req) != src_req ||
                     (dst_hit->granted & dst_req) != dst_req)
                     return -EACCES;
@@ -1059,6 +1064,7 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             mutable->stats_cache_hits++;
             if (src_hit->deny_layer >= 0) return -EACCES;
             uint32_t req = op_required_src_mode(rs, ctx->op);
+            if (!src_hit->any_matched) return 0;  /* no rules matched */
             if ((src_hit->granted & req) != req) return -EACCES;
             return (int)src_hit->granted;
         } else {
@@ -1131,13 +1137,15 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             soft_ruleset_t *m = (soft_ruleset_t *)rs;
             uint64_t sh = path_hash(ctx->src_path);
             query_cache_store(m, sh, subj_hash, ctx->uid,
-                              src_granted, eval_mask, src_deny);
+                              src_granted, eval_mask, src_deny,
+                              src_pattern != NULL);
             /* Cache DST only if it was evaluated */
             if (src_deny < 0 &&
                 (src_granted & op_required_src_mode(rs, ctx->op)) == op_required_src_mode(rs, ctx->op)) {
                 uint64_t dh = path_hash(ctx->dst_path);
                 query_cache_store(m, dh, subj_hash, ctx->uid,
-                                  dst_granted, eval_mask, dst_deny);
+                                  dst_granted, eval_mask, dst_deny,
+                                  dst_pattern != NULL);
             }
         }
     } else {
@@ -1156,6 +1164,15 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                 out_log->matched_rule = matched_pattern;
             }
             result = -EACCES;
+        } else if (granted == 0 && matched_pattern == NULL) {
+            /* No rules matched this path — undetermined.
+             * Caller should apply their default policy. */
+            if (out_log) {
+                out_log->result = 0;
+                out_log->deny_layer = -1;
+                out_log->matched_rule = NULL;
+            }
+            result = 0;
         } else if ((granted & req) != req) {
             if (out_log) {
                 out_log->result = -EACCES;
@@ -1178,7 +1195,8 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             soft_ruleset_t *m = (soft_ruleset_t *)rs;
             uint64_t sh = path_hash(ctx->src_path);
             query_cache_store(m, sh, subj_hash, ctx->uid,
-                              granted, eval_mask, deny_layer);
+                              granted, eval_mask, deny_layer,
+                              matched_pattern != NULL);
         }
     }
 

@@ -111,12 +111,12 @@ static void test_static_dynamic_matching_and_intersection(void)
 
     /* Query non-existent path */
     ctx.src_path = "/data/dir99";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "static_binsearch: non-existent denied");
 
     /* Query before all rules */
     ctx.src_path = "/data/dir000";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "static_binsearch: before all denied");
 
     soft_ruleset_free(rs);
@@ -187,7 +187,7 @@ static void test_specificity_matching_and_deny(void)
 
     /* Non-match */
     ctx.src_path = "/data/other.txt";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "spec_static: non-match denied");
 
     soft_ruleset_free(rs);
@@ -333,7 +333,7 @@ static void test_complex_combinations_and_edge_cases(void)
 
     /* Empty path query */
     ctx = (soft_access_ctx_t){SOFT_OP_READ, "", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "eval_edge_empty: empty path denied");
 
     soft_ruleset_free(rs);
@@ -400,7 +400,7 @@ static void test_subject_subsumption_and_layer_configs(void)
 
     /* NULL subject with regex present -> denied */
     ctx.subject = NULL;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_exact: NULL subject denied when regex present");
 
     soft_ruleset_free(rs);
@@ -423,7 +423,7 @@ static void test_subject_subsumption_and_layer_configs(void)
 
     /* Subject with "root" in middle but not at end */
     ctx.subject = "/usr/bin/rootkit";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_suffix: rootkit doesn't match .*root$");
 
     soft_ruleset_free(rs);
@@ -496,7 +496,7 @@ static void test_subject_subsumption_and_layer_configs(void)
 
     /* Path under /etc but not exact -> denied */
     ctx.src_path = "/etc/other";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "mixed_patterns: /etc/other denied (no recursive)");
 
     soft_ruleset_free(rs);

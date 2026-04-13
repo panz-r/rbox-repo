@@ -1410,7 +1410,7 @@ static void test_merge_then_evaluate(void)
 
     ctx.src_path = "/unknown";
     ret = soft_ruleset_check_ctx(a, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "merged: /unknown denied");
+    TEST_ASSERT_EQ(ret, 0, "merged: /unknown undetermined");
 
     soft_ruleset_free(a);
     soft_ruleset_free(b);

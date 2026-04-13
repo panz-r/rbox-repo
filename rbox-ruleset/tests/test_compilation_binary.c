@@ -224,7 +224,7 @@ static void test_binary_serialization_all_variants(void)
 
     /* Unmatched path should be denied */
     ctx = (soft_access_ctx_t){SOFT_OP_READ, "/etc/shadow", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs2, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs2, &ctx, NULL), 0,
                    "bin_only_static: unmatched path denied");
 
     free(buf);

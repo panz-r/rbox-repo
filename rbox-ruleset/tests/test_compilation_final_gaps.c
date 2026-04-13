@@ -73,7 +73,7 @@ static void test_templates_patterns_and_covering(void)
 
     /* Multiple segments denied (star can't cross /) */
     ctx.src_path = "/data/subdir/file.txt";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "glob_star: multiple segments denied");
 
     soft_ruleset_free(rs);
@@ -150,7 +150,7 @@ static void test_subject_matching_all_cases(void)
 
     /* Subject with "admin" in middle doesn't match */
     ctx.subject = "/usr/bin/admin_extra";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_suffix: admin_extra doesn't match .*admin$");
 
     soft_ruleset_free(rs);
@@ -168,7 +168,7 @@ static void test_subject_matching_all_cases(void)
 
     /* Similar but longer */
     ctx.subject = "/usr/bin/sudo/extra";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_exact: longer subject denied");
 
     soft_ruleset_free(rs);
@@ -204,12 +204,12 @@ static void test_subject_matching_all_cases(void)
 
     /* NULL subject denied */
     ctx = (soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_constraint_null: NULL subject denied");
 
     /* Empty subject denied */
     ctx.subject = "";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "subject_constraint_empty: empty subject denied");
 
     /* Matching subject allowed */
@@ -256,7 +256,7 @@ static void test_binary_search_with_many_rules(void)
 
     /* Query non-existent path */
     ctx.src_path = "/data/dir99";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "binsearch_many: non-existent denied");
 
     soft_ruleset_free(rs);
@@ -271,7 +271,7 @@ static void test_binary_search_with_many_rules(void)
 
     /* Query path between /aaa and /zzz - no prefix match */
     ctx = (soft_access_ctx_t){SOFT_OP_READ, "/mmm", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "binsearch_between: path between rules denied");
 
     /* Query path that is prefix of second rule */
@@ -375,7 +375,7 @@ static void test_layer_mask_deny_and_specificity(void)
 
     /* /other: no match in SPECIFICITY -> denied */
     ctx.src_path = "/other/file.txt";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "spec_only: other path denied (no PRECEDENCE fallback)");
 
     soft_ruleset_free(rs);
@@ -434,13 +434,13 @@ static void test_cache_constraints_and_edge_paths(void)
 
     /* Subject matches, UID doesn't */
     ctx.uid = 500;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "complex_constraints: subject matches but UID doesn't");
 
     /* UID matches, subject doesn't */
     ctx.uid = 1000;
     ctx.subject = "/usr/bin/cat";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "complex_constraints: UID matches but subject doesn't");
 
     soft_ruleset_free(rs);
@@ -452,7 +452,7 @@ static void test_cache_constraints_and_edge_paths(void)
     soft_ruleset_compile(rs);
 
     ctx = (soft_access_ctx_t){SOFT_OP_READ, "", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "empty_path: empty path denied");
 
     soft_ruleset_free(rs);

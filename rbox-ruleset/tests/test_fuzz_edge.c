@@ -48,12 +48,12 @@ static void test_null_and_boundary_stress(void)
 
     /* Check on empty/uncompiled ruleset */
     soft_access_ctx_t ctx = {SOFT_OP_READ, "/anything", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "empty_uncompiled: denied");
 
     /* Compile empty ruleset, then check */
     TEST_ASSERT_EQ(soft_ruleset_compile(rs), 0, "compile_empty: success");
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
+    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
                    "empty_compiled: denied");
 
     /* Save/load empty compiled ruleset */
