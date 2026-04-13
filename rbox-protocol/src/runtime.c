@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "runtime.h"
 #include "rbox_protocol_defs.h"
@@ -44,7 +45,8 @@ static void init_crc32_table(void) {
 static void runtime_init_internal(void) {
     pthread_once(&crc32_once, init_crc32_table);
     
-    /* Seed random number generator for ID generation */
+    signal(SIGPIPE, SIG_IGN);
+    
     srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
     
     runtime_initialized = 1;
