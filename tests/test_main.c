@@ -33,6 +33,7 @@ extern void test_compilation_extra_run(void);
 extern void test_compilation_gaps_run(void);
 extern void test_compilation_binary_run(void);
 extern void test_compilation_layered_run(void);
+extern void test_fuzz_edge_run(void);
 
 int main(void)
 {
@@ -99,6 +100,9 @@ int main(void)
     printf("\n");
 
     test_compilation_layered_run();
+    printf("\n");
+
+    test_fuzz_edge_run();
     printf("\n");
 
     print_summary();

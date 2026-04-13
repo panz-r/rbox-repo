@@ -213,6 +213,55 @@ int landlock_path_is_vfs(const char *path);
  */
 uint64_t landlock_abi_mask(int abi_version);
 
+/**
+ * Detect the highest Landlock ABI version supported by the running kernel.
+ *
+ * Uses the `landlock_create_ruleset` syscall with NULL arguments to
+ * query the kernel's supported version without creating a ruleset.
+ *
+ * @return ABI version (1..LANDLOCK_ABI_MAX), or 0 if Landlock is
+ *         unavailable (kernel < 5.13 or syscall blocked by seccomp).
+ */
+int landlock_detect_abi_version(void);
+
+/**
+ * Report entry for rights masked out during ABI prepare.
+ */
+typedef struct {
+    int      rule_index;    /**< Index in prepared rules array. */
+    uint64_t original;      /**< Rights before ABI masking. */
+    uint64_t masked;        /**< Rights after ABI masking (what Landlock enforces). */
+    uint64_t dropped;       /**< original & ~masked — rights not enforced. */
+} landlock_abi_mask_entry_t;
+
+/**
+ * Report returned by landlock_builder_prepare_with_report().
+ */
+typedef struct {
+    int                        abi_version;      /**< ABI version used for masking. */
+    uint64_t                   abi_mask;         /**< Access rights available in this ABI. */
+    int                        masked_rules;     /**< Number of rules with dropped rights. */
+    landlock_abi_mask_entry_t  entries[16];      /**< Details for first 16 masked rules. */
+} landlock_abi_report_t;
+
+/**
+ * Prepare with ABI masking report.
+ *
+ * Like landlock_builder_prepare() but also reports which rules had
+ * access rights silently dropped because they are not available in
+ * the target ABI version.  This lets the caller detect policy
+ * degradation and warn the user or abort.
+ *
+ * @param b              Builder handle.
+ * @param abi_version    Target Landlock ABI version (1..LANDLOCK_ABI_MAX).
+ * @param expand_symlinks If true, expand symlinks.
+ * @param report         If non-NULL, receives masking details.
+ * @return 0 on success, -1 on error (errno set).
+ */
+int landlock_builder_prepare_with_report(
+        landlock_builder_t *b, int abi_version, bool expand_symlinks,
+        landlock_abi_report_t *report);
+
 #ifdef __cplusplus
 }
 #endif

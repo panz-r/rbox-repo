@@ -822,6 +822,65 @@ static void test_bridge_save_landlock_policy(void)
 }
 
 
+/* ------------------------------------------------------------------ */
+/*  ABI detection and masking report                                   */
+/* ------------------------------------------------------------------ */
+
+static void test_bridge_abi_detection_and_masking(void)
+{
+    /* Case 1: Detect ABI version */
+    int abi = landlock_detect_abi_version();
+    /* On this system Landlock may or may not be available */
+    TEST_ASSERT(abi >= 0 && abi <= LANDLOCK_ABI_MAX,
+                "abi_detect: version in valid range (0 if unavailable)");
+
+    /* Case 2: ABI mask for each version */
+    TEST_ASSERT(landlock_abi_mask(0) == 0, "abi_mask: v0 returns 0");
+    TEST_ASSERT(landlock_abi_mask(1) != 0, "abi_mask: v1 non-zero");
+    if (LANDLOCK_ABI_MAX >= 2)
+        TEST_ASSERT(landlock_abi_mask(2) > landlock_abi_mask(1),
+                    "abi_mask: v2 > v1");
+    if (LANDLOCK_ABI_MAX >= 4)
+        TEST_ASSERT(landlock_abi_mask(4) >= landlock_abi_mask(3),
+                    "abi_mask: v4 >= v3");
+    TEST_ASSERT(landlock_abi_mask(99) == 0, "abi_mask: invalid version 0");
+
+    /* Case 3: Prepare with report — no masking when ABI is high enough */
+    landlock_builder_t *b = landlock_builder_new();
+    landlock_builder_allow(b, "/usr/**", LL_FS_READ_FILE | LL_FS_READ_DIR);
+    landlock_abi_report_t rep;
+    memset(&rep, 0, sizeof(rep));
+    TEST_ASSERT_EQ(landlock_builder_prepare_with_report(b, LANDLOCK_ABI_V4, false, &rep), 0,
+                   "abi_report: prepare succeeds");
+    TEST_ASSERT_EQ(rep.abi_version, LANDLOCK_ABI_V4, "abi_report: version set");
+    TEST_ASSERT_EQ(rep.masked_rules, 0, "abi_report: no masked rules (ABI 4 has all rights)");
+    landlock_builder_free(b);
+
+    /* Case 4: Prepare with report — masking when ABI is low */
+    b = landlock_builder_new();
+    /* Use rights only available in ABI v4 */
+    landlock_builder_allow(b, "/usr/**", LL_FS_READ_FILE | LL_FS_TRUNCATE);
+    memset(&rep, 0, sizeof(rep));
+    TEST_ASSERT_EQ(landlock_builder_prepare_with_report(b, LANDLOCK_ABI_V2, false, &rep), 0,
+                   "abi_report_low: prepare succeeds");
+    TEST_ASSERT_EQ(rep.abi_version, LANDLOCK_ABI_V2, "abi_report_low: version set");
+    TEST_ASSERT(rep.masked_rules >= 0, "abi_report_low: masked_rules count valid");
+    if (rep.masked_rules > 0) {
+        TEST_ASSERT(rep.entries[0].dropped != 0, "abi_report_low: some rights dropped");
+        TEST_ASSERT(rep.entries[0].masked < rep.entries[0].original,
+                    "abi_report_low: masked < original");
+    }
+    landlock_builder_free(b);
+
+    /* Case 5: Prepare with report — NULL report (same as regular prepare) */
+    b = landlock_builder_new();
+    landlock_builder_allow(b, "/usr/**", LL_FS_READ_FILE);
+    TEST_ASSERT_EQ(landlock_builder_prepare_with_report(b, LANDLOCK_ABI_V4, false, NULL), 0,
+                   "abi_report_null: prepare with NULL report succeeds");
+    landlock_builder_free(b);
+}
+
+
 void test_landlock_bridge_run(void)
 {
     printf("=== Landlock Bridge Tests ===\n");
@@ -838,4 +897,5 @@ void test_landlock_bridge_run(void)
     RUN_TEST(test_bridge_validation_report);
     RUN_TEST(test_bridge_translation_report);
     RUN_TEST(test_bridge_save_landlock_policy);
+    RUN_TEST(test_bridge_abi_detection_and_masking);
 }

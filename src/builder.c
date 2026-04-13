@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/syscall.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <inttypes.h>
@@ -71,6 +72,22 @@ uint64_t landlock_abi_mask(int abi_version)
 {
     if (abi_version < 1 || abi_version > LANDLOCK_ABI_MAX) return 0;
     return abi_masks[abi_version];
+}
+
+int landlock_detect_abi_version(void)
+{
+#ifdef __NR_landlock_create_ruleset
+    /* The kernel returns the highest supported ABI version when called
+     * with NULL attr, zero size, and LANDLOCK_CREATE_RULESET_VERSION flag.
+     * This was added in kernel 5.13 (ABI v1). */
+    long ret = syscall(__NR_landlock_create_ruleset, NULL, 0, 0);
+    if (ret < 0) return 0;  /* Landlock not available or blocked */
+    int version = (int)ret;
+    if (version < 1 || version > LANDLOCK_ABI_MAX) return 0;
+    return version;
+#else
+    return 0;  /* Syscall number not defined in headers */
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -522,6 +539,13 @@ int landlock_builder_deny(landlock_builder_t *b, const char *path)
 
 int landlock_builder_prepare(landlock_builder_t *b, int abi_version, bool expand_symlinks)
 {
+    return landlock_builder_prepare_with_report(b, abi_version, expand_symlinks, NULL);
+}
+
+int landlock_builder_prepare_with_report(
+        landlock_builder_t *b, int abi_version, bool expand_symlinks,
+        landlock_abi_report_t *report)
+{
     if (!b) { errno = EINVAL; return -1; }
     if (abi_version < 1 || abi_version > LANDLOCK_ABI_MAX) {
         errno = EINVAL;
@@ -555,9 +579,26 @@ int landlock_builder_prepare(landlock_builder_t *b, int abi_version, bool expand
     uint64_t mask = landlock_abi_mask(abi_version);
     radix_tree_collect_rules(b->tree, &b->rules, &b->rule_count);
 
-    /* Mask access rights */
+    /* Initialize report if requested */
+    if (report) {
+        memset(report, 0, sizeof(*report));
+        report->abi_version = abi_version;
+        report->abi_mask = mask;
+    }
+
+    /* Mask access rights, track dropped */
     for (size_t i = 0; i < b->rule_count; i++) {
+        uint64_t orig = b->rules[i].access;
         b->rules[i].access &= mask;
+        uint64_t dropped = orig & ~mask;
+        if (dropped && report && report->masked_rules < 16) {
+            int idx = report->masked_rules;
+            report->entries[idx].rule_index = (int)i;
+            report->entries[idx].original = orig;
+            report->entries[idx].masked = b->rules[i].access;
+            report->entries[idx].dropped = dropped;
+            report->masked_rules++;
+        }
     }
 
     b->prepared = true;

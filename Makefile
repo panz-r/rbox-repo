@@ -47,7 +47,8 @@ TEST_SRCS := $(TESTDIR)/test_radix_tree.c \
              $(TESTDIR)/test_compilation_extra.c \
              $(TESTDIR)/test_compilation_gaps.c \
              $(TESTDIR)/test_compilation_binary.c \
-             $(TESTDIR)/test_compilation_layered.c
+             $(TESTDIR)/test_compilation_layered.c \
+             $(TESTDIR)/test_fuzz_edge.c
 TEST_OBJS := $(TEST_SRCS:.c=.o)
 TEST_BIN  := $(BUILDDIR)/test_runner
 
