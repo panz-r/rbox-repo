@@ -81,12 +81,13 @@ extern const char *const landlock_compat_error_msgs[];
  * @param error_code  If non-NULL, receives a landlock_compat_error_t value
  *                    (LANDLOCK_COMPAT_OK on success, negative on failure).
  * @param error_msg   If non-NULL and the ruleset is incompatible,
- *                    receives a static string describing the issue.
+ *                    receives a static string describing the FIRST issue.
  * @param error_line  If non-NULL, receives the approximate rule index
- *                    that caused the incompatibility.
+ *                    that caused the FIRST incompatibility.
  * @return 0 if the ruleset can be translated, -1 if not.
  *
  * @see soft_ruleset_validate_for_landlock_ex() for the enum-returning variant.
+ * @see soft_ruleset_validate_for_landlock_report() for a full error report.
  */
 int soft_ruleset_validate_for_landlock(const soft_ruleset_t *rs,
                                        landlock_compat_error_t *error_code,
@@ -106,6 +107,98 @@ int soft_ruleset_validate_for_landlock(const soft_ruleset_t *rs,
  */
 landlock_compat_error_t soft_ruleset_validate_for_landlock_ex(
         const soft_ruleset_t *rs, int *error_line);
+
+/* ------------------------------------------------------------------ */
+/*  Validation report (collects ALL errors, not just first)            */
+/* ------------------------------------------------------------------ */
+
+/** Maximum number of validation errors collected in a single report. */
+#define LANDLOCK_VALIDATION_REPORT_MAX 32
+
+/**
+ * A single entry in a validation report.
+ */
+typedef struct {
+    landlock_compat_error_t error;   /**< Error code. */
+    int                     line;    /**< Rule index (0-based). */
+} landlock_validation_entry_t;
+
+/**
+ * Full validation report collecting ALL incompatibilities.
+ *
+ * Unlike soft_ruleset_validate_for_landlock() which stops at the first
+ * error, this function scans the entire ruleset and records every
+ * rule that cannot be translated to Landlock.
+ *
+ * @param rs       Ruleset handle (compiled or uncompiled).
+ * @param report   Caller-allocated array of at least LANDLOCK_VALIDATION_REPORT_MAX entries.
+ * @return Number of entries written to report (0 if fully compatible).
+ */
+int soft_ruleset_validate_for_landlock_report(
+        const soft_ruleset_t *rs,
+        landlock_validation_entry_t report[LANDLOCK_VALIDATION_REPORT_MAX]);
+
+/* ------------------------------------------------------------------ */
+/*  Translation report                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Statistics returned by soft_ruleset_to_landlock_with_report().
+ */
+typedef struct {
+    int total_rules;          /**< Total rules in source ruleset. */
+    int allowed_rules;        /**< Rules translated to Landlock allow. */
+    int denied_rules;         /**< Rules translated to Landlock deny. */
+    int skipped_rules;        /**< Rules skipped (inexpressible in Landlock). */
+    int skipped_subject;      /**< Skipped due to subject constraint. */
+    int skipped_uid;          /**< Skipped due to UID constraint. */
+    int skipped_template;     /**< Skipped due to template. */
+    int skipped_wildcard;     /**< Skipped due to wildcard pattern. */
+    int deny_prefixes;        /**< Number of deny path prefixes reported. */
+} landlock_translation_report_t;
+
+/**
+ * Translate a ruleset to Landlock with a detailed report.
+ *
+ * Like soft_ruleset_to_landlock() but also populates a report
+ * with counts of allowed, denied, and skipped rules broken down
+ * by skip reason.
+ *
+ * @param rs            Ruleset handle (must be compiled).
+ * @param deny_prefixes If non-NULL, receives deny prefix array.
+ * @param report        If non-NULL, receives translation statistics.
+ * @return Landlock builder, or NULL on failure.
+ */
+landlock_builder_t *soft_ruleset_to_landlock_with_report(
+        const soft_ruleset_t *rs,
+        const char ***deny_prefixes,
+        landlock_translation_report_t *report);
+
+/* ------------------------------------------------------------------ */
+/*  Convenience: validate → translate → save in one call              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Validate, translate, and save a ruleset as a Landlock binary policy.
+ *
+ * This is the recommended high-level API for the Landlock workflow:
+ *   1. Validates the ruleset (returns error if incompatible)
+ *   2. Translates to Landlock
+ *   3. Prepares for the given ABI version
+ *   4. Saves the binary policy to the specified file
+ *
+ * @param rs           Ruleset handle (compiled or uncompiled).
+ * @param filename     Output file path for the Landlock binary policy.
+ * @param abi_version  Target Landlock ABI version (1..LANDLOCK_ABI_MAX).
+ * @param error_msg    If non-NULL and validation fails, receives error string.
+ * @param error_code   If non-NULL, receives validation error code.
+ * @return 0 on success, -1 on validation or translation failure.
+ */
+int soft_ruleset_save_landlock_policy(const soft_ruleset_t *rs,
+                                      const char *filename,
+                                      int abi_version,
+                                      const char **error_msg,
+                                      landlock_compat_error_t *error_code);
 
 /* ------------------------------------------------------------------ */
 /*  Translation                                                       */

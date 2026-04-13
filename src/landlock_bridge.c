@@ -425,3 +425,264 @@ landlock_builder_t *soft_ruleset_to_landlock(const soft_ruleset_t *rs,
 
     return b;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Validation report (collects ALL errors)                           */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_validate_for_landlock_report(
+        const soft_ruleset_t *rs,
+        landlock_validation_entry_t report[LANDLOCK_VALIDATION_REPORT_MAX])
+{
+    if (!rs) return 0;
+
+    int count = 0;
+
+    /* If compiled, check effective ruleset */
+    if (rs->is_compiled) {
+        const effective_ruleset_t *eff = &rs->effective;
+        int idx = 0;
+
+        /* SPECIFICITY rules: reject all at once */
+        if (eff->spec_static_count > 0 || eff->spec_dynamic_count > 0) {
+            if (count < LANDLOCK_VALIDATION_REPORT_MAX) {
+                report[count].error = LANDLOCK_COMPAT_SPECIFICITY;
+                report[count].line = 0;
+            }
+            count++;
+        }
+
+        /* Check all four compiled rule arrays */
+        const compiled_rule_t *all_rules[4];
+        int all_counts[4];
+        all_rules[0] = eff->static_rules;     all_counts[0] = eff->static_count;
+        all_rules[1] = eff->dynamic_rules;    all_counts[1] = eff->dynamic_count;
+        all_rules[2] = eff->spec_static_rules; all_counts[2] = eff->spec_static_count;
+        all_rules[3] = eff->spec_dynamic_rules; all_counts[3] = eff->spec_dynamic_count;
+
+        for (int arr = 0; arr < 4; arr++) {
+            for (int i = 0; i < all_counts[arr]; i++) {
+                landlock_compat_error_t e = validate_compiled_rule(&all_rules[arr][i], NULL);
+                if (e != LANDLOCK_COMPAT_OK) {
+                    if (count < LANDLOCK_VALIDATION_REPORT_MAX) {
+                        report[count].error = e;
+                        report[count].line = idx;
+                    }
+                    count++;
+                }
+                idx++;
+            }
+        }
+
+        return count;
+    }
+
+    /* Not compiled: check descriptive layers */
+    int rule_idx = 0;
+    for (int l = 0; l < rs->layer_count; l++) {
+        const layer_t *lyr = &rs->layers[l];
+
+        if (lyr->mask != 0) {
+            if (count < LANDLOCK_VALIDATION_REPORT_MAX) {
+                report[count].error = LANDLOCK_COMPAT_LAYER_MASK;
+                report[count].line = rule_idx;
+            }
+            count++;
+        }
+
+        if (lyr->type == LAYER_SPECIFICITY && lyr->count > 0) {
+            if (count < LANDLOCK_VALIDATION_REPORT_MAX) {
+                report[count].error = LANDLOCK_COMPAT_SPECIFICITY;
+                report[count].line = rule_idx;
+            }
+            count++;
+        }
+
+        for (int r = 0; r < lyr->count; r++) {
+            landlock_compat_error_t e = validate_descriptive_rule(&lyr->rules[r], NULL);
+            if (e != LANDLOCK_COMPAT_OK) {
+                if (count < LANDLOCK_VALIDATION_REPORT_MAX) {
+                    report[count].error = e;
+                    report[count].line = rule_idx;
+                }
+                count++;
+            }
+            rule_idx++;
+        }
+    }
+
+    return count;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Translation with report                                           */
+/* ------------------------------------------------------------------ */
+
+landlock_builder_t *soft_ruleset_to_landlock_with_report(
+        const soft_ruleset_t *rs,
+        const char ***deny_prefixes_out,
+        landlock_translation_report_t *report)
+{
+    if (!rs) return NULL;
+
+    /* Compile if not already compiled */
+    soft_ruleset_t *mutable_rs = (soft_ruleset_t *)rs;
+    if (!rs->is_compiled) {
+        if (soft_ruleset_compile(mutable_rs) != 0)
+            return NULL;
+    }
+
+    /* Initialize report */
+    landlock_translation_report_t rep;
+    memset(&rep, 0, sizeof(rep));
+
+    const effective_ruleset_t *eff = &rs->effective;
+    rep.total_rules = eff->static_count + eff->dynamic_count +
+                      eff->spec_static_count + eff->spec_dynamic_count;
+
+    landlock_builder_t *b = landlock_builder_new();
+    if (!b) return NULL;
+
+    /* Collect deny prefixes */
+    const char **deny_prefixes = NULL;
+    int deny_cap = 0;
+    int deny_idx = 0;
+
+    /* Process all compiled rule arrays */
+    const compiled_rule_t *all_rules[4];
+    int all_counts[4];
+    all_rules[0] = eff->static_rules;     all_counts[0] = eff->static_count;
+    all_rules[1] = eff->dynamic_rules;    all_counts[1] = eff->dynamic_count;
+    all_rules[2] = eff->spec_static_rules; all_counts[2] = eff->spec_static_count;
+    all_rules[3] = eff->spec_dynamic_rules; all_counts[3] = eff->spec_dynamic_count;
+
+    for (int arr = 0; arr < 4; arr++) {
+        for (int i = 0; i < all_counts[arr]; i++) {
+            const compiled_rule_t *cr = &all_rules[arr][i];
+
+            /* Track skip reasons */
+            if (cr->subject_regex && cr->subject_regex[0] != '\0') {
+                rep.skipped_rules++; rep.skipped_subject++; continue;
+            }
+            if (cr->min_uid > 0) {
+                rep.skipped_rules++; rep.skipped_uid++; continue;
+            }
+            if (cr->flags & SOFT_RULE_TEMPLATE) {
+                rep.skipped_rules++; rep.skipped_template++; continue;
+            }
+
+            /* Classify pattern */
+            pattern_class_t pc = soft_pattern_classify(cr->pattern);
+            if (pc == PATTERN_WILDCARD) {
+                rep.skipped_rules++; rep.skipped_wildcard++; continue;
+            }
+
+            /* Convert pattern to Landlock-compatible prefix */
+            const char *prefix = pattern_to_prefix(cr->pattern);
+            if (!prefix || !*prefix) continue;
+
+            /* Check if this is a deny rule */
+            if ((cr->mode & SOFT_ACCESS_DENY) || soft_access_to_ll_fs(cr->mode) == 0) {
+                landlock_builder_deny(b, prefix);
+                rep.denied_rules++;
+
+                if (deny_prefixes_out) {
+                    if (deny_idx >= deny_cap) {
+                        deny_cap = deny_cap == 0 ? 16 : deny_cap * 2;
+                        deny_prefixes = realloc(deny_prefixes,
+                                                (deny_cap + 1) * sizeof(char *));
+                        if (!deny_prefixes) {
+                            landlock_builder_free(b);
+                            soft_landlock_deny_prefixes_free(deny_prefixes);
+                            return NULL;
+                        }
+                    }
+                    deny_prefixes[deny_idx] = strdup(prefix);
+                    if (deny_prefixes[deny_idx]) deny_idx++;
+                }
+                continue;
+            }
+
+            /* Allow rule */
+            uint64_t access = soft_access_to_ll_fs(cr->mode);
+            if (access == 0) continue;
+
+            if (landlock_builder_allow(b, prefix, access) != 0) {
+                landlock_builder_free(b);
+                soft_landlock_deny_prefixes_free(deny_prefixes);
+                return NULL;
+            }
+            rep.allowed_rules++;
+        }
+    }
+
+    /* Finalize deny prefix array */
+    if (deny_prefixes) {
+        deny_prefixes[deny_idx] = NULL;
+        rep.deny_prefixes = deny_idx;
+    }
+
+    if (deny_prefixes_out) {
+        *deny_prefixes_out = deny_prefixes;
+    } else {
+        soft_landlock_deny_prefixes_free(deny_prefixes);
+    }
+
+    if (report) *report = rep;
+    return b;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Convenience: validate → translate → save in one call              */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_save_landlock_policy(const soft_ruleset_t *rs,
+                                      const char *filename,
+                                      int abi_version,
+                                      const char **error_msg,
+                                      landlock_compat_error_t *error_code)
+{
+    if (!rs || !filename) return -1;
+
+    /* Step 1: Validate */
+    landlock_compat_error_t e = soft_ruleset_validate_for_landlock_ex(rs, NULL);
+    if (error_code) *error_code = e;
+    if (e != LANDLOCK_COMPAT_OK) {
+        if (error_msg) {
+            int idx = -e;
+            *error_msg = (idx >= 0 && idx < (int)(sizeof(landlock_compat_error_msgs) / sizeof(landlock_compat_error_msgs[0])))
+                         ? landlock_compat_error_msgs[idx]
+                         : "Unknown Landlock incompatibility";
+        }
+        return -1;
+    }
+
+    /* Step 2: Translate */
+    landlock_builder_t *b = soft_ruleset_to_landlock(rs, NULL);
+    if (!b) {
+        if (error_msg) *error_msg = "Translation to Landlock failed";
+        if (error_code) *error_code = LANDLOCK_COMPAT_COMPILE_FAIL;
+        return -1;
+    }
+
+    /* Step 3: Prepare for ABI version */
+    if (landlock_builder_prepare(b, abi_version, false) != 0) {
+        landlock_builder_free(b);
+        if (error_msg) *error_msg = "Landlock prepare failed";
+        if (error_code) *error_code = LANDLOCK_COMPAT_COMPILE_FAIL;
+        return -1;
+    }
+
+    /* Step 4: Save to file */
+    int ret = landlock_builder_save(b, filename);
+    landlock_builder_free(b);
+
+    if (ret != 0) {
+        if (error_msg) *error_msg = "Failed to save Landlock policy";
+        if (error_code) *error_code = LANDLOCK_COMPAT_COMPILE_FAIL;
+        return -1;
+    }
+
+    if (error_msg) *error_msg = NULL;
+    return 0;
+}

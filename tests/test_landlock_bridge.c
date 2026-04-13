@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 /* ------------------------------------------------------------------ */
 /*  Access flag mapping                                                 */
@@ -668,6 +669,159 @@ static void test_bridge_error_codes(void)
 }
 
 
+/* ------------------------------------------------------------------ */
+/*  Validation report (collects ALL errors)                            */
+/* ------------------------------------------------------------------ */
+
+static void test_bridge_validation_report(void)
+{
+    landlock_validation_entry_t report[LANDLOCK_VALIDATION_REPORT_MAX];
+    int count;
+    soft_ruleset_t *rs;
+
+    /* Case 1: Compatible ruleset has 0 errors */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_compile(rs);
+    count = soft_ruleset_validate_for_landlock_report(rs, report);
+    TEST_ASSERT_EQ(count, 0, "report: compatible has 0 errors");
+    soft_ruleset_free(rs);
+
+    /* Case 2: Ruleset with multiple errors collects all of them */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule_at_layer(rs, 0, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, ".*admin$", 1000, SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/${SRC}", SOFT_ACCESS_READ, SOFT_OP_COPY, "SRC", NULL, 0, SOFT_RULE_TEMPLATE);
+    soft_ruleset_compile(rs);
+    count = soft_ruleset_validate_for_landlock_report(rs, report);
+    TEST_ASSERT(count >= 2, "report: multiple errors collected");
+    if (count >= 2) {
+        TEST_ASSERT(report[0].error == LANDLOCK_COMPAT_SUBJECT ||
+                    report[0].error == LANDLOCK_COMPAT_UID ||
+                    report[0].error == LANDLOCK_COMPAT_TEMPLATE,
+                    "report: first error is valid");
+        TEST_ASSERT(report[1].error == LANDLOCK_COMPAT_SUBJECT ||
+                    report[1].error == LANDLOCK_COMPAT_UID ||
+                    report[1].error == LANDLOCK_COMPAT_TEMPLATE,
+                    "report: second error is valid");
+    }
+    soft_ruleset_free(rs);
+
+    /* Case 3: SPECIFICITY layer reported */
+    rs = soft_ruleset_new();
+    soft_ruleset_set_layer_type(rs, 0, LAYER_SPECIFICITY, 0);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+    soft_ruleset_compile(rs);
+    count = soft_ruleset_validate_for_landlock_report(rs, report);
+    TEST_ASSERT(count >= 1, "report: SPECIFICITY reported");
+    if (count >= 1) {
+        TEST_ASSERT_EQ(report[0].error, LANDLOCK_COMPAT_SPECIFICITY, "report: error is SPECIFICITY");
+    }
+    soft_ruleset_free(rs);
+
+    /* Case 4: NULL ruleset returns 0 (no errors to report) */
+    count = soft_ruleset_validate_for_landlock_report(NULL, report);
+    TEST_ASSERT_EQ(count, 0, "report: NULL returns 0");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Translation report                                                 */
+/* ------------------------------------------------------------------ */
+
+static void test_bridge_translation_report(void)
+{
+    soft_ruleset_t *rs;
+    landlock_translation_report_t rep;
+    const char **deny_prefixes = NULL;
+    landlock_builder_t *b;
+
+    /* Case 1: Simple ruleset — all allowed, none skipped */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, SOFT_OP_EXEC, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+    soft_ruleset_compile(rs);
+    b = soft_ruleset_to_landlock_with_report(rs, NULL, &rep);
+    TEST_ASSERT(b != NULL, "translate_report: builder created");
+    if (b) {
+        TEST_ASSERT_EQ(rep.total_rules, 2, "translate_report: 2 total");
+        TEST_ASSERT(rep.allowed_rules >= 1, "translate_report: at least 1 allowed");
+        TEST_ASSERT_EQ(rep.skipped_rules, 0, "translate_report: 0 skipped");
+        landlock_builder_free(b);
+    }
+    soft_ruleset_free(rs);
+
+    /* Case 2: Ruleset with skipped rules */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, ".*admin$", 1000, SOFT_RULE_RECURSIVE);
+    soft_ruleset_compile(rs);
+    b = soft_ruleset_to_landlock_with_report(rs, &deny_prefixes, &rep);
+    TEST_ASSERT(b != NULL, "translate_report: builder with skips created");
+    if (b) {
+        TEST_ASSERT_EQ(rep.total_rules, 2, "translate_report: 2 total");
+        TEST_ASSERT(rep.allowed_rules >= 1, "translate_report: at least 1 allowed");
+        TEST_ASSERT(rep.skipped_rules >= 1, "translate_report: at least 1 skipped");
+        TEST_ASSERT(rep.skipped_subject >= 1 || rep.skipped_uid >= 1,
+                    "translate_report: subject or uid skipped");
+        landlock_builder_free(b);
+    }
+    soft_landlock_deny_prefixes_free(deny_prefixes);
+    soft_ruleset_free(rs);
+
+    /* Case 3: Ruleset with deny rules */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "/secret", SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_compile(rs);
+    b = soft_ruleset_to_landlock_with_report(rs, &deny_prefixes, &rep);
+    TEST_ASSERT(b != NULL, "translate_report: deny ruleset translated");
+    if (b) {
+        TEST_ASSERT_EQ(rep.denied_rules, 1, "translate_report: 1 denied");
+        TEST_ASSERT(rep.deny_prefixes >= 1, "translate_report: deny prefixes reported");
+        landlock_builder_free(b);
+    }
+    soft_landlock_deny_prefixes_free(deny_prefixes);
+    soft_ruleset_free(rs);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Save Landlock policy convenience function                          */
+/* ------------------------------------------------------------------ */
+
+static void test_bridge_save_landlock_policy(void)
+{
+    const char *tmpfile = "/tmp/test_ll_policy.bin";
+    const char *err = NULL;
+    landlock_compat_error_t code;
+    int ret;
+
+    /* Case 1: Compatible ruleset saves successfully */
+    soft_ruleset_t *rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, SOFT_OP_EXEC, NULL, NULL, 0, 0);
+    soft_ruleset_compile(rs);
+    ret = soft_ruleset_save_landlock_policy(rs, tmpfile, LANDLOCK_ABI_V4, &err, &code);
+    TEST_ASSERT_EQ(ret, 0, "save_policy: compatible saves successfully");
+    TEST_ASSERT(err == NULL, "save_policy: error msg is NULL");
+    TEST_ASSERT_EQ(code, LANDLOCK_COMPAT_OK, "save_policy: code is OK");
+    /* Verify file was created */
+    TEST_ASSERT(access(tmpfile, F_OK) == 0, "save_policy: file exists");
+    soft_ruleset_free(rs);
+    unlink(tmpfile);
+
+    /* Case 2: Incompatible ruleset fails with proper error */
+    rs = soft_ruleset_new();
+    soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, ".*admin$", 0, SOFT_RULE_RECURSIVE);
+    soft_ruleset_compile(rs);
+    ret = soft_ruleset_save_landlock_policy(rs, tmpfile, LANDLOCK_ABI_V4, &err, &code);
+    TEST_ASSERT_EQ(ret, -1, "save_policy: incompatible fails");
+    TEST_ASSERT(err != NULL, "save_policy: error msg set");
+    TEST_ASSERT_EQ(code, LANDLOCK_COMPAT_SUBJECT, "save_policy: code is SUBJECT");
+    /* Verify file was NOT created */
+    TEST_ASSERT(access(tmpfile, F_OK) != 0, "save_policy: file not created");
+    soft_ruleset_free(rs);
+    unlink(tmpfile);
+}
+
+
 void test_landlock_bridge_run(void)
 {
     printf("=== Landlock Bridge Tests ===\n");
@@ -681,4 +835,7 @@ void test_landlock_bridge_run(void)
     RUN_TEST(test_bridge_large_ruleset);
     RUN_TEST(test_bridge_integration);
     RUN_TEST(test_bridge_error_codes);
+    RUN_TEST(test_bridge_validation_report);
+    RUN_TEST(test_bridge_translation_report);
+    RUN_TEST(test_bridge_save_landlock_policy);
 }
