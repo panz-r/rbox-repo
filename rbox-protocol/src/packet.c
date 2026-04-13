@@ -874,15 +874,23 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                 case RBOX_SESSION_CONNECTING: {
                     short events;
                     int fd = rbox_session_pollfd(session, &events);
-                    if (fd >= 0 && rbox_pollout(fd, 5000) > 0) {
-                        rbox_session_heartbeat(session, POLLOUT);
-                    } else if (session->base_delay_ms > 0) {
-                        uint64_t now = get_time_ms();
-                        if (now >= session->next_retry_time) {
+                    if (fd >= 0) {
+                        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+                        int ret = poll(&pfd, 1, 10);
+                        if (ret > 0) {
+                            rbox_session_heartbeat(session, POLLOUT);
+                        } else if (ret == 0) {
                             rbox_session_heartbeat(session, 0);
-                        } else {
-                            usleep(10000);
+                        } else if (ret < 0 && errno != EINTR) {
+                            rbox_session_heartbeat(session, POLLERR);
                         }
+                    } else {
+                        /* No client fd (retry wait period) – drive the
+                         * time-based retry logic by calling heartbeat
+                         * with no events, then sleep briefly to avoid
+                         * busy-looping. */
+                        rbox_session_heartbeat(session, 0);
+                        usleep(10000);
                     }
                     break;
                 }
