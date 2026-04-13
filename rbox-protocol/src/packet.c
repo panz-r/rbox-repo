@@ -685,7 +685,7 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
      * Use 64KB stack buffer first; fall back to heap if request is larger. */
     char stack_buf[65536];
     char *packet = stack_buf;
-    size_t packet_len;
+    size_t packet_len = 0;
     rbox_error_t err = rbox_build_request(packet, sizeof(stack_buf), &packet_len, command, caller, syscall, argc, argv, env_var_count, env_var_names, env_var_scores);
     if (err != RBOX_OK) {
         /* If buffer was too small, allocate dynamically and retry.
