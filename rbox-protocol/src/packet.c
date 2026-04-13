@@ -91,7 +91,7 @@ uint64_t rbox_hash64(const char *str, size_t len) {
 /* Validate header from binary packet - uses explicit byte offsets, NOT struct
  * This ensures we validate the actual binary format, not struct layout */
 rbox_error_t rbox_header_validate(const char *packet, size_t len) {
-    if (!packet || len < RBOX_HEADER_SIZE) return RBOX_ERR_INVALID;
+    if (!packet || len < RBOX_HEADER_SIZE) return RBOX_ERR_TRUNCATED;
 
     /* Check magic at offset 0 */
     uint32_t magic = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_MAGIC);
