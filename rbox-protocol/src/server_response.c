@@ -29,7 +29,7 @@ char *rbox_server_build_response(
 
     if (!out_len) return NULL;
 
-    if (env_decision_count > 4096) return NULL;
+    if (env_decision_count < 0 || env_decision_count > 4096) return NULL;
 
     size_t reason_len = reason ? strlen(reason) : 0;
     if (reason_len > RBOX_RESPONSE_MAX_REASON) reason_len = RBOX_RESPONSE_MAX_REASON;
