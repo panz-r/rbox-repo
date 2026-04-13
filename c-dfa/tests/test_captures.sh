@@ -4,9 +4,34 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TOOLS_DIR="$SCRIPT_DIR/../tools"
-BUILD="$SCRIPT_DIR/../build_test"
+SRC_DIR="$SCRIPT_DIR/.."
+
+# BUILD_DIR can be passed from Python runner, otherwise auto-detect
+if [ -n "$BUILD_DIR" ]; then
+    BUILD="$BUILD_DIR"
+    TOOLS_DIR="$BUILD/tools"
+    LIB_DIR="$BUILD/tools"
+elif [ -d "$SRC_DIR/build/tools" ] && [ -f "$SRC_DIR/build/tools/libreadonlybox_dfa.a" ]; then
+    BUILD="$SRC_DIR/build"
+    TOOLS_DIR="$SRC_DIR/build/tools"
+    LIB_DIR="$SRC_DIR/build/tools"
+else
+    BUILD="$SRC_DIR/build_test"
+    TOOLS_DIR="$SRC_DIR/tools"
+    LIB_DIR="$SRC_DIR/build_test"
+fi
 mkdir -p "$BUILD"
+
+# Create build_test symlink for backward compatibility with hardcoded paths in C test code
+if [ ! -e "$SRC_DIR/build_test" ]; then
+    ln -s "$BUILD" "$SRC_DIR/build_test"
+fi
+
+# Libraries needed for linking
+readonlybox_lib="$LIB_DIR/libreadonlybox_dfa.a"
+sat_lib="$LIB_DIR/libsat_modules.a"
+cadical_lib="$SRC_DIR/vendor/cadical/build/libcadical.a"
+STATIC_LIBS="$readonlybox_lib $sat_lib $cadical_lib -lm -lstdc++"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -42,7 +67,7 @@ int main(void) {
     return 0;
 }
 CEEOF
-    gcc -Iinclude -o "$BUILD/test_cap_bin" "$BUILD/test_cap.c" -L. -lreadonlybox_dfa -lm 2>/dev/null || return 1
+    gcc -I"$SRC_DIR/include" -o "$BUILD/test_cap_bin" "$BUILD/test_cap.c" $STATIC_LIBS 2>/dev/null || return 1
     local result=$("$BUILD/test_cap_bin" 2>/dev/null)
     [ "$result" = "$expect_match" ]
 }

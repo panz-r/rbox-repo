@@ -5,15 +5,28 @@ A high-performance C implementation of a Deterministic Finite Automata (DFA) for
 ## Quick Start
 
 ```bash
-# Build
-make
+# Configure and build
+cmake -B build
+cmake --build build
 
-# Test
-make test
+# Run tests
+ctest --test-dir build --output-on-failure
+```
 
-# Build DFA from patterns
-./tools/nfa_builder patterns/commands/safe_commands.txt readonlybox.nfa
-./tools/nfa2dfa_advanced --minimize-hopcroft readonlybox.nfa readonlybox.dfa
+## Build Options
+
+| Option | Description |
+|--------|-------------|
+| `-DENABLE_SAT=ON/OFF` | Enable SAT-based minimization (requires CaDiCaL) |
+| `-DENABLE_COVERAGE=ON/OFF` | Enable coverage instrumentation |
+| `-DENABLE_FUZZ=ON/OFF` | Enable LibFuzzer harnesses (requires clang) |
+
+### Building with Fuzzers
+
+```bash
+cmake -B build -DENABLE_FUZZ=ON \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build
 ```
 
 ## Architecture
@@ -22,29 +35,16 @@ make test
 Pattern Input → Validation → Ordering → NFA Build + Parsing → NFA Pre-Minimize → DFA Construct → Flatten → Minimize → Re-Flatten → Compress → Layout → Binary DFA
 ```
 
-See [docs/PIPELINE.md](docs/PIPELINE.md) for detailed pipeline documentation.
+## Build Outputs
 
-## Build Commands
-
-| Command | Description |
-|---------|-------------|
-| `make` | Build all tools, tests, and libraries |
-| `make test` | Run full test suite |
-| `make test-moore` | Test Moore minimization |
-| `make test-hopcroft` | Test Hopcroft algorithm (recommended) |
-| `make test-brzozowski` | Test Brzozowski algorithm |
-| `make build-sat` | Build with SAT solver support |
-| `make test-sat` | Run SAT minimization tests |
-| `make test-integrity` | Run minimization integrity tests |
-| `make clean` | Clean build artifacts |
-| `make fuzz-build` | Build fuzzers |
-
-**Libraries produced:**
-
-| Library | Size | Purpose |
-|---------|------|---------|
-| `libdfa_eval.a` | ~8KB | Eval-only (loading + evaluation). For pre-built DFAs. |
-| `libreadonlybox_dfa.a` | ~235KB | Full library (building + evaluating). For dynamic pattern sets. |
+| Output | Location | Purpose |
+|--------|----------|---------|
+| `libreadonlybox_dfa.a` | `build/tools/` | Full library (building + evaluating) |
+| `libreadonlybox_dfa.so` | `build/tools/` | Shared library |
+| `nfa_builder` | `build/tools/` | Pattern file to NFA |
+| `nfa2dfa_advanced` | `build/tools/` | NFA to DFA with minimization |
+| `dfa_eval_wrapper` | `build/tools/` | Command-line DFA evaluation |
+| `dfa2c_array` | `build/tools/` | DFA to C array converter |
 
 ## Minimization Algorithms
 
@@ -83,8 +83,6 @@ The DFA uses an 8-bit category mask - the meaning of each bit is defined by the 
 | 0x10 | network - Network operations |
 | 0x20 | admin - Requires privileges |
 
-Other projects can define their own category meanings.
-
 ## Command Specification Format
 
 The DFA is built from a command specification file:
@@ -111,113 +109,69 @@ Fragments are reusable pattern components with namespace support:
 
 # Reference fragments
 [safe] ((digit))+        → Looks for safe::digit
-[caution] ((word))+      → Looks for caution::word
-[test] ((safe::digit))+  → Cross-namespace reference (looks for safe::digit)
+[caution] ((word))+       → Looks for caution::word
+[test] ((safe::digit))+   → Cross-namespace reference (looks for safe::digit)
 ```
 
 **Namespace Semantics:**
 - `((a::b))` - References fragment 'b' in namespace 'a' (explicit)
 - `((c))` - References fragment 'c' in the **same namespace** as the pattern
 
-### Validation
-
-The NFA builder performs automatic validation:
-
-1. **Duplicate Detection**: Warns and removes duplicate patterns
-2. **Fragment Reference Validation**: Errors on undefined fragment references
-3. **Namespace Validation**: Ensures fragments are looked up in correct namespace
-
 ## Building the DFA
 
 ```bash
 # Build the tools
-make
+cmake -B build && cmake --build build
 
 # Generate DFA using Hopcroft minimization (recommended)
-./tools/nfa_builder patterns_combined.txt readonlybox.nfa
-./tools/nfa2dfa_advanced --minimize-hopcroft readonlybox.nfa readonlybox.dfa
-
-# Or use SAT-based minimal DFA construction
-./tools/nfa2dfa_sat readonlybox.nfa readonlybox.dfa
-```
-
-## Using the DFA in Applications
-
-There are two types of users:
-
-### Eval-Only Users (Recommended)
-
-If you only need to evaluate strings against a pre-built binary DFA, link against `libdfa_eval.a` (17KB). No setup, no allocations, zero overhead.
-
-```c
-#include "dfa.h"
-#include <stdlib.h>
-#include <stdio.h>
-
-// Load DFA binary - however you want (you own the memory)
-FILE* f = fopen("readonlybox.dfa", "rb");
-fseek(f, 0, SEEK_END);
-size_t dfa_size = ftell(f);
-fseek(f, 0, SEEK_SET);
-void* dfa_data = malloc(dfa_size);
-fread(dfa_data, 1, dfa_size, f);
-fclose(f);
-
-// Optional: verify this is the right DFA
-dfa_eval_validate_id(dfa_data, dfa_size, "readonlybox-v2");
-
-// Evaluate - pass DFA pointer and size directly
-dfa_result_t result;
-if (dfa_eval(dfa_data, dfa_size, "cat file.txt", 12, &result)) {
-    if (result.category == DFA_CMD_READONLY_SAFE) {
-        // Command is safe
-    }
-}
-
-// Free when done
-free(dfa_data);
-```
-
-Link with:
-```bash
-gcc -o myapp myapp.c -ldfa_eval -Iinclude
-```
-
-### Machine Builders
-
-If you need to build DFAs dynamically from pattern sets, link against `libreadonlybox_dfa.a` (235KB). See [docs/PIPELINE.md](docs/PIPELINE.md).
-
-```c
-#include "dfa.h"
-#include "pipeline.h"
-
-pipeline_t* p = pipeline_create();
-pipeline_set_patterns_file(p, "patterns.txt");
-pipeline_run(p);
-dfa_result_t result = pipeline_evaluate(p, "cat file.txt");
-pipeline_destroy(p);
-```
-
-Link with:
-```bash
-gcc -o builder builder.c -lreadonlybox_dfa -Iinclude -lstdc++
+./build/tools/nfa_builder patterns/commands/safe_commands.txt readonlybox.nfa
+./build/tools/nfa2dfa_advanced --minimize-hopcroft readonlybox.nfa readonlybox.dfa
 ```
 
 ## Test Organization
 
-The test suite is organized into three sets:
+### Fast Tests (CTest)
+```bash
+ctest --test-dir build --output-on-failure
+```
+Runs: `test_library_api`, `test_eval_only`, `testgen_test` (~3 seconds)
 
-| Test Set | Description |
-|----------|-------------|
+### Full Test Suite
+```bash
+cmake --build build --target test-full
+```
+Runs the complete test suite via `tests/run_test_suite.py` (~5-10 minutes):
+- Moore algorithm on test-set A with SAT compression
+- Hopcroft algorithm on test-set B with SAT compression
+- Stress tests on test-set C with SAT compression
+- Minimization integrity tests
+- Library API tests
+- Eval-only library tests
+- DFA2C array tool tests
+- Binary format edge case tests
+- Capture system tests
+- Pattern regression tests
+
+Output includes:
+- Per-suite timing table
+- Per-suite failure details (if any)
+- Aggregated summary line: `AGGREGATE SUMMARY: X/Y tests`
+
+### Manual Test Runner
+Run individual test sets manually:
+
+```bash
+./build/tests/dfa_test --minimize-moore --compress-sat --test-set A
+./build/tests/dfa_test --minimize-hopcroft --compress-sat --test-set B
+./build/tests/dfa_test --minimize-moore --compress-sat --test-set C
+```
+
+Test sets:
+| Set | Description |
+|-----|-------------|
 | **A** | Core tests: basic patterns, quantifiers, fragments, alternation |
 | **B** | Expanded tests: complex patterns with nested quantifiers |
 | **C** | Command tests: admin, caution, modifying, dangerous, network commands |
-
-Run specific test sets:
-```bash
-./dfa_test --minimize-hopcroft --test-set A
-./dfa_test --minimize-hopcroft --test-set BC
-```
 
 ## Performance Characteristics
 
@@ -226,57 +180,35 @@ Run specific test sets:
 - **Initialization**: <10μs
 - **Throughput**: 1M+ commands/second
 
-### Minimization Performance
-
-| Algorithm | 100 states | 1000 states |
-|-----------|------------|-------------|
-| Moore | ~1ms | ~100ms |
-| Hopcroft | ~0.5ms | ~10ms |
-| Brzozowski | ~5ms | ~500ms |
-| SAT | ~50ms | varies |
-
 ## File Structure
 
 ```
 c-dfa/
 ├── include/          # Public headers
-├── src/              # Library (eval, loader, test)
+├── src/              # Library (eval, loader, machine, test)
+├── lib/              # Pipeline implementation
 ├── tools/            # Build tools (nfa_builder, nfa2dfa, etc.)
 ├── tests/            # Test code
+├── testgen/          # Test pattern generator
 ├── fuzz/             # LibFuzzer fuzzers
-├── vendor/           # CaDiCaL SAT solver
 ├── patterns/         # Test pattern files
-├── docs/             # Documentation
-└── Makefile
+├── cmake/            # CMake modules
+└── CMakeLists.txt    # CMake build configuration
 ```
-
-## Documentation
-
-Key documentation files in `docs/`:
-
-| File | Description |
-|------|-------------|
-| [docs/PIPELINE.md](docs/PIPELINE.md) | Full pipeline overview |
-| [docs/LAYOUT_OPTIMIZATION.md](docs/LAYOUT_OPTIMIZATION.md) | SCC-based cache optimization |
-| [docs/TRANSITION_COMPRESSION.md](docs/TRANSITION_COMPRESSION.md) | Rule compression |
-| [docs/GLOSSARY.md](docs/GLOSSARY.md) | Terminology definitions |
 
 ## Fuzzing
 
-This project includes LibFuzzer-based fuzzers for continuous testing:
+This project includes LibFuzzer-based fuzzers for continuous testing. See `fuzz/README.md` for details.
 
 ```bash
-# Build fuzzers
-make fuzz-build
+# Build fuzzers (requires clang)
+cmake -B build -DENABLE_FUZZ=ON \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build
 
-# Run DFA evaluation fuzzer
-make fuzz-run-dfa
-
-# Run pattern parser fuzzer
-make fuzz-run-pattern
+# Fuzzers are in build/fuzz/
+./build/fuzz/dfa_eval_fuzzer ...
 ```
-
-See `fuzz/README.md` for details.
 
 ## Security Considerations
 
@@ -284,40 +216,3 @@ See `fuzz/README.md` for details.
 - **Input Validation**: All inputs are validated before processing
 - **No Allocation**: DFA evaluation uses no dynamic memory
 - **Deterministic**: Same input always produces same output
-
-## Recent Fixes
-
-### Pattern Ordering Memory Fix (2026-02-22)
-
-A double-free bug was fixed in the pattern ordering code. The issue was that `pattern_order_optimize()` compacts the pattern array (removing duplicates), but the caller was still using the original `pattern_count` when freeing memory.
-
-**Fix**: The caller now uses `pattern_order_get_stats()` to get the correct count after optimization:
-
-```c
-pattern_order_optimize(patterns, pattern_count, &opts);
-pattern_order_stats_t stats;
-pattern_order_get_stats(&stats);
-pattern_count = stats.original_count - stats.duplicates_found;
-```
-
-### NFA Builder Crash Fixes (2026-02-21)
-
-Fixed multiple segmentation fault vulnerabilities discovered through fuzzing in the nfa_builder tool:
-
-1. **Input Validation**: Added validation for NULL/empty patterns at entry points
-2. **Bounds Checking**: Added checks before accessing alphabet array with symbol IDs
-3. **Pattern Parsing**: Added bounds check in parse_rdp_element to prevent accessing past end of pattern string
-
-### Start State Preservation (2026-02-19)
-
-A critical bug was fixed in the DFA minimization and layout optimization code. The issue was that the start state (state 0) was not being preserved at position 0 during:
-
-1. **DFA Minimization** (`dfa_minimize.c`): The `build_minimized_dfa()` function now explicitly finds and processes the partition containing state 0 first, ensuring the start state remains at position 0.
-
-2. **Layout Optimization** (`dfa_layout.c`): The `build_state_order_bfs()` function now ensures state 0 stays at position 0 after cache-optimized reordering.
-
-This fix resolved a major test regression where approximately 240 tests were failing due to the DFA evaluator starting from the wrong state.
-
-## License
-
-This code is part of the ReadOnlyBox project and follows the same licensing terms.

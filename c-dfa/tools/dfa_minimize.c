@@ -604,14 +604,13 @@ int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
 }
 
 // ============================================================================
-// Pass 2 (B): Moore's Algorithm (Fallback)
+// Moore's Algorithm (Fallback)
 // ============================================================================
 
 int dfa_minimize_moore(build_dfa_state_t** dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
     
-    // Allocate working arrays on heap instead of stack (was ~512KB on stack)
     int* state_to_sg = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc state_to_sg");
     int* sg_reps = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc sg_reps");
     int* new_p_ids = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc new_p_ids");

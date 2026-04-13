@@ -95,8 +95,8 @@ func BuildDependencies() error {
 	defer os.Setenv("CGO_ENABLED", oldCGO)
 	os.MkdirAll(binDir, 0755)
 
-	// Build c-dfa FIRST (produces tools needed for pattern validation)
-	if err := runMake(filepath.Join(wd, cDfaDir), true); err != nil {
+	// Build c-dfa FIRST using CMake (produces tools needed for pattern validation)
+	if err := runCMake(filepath.Join(wd, cDfaDir), true); err != nil {
 		return fmt.Errorf("c-dfa build failed: %w", err)
 	}
 
@@ -155,8 +155,8 @@ func Deps() error {
 	fmt.Println("=== Building DFA tools ===")
 	wd, _ := os.Getwd()
 
-	// Build c-dfa which produces nfa_builder, nfa2dfa_advanced, dfa2c_array
-	if err := runMake(filepath.Join(wd, cDfaDir), true); err != nil {
+	// Build c-dfa using CMake which produces nfa_builder, nfa2dfa_advanced, dfa2c_array
+	if err := runCMake(filepath.Join(wd, cDfaDir), true); err != nil {
 		return fmt.Errorf("c-dfa build failed: %w", err)
 	}
 
@@ -349,12 +349,8 @@ func BuildBinaries() error {
 	}
 
 	// Ensure c-dfa tools are fully built before rbox-wrap (which needs dfa2c_array)
-	// Build c-dfa tools explicitly using the 'tools' target
-	cmd := exec.Command("make", "tools")
-	cmd.Dir = filepath.Join(wd, cDfaDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// Build c-dfa tools using CMake
+	if err := runCMakeTools(filepath.Join(wd, cDfaDir)); err != nil {
 		return fmt.Errorf("c-dfa tools build failed: %w", err)
 	}
 
@@ -386,6 +382,7 @@ func BuildBinaries() error {
 	// - Replace NEEDED path with just library name
 	// - Set RUNPATH to $ORIGIN/../lib
 	rboxWrapBin := filepath.Join(wd, binDir, "rbox-wrap")
+	var cmd *exec.Cmd
 	if _, err := os.Stat(rboxWrapBin); err == nil {
 		// Replace NEEDED entry: ../rbox-protocol/librbox_protocol.so -> librbox_protocol.so
 		cmd = exec.Command("patchelf", "--replace-needed", "../rbox-protocol/librbox_protocol.so", "librbox_protocol.so", rboxWrapBin)
@@ -467,9 +464,15 @@ func Clean() error {
 	wd, _ := os.Getwd()
 	var errs []error
 
-	// Clean subprojects (use cmake clean for rbox-protocol, make clean for others)
-	subprojects := []string{cDfaDir, shellsplitDir, rboxWrapDir, rboxPtraceDir, rboxServerDir, shelltypeDir}
-	for _, dir := range subprojects {
+	// Clean c-dfa (CMake-based)
+	cDfaPath := filepath.Join(wd, cDfaDir)
+	if err := os.RemoveAll(filepath.Join(cDfaPath, "build")); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, fmt.Errorf("c-dfa build dir clean failed: %w", err))
+	}
+
+	// Clean other subprojects (Make-based)
+	otherSubprojects := []string{shellsplitDir, rboxProtocolDir, rboxWrapDir, rboxPtraceDir, rboxServerDir}
+	for _, dir := range otherSubprojects {
 		if err := runMakeClean(filepath.Join(wd, dir)); err != nil {
 			errs = append(errs, fmt.Errorf("%s clean failed: %w", dir, err))
 		}
@@ -495,7 +498,7 @@ func Clean() error {
 	// Remove lib directory (dev build artifact)
 	libPath := filepath.Join(wd, "lib")
 	if err := os.RemoveAll(libPath); err != nil && !os.IsNotExist(err) {
-		errs = append(errs, fmt.Errorf("removing lib failed: %w", err))
+		errs = append(errs, fmt.Errorf("removing lib failed: %w", libPath, err))
 	}
 
 	// Clean generated DFA files
@@ -504,9 +507,6 @@ func Clean() error {
 		filepath.Join(wd, clientDir, "readonlybox.dfa"),
 		filepath.Join(wd, clientDir, "readonlybox_dfa.c"),
 		filepath.Join(wd, clientDir, "dfa_static_data.c"),
-		filepath.Join(wd, cDfaToolsDir, "nfa_builder"),
-		filepath.Join(wd, cDfaToolsDir, "nfa2dfa_advanced"),
-		filepath.Join(wd, cDfaToolsDir, "dfa2c_array"),
 		filepath.Join(wd, "readonlybox"),
 		filepath.Join(wd, "readonlybox-server"),
 		filepath.Join(wd, "libreadonlybox_client.so"),
@@ -531,9 +531,9 @@ func Test() error {
 		return fmt.Errorf("build failed: %w", err)
 	}
 
-	// Run c-dfa tests
+	// Run c-dfa tests using CMake/ctest
 	fmt.Println("=== Running c-dfa tests ===")
-	if err := runMakeTest(filepath.Join(cDfaDir)); err != nil {
+	if err := runCMakeTest(filepath.Join(cDfaDir)); err != nil {
 		return fmt.Errorf("c-dfa tests failed: %w", err)
 	}
 
@@ -874,6 +874,91 @@ func runMakeClean(dir string) error {
 	return nil
 }
 
+// runCMakeConfig runs cmake configure in a directory
+func runCMakeConfig(dir string) error {
+	os.MkdirAll(filepath.Join(dir, "build"), 0755)
+	cmd := exec.Command("cmake", "-B", "build")
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cmake configure failed for %s: %w", dir, err)
+	}
+	return nil
+}
+
+// runCMakeBuild runs cmake --build in a directory
+func runCMakeBuild(dir string) error {
+	cmd := exec.Command("cmake", "--build", "build")
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cmake build failed for %s: %w", dir, err)
+	}
+	return nil
+}
+
+// runCMake runs cmake configure + build in a directory
+func runCMake(dir string, parallel bool) error {
+	if err := runCMakeConfig(dir); err != nil {
+		return err
+	}
+	if parallel {
+		nproc := os.Getenv("NPROC")
+		// With parallel, use cmake --build with -j to pass to underlying make
+		cmd := exec.Command("cmake", "--build", "build")
+		if nproc != "" && nproc != "0" {
+			cmd = exec.Command("cmake", "--build", "build", "--parallel", nproc)
+		} else {
+			cmd = exec.Command("cmake", "--build", "build", "--parallel")
+		}
+		cmd.Dir = dir
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("cmake build failed for %s: %w", dir, err)
+		}
+	} else {
+		if err := runCMakeBuild(dir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runCMakeTools runs cmake --build with tools target
+func runCMakeTools(dir string) error {
+	cmd := exec.Command("cmake", "--build", "build", "--target", "tools")
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cmake build tools failed for %s: %w", dir, err)
+	}
+	return nil
+}
+
+// runCMakeTest runs cmake --build then ctest for a project
+func runCMakeTest(dir string) error {
+	// First configure and build
+	if err := runCMakeConfig(dir); err != nil {
+		return err
+	}
+	if err := runCMakeBuild(dir); err != nil {
+		return err
+	}
+
+	// Now run tests via ctest
+	cmd := exec.Command("ctest", "--test-dir", filepath.Join(dir, "build"), "--output-on-failure")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ctest failed for %s: %w", dir, err)
+	}
+	return nil
+}
+
 // runMake runs make in a directory with optional parallel build
 func runMake(dir string, parallel bool) error {
 	args := []string{}
@@ -947,26 +1032,6 @@ func cleanCMake(dir string) error {
 			// Log but don't fail - might be a real file not a symlink
 			fmt.Printf("Warning: could not remove %s: %v\n", p, err)
 		}
-	}
-	return nil
-}
-
-// runCMakeTest runs tests via ctest in a cmake build directory
-func runCMakeTest(dir string) error {
-	buildDir := filepath.Join(dir, "build")
-	if _, err := os.Stat(buildDir); os.IsNotExist(err) {
-		// Build first if build dir doesn't exist
-		if err := buildCMake(dir); err != nil {
-			return err
-		}
-	}
-
-	cmd := exec.Command("ctest", "--output-on-failure")
-	cmd.Dir = buildDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ctest failed in %s: %w", dir, err)
 	}
 	return nil
 }

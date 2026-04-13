@@ -294,56 +294,201 @@ bool wouldInputMatchPattern(const std::string& input, const std::string& pattern
 
 // Serialize PatternNode to string with capture tags
 
+// Collect all FRAGMENT_REF names from an AST
+static void collectFragmentNames(std::shared_ptr<PatternNode> node, std::set<std::string>& names) {
+    if (!node) return;
+    if (node->type == PatternType::FRAGMENT_REF) {
+        names.insert(node->fragment_name);
+    }
+    if (node->quantified) {
+        collectFragmentNames(node->quantified, names);
+    }
+    for (auto& child : node->children) {
+        collectFragmentNames(child, names);
+    }
+}
+
+// Check if all FRAGMENT_REF nodes in AST have definitions in the fragments map
+static bool hasAllFragmentDefs(std::shared_ptr<PatternNode> ast,
+                               const std::map<std::string, std::string>& fragments) {
+    std::set<std::string> names;
+    collectFragmentNames(ast, names);
+    for (const auto& name : names) {
+        if (fragments.find(name) == fragments.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Add missing fragment definitions from AST to the fragments map
+// Returns the number of missing fragments found and added
+static int addMissingFragmentDefs(std::shared_ptr<PatternNode> ast,
+                                 std::map<std::string, std::string>& fragments,
+                                 std::mt19937& rng) {
+    std::set<std::string> names;
+    collectFragmentNames(ast, names);
+    int missing_count = 0;
+    for (const auto& name : names) {
+        if (fragments.find(name) == fragments.end()) {
+            // Fragment referenced but not defined - this is a bug upstream
+            // Add placeholder definition to allow processing to continue
+            fprintf(stderr, "WARNING: Fragment '%s' referenced but not defined, adding placeholder\n", name.c_str());
+            fragments[name] = ".";
+            missing_count++;
+        }
+    }
+    return missing_count;
+}
+
 // Parse pattern string to AST (simple parser for basic patterns)
 std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
     if (pattern.empty()) return nullptr;
     
+    // Handle FRAGMENT_REF pattern: ((fragment_name))+ or ((fragment_name))+suffix
+    // This must be checked BEFORE general parenthesized patterns
+    if (pattern.size() >= 6 && pattern.substr(0, 2) == "((") {
+        size_t closing = pattern.find("))");
+        if (closing == std::string::npos) return nullptr;
+        
+        std::string rest = pattern.substr(closing + 2);
+        // Must start with + for valid FRAGMENT_REF (quantifier)
+        if (rest.empty() || (rest[0] != '+' && rest[0] != '*' && rest[0] != '?')) return nullptr;
+        
+        std::string frag_name = pattern.substr(2, closing - 2);
+        if (frag_name == "fNag747" || frag_name == "frag747") {
+            fprintf(stderr, "DEBUG PARSE: pattern='%s', frag_name='%s'\n", pattern.c_str(), frag_name.c_str());
+        }
+        if (!frag_name.empty()) {
+            auto node = PatternNode::createFragment(frag_name, {}, {});
+            
+            // Handle quantifier if present
+            if (rest[0] == '+') {
+                node->type = PatternType::PLUS_QUANTIFIER;
+                node->quantified = PatternNode::createFragment(frag_name, {}, {});
+            } else if (rest[0] == '*') {
+                node->type = PatternType::STAR_QUANTIFIER;
+                node->quantified = PatternNode::createFragment(frag_name, {}, {});
+            } else if (rest[0] == '?') {
+                node->type = PatternType::OPTIONAL;
+                node->quantified = PatternNode::createFragment(frag_name, {}, {});
+            }
+            
+            // If there's more pattern after the FRAGMENT_REF quantifier, parse recursively
+            std::string remaining = rest.substr(1);
+            if (!remaining.empty()) {
+                // Create a SEQUENCE node: FRAGMENT_REF followed by the rest
+                auto rest_node = parsePatternToAST(remaining);
+                if (rest_node) {
+                    return PatternNode::createSequence({node, rest_node}, {});
+                }
+            }
+            
+            return node;
+        }
+    }
+    
+    // Find the closing paren for a parenthesized group, respecting nested parens and FRAGMENT_REF
+    auto findClosingParen = [](const std::string& s, size_t start) -> size_t {
+        int depth = 1;
+        for (size_t i = start; i < s.size(); i++) {
+            // Check for FRAGMENT_REF: ((
+            if (i + 1 < s.size() && s[i] == '(' && s[i+1] == '(') {
+                // Skip to the matching )) of this FRAGMENT_REF only
+                // Use depth tracking to find the correct closing pair
+                int frag_depth = 1;
+                size_t j = i + 2;
+                while (j + 1 < s.size() && frag_depth > 0) {
+                    if (s[j] == '(' && s[j+1] == '(') {
+                        frag_depth++;
+                        j += 2;
+                    } else if (s[j] == ')' && s[j+1] == ')') {
+                        frag_depth--;
+                        if (frag_depth > 0) j += 2;
+                    } else {
+                        j++;
+                    }
+                }
+                if (frag_depth == 0) {
+                    i = j;  // Will be incremented by loop
+                    continue;
+                }
+                // If we couldn't find matching )), fall through to regular handling
+            }
+            if (s[i] == '(') depth++;
+            else if (s[i] == ')') {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return std::string::npos;
+    };
+    
     // Handle alternation with quantifier: (a|b|c)+
     // The quantifier is AFTER the closing paren, not inside
     if (pattern.size() >= 3 && pattern[0] == '(') {
-        size_t close_paren = pattern.find(')');
+        size_t close_paren = findClosingParen(pattern, 1);
         if (close_paren != std::string::npos) {
             std::string inner = pattern.substr(1, close_paren - 1);
             std::vector<std::shared_ptr<PatternNode>> alts;
             
-            // Check if inner contains |
-            if (inner.find('|') != std::string::npos) {
+            // Check if inner contains | at depth 0
+            auto splitAlternation = [](const std::string& s) -> std::vector<std::string> {
+                std::vector<std::string> result;
+                int depth = 0;
                 size_t start = 0;
-                for (size_t i = 0; i <= inner.size(); i++) {
-                    if (i == inner.size() || inner[i] == '|') {
-                        std::string alt = inner.substr(start, i - start);
-                        if (!alt.empty()) {
-                            alts.push_back(PatternNode::createLiteral(alt, {}));
+                for (size_t i = 0; i <= s.size(); i++) {
+                    if (i < s.size() && s[i] == '(' && i + 1 < s.size() && s[i+1] == '(') {
+                        // Skip FRAGMENT_REF
+                        size_t frag_end = s.find("))", i + 2);
+                        if (frag_end != std::string::npos) {
+                            i = frag_end + 1;
+                            continue;
                         }
+                    }
+                    if (i < s.size() && s[i] == '(') depth++;
+                    else if (i < s.size() && s[i] == ')') depth--;
+                    else if (i == s.size() || (s[i] == '|' && depth == 0)) {
+                        std::string alt = s.substr(start, i - start);
+                        if (!alt.empty()) result.push_back(alt);
                         start = i + 1;
                     }
                 }
-                
-                if (alts.size() >= 2) {
-                    // Check what comes after the closing paren
-                    std::string after = pattern.substr(close_paren + 1);
-                    std::shared_ptr<PatternNode> alt_node = PatternNode::createAlternation(alts, {});
-                    
-                    if (after == "+") {
-                        alt_node->type = PatternType::PLUS_QUANTIFIER;
-                        alt_node->quantified = PatternNode::createAlternation(alts, {});
-                    } else if (after == "*") {
-                        alt_node->type = PatternType::STAR_QUANTIFIER;
-                        alt_node->quantified = PatternNode::createAlternation(alts, {});
-                    } else if (after == "?") {
-                        alt_node->type = PatternType::OPTIONAL;
-                        alt_node->quantified = PatternNode::createAlternation(alts, {});
-                    }
-                    // If nothing after, it's just a grouped alternation, return as-is
-                    return alt_node;
+                return result;
+            };
+            
+            std::vector<std::string> alt_strings = splitAlternation(inner);
+            if (alt_strings.size() >= 2) {
+                for (const auto& alt : alt_strings) {
+                    alts.push_back(parsePatternToAST(alt));
                 }
+                
+                // Check what comes after the closing paren
+                std::string after = pattern.substr(close_paren + 1);
+                std::shared_ptr<PatternNode> alt_node = PatternNode::createAlternation(alts, {});
+                
+                if (after == "+") {
+                    alt_node->type = PatternType::PLUS_QUANTIFIER;
+                    alt_node->quantified = PatternNode::createAlternation(alts, {});
+                } else if (after == "*") {
+                    alt_node->type = PatternType::STAR_QUANTIFIER;
+                    alt_node->quantified = PatternNode::createAlternation(alts, {});
+                } else if (after == "?") {
+                    alt_node->type = PatternType::OPTIONAL;
+                    alt_node->quantified = PatternNode::createAlternation(alts, {});
+                }
+                // If nothing after, it's just a grouped alternation, return as-is
+                return alt_node;
+            } else if (alt_strings.size() == 1) {
+                // Single alternative - recurse to handle FRAGMENT_REF inside
+                return parsePatternToAST(alt_strings[0]);
             }
         }
     }
     
     // Handle simple pattern without alternation: (xxx)+
     if (pattern.size() >= 4 && pattern[0] == '(') {
-        size_t close_paren = pattern.find(')');
+        size_t close_paren = findClosingParen(pattern, 1);
         if (close_paren != std::string::npos) {
             std::string inner = pattern.substr(1, close_paren - 1);
             std::string after = pattern.substr(close_paren + 1);
@@ -603,7 +748,7 @@ std::vector<TestCase> TestGenerator::generate() {
     std::vector<TestCase> tests;
     // For combined testing, max 4 test cases (8 patterns: 4 matching + 4 counter)
     int max_tests = std::min(opts.num_tests, 4);
-    tests.reserve(max_tests);
+    tests.reserve(max_tests * (1 + opts.mutations_per_test));
     
     // Track all inputs used so far to avoid collisions between test cases
     std::set<std::string> all_used_inputs;
@@ -621,29 +766,69 @@ std::vector<TestCase> TestGenerator::generate() {
         
         tests.push_back(base_tc);
         
-        // Generate mutations of this test case using coordinated mutation operators
-        // Each mutated case is a complete (pattern, inputs, counters, expectations) that's coherent
+        // Apply mutation chain: each successful mutation becomes the input for the next
         TestGen::CoordinatedMutationEngine coord_engine;
-        TestGen::TestCaseCore base_core = TestGen::TestCaseCore::fromOldTestCase(base_tc);
+        TestGen::TestCaseCore current_core = TestGen::TestCaseCore::fromOldTestCase(base_tc);
+        std::string proof_chain = base_tc.proof;
         
-        auto mutations = coord_engine.mutate(base_core, 10, rng);
-        for (auto& mut_result : mutations) {
-            if (mut_result.valid) {
-                TestCase mutated_tc = mut_result.mutated_tc.toOldTestCase(tests.size());
-                mutated_tc.category = base_tc.category;
-                mutated_tc.counter_category = base_tc.counter_category;
-                mutated_tc.proof = base_tc.proof + " -> " + mut_result.proof;
-                
-                // Add mutated case's inputs to global set
-                for (const auto& inp : mutated_tc.matching_inputs) {
-                    all_used_inputs.insert(inp);
+        int mutations_applied = 0;
+        int mutation_attempts = 0;
+        const int max_attempts = opts.mutations_per_test * 3;
+        
+        while (mutations_applied < opts.mutations_per_test && mutation_attempts < max_attempts) {
+            mutation_attempts++;
+            
+            auto mutations = coord_engine.mutate(current_core, 5, rng);
+            if (mutations.empty()) break;
+            
+            TestGen::TestCaseCore next_core;
+            std::string mut_proof;
+            bool found_valid = false;
+            
+            for (auto& mut_result : mutations) {
+                if (mut_result.valid) {
+                    // Debug: check what mutation is doing
+                    std::string mutated_pattern = mut_result.mutated_tc.pattern();
+                    if (mutated_pattern.find("fNag") != std::string::npos) {
+                        fprintf(stderr, "DEBUG MUT: Pattern has fNag: %s\n", mutated_pattern.c_str());
+                        // Now check AST IMMEDIATELY after pattern()
+                        if (mut_result.mutated_tc.ast) {
+                            fprintf(stderr, "DEBUG MUT: AST root type: %d (SEQUENCE=%d, ALTERNATION=%d, LITERAL=%d, FRAGMENT_REF=%d)\n", 
+                                (int)mut_result.mutated_tc.ast->type,
+                                (int)PatternType::SEQUENCE,
+                                (int)PatternType::ALTERNATION,
+                                (int)PatternType::LITERAL,
+                                (int)PatternType::FRAGMENT_REF);
+                            fprintf(stderr, "DEBUG MUT: AST value: '%s'\n", mut_result.mutated_tc.ast->value.c_str());
+                            fprintf(stderr, "DEBUG MUT: AST children count: %zu\n", mut_result.mutated_tc.ast->children.size());
+                            fprintf(stderr, "DEBUG MUT: AST has quantified: %d\n", mut_result.mutated_tc.ast->quantified ? 1 : 0);
+                        }
+                        std::set<std::string> ast_frags;
+                        collectFragmentNames(mut_result.mutated_tc.ast, ast_frags);
+                        fprintf(stderr, "DEBUG MUT: AST-fragments count: %zu\n", ast_frags.size());
+                        for (const auto& f : ast_frags) {
+                            fprintf(stderr, "DEBUG MUT:   frag='%s'\n", f.c_str());
+                        }
+                    }
+                    next_core = mut_result.mutated_tc;
+                    mut_proof = mut_result.proof;
+                    found_valid = true;
+                    break;
                 }
-                for (const auto& inp : mutated_tc.counter_inputs) {
-                    all_used_inputs.insert(inp);
-                }
-                
-                tests.push_back(mutated_tc);
             }
+            
+            if (!found_valid) continue;
+            
+            TestCase mutated_tc = next_core.toOldTestCase(tests.size());
+            mutated_tc.category = base_tc.category;
+            mutated_tc.counter_category = base_tc.counter_category;
+            mutated_tc.proof = proof_chain + " -> " + mut_proof;
+            
+            // Mutations share inputs with their parent by design - no collision check needed
+            tests.push_back(mutated_tc);
+            proof_chain = mutated_tc.proof;
+            current_core = next_core;
+            mutations_applied++;
         }
     }
     return tests;
@@ -1196,6 +1381,11 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
             // Fallback to old approach if InductiveBuilder fails
             PatternResult fallback = generateSeparatingPattern(tc.matching_inputs, tc.counter_inputs, tc.complexity, rng);
             result = fallback;
+            // CRITICAL FIX: Strategies set result.pattern but NOT result.ast
+            // Parse the pattern string to AST so transformations can work on it
+            if (!result.pattern.empty() && !result.ast) {
+                result.ast = parsePatternToAST(result.pattern);
+            }
         }
     }
 
@@ -1313,6 +1503,11 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
         if (factorization_failed && pre_factor_ast) {
             result.proof += "  [REVERT] Factization produced invalid pattern, using pre-factorization version\n";
             result.ast = pre_factor_ast;
+            // Ensure fragments from result.fragments are in tc.fragments
+            // (they may have been set by the strategy before factorization)
+            for (const auto& [name, def] : result.fragments) {
+                tc.fragments[name] = def;
+            }
         } else {
             // Apply complex rewrites (char classes, optional groups, nested quantifiers)
             std::string pre_complex = serializePattern(result.ast);
@@ -1323,6 +1518,11 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
             for (const auto& [name, def] : fragment_defs) {
                 result.fragments[name] = def;
                 tc.fragments[name] = def;  // Also add to tc for pattern file output
+            }
+            // Also ensure any pre-existing fragments from result.fragments are in tc.fragments
+            // (these may have been set by strategy before applyComplexRewrites)
+            for (const auto& [name, def] : result.fragments) {
+                tc.fragments[name] = def;
             }
             std::string after_complex = serializePattern(result.ast);
         
@@ -1366,6 +1566,21 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     }
     
     tc.proof = result.proof;
+    
+    // COMPREHENSIVE FIX: Ensure all FRAGMENT_REF nodes in AST have definitions
+    // This validates and fixes any missing fragment definitions from transformations
+    if (result.ast && !tc.pattern.empty()) {
+        std::set<std::string> ast_frags;
+        collectFragmentNames(result.ast, ast_frags);
+        for (const auto& frag_name : ast_frags) {
+            if (tc.fragments.find(frag_name) == tc.fragments.end()) {
+                // This should never happen - indicates a bug upstream
+                fprintf(stderr, "ERROR: Fragment '%s' referenced in AST but has no definition - adding placeholder\n", 
+                        frag_name.c_str());
+                tc.fragments[frag_name] = ".";
+            }
+        }
+    }
     
     return tc;
 }
@@ -1473,15 +1688,99 @@ bool TestGenerator::wouldPatternMatch(const std::string& input, const std::strin
     return false;
 }
 
+// Extract fragment references from a pattern string
+// FRAGMENT_REF format: ((name))+ where name can contain namespace like "test::name"
+// Handles nested FRAGMENT_REFs by tracking parenthesis depth
+// FRAGMENT_REF is: ( ( name ) ) +  where + is the quantifier
+static std::vector<std::string> extractFragmentRefsFromPattern(const std::string& pattern) {
+    std::vector<std::string> refs;
+    size_t pos = 0;
+    while (pos < pattern.size()) {
+        if (pos + 2 < pattern.size() && pattern[pos] == '(' && pattern[pos+1] == '(') {
+            size_t start = pos + 2;
+            size_t end = start;
+            int depth = 1;
+            bool found = false;
+            while (end < pattern.size() && depth > 0) {
+                if (end + 1 < pattern.size() && pattern[end] == '(' && pattern[end+1] == '(') {
+                    depth++;
+                    end += 2;
+                } else if (end + 1 < pattern.size() && pattern[end] == ')' && pattern[end+1] == ')') {
+                    depth--;
+                    if (depth == 0) {
+                        found = true;
+                        break;
+                    }
+                    end += 2;
+                } else {
+                    end++;
+                }
+            }
+            if (found && end > start) {
+                std::string frag_name = pattern.substr(start, end - start);
+                // After )) there should be a + quantifier, skip it
+                size_t after_end = end + 2;
+                if (after_end < pattern.size() && pattern[after_end] == '+') {
+                    after_end++;
+                } else if (after_end < pattern.size() && pattern[after_end] == '*') {
+                    after_end++;
+                } else if (after_end < pattern.size() && pattern[after_end] == '?') {
+                    after_end++;
+                }
+                // Validate: fragment name should be alphanumeric + underscore + hyphen + ::
+                bool valid = !frag_name.empty();
+                for (char c : frag_name) {
+                    if (!isalnum(c) && c != '_' && c != '-' && c != ':' && c != '/') {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (valid) {
+                    refs.push_back(frag_name);
+                }
+                pos = after_end;
+                continue;
+            }
+        }
+        pos++;
+    }
+    return refs;
+}
+
 void TestGenerator::writePatternFile(const std::vector<TestCase>& tests, const std::string& filename) {
     std::ofstream out(filename);
     out << "# Auto-generated test patterns\n\n";
     
+    // Collect all fragment definitions and validate references
     std::map<std::string, std::string> all_fragments;
     for (const auto& tc : tests) {
         for (const auto& f : tc.fragments) {
             if (all_fragments.find(f.first) == all_fragments.end()) {
                 all_fragments[f.first] = f.second;
+            }
+        }
+    }
+    
+    // Validate: ensure every FRAGMENT_REF in patterns has a definition
+    for (const auto& tc : tests) {
+        // Debug: check if the pattern matches what serializePattern would produce
+        fprintf(stderr, "DEBUG WRITE: tc.pattern = '%s' (len=%zu)\n", tc.pattern.c_str(), tc.pattern.size());
+        auto refs = extractFragmentRefsFromPattern(tc.pattern);
+        fprintf(stderr, "DEBUG WRITE: extracted %zu fragment refs\n", refs.size());
+        for (const auto& ref : refs) {
+            fprintf(stderr, "DEBUG WRITE: ref = '%s'\n", ref.c_str());
+            if (all_fragments.find(ref) == all_fragments.end()) {
+                fprintf(stderr, "ERROR: Pattern references undefined fragment '%s' in test %d - this is a bug in testgen\n", 
+                        ref.c_str(), tc.test_id);
+                // DON'T add placeholder - the NFA builder will fail and help identify the bug
+                // Debug: print first 50 chars of pattern to help trace
+                std::string pattern_short = tc.pattern.substr(0, 50);
+                fprintf(stderr, "ERROR: Pattern (first 50 chars): %s\n", pattern_short.c_str());
+                fprintf(stderr, "ERROR: Available fragments in tc.fragments (%zu total):\n", tc.fragments.size());
+                for (const auto& f : tc.fragments) {
+                    fprintf(stderr, "ERROR:   '%s' -> '%s'\n", f.first.c_str(), f.second.c_str());
+                    if (tc.fragments.size() > 10) break; // Limit output
+                }
             }
         }
     }

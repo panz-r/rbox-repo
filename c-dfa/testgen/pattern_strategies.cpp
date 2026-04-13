@@ -881,8 +881,9 @@ PatternResult tryNestedGroup(const std::vector<std::string>& matching,
         return result;
     }
     
-    // Wrap in extra parens: ((pattern))
-    result.pattern = "((" + base_pattern + "))";
+    // Wrap in parens for grouping: (pattern)
+    // Note: ((pattern)) is FRAGMENT_REF syntax, so we use single parens for grouping
+    result.pattern = "(" + base_pattern + ")";
     
     // Verify - nested groups should match same as base
     bool all_match = true;
@@ -931,13 +932,10 @@ PatternResult tryNestedGroup(const std::vector<std::string>& matching,
         }
         
         if (!any_match) {
-            result.pattern = "((" + base_pattern + "))";
-            
-            // For nested groups, we keep the same AST but wrap it
-            // Just use the base pattern as-is since nesting doesn't change semantics
+            result.pattern = "(" + base_pattern + ")";
             
             result.proof += "  Nested: " + result.pattern + "\n";
-            result.proof += "    Wrapped base pattern in extra parentheses\n";
+            result.proof += "    Wrapped base pattern in parentheses for grouping\n";
             result.proof += "    VERIFIED: same matching as base, counters excluded\n";
             return result;
         }
@@ -2894,7 +2892,10 @@ PatternResult applyEdgeCases(const PatternResult& base,
         PatternResult nested = tryNestedGroup(matching, counters, rng, result.pattern);
         if (!nested.pattern.empty()) {
             result = nested;
-            result.fragments = nested.fragments;
+            // Merge fragments (not overwrite) - nested.fragments may be empty but base fragments must be preserved
+            for (const auto& f : nested.fragments) {
+                result.fragments[f.first] = f.second;
+            }
             result.proof += "    [Edge case: Nested group with 6% probability]\n";
             return result;
         }

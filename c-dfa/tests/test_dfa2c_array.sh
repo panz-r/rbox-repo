@@ -3,7 +3,14 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TOOLS_DIR="$SCRIPT_DIR/../tools"
+SRC_DIR="$SCRIPT_DIR/.."
+
+# BUILD_DIR can be passed from Python runner, otherwise auto-detect
+if [ -n "$BUILD_DIR" ]; then
+    TOOLS_DIR="$BUILD_DIR/tools"
+else
+    TOOLS_DIR="$SRC_DIR/build/tools"
+fi
 DFA2C="$TOOLS_DIR/dfa2c_array"
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT

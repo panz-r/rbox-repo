@@ -1,13 +1,32 @@
 #include "testgen_core.h"
 #include "pattern_serializer.h"
+#include <set>
 
 namespace TestGen {
 
 std::string TestCaseCore::pattern() const {
     if (ast) {
-        return serializePattern(ast);
+        std::string result = serializePattern(ast);
+        if (result.find("fNag") != std::string::npos) {
+            fprintf(stderr, "DEBUG PATTERN: serialize produced fNag in: %s\n", result.c_str());
+        }
+        return result;
     }
     return "";
+}
+
+// Collect all FRAGMENT_REF names from an AST node
+static void collectFragmentNames(std::shared_ptr<PatternNode> node, std::set<std::string>& names) {
+    if (!node) return;
+    if (node->type == PatternType::FRAGMENT_REF) {
+        names.insert(node->fragment_name);
+    }
+    if (node->quantified) {
+        collectFragmentNames(node->quantified, names);
+    }
+    for (auto& child : node->children) {
+        collectFragmentNames(child, names);
+    }
 }
 
 TestCaseCore TestCaseCore::fromOldTestCase(const TestCase& tc) {
@@ -50,6 +69,20 @@ TestCase TestCaseCore::toOldTestCase(int test_id) const {
             tc.matching_inputs.push_back(node.value);
         } else if (node.categories.count("counter")) {
             tc.counter_inputs.push_back(node.value);
+        }
+    }
+    
+    // DEFENSIVE FIX: Ensure all FRAGMENT_REF nodes in AST have definitions
+    // This catches issues where mutations create FRAGMENT_REF nodes without definitions
+    if (ast) {
+        std::set<std::string> ast_frags;
+        collectFragmentNames(ast, ast_frags);
+        for (const auto& frag_name : ast_frags) {
+            if (tc.fragments.find(frag_name) == tc.fragments.end()) {
+                fprintf(stderr, "WARNING: Fragment '%s' in mutated AST but has no definition, adding placeholder\n",
+                        frag_name.c_str());
+                tc.fragments[frag_name] = ".";
+            }
         }
     }
     

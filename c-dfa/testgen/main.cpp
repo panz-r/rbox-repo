@@ -14,9 +14,10 @@ void printUsage(const char* prog) {
     std::cout << "  -o DIR        Output directory (default: output)\n";
     std::cout << "  -s SEED       Random seed\n";
     std::cout << "  -c LEVEL      Complexity: simple, medium, complex, mixed (default: mixed)\n";
+    std::cout << "  -m N          Mutations per test case (default: 10, 0 to disable)\n";
     std::cout << "  -r            Run tests through c-dfa\n";
     std::cout << "  -k            Keep generated files\n";
-    std::cout << "  -h            Show this help\n";
+    std::cout << "  -h, --help    Show this help\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -39,11 +40,13 @@ int main(int argc, char* argv[]) {
             else if (c == "medium") opts.complexity = Complexity::MEDIUM;
             else if (c == "complex") opts.complexity = Complexity::COMPLEX;
             else if (c == "mixed") opts.complexity = Complexity::MEDIUM;
+        } else if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--mutations") == 0) {
+            if (i + 1 < argc) opts.mutations_per_test = std::stoi(argv[++i]);
         } else if (strcmp(argv[i], "-r") == 0) {
             run_tests = true;
         } else if (strcmp(argv[i], "-k") == 0) {
             keep_files = true;
-        } else if (strcmp(argv[i], "-h") == 0) {
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             return 0;
         }

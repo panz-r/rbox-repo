@@ -1,6 +1,9 @@
 #include "testgen_operators.h"
 #include "pattern_serializer.h"
 #include <algorithm>
+#include <map>
+#include <set>
+#include <functional>
 
 namespace TestGen {
 
@@ -76,6 +79,20 @@ static bool isValidPattern(std::shared_ptr<PatternNode> node) {
     if (!node) return false;
     std::string serialized = serializePattern(node);
     return hasBalancedParens(serialized);
+}
+
+static bool hasAllFragmentDefs(std::shared_ptr<PatternNode> node, const std::map<std::string, std::string>& fragments) {
+    if (!node) return true;
+    if (node->type == PatternType::FRAGMENT_REF) {
+        if (fragments.find(node->fragment_name) == fragments.end()) {
+            return false;
+        }
+    }
+    if (node->quantified && !hasAllFragmentDefs(node->quantified, fragments)) return false;
+    for (auto& child : node->children) {
+        if (!hasAllFragmentDefs(child, fragments)) return false;
+    }
+    return true;
 }
 
 static bool patternMatchesPlus(const std::string& content, const std::string& str) {
@@ -1691,10 +1708,48 @@ std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(
     std::mt19937& rng
 ) const {
     std::vector<CoordinatedMutationResult> all_results;
+    
+    // Debug: check original tc.ast before mutation
+    if (tc.fragments.find("frag747") != tc.fragments.end()) {
+        std::string pat = tc.pattern();
+        fprintf(stderr, "DEBUG MUTATE INPUT: tc has frag747, pattern=%s\n", pat.c_str());
+        if (tc.ast) {
+            std::set<std::string> frag_names;
+            std::function<void(std::shared_ptr<PatternNode>)> collect = [&](std::shared_ptr<PatternNode> n) {
+                if (!n) return;
+                if (n->type == PatternType::FRAGMENT_REF) frag_names.insert(n->fragment_name);
+                if (n->quantified) collect(n->quantified);
+                for (auto& c : n->children) collect(c);
+            };
+            collect(tc.ast);
+            fprintf(stderr, "DEBUG MUTATE INPUT: AST has %zu fragment nodes, types: ", frag_names.size());
+            for (auto& f : frag_names) fprintf(stderr, "%s ", f.c_str());
+            fprintf(stderr, "\n");
+        }
+    }
+    
     for (auto& op : operators) {
         auto result = op->apply(tc, rng);
         if (result.valid) {
-            if (isValidPattern(result.mutated_tc.ast)) {
+            // Debug: check the mutated pattern
+            if (result.mutated_tc.ast && result.mutated_tc.fragments.find("frag747") != result.mutated_tc.fragments.end()) {
+                std::string pat = result.mutated_tc.pattern();
+                if (pat.find("fNag") != std::string::npos) {
+                    fprintf(stderr, "DEBUG MUTATE: op=%s, pattern=%s\n", op->name().c_str(), pat.c_str());
+                    std::set<std::string> frag_names;
+                    std::function<void(std::shared_ptr<PatternNode>)> collect = [&](std::shared_ptr<PatternNode> n) {
+                        if (!n) return;
+                        if (n->type == PatternType::FRAGMENT_REF) frag_names.insert(n->fragment_name);
+                        if (n->quantified) collect(n->quantified);
+                        for (auto& c : n->children) collect(c);
+                    };
+                    collect(result.mutated_tc.ast);
+                    fprintf(stderr, "DEBUG MUTATE: AST has %zu fragment nodes\n", frag_names.size());
+                    for (auto& f : frag_names) fprintf(stderr, "DEBUG MUTATE:   frag='%s'\n", f.c_str());
+                }
+            }
+            if (isValidPattern(result.mutated_tc.ast) && 
+                hasAllFragmentDefs(result.mutated_tc.ast, result.mutated_tc.fragments)) {
                 all_results.push_back(result);
             }
         }

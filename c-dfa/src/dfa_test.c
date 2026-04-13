@@ -78,7 +78,7 @@ static void print_usage(const char* progname) {
     printf("  --test-set A|B|C       Run only tests for specified test set(s)\n");
     printf("                          A = Core tests (quantifiers, fragments, etc.)\n");
     printf("                          B = Expanded tests (quantifier expansions)\n");
-    printf("                          C = Command tests (admin, caution, captures)\n");
+    printf("                          C = Command tests (admin, caution, modifying, dangerous, network commands)\n");
     printf("                          Can combine: ABC, AB, AC, BC, etc.\n");
     printf("  --help                 Show this help message\n");
     printf("\nExamples:\n");

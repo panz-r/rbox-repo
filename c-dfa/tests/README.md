@@ -2,6 +2,44 @@
 
 This directory contains all test-related files for the C-DFA project.
 
+## Running Tests
+
+```bash
+# Configure and build
+cmake -B build
+cmake --build build
+
+# Run all tests via CTest
+ctest --test-dir build --output-on-failure
+
+# Run specific tests
+ctest --test-dir build -R dfa_test --output-on-failure
+ctest --test-dir build -R test_library_api --output-on-failure
+ctest --test-dir build -R test_eval_only --output-on-failure
+```
+
+## Test Executables
+
+| Test | Description |
+|------|-------------|
+| `dfa_test` | Comprehensive test suite |
+| `test_library_api` | Library API tests |
+| `test_eval_only` | Eval-only functionality tests |
+| `test_minimize_integrity` | Minimization integrity tests |
+| `regression_test` | Regression tests |
+
+## Test Sets
+
+- **A**: Core tests (basic patterns, quantifiers, fragments, alternation)
+- **B**: Expanded tests (complex patterns with nested quantifiers)
+- **C**: Command tests (admin, caution, modifying, dangerous, network commands)
+
+Run specific test sets:
+```bash
+./build/tests/dfa_test --test-set A
+./build/tests/dfa_test --test-set A --minimize-hopcroft
+```
+
 ## Directory Structure
 
 ### test_data/
@@ -18,31 +56,7 @@ Test execution scripts:
 
 ### Root
 Test source code:
-- `test_sat_encoding.cpp` - SAT encoding tests
-- `test_capture_e2e.c` - End-to-end capture tests
 - `test_minimize_integrity.c` - Minimization integrity tests
-
-## Running Tests
-
-```bash
-# From c-dfa root directory
-make test
-
-# Run specific test set
-./dfa_test --test-set A patterns/stress_test.txt
-
-# Run with specific minimization algorithm
-./dfa_test --test-set A --minimize-hopcroft
-```
-
-## Test Sets
-
-- **A**: Core tests (basic patterns, quantifiers, fragments, alternation)
-- **B**: Expanded tests (complex patterns with nested quantifiers)
-- **C**: Command tests (admin, caution, modifying, dangerous, network commands)
-
-## Adding New Tests
-
-1. Create pattern file in `patterns/` directory
-2. Add test case to `src/dfa_test.c`
-3. Run `make test` to verify
+- `test_library_api.c` - Library API tests
+- `test_eval_only.c` - Eval-only tests
+- `regression_test.c` - Regression tests

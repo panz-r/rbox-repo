@@ -7,25 +7,38 @@ Generates pattern files with expectations from an abstract grammar. Works backwa
 The generator uses a **backwards synthesis** approach:
 
 1. **Select expectations**: Choose what the pattern should match
-2. **Generate counter inputs**: Create 10 inputs that should NOT match  
+2. **Generate counter inputs**: Create 10 inputs that should NOT match
 3. **Build pattern backwards**: Create a pattern that matches the expected input but not the counter inputs
 4. **Add variability**: Apply random transformations (fragments, character classes, quantifiers) for complexity
 
 ## Building
 
+TestGen is built as part of the main CMake build:
+
 ```bash
-cd testgen
-make
+cmake -B build
+cmake --build build
+```
+
+Executables are in `build/testgen/`:
+- `testgen` - Main generator executable
+- `testgen_lib` - Static library
+- `testgen_test` - Unit tests
+
+## Running Tests
+
+```bash
+ctest --test-dir build -R testgen --output-on-failure
 ```
 
 ## Usage
 
 ```bash
 # Generate test cases
-./testgen -n 100 -c mixed
+./build/testgen/testgen -n 100 -c mixed
 
 # Generate and run tests
-./testgen -n 100 -c mixed -r
+./build/testgen/testgen -n 100 -c mixed -r
 ```
 
 ### Options

@@ -184,6 +184,7 @@ struct Options {
     Complexity complexity = Complexity::MEDIUM;
     bool run_tests = false;
     bool keep_files = false;
+    int mutations_per_test = 10;
 };
 
 class TestGenerator {

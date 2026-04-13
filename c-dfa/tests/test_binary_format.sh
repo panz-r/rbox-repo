@@ -4,10 +4,34 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TOOLS_DIR="$SCRIPT_DIR/../tools"
-DFA2C="$TOOLS_DIR/dfa2c_array"
-BUILD="$SCRIPT_DIR/../build_test"
+SRC_DIR="$SCRIPT_DIR/.."
+
+# BUILD_DIR can be passed from Python runner, otherwise auto-detect
+if [ -n "$BUILD_DIR" ]; then
+    BUILD="$BUILD_DIR"
+    TOOLS_DIR="$BUILD/tools"
+    LIB_DIR="$BUILD/tools"
+elif [ -d "$SRC_DIR/build/tools" ] && [ -f "$SRC_DIR/build/tools/libreadonlybox_dfa.a" ]; then
+    BUILD="$SRC_DIR/build"
+    TOOLS_DIR="$SRC_DIR/build/tools"
+    LIB_DIR="$SRC_DIR/build/tools"
+else
+    BUILD="$SRC_DIR/build_test"
+    TOOLS_DIR="$SRC_DIR/tools"
+    LIB_DIR="$SRC_DIR/build_test"
+fi
 mkdir -p "$BUILD"
+
+# Create build_test symlink for backward compatibility with hardcoded paths in C test code
+if [ ! -e "$SRC_DIR/build_test" ]; then
+    ln -s "$BUILD" "$SRC_DIR/build_test"
+fi
+
+# Libraries needed for linking
+readonlybox_lib="$LIB_DIR/libreadonlybox_dfa.a"
+sat_lib="$LIB_DIR/libsat_modules.a"
+cadical_lib="$SRC_DIR/vendor/cadical/build/libcadical.a"
+STATIC_LIBS="$readonlybox_lib $sat_lib $cadical_lib -lm -lstdc++"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -20,6 +44,14 @@ build_dfa() {
     local patterns="$1" output="$2"
     "$TOOLS_DIR/nfa_builder" "$patterns" "$BUILD/test.nfa" 2>/dev/null || return 1
     "$TOOLS_DIR/nfa2dfa_advanced" "$BUILD/test.nfa" "$output" 2>/dev/null || return 1
+}
+
+# Helper: compile and link test program
+compile_test() {
+    local src="$1" out="$2"
+    gcc -I"$SRC_DIR/include" -o "$out" "$src" \
+        "$readonlybox_lib" "$sat_lib" "$cadical_lib" \
+        -lm -lstdc++ 2>/dev/null || return 1
 }
 
 # Helper: test DFA evaluation using C test program
@@ -46,7 +78,7 @@ int main(void) {
     return 0;
 }
 CEEOF
-    gcc -Iinclude -o "$BUILD/test_eval_bin" "$BUILD/test_eval_tmp.c" -L. -lreadonlybox_dfa -lm 2>/dev/null || return 1
+    gcc -I"$SRC_DIR/include" -o "$BUILD/test_eval_bin" "$BUILD/test_eval_tmp.c" $STATIC_LIBS 2>/dev/null || return 1
     "$BUILD/test_eval_bin"
 }
 
@@ -80,7 +112,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/bad_version" "$BUILD/bad_version.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/bad_version" "$BUILD/bad_version.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/bad_version" 2>/dev/null)
 if [ "$RESULT" = "0" ]; then pass "version_rejection"; else fail "version_rejection: got '$RESULT' expected '0'"; fi
 
@@ -145,7 +177,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_id" "$BUILD/test_id.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_id" "$BUILD/test_id.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_id" 2>/dev/null)
 if [ "$RESULT" = "1 0 0" ]; then pass "identifier_validation"; else fail "identifier_validation: got '$RESULT' expected '1 0 0'"; fi
 
@@ -200,7 +232,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_compact" "$BUILD/test_compact.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_compact" "$BUILD/test_compact.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_compact" 2>/dev/null)
 # Should have compact states, empty NOT match, "a" matches
 if echo "$RESULT" | grep -q " 0 1$"; then pass "compact_state_empty_input ($RESULT)"; else fail "compact_state_empty_input: got '$RESULT'"; fi
@@ -241,7 +273,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_boundary" "$BUILD/test_boundary.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_boundary" "$BUILD/test_boundary.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_boundary" 2>/dev/null)
 if [ "$RESULT" = "1 0 0" ]; then pass "char_boundary_7f_80"; else fail "char_boundary_7f_80: got '$RESULT' expected '1 0 0'"; fi
 
@@ -283,7 +315,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_dense" "$BUILD/test_dense.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_dense" "$BUILD/test_dense.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_dense" 2>/dev/null)
 if [ "$RESULT" = "11111 00" ]; then pass "dense_state_200_transitions"; else fail "dense_state_200_transitions: got '$RESULT' expected '11111 00'"; fi
 
@@ -321,7 +353,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_range" "$BUILD/test_range.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_range" "$BUILD/test_range.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_range" 2>/dev/null)
 if echo "$RESULT" | grep -q "00$"; then pass "packed_range_127_boundary ($RESULT)"; else fail "packed_range_127_boundary: got '$RESULT'"; fi
 
@@ -364,7 +396,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_mixed" "$BUILD/test_mixed.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_mixed" "$BUILD/test_mixed.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_mixed" 2>/dev/null)
 if [ "$RESULT" = "11100" ]; then pass "mixed_state_sizes"; else fail "mixed_state_sizes: got '$RESULT' expected '11100'"; fi
 
@@ -395,7 +427,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_minimal" "$BUILD/test_minimal.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_minimal" "$BUILD/test_minimal.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_minimal" 2>/dev/null)
 if [ "$RESULT" = "100" ]; then pass "minimal_dfa"; else fail "minimal_dfa: got '$RESULT' expected '100'"; fi
 
@@ -439,7 +471,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_frag_full" "$BUILD/test_frag_full.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_frag_full" "$BUILD/test_frag_full.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_frag_full" 2>/dev/null)
 if [ "$RESULT" = "1 0" ]; then pass "fragment_full_range"; else fail "fragment_full_range: got '$RESULT' expected '1 0' (known packed encoding issue with capture markers)"; fi
 
@@ -478,7 +510,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_capture" "$BUILD/test_capture.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_capture" "$BUILD/test_capture.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_capture" 2>/dev/null)
 if [ "$RESULT" = "1 1 0" ]; then pass "capture_markers_transitions"; else fail "capture_markers_transitions: got '$RESULT' expected '1 1 0' (known issue: capture markers corrupt fragment transitions)"; fi
 
@@ -523,7 +555,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_http" "$BUILD/test_http.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_http" "$BUILD/test_http.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_http" 2>/dev/null)
 if [ "$RESULT" = "11110" ]; then pass "packed_http_patterns"; else fail "packed_http_patterns: got '$RESULT' expected '11110' (known issue: capture markers corrupt transitions)"; fi
 
@@ -549,7 +581,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_ver0" "$BUILD/test_ver0.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_ver0" "$BUILD/test_ver0.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_ver0" 2>/dev/null)
 if [ "$RESULT" = "0" ]; then pass "version_zero_rejected"; else fail "version_zero_rejected: got '$RESULT' expected '0'"; fi
 
@@ -587,7 +619,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_cap_access" "$BUILD/test_cap_access.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_cap_access" "$BUILD/test_cap_access.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_cap_access" 2>/dev/null)
 # Known issue: captures not yet working in v8 format
 if echo "$RESULT" | grep -q "^1 "; then pass "capture_access_api ($RESULT - matched OK, captures need work)"; else fail "capture_access_api: got '$RESULT'"; fi
@@ -601,7 +633,7 @@ cat > "$BUILD/bad_parens.txt" << 'EOF'
 [safe] (unclosed paren
 EOF
 set +e
-tools/nfa_builder "$BUILD/bad_parens.txt" "$BUILD/bad_parens.nfa" 2>/dev/null
+"$TOOLS_DIR/nfa_builder" "$BUILD/bad_parens.txt" "$BUILD/bad_parens.nfa" 2>/dev/null
 RC=$?
 set -e
 if [ $RC -ne 0 ]; then pass "validation_unmatched_parens"; else fail "validation_unmatched_parens: should have failed"; fi
@@ -640,7 +672,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_empty" "$BUILD/test_empty.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_empty" "$BUILD/test_empty.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_empty" 2>/dev/null)
 # empty: not matched (pattern "a" requires char), NULL: not matched, single "a": matched
 if [ "$RESULT" = "0 0 1" ]; then pass "empty_input_edge_cases"; else fail "empty_input_edge_cases: got '$RESULT' expected '0 0 1'"; fi
@@ -661,7 +693,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_cat_str" "$BUILD/test_cat_str.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_cat_str" "$BUILD/test_cat_str.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_cat_str" 2>/dev/null)
 if [ "$RESULT" = "1" ]; then pass "category_string_invalid"; else fail "category_string_invalid: got '$RESULT'"; fi
 
@@ -697,7 +729,7 @@ int main(void) {
     return 0;
 }
 CEOF
-gcc -Iinclude -o "$BUILD/test_alpha" "$BUILD/test_alpha.c" -L. -lreadonlybox_dfa -lm 2>/dev/null
+gcc -I"$SRC_DIR/include" -o "$BUILD/test_alpha" "$BUILD/test_alpha.c" $STATIC_LIBS 2>/dev/null
 RESULT=$("$BUILD/test_alpha" 2>/dev/null)
 # "cmd a", "cmd Z", "cmd 9" should match (one or more chars after cmd)
 # "cmd" alone should NOT match (requires at least one char after space)

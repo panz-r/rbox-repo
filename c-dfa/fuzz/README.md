@@ -2,86 +2,69 @@
 
 LibFuzzer-based fuzzers for testing the DFA and pattern parser components of ReadOnlyBox.
 
-## Quick Reference (Common Tasks)
+## Building
+
+Fuzzers require clang with LibFuzzer support. Build with CMake:
 
 ```bash
-# Build all fuzzers
-make all
+# Configure with fuzzers enabled (must use clang)
+cmake -B build -DENABLE_FUZZ=ON \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
-# List found crashes
-make list-crashes
+# Build all (including fuzzers)
+cmake --build build
+```
 
-# Clear all crash artifacts (after fixing bugs)
-make clean-crashes
+Fuzzers are output to `build/fuzz/`:
+- `dfa_eval_fuzzer`
+- `pattern_parse_fuzzer`
+- `nfa_build_fuzzer`
+- `pipeline_fuzzer`
+- `dfa_loader_fuzzer`
 
-# Replay all crashes (verify fixes)
-make replay-all-crashes
+## Running Fuzzers
 
-# Replay crashes for specific fuzzer
-make replay-all-nfa-build-crashes
-make replay-all-dfa-crashes
-make replay-all-pattern-crashes
+Run from the c-dfa source directory:
 
-# Replay specific crash files
-make replay-crashes-nfa-build CRASHES="crashes/nfa_build_*"
+```bash
+# DFA evaluation fuzzer
+./build/fuzz/dfa_eval_fuzzer fuzz/corpus/seed/dfa_eval \
+    -merge=fuzz/corpus/interesting/dfa_eval \
+    -artifact_prefix=fuzz/crashes/dfa_eval_ \
+    -max_len=4096 -jobs=4 -workers=4
 
-# Run 4-hour fuzzing session with memory protection
-./run_fuzzing_4h.sh nfa-build
-./run_fuzzing_4h.sh dfa
-./run_fuzzing_4h.sh pattern
+# Pattern parser fuzzer
+./build/fuzz/pattern_parse_fuzzer fuzz/corpus/seed/pattern_parser \
+    -merge=fuzz/corpus/interesting/pattern_parser \
+    -artifact_prefix=fuzz/crashes/pattern_parse_ \
+    -max_len=8192 -jobs=4 -workers=4
+
+# NFA build fuzzer
+./build/fuzz/nfa_build_fuzzer fuzz/corpus/seed/pattern_parser \
+    -merge=fuzz/corpus/interesting/nfa_build \
+    -artifact_prefix=fuzz/crashes/nfa_build_ \
+    -max_len=32768 -jobs=2 -workers=2
+
+# Pipeline fuzzer (full build pipeline)
+./build/fuzz/pipeline_fuzzer fuzz/corpus/seed/pattern_parser \
+    -merge=fuzz/corpus/interesting/pipeline \
+    -artifact_prefix=fuzz/crashes/pipeline_ \
+    -max_len=4096 -jobs=2 -workers=2
+
+# DFA loader fuzzer
+./build/fuzz/dfa_loader_fuzzer fuzz/corpus/seed/dfa_binary \
+    -merge=fuzz/corpus/interesting/loader \
+    -artifact_prefix=fuzz/crashes/loader_ \
+    -max_len=65536 -jobs=2 -workers=2
 ```
 
 ## Fuzzers
 
-### 1. nfa_build_fuzzer
+### dfa_eval_fuzzer
 
-Fuzzes NFA construction by running `nfa_builder` as a subprocess.
+Fuzzes `dfa_eval()` with random command strings.
 
-**Target:** `c-dfa/tools/nfa_builder` (full NFA construction, not just validation)
-
-**Corpus:** `corpus/seed/pattern_parser/` - pattern specification files
-
-**Build:**
-```bash
-make nfa_build_fuzzer
-```
-
-**Run:**
-```bash
-./nfa_build_fuzzer corpus/seed/pattern_parser -max_len=32768 -jobs=2 -workers=2
-```
-
-**What it tests:**
-- Pattern file parsing
-- NFA state construction
-- Memory allocation during build
-- Crash detection in builder
-
-**Performance:** ~1K-5K execs/sec (subprocess overhead)
-
-### 2. dfa_eval_fuzzer
-
-Fuzzes the `dfa_evaluate()` function with random command strings.
-
-**Target:** `c-dfa/src/dfa_eval.c`
-
-**Corpus:** `corpus/seed/dfa_binary/` - binary DFA files (see note below)
-
-**Dictionary:** `cmd_dict.txt` - common command tokens to guide mutation
-
-**Build:**
-```bash
-make dfa_eval_fuzzer
-```
-
-**Run:**
-```bash
-./dfa_eval_fuzzer corpus/seed/dfa_binary -max_len=4096 -jobs=4 -workers=4
-```
-
-**Corpus Format Note:** The fuzzer expects binary format: `[dfa_size:4][dfa_data][num_strings:2][strings...]`.
-The `dfa_binary` corpus contains raw DFA files that need to be converted to this format.
-Use `generate_dfa_corpus.sh` to regenerate proper corpus files.
+**Target:** `src/dfa_eval.c`
 
 **What it tests:**
 - DFA evaluation correctness
@@ -90,32 +73,64 @@ Use `generate_dfa_corpus.sh` to regenerate proper corpus files.
 - Memory safety (ASan)
 - Undefined behavior (UBSan)
 
-**Performance:** ~100K+ execs/sec on modern CPU
+### pattern_parse_fuzzer
 
-### 3. pattern_parse_fuzzer
+Fuzzes pattern validation via `nfa_builder --validate-only`.
 
-Fuzzes pattern validation by invoking `nfa_builder --validate-only` as a subprocess.
-
-**Target:** `c-dfa/tools/nfa_builder` pattern validation
-
-**Corpus:** `corpus/seed/pattern_parser/` - pattern specification files
-
-**Build:**
-```bash
-make pattern_parse_fuzzer
-```
-
-**Run:**
-```bash
-./pattern_parse_fuzzer corpus/seed/pattern_parser -max_len=8192 -jobs=4
-```
+**Target:** `tools/nfa_builder` pattern validation
 
 **What it tests:**
 - Pattern file parsing
 - Syntax validation
-- Resource handling (memory limits, timeouts)
+- Resource handling
 
-**Performance:** ~1K-5K execs/sec (subprocess overhead)
+### nfa_build_fuzzer
+
+Fuzzes NFA construction by running `nfa_builder` as subprocess.
+
+**Target:** `tools/nfa_builder` (full NFA construction)
+
+**What it tests:**
+- Pattern file parsing
+- NFA state construction
+- Memory allocation during build
+
+### pipeline_fuzzer
+
+Fuzzes the full build pipeline with various configurations.
+
+**Target:** Full NFA→DFA pipeline including SAT-based optimization
+
+**What it tests:**
+- End-to-end build pipeline
+- SAT solver integration
+- All minimization algorithms
+
+### dfa_loader_fuzzer
+
+Fuzzes binary and text DFA loading.
+
+**Target:** `src/dfa_loader.c`
+
+**What it tests:**
+- Binary DFA format parsing
+- Text DFA format parsing
+- Loading error handling
+
+## Crash Replay
+
+Replay crashes to verify fixes:
+
+```bash
+# Run single crash
+./build/fuzz/dfa_eval_fuzzer fuzz/crashes/dfa_eval_<id> -runs=1
+
+# Run all crashes of a type
+for crash in fuzz/crashes/dfa_eval_*; do
+    echo "=== Replaying $crash ==="
+    ./build/fuzz/dfa_eval_fuzzer "$crash" -runs=1
+done
+```
 
 ## Memory Protection
 
@@ -127,128 +142,50 @@ Three layers of protection prevent OOM crashes:
 | Per-fuzzer | `-rss_limit_mb` | 4 GB LibFuzzer limit |
 | Session | `systemd-run` | 8 GB total |
 
-**Note:** The 8 GB per-process limit is required because `nfa_builder` is compiled with `-mcmodel=medium` which requires larger address space. A 2 GB limit causes SIGSEGV during initialization.
-
-The `run_fuzzing_4h.sh` script applies all three layers automatically.
+**Note:** The 8 GB per-process limit is required because `nfa_builder` is compiled with `-mcmodel=medium` which requires larger address space.
 
 ## Build Requirements
 
-- clang with LibFuzzer support (`libfuzzer-21-dev`)
+- clang with LibFuzzer support (`-fsanitize=fuzzer`)
 - AddressSanitizer (ASan)
 - UndefinedBehaviorSanitizer (UBSan)
 
-On Ubuntu/Debian:
+On Ubuntu/Debian with clang:
 ```bash
-sudo apt install libfuzzer-21-dev
+sudo apt install clang
 ```
-
-## Running Fuzzing Sessions
-
-### Quick Run (No Protection)
-
-```bash
-make run-nfa-build       # NFA build fuzzer
-make run-dfa             # DFA eval fuzzer
-make run-pattern         # Pattern parse fuzzer
-```
-
-### Protected 4-Hour Session
-
-```bash
-./run_fuzzing_4h.sh nfa-build   # Recommended for extended fuzzing
-./run_fuzzing_4h.sh dfa
-./run_fuzzing_4h.sh pattern
-```
-
-Logs are saved to `logs/<timestamp>/`:
-- `fuzzer.log` - LibFuzzer output
-- `watchdog.log` - Memory watchdog output
-
-### With Cgroup Memory Limits
-
-```bash
-make run-nfa-build-cgroup
-make run-dfa-cgroup
-make run-pattern-cgroup
-```
-
-## Crash Management
-
-### List Crashes
-
-```bash
-make list-crashes
-```
-
-### Replay Crashes
-
-```bash
-# Replay all crashes from all fuzzers
-make replay-all-crashes
-
-# Replay by fuzzer type
-make replay-all-nfa-build-crashes
-make replay-all-dfa-crashes
-make replay-all-pattern-crashes
-
-# Replay specific crash files
-make replay-crashes-nfa-build CRASHES="crashes/nfa_build_abc123"
-```
-
-### Clear Crashes
-
-After fixing bugs and verifying with replay:
-
-```bash
-make clean-crashes
-```
-
-## Generating Corpus
-
-Initial corpus from existing pattern files:
-
-```bash
-./generate_corpus.sh
-./generate_multiline_corpus.sh
-```
-
-This creates seed files in `corpus/seed/` directories.
-
-## Crash Artifacts
-
-When a crash is found, LibFuzzer saves artifacts to `crashes/`:
-- `crashes/nfa_build_*` - NFA builder crashes
-- `crashes/dfa_eval_*` - DFA evaluation crashes
-- `crashes/pattern_parse_*` - Pattern parser crashes
-
-Files are named with LibFuzzer's artifact prefix convention.
-
-## Expected Findings
-
-| Fuzzer | Typical Bugs |
-|--------|--------------|
-| nfa_build_fuzzer | Parser segfaults, invalid input handling, NFA construction failures |
-| dfa_eval_fuzzer | Buffer overflows, out-of-bounds reads, invalid state transitions |
-| pattern_parse_fuzzer | Parser crashes, syntax validation failures |
 
 ## File Structure
 
 ```
 fuzz/
-  Makefile                    # Build and run targets
-  README.md                   # This file
+  CMakeLists.txt              # CMake build configuration
   dfa_eval_fuzzer.cpp         # DFA eval fuzzer source
-  pattern_parse_fuzzer.cpp    # Pattern parse fuzzer source
+  pattern_parse_fuzzer.cpp     # Pattern parse fuzzer source
   nfa_build_fuzzer.cpp        # NFA build fuzzer source
-  run_fuzzing_4h.sh           # 4-hour session runner
-  run_in_cgroup.sh            # Cgroup memory limit wrapper
-  memory_watchdog.sh          # Memory monitor (95% kill)
-  generate_corpus.sh          # Corpus generator
+  pipeline_fuzzer.cpp          # Pipeline fuzzer source
+  dfa_loader_fuzzer.cpp       # DFA loader fuzzer source
+  cmd_dict.txt                # Fuzzing dictionary
   crashes/                    # Crash artifacts
   corpus/
     seed/                     # Seed corpus
       dfa_eval/
       pattern_parser/
+      dfa_binary/
     interesting/              # Coverage-increasing inputs
   logs/                       # Session logs
+```
+
+## Legacy Makefile
+
+A legacy Makefile exists for reference. The CMake build is the supported method:
+
+```bash
+# Old way (deprecated)
+cd fuzz && make all
+
+# New way (CMake)
+cmake -B build -DENABLE_FUZZ=ON \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build
 ```

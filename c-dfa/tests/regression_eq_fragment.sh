@@ -11,8 +11,16 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TOOLS_DIR="$SCRIPT_DIR/../tools"
-BUILD_DIR="$SCRIPT_DIR/../build_test"
+SRC_DIR="$SCRIPT_DIR/.."
+
+# BUILD_DIR can be passed from Python runner, otherwise auto-detect
+if [ -n "$WORK_DIR" ]; then
+    TOOLS_DIR="$WORK_DIR/tools"
+    WORK_DIR="$WORK_DIR"
+else
+    TOOLS_DIR="$SRC_DIR/build/tools"
+    WORK_DIR="$SRC_DIR/build_test"
+fi
 
 TESTS_PASSED=0
 TESTS_FAILED=0
@@ -49,12 +57,12 @@ echo ""
 
 # Test 1: Working pattern - ls(z)((safe::x)) should have > 1 states
 echo "[TEST 1] Working pattern ls(z)((safe::x))"
-cat > "$BUILD_DIR/regression_work.txt" << 'EOF'
+cat > "$WORK_DIR/regression_work.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [fragment:safe::x] a|b|c
 [safe] ls(z)((safe::x))
 EOF
-states=$(get_nfa_states "$BUILD_DIR/regression_work.txt" "$BUILD_DIR/regression_work.nfa")
+states=$(get_nfa_states "$WORK_DIR/regression_work.txt" "$WORK_DIR/regression_work.nfa")
 if [ "$states" -gt 1 ]; then
     pass "ls(z)((safe::x)) has $states states (expected > 1)"
 else
@@ -63,12 +71,12 @@ fi
 
 # Test 2: Bug pattern - ls( =)((safe::x)) should have > 1 states (BUG: currently 1)
 echo "[TEST 2] Bug pattern ls( =)((safe::x))"
-cat > "$BUILD_DIR/regression_bug1.txt" << 'EOF'
+cat > "$WORK_DIR/regression_bug1.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [fragment:safe::x] a|b|c
 [safe] ls( =)((safe::x))
 EOF
-states=$(get_nfa_states "$BUILD_DIR/regression_bug1.txt" "$BUILD_DIR/regression_bug1.nfa")
+states=$(get_nfa_states "$WORK_DIR/regression_bug1.txt" "$WORK_DIR/regression_bug1.nfa")
 if [ "$states" -gt 1 ]; then
     pass "ls( =)((safe::x)) has $states states (expected > 1) - BUG FIXED!"
 else
@@ -77,12 +85,12 @@ fi
 
 # Test 3: Bug pattern - ls(=)?((safe::x)) should have > 1 states (BUG: currently 1)
 echo "[TEST 3] Bug pattern ls(=)?((safe::x))"
-cat > "$BUILD_DIR/regression_bug2.txt" << 'EOF'
+cat > "$WORK_DIR/regression_bug2.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [fragment:safe::x] a|b|c
 [safe] ls(=)?((safe::x))
 EOF
-states=$(get_nfa_states "$BUILD_DIR/regression_bug2.txt" "$BUILD_DIR/regression_bug2.nfa")
+states=$(get_nfa_states "$WORK_DIR/regression_bug2.txt" "$WORK_DIR/regression_bug2.nfa")
 if [ "$states" -gt 1 ]; then
     pass "ls(=)?((safe::x)) has $states states (expected > 1) - BUG FIXED!"
 else
@@ -91,12 +99,12 @@ fi
 
 # Test 4: Character 'a' before fragment works - control
 echo "[TEST 4] Control pattern ls(a)((safe::x))"
-cat > "$BUILD_DIR/regression_ctrl.txt" << 'EOF'
+cat > "$WORK_DIR/regression_ctrl.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [fragment:safe::x] a|b|c
 [safe] ls(a)((safe::x))
 EOF
-states=$(get_nfa_states "$BUILD_DIR/regression_ctrl.txt" "$BUILD_DIR/regression_ctrl.nfa")
+states=$(get_nfa_states "$WORK_DIR/regression_ctrl.txt" "$WORK_DIR/regression_ctrl.nfa")
 if [ "$states" -gt 1 ]; then
     pass "ls(a)((safe::x)) has $states states (expected > 1)"
 else
@@ -105,11 +113,11 @@ fi
 
 # Test 5: ls x= (equals at end) should work
 echo "[TEST 5] Pattern ls x= (equals at end)"
-cat > "$BUILD_DIR/regression_end.txt" << 'EOF'
+cat > "$WORK_DIR/regression_end.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [safe] ls x=
 EOF
-states=$(get_nfa_states "$BUILD_DIR/regression_end.txt" "$BUILD_DIR/regression_end.nfa")
+states=$(get_nfa_states "$WORK_DIR/regression_end.txt" "$WORK_DIR/regression_end.nfa")
 if [ "$states" -gt 1 ]; then
     pass "ls x= has $states states (expected > 1)"
 else
@@ -117,7 +125,7 @@ else
 fi
 
 # Cleanup
-rm -f "$BUILD_DIR/regression_*.txt" "$BUILD_DIR/regression_*.nfa" "$BUILD_DIR/regression_*.dfa"
+rm -f "$WORK_DIR/regression_*.txt" "$WORK_DIR/regression_*.nfa" "$WORK_DIR/regression_*.dfa"
 
 echo ""
 echo "================================"

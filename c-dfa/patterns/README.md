@@ -52,19 +52,42 @@ Fragment definition and expansion tests:
 ## Pattern File Format
 
 ```
-IDENTIFIER "test_name"
+# Comments start with #
 
-[fragment:name] value
-[characterset:name] value
-[category:subcategory:operations] pattern -> action
+[fragment:name] pattern definition
 
-#ACCEPTANCE_MAPPING [category:subcategory:operations] -> N
+[category] command pattern
 ```
 
-## Usage
+## Categories
 
-Patterns are processed by the test runner:
+| Category | Description |
+|----------|-------------|
+| safe | Read-only, no side effects |
+| caution | Minor side effects |
+| modifying | Modifies files |
+| dangerous | Destructive |
+| network | Network operations |
+| admin | Requires privileges |
+
+## Example Pattern File
+
+```
+[safe] cat *
+[safe] grep * *
+[dangerous] rm *
+[network] curl *
+```
+
+## Building a DFA from Patterns
 
 ```bash
-./dfa_test --test-set A patterns/stress_test.txt
+# Build tools first
+cmake -B build && cmake --build build
+
+# Build NFA from patterns
+./build/tools/nfa_builder patterns/commands/safe_commands.txt readonlybox.nfa
+
+# Convert to minimized DFA
+./build/tools/nfa2dfa_advanced --minimize-hopcroft readonlybox.nfa readonlybox.dfa
 ```
