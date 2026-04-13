@@ -198,10 +198,10 @@ typedef struct rbox_server_request rbox_server_request_t;
 typedef struct rbox_client_fd_entry {
     int fd;
     rbox_server_request_t *pending_request;  /* Non-null if body is being read */
-    time_t header_start_time;                /* When we started waiting for header */
-    time_t body_start_time;                 /* When we started reading body */
+    uint64_t header_start_time;              /* When we started waiting for header (ms) */
+    uint64_t body_start_time;               /* When we started reading body (ms) */
     int waiting_for_header;                 /* 1 if we are in header read timeout state */
-    time_t last_activity;                   /* Last read/write activity time */
+    uint64_t last_activity;                  /* Last read/write activity time (ms) */
     char header_buf[RBOX_HEADER_SIZE];      /* Partial header buffer for incremental reads */
     size_t header_bytes_read;              /* Bytes of header currently in buffer */
     struct rbox_client_fd_entry *prev;       /* Previous entry in doubly-linked list */

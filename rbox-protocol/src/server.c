@@ -39,6 +39,8 @@
 #define DBG(fmt, ...) ((void)0)
 #endif
 
+uint64_t get_time_ms(void);
+
 static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size_t len, rbox_server_request_t *req);
 static void try_send_pending(rbox_server_handle_t *server, int fd);
 
@@ -272,7 +274,7 @@ static void pending_request_set(rbox_server_handle_t *server, int fd, rbox_serve
     if (entry) {
         entry->pending_request = req;
         if (req->reading_body && entry->body_start_time == 0) {
-            entry->body_start_time = time(NULL);
+            entry->body_start_time = get_time_ms();
         }
     }
 }
@@ -317,7 +319,7 @@ static int read_body_nonblocking(rbox_server_handle_t *server, int fd, rbox_serv
             return -1;
         }
         req->body_received += (size_t)n;
-        if (entry) entry->last_activity = time(NULL);
+        if (entry) entry->last_activity = get_time_ms();
     }
     DBG("read_body_nonblocking: body complete %zu bytes", req->body_received);
     uint32_t computed_crc = rbox_runtime_crc32(0, req->command_data, req->body_received);
@@ -353,7 +355,7 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
                 if (n == -1) return 0;      /* EAGAIN – partial, wait */
                 if (n == -2) return -1;     /* error */
                 entry->header_bytes_read += (size_t)n;
-                entry->last_activity = time(NULL);
+                entry->last_activity = get_time_ms();
             }
 
             /* Full chunk header received – validate */
@@ -367,6 +369,7 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
                 DBG("Chunk header checksum mismatch");
                 return -1;
             }
+            if (entry) entry->last_activity = get_time_ms();
             uint32_t chunk_len = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CHUNK_LEN);
             uint32_t flags = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FLAGS);
             uint32_t body_checksum = *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
@@ -390,7 +393,7 @@ static int read_body_chunks_nonblocking(rbox_server_handle_t *server, int fd, rb
         req->current_chunk_received += n;
         req->body_received += n;
         rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
-        if (entry) entry->last_activity = time(NULL);
+        if (entry) entry->last_activity = get_time_ms();
         if (req->current_chunk_received == req->current_chunk_len) {
             uint32_t computed_crc = rbox_runtime_crc32(0, req->command_data + req->body_received - req->current_chunk_len, req->current_chunk_len);
             if (computed_crc != req->current_chunk_checksum) {
@@ -574,7 +577,7 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
             continue;
         } else {
             entry->offset += w;
-            client_entry->last_activity = time(NULL);
+            client_entry->last_activity = get_time_ms();
             DBG("send_pending_locked: wrote %zd bytes on fd %d, offset now %zu/%zu", w, entry->fd, entry->offset, entry->len);
             if (entry->offset == entry->len) {
                 DBG("send_pending_locked: fully sent response for fd %d", entry->fd);
@@ -697,7 +700,8 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
         if (n == -1) {
             if (!entry->waiting_for_header) {
                 entry->waiting_for_header = 1;
-                entry->header_start_time = time(NULL);
+                entry->header_start_time = get_time_ms();
+                DBG("server_read_header: started header wait for fd %d", fd);
                 return 1;
             }
             return 1;
@@ -709,7 +713,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
         }
 
         *bytes_read += (size_t)n;
-        entry->last_activity = time(NULL);
+        entry->last_activity = get_time_ms();
     }
 
     entry->waiting_for_header = 0;
@@ -719,7 +723,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
     uint32_t version = *(uint32_t *)(header + 4);
     if (magic != RBOX_MAGIC || version != RBOX_VERSION) return -1;
     if (rbox_header_validate(header, RBOX_HEADER_SIZE) != RBOX_OK) return -1;
-    entry->last_activity = time(NULL);
+    entry->last_activity = get_time_ms();
     *msg_type = *(uint32_t *)(header + RBOX_HEADER_OFFSET_TYPE);
     memcpy(client_id, header + RBOX_HEADER_OFFSET_CLIENT_ID, 16);
     memcpy(request_id, header + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
@@ -867,7 +871,7 @@ static void *server_thread_func(void *arg) {
     rbox_server_handle_t *server = arg;
     struct epoll_event events[64];
     int loop_count = 0;
-    time_t shutdown_start = 0;
+    uint64_t shutdown_start = 0;
 
     /* Make listen socket non‑blocking.
      * We do this here (after listen() is called) rather than in rbox_server_handle_new()
@@ -949,8 +953,9 @@ static void *server_thread_func(void *arg) {
                 DBG("No active clients, exiting");
                 break;
             }
-            if (shutdown_start == 0) shutdown_start = time(NULL);
-            if (time(NULL) - shutdown_start > 2) {
+            if (shutdown_start == 0) shutdown_start = get_time_ms();
+            uint64_t shutdown_elapsed = get_time_ms() - shutdown_start;
+            if (shutdown_elapsed > 2000) {
                 DBG("Shutdown timeout reached, exiting with %d active clients",
                     server->active_client_count);
                 break;
@@ -1297,7 +1302,7 @@ static void *server_thread_func(void *arg) {
 
         /* Check for timeouts AFTER processing events to avoid use-after-free
          * (events array may contain fds that were closed in a previous iteration) */
-        time_t now = time(NULL);
+        uint64_t now = get_time_ms();
         pthread_mutex_lock(&server->client_fd_mutex);
         rbox_client_fd_entry_t *tentry = server->client_fds;
         while (tentry) {
@@ -1307,12 +1312,14 @@ static void *server_thread_func(void *arg) {
 
             if (server->request_timeout > 0) {
                 if (tentry->waiting_for_header && tentry->header_start_time > 0) {
-                    if (difftime(now, tentry->header_start_time) > (double)server->request_timeout) {
+                    uint64_t elapsed = now - tentry->header_start_time;
+                    if (elapsed > server->request_timeout * 1000) {
                         should_close = 1;
                         close_reason = 1;
                     }
                 } else if (tentry->pending_request && tentry->pending_request->reading_body) {
-                    if (difftime(now, tentry->body_start_time) > (double)server->request_timeout) {
+                    uint64_t elapsed = now - tentry->body_start_time;
+                    if (elapsed > server->request_timeout * 1000) {
                         should_close = 1;
                         close_reason = 2;
                     }
@@ -1320,7 +1327,8 @@ static void *server_thread_func(void *arg) {
             }
 
             if (!should_close && server->client_idle_timeout > 0 && !tentry->pending_request) {
-                if (difftime(now, tentry->last_activity) > (double)server->client_idle_timeout) {
+                uint64_t idle = now - tentry->last_activity;
+                if (idle > server->client_idle_timeout * 1000) {
                     should_close = 1;
                     close_reason = 3;
                 }
