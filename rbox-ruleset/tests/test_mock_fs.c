@@ -18,21 +18,19 @@
 #include <sys/stat.h>
 
 /* ------------------------------------------------------------------ */
-/*  Create dir / file / symlink                                        */
+/*  Entry creation: dir, file, symlink, stat, realpath, query APIs     */
 /* ------------------------------------------------------------------ */
 
-static void test_mock_create_entries(void)
+static void test_mock_fs_all(void)
 {
     struct stat st;
 
-    /* Case 1: Create directories */
+    /* ---- entry creation: dir, file, symlink ---- */
     mock_fs_reset();
     TEST_ASSERT_EQ(mock_fs_create_dir("/home"), 0, "create: create /home");
     TEST_ASSERT_EQ(mock_fs_create_dir("/home/user"), 0, "create: create /home/user");
     TEST_ASSERT_EQ(mock_fs_create_dir("/home"), -1, "create: duplicate dir fails");
 
-    /* Case 2: Create file and verify with stat */
-    mock_fs_reset();
     mock_fs_create_dir("/home/user");
     TEST_ASSERT_EQ(mock_fs_create_file("/home/user/file.txt"), 0,
                    "create: create file");
@@ -40,35 +38,35 @@ static void test_mock_create_entries(void)
                    "create: stat created file succeeds");
     TEST_ASSERT(S_ISREG(st.st_mode), "create: reports regular file");
 
-    /* Case 3: Create symlink and verify resolution */
-    mock_fs_reset();
     mock_fs_create_dir("/real");
     TEST_ASSERT_EQ(mock_fs_create_symlink("/link", "/real"), 0,
                    "create: create symlink");
-    char *resolved = realpath("/link", NULL);
-    TEST_ASSERT_NOT_NULL(resolved, "create: realpath through symlink");
-    TEST_ASSERT_STR_EQ(resolved, "/real", "create: symlink resolves correctly");
-    free(resolved);
-}
 
-/* ------------------------------------------------------------------ */
-/*  realpath: direct, symlink, dotdot, nonexistent                     */
-/* ------------------------------------------------------------------ */
+    /* ---- stat / lstat on created entries ---- */
+    mock_fs_reset();
+    mock_fs_create_dir("/test_dir");
+    TEST_ASSERT_EQ(stat("/test_dir", &st), 0, "stat: stat dir succeeds");
+    TEST_ASSERT(S_ISDIR(st.st_mode), "stat: reports dir");
 
-static void test_mock_realpath(void)
-{
-    char *resolved;
+    mock_fs_create_symlink("/s", "/nowhere");
+    TEST_ASSERT_EQ(lstat("/s", &st), 0, "lstat: lstat symlink succeeds");
+    TEST_ASSERT(S_ISLNK(st.st_mode), "lstat: reports symlink");
 
-    /* Case 1: Direct path (no symlink) */
+    mock_fs_create_symlink("/mylink", "/some/target");
+    char rdbuf[PATH_MAX];
+    ssize_t rlen = readlink("/mylink", rdbuf, sizeof(rdbuf));
+    TEST_ASSERT(rlen > 0, "readlink: returns length");
+    rdbuf[rlen] = '\0';
+    TEST_ASSERT_STR_EQ(rdbuf, "/some/target", "readlink: target matches");
+
+    /* ---- realpath: direct, through symlink, .., nonexistent ---- */
     mock_fs_reset();
     mock_fs_create_dir("/usr/lib");
-    resolved = realpath("/usr/lib", NULL);
+    char *resolved = realpath("/usr/lib", NULL);
     TEST_ASSERT_NOT_NULL(resolved, "realpath: direct /usr/lib resolves");
     TEST_ASSERT_STR_EQ(resolved, "/usr/lib", "realpath: direct path unchanged");
     free(resolved);
 
-    /* Case 2: Path through symlink */
-    mock_fs_reset();
     mock_fs_create_dir("/real/target");
     mock_fs_create_symlink("/mylink", "/real/target");
     resolved = realpath("/mylink", NULL);
@@ -76,57 +74,16 @@ static void test_mock_realpath(void)
     TEST_ASSERT_STR_EQ(resolved, "/real/target", "realpath: symlink resolves to target");
     free(resolved);
 
-    /* Case 3: realpath with .. components */
-    mock_fs_reset();
     mock_fs_create_dir("/a/b/c");
     resolved = realpath("/a/b/../c", NULL);
     TEST_ASSERT_NOT_NULL(resolved, "realpath: with ..");
     TEST_ASSERT_STR_EQ(resolved, "/a/c", "realpath: .. resolved correctly");
     free(resolved);
 
-    /* Case 4: stat on nonexistent path returns -1 */
     mock_fs_reset();
-    struct stat st;
     TEST_ASSERT_EQ(stat("/nonexistent", &st), -1, "realpath: stat nonexistent fails");
-}
 
-/* ------------------------------------------------------------------ */
-/*  stat / lstat / readlink on mock entries                            */
-/* ------------------------------------------------------------------ */
-
-static void test_mock_stat_family(void)
-{
-    struct stat st;
-
-    /* Case 1: stat on directory */
-    mock_fs_reset();
-    mock_fs_create_dir("/test_dir");
-    TEST_ASSERT_EQ(stat("/test_dir", &st), 0, "stat: stat dir succeeds");
-    TEST_ASSERT(S_ISDIR(st.st_mode), "stat: reports dir");
-
-    /* Case 2: lstat on symlink */
-    mock_fs_reset();
-    mock_fs_create_symlink("/s", "/nowhere");
-    TEST_ASSERT_EQ(lstat("/s", &st), 0, "lstat: lstat symlink succeeds");
-    TEST_ASSERT(S_ISLNK(st.st_mode), "lstat: reports symlink");
-
-    /* Case 3: readlink on symlink */
-    mock_fs_reset();
-    mock_fs_create_symlink("/mylink", "/some/target");
-    char buf[PATH_MAX];
-    ssize_t len = readlink("/mylink", buf, sizeof(buf));
-    TEST_ASSERT(len > 0, "readlink: returns length");
-    buf[len] = '\0';
-    TEST_ASSERT_STR_EQ(buf, "/some/target", "readlink: target matches");
-}
-
-/* ------------------------------------------------------------------ */
-/*  list_children and mock_fs_exists                                   */
-/* ------------------------------------------------------------------ */
-
-static void test_mock_query_apis(void)
-{
-    /* Case 1: list_children returns all entries */
+    /* ---- query APIs: list_children, mock_fs_exists ---- */
     mock_fs_reset();
     mock_fs_create_dir("/root");
     mock_fs_create_dir("/root/alpha");
@@ -145,8 +102,6 @@ static void test_mock_query_apis(void)
     TEST_ASSERT(found_beta, "query: beta found");
     TEST_ASSERT(found_file, "query: file.txt found");
 
-    /* Case 2: mock_fs_exists returns correct types */
-    mock_fs_reset();
     mock_fs_create_dir("/adir");
     mock_fs_create_file("/afile");
     mock_fs_create_symlink("/alink", "/adir");
@@ -154,17 +109,8 @@ static void test_mock_query_apis(void)
     TEST_ASSERT_EQ(mock_fs_exists("/afile"), 2, "query: file exists returns 2");
     TEST_ASSERT_EQ(mock_fs_exists("/alink"), 3, "query: symlink exists returns 3");
     TEST_ASSERT_EQ(mock_fs_exists("/nope"), 0, "query: nonexistent returns 0");
-}
 
-/* ------------------------------------------------------------------ */
-/*  Symlink resolution: relative targets and chains                    */
-/* ------------------------------------------------------------------ */
-
-static void test_mock_symlink_resolution(void)
-{
-    char *resolved;
-
-    /* Case 1: Relative symlink target */
+    /* ---- symlink resolution: relative targets and chains ---- */
     mock_fs_reset();
     mock_fs_create_dir("/dir");
     mock_fs_create_dir("/real/target");
@@ -174,8 +120,6 @@ static void test_mock_symlink_resolution(void)
     TEST_ASSERT_STR_EQ(resolved, "/real/target", "relative target resolved correctly");
     free(resolved);
 
-    /* Case 2: Symlink chain (a -> b -> c -> real) */
-    mock_fs_reset();
     mock_fs_create_dir("/final");
     mock_fs_create_symlink("/c", "/final");
     mock_fs_create_symlink("/b", "/c");
@@ -184,6 +128,11 @@ static void test_mock_symlink_resolution(void)
     TEST_ASSERT_NOT_NULL(resolved, "chain resolves");
     TEST_ASSERT_STR_EQ(resolved, "/final", "chain resolves to final target");
     free(resolved);
+
+    /* ---- mock_fs_active lifecycle ---- */
+    TEST_ASSERT(mock_fs_active(), "mock is active after setup");
+    mock_fs_reset();
+    TEST_ASSERT(mock_fs_active(), "mock remains active after reset");
 }
 
 /* ------------------------------------------------------------------ */
@@ -191,9 +140,5 @@ static void test_mock_symlink_resolution(void)
 void test_mock_fs_run(void)
 {
     printf("=== Mock Filesystem Tests ===\n");
-    RUN_TEST(test_mock_create_entries);
-    RUN_TEST(test_mock_realpath);
-    RUN_TEST(test_mock_stat_family);
-    RUN_TEST(test_mock_query_apis);
-    RUN_TEST(test_mock_symlink_resolution);
+    RUN_TEST(test_mock_fs_all);
 }

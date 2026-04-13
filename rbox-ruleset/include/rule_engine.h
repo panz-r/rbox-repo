@@ -316,6 +316,36 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
                               const char *source_file);
 
 /**
+ * Parse a compact comma-separated rule list (CLI shorthand syntax).
+ *
+ * Format:  /path1:rwx,/path2:ro,/path3:rx,...
+ *
+ * Mode chars (case-insensitive):
+ *   r  →  SOFT_ACCESS_READ
+ *   w  →  SOFT_ACCESS_WRITE
+ *   x  →  SOFT_ACCESS_EXEC
+ *   ro →  SOFT_ACCESS_READ (read-only alias)
+ *   D  →  SOFT_ACCESS_DENY
+ *
+ * Path conventions:
+ *   Trailing /... or /**  →  SOFT_RULE_RECURSIVE
+ *   Trailing /*           →  single-level wildcard
+ *   Exact path            →  static rule
+ *
+ * All rules are added to layer 0 with SOFT_OP_READ operation.
+ * For binary operations (COPY/MOVE) use soft_ruleset_add_rule_str().
+ *
+ * @param rs          Ruleset handle.
+ * @param rules_str   Comma-separated rule string (e.g. "/usr:rx,/tmp:rw").
+ * @param source_name Optional name for error messages (e.g. "--hard-allow").
+ * @return 0 on success, -1 on parse error (errno set, message in
+ *         soft_ruleset_error()).
+ */
+int soft_ruleset_parse_compact_rules(soft_ruleset_t *rs,
+                                     const char *rules_str,
+                                     const char *source_name);
+
+/**
  * Return the last error message from parsing or rule insertion.
  * @param rs Ruleset handle.
  * @return Error string, or NULL if no error.

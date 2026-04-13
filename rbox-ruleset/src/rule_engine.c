@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <limits.h>
+#include <ctype.h>
 #include <sys/param.h>
 
 #ifndef PATH_MAX
@@ -680,6 +681,142 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
                      "Failed to add DST rule: %s", strerror(errno));
             return -1;
         }
+    }
+
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Compact CLI rule parser                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Parse mode chars for compact syntax: r,w,x,D,ro (case-insensitive).
+ * "ro" is treated as an alias for "r" (read-only).
+ */
+static uint32_t parse_compact_mode(const char *s)
+{
+    uint32_t mode = 0;
+    for (; *s; s++) {
+        char c = (char)tolower((unsigned char)*s);
+        /* Handle "ro" as a unit: if we see 'r' followed by 'o', it's read-only */
+        if (c == 'r') {
+            mode |= SOFT_ACCESS_READ;
+        } else if (c == 'w') {
+            mode |= SOFT_ACCESS_WRITE;
+        } else if (c == 'x') {
+            mode |= SOFT_ACCESS_EXEC;
+        } else if (c == 'd') {
+            mode = SOFT_ACCESS_DENY;
+            return mode;  /* DENY overrides everything */
+        } else if (c == 'o') {
+            /* 'o' alone is meaningless; only matters after 'r' (ro) */
+            /* If no 'r' seen, ignore */
+        }
+        /* Unknown chars are silently ignored for robustness */
+    }
+    if (mode == 0) mode = SOFT_ACCESS_READ;  /* default: read */
+    return mode;
+}
+
+int soft_ruleset_parse_compact_rules(soft_ruleset_t *rs,
+                                     const char *rules_str,
+                                     const char *source_name)
+{
+    if (!rs || !rules_str) { errno = EINVAL; return -1; }
+
+    const char *p = rules_str;
+    int rule_idx = 0;
+
+    while (*p) {
+        /* Skip leading whitespace/commas */
+        while (*p == ',' || *p == ' ' || *p == '\t') p++;
+        if (*p == '\0') break;
+
+        /* Find the path:mode separator (last colon in the token) */
+        const char *token_start = p;
+        const char *colon = NULL;
+        const char *scan = p;
+        int in_brace = 0;
+
+        while (*scan && *scan != ',') {
+            if (*scan == '{') in_brace++;
+            else if (*scan == '}') in_brace--;
+            else if (*scan == ':' && in_brace == 0) colon = scan;
+            scan++;
+        }
+
+        if (!colon) {
+            /* No colon — treat entire token as path with default READ mode.
+             * This allows bare paths like "/usr/bin" to default to read. */
+            colon = scan;  /* mode portion is empty */
+        }
+
+        /* Extract path */
+        size_t path_len = (size_t)(colon - token_start);
+        if (path_len == 0) {
+            snprintf(rs->last_error, sizeof(rs->last_error),
+                     "%s: rule %d: empty path",
+                     source_name ? source_name : "compact", rule_idx);
+            errno = EINVAL;
+            return -1;
+        }
+        char path[MAX_PATTERN_LEN];
+        if (path_len >= sizeof(path)) {
+            snprintf(rs->last_error, sizeof(rs->last_error),
+                     "%s: rule %d: path too long",
+                     source_name ? source_name : "compact", rule_idx);
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        memcpy(path, token_start, path_len);
+        path[path_len] = '\0';
+
+        /* Extract mode string (may be empty if no colon was found) */
+        const char *mode_start = colon + 1;
+        const char *mode_end = scan;
+        size_t mode_len = 0;
+        if (mode_end > mode_start)
+            mode_len = (size_t)(mode_end - mode_start);
+        char mode_buf[16];
+        if (mode_len >= sizeof(mode_buf)) {
+            snprintf(rs->last_error, sizeof(rs->last_error),
+                     "%s: rule %d: mode string too long",
+                     source_name ? source_name : "compact", rule_idx);
+            errno = EINVAL;
+            return -1;
+        }
+        if (mode_len > 0)
+            memcpy(mode_buf, mode_start, mode_len);
+        mode_buf[mode_len] = '\0';
+
+        uint32_t mode = parse_compact_mode(mode_buf);
+        uint32_t flags = 0;
+
+        /* Detect recursive wildcards */
+        size_t pl = strlen(path);
+        if (pl >= 3 && path[pl - 3] == '.' &&
+            path[pl - 2] == '.' && path[pl - 1] == '.') {
+            flags |= SOFT_RULE_RECURSIVE;
+        }
+        /* Path ending with /** is also recursive */
+        if (pl >= 3 && path[pl - 3] == '/' &&
+            path[pl - 2] == '*' && path[pl - 1] == '*') {
+            flags |= SOFT_RULE_RECURSIVE;
+        }
+
+        int ret = soft_ruleset_add_rule(rs, path, mode, SOFT_OP_READ,
+                                        NULL, NULL, 0, flags);
+        if (ret < 0) {
+            snprintf(rs->last_error, sizeof(rs->last_error),
+                     "%s: rule %d: failed to add rule for '%s': %s",
+                     source_name ? source_name : "compact", rule_idx,
+                     path, strerror(errno));
+            return -1;
+        }
+
+        rule_idx++;
+        p = scan;
     }
 
     return 0;

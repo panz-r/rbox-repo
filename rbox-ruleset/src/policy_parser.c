@@ -450,7 +450,44 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
     uint32_t use_mask = st->current_mask;
 
     const char *arrow = strstr(p, "->");
-    if (!arrow) return set_error(NULL, error_msg, line_num, "Missing '->' separator");
+    if (!arrow) {
+        /* Try compact CLI syntax: /path:mode (no ->, has colon with mode chars) */
+        const char *col = strchr(p, ':');
+        if (col) {
+            /* Check if chars after colon look like mode chars */
+            const char *mc = col + 1;
+            int looks_like_mode = 0;
+            if (*mc) {
+                char c = (char)tolower((unsigned char)*mc);
+                if (c == 'r' || c == 'w' || c == 'x' || c == 'd')
+                    looks_like_mode = 1;
+            }
+            if (looks_like_mode) {
+                /* Build compact rule string and delegate to rule_engine */
+                char compact[MAX_PATTERN_LEN + 16];
+                strncpy(compact, p, sizeof(compact) - 1);
+                compact[sizeof(compact) - 1] = '\0';
+                /* Strip trailing whitespace */
+                size_t clen = strlen(compact);
+                while (clen > 0 && isspace((unsigned char)compact[clen - 1]))
+                    compact[--clen] = '\0';
+
+                soft_ruleset_t *mutable_rs = (soft_ruleset_t *)rs;
+                char save_error[256];
+                memcpy(save_error, mutable_rs->last_error, sizeof(save_error));
+
+                int ret = soft_ruleset_parse_compact_rules(mutable_rs, compact, NULL);
+                if (ret < 0) {
+                    /* Restore original error, set parse error */
+                    memcpy(mutable_rs->last_error, save_error, sizeof(save_error));
+                    return set_error(NULL, error_msg, line_num,
+                                     "Invalid compact rule syntax");
+                }
+                return 0;
+            }
+        }
+        return set_error(NULL, error_msg, line_num, "Missing '->' separator");
+    }
 
     char pattern_raw[MAX_PATTERN_LEN];
     size_t pat_len = (size_t)(arrow - p);

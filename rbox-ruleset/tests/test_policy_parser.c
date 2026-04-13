@@ -1463,8 +1463,162 @@ static void test_parser_null_arguments(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Runner                                                              */
+/*  Compact CLI syntax parser                                          */
 /* ------------------------------------------------------------------ */
+
+static void test_compact_cli_parser(void)
+{
+    /* ---- basic multi-rule parsing ---- */
+    {
+        soft_ruleset_t *rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs,
+                       "/w:rwx,/usr/bin:rx,/lib64:rx", "--test"),
+                       0, "parse compact rules");
+        TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 3, "3 rules parsed");
+
+        soft_rule_info_t info;
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "rule 0");
+        TEST_ASSERT_STR_EQ(info.pattern, "/w", "rule 0 path");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC,
+                       "rule 0 mode rwx");
+
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 1, &info), 0, "rule 1");
+        TEST_ASSERT_STR_EQ(info.pattern, "/usr/bin", "rule 1 path");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, "rule 1 mode rx");
+
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 2, &info), 0, "rule 2");
+        TEST_ASSERT_STR_EQ(info.pattern, "/lib64", "rule 2 path");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, "rule 2 mode rx");
+        soft_ruleset_free(rs);
+    }
+
+    /* ---- mode variants: ro, rw, D, case insensitive ---- */
+    {
+        soft_ruleset_t *rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs,
+                       "/proc:ro,/tmp:rw", NULL), 0, "ro and rw");
+        soft_rule_info_t info;
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "rule 0");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ, "ro = read only");
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 1, &info), 0, "rule 1");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "rw");
+        soft_ruleset_free(rs);
+
+        rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs,
+                       "/secret:D", NULL), 0, "deny rule");
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "deny rule info");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_DENY, "D = deny");
+        soft_ruleset_free(rs);
+
+        rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs,
+                       "/data:RWX", NULL), 0, "uppercase modes");
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "rule 0");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC,
+                       "RWX mode");
+        soft_ruleset_free(rs);
+    }
+
+    /* ---- recursive patterns and exact paths ---- */
+    {
+        soft_ruleset_t *rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs,
+                       "/home/...,/data/**,/etc", NULL), 0, "recursive patterns");
+        TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 3, "3 rules");
+
+        soft_rule_info_t info;
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "rule 0");
+        TEST_ASSERT_STR_EQ(info.pattern, "/home/...", "recursive ...");
+        TEST_ASSERT(info.flags & SOFT_RULE_RECURSIVE, "... sets RECURSIVE flag");
+
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 1, &info), 0, "rule 1");
+        TEST_ASSERT_STR_EQ(info.pattern, "/data/**", "recursive **");
+        TEST_ASSERT(info.flags & SOFT_RULE_RECURSIVE, "** sets RECURSIVE flag");
+
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 2, &info), 0, "rule 2");
+        TEST_ASSERT_STR_EQ(info.pattern, "/etc", "exact path");
+        TEST_ASSERT((info.flags & SOFT_RULE_RECURSIVE) == 0, "exact path no RECURSIVE");
+        soft_ruleset_free(rs);
+    }
+
+    /* ---- error handling and edge cases ---- */
+    {
+        soft_ruleset_t *rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs, ":rwx", NULL),
+                       -1, "empty path rejected");
+
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs, NULL, NULL), -1,
+                       "NULL string rejected");
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(NULL, "/data:rwx", NULL), -1,
+                       "NULL rs rejected");
+        soft_ruleset_free(rs);
+
+        rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs, "/data", NULL), 0,
+                       "bare path ok");
+        soft_rule_info_t info;
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "bare path rule");
+        TEST_ASSERT_STR_EQ(info.pattern, "/data", "bare path");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ, "bare path defaults to READ");
+        soft_ruleset_free(rs);
+
+        rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs, "/data:rwx,", NULL),
+                       0, "trailing comma ok");
+        TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 1, "1 rule parsed");
+        soft_ruleset_free(rs);
+
+        /* Whitespace between rules and around tokens */
+        rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs, "/a:rx , /b:rw", NULL), 0,
+                       "spaces around comma");
+        TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 2, "2 rules with spaces");
+        soft_ruleset_free(rs);
+
+        rs = soft_ruleset_new();
+        TEST_ASSERT_EQ(soft_ruleset_parse_compact_rules(rs, "  /data:rwx  ", NULL), 0,
+                       "leading/trailing whitespace");
+        TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 1, "1 rule with whitespace");
+        soft_ruleset_free(rs);
+    }
+
+    /* ---- integration: mixed syntax in .policy file ---- */
+    {
+        const char *policy =
+            "# Mixed policy file\n"
+            "/usr/bin:rx\n"
+            "/tmp:rw\n"
+            "/etc/readonly:ro\n"
+            "/data/... -> R\n";
+
+        soft_ruleset_t *rs = soft_ruleset_new();
+        int line;
+        const char *err;
+        TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, policy, &line, &err),
+                       0, "parse mixed syntax");
+        TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 4, "4 rules parsed");
+
+        soft_rule_info_t info;
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "rule 0");
+        TEST_ASSERT_STR_EQ(info.pattern, "/usr/bin", "rule 0 path");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, "rule 0 rx");
+
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 1, &info), 0, "rule 1");
+        TEST_ASSERT_STR_EQ(info.pattern, "/tmp", "rule 1 path");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE, "rule 1 rw");
+
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 2, &info), 0, "rule 2");
+        TEST_ASSERT_STR_EQ(info.pattern, "/etc/readonly", "rule 2 path");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ, "rule 2 ro");
+
+        TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 3, &info), 0, "rule 3");
+        TEST_ASSERT_STR_EQ(info.pattern, "/data/...", "rule 3 arrow path");
+        TEST_ASSERT_EQ(info.mode, SOFT_ACCESS_READ, "rule 3 arrow mode");
+        soft_ruleset_free(rs);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Runner                                                              */
 /* ------------------------------------------------------------------ */
@@ -1486,4 +1640,5 @@ void test_rule_engine_parser_run(void)
     RUN_TEST(test_parser_constraint_edge_cases);
     RUN_TEST(test_compiled_serialization);
     RUN_TEST(test_parser_null_arguments);
+    RUN_TEST(test_compact_cli_parser);
 }
