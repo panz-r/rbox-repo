@@ -194,6 +194,7 @@ rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
         }
     }
     if (capacity < needed) {
+        *out_len = needed;
         return RBOX_ERR_INVALID;
     }
 
