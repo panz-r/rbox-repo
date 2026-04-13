@@ -358,6 +358,11 @@ rbox_error_t validate_response(const char *packet, size_t len,
             return RBOX_ERR_TRUNCATED;
         }
 
+        uint32_t chunk_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
+        if (len < RBOX_HEADER_SIZE + chunk_len) {
+            return RBOX_ERR_TRUNCATED;
+        }
+
         decision = packet[RBOX_HEADER_SIZE];  /* decision at offset 92 */
         reason_offset = RBOX_HEADER_SIZE + 1;  /* reason starts after decision byte */
         /* Parse reason string to find actual length (null-terminated) */
