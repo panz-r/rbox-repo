@@ -262,6 +262,36 @@ int landlock_builder_prepare_with_report(
         landlock_builder_t *b, int abi_version, bool expand_symlinks,
         landlock_abi_report_t *report);
 
+/* ------------------------------------------------------------------ */
+/*  Dry-run prepare (path resolution preview)                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Dry-run prepare: resolve all rule paths without mutating state.
+ *
+ * Walks the radix tree and attempts to canonicalise every stored path
+ * via realpath() (or normalise_path() if expand_symlinks is false).
+ * Paths that cannot be resolved are collected.
+ *
+ * Unlike landlock_builder_prepare(), this does NOT call overlap removal,
+ * simplification, or symlink expansion on the builder's internal state.
+ * The builder remains unchanged and can still be modified.
+ *
+ * @param b              Builder handle (not modified).
+ * @param expand_symlinks Whether to expand symlinks during resolution.
+ * @param failures       If non-NULL, receives a NULL-terminated array of
+ *                       paths that failed resolution.  Caller must free
+ *                       individual strings and the array.
+ *                       Pass NULL to just get the count.
+ * @param failure_count  Receives number of failed paths.  May be NULL.
+ * @return 0 on success (internal errors only; path failures are reported
+ *         via failure_count, not as errors).
+ */
+int landlock_builder_dry_run(const landlock_builder_t *b,
+                             bool expand_symlinks,
+                             char ***failures,
+                             int *failure_count);
+
 #ifdef __cplusplus
 }
 #endif

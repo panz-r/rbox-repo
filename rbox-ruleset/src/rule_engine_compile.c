@@ -128,11 +128,15 @@ static int eff_add_spec_dynamic(effective_ruleset_t *eff, const compiled_rule_t 
 
 void eff_free(effective_ruleset_t *eff)
 {
+
     free(eff->static_rules);
+
     free(eff->dynamic_rules);
     free(eff->spec_static_rules);
     free(eff->spec_dynamic_rules);
+
     arena_free(&eff->strings);
+
     eff->static_rules = NULL;
     eff->dynamic_rules = NULL;
     eff->static_count = 0;
@@ -790,27 +794,44 @@ static int cmp_pending(const void *a, const void *b)
     return a_deny - b_deny;
 }
 
-int soft_ruleset_compile(soft_ruleset_t *rs)
+/** Internal compile implementation with error reporting. */
+int soft_ruleset_compile_err(soft_ruleset_t *rs,
+                             char *errbuf, size_t errbuf_size)
 {
+
     if (!rs) { errno = EINVAL; return -1; }
 
-    /* Invalidate any previous effective */
-    eff_free(&rs->effective);
+#define COMPILE_ERR(msg) do { \
+    if (errbuf) { snprintf(errbuf, errbuf_size, "%s", msg); } \
+    errno = ENOMEM; \
+    goto compile_fail; \
+} while (0)
 
+    /* Invalidate any previous effective */
+
+    eff_free(&rs->effective);
     /* Count total rules */
     int max_pending = 0;
     for (int i = 0; i < rs->layer_count; i++)
         max_pending += rs->layers[i].count;
+
     if (max_pending == 0) {
         rs->is_compiled = true;
         return 0;
     }
 
     /* Phase 1: Collect all rules with cached pattern metadata */
-    pending_rule_t *pending = calloc((size_t)max_pending, sizeof(pending_rule_t));
-    if (!pending) return -1;
-    int pending_count = 0;
+    pending_rule_t *pending = NULL;
+    bool *removed = NULL;
+    effective_ruleset_t eff;
+    memset(&eff, 0, sizeof(eff));
 
+    typedef struct { uint32_t mode; bool used; } group_entry_t;
+    group_entry_t *groups = NULL;
+    pending = calloc((size_t)max_pending, sizeof(pending_rule_t));
+
+    if (!pending) COMPILE_ERR("Compile phase 1: OOM allocating pending rules");
+    int pending_count = 0;
     for (int li = 0; li < rs->layer_count; li++) {
         const layer_t *lyr = &rs->layers[li];
         for (int ri = 0; ri < lyr->count; ri++) {
@@ -828,7 +849,6 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
             pending_count++;
         }
     }
-
     /* Phase 1b: Sort by (layer ASC, pattern ASC, is_deny ASC) so that:
      *   - Earlier layers (higher precedence) sort first
      *   - Prefix patterns sort before their extensions
@@ -836,11 +856,11 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
      * This limits shadow elimination and subsumption to local windows. */
     if (pending_count > 1)
         qsort(pending, (size_t)pending_count, sizeof(pending_rule_t), cmp_pending);
-
     /* Phase 1a: Single-pass shadow elimination.
      * For each rule i, scan DENY rules backward from i-1.  Since sorted,
      * DENY rules from layers ≤ layer[i] with prefix-matching patterns are
      * adjacent.  Break when pattern[j] can't be a prefix of pattern[i]. */
+
     int write = 0;
     for (int i = 0; i < pending_count; i++) {
         bool shadowed = false;
@@ -892,13 +912,13 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
         }
     }
     pending_count = write;
-
     /* Phase 2: Mode intersection (PRECEDENCE layers only).
      * After sorting, identical patterns are adjacent — only scan forward
      * while patterns match. */
-    typedef struct { uint32_t mode; bool used; } group_entry_t;
-    group_entry_t *groups = calloc((size_t)pending_count, sizeof(group_entry_t));
-    if (!groups) { free(pending); return -1; }
+
+    groups = calloc((size_t)pending_count, sizeof(group_entry_t));
+
+    if (!groups) COMPILE_ERR("Compile phase 2: OOM allocating mode intersection groups");
     for (int i = 0; i < pending_count; i++) {
         groups[i].mode = pending[i].rule.mode;
         groups[i].used = false;
@@ -921,15 +941,15 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
 
     /* Phase 3: Separate static vs dynamic, subsumption (PRECEDENCE only),
      * classify into PRECEDENCE vs SPECIFICITY buckets */
-    effective_ruleset_t eff;
-    memset(&eff, 0, sizeof(eff));
 
     /* First pass: mark subsumed rules (PRECEDENCE only).
      * After sorting by pattern, rule i can only subsume rule j where j > i
      * and pattern[j] starts with pattern[i].  Once pattern[j] diverges
      * past pattern[i] lexicographically, no further j can be subsumed. */
-    bool *removed = calloc((size_t)pending_count, sizeof(bool));
-    if (pending_count > 0 && !removed) { free(groups); free(pending); return -1; }
+
+    removed = calloc((size_t)pending_count, sizeof(bool));
+
+    if (pending_count > 0 && !removed) COMPILE_ERR("Compile phase 3: OOM allocating subsumption bitmap");
 
     for (int i = 0; i < pending_count; i++) {
         if (removed[i] || groups[i].used) continue;
@@ -992,48 +1012,30 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
         r.mode = groups[i].mode;
 
         compiled_rule_t cr;
-        if (compile_rule(&eff, &r, &cr) < 0) {
-            free(removed); free(groups); free(pending);
-            eff_free(&eff);
-            return -1;
-        }
+        if (compile_rule(&eff, &r, &cr) < 0)
+            COMPILE_ERR("Compile phase 4: OOM interning rule strings");
 
         if (pending[i].type == LAYER_SPECIFICITY) {
             if (is_static_rule(&r)) {
-                if (eff_add_spec_static(&eff, &cr) < 0) {
-                    free(removed); free(groups); free(pending);
-                    eff_free(&eff);
-                    return -1;
-                }
+                if (eff_add_spec_static(&eff, &cr) < 0)
+                    COMPILE_ERR("Compile phase 4: OOM expanding SPECIFICITY static rules");
             } else {
-                if (eff_add_spec_dynamic(&eff, &cr) < 0) {
-                    free(removed); free(groups); free(pending);
-                    eff_free(&eff);
-                    return -1;
-                }
+                if (eff_add_spec_dynamic(&eff, &cr) < 0)
+                    COMPILE_ERR("Compile phase 4: OOM expanding SPECIFICITY dynamic rules");
             }
         } else {
             if (is_static_rule(&r)) {
-                if (eff_add_static(&eff, &cr) < 0) {
-                    free(removed); free(groups); free(pending);
-                    eff_free(&eff);
-                    return -1;
-                }
+                if (eff_add_static(&eff, &cr) < 0)
+                    COMPILE_ERR("Compile phase 4: OOM expanding PRECEDENCE static rules");
             } else {
-                if (eff_add_dynamic(&eff, &cr) < 0) {
-                    free(removed); free(groups); free(pending);
-                    eff_free(&eff);
-                    return -1;
-                }
+                if (eff_add_dynamic(&eff, &cr) < 0)
+                    COMPILE_ERR("Compile phase 4: OOM expanding PRECEDENCE dynamic rules");
             }
         }
     }
 
-    free(removed);
-    free(groups);
-    free(pending);
-
     /* Phase 4: Sort PRECEDENCE static rules by pattern */
+
     if (eff.static_count > 1)
         qsort(eff.static_rules, (size_t)eff.static_count,
               sizeof(compiled_rule_t), compare_rule_by_pattern);
@@ -1058,7 +1060,25 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
 
     rs->effective = eff;
     rs->is_compiled = true;
+
+    free(removed);
+    free(groups);
+    free(pending);
+#undef COMPILE_ERR
     return 0;
+
+compile_fail:
+    eff_free(&eff);
+    free(removed);
+    free(groups);
+    free(pending);
+#undef COMPILE_ERR
+    return -1;
+}
+
+int soft_ruleset_compile(soft_ruleset_t *rs)
+{
+    return soft_ruleset_compile_err(rs, NULL, 0);
 }
 
 /* ------------------------------------------------------------------ */

@@ -173,6 +173,10 @@ struct soft_ruleset {
     custom_op_entry_t   custom_ops[MAX_CUSTOM_OPS];
     query_cache_entry_t query_cache[QUERY_CACHE_SIZE]; /**< Direct-mapped query result cache */
     char                last_error[256];
+    /* Evaluation statistics (not thread-safe) */
+    uint64_t            stats_cache_hits;
+    uint64_t            stats_cache_misses;
+    uint64_t            stats_eval_calls;
 };
 
 /* ------------------------------------------------------------------ */

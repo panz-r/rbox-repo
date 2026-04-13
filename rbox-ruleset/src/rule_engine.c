@@ -878,6 +878,9 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
 {
     if (!rs || !ctx) { errno = EINVAL; return -EACCES; }
 
+    /* Track eval calls */
+    ((soft_ruleset_t *)rs)->stats_eval_calls++;
+
     bool is_binary = (ctx->op == SOFT_OP_COPY || ctx->op == SOFT_OP_MOVE ||
                       ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT ||
                       ctx->op >= SOFT_OP_CUSTOM);
@@ -902,6 +905,7 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
 
             if (src_hit && dst_hit) {
                 /* Both subqueries cached and cover required modes */
+                mutable->stats_cache_hits += 2;
                 if (src_hit->deny_layer >= 0 || dst_hit->deny_layer >= 0)
                     return -EACCES;
                 if ((src_hit->granted & src_req) != src_req ||
@@ -909,12 +913,19 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                     return -EACCES;
                 return (int)(src_hit->granted | dst_hit->granted);
             }
+            if (src_hit) mutable->stats_cache_hits++;
+            else mutable->stats_cache_misses++;
+            if (dst_hit) mutable->stats_cache_hits++;
+            else mutable->stats_cache_misses++;
         } else if (src_hit) {
             /* Unary op, fully cached */
+            mutable->stats_cache_hits++;
             if (src_hit->deny_layer >= 0) return -EACCES;
             uint32_t req = op_required_src_mode(rs, ctx->op);
             if ((src_hit->granted & req) != req) return -EACCES;
             return (int)src_hit->granted;
+        } else {
+            mutable->stats_cache_misses++;
         }
     }
 
@@ -1747,4 +1758,74 @@ int soft_ruleset_check(const soft_ruleset_t *rs,
     };
     (void)mask;
     return soft_ruleset_check_ctx(rs, &ctx, NULL);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Evaluation statistics                                               */
+/* ------------------------------------------------------------------ */
+
+void soft_ruleset_get_stats(const soft_ruleset_t *rs,
+                            soft_eval_stats_t *out,
+                            bool reset)
+{
+    if (!out) return;
+    out->cache_hits = rs ? rs->stats_cache_hits : 0;
+    out->cache_misses = rs ? rs->stats_cache_misses : 0;
+    out->eval_calls = rs ? rs->stats_eval_calls : 0;
+    if (reset && rs) {
+        ((soft_ruleset_t *)rs)->stats_cache_hits = 0;
+        ((soft_ruleset_t *)rs)->stats_cache_misses = 0;
+        ((soft_ruleset_t *)rs)->stats_eval_calls = 0;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Compiled footprint estimate                                       */
+/* ------------------------------------------------------------------ */
+
+int soft_ruleset_estimate_compiled(const soft_ruleset_t *rs,
+                                   size_t *out_rule_bytes,
+                                   size_t *out_str_bytes)
+{
+    if (!rs) { errno = EINVAL; return -1; }
+
+    size_t rule_count = 0;
+    size_t str_bytes = 0;
+
+    for (int i = 0; i < rs->layer_count; i++) {
+        const layer_t *lyr = &rs->layers[i];
+        for (int j = 0; j < lyr->count; j++) {
+            const rule_t *r = &lyr->rules[j];
+            rule_count++;
+            str_bytes += strlen(r->pattern) + 1;  /* +1 for null */
+            if (r->subject_regex[0] != '\0')
+                str_bytes += strlen(r->subject_regex) + 1;
+        }
+    }
+
+    /* compiled_rule_t is ~48 bytes.  Add small overhead for arena alignment. */
+    size_t rule_bytes = rule_count * (sizeof(compiled_rule_t) + 8);
+
+    if (out_rule_bytes) *out_rule_bytes = rule_bytes;
+    if (out_str_bytes) *out_str_bytes = str_bytes;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Library version and features                                       */
+/* ------------------------------------------------------------------ */
+
+#define RULE_ENGINE_VERSION "0.2.0"
+
+const char *soft_ruleset_version(void)
+{
+    return RULE_ENGINE_VERSION;
+}
+
+uint32_t soft_ruleset_features(void)
+{
+    return SOFT_FEATURE_LANDLOCK_BRIDGE
+         | SOFT_FEATURE_BINARY_SERIALIZATION
+         | SOFT_FEATURE_RULE_MELD
+         | SOFT_FEATURE_RULE_DIFF;
 }

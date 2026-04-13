@@ -18,6 +18,38 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ */
+/*  Per-rule Landlock compatibility pre-check                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Check if a single rule can be expressed in Landlock.
+ *
+ * This is useful for interactive policy building: reject a rule before
+ * inserting it into the ruleset, rather than validating the entire
+ * ruleset after each insertion.
+ *
+ * Incompatible conditions:
+ *   - Subject constraint (subject_regex non-NULL and non-empty)
+ *   - UID constraint (min_uid > 0)
+ *   - Template variable (linked_path_var non-NULL and non-empty)
+ *   - Mid-path wildcard (* not at suffix /** or ...)
+ *   - Single-star suffix (/*) — over-permissive, not expressible
+ *
+ * @param pattern        Path pattern string.
+ * @param subject_regex  Subject regex constraint (NULL or "" = none).
+ * @param min_uid        Minimum UID (0 = any).
+ * @param linked_path_var Template variable ("SRC", "DST", or NULL/"" = none).
+ * @param error_msg      If non-NULL and incompatible, receives a static
+ *                       error string describing the issue.
+ * @return 0 if compatible with Landlock, -1 if not.
+ */
+int soft_rule_is_landlock_compatible(const char *pattern,
+                                     const char *subject_regex,
+                                     uint32_t min_uid,
+                                     const char *linked_path_var,
+                                     const char **error_msg);
+
+/* ------------------------------------------------------------------ */
 /*  Access flag mapping                                                 */
 /* ------------------------------------------------------------------ */
 

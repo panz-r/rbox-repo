@@ -173,6 +173,20 @@ int soft_ruleset_layer_count(const soft_ruleset_t *rs);
 int soft_ruleset_compile(soft_ruleset_t *rs);
 
 /**
+ * Compile with error detail.
+ *
+ * Like soft_ruleset_compile(), but on failure writes a human-readable
+ * description of what went wrong into errbuf.
+ *
+ * @param rs           Ruleset handle.
+ * @param errbuf       Buffer to receive error message, or NULL to discard.
+ * @param errbuf_size  Size of errbuf in bytes (ignored if errbuf is NULL).
+ * @return 0 on success, -1 on failure (errno set, errbuf filled).
+ */
+int soft_ruleset_compile_err(soft_ruleset_t *rs,
+                             char *errbuf, size_t errbuf_size);
+
+/**
  * Check if the ruleset has a valid compiled effective ruleset.
  */
 bool soft_ruleset_is_compiled(const soft_ruleset_t *rs);
@@ -378,6 +392,80 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
 int soft_ruleset_check(const soft_ruleset_t *rs,
                        const char *path,
                        uint32_t mask);
+
+/* ------------------------------------------------------------------ */
+/*  Evaluation statistics                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Evaluation statistics collected from check_ctx() calls.
+ *
+ * These counters are NOT thread-safe.  In a multi-threaded syscall
+ * intercept, the caller must synchronize access or accept approximate
+ * counts.
+ */
+typedef struct {
+    uint64_t cache_hits;     /**< Query cache hits */
+    uint64_t cache_misses;   /**< Query cache misses */
+    uint64_t eval_calls;     /**< Total soft_ruleset_check_ctx() calls */
+} soft_eval_stats_t;
+
+/**
+ * Read and optionally reset evaluation statistics.
+ *
+ * @param rs     Ruleset handle.
+ * @param out    Receives current statistics.
+ * @param reset  If true, reset all counters to zero after reading.
+ */
+void soft_ruleset_get_stats(const soft_ruleset_t *rs,
+                            soft_eval_stats_t *out,
+                            bool reset);
+
+/* ------------------------------------------------------------------ */
+/*  Compiled footprint estimate                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Estimate the memory footprint of the compiled ruleset without
+ * actually compiling.
+ *
+ * Useful for enforcing memory budgets or warning about oversized
+ * rulesets before committing to the (potentially expensive) compile.
+ *
+ * @param rs               Ruleset handle.
+ * @param out_rule_bytes   Estimated bytes for compiled rule arrays
+ *                         (all 4 buckets combined).  May be NULL.
+ * @param out_str_bytes    Estimated bytes for the string arena
+ *                         (interned pattern/subject strings). May be NULL.
+ * @return 0 on success, -1 if rs is NULL.
+ */
+int soft_ruleset_estimate_compiled(const soft_ruleset_t *rs,
+                                   size_t *out_rule_bytes,
+                                   size_t *out_str_bytes);
+
+/* ------------------------------------------------------------------ */
+/*  Library version and features                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Library version string, e.g. "0.2.0".
+ */
+const char *soft_ruleset_version(void);
+
+/** Feature flags returned by soft_ruleset_features(). */
+#define SOFT_FEATURE_LANDLOCK_BRIDGE      (1U << 0)
+#define SOFT_FEATURE_BINARY_SERIALIZATION (1U << 1)
+#define SOFT_FEATURE_RULE_MELD            (1U << 2)
+#define SOFT_FEATURE_RULE_DIFF            (1U << 3)
+
+/**
+ * Query which features are compiled into this build.
+ *
+ * Returns a bitmask of SOFT_FEATURE_* flags.  All features defined
+ * above are always present in a standard build.  Stripped-down builds
+ * may omit some flags.
+ */
+uint32_t soft_ruleset_features(void);
 
 /* ------------------------------------------------------------------ */
 /*  Rule info (enumeration / inspection)                               */

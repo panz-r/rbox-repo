@@ -18,6 +18,48 @@
 #include "landlock_bridge.h"
 
 /* ------------------------------------------------------------------ */
+/*  Per-rule Landlock compatibility pre-check                           */
+/* ------------------------------------------------------------------ */
+
+/** Check if pattern ends with /* (single-star suffix). */
+static bool is_single_star_suffix(const char *pattern)
+{
+    if (!pattern) return false;
+    size_t len = strlen(pattern);
+    return len >= 2 && pattern[len - 2] == '/' && pattern[len - 1] == '*';
+}
+
+int soft_rule_is_landlock_compatible(const char *pattern,
+                                     const char *subject_regex,
+                                     uint32_t min_uid,
+                                     const char *linked_path_var,
+                                     const char **error_msg)
+{
+    if (subject_regex && subject_regex[0] != '\0') {
+        if (error_msg) *error_msg = landlock_compat_error_msgs[-LANDLOCK_COMPAT_SUBJECT];
+        return -1;
+    }
+    if (min_uid > 0) {
+        if (error_msg) *error_msg = landlock_compat_error_msgs[-LANDLOCK_COMPAT_UID];
+        return -1;
+    }
+    if (linked_path_var && linked_path_var[0] != '\0') {
+        if (error_msg) *error_msg = landlock_compat_error_msgs[-LANDLOCK_COMPAT_TEMPLATE];
+        return -1;
+    }
+    if (is_single_star_suffix(pattern)) {
+        if (error_msg) *error_msg = landlock_compat_error_msgs[-LANDLOCK_COMPAT_SINGLE_STAR];
+        return -1;
+    }
+    pattern_class_t pc = soft_pattern_classify(pattern);
+    if (pc == PATTERN_WILDCARD) {
+        if (error_msg) *error_msg = landlock_compat_error_msgs[-LANDLOCK_COMPAT_WILDCARD];
+        return -1;
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Access flag mapping                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -85,14 +127,6 @@ pattern_class_t soft_pattern_classify(const char *pattern)
         return PATTERN_WILDCARD;
 
     return PATTERN_EXACT;
-}
-
-/** Check if pattern ends with /* (single-star suffix). */
-static bool is_single_star_suffix(const char *pattern)
-{
-    if (!pattern) return false;
-    size_t len = strlen(pattern);
-    return len >= 2 && pattern[len - 2] == '/' && pattern[len - 1] == '*';
 }
 
 /* ------------------------------------------------------------------ */

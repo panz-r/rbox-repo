@@ -605,6 +605,71 @@ int landlock_builder_prepare_with_report(
     return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Dry-run prepare (path resolution preview)                          */
+/* ------------------------------------------------------------------ */
+
+int landlock_builder_dry_run(const landlock_builder_t *b,
+                             bool expand_symlinks,
+                             char ***failures,
+                             int *failure_count)
+{
+    if (!b || !b->tree) {
+        if (failure_count) *failure_count = 0;
+        if (failures) *failures = NULL;
+        return -1;
+    }
+
+    /* Collect all rules from the tree */
+    landlock_rule_t *rules = NULL;
+    size_t rule_count = 0;
+    radix_tree_collect_rules(b->tree, &rules, &rule_count);
+
+    int fail_cap = 0;
+    int fail_idx = 0;
+    char **fail_list = NULL;
+
+    for (size_t i = 0; i < rule_count; i++) {
+        const char *path = rules[i].path;
+        char resolved[PATH_MAX];
+        int ok;
+
+        if (expand_symlinks) {
+            ok = (realpath(path, resolved) != NULL);
+        } else {
+            ok = (path[0] == '/' && strstr(path, "//") == NULL);
+        }
+
+        if (!ok) {
+            if (fail_idx >= fail_cap) {
+                fail_cap = fail_cap == 0 ? 16 : fail_cap * 2;
+                char **new_list = realloc(fail_list, (size_t)fail_cap * sizeof(char *));
+                if (!new_list) break;
+                fail_list = new_list;
+            }
+            fail_list[fail_idx] = strdup(path);
+            if (fail_list[fail_idx]) fail_idx++;
+        }
+    }
+
+    free(rules);
+
+    if (failures) {
+        if (fail_idx > 0) {
+            fail_list = realloc(fail_list, (size_t)(fail_idx + 1) * sizeof(char *));
+            if (fail_list) fail_list[fail_idx] = NULL;
+        }
+        *failures = fail_list;
+    } else {
+        for (int i = 0; i < fail_idx; i++)
+            free(fail_list[i]);
+        free(fail_list);
+    }
+
+    if (failure_count) *failure_count = fail_idx;
+    return 0;
+}
+
 int landlock_rule_open_fd(const landlock_rule_t *rule, int flags)
 {
     if (!rule || !rule->path) { errno = EINVAL; return -1; }
