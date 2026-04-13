@@ -440,12 +440,6 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                         CDBG("waiting: total_needed exceeds max -> failed");
                         break;
                     }
-                    if (total_needed > 10 * 1024 * 1024) {
-                        session->state = RBOX_SESSION_FAILED;
-                        session->error = RBOX_ERR_INVALID;
-                        CDBG("waiting: total_needed exceeds 10MB -> failed");
-                        break;
-                    }
                     if (total_needed > session->recv_capacity) {
                         char *new_buf = realloc(session->recv_buf, total_needed);
                         if (!new_buf) {
