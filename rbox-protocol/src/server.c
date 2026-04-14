@@ -925,6 +925,12 @@ static void *server_thread_func(void *arg) {
         DBG("Wake fd %d added to epoll", server->wake_fd);
     }
 
+    /* Signal successful startup before entering main loop */
+    pthread_mutex_lock(&server->startup_mutex);
+    server->startup_complete = 1;
+    pthread_cond_broadcast(&server->startup_cond);
+    pthread_mutex_unlock(&server->startup_mutex);
+
     while (1) {
         loop_count++;
         DBG("=== Top of loop (count=%d) ===", loop_count);
@@ -948,7 +954,8 @@ static void *server_thread_func(void *arg) {
             uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
             uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_runtime_crc32(0, req->command_data, req->command_len) : 0;
             rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
-                                  cmd_hash, cmd_hash2, dec->fenv_hash, dec->decision, dec->reason, dec->duration,
+                                  cmd_hash, cmd_hash2, dec->fenv_hash,
+                                  dec->decision, dec->reason, dec->duration,
                                   dec->env_decision_count, dec->env_decisions);
             char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
                 dec->decision, dec->reason,
@@ -1425,6 +1432,24 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         free(srv);
         return NULL;
     }
+    if (pthread_mutex_init(&srv->startup_mutex, NULL) != 0) {
+        pthread_mutex_destroy(&srv->client_fd_mutex);
+        pthread_mutex_destroy(&srv->cache_mutex);
+        close(srv->listen_fd);
+        unlink(socket_path);
+        free(srv);
+        return NULL;
+    }
+    if (pthread_cond_init(&srv->startup_cond, NULL) != 0) {
+        pthread_mutex_destroy(&srv->startup_mutex);
+        pthread_mutex_destroy(&srv->client_fd_mutex);
+        pthread_mutex_destroy(&srv->cache_mutex);
+        close(srv->listen_fd);
+        unlink(socket_path);
+        free(srv);
+        return NULL;
+    }
+    srv->startup_complete = 0;
     atomic_flag_clear(&srv->stop_flag);
     srv->client_fds = NULL;
     srv->active_client_count = 0;
@@ -1443,6 +1468,8 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         send_pool_destroy(srv);
         pthread_mutex_destroy(&srv->cache_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
+        pthread_mutex_destroy(&srv->startup_mutex);
+        pthread_cond_destroy(&srv->startup_cond);
         close(srv->listen_fd);
         free(srv);
         return NULL;
@@ -1463,21 +1490,23 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         return NULL;
     }
 
-    rbox_decision_node_t *dummy = malloc(sizeof(*dummy));
-    if (!dummy) {
+    rbox_decision_node_t *dec_dummy = malloc(sizeof(*dec_dummy));
+    if (!dec_dummy) {
         close(srv->request_wake_fd);
         request_pool_destroy(srv);
         send_pool_destroy(srv);
         pthread_mutex_destroy(&srv->cache_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
+        pthread_mutex_destroy(&srv->startup_mutex);
+        pthread_cond_destroy(&srv->startup_cond);
         close(srv->listen_fd);
         free(srv);
         return NULL;
     }
-    dummy->decision = NULL;
-    atomic_store_explicit(&dummy->next, NULL, memory_order_relaxed);
-    atomic_store_explicit(&srv->decision_queue.head, dummy, memory_order_relaxed);
-    atomic_store_explicit(&srv->decision_queue.tail, dummy, memory_order_relaxed);
+    dec_dummy->decision = NULL;
+    atomic_store_explicit(&dec_dummy->next, NULL, memory_order_relaxed);
+    atomic_store_explicit(&srv->decision_queue.head, dec_dummy, memory_order_relaxed);
+    atomic_store_explicit(&srv->decision_queue.tail, dec_dummy, memory_order_relaxed);
 
     srv->wake_fd = eventfd(0, EFD_NONBLOCK);
     if (srv->wake_fd < 0) {
@@ -1486,6 +1515,8 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         send_pool_destroy(srv);
         pthread_mutex_destroy(&srv->cache_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
+        pthread_mutex_destroy(&srv->startup_mutex);
+        pthread_cond_destroy(&srv->startup_cond);
         close(srv->listen_fd);
         unlink(srv->socket_path);
         free(srv);
@@ -1568,6 +1599,8 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
 
     pthread_mutex_destroy(&server->cache_mutex);
     pthread_mutex_destroy(&server->client_fd_mutex);
+    pthread_mutex_destroy(&server->startup_mutex);
+    pthread_cond_destroy(&server->startup_cond);
     free(server);
 }
 
@@ -1580,10 +1613,23 @@ void rbox_server_set_limits(rbox_server_handle_t *server, int max_clients, int i
 
 rbox_error_t rbox_server_start(rbox_server_handle_t *server) {
     if (!server) return RBOX_ERR_INVALID;
+    server->thread_error = RBOX_OK;
+    server->startup_complete = 0;
     atomic_store(&server->running, 1);
     if (pthread_create(&server->thread, NULL, server_thread_func, server) != 0) {
         atomic_store(&server->running, 0);
         return RBOX_ERR_IO;
+    }
+    /* Wait for thread to signal successful startup */
+    pthread_mutex_lock(&server->startup_mutex);
+    while (!server->startup_complete && server->thread_error == RBOX_OK) {
+        pthread_cond_wait(&server->startup_cond, &server->startup_mutex);
+    }
+    pthread_mutex_unlock(&server->startup_mutex);
+
+    if (server->thread_error != RBOX_OK) {
+        atomic_store(&server->running, 0);
+        return server->thread_error;
     }
     return RBOX_OK;
 }
