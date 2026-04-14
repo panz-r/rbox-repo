@@ -82,7 +82,6 @@ uint32_t rbox_runtime_rand_seed(void) {
  * If prev_crc is 0, starts fresh (initial CRC = 0xFFFFFFFF).
  * Otherwise continues from prev_crc (expects pre-xored value). */
 uint32_t rbox_runtime_crc32(uint32_t prev_crc, const void *data, size_t len) {
-    init_crc32_table();
     uint32_t crc = prev_crc == 0 ? 0xFFFFFFFF : prev_crc;
     const uint8_t *bytes = (const uint8_t *)data;
     for (size_t i = 0; i < len; i++) {
