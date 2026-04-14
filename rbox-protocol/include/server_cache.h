@@ -11,6 +11,7 @@
 #define RBOX_SERVER_CACHE_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* Forward declaration */
 typedef struct rbox_server_handle rbox_server_handle_t;

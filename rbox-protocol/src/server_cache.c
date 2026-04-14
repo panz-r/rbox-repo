@@ -283,7 +283,12 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
             if (existing->key_hash == entry->key_hash &&
                 existing->cmd_hash == entry->cmd_hash &&
                 existing->cmd_hash2 == entry->cmd_hash2 &&
-                existing->fenv_hash == entry->fenv_hash) {
+                existing->fenv_hash == entry->fenv_hash &&
+                /* Don't replace if both are one-shot but IDs differ (collision) */
+                !(existing->expires_at == 0 && entry->expires_at == 0 &&
+                  (memcmp(existing->client_id, entry->client_id, 16) != 0 ||
+                   memcmp(existing->request_id, entry->request_id, 16) != 0 ||
+                   existing->packet_checksum != entry->packet_checksum))) {
                 /* Timed entry (expires_at > 0) is stronger than one-shot (expires_at == 0).
                  * A one-shot request with the same command AND identical env decisions
                  * does not replace the timed entry - the one-shot is discarded.
@@ -300,6 +305,9 @@ void rbox_server_cache_insert(rbox_server_handle_t *server,
                 existing->duration = entry->duration;
                 existing->timestamp = entry->timestamp;
                 existing->expires_at = entry->expires_at;
+                existing->packet_checksum = entry->packet_checksum;
+                memcpy(existing->client_id, entry->client_id, 16);
+                memcpy(existing->request_id, entry->request_id, 16);
                 free(existing->env_decisions);
                 existing->env_decision_count = entry->env_decision_count;
                 if (entry->env_decision_count > 0 && entry->env_decisions) {
