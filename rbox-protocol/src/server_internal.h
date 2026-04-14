@@ -270,6 +270,12 @@ struct rbox_server_handle {
     atomic_int running;            /* Atomic flag to signal shutdown */
     atomic_flag stop_flag;         /* Atomic flag - only one stop() wins */
     int wake_fd;                   /* eventfd to wake epoll thread */
+    rbox_error_t thread_error;     /* Error code if thread failed to start */
+
+    /* Thread startup synchronization */
+    pthread_mutex_t startup_mutex;
+    pthread_cond_t startup_cond;
+    int startup_complete;          /* 1 once thread signals it has entered main loop */
 
     /* Response cache (hash table with LRU) */
     rbox_response_cache_t cache;
