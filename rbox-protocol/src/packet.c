@@ -105,6 +105,12 @@ rbox_error_t rbox_header_validate(const char *packet, size_t len) {
         return RBOX_ERR_VERSION;
     }
 
+    /* Verify chunk_len is within bounds */
+    uint32_t chunk_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
+    if (chunk_len > RBOX_CHUNK_MAX) {
+        return RBOX_ERR_INVALID;
+    }
+
     /* Verify checksum at offset 119 - compute CRC over bytes 0-118 only */
     uint32_t stored_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
     uint32_t calc_checksum = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
@@ -360,16 +366,27 @@ rbox_error_t validate_response(const char *packet, size_t len,
         }
 
         uint32_t chunk_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
+        if (chunk_len > RBOX_CHUNK_MAX) {
+            return RBOX_ERR_INVALID;
+        }
         if (len < RBOX_HEADER_SIZE + chunk_len) {
             return RBOX_ERR_TRUNCATED;
         }
 
+        /* Validate header checksum before parsing body */
+        uint32_t stored_hdr_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
+        uint32_t computed_hdr_checksum = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
+        if (stored_hdr_checksum != computed_hdr_checksum) {
+            return RBOX_ERR_CHECKSUM;
+        }
+
         decision = packet[RBOX_HEADER_SIZE];  /* decision at offset 92 */
         reason_offset = RBOX_HEADER_SIZE + 1;  /* reason starts after decision byte */
-        /* Parse reason string to find actual length (null-terminated) */
+        /* Parse reason string to find actual length (null-terminated, bounded by chunk_len) */
         reason_len = 0;
         size_t scan_offset = RBOX_HEADER_SIZE + 1;
-        while (scan_offset < len && reason_len < RBOX_RESPONSE_MAX_REASON) {
+        size_t scan_bound = RBOX_HEADER_SIZE + chunk_len;
+        while (scan_offset < scan_bound && reason_len < RBOX_RESPONSE_MAX_REASON) {
             if (packet[scan_offset] == '\0') break;
             reason_len++;
             scan_offset++;
