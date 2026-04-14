@@ -360,15 +360,15 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
  * Evaluate a single access transaction.
  *
  * Layers are evaluated from 0 (highest precedence) downward:
- *   1. If any layer produces DENY, return DENY immediately.
+ *   1. If any layer produces DENY, granted = 0.
  *   2. Otherwise, the granted mode is the bitwise AND of all layers.
  *
  * Return values:
- *   > 0        — SOFT_ACCESS_* bitmask granted by matching rules
- *   == 0       — no rules matched this path (undetermined; caller
- *                should apply their default policy)
- *   -EACCES    — access explicitly denied by a matching rule, or
- *                rules matched but granted insufficient mode bits
+ *   1  — determined.  *out_granted holds the bitmask: check individual
+ *        bits (SOFT_ACCESS_READ, WRITE, etc.) to know what is allowed.
+ *        A value of 0 means all access denied.
+ *   0  — undetermined.  No rules matched this path/subject/UID.
+ *        Caller should apply their default policy.
  *
  * For unary operations (READ, WRITE, EXEC), ctx->src_path is the
  * target path and ctx->dst_path should be NULL.
@@ -377,20 +377,23 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
  * dst_path are evaluated:
  *   - src_path is checked against rules matching the operation or READ
  *   - dst_path is checked against rules matching the operation or WRITE
- *   - Results are intersected; DENY on either side means DENY overall
+ *   - Results are intersected; if either side is denied, granted = 0
  *   - If neither path matched any rule, returns 0 (undetermined)
  *
  * Within each layer, static (non-template) rules are evaluated before
  * template rules, so a static DENY for /etc/shadow will shadow a
  * template ${SRC}: RO rule.
  *
- * @param rs        Ruleset handle.
- * @param ctx       Access context (operation, paths, subject, UID).
- * @param out_log   Optional audit log output.
- * @return SOFT_ACCESS_* granted, 0 if no rules matched, or -EACCES if denied.
+ * @param rs           Ruleset handle.
+ * @param ctx          Access context (operation, paths, subject, UID).
+ * @param out_granted  Receives the granted access mask.  Always set
+ *                     on return 1, always 0 on return 0.
+ * @param out_log      Optional audit log output.
+ * @return 1 if the ruleset made a decision, 0 if undetermined.
  */
 int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                            const soft_access_ctx_t *ctx,
+                           uint32_t *out_granted,
                            soft_audit_log_t *out_log);
 
 /**
@@ -403,14 +406,15 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
  *
  * @param rs        Ruleset handle.
  * @param ctxs      Array of access contexts (count entries).
- * @param results   Output array of results (count entries).
- *                  Each entry is SOFT_ACCESS_* or -EACCES.
+ * @param out_granted  Output array of granted bitmasks (count entries).
+ *                  On return 1 for an entry, *out_granted[i] holds
+ *                  the granted mask. On return 0, *out_granted[i] is 0.
  * @param count     Number of transactions.
  * @return 0 on success, -1 on failure (e.g., memory).
  */
 int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                                  const soft_access_ctx_t *ctxs[],
-                                 int *results,
+                                 uint32_t *out_granted,
                                  int count);
 
 /* ------------------------------------------------------------------ */
@@ -422,14 +426,14 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
  * Equivalent to calling soft_ruleset_check_ctx with a READ operation
  * on the given path.
  *
- * @param rs    Ruleset handle.
- * @param path  Target path.
- * @param mask  Requested access mask (ignored, kept for API compat).
- * @return SOFT_ACCESS_* granted, or -EACCES if denied.
+ * @param rs           Ruleset handle.
+ * @param path         Target path.
+ * @param out_granted  Receives the granted access mask.
+ * @return 1 if determined (check *out_granted), 0 if undetermined.
  */
 int soft_ruleset_check(const soft_ruleset_t *rs,
                        const char *path,
-                       uint32_t mask);
+                       uint32_t *out_granted);
 
 /* ------------------------------------------------------------------ */
 /*  Evaluation statistics                                               */

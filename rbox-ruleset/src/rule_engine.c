@@ -1013,9 +1013,10 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
 
 int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
                            const soft_access_ctx_t *ctx,
+                           uint32_t *out_granted,
                            soft_audit_log_t *out_log)
 {
-    if (!rs || !ctx) { errno = EINVAL; return -EACCES; }
+    if (!rs || !ctx) { if (out_granted) *out_granted = 0; return 0; }
 
     /* Track eval calls */
     ((soft_ruleset_t *)rs)->stats_eval_calls++;
@@ -1026,7 +1027,8 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
 
     uint64_t subj_hash = fnv1a_str(ctx->subject);
     uint32_t eval_mask = eval_mode_for_op(ctx->op);
-    int result;
+    uint32_t granted = 0;
+    int determined = 0;  /* 1 = ruleset made a decision, 0 = undetermined */
 
     /* Try cache lookup (skip if audit log requested) */
     if (!out_log) {
@@ -1045,163 +1047,191 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             if (src_hit && dst_hit) {
                 /* Both subqueries cached and cover required modes */
                 mutable->stats_cache_hits += 2;
-                if (src_hit->deny_layer >= 0 || dst_hit->deny_layer >= 0)
-                    return -EACCES;
+                if (src_hit->deny_layer >= 0 || dst_hit->deny_layer >= 0) {
+                    /* Denied by rule */
+                    if (out_granted) *out_granted = 0;
+                    if (out_log) {
+                        out_log->result = 0;
+                        out_log->deny_reason = src_hit->deny_layer >= 0 ? "SRC denied" : "DST denied";
+                        out_log->deny_layer = src_hit->deny_layer >= 0 ? src_hit->deny_layer : dst_hit->deny_layer;
+                        out_log->matched_rule = NULL;
+                    }
+                    return 1;
+                }
                 /* If neither sub-query matched any rule, return undetermined */
-                if (!src_hit->any_matched && !dst_hit->any_matched)
+                if (!src_hit->any_matched && !dst_hit->any_matched) {
+                    if (out_granted) *out_granted = 0;
                     return 0;
+                }
                 if ((src_hit->granted & src_req) != src_req ||
-                    (dst_hit->granted & dst_req) != dst_req)
-                    return -EACCES;
-                return (int)(src_hit->granted | dst_hit->granted);
+                    (dst_hit->granted & dst_req) != dst_req) {
+                    if (out_granted) *out_granted = 0;
+                    if (out_log) {
+                        out_log->result = 0;
+                        out_log->deny_reason = "Insufficient mode";
+                        out_log->deny_layer = -1;
+                        out_log->matched_rule = NULL;
+                    }
+                    return 1;
+                }
+                granted = src_hit->granted | dst_hit->granted;
+                determined = 1;
+            } else {
+                if (src_hit) mutable->stats_cache_hits++;
+                else mutable->stats_cache_misses++;
+                if (dst_hit) mutable->stats_cache_hits++;
+                else mutable->stats_cache_misses++;
             }
-            if (src_hit) mutable->stats_cache_hits++;
-            else mutable->stats_cache_misses++;
-            if (dst_hit) mutable->stats_cache_hits++;
-            else mutable->stats_cache_misses++;
         } else if (src_hit) {
             /* Unary op, fully cached */
             mutable->stats_cache_hits++;
-            if (src_hit->deny_layer >= 0) return -EACCES;
+            if (!src_hit->any_matched) {
+                /* No rules matched */
+                if (out_granted) *out_granted = 0;
+                return 0;
+            }
             uint32_t req = op_required_src_mode(rs, ctx->op);
-            if (!src_hit->any_matched) return 0;  /* no rules matched */
-            if ((src_hit->granted & req) != req) return -EACCES;
-            return (int)src_hit->granted;
+            if (src_hit->deny_layer >= 0 || (src_hit->granted & req) != req) {
+                if (out_granted) *out_granted = 0;
+                if (out_log) {
+                    out_log->result = 0;
+                    out_log->deny_reason = src_hit->deny_layer >= 0 ? "Denied by rule" : "Insufficient mode";
+                    out_log->deny_layer = src_hit->deny_layer;
+                    out_log->matched_rule = NULL;
+                }
+                return 1;
+            }
+            granted = src_hit->granted;
+            determined = 1;
         } else {
             mutable->stats_cache_misses++;
         }
     }
 
-    /* Evaluate */
-    if (is_binary) {
-        int src_deny = -1, dst_deny = -1;
-        uint32_t src_granted = 0, dst_granted = 0;
-        const char *src_pattern = NULL, *dst_pattern = NULL;
+    if (!determined) {
+        /* Evaluate */
+        if (is_binary) {
+            int src_deny = -1, dst_deny = -1;
+            uint32_t src_granted = 0, dst_granted = 0;
+            const char *src_pattern = NULL, *dst_pattern = NULL;
 
-        src_granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
-                                      &src_deny, &src_pattern);
-        if (src_deny >= 0) {
-            if (out_log) {
-                out_log->result = -EACCES;
-                out_log->deny_reason = "SRC denied by layer";
-                out_log->deny_layer = src_deny;
-                out_log->matched_rule = src_pattern;
-            }
-            result = -EACCES;
-        } else {
-            uint32_t src_req = op_required_src_mode(rs, ctx->op);
-            if ((src_granted & src_req) != src_req) {
+            src_granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
+                                          &src_deny, &src_pattern);
+            if (src_deny >= 0) {
+                granted = 0; determined = 1;
                 if (out_log) {
-                    out_log->result = -EACCES;
-                    out_log->deny_reason = "SRC insufficient mode";
+                    out_log->result = 0;
+                    out_log->deny_reason = "SRC denied by layer";
+                    out_log->deny_layer = src_deny;
+                    out_log->matched_rule = src_pattern;
+                }
+            } else {
+                uint32_t src_req = op_required_src_mode(rs, ctx->op);
+                if ((src_granted & src_req) != src_req) {
+                    granted = 0; determined = 1;
+                    if (out_log) {
+                        out_log->result = 0;
+                        out_log->deny_reason = "SRC insufficient mode";
+                        out_log->deny_layer = -1;
+                        out_log->matched_rule = NULL;
+                    }
+                } else {
+                    dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
+                                                  &dst_deny, &dst_pattern);
+                    if (dst_deny >= 0) {
+                        granted = 0; determined = 1;
+                        if (out_log) {
+                            out_log->result = 0;
+                            out_log->deny_reason = "DST denied by layer";
+                            out_log->deny_layer = dst_deny;
+                            out_log->matched_rule = dst_pattern;
+                        }
+                    } else {
+                        uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
+                        if ((dst_granted & dst_req) != dst_req) {
+                            granted = 0; determined = 1;
+                            if (out_log) {
+                                out_log->result = 0;
+                                out_log->deny_reason = "DST insufficient mode";
+                                out_log->deny_layer = -1;
+                                out_log->matched_rule = NULL;
+                            }
+                        } else {
+                            granted = src_granted | dst_granted;
+                            determined = 1;
+                            if (out_log) {
+                                out_log->result = (int)granted;
+                                out_log->deny_layer = -1;
+                                out_log->matched_rule = src_pattern;
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* Cache subquery results independently */
+            if (!out_log && determined) {
+                soft_ruleset_t *m = (soft_ruleset_t *)rs;
+                uint64_t sh = path_hash(ctx->src_path);
+                query_cache_store(m, sh, subj_hash, ctx->uid,
+                                  src_granted, eval_mask, src_deny,
+                                  src_pattern != NULL);
+                if (src_deny < 0 &&
+                    (src_granted & op_required_src_mode(rs, ctx->op)) == op_required_src_mode(rs, ctx->op)) {
+                    uint64_t dh = path_hash(ctx->dst_path);
+                    query_cache_store(m, dh, subj_hash, ctx->uid,
+                                      dst_granted, eval_mask, dst_deny,
+                                      dst_pattern != NULL);
+                }
+            }
+        } else {
+            int deny_layer = -1;
+            const char *matched_pattern = NULL;
+
+            uint32_t req = op_required_src_mode(rs, ctx->op);
+            uint32_t g = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
+                                         &deny_layer, &matched_pattern);
+
+            if (g == 0 && matched_pattern == NULL) {
+                /* No rules matched — undetermined */
+                granted = 0; determined = 0;
+                if (out_log) {
+                    out_log->result = 0;
                     out_log->deny_layer = -1;
                     out_log->matched_rule = NULL;
                 }
-                result = -EACCES;
+            } else if (deny_layer >= 0 || (g & req) != req) {
+                granted = 0; determined = 1;
+                if (out_log) {
+                    out_log->result = 0;
+                    out_log->deny_reason = deny_layer >= 0 ? "Denied by layer" : "Insufficient mode";
+                    out_log->deny_layer = deny_layer;
+                    out_log->matched_rule = matched_pattern;
+                }
             } else {
-                dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
-                                              &dst_deny, &dst_pattern);
-                if (dst_deny >= 0) {
-                    if (out_log) {
-                        out_log->result = -EACCES;
-                        out_log->deny_reason = "DST denied by layer";
-                        out_log->deny_layer = dst_deny;
-                        out_log->matched_rule = dst_pattern;
-                    }
-                    result = -EACCES;
-                } else {
-                    uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
-                    if ((dst_granted & dst_req) != dst_req) {
-                        if (out_log) {
-                            out_log->result = -EACCES;
-                            out_log->deny_reason = "DST insufficient mode";
-                            out_log->deny_layer = -1;
-                            out_log->matched_rule = NULL;
-                        }
-                        result = -EACCES;
-                    } else {
-                        uint32_t res = src_granted | dst_granted;
-                        if (out_log) {
-                            out_log->result = (int)res;
-                            out_log->deny_layer = -1;
-                            out_log->matched_rule = src_pattern;
-                        }
-                        result = (int)res;
-                    }
+                granted = g; determined = 1;
+                if (out_log) {
+                    out_log->result = (int)granted;
+                    out_log->deny_layer = -1;
+                    out_log->matched_rule = matched_pattern;
                 }
             }
-        }
 
-        /* Cache subquery results independently */
-        if (!out_log) {
-            soft_ruleset_t *m = (soft_ruleset_t *)rs;
-            uint64_t sh = path_hash(ctx->src_path);
-            query_cache_store(m, sh, subj_hash, ctx->uid,
-                              src_granted, eval_mask, src_deny,
-                              src_pattern != NULL);
-            /* Cache DST only if it was evaluated */
-            if (src_deny < 0 &&
-                (src_granted & op_required_src_mode(rs, ctx->op)) == op_required_src_mode(rs, ctx->op)) {
-                uint64_t dh = path_hash(ctx->dst_path);
-                query_cache_store(m, dh, subj_hash, ctx->uid,
-                                  dst_granted, eval_mask, dst_deny,
-                                  dst_pattern != NULL);
+            /* Cache unary result */
+            if (!out_log && determined) {
+                soft_ruleset_t *m = (soft_ruleset_t *)rs;
+                uint64_t sh = path_hash(ctx->src_path);
+                query_cache_store(m, sh, subj_hash, ctx->uid,
+                                  granted, eval_mask, deny_layer,
+                                  matched_pattern != NULL);
             }
-        }
-    } else {
-        int deny_layer = -1;
-        const char *matched_pattern = NULL;
-
-        uint32_t req = op_required_src_mode(rs, ctx->op);
-        uint32_t granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
-                                           &deny_layer, &matched_pattern);
-
-        if (deny_layer >= 0) {
-            if (out_log) {
-                out_log->result = -EACCES;
-                out_log->deny_reason = "Access denied by layer";
-                out_log->deny_layer = deny_layer;
-                out_log->matched_rule = matched_pattern;
-            }
-            result = -EACCES;
-        } else if (granted == 0 && matched_pattern == NULL) {
-            /* No rules matched this path — undetermined.
-             * Caller should apply their default policy. */
-            if (out_log) {
-                out_log->result = 0;
-                out_log->deny_layer = -1;
-                out_log->matched_rule = NULL;
-            }
-            result = 0;
-        } else if ((granted & req) != req) {
-            if (out_log) {
-                out_log->result = -EACCES;
-                out_log->deny_reason = "Insufficient access mode";
-                out_log->deny_layer = -1;
-                out_log->matched_rule = NULL;
-            }
-            result = -EACCES;
-        } else {
-            if (out_log) {
-                out_log->result = (int)granted;
-                out_log->deny_layer = -1;
-                out_log->matched_rule = matched_pattern;
-            }
-            result = (int)granted;
-        }
-
-        /* Cache unary result */
-        if (!out_log) {
-            soft_ruleset_t *m = (soft_ruleset_t *)rs;
-            uint64_t sh = path_hash(ctx->src_path);
-            query_cache_store(m, sh, subj_hash, ctx->uid,
-                              granted, eval_mask, deny_layer,
-                              matched_pattern != NULL);
         }
     }
 
-    return result;
+    if (out_granted) *out_granted = granted;
+    return determined ? 1 : 0;
 }
+
 
 /* ------------------------------------------------------------------ */
 /*  Batch evaluation with parent-directory cache                        */
@@ -1280,10 +1310,10 @@ static void batch_cache_store(batch_cache_entry_t *cache,
 
 int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                                  const soft_access_ctx_t *ctxs[],
-                                 int *results,
+                                 uint32_t *out_granted,
                                  int count)
 {
-    if (!rs || !ctxs || !results || count <= 0) { errno = EINVAL; return -1; }
+    if (!rs || !ctxs || !out_granted || count <= 0) { return 0; }
 
     /* Use stack allocation for small batches (avoids malloc overhead).
      * BATCH_CACHE_SIZE (256) * 532 bytes = ~136KB per cache, ~272KB total.
@@ -1307,7 +1337,7 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
 
     for (int i = 0; i < count; i++) {
         const soft_access_ctx_t *ctx = ctxs[i];
-        if (!ctx) { results[i] = -EACCES; continue; }
+        if (!ctx) { out_granted[i] = 0; continue; }
 
         bool is_binary = (ctx->op == SOFT_OP_COPY || ctx->op == SOFT_OP_MOVE ||
                           ctx->op == SOFT_OP_LINK || ctx->op == SOFT_OP_MOUNT ||
@@ -1376,26 +1406,26 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
 
         if (is_binary) {
             if (src_deny >= 0 || dst_deny >= 0) {
-                results[i] = -EACCES;
+                out_granted[i] = 0;
             } else {
                 uint32_t src_req = op_required_src_mode(rs, ctx->op);
                 uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
                 if ((src_granted & src_req) == src_req &&
                     (dst_granted & dst_req) == dst_req) {
-                    results[i] = (int)(src_granted | dst_granted);
+                    out_granted[i] = src_granted | dst_granted;
                 } else {
-                    results[i] = -EACCES;
+                    out_granted[i] = 0;
                 }
             }
         } else {
             if (src_deny >= 0) {
-                results[i] = -EACCES;
+                out_granted[i] = 0;
             } else {
                 uint32_t req = op_required_src_mode(rs, ctx->op);
                 if ((src_granted & req) == req) {
-                    results[i] = (int)src_granted;
+                    out_granted[i] = src_granted;
                 } else {
-                    results[i] = -EACCES;
+                    out_granted[i] = 0;
                 }
             }
         }
@@ -1406,7 +1436,7 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
         free(src_cache);
         free(dst_cache);
     }
-    return 0;
+    return 1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1902,7 +1932,7 @@ int soft_ruleset_insert_at_layer(soft_ruleset_t *dest,
 
 int soft_ruleset_check(const soft_ruleset_t *rs,
                        const char *path,
-                       uint32_t mask)
+                       uint32_t *out_granted)
 {
     soft_access_ctx_t ctx = {
         .op = SOFT_OP_READ,
@@ -1911,8 +1941,7 @@ int soft_ruleset_check(const soft_ruleset_t *rs,
         .subject = NULL,
         .uid = 0
     };
-    (void)mask;
-    return soft_ruleset_check_ctx(rs, &ctx, NULL);
+    return soft_ruleset_check_ctx(rs, &ctx, out_granted, NULL);
 }
 
 /* ------------------------------------------------------------------ */
