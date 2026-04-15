@@ -226,18 +226,28 @@ bool rule_matches_path(const rule_t *rule, const char *path,
 
 /**
  * Check subject constraint.
+ *
+ * Supported subject pattern syntax (simplified, no regex):
+ *   - Empty string or NULL: match any subject
+ *   - Exact string: exact match (e.g., "/usr/bin/admin")
+ *   - "*suffix": match any characters (except '/') then suffix
+ *   - "**suffix": match any characters (including '/') then suffix
+ *   - "$" at end anchors to end of string
  */
 bool subject_matches(const rule_t *rule, const char *subject)
 {
     if (rule->subject_regex[0] == '\0') return true;
     if (!subject) return false;
 
-    size_t rlen = strlen(rule->subject_regex);
-    if (rlen >= 2 && rule->subject_regex[0] == '.' &&
-        rule->subject_regex[1] == '*' && rlen > 2) {
-        const char *suffix = rule->subject_regex + 2;
-        size_t slen = strlen(subject);
+    const char *pat = rule->subject_regex;
+    size_t plen = strlen(pat);
+    size_t slen = strlen(subject);
+
+    /* Check for "**" prefix (match any including '/') */
+    if (plen >= 2 && pat[0] == '*' && pat[1] == '*') {
+        const char *suffix = pat + 2;
         size_t suf_len = strlen(suffix);
+        /* Strip trailing '$' if present */
         if (suf_len > 0 && suffix[suf_len - 1] == '$') suf_len--;
         if (slen >= suf_len && suf_len > 0 &&
             strncmp(subject + slen - suf_len, suffix, suf_len) == 0)
@@ -245,7 +255,31 @@ bool subject_matches(const rule_t *rule, const char *subject)
         return false;
     }
 
-    return strcmp(rule->subject_regex, subject) == 0;
+    /* Check for "*" prefix (match any except '/') */
+    if (plen >= 1 && pat[0] == '*') {
+        const char *suffix = pat + 1;
+        size_t suf_len = strlen(suffix);
+        /* Strip trailing '$' if present */
+        if (suf_len > 0 && suffix[suf_len - 1] == '$') suf_len--;
+        if (slen >= suf_len && suf_len > 0 &&
+            strncmp(subject + slen - suf_len, suffix, suf_len) == 0) {
+            /* Verify no '/' in the prefix part */
+            size_t prefix_len = slen - suf_len;
+            for (size_t i = 0; i < prefix_len; i++) {
+                if (subject[i] == '/') return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /* Strip trailing '$' for exact match */
+    if (plen > 0 && pat[plen - 1] == '$') {
+        plen--;
+    }
+
+    if (plen != slen) return false;
+    return strncmp(pat, subject, plen) == 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -343,13 +377,12 @@ static uint32_t eval_mode_for_op(soft_binary_op_t op)
 static query_cache_entry_t *query_cache_lookup(soft_ruleset_t *rs,
                                                 uint64_t phash,
                                                 uint32_t subject_hash,
-                                                uint32_t uid,
                                                 uint32_t required_mode)
 {
     uint32_t idx = (uint32_t)(phash % QUERY_CACHE_SIZE);
     query_cache_entry_t *e = &rs->query_cache[idx];
     if (e->valid && e->path_hash == phash &&
-        e->subject_hash == subject_hash && e->uid == uid &&
+        e->subject_hash == subject_hash &&
         (e->eval & required_mode) == required_mode) {
         return e;
     }
@@ -360,7 +393,6 @@ static query_cache_entry_t *query_cache_lookup(soft_ruleset_t *rs,
 static void query_cache_store(soft_ruleset_t *rs,
                               uint64_t phash,
                               uint32_t subject_hash,
-                              uint32_t uid,
                               uint32_t granted,
                               uint32_t eval,
                               int32_t deny_layer,
@@ -370,7 +402,6 @@ static void query_cache_store(soft_ruleset_t *rs,
     query_cache_entry_t *e = &rs->query_cache[idx];
     e->path_hash = phash;
     e->subject_hash = subject_hash;
-    e->uid = uid;
     e->granted = granted;
     e->eval = eval;
     e->deny_layer = deny_layer;
@@ -415,7 +446,6 @@ int soft_ruleset_add_rule_at_layer(soft_ruleset_t *rs,
                                    soft_binary_op_t op_type,
                                    const char *linked_path_var,
                                    const char *subject_regex,
-                                   uint32_t min_uid,
                                    uint32_t flags)
 {
     if (!rs || !pattern) { errno = EINVAL; return -1; }
@@ -439,7 +469,6 @@ int soft_ruleset_add_rule_at_layer(soft_ruleset_t *rs,
 
     r.mode = mode;
     r.op_type = op_type;
-    r.min_uid = min_uid;
     r.flags = flags;
 
     if (linked_path_var) {
@@ -469,12 +498,11 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
                           soft_binary_op_t op_type,
                           const char *linked_path_var,
                           const char *subject_regex,
-                          uint32_t min_uid,
                           uint32_t flags)
 {
     return soft_ruleset_add_rule_at_layer(rs, 0, pattern, mode, op_type,
                                           linked_path_var, subject_regex,
-                                          min_uid, flags);
+                                          flags);
 }
 
 /*  Layer type configuration                                           */
@@ -661,7 +689,7 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
         else if (strcmp(src_pattern, "${DST}") == 0) linked = "DST";
 
         int ret = soft_ruleset_add_rule_at_layer(rs, target_layer, src_pattern,
-                                                 mode, op, linked, subject, 0, flags);
+                                                 mode, op, linked, subject, flags);
         if (ret < 0) {
             snprintf(rs->last_error, sizeof(rs->last_error),
                      "Failed to add SRC rule: %s", strerror(errno));
@@ -677,7 +705,7 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
         else if (strcmp(dst_pattern, "${DST}") == 0) linked = "DST";
 
         int ret = soft_ruleset_add_rule_at_layer(rs, target_layer, dst_pattern,
-                                                 mode, op, linked, subject, 0, flags);
+                                                 mode, op, linked, subject, flags);
         if (ret < 0) {
             snprintf(rs->last_error, sizeof(rs->last_error),
                      "Failed to add DST rule: %s", strerror(errno));
@@ -801,14 +829,14 @@ int soft_ruleset_parse_compact_rules(soft_ruleset_t *rs,
             path[pl - 2] == '.' && path[pl - 1] == '.') {
             flags |= SOFT_RULE_RECURSIVE;
         }
-        /* Path ending with /** is also recursive */
+        /* Path ending with /... is also recursive */
         if (pl >= 3 && path[pl - 3] == '/' &&
             path[pl - 2] == '*' && path[pl - 1] == '*') {
             flags |= SOFT_RULE_RECURSIVE;
         }
 
         int ret = soft_ruleset_add_rule(rs, path, mode, SOFT_OP_READ,
-                                        NULL, NULL, 0, flags);
+                                        NULL, NULL, flags);
         if (ret < 0) {
             snprintf(rs->last_error, sizeof(rs->last_error),
                      "%s: rule %d: failed to add rule for '%s': %s",
@@ -920,7 +948,7 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
             if (r->op_type != op && r->op_type != SOFT_OP_READ &&
                 r->op_type != SOFT_OP_WRITE) continue;
             if (!subject_matches(r, ctx->subject)) continue;
-            if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+            
             if (!rule_matches_path(r, path, ctx)) continue;
 
             size_t pat_len = strlen(r->pattern);
@@ -959,7 +987,6 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
             if (r->op_type != op && r->op_type != SOFT_OP_READ &&
                 r->op_type != SOFT_OP_WRITE) continue;
             if (!subject_matches(r, ctx->subject)) continue;
-            if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
             if (!rule_matches_path(r, path, ctx)) continue;
 
             if (r->mode & SOFT_ACCESS_DENY) {
@@ -979,7 +1006,6 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
                 if (r->op_type != op && r->op_type != SOFT_OP_READ &&
                     r->op_type != SOFT_OP_WRITE) continue;
                 if (!subject_matches(r, ctx->subject)) continue;
-                if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
                 if (!rule_matches_path(r, path, ctx)) continue;
 
                 if (r->mode & SOFT_ACCESS_DENY) {
@@ -1036,13 +1062,13 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
         uint64_t src_hash = path_hash(ctx->src_path);
         uint32_t src_req = op_required_src_mode(rs, ctx->op);
         query_cache_entry_t *src_hit = query_cache_lookup(mutable, src_hash,
-                                                           subj_hash, ctx->uid, src_req);
+                                                           subj_hash, src_req);
 
         if (is_binary) {
             uint64_t dst_hash = path_hash(ctx->dst_path);
             uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
             query_cache_entry_t *dst_hit = query_cache_lookup(mutable, dst_hash,
-                                                               subj_hash, ctx->uid, dst_req);
+                                                               subj_hash, dst_req);
 
             if (src_hit && dst_hit) {
                 /* Both subqueries cached and cover required modes */
@@ -1173,13 +1199,13 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             if (!out_log && determined) {
                 soft_ruleset_t *m = (soft_ruleset_t *)rs;
                 uint64_t sh = path_hash(ctx->src_path);
-                query_cache_store(m, sh, subj_hash, ctx->uid,
+                query_cache_store(m, sh, subj_hash,
                                   src_granted, eval_mask, src_deny,
                                   src_pattern != NULL);
                 if (src_deny < 0 &&
                     (src_granted & op_required_src_mode(rs, ctx->op)) == op_required_src_mode(rs, ctx->op)) {
                     uint64_t dh = path_hash(ctx->dst_path);
-                    query_cache_store(m, dh, subj_hash, ctx->uid,
+                    query_cache_store(m, dh, subj_hash,
                                       dst_granted, eval_mask, dst_deny,
                                       dst_pattern != NULL);
                 }
@@ -1221,7 +1247,7 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             if (!out_log && determined) {
                 soft_ruleset_t *m = (soft_ruleset_t *)rs;
                 uint64_t sh = path_hash(ctx->src_path);
-                query_cache_store(m, sh, subj_hash, ctx->uid,
+                query_cache_store(m, sh, subj_hash,
                                   granted, eval_mask, deny_layer,
                                   matched_pattern != NULL);
             }
@@ -1245,7 +1271,6 @@ typedef struct {
     uint32_t granted;
     int      deny_layer;
     uint32_t subject_hash;  /**< FNV-1a hash of subject string for cache key */
-    uint32_t uid;            /**< Caller UID for cache key */
     int      valid;
 } batch_cache_entry_t;
 
@@ -1275,14 +1300,12 @@ static void parent_dir(const char *path, char *out, size_t out_size)
 
 static batch_cache_entry_t *batch_cache_lookup(batch_cache_entry_t *cache,
                                                const char *path,
-                                               uint32_t subject_hash,
-                                               uint32_t uid)
+                                               uint32_t subject_hash)
 {
     for (int i = 0; i < BATCH_CACHE_SIZE; i++) {
         if (cache[i].valid &&
             strcmp(cache[i].path, path) == 0 &&
-            cache[i].subject_hash == subject_hash &&
-            cache[i].uid == uid)
+            cache[i].subject_hash == subject_hash)
             return &cache[i];
     }
     return NULL;
@@ -1293,7 +1316,6 @@ static void batch_cache_store(batch_cache_entry_t *cache,
                               uint32_t granted,
                               int deny_layer,
                               uint32_t subject_hash,
-                              uint32_t uid,
                               int *write_pos)
 {
     int pos = *write_pos;
@@ -1303,7 +1325,6 @@ static void batch_cache_store(batch_cache_entry_t *cache,
     e->granted = granted;
     e->deny_layer = deny_layer;
     e->subject_hash = subject_hash;
-    e->uid = uid;
     e->valid = 1;
     *write_pos = (pos + 1) % BATCH_CACHE_SIZE;
 }
@@ -1313,7 +1334,7 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                                  uint32_t *out_granted,
                                  int count)
 {
-    if (!rs || !ctxs || !out_granted || count <= 0) { return 0; }
+    if (!rs || !ctxs || !out_granted || count <= 0) { return -1; }
 
     /* Use stack allocation for small batches (avoids malloc overhead).
      * BATCH_CACHE_SIZE (256) * 532 bytes = ~136KB per cache, ~272KB total.
@@ -1361,9 +1382,9 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
         int src_deny = -1, dst_deny = -1;
 
         batch_cache_entry_t *src_hit = batch_cache_lookup(src_cache, ctx->src_path,
-                                                          subj_hash, ctx->uid);
+                                                          subj_hash);
         batch_cache_entry_t *src_par = batch_cache_lookup(src_cache, src_parent,
-                                                          subj_hash, ctx->uid);
+                                                          subj_hash);
         if (src_hit) {
             src_granted = src_hit->granted;
             src_deny = src_hit->deny_layer;
@@ -1374,18 +1395,18 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
             src_granted = eval_all_layers(rs, ctx->src_path, ctx->op, ctx,
                                           &src_deny, NULL);
             batch_cache_store(src_cache, ctx->src_path, src_granted, src_deny,
-                              subj_hash, ctx->uid, &src_write);
+                              subj_hash, &src_write);
             /* Don't cache root parent — it matches everything and causes false hits */
             if (strcmp(src_parent, "/") != 0)
                 batch_cache_store(src_cache, src_parent, src_granted, src_deny,
-                                  subj_hash, ctx->uid, &src_write);
+                                  subj_hash, &src_write);
         }
 
         if (is_binary && ctx->dst_path) {
             batch_cache_entry_t *dst_hit = batch_cache_lookup(dst_cache, ctx->dst_path,
-                                                              subj_hash, ctx->uid);
+                                                              subj_hash);
             batch_cache_entry_t *dst_par = batch_cache_lookup(dst_cache, dst_parent,
-                                                              subj_hash, ctx->uid);
+                                                              subj_hash);
             if (dst_hit) {
                 dst_granted = dst_hit->granted;
                 dst_deny = dst_hit->deny_layer;
@@ -1396,11 +1417,11 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
                 dst_granted = eval_all_layers(rs, ctx->dst_path, ctx->op, ctx,
                                               &dst_deny, NULL);
                 batch_cache_store(dst_cache, ctx->dst_path, dst_granted, dst_deny,
-                                  subj_hash, ctx->uid, &dst_write);
+                                  subj_hash, &dst_write);
                 /* Don't cache root parent */
                 if (strcmp(dst_parent, "/") != 0)
                     batch_cache_store(dst_cache, dst_parent, dst_granted, dst_deny,
-                                      subj_hash, ctx->uid, &dst_write);
+                                      subj_hash, &dst_write);
             }
         }
 
@@ -1436,7 +1457,7 @@ int soft_ruleset_check_batch_ctx(const soft_ruleset_t *rs,
         free(src_cache);
         free(dst_cache);
     }
-    return 1;
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1458,7 +1479,6 @@ int soft_ruleset_get_rule_info(const soft_ruleset_t *rs, int index,
             out->op_type = r->op_type;
             out->linked_path_var = (r->linked_path_var[0] != '\0') ? r->linked_path_var : NULL;
             out->subject_regex = (r->subject_regex[0] != '\0') ? r->subject_regex : NULL;
-            out->min_uid = r->min_uid;
             out->flags = r->flags;
             out->layer = i;
             return 0;
@@ -1938,8 +1958,7 @@ int soft_ruleset_check(const soft_ruleset_t *rs,
         .op = SOFT_OP_READ,
         .src_path = path,
         .dst_path = NULL,
-        .subject = NULL,
-        .uid = 0
+        .subject = NULL
     };
     return soft_ruleset_check_ctx(rs, &ctx, out_granted, NULL);
 }

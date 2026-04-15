@@ -34,6 +34,7 @@
 
 static void test_null_and_boundary_stress(void)
 {
+    uint32_t __g = 0;
     /* NULL pattern in path_matches should not crash */
     TEST_ASSERT_EQ(path_matches(NULL, "/data/file.txt"), false,
                    "null_pattern: returns false");
@@ -47,14 +48,12 @@ static void test_null_and_boundary_stress(void)
     TEST_ASSERT(rs != NULL, "new: non-NULL ruleset");
 
     /* Check on empty/uncompiled ruleset */
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/anything", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
-                   "empty_uncompiled: denied");
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/anything", NULL, NULL};
+    TEST_ASSERT(!soft_ruleset_check_ctx(rs, &ctx, &__g, NULL), "empty_uncompiled: denied");
 
     /* Compile empty ruleset, then check */
     TEST_ASSERT_EQ(soft_ruleset_compile(rs), 0, "compile_empty: success");
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), 0,
-                   "empty_compiled: denied");
+    TEST_ASSERT(!soft_ruleset_check_ctx(rs, &ctx, &__g, NULL), "empty_compiled: denied");
 
     /* Save/load empty compiled ruleset */
     void *buf = NULL;
@@ -66,13 +65,11 @@ static void test_null_and_boundary_stress(void)
     soft_ruleset_t *rs2 = soft_ruleset_load_compiled(buf, len);
     /* Empty compiled ruleset may serialize to minimal data */
     if (rs2) {
-        TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs2, &ctx, NULL), -13,
-                       "loaded_empty: denied");
+        TEST_ASSERT(!soft_ruleset_check_ctx(rs2, &ctx, &__g, NULL), "loaded_empty: denied");
         soft_ruleset_free(rs2);
     } else {
         TEST_ASSERT(true, "load_empty: NULL for empty ruleset (acceptable)");
     }
-    soft_ruleset_free(rs2);
     free(buf);
     soft_ruleset_free(rs);
 
@@ -150,6 +147,7 @@ static void test_path_matching_boundaries(void)
 
 static void test_compilation_stress_and_edge_cases(void)
 {
+    uint32_t __g = 0;
     /* Max layers (64) with one rule each */
     soft_ruleset_t *rs = soft_ruleset_new();
     char pattern[32];
@@ -157,18 +155,16 @@ static void test_compilation_stress_and_edge_cases(void)
     for (i = 0; i < 64; i++) {
         snprintf(pattern, sizeof(pattern), "/layer%d/**", i);
         soft_ruleset_add_rule_at_layer(rs, i, pattern, SOFT_ACCESS_READ,
-                                       SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                                       SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     }
     TEST_ASSERT_EQ(soft_ruleset_compile(rs), 0, "max_layers: compile succeeds");
     TEST_ASSERT(soft_ruleset_is_compiled(rs), "max_layers: is compiled");
 
     /* Verify a few layers */
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/layer0/file.txt", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
-                   "max_layers: layer 0 works");
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/layer0/file.txt", NULL, NULL};
+    TEST_ASSERT(soft_ruleset_check_ctx(rs, &ctx, &__g, NULL) && __g == SOFT_ACCESS_READ, "max_layers: layer 0 works");
     ctx.src_path = "/layer63/file.txt";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
-                   "max_layers: layer 63 works");
+    TEST_ASSERT(soft_ruleset_check_ctx(rs, &ctx, &__g, NULL) && __g == SOFT_ACCESS_READ, "max_layers: layer 63 works");
 
     soft_ruleset_free(rs);
 
@@ -176,48 +172,46 @@ static void test_compilation_stress_and_edge_cases(void)
     rs = soft_ruleset_new();
     for (i = 0; i < 100; i++) {
         soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                              SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                              SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     }
     TEST_ASSERT_EQ(soft_ruleset_compile(rs), 0, "duplicates: compile succeeds");
-    ctx = (soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
-                   "duplicates: works");
+    ctx = (soft_access_ctx_t){SOFT_OP_READ, "/data/file.txt", NULL, NULL};
+    TEST_ASSERT(soft_ruleset_check_ctx(rs, &ctx, &__g, NULL) && __g == SOFT_ACCESS_READ, "duplicates: works");
     soft_ruleset_free(rs);
 
     /* Rule at max layer boundary */
     rs = soft_ruleset_new();
     /* Adding rule at layer 64 should fail or be handled gracefully */
     int ret = soft_ruleset_add_rule_at_layer(rs, 64, "/overflow/**", SOFT_ACCESS_READ,
-                                             SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                                             SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     TEST_ASSERT(ret == -1 || ret == 0, "overflow_layer: handled (may fail or be clamped)");
     soft_ruleset_free(rs);
 }
 
 /* ------------------------------------------------------------------ */
-/*  Evaluation edge cases: invalid ops, boundary UIDs                  */
+/*  Evaluation edge cases: invalid ops, boundary cases                 */
 /* ------------------------------------------------------------------ */
 
 static void test_evaluation_edge_cases(void)
 {
+    uint32_t __g = 0;
     soft_ruleset_t *rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
 
-    /* Boundary UIDs */
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, NULL, 0};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
-                   "uid_zero: allowed");
+    /* Boundary cases */
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, NULL};
+    TEST_ASSERT(soft_ruleset_check_ctx(rs, &ctx, &__g, NULL) && __g == SOFT_ACCESS_READ, "boundary: allowed");
 
-    ctx.uid = UINT32_MAX;
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
-                   "uid_max: allowed");
+    /* Test with different subject */
+    ctx.subject = "/usr/bin/different";
+    TEST_ASSERT(soft_ruleset_check_ctx(rs, &ctx, &__g, NULL) && __g == SOFT_ACCESS_READ, "different_subject: allowed");
 
     /* Invalid operation type */
-    ctx.uid = 1000;
     ctx.op = (soft_binary_op_t)999;
     /* Should not crash; may return denied or fall through */
-    int result = soft_ruleset_check_ctx(rs, &ctx, NULL);
+    int result = soft_ruleset_check_ctx(rs, &ctx, &__g, NULL);
     TEST_ASSERT(result == SOFT_ACCESS_READ || result == -13,
                 "invalid_op: evaluated safely");
 
@@ -232,17 +226,17 @@ static void test_batch_evaluation_edge_cases(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
 
     /* NULL contexts array */
-    int results[1];
+    uint32_t results[1];
     TEST_ASSERT_EQ(soft_ruleset_check_batch_ctx(rs, NULL, results, 1), -1,
                    "batch_null_ctxs: returns error");
 
     /* NULL results array */
     const soft_access_ctx_t *ctxs[1];
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000};
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data/file.txt", NULL, NULL};
     ctxs[0] = &ctx;
     TEST_ASSERT_EQ(soft_ruleset_check_batch_ctx(rs, ctxs, NULL, 1), -1,
                    "batch_null_results: returns error");
@@ -255,18 +249,18 @@ static void test_batch_evaluation_edge_cases(void)
     const soft_access_ctx_t *ctxs2[1] = {NULL};
     TEST_ASSERT_EQ(soft_ruleset_check_batch_ctx(rs, ctxs2, results, 1), 0,
                    "batch_null_entry: returns 0 (graceful)");
-    TEST_ASSERT_EQ(results[0], -EACCES, "batch_null_entry: result is -EACCES");
+    TEST_ASSERT_EQ(results[0], 0, "batch_null_entry: result is 0");
 
     /* Mixed valid/NULL entries */
     const soft_access_ctx_t *ctxs3[3];
     ctxs3[0] = &ctx;
     ctxs3[1] = NULL;
     ctxs3[2] = &ctx;
-    int results3[3];
+    uint32_t results3[3];
     TEST_ASSERT_EQ(soft_ruleset_check_batch_ctx(rs, ctxs3, results3, 3), 0,
                    "batch_mixed: returns 0");
     TEST_ASSERT(results3[0] != 0, "batch_mixed: first result set");
-    TEST_ASSERT_EQ(results3[1], -EACCES, "batch_mixed: NULL entry is -EACCES");
+    TEST_ASSERT_EQ(results3[1], 0, "batch_mixed: NULL entry is 0");
     TEST_ASSERT(results3[2] != 0, "batch_mixed: third result set");
 
     soft_ruleset_free(rs);
@@ -281,7 +275,7 @@ static void test_binary_serialization_corruption(void)
     /* Create a valid compiled ruleset */
     soft_ruleset_t *rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
 
     void *buf = NULL;
@@ -359,7 +353,7 @@ static void test_landlock_bridge_edge_cases(void)
 
     /* Empty pattern in ruleset */
     soft_ruleset_t *rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
 
     /* Should not crash during validation */
@@ -374,7 +368,7 @@ static void test_landlock_bridge_edge_cases(void)
 
     /* Save policy with NULL filename */
     rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_save_landlock_policy(rs, NULL, LANDLOCK_ABI_V4, &err, &code), -1,
                    "ll_save_null_file: fails");
@@ -382,7 +376,7 @@ static void test_landlock_bridge_edge_cases(void)
 
     /* Validation report with NULL report array */
     rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     /* NULL report should not crash */
     int count = soft_ruleset_validate_for_landlock_report(rs, NULL);
@@ -452,9 +446,10 @@ static void test_policy_parser_edge_cases(void)
 
 static void test_save_load_null_params(void)
 {
+    uint32_t __g = 0;
     soft_ruleset_t *rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
 
     /* Save with NULL buffer pointer */
@@ -478,11 +473,9 @@ static void test_save_load_null_params(void)
                    "is_compiled_null: false");
 
     /* Check with NULL ruleset */
-    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data", NULL, NULL, 1000};
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(NULL, &ctx, NULL), -13,
-                   "check_null_rs: denied");
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, NULL, NULL), -13,
-                   "check_null_ctx: denied");
+    soft_access_ctx_t ctx = {SOFT_OP_READ, "/data", NULL, NULL};
+    TEST_ASSERT(!soft_ruleset_check_ctx(NULL, &ctx, &__g, NULL), "check_null_rs: denied");
+    TEST_ASSERT(!soft_ruleset_check_ctx(rs, NULL, &__g, NULL), "check_null_ctx: denied");
 
     soft_ruleset_free(rs);
 }
@@ -522,10 +515,10 @@ static void test_landlock_builder_edge_cases(void)
                    "builder_allow: succeeds");
     /* ABI 0 should be invalid */
     uint64_t mask = landlock_abi_mask(0);
-    TEST_ASSERT_EQ(mask, 0, "builder_abi_zero: mask is 0");
+    TEST_ASSERT(mask == 0, "builder_abi_zero: mask is 0");
     /* ABI 5+ should also be invalid */
     mask = landlock_abi_mask(99);
-    TEST_ASSERT_EQ(mask, 0, "builder_abi_99: mask is 0");
+    TEST_ASSERT(mask == 0, "builder_abi_99: mask is 0");
     landlock_builder_free(b);
 
     /* DENY with NULL path */
@@ -561,17 +554,13 @@ static void test_double_free_and_use_after_free(void)
 
     /* Double free of deny prefixes */
     /* Test deny prefixes free with stack-allocated string */
-    char test_prefix[] = "/test";
-    const char *prefixes[2];
-    prefixes[0] = test_prefix;
-    prefixes[1] = NULL;
     /* free() on stack memory would crash - just verify function exists */
     TEST_ASSERT(true, "deny_prefixes_free: API exists");
 
     /* Free compiled ruleset, then try to use it */
     soft_ruleset_t *rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     soft_ruleset_free(rs);
     /* Accessing freed memory is undefined behavior; we just verify no crash

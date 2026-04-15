@@ -57,7 +57,6 @@
 typedef struct {
     uint64_t path_hash;       /**< FNV-1a hash of path */
     uint32_t subject_hash;    /**< FNV-1a hash of subject string */
-    uint32_t uid;             /**< Caller UID */
     uint32_t granted;         /**< SOFT_ACCESS_* bits granted */
     uint32_t eval;            /**< SOFT_ACCESS_* bits that were evaluated */
     int32_t  deny_layer;      /**< -1 = no deny, >=0 = denied at this layer */
@@ -75,7 +74,6 @@ typedef struct {
     soft_binary_op_t  op_type;                  /**< Operation this rule applies to */
     char              linked_path_var[MAX_LINKED_LEN]; /**< "SRC", "DST", or "" */
     char              subject_regex[128];       /**< Binary path regex, or "" */
-    uint32_t          min_uid;                  /**< Minimum UID */
     uint32_t          flags;                    /**< Rule flags */
 } rule_t;
 
@@ -112,7 +110,6 @@ typedef struct {
 typedef struct {
     const char     *pattern;       /**< Interned path pattern */
     uint32_t        mode;          /**< SOFT_ACCESS_* or DENY */
-    uint32_t        min_uid;       /**< Minimum UID */
     uint32_t        flags;         /**< Rule flags (RECURSIVE, TEMPLATE) */
     uint16_t        op_type;       /**< soft_binary_op_t */
     uint16_t        pattern_len;   /**< strlen(pattern), cached */

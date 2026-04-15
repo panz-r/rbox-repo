@@ -132,27 +132,17 @@ static void test_bridge_validation_rejections(void)
     /* Case 1: Subject constraint rejected */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, ".*admin$", 1000, 0);
+                          SOFT_OP_READ, NULL, "**admin", 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), -1,
                    "reject: subject constraint");
     TEST_ASSERT(err != NULL, "reject: subject error message set");
     soft_ruleset_free(rs);
 
-    /* Case 2: UID constraint rejected */
-    rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 500, 0);
-    soft_ruleset_compile(rs);
-    TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), -1,
-                   "reject: UID constraint");
-    TEST_ASSERT(err != NULL, "reject: UID error message set");
-    soft_ruleset_free(rs);
-
-    /* Case 3: Template rule (${SRC}) rejected */
+    /* Case 2: Template rule (${SRC}) rejected */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "${SRC}", SOFT_ACCESS_READ,
-                          SOFT_OP_COPY, "SRC", NULL, 0, SOFT_RULE_TEMPLATE);
+                          SOFT_OP_COPY, "SRC", NULL, SOFT_RULE_TEMPLATE);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), -1,
                    "reject: template rule");
@@ -162,7 +152,7 @@ static void test_bridge_validation_rejections(void)
     /* Case 4: Mid-path wildcard rejected */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/etc/*/passwd", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), -1,
                    "reject: mid-path wildcard");
@@ -178,7 +168,7 @@ static void test_bridge_validation_rejections(void)
     rs = soft_ruleset_new();
     soft_ruleset_set_layer_type(rs, 0, LAYER_SPECIFICITY, 0);
     soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
-                                   SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                                   SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), -1,
                    "reject: SPECIFICITY layer");
@@ -188,7 +178,7 @@ static void test_bridge_validation_rejections(void)
     rs = soft_ruleset_new();
     soft_ruleset_set_layer_type(rs, 0, LAYER_PRECEDENCE, SOFT_ACCESS_READ);
     soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
-                                   SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                                   SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     /* Do NOT compile - validation on uncompiled ruleset */
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), -1,
                    "reject: layer mode mask");
@@ -197,7 +187,7 @@ static void test_bridge_validation_rejections(void)
     /* Case 8: Single-star suffix rejected */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/etc/*", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), -1,
                    "reject: single-star suffix");
@@ -217,9 +207,9 @@ static void test_bridge_validation_accepts(void)
     /* Case 1: Compatible ruleset (exact + prefix patterns) */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC,
-                          SOFT_OP_EXEC, NULL, NULL, 0, 0);
+                          SOFT_OP_EXEC, NULL, NULL, 0);
     soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), 0,
                    "accept: compatible ruleset");
@@ -235,9 +225,9 @@ static void test_bridge_validation_accepts(void)
     /* Case 3: DENY rule accepted (handled separately by Landlock) */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_add_rule(rs, "/data/secret", SOFT_ACCESS_DENY,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), 0,
                    "accept: DENY rule accepted");
@@ -246,7 +236,7 @@ static void test_bridge_validation_accepts(void)
     /* Case 4: Uncompiled compatible ruleset */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, NULL, &err, &line), 0,
                    "accept: uncompiled compatible ruleset");
     soft_ruleset_free(rs);
@@ -266,7 +256,7 @@ static void test_bridge_translation_basic(void)
     /* Case 1: Basic translation with single rule */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC,
-                          SOFT_OP_EXEC, NULL, NULL, 0, 0);
+                          SOFT_OP_EXEC, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock(rs, &deny_prefixes);
     TEST_ASSERT(b != NULL, "translate: basic ruleset translated");
@@ -320,9 +310,9 @@ static void test_bridge_translation_with_deny(void)
     /* Case 1: Translation with deny rules */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_add_rule(rs, "/secret", SOFT_ACCESS_DENY,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock(rs, &deny_prefixes);
     TEST_ASSERT(b != NULL, "translate: ruleset with deny translated");
@@ -341,11 +331,11 @@ static void test_bridge_translation_with_deny(void)
     /* Case 2: Multiple DENY rules */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_add_rule(rs, "/data/secret", SOFT_ACCESS_DENY,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_add_rule(rs, "/data/private", SOFT_ACCESS_DENY,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock(rs, &deny_prefixes);
     TEST_ASSERT(b != NULL, "translate: multiple deny rules translated");
@@ -361,9 +351,9 @@ static void test_bridge_translation_with_deny(void)
     /* Case 3: DENY with recursive pattern */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_add_rule(rs, "/data/secret/**", SOFT_ACCESS_DENY,
-                          SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock(rs, &deny_prefixes);
     TEST_ASSERT(b != NULL, "translate: recursive DENY translated");
@@ -385,11 +375,11 @@ static void test_bridge_multi_layer_translation(void)
     /* Case 1: Multiple PRECEDENCE layers with mixed allow/deny */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule_at_layer(rs, 0, "/usr/**", SOFT_ACCESS_READ,
-                                   SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                                   SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_add_rule_at_layer(rs, 1, "/usr/bin/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC,
-                                   SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                                   SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_add_rule_at_layer(rs, 2, "/usr/bin/secret", SOFT_ACCESS_DENY,
-                                   SOFT_OP_READ, NULL, NULL, 0, 0);
+                                   SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock(rs, &deny_prefixes);
     TEST_ASSERT(b != NULL, "translate: multi-layer ruleset translated");
@@ -417,7 +407,7 @@ static void test_bridge_large_ruleset(void)
     for (i = 0; i < 200; i++) {
         snprintf(path, sizeof(path), "/data/dir%03d/**", i);
         soft_ruleset_add_rule(rs, path, SOFT_ACCESS_READ,
-                              SOFT_OP_READ, NULL, NULL, 0, 0);
+                              SOFT_OP_READ, NULL, NULL, 0);
     }
     soft_ruleset_compile(rs);
 
@@ -486,7 +476,7 @@ static void test_bridge_integration(void)
     const char *bad_text =
         "@0 PRECEDENCE\n"
         "/usr/** -> RW /exec\n"
-        "/data/... -> R recursive subject:.*admin$\n";
+        "/data/... -> R recursive subject:**admin\n";
 
     rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_parse_text(rs, bad_text, NULL, NULL), 0,
@@ -553,8 +543,6 @@ static void test_bridge_error_codes(void)
                 "error_msgs: OK message exists");
     TEST_ASSERT(landlock_compat_error_msgs[-LANDLOCK_COMPAT_SUBJECT] != NULL,
                 "error_msgs: SUBJECT message exists");
-    TEST_ASSERT(landlock_compat_error_msgs[-LANDLOCK_COMPAT_UID] != NULL,
-                "error_msgs: UID message exists");
     TEST_ASSERT(landlock_compat_error_msgs[-LANDLOCK_COMPAT_TEMPLATE] != NULL,
                 "error_msgs: TEMPLATE message exists");
     TEST_ASSERT(landlock_compat_error_msgs[-LANDLOCK_COMPAT_WILDCARD] != NULL,
@@ -573,7 +561,7 @@ static void test_bridge_error_codes(void)
     /* Case 1: Compatible ruleset returns OK code */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC,
-                          SOFT_OP_EXEC, NULL, NULL, 0, 0);
+                          SOFT_OP_EXEC, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, &code, &err, &line), 0,
                    "error_code: compatible returns 0");
@@ -584,7 +572,7 @@ static void test_bridge_error_codes(void)
     /* Case 2: Subject constraint returns correct code */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, ".*admin$", 1000, 0);
+                          SOFT_OP_READ, NULL, "**admin", 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, &code, &err, &line), -1,
                    "error_code: subject rejected");
@@ -592,20 +580,10 @@ static void test_bridge_error_codes(void)
     TEST_ASSERT(err != NULL, "error_code: error message is set");
     soft_ruleset_free(rs);
 
-    /* Case 3: UID constraint returns correct code */
-    rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 500, 0);
-    soft_ruleset_compile(rs);
-    TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, &code, &err, &line), -1,
-                   "error_code: uid rejected");
-    TEST_ASSERT_EQ(code, LANDLOCK_COMPAT_UID, "error_code: code is UID");
-    soft_ruleset_free(rs);
-
-    /* Case 4: Template rule returns correct code */
+    /* Case 3: Template rule returns correct code */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "${SRC}", SOFT_ACCESS_READ,
-                          SOFT_OP_COPY, "SRC", NULL, 0, SOFT_RULE_TEMPLATE);
+                          SOFT_OP_COPY, "SRC", NULL, SOFT_RULE_TEMPLATE);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, &code, &err, &line), -1,
                    "error_code: template rejected");
@@ -615,7 +593,7 @@ static void test_bridge_error_codes(void)
     /* Case 5: Mid-path wildcard returns correct code */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/etc/*/passwd", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, &code, &err, &line), -1,
                    "error_code: wildcard rejected");
@@ -626,7 +604,7 @@ static void test_bridge_error_codes(void)
     rs = soft_ruleset_new();
     soft_ruleset_set_layer_type(rs, 0, LAYER_SPECIFICITY, 0);
     soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
-                                   SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                                   SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, &code, &err, &line), -1,
                    "error_code: SPECIFICITY rejected");
@@ -637,7 +615,7 @@ static void test_bridge_error_codes(void)
     rs = soft_ruleset_new();
     soft_ruleset_set_layer_type(rs, 0, LAYER_PRECEDENCE, SOFT_ACCESS_READ);
     soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ,
-                                   SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+                                   SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, &code, &err, &line), -1,
                    "error_code: layer mask rejected");
     TEST_ASSERT_EQ(code, LANDLOCK_COMPAT_LAYER_MASK, "error_code: code is LAYER_MASK");
@@ -646,7 +624,7 @@ static void test_bridge_error_codes(void)
     /* Case 8: Single-star suffix returns correct code */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/etc/*", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, NULL, 0, 0);
+                          SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     TEST_ASSERT_EQ(soft_ruleset_validate_for_landlock(rs, &code, &err, &line), -1,
                    "error_code: single star rejected");
@@ -661,7 +639,7 @@ static void test_bridge_error_codes(void)
     /* Case 10: Direct _ex API returns enum directly */
     rs = soft_ruleset_new();
     soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ,
-                          SOFT_OP_READ, NULL, ".*admin$", 0, SOFT_RULE_RECURSIVE);
+                          SOFT_OP_READ, NULL, "**admin", SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     code = soft_ruleset_validate_for_landlock_ex(rs, &line);
     TEST_ASSERT_EQ(code, LANDLOCK_COMPAT_SUBJECT, "error_code_ex: returns SUBJECT enum");
@@ -681,7 +659,7 @@ static void test_bridge_validation_report(void)
 
     /* Case 1: Compatible ruleset has 0 errors */
     rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     count = soft_ruleset_validate_for_landlock_report(rs, report);
     TEST_ASSERT_EQ(count, 0, "report: compatible has 0 errors");
@@ -689,18 +667,16 @@ static void test_bridge_validation_report(void)
 
     /* Case 2: Ruleset with multiple errors collects all of them */
     rs = soft_ruleset_new();
-    soft_ruleset_add_rule_at_layer(rs, 0, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, ".*admin$", 1000, SOFT_RULE_RECURSIVE);
-    soft_ruleset_add_rule_at_layer(rs, 0, "/data/${SRC}", SOFT_ACCESS_READ, SOFT_OP_COPY, "SRC", NULL, 0, SOFT_RULE_TEMPLATE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, "**admin", SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/${SRC}", SOFT_ACCESS_READ, SOFT_OP_COPY, "SRC", NULL, SOFT_RULE_TEMPLATE);
     soft_ruleset_compile(rs);
     count = soft_ruleset_validate_for_landlock_report(rs, report);
     TEST_ASSERT(count >= 2, "report: multiple errors collected");
     if (count >= 2) {
         TEST_ASSERT(report[0].error == LANDLOCK_COMPAT_SUBJECT ||
-                    report[0].error == LANDLOCK_COMPAT_UID ||
                     report[0].error == LANDLOCK_COMPAT_TEMPLATE,
                     "report: first error is valid");
         TEST_ASSERT(report[1].error == LANDLOCK_COMPAT_SUBJECT ||
-                    report[1].error == LANDLOCK_COMPAT_UID ||
                     report[1].error == LANDLOCK_COMPAT_TEMPLATE,
                     "report: second error is valid");
     }
@@ -709,7 +685,7 @@ static void test_bridge_validation_report(void)
     /* Case 3: SPECIFICITY layer reported */
     rs = soft_ruleset_new();
     soft_ruleset_set_layer_type(rs, 0, LAYER_SPECIFICITY, 0);
-    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     count = soft_ruleset_validate_for_landlock_report(rs, report);
     TEST_ASSERT(count >= 1, "report: SPECIFICITY reported");
@@ -736,8 +712,8 @@ static void test_bridge_translation_report(void)
 
     /* Case 1: Simple ruleset — all allowed, none skipped */
     rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, SOFT_OP_EXEC, NULL, NULL, 0, 0);
-    soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, SOFT_OP_EXEC, NULL, NULL, 0);
+    soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock_with_report(rs, NULL, &rep);
     TEST_ASSERT(b != NULL, "translate_report: builder created");
@@ -751,8 +727,8 @@ static void test_bridge_translation_report(void)
 
     /* Case 2: Ruleset with skipped rules */
     rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
-    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, ".*admin$", 1000, SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, "**admin", SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock_with_report(rs, &deny_prefixes, &rep);
     TEST_ASSERT(b != NULL, "translate_report: builder with skips created");
@@ -760,8 +736,8 @@ static void test_bridge_translation_report(void)
         TEST_ASSERT_EQ(rep.total_rules, 2, "translate_report: 2 total");
         TEST_ASSERT(rep.allowed_rules >= 1, "translate_report: at least 1 allowed");
         TEST_ASSERT(rep.skipped_rules >= 1, "translate_report: at least 1 skipped");
-        TEST_ASSERT(rep.skipped_subject >= 1 || rep.skipped_uid >= 1,
-                    "translate_report: subject or uid skipped");
+        TEST_ASSERT(rep.skipped_subject >= 1,
+                    "translate_report: subject skipped");
         landlock_builder_free(b);
     }
     soft_landlock_deny_prefixes_free(deny_prefixes);
@@ -769,8 +745,8 @@ static void test_bridge_translation_report(void)
 
     /* Case 3: Ruleset with deny rules */
     rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0, 0);
-    soft_ruleset_add_rule(rs, "/secret", SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0);
+    soft_ruleset_add_rule(rs, "/secret", SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock_with_report(rs, &deny_prefixes, &rep);
     TEST_ASSERT(b != NULL, "translate_report: deny ruleset translated");
@@ -796,7 +772,7 @@ static void test_bridge_save_landlock_policy(void)
 
     /* Case 1: Compatible ruleset saves successfully */
     soft_ruleset_t *rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, SOFT_OP_EXEC, NULL, NULL, 0, 0);
+    soft_ruleset_add_rule(rs, "/usr/**", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, SOFT_OP_EXEC, NULL, NULL, 0);
     soft_ruleset_compile(rs);
     ret = soft_ruleset_save_landlock_policy(rs, tmpfile, LANDLOCK_ABI_V4, &err, &code);
     TEST_ASSERT_EQ(ret, 0, "save_policy: compatible saves successfully");
@@ -809,7 +785,7 @@ static void test_bridge_save_landlock_policy(void)
 
     /* Case 2: Incompatible ruleset fails with proper error */
     rs = soft_ruleset_new();
-    soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, ".*admin$", 0, SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule(rs, "/data/**", SOFT_ACCESS_READ, SOFT_OP_READ, NULL, "**admin", SOFT_RULE_RECURSIVE);
     soft_ruleset_compile(rs);
     ret = soft_ruleset_save_landlock_policy(rs, tmpfile, LANDLOCK_ABI_V4, &err, &code);
     TEST_ASSERT_EQ(ret, -1, "save_policy: incompatible fails");

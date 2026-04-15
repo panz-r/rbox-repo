@@ -135,8 +135,8 @@ static int add_macro(parser_state_t *st, const char *id, const char *pattern)
 {
     if (st->macro_count >= MAX_MACROS)
         return -1;
-    strncpy(st->macros[st->macro_count].id, id, MAX_MACRO_ID - 1);
-    strncpy(st->macros[st->macro_count].pattern, pattern, MAX_PATTERN_LEN - 1);
+    snprintf(st->macros[st->macro_count].id, MAX_MACRO_ID, "%s", id);
+    snprintf(st->macros[st->macro_count].pattern, MAX_PATTERN_LEN, "%s", pattern);
     st->macros[st->macro_count].valid = 1;
     st->macro_count++;
     return 0;
@@ -187,6 +187,7 @@ static int expand_macros(parser_state_t *st, const char *pattern, char *out,
     }
 
     strncpy(out, buf, out_size - 1);
+    out[out_size - 1] = '\0';
     return 0;
 }
 
@@ -390,10 +391,8 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
         const char *q = mode_end;
         soft_binary_op_t op_type = SOFT_OP_READ;
         const char *subject_regex = NULL;
-        uint32_t min_uid = 0;
         uint32_t flags = 0;
         char subject_buf[MAX_PATTERN_LEN];
-        char uid_buf[32];
 
         while (*q) {
             q = skip_ws(q);
@@ -415,13 +414,6 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
                 if (*subject_buf == '\0')
                     return set_error(NULL, error_msg, line_num, "Empty subject regex");
                 subject_regex = subject_buf;
-            } else if (strncmp(q, "uid:", 4) == 0) {
-                q = copy_token(q + 4, uid_buf, sizeof(uid_buf));
-                char *endptr2;
-                long uid_val = strtol(uid_buf, &endptr2, 10);
-                if (endptr2 == uid_buf || uid_val < 0 || uid_val > UINT32_MAX)
-                    return set_error(NULL, error_msg, line_num, "Invalid uid");
-                min_uid = (uint32_t)uid_val;
             } else if (strncmp(q, "recursive", 9) == 0) {
                 /* Ensure it's the full word (not a prefix) */
                 const char *after = q + 9;
@@ -436,14 +428,14 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
 
         if (soft_ruleset_add_rule_at_layer(rs, use_layer, pattern, mode,
                                            op_type, NULL, subject_regex,
-                                           min_uid, flags) != 0) {
+                                           flags) != 0) {
             return set_error(NULL, error_msg, line_num, "Failed to add rule");
         }
 
         return 0;
     }
 
-    /* Rule without explicit layer: PATTERN -> MODE [OP] [subject:REGEX] [uid:NUM] [recursive] */
+    /* Rule without explicit layer: PATTERN -> MODE [OP] [subject:REGEX] [recursive] */
     /* Use the current layer from parser state */
     {
     int use_layer = st->current_layer;
@@ -525,10 +517,8 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
     const char *q = mode_end;
     soft_binary_op_t op_type = SOFT_OP_READ;
     const char *subject_regex = NULL;
-    uint32_t min_uid = 0;
     uint32_t flags = 0;
     char subject_buf[MAX_PATTERN_LEN];
-    char uid_buf[32];
 
     while (*q) {
         q = skip_ws(q);
@@ -550,13 +540,6 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
             if (*subject_buf == '\0')
                 return set_error(NULL, error_msg, line_num, "Empty subject regex");
             subject_regex = subject_buf;
-        } else if (strncmp(q, "uid:", 4) == 0) {
-            q = copy_token(q + 4, uid_buf, sizeof(uid_buf));
-            char *endptr3;
-            long uid_val = strtol(uid_buf, &endptr3, 10);
-            if (endptr3 == uid_buf || uid_val < 0 || uid_val > UINT32_MAX)
-                return set_error(NULL, error_msg, line_num, "Invalid uid");
-            min_uid = (uint32_t)uid_val;
         } else if (strncmp(q, "recursive", 9) == 0) {
             const char *after = q + 9;
             if (*after != '\0' && *after != '#' && !isspace((unsigned char)*after))
@@ -570,7 +553,7 @@ static int parse_line(parser_state_t *st, soft_ruleset_t *rs,
 
     if (soft_ruleset_add_rule_at_layer(rs, use_layer, pattern, mode,
                                        op_type, NULL, subject_regex,
-                                       min_uid, flags) != 0) {
+                                       flags) != 0) {
         return set_error(NULL, error_msg, line_num, "Failed to add rule");
     }
 
@@ -745,11 +728,7 @@ int soft_ruleset_write_text(const soft_ruleset_t *rs, char **out_text)
                     used += (size_t)n;
                 }
             }
-            if (r->min_uid > 0) {
-                n = snprintf(buf + used, capacity - used, " uid:%u", r->min_uid);
-                if (n < 0 || (size_t)n >= capacity - used) { free(buf); return -1; }
-                used += (size_t)n;
-            }
+
             if (r->flags & SOFT_RULE_RECURSIVE) {
                 n = snprintf(buf + used, capacity - used, " recursive");
                 if (n < 0 || (size_t)n >= capacity - used) { free(buf); return -1; }

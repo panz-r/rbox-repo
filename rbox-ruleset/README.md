@@ -37,7 +37,7 @@ Policies are written in a declarative text format parsed by `soft_ruleset_parse_
 ### Rule Syntax
 
 ```
-pattern -> mode [/operation] [recursive] [subject:REGEX] [uid:UID]
+pattern -> mode [/operation] [recursive] [subject:REGEX]
 ```
 
 | Component | Required | Example |
@@ -48,7 +48,7 @@ pattern -> mode [/operation] [recursive] [subject:REGEX] [uid:UID]
 | `/operation` | No | `/read`, `/exec`, `/copy` |
 | `recursive` | No | Matches subdirectories (suffix `/**` or `/...` already implies this) |
 | `subject:REGEX` | No | Restricts which calling binary the rule applies to |
-| `uid:UID` | No | Minimum UID for the rule to apply |
+
 
 ### Layer Declarations
 
@@ -174,7 +174,7 @@ landlock_builder_free(b);
 The validator rejects these with clear error messages:
 
 - **Subject constraints** — Landlock has no process filtering
-- **UID constraints** — Same limitation
+
 - **Dual-path operations** — `${SRC}`/`${DST}` cannot be single-path
 - **Mid-path wildcards** — `/etc/*/passwd` (Landlock only supports prefix matching)
 - **SPECIFICITY layers** — Longest-match semantics have no Landlock equivalent
@@ -187,8 +187,8 @@ Compile a policy and evaluate it inside your syscall interceptor. This path:
 
 - Does **not** expand symlinks (paths are resolved at evaluation time)
 - Provides O(log n) lookup for exact/prefix patterns via binary search
-- Supports subject regex, UID filtering, binary operations, and all layer types
-- Caches results per path+subject+UID for repeated lookups
+- Supports subject regex, binary operations, and all layer types
+- Caches results per path+subject for repeated lookups
 
 ### Usage
 
@@ -207,7 +207,7 @@ soft_access_ctx_t ctx = {
     .src_path = "/data/config.json",
     .dst_path = NULL,
     .subject = "/usr/bin/cat",
-    .uid = 1000,
+
 };
 int result = soft_ruleset_check_ctx(rs, &ctx, NULL);
 if (result == -EACCES) {
@@ -277,7 +277,7 @@ Rulesets are **not thread-safe** for concurrent mutation. After `compile()`, the
 | Header | Type | Purpose |
 |---|---|---|
 | `rule_engine.h` | `soft_ruleset_t*` | Opaque ruleset handle |
-| `rule_engine.h` | `soft_access_ctx_t` | Access transaction (op, src, dst, subject, uid) |
+| `rule_engine.h` | `soft_access_ctx_t` | Access transaction (op, src, dst, subject) |
 | `rule_engine.h` | `soft_audit_log_t` | Optional audit output (result, reason, matched rule) |
 | `landlock_builder.h` | `landlock_builder_t*` | Opaque Landlock builder handle |
 | `landlock_builder.h` | `landlock_rule_t` | Compiled Landlock rule (path + access mask) |

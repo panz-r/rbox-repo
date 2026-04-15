@@ -30,14 +30,12 @@ extern "C" {
  *
  * Incompatible conditions:
  *   - Subject constraint (subject_regex non-NULL and non-empty)
- *   - UID constraint (min_uid > 0)
  *   - Template variable (linked_path_var non-NULL and non-empty)
- *   - Mid-path wildcard (* not at suffix /** or ...)
- *   - Single-star suffix (/*) — over-permissive, not expressible
+ *   - Mid-path wildcard (* not at suffix /... or ...)
+ *   - Single-star suffix (/) — over-permissive, not expressible
  *
  * @param pattern        Path pattern string.
  * @param subject_regex  Subject regex constraint (NULL or "" = none).
- * @param min_uid        Minimum UID (0 = any).
  * @param linked_path_var Template variable ("SRC", "DST", or NULL/"" = none).
  * @param error_msg      If non-NULL and incompatible, receives a static
  *                       error string describing the issue.
@@ -45,7 +43,6 @@ extern "C" {
  */
 int soft_rule_is_landlock_compatible(const char *pattern,
                                      const char *subject_regex,
-                                     uint32_t min_uid,
                                      const char *linked_path_var,
                                      const char **error_msg);
 
@@ -83,12 +80,11 @@ uint64_t soft_access_to_ll_fs(uint32_t soft_mask);
 typedef enum {
     LANDLOCK_COMPAT_OK            =  0,  /**< Compatible with Landlock. */
     LANDLOCK_COMPAT_SUBJECT       = -1,  /**< Rule has subject_regex constraint. */
-    LANDLOCK_COMPAT_UID           = -2,  /**< Rule has min_uid > 0 constraint. */
-    LANDLOCK_COMPAT_TEMPLATE      = -3,  /**< Rule uses ${SRC}/${DST} template. */
+    LANDLOCK_COMPAT_TEMPLATE      = -2,  /**< Rule uses ${SRC}/${DST} template. */
     LANDLOCK_COMPAT_WILDCARD      = -4,  /**< Pattern has mid-path * wildcard. */
     LANDLOCK_COMPAT_SPECIFICITY   = -5,  /**< Layer uses SPECIFICITY type. */
     LANDLOCK_COMPAT_LAYER_MASK    = -6,  /**< Layer has a mode mask (e.g. PRECEDENCE:RW). */
-    LANDLOCK_COMPAT_SINGLE_STAR   = -7,  /**< Pattern ends with /* (single-star suffix). */
+    LANDLOCK_COMPAT_SINGLE_STAR   = -7,  /**< Pattern ends with / (single-star suffix). */
     LANDLOCK_COMPAT_NULL_RULESET  = -8,  /**< NULL ruleset passed. */
     LANDLOCK_COMPAT_COMPILE_FAIL  = -9,  /**< Compilation failed during validation. */
 } landlock_compat_error_t;
@@ -104,7 +100,6 @@ extern const char *const landlock_compat_error_msgs[];
  *
  * Landlock cannot express:
  *   - Subject constraints (subject_regex)
- *   - UID constraints (min_uid > 0)
  *   - Binary operations with distinct SRC/DST patterns (COPY, MOVE, etc.)
  *   - Non-prefix wildcards (`*` in the middle of a path)
  *   - Layer masks (SPECIFICITY:R, PRECEDENCE:RW)
@@ -183,7 +178,6 @@ typedef struct {
     int denied_rules;         /**< Rules translated to Landlock deny. */
     int skipped_rules;        /**< Rules skipped (inexpressible in Landlock). */
     int skipped_subject;      /**< Skipped due to subject constraint. */
-    int skipped_uid;          /**< Skipped due to UID constraint. */
     int skipped_template;     /**< Skipped due to template. */
     int skipped_wildcard;     /**< Skipped due to wildcard pattern. */
     int deny_prefixes;        /**< Number of deny path prefixes reported. */

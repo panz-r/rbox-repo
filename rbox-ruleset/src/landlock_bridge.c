@@ -21,7 +21,7 @@
 /*  Per-rule Landlock compatibility pre-check                           */
 /* ------------------------------------------------------------------ */
 
-/** Check if pattern ends with /* (single-star suffix). */
+/** Check if pattern ends with / (single-star suffix). */
 static bool is_single_star_suffix(const char *pattern)
 {
     if (!pattern) return false;
@@ -31,16 +31,11 @@ static bool is_single_star_suffix(const char *pattern)
 
 int soft_rule_is_landlock_compatible(const char *pattern,
                                      const char *subject_regex,
-                                     uint32_t min_uid,
                                      const char *linked_path_var,
                                      const char **error_msg)
 {
     if (subject_regex && subject_regex[0] != '\0') {
         if (error_msg) *error_msg = landlock_compat_error_msgs[-LANDLOCK_COMPAT_SUBJECT];
-        return -1;
-    }
-    if (min_uid > 0) {
-        if (error_msg) *error_msg = landlock_compat_error_msgs[-LANDLOCK_COMPAT_UID];
         return -1;
     }
     if (linked_path_var && linked_path_var[0] != '\0') {
@@ -147,7 +142,7 @@ static const char *pattern_to_prefix(const char *pattern)
         return buf;
     }
 
-    /* /path/** → /path */
+    /* /path/... → /path */
     if (len >= 3 && pattern[len - 3] == '/' &&
         pattern[len - 2] == '*' && pattern[len - 1] == '*') {
         size_t base = len - 3;
@@ -166,7 +161,7 @@ static const char *pattern_to_prefix(const char *pattern)
         return buf;
     }
 
-    /* /path/* → /path (over-permissive) */
+    /* /path/star → /path (over-permissive) */
     if (len >= 2 && pattern[len - 2] == '/' && pattern[len - 1] == '*') {
         size_t base = len - 2;
         memcpy(buf, pattern, base);
@@ -188,7 +183,7 @@ static const char *pattern_to_prefix(const char *pattern)
 const char *const landlock_compat_error_msgs[] = {
     [-LANDLOCK_COMPAT_OK]           = "Compatible with Landlock",
     [-LANDLOCK_COMPAT_SUBJECT]      = "Subject constraint not supported by Landlock",
-    [-LANDLOCK_COMPAT_UID]          = "UID constraint not supported by Landlock",
+
     [-LANDLOCK_COMPAT_TEMPLATE]     = "Dual-path operation (COPY/MOVE/LINK/MOUNT) not supported by Landlock",
     [-LANDLOCK_COMPAT_WILDCARD]     = "Mid-path wildcard (*) cannot be expressed in Landlock",
     [-LANDLOCK_COMPAT_SPECIFICITY]  = "SPECIFICITY layer rules not supported by Landlock (longest-match semantics)",
@@ -207,8 +202,7 @@ static landlock_compat_error_t validate_compiled_rule(const compiled_rule_t *cr,
 {
     if (cr->subject_regex && cr->subject_regex[0] != '\0')
         return LANDLOCK_COMPAT_SUBJECT;
-    if (cr->min_uid > 0)
-        return LANDLOCK_COMPAT_UID;
+
     if (cr->flags & SOFT_RULE_TEMPLATE)
         return LANDLOCK_COMPAT_TEMPLATE;
     if (is_single_star_suffix(cr->pattern))
@@ -229,8 +223,7 @@ static landlock_compat_error_t validate_descriptive_rule(const rule_t *r,
 {
     if (r->subject_regex[0] != '\0')
         return LANDLOCK_COMPAT_SUBJECT;
-    if (r->min_uid > 0)
-        return LANDLOCK_COMPAT_UID;
+
     if (r->linked_path_var[0] != '\0')
         return LANDLOCK_COMPAT_TEMPLATE;
     if (is_single_star_suffix(r->pattern))
@@ -394,7 +387,7 @@ landlock_builder_t *soft_ruleset_to_landlock(const soft_ruleset_t *rs,
 
             /* Skip rules with constraints Landlock can't express */
             if ((cr->subject_regex && cr->subject_regex[0] != '\0') ||
-                cr->min_uid > 0 ||
+
                 (cr->flags & SOFT_RULE_TEMPLATE)) {
                 continue;  /* skip inexpressible rules */
             }
@@ -598,9 +591,7 @@ landlock_builder_t *soft_ruleset_to_landlock_with_report(
             if (cr->subject_regex && cr->subject_regex[0] != '\0') {
                 rep.skipped_rules++; rep.skipped_subject++; continue;
             }
-            if (cr->min_uid > 0) {
-                rep.skipped_rules++; rep.skipped_uid++; continue;
-            }
+
             if (cr->flags & SOFT_RULE_TEMPLATE) {
                 rep.skipped_rules++; rep.skipped_template++; continue;
             }

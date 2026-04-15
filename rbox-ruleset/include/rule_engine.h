@@ -92,7 +92,6 @@ typedef struct {
     const char *src_path;   /**< Source path (NULL for unary ops) */
     const char *dst_path;   /**< Destination path (NULL for unary ops) */
     const char *subject;    /**< Calling binary path (for subject_regex) */
-    uid_t       uid;        /**< Caller UID (for min_uid matching) */
 } soft_access_ctx_t;
 
 /* ------------------------------------------------------------------ */
@@ -210,7 +209,6 @@ bool soft_ruleset_is_compiled(const soft_ruleset_t *rs);
  *                        ${DST}; rejected with EINVAL otherwise.
  * @param subject_regex   Optional regex to match the calling binary.
  *                        NULL or "" matches any subject.
- * @param min_uid         Minimum UID for this rule to apply (0 = any).
  * @param flags           Rule flags (SOFT_RULE_RECURSIVE, etc.).
  * @return 0 on success, -1 on failure (errno set).
  */
@@ -220,7 +218,6 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
                           soft_binary_op_t op_type,
                           const char *linked_path_var,
                           const char *subject_regex,
-                          uint32_t min_uid,
                           uint32_t flags);
 
 /**
@@ -238,7 +235,6 @@ int soft_ruleset_add_rule(soft_ruleset_t *rs,
  * @param op_type         Operation type.
  * @param linked_path_var Linked path variable ("SRC", "DST", or NULL).
  * @param subject_regex   Subject regex constraint (NULL = any).
- * @param min_uid         Minimum UID (0 = any).
  * @param flags           Rule flags.
  * @return 0 on success, -1 on failure.
  */
@@ -249,7 +245,6 @@ int soft_ruleset_add_rule_at_layer(soft_ruleset_t *rs,
                                    soft_binary_op_t op_type,
                                    const char *linked_path_var,
                                    const char *subject_regex,
-                                   uint32_t min_uid,
                                    uint32_t flags);
 
 /* ------------------------------------------------------------------ */
@@ -328,9 +323,9 @@ int soft_ruleset_add_rule_str(soft_ruleset_t *rs,
  *   D  →  SOFT_ACCESS_DENY
  *
  * Path conventions:
- *   Trailing /... or /**  →  SOFT_RULE_RECURSIVE
- *   Trailing /*           →  single-level wildcard
- *   Exact path            →  static rule
+ *   Trailing /... or /...  →  SOFT_RULE_RECURSIVE
+ *   Trailing /\*          →  single-level wildcard
+ *   Exact path           →  static rule
  *
  * All rules are added to layer 0 with SOFT_OP_READ operation.
  * For binary operations (COPY/MOVE) use soft_ruleset_add_rule_str().
@@ -367,7 +362,7 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
  *   1  — determined.  *out_granted holds the bitmask: check individual
  *        bits (SOFT_ACCESS_READ, WRITE, etc.) to know what is allowed.
  *        A value of 0 means all access denied.
- *   0  — undetermined.  No rules matched this path/subject/UID.
+ *   0  — undetermined.  No rules matched this path/subject.
  *        Caller should apply their default policy.
  *
  * For unary operations (READ, WRITE, EXEC), ctx->src_path is the
@@ -385,7 +380,7 @@ const char *soft_ruleset_error(const soft_ruleset_t *rs);
  * template ${SRC}: RO rule.
  *
  * @param rs           Ruleset handle.
- * @param ctx          Access context (operation, paths, subject, UID).
+ * @param ctx          Access context (operation, paths, subject).
  * @param out_granted  Receives the granted access mask.  Always set
  *                     on return 1, always 0 on return 0.
  * @param out_log      Optional audit log output.
@@ -524,7 +519,6 @@ typedef struct {
     soft_binary_op_t    op_type;           /**< Operation type */
     const char         *linked_path_var;   /**< "SRC", "DST", or NULL */
     const char         *subject_regex;     /**< Subject regex, or NULL */
-    uint32_t            min_uid;           /**< Minimum UID */
     uint32_t            flags;             /**< SOFT_RULE_* flags */
     int                 layer;             /**< Layer index */
 } soft_rule_info_t;
@@ -812,7 +806,7 @@ typedef struct {
  * Compare two rulesets and produce a diff report.
  *
  * Rules are compared layer by layer, then by (pattern, mode, op_type,
- * subject_regex, min_uid, flags).  A rule is considered MODIFIED if
+ * subject_regex, flags).  A rule is considered MODIFIED if
  * the same pattern+op exists in both rulesets but with different
  * attributes.
  *

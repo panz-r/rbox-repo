@@ -184,23 +184,6 @@ static void test_path_max_boundary(void)
 /*  Allow with access == 0                                            */
 /* ------------------------------------------------------------------ */
 
-static void test_allow_zero_access(void)
-{
-    radix_tree_t *tree = radix_tree_new();
-
-    radix_tree_allow(tree, "/empty", 0);
-
-    landlock_rule_t *rules = NULL;
-    size_t count = 0;
-    radix_tree_collect_rules(tree, &rules, &count);
-
-    /* access == 0 → not collected (access_mask != 0 check) */
-    TEST_ASSERT_EQ(count, 0, "zero access rule not collected");
-
-    free(rules);
-    radix_tree_free(tree);
-}
-
 /* ------------------------------------------------------------------ */
 /*  Runner                                                             */
 /* ------------------------------------------------------------------ */

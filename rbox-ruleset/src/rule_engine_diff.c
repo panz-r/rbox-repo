@@ -26,7 +26,6 @@ static bool rules_equal(const rule_t *a, const rule_t *b)
            a->op_type == b->op_type &&
            strcmp(a->linked_path_var, b->linked_path_var) == 0 &&
            strcmp(a->subject_regex, b->subject_regex) == 0 &&
-           a->min_uid == b->min_uid &&
            a->flags == b->flags;
 }
 
@@ -136,7 +135,6 @@ int soft_ruleset_diff(const soft_ruleset_t *a,
                 info.op_type = lyr_a->rules[i].op_type;
                 info.linked_path_var = (lyr_a->rules[i].linked_path_var[0] != '\0') ? lyr_a->rules[i].linked_path_var : NULL;
                 info.subject_regex = (lyr_a->rules[i].subject_regex[0] != '\0') ? lyr_a->rules[i].subject_regex : NULL;
-                info.min_uid = lyr_a->rules[i].min_uid;
                 info.flags = lyr_a->rules[i].flags;
                 info.layer = layer;
 
@@ -155,7 +153,6 @@ int soft_ruleset_diff(const soft_ruleset_t *a,
                 info.op_type = lyr_b->rules[i].op_type;
                 info.linked_path_var = (lyr_b->rules[i].linked_path_var[0] != '\0') ? lyr_b->rules[i].linked_path_var : NULL;
                 info.subject_regex = (lyr_b->rules[i].subject_regex[0] != '\0') ? lyr_b->rules[i].subject_regex : NULL;
-                info.min_uid = lyr_b->rules[i].min_uid;
                 info.flags = lyr_b->rules[i].flags;
                 info.layer = layer;
 
@@ -208,7 +205,6 @@ int soft_ruleset_diff(const soft_ruleset_t *a,
                 info_a.op_type = ra->op_type;
                 info_a.linked_path_var = (ra->linked_path_var[0] != '\0') ? ra->linked_path_var : NULL;
                 info_a.subject_regex = (ra->subject_regex[0] != '\0') ? ra->subject_regex : NULL;
-                info_a.min_uid = ra->min_uid;
                 info_a.flags = ra->flags;
                 info_a.layer = layer;
 
@@ -217,7 +213,6 @@ int soft_ruleset_diff(const soft_ruleset_t *a,
                 info_b.op_type = rb->op_type;
                 info_b.linked_path_var = (rb->linked_path_var[0] != '\0') ? rb->linked_path_var : NULL;
                 info_b.subject_regex = (rb->subject_regex[0] != '\0') ? rb->subject_regex : NULL;
-                info_b.min_uid = rb->min_uid;
                 info_b.flags = rb->flags;
                 info_b.layer = layer;
 
@@ -240,7 +235,6 @@ int soft_ruleset_diff(const soft_ruleset_t *a,
                 info.op_type = ra->op_type;
                 info.linked_path_var = (ra->linked_path_var[0] != '\0') ? ra->linked_path_var : NULL;
                 info.subject_regex = (ra->subject_regex[0] != '\0') ? ra->subject_regex : NULL;
-                info.min_uid = ra->min_uid;
                 info.flags = ra->flags;
                 info.layer = layer;
 
@@ -262,7 +256,6 @@ int soft_ruleset_diff(const soft_ruleset_t *a,
             info.op_type = rb->op_type;
             info.linked_path_var = (rb->linked_path_var[0] != '\0') ? rb->linked_path_var : NULL;
             info.subject_regex = (rb->subject_regex[0] != '\0') ? rb->subject_regex : NULL;
-            info.min_uid = rb->min_uid;
             info.flags = rb->flags;
             info.layer = layer;
 

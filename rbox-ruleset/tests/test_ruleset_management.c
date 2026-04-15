@@ -20,13 +20,13 @@
 
 static void test_clone_basic(void)
 {
+    uint32_t __g = 0;
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data/...", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0,
-                                          SOFT_RULE_RECURSIVE),
+                                          SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE),
                    0, "add recursive read rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/secret",
-                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0),
                    0, "add deny at layer 1");
 
     soft_ruleset_t *clone = soft_ruleset_clone(rs);
@@ -39,21 +39,17 @@ static void test_clone_basic(void)
                    "clone starts uncompiled");
 
     /* Clone evaluates the same as original */
-    soft_access_ctx_t ctx = { SOFT_OP_READ, "/data/file.txt", NULL, NULL, 1000 };
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), SOFT_ACCESS_READ,
-                   "original allows /data/file.txt");
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(clone, &ctx, NULL), SOFT_ACCESS_READ,
-                   "clone allows /data/file.txt");
+    soft_access_ctx_t ctx = { .op = SOFT_OP_READ, .src_path = "/data/file.txt", NULL, NULL };
+    TEST_ASSERT(soft_ruleset_check_ctx(rs, &ctx, &__g, NULL) && __g == SOFT_ACCESS_READ, "original allows /data/file.txt");
+    TEST_ASSERT(soft_ruleset_check_ctx(clone, &ctx, &__g, NULL) && __g == SOFT_ACCESS_READ, "clone allows /data/file.txt");
 
     ctx.src_path = "/secret";
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(rs, &ctx, NULL), -13,
-                   "original denies /secret");
-    TEST_ASSERT_EQ(soft_ruleset_check_ctx(clone, &ctx, NULL), -13,
-                   "clone denies /secret");
+    TEST_ASSERT(soft_ruleset_check_ctx(rs, &ctx, &__g, NULL) && __g == 0, "original denies /secret");
+    TEST_ASSERT(soft_ruleset_check_ctx(clone, &ctx, &__g, NULL) && __g == 0, "clone denies /secret");
 
     /* Modifying clone doesn't affect original */
     TEST_ASSERT_EQ(soft_ruleset_add_rule(clone, "/new", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule to clone");
     TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 2,
                    "original rule count unchanged");
@@ -83,7 +79,7 @@ static void test_clone_with_custom_ops(void)
                    SOFT_ACCESS_READ | SOFT_ACCESS_EXEC, SOFT_ACCESS_WRITE),
                    0, "set custom op modes");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/custom", SOFT_ACCESS_READ,
-                                          SOFT_OP_CUSTOM, NULL, NULL, 0, 0),
+                                          SOFT_OP_CUSTOM, NULL, NULL, 0),
                    0, "add custom op rule");
 
     soft_ruleset_t *clone = soft_ruleset_clone(rs);
@@ -110,10 +106,10 @@ static void test_rule_info_basic(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/secret", SOFT_ACCESS_DENY,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule 1");
 
     soft_rule_info_t info;
@@ -125,7 +121,7 @@ static void test_rule_info_basic(void)
     TEST_ASSERT_EQ(info.layer, 0, "rule 0 layer");
     TEST_ASSERT(info.linked_path_var == NULL, "rule 0 no linked var");
     TEST_ASSERT(info.subject_regex == NULL, "rule 0 no subject");
-    TEST_ASSERT_EQ(info.min_uid, 0, "rule 0 min_uid");
+    // TEST_ASSERT_EQ(info.min_uid, 0, "rule 0 min_uid"); // min_uid field removed
 
     TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 1, &info), 0,
                    "get rule info at index 1");
@@ -145,11 +141,11 @@ static void test_rule_info_multi_layer(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/a", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "layer 0 rule");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "layer 0 rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 2, "/b", SOFT_ACCESS_WRITE,
-                   SOFT_OP_WRITE, NULL, NULL, 0, 0), 0, "layer 2 rule");
+                   SOFT_OP_WRITE, NULL, NULL, 0), 0, "layer 2 rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 2, "/c", SOFT_ACCESS_EXEC,
-                   SOFT_OP_EXEC, NULL, NULL, 0, 0), 0, "layer 2 rule 2");
+                   SOFT_OP_EXEC, NULL, NULL, 0), 0, "layer 2 rule 2");
 
     soft_rule_info_t info;
     TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "index 0");
@@ -171,7 +167,7 @@ static void test_rule_info_with_constraints(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "${SRC}", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, "SRC", ".*cp$", 1000,
+                                          SOFT_OP_COPY, "SRC", "**cp",
                                           SOFT_RULE_TEMPLATE),
                    0, "add template rule with constraints");
 
@@ -179,8 +175,8 @@ static void test_rule_info_with_constraints(void)
     TEST_ASSERT_EQ(soft_ruleset_get_rule_info(rs, 0, &info), 0, "get rule info");
     TEST_ASSERT_STR_EQ(info.pattern, "${SRC}", "pattern");
     TEST_ASSERT_STR_EQ(info.linked_path_var, "SRC", "linked var");
-    TEST_ASSERT_STR_EQ(info.subject_regex, ".*cp$", "subject regex");
-    TEST_ASSERT_EQ(info.min_uid, 1000, "min_uid");
+    TEST_ASSERT_STR_EQ(info.subject_regex, "**cp", "subject regex");
+    // TEST_ASSERT_EQ(info.min_uid, 1000, "min_uid"); // min_uid field removed
     TEST_ASSERT(info.flags & SOFT_RULE_TEMPLATE, "template flag set");
     TEST_ASSERT_EQ(info.layer, 0, "layer");
 
@@ -191,9 +187,9 @@ static void test_layer_info_basic(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/a", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "add layer 0 rule");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "add layer 0 rule");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/b", SOFT_ACCESS_WRITE,
-                   SOFT_OP_WRITE, NULL, NULL, 0, 0), 0, "add layer 1 rule");
+                   SOFT_OP_WRITE, NULL, NULL, 0), 0, "add layer 1 rule");
 
     soft_layer_info_t info;
     TEST_ASSERT_EQ(soft_ruleset_get_layer_info(rs, 0, &info), 0, "layer 0 info");
@@ -226,10 +222,10 @@ static void test_remove_rule_by_attrs(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule 1");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/secret", SOFT_ACCESS_DENY,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule 2");
     TEST_ASSERT_EQ(soft_ruleset_rule_count(rs), 2, "2 rules");
 
@@ -255,13 +251,13 @@ static void test_remove_rule_at_index(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/a", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add /a");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/b", SOFT_ACCESS_WRITE,
-                                          SOFT_OP_WRITE, NULL, NULL, 0, 0),
+                                          SOFT_OP_WRITE, NULL, NULL, 0),
                    0, "add /b");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/c", SOFT_ACCESS_EXEC,
-                                          SOFT_OP_EXEC, NULL, NULL, 0, 0),
+                                          SOFT_OP_EXEC, NULL, NULL, 0),
                    0, "add /c");
 
     /* Remove middle rule */
@@ -292,7 +288,7 @@ static void test_remove_invalidates_compile(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule");
     TEST_ASSERT_EQ(soft_ruleset_compile(rs), 0, "compile");
     TEST_ASSERT_EQ(soft_ruleset_is_compiled(rs), true, "compiled");
@@ -309,11 +305,11 @@ static void test_remove_from_multi_layer(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 0, "/a", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "layer 0 /a");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "layer 0 /a");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/b", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "layer 1 /b");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "layer 1 /b");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(rs, 1, "/c", SOFT_ACCESS_WRITE,
-                   SOFT_OP_WRITE, NULL, NULL, 0, 0), 0, "layer 1 /c");
+                   SOFT_OP_WRITE, NULL, NULL, 0), 0, "layer 1 /c");
 
     /* Remove from layer 1 */
     TEST_ASSERT_EQ(soft_ruleset_remove_rule_at_index(rs, 1, 0), 0,
@@ -339,15 +335,15 @@ static void test_merge_basic(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: add /data");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 0, "/secret",
-                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0, 0),
+                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: add /secret at layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 1, "/tmp",
-                   SOFT_ACCESS_WRITE, SOFT_OP_WRITE, NULL, NULL, 0, 0),
+                   SOFT_ACCESS_WRITE, SOFT_OP_WRITE, NULL, NULL, 0),
                    0, "b: add /tmp at layer 1");
 
     TEST_ASSERT_EQ(soft_ruleset_merge(a, b), 0, "merge b into a");
@@ -389,13 +385,13 @@ static void test_merge_layer_type_override(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 0, "/a", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: add /a");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: add /a");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_set_layer_type(b, 0, LAYER_SPECIFICITY,
                    SOFT_ACCESS_READ), 0, "b: set layer 0 SPECIFICITY");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 0, "/b", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: add /b");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: add /b");
 
     TEST_ASSERT_EQ(soft_ruleset_merge(a, b), 0, "merge");
 
@@ -412,13 +408,13 @@ static void test_insert_ruleset_with_depth(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 0, "/top", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: add /top at layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: add /top at layer 0");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 0, "/src0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: add /src0 at layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: add /src0 at layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 1, "/src1", SOFT_ACCESS_WRITE,
-                   SOFT_OP_WRITE, NULL, NULL, 0, 0), 0, "b: add /src1 at layer 1");
+                   SOFT_OP_WRITE, NULL, NULL, 0), 0, "b: add /src1 at layer 1");
 
     /* Insert b shifted by depth=2 */
     TEST_ASSERT_EQ(soft_ruleset_insert_ruleset(a, b, 2), 0,
@@ -443,7 +439,7 @@ static void test_insert_ruleset_with_depth(void)
     /* Invalid depth */
     soft_ruleset_t *c = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(c, 0, "/x", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "c: add rule");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "c: add rule");
     TEST_ASSERT_EQ(soft_ruleset_insert_ruleset(a, c, 64), -1,
                    "excessive depth rejected");
 
@@ -456,15 +452,15 @@ static void test_merge_at_layer(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 0, "/layer0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: add /layer0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: add /layer0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 1, "/layer1", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: add /layer1");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: add /layer1");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 0, "/src_layer0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: src layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: src layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 1, "/src_layer1", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: src layer 1");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: src layer 1");
 
     /* Merge b at layer 1 of a: b's layer 0 → a's layer 1, b's layer 1 → a's layer 2 */
     TEST_ASSERT_EQ(soft_ruleset_merge_at_layer(a, b, 1), 0,
@@ -500,14 +496,14 @@ static void test_merge_invalidation(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/a", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule to a");
     TEST_ASSERT_EQ(soft_ruleset_compile(a), 0, "compile a");
     TEST_ASSERT_EQ(soft_ruleset_is_compiled(a), true, "a compiled");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/b", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule to b");
 
     TEST_ASSERT_EQ(soft_ruleset_merge(a, b), 0, "merge");
@@ -532,20 +528,20 @@ static void test_insert_at_layer_basic(void)
     /* dest: layers [0, 1, 2] — one rule each */
     soft_ruleset_t *dest = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(dest, 0, "/layer0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "dest: layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "dest: layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(dest, 1, "/layer1", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "dest: layer 1");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "dest: layer 1");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(dest, 2, "/layer2", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "dest: layer 2");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "dest: layer 2");
 
     /* src: 3 layers, one rule each */
     soft_ruleset_t *src = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(src, 0, "/src0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "src: layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "src: layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(src, 1, "/src1", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "src: layer 1");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "src: layer 1");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(src, 2, "/src2", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "src: layer 2");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "src: layer 2");
 
     /* Insert src at layer 1 of dest */
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(dest, src, 1), 0,
@@ -590,13 +586,13 @@ static void test_insert_at_layer_edge_cases(void)
     /* Insert at layer 0 (prepend all) */
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 0, "/a0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 1, "/a1", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: layer 1");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: layer 1");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/b", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: 1 layer");
 
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(a, b, 0), 0, "insert at layer 0");
@@ -616,11 +612,11 @@ static void test_insert_at_layer_edge_cases(void)
     /* Insert at the very end (same as merge_at_layer) */
     a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 0, "/x", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: layer 0");
 
     b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/y", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: layer 0");
 
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(a, b, 1), 0, "insert at end");
@@ -636,10 +632,10 @@ static void test_insert_at_layer_edge_cases(void)
     /* Invalid: target_layer with src that would exceed MAX_LAYERS */
     a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 0, "/x", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: rule");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: rule");
     b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 0, "/y", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: rule");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: rule");
     /* target=63 + 1 src layer = 64, which equals MAX_LAYERS → still OK */
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(a, b, 63), 0,
                    "insert at edge of MAX_LAYERS");
@@ -654,11 +650,11 @@ static void test_insert_at_layer_edge_cases(void)
         char pat[32];
         snprintf(pat, sizeof(pat), "/l%d", i);
         soft_ruleset_add_rule_at_layer(a, i, pat, SOFT_ACCESS_READ,
-                                       SOFT_OP_READ, NULL, NULL, 0, 0);
+                                       SOFT_OP_READ, NULL, NULL, 0);
     }
     b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/new", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: rule");
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(a, b, 0), -1,
                    "insert when already at MAX_LAYERS rejected");
@@ -668,11 +664,11 @@ static void test_insert_at_layer_edge_cases(void)
     /* Invalid: null args */
     a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/x", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: rule");
     b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/y", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: rule");
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(NULL, b, 0), -1, "NULL dest rejected");
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(a, NULL, 0), -1, "NULL src rejected");
@@ -692,14 +688,14 @@ static void test_insert_at_layer_invalidation(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/a", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule to a");
     TEST_ASSERT_EQ(soft_ruleset_compile(a), 0, "compile a");
     TEST_ASSERT_EQ(soft_ruleset_is_compiled(a), true, "a compiled");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/b", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule to b");
 
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(a, b, 0), 0, "insert");
@@ -714,12 +710,12 @@ static void test_insert_at_layer_independence(void)
     /* Verify that modifying the inserted rules doesn't affect src */
     soft_ruleset_t *dest = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(dest, "/dest", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "dest rule");
 
     soft_ruleset_t *src = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(src, "/src", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "src rule");
 
     TEST_ASSERT_EQ(soft_ruleset_insert_at_layer(dest, src, 1), 0, "insert");
@@ -742,23 +738,23 @@ static void test_meld_into_basic(void)
     /* dest: layers [0, 1, 2] — one rule each */
     soft_ruleset_t *dest = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(dest, 0, "/layer0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "dest: layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "dest: layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(dest, 1, "/layer1", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "dest: layer 1");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "dest: layer 1");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(dest, 2, "/layer2", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "dest: layer 2");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "dest: layer 2");
 
     /* src: 3 layers, one rule each */
     soft_ruleset_t *src = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(src, 0, "/src0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "src: layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "src: layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(src, 1, "/src1", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "src: layer 1");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "src: layer 1");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(src, 2, "/src2", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "src: layer 2");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "src: layer 2");
 
     size_t src_rules_before = soft_ruleset_rule_count(src);
-    TEST_ASSERT_EQ(src_rules_before, 3, "src has 3 rules before meld");
+    TEST_ASSERT(src_rules_before == 3, "src has 3 rules before meld");
 
     TEST_ASSERT_EQ(soft_ruleset_meld_into(dest, src, 1), 0, "meld at layer 1");
 
@@ -790,12 +786,12 @@ static void test_meld_into_ownership(void)
     /* Verify src's memory is transferred, not copied */
     soft_ruleset_t *dest = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(dest, "/dest", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "dest rule");
 
     soft_ruleset_t *src = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(src, "/src", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "src rule");
 
     TEST_ASSERT_EQ(soft_ruleset_meld_into(dest, src, 1), 0, "meld");
@@ -817,7 +813,7 @@ static void test_meld_into_edge_cases(void)
     /* Empty src: no-op */
     soft_ruleset_t *dest = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(dest, "/x", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "dest rule");
     soft_ruleset_t *empty = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_meld_into(dest, empty, 0), 0, "empty src ok");
@@ -829,7 +825,7 @@ static void test_meld_into_edge_cases(void)
     dest = soft_ruleset_new();
     soft_ruleset_t *src = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(src, "/y", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "src rule");
     TEST_ASSERT_EQ(soft_ruleset_meld_into(NULL, src, 0), -1, "NULL dest rejected");
     TEST_ASSERT_EQ(soft_ruleset_meld_into(dest, NULL, 0), -1, "NULL src rejected");
@@ -843,11 +839,11 @@ static void test_meld_into_edge_cases(void)
         char pat[32];
         snprintf(pat, sizeof(pat), "/l%d", i);
         soft_ruleset_add_rule_at_layer(dest, i, pat, SOFT_ACCESS_READ,
-                                       SOFT_OP_READ, NULL, NULL, 0, 0);
+                                       SOFT_OP_READ, NULL, NULL, 0);
     }
     src = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(src, "/new", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "src rule");
     TEST_ASSERT_EQ(soft_ruleset_meld_into(dest, src, 0), -1,
                    "meld when at MAX_LAYERS rejected");
@@ -859,14 +855,14 @@ static void test_meld_into_invalidation(void)
 {
     soft_ruleset_t *dest = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(dest, "/a", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule to dest");
     TEST_ASSERT_EQ(soft_ruleset_compile(dest), 0, "compile dest");
     TEST_ASSERT_EQ(soft_ruleset_is_compiled(dest), true, "dest compiled");
 
     soft_ruleset_t *src = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(src, "/b", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule to src");
 
     TEST_ASSERT_EQ(soft_ruleset_meld_into(dest, src, 0), 0, "meld");
@@ -884,14 +880,14 @@ static void test_meld_basic(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/a", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: /a");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 0, "/b0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: /b0 layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: /b0 layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 1, "/b1", SOFT_ACCESS_WRITE,
-                   SOFT_OP_WRITE, NULL, NULL, 0, 0), 0, "b: /b1 layer 1");
+                   SOFT_OP_WRITE, NULL, NULL, 0), 0, "b: /b1 layer 1");
 
     TEST_ASSERT_EQ(soft_ruleset_meld(a, b), 0, "meld");
     TEST_ASSERT_EQ(soft_ruleset_rule_count(a), 3, "3 rules in dest");
@@ -919,7 +915,7 @@ static void test_meld_empty_dest_layer_takes_ownership(void)
     soft_ruleset_t *dest = soft_ruleset_new();
     soft_ruleset_t *src = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(src, "/x", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "src rule");
 
     TEST_ASSERT_EQ(soft_ruleset_meld(dest, src), 0, "meld into empty dest");
@@ -934,12 +930,12 @@ static void test_meld_ruleset_basic(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/a", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: /a layer 0");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/b", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: /b layer 0");
 
     TEST_ASSERT_EQ(soft_ruleset_meld_ruleset(a, b, 1), 0, "meld_ruleset depth=1");
@@ -960,11 +956,11 @@ static void test_meld_at_layer_basic(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 0, "/top", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: /top layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: /top layer 0");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 0, "/mid", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: /mid layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: /mid layer 0");
 
     TEST_ASSERT_EQ(soft_ruleset_meld_at_layer(a, b, 1), 0, "meld_at_layer 1");
     TEST_ASSERT_EQ(soft_ruleset_rule_count(a), 2, "2 rules");
@@ -1008,11 +1004,11 @@ static void test_meld_edge_cases(void)
         char pat[32];
         snprintf(pat, sizeof(pat), "/l%d", i);
         soft_ruleset_add_rule_at_layer(full, i, pat, SOFT_ACCESS_READ,
-                                       SOFT_OP_READ, NULL, NULL, 0, 0);
+                                       SOFT_OP_READ, NULL, NULL, 0);
     }
     soft_ruleset_t *one = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(one, "/x", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "one rule");
     /* meld_ruleset with depth=0 appends to existing layers (succeeds) */
     TEST_ASSERT_EQ(soft_ruleset_meld_ruleset(full, one, 0), 0,
@@ -1024,10 +1020,10 @@ static void test_meld_edge_cases(void)
     /* Meld at layer targeting beyond MAX_LAYERS */
     soft_ruleset_t *a63 = soft_ruleset_new();
     soft_ruleset_add_rule_at_layer(a63, 63, "/l63", SOFT_ACCESS_READ,
-                                   SOFT_OP_READ, NULL, NULL, 0, 0);
+                                   SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_t *b1 = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b1, "/x", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b1 rule");
     /* target_layer=63 + src 1 layer = 64, ok */
     TEST_ASSERT_EQ(soft_ruleset_meld_at_layer(a63, b1, 63), 0,
@@ -1038,12 +1034,12 @@ static void test_meld_edge_cases(void)
     /* Now test actual overflow: src at layer 1, target=63 → dest_layer=64 > MAX */
     a63 = soft_ruleset_new();
     soft_ruleset_add_rule_at_layer(a63, 63, "/l63", SOFT_ACCESS_READ,
-                                   SOFT_OP_READ, NULL, NULL, 0, 0);
+                                   SOFT_OP_READ, NULL, NULL, 0);
     soft_ruleset_t *b2 = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b2, 0, "/x0", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b2 layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b2 layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b2, 1, "/x1", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b2 layer 1");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b2 layer 1");
     /* target=63, src layer 1 → dest 64 > MAX */
     TEST_ASSERT_EQ(soft_ruleset_meld_at_layer(a63, b2, 63), -1,
                    "meld_at_layer exceeding MAX_LAYERS");
@@ -1062,10 +1058,10 @@ static void test_diff_identical(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: /data");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/secret", SOFT_ACCESS_DENY,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: /secret");
 
     soft_ruleset_t *b = soft_ruleset_clone(a);
@@ -1089,10 +1085,10 @@ static void test_diff_added_only(void)
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: /data");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/secret", SOFT_ACCESS_DENY,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: /secret");
 
     soft_ruleset_diff_t diff;
@@ -1121,7 +1117,7 @@ static void test_diff_removed_only(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: /data");
 
     soft_ruleset_t *b = soft_ruleset_new();
@@ -1146,12 +1142,12 @@ static void test_diff_modified(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: /data READ");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/data", SOFT_ACCESS_WRITE,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: /data WRITE");
 
     soft_ruleset_diff_t diff;
@@ -1179,24 +1175,24 @@ static void test_diff_mixed_changes(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/unchanged", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: unchanged");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/modified", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: modified");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/removed", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: removed");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/unchanged", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: unchanged");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/modified", SOFT_ACCESS_WRITE,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: modified (different mode)");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/added", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: added");
 
     soft_ruleset_diff_t diff;
@@ -1217,7 +1213,7 @@ static void test_diff_null_inputs(void)
 {
     soft_ruleset_t *rs = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(rs, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "add rule");
 
     /* NULL a: all rules from b are "added" */
@@ -1254,15 +1250,15 @@ static void test_diff_multi_layer(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 0, "/layer0_a", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: layer 0");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: layer 0");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(a, 2, "/layer2_a", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "a: layer 2");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "a: layer 2");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 0, "/layer0_a", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: layer 0 same");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: layer 0 same");
     TEST_ASSERT_EQ(soft_ruleset_add_rule_at_layer(b, 1, "/layer1_b", SOFT_ACCESS_READ,
-                   SOFT_OP_READ, NULL, NULL, 0, 0), 0, "b: layer 1 new");
+                   SOFT_OP_READ, NULL, NULL, 0), 0, "b: layer 1 new");
 
     soft_ruleset_diff_t diff;
     memset(&diff, 0, sizeof(diff));
@@ -1284,13 +1280,13 @@ static void test_diff_with_constraints(void)
 {
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "${SRC}", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, "SRC", ".*cp$", 1000,
+                                          SOFT_OP_COPY, "SRC", "**cp",
                                           SOFT_RULE_TEMPLATE),
                    0, "a: template with constraints");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "${SRC}", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, "SRC", ".*cp$", 1000,
+                                          SOFT_OP_COPY, "SRC", "**cp",
                                           SOFT_RULE_TEMPLATE),
                    0, "b: same template with constraints");
 
@@ -1306,7 +1302,7 @@ static void test_diff_with_constraints(void)
     soft_ruleset_free(b);
     b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "${SRC}", SOFT_ACCESS_READ,
-                                          SOFT_OP_COPY, "SRC", ".*mv$", 2000,
+                                          SOFT_OP_COPY, "SRC", "**mv",
                                           SOFT_RULE_TEMPLATE),
                    0, "b: different constraints");
 
@@ -1328,16 +1324,16 @@ static void test_clone_merge_diff_workflow(void)
     /* Create base ruleset */
     soft_ruleset_t *base = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(base, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "base: /data");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(base, "/secret", SOFT_ACCESS_DENY,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "base: /secret deny");
 
     /* Clone for modification */
     soft_ruleset_t *working = soft_ruleset_clone(base);
     TEST_ASSERT_EQ(soft_ruleset_add_rule(working, "/new", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "working: add /new");
 
     /* Diff working against base */
@@ -1366,21 +1362,22 @@ static void test_clone_merge_diff_workflow(void)
 
 static void test_merge_then_evaluate(void)
 {
+    uint32_t __g = 0;
     /* Create two independent rulesets with non-overlapping patterns */
     soft_ruleset_t *a = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/data", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: /data allow");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(a, "/secret", SOFT_ACCESS_DENY,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "a: /secret deny");
 
     soft_ruleset_t *b = soft_ruleset_new();
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/home", SOFT_ACCESS_READ,
-                                          SOFT_OP_READ, NULL, NULL, 0, 0),
+                                          SOFT_OP_READ, NULL, NULL, 0),
                    0, "b: /home allow");
     TEST_ASSERT_EQ(soft_ruleset_add_rule(b, "/tmp", SOFT_ACCESS_WRITE,
-                                          SOFT_OP_WRITE, NULL, NULL, 0, 0),
+                                          SOFT_OP_WRITE, NULL, NULL, 0),
                    0, "b: /tmp write");
 
     /* Merge b into a */
@@ -1390,27 +1387,26 @@ static void test_merge_then_evaluate(void)
     /* Compile and evaluate */
     TEST_ASSERT_EQ(soft_ruleset_compile(a), 0, "compile");
 
-    soft_access_ctx_t ctx = { SOFT_OP_READ, "/data", NULL, NULL, 1000 };
-    int ret = soft_ruleset_check_ctx(a, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, SOFT_ACCESS_READ,
-                   "merged: /data allows READ");
+    soft_access_ctx_t ctx = { .op = SOFT_OP_READ, .src_path = "/data", NULL, NULL };
+    int ret = soft_ruleset_check_ctx(a, &ctx, &__g, NULL);
+    TEST_ASSERT((ret) && __g == SOFT_ACCESS_READ, "merged: /data allows READ");
 
     ctx.src_path = "/secret";
-    ret = soft_ruleset_check_ctx(a, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, -13, "merged: /secret denied");
+    ret = soft_ruleset_check_ctx(a, &ctx, &__g, NULL);
+    TEST_ASSERT((ret) && __g == 0, "merged: /secret denied");
 
     ctx.src_path = "/home";
-    ret = soft_ruleset_check_ctx(a, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, SOFT_ACCESS_READ, "merged: /home allows READ");
+    ret = soft_ruleset_check_ctx(a, &ctx, &__g, NULL);
+    TEST_ASSERT((ret) && __g == SOFT_ACCESS_READ, "merged: /home allows READ");
 
     ctx.op = SOFT_OP_WRITE;
     ctx.src_path = "/tmp";
-    ret = soft_ruleset_check_ctx(a, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, SOFT_ACCESS_WRITE, "merged: /tmp allows WRITE");
+    ret = soft_ruleset_check_ctx(a, &ctx, &__g, NULL);
+    TEST_ASSERT((ret) && __g == SOFT_ACCESS_WRITE, "merged: /tmp allows WRITE");
 
     ctx.src_path = "/unknown";
-    ret = soft_ruleset_check_ctx(a, &ctx, NULL);
-    TEST_ASSERT_EQ(ret, 0, "merged: /unknown undetermined");
+    ret = soft_ruleset_check_ctx(a, &ctx, &__g, NULL);
+    TEST_ASSERT(!ret, "merged: /unknown undetermined");
 
     soft_ruleset_free(a);
     soft_ruleset_free(b);

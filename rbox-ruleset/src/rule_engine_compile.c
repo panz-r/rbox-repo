@@ -156,7 +156,7 @@ static int compile_rule(effective_ruleset_t *eff, const rule_t *r,
     out->pattern = pat;
     out->pattern_len = (uint16_t)strlen(r->pattern);
     out->mode = r->mode;
-    out->min_uid = r->min_uid;
+
     out->flags = r->flags;
     out->op_type = (uint16_t)r->op_type;
     if (r->subject_regex[0] != '\0') {
@@ -362,7 +362,6 @@ bool pattern_covers_classified(const char *a, size_t la, bool a_rec, bool a_star
 bool rule_constraints_equal(const rule_t *a, const rule_t *b)
 {
     return a->op_type == b->op_type &&
-           a->min_uid == b->min_uid &&
            a->flags == b->flags &&
            strcmp(a->subject_regex, b->subject_regex) == 0 &&
            strcmp(a->linked_path_var, b->linked_path_var) == 0;
@@ -403,11 +402,11 @@ static bool subject_rule_redundant(const rule_t *unconstrained,
     if (unconstrained->subject_regex[0] != '\0') return false;
     /* Subject rule must have a subject constraint */
     if (subject_rule->subject_regex[0] == '\0') return false;
-    /* Same pattern, op, flags, linked_path_var, min_uid */
+    /* Same pattern, op, flags, linked_path_var, subject */
     if (strcmp(unconstrained->pattern, subject_rule->pattern) != 0) return false;
     if (unconstrained->op_type != subject_rule->op_type) return false;
     if (unconstrained->flags != subject_rule->flags) return false;
-    if (unconstrained->min_uid != subject_rule->min_uid) return false;
+
     /* Subject rule mode must be a superset of unconstrained mode */
     return (subject_rule->mode & unconstrained->mode) == unconstrained->mode;
 }
@@ -422,11 +421,13 @@ static bool compiled_subject_matches(const compiled_rule_t *rule,
     if (!rule->subject_regex) return true;
     if (!subject) return false;
 
-    size_t rlen = strlen(rule->subject_regex);
-    if (rlen >= 2 && rule->subject_regex[0] == '.' &&
-        rule->subject_regex[1] == '*' && rlen > 2) {
-        const char *suffix = rule->subject_regex + 2;
-        size_t slen = strlen(subject);
+    const char *pat = rule->subject_regex;
+    size_t plen = strlen(pat);
+    size_t slen = strlen(subject);
+
+    /* Check for "**" prefix (match any including '/') */
+    if (plen >= 2 && pat[0] == '*' && pat[1] == '*') {
+        const char *suffix = pat + 2;
         size_t suf_len = strlen(suffix);
         if (suf_len > 0 && suffix[suf_len - 1] == '$') suf_len--;
         if (slen >= suf_len && suf_len > 0 &&
@@ -434,7 +435,27 @@ static bool compiled_subject_matches(const compiled_rule_t *rule,
             return true;
         return false;
     }
-    return strcmp(rule->subject_regex, subject) == 0;
+
+    /* Check for "*" prefix (match any except '/') */
+    if (plen >= 1 && pat[0] == '*') {
+        const char *suffix = pat + 1;
+        size_t suf_len = strlen(suffix);
+        if (suf_len > 0 && suffix[suf_len - 1] == '$') suf_len--;
+        if (slen >= suf_len && suf_len > 0 &&
+            strncmp(subject + slen - suf_len, suffix, suf_len) == 0) {
+            size_t prefix_len = slen - suf_len;
+            for (size_t i = 0; i < prefix_len; i++) {
+                if (subject[i] == '/') return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /* Strip trailing '$' for exact match */
+    if (plen > 0 && pat[plen - 1] == '$') plen--;
+    if (plen != slen) return false;
+    return strncmp(pat, subject, plen) == 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -494,7 +515,7 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
         if (!compiled_subject_matches(r, ctx->subject)) continue;
-        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
+        
 
         any_matched = true;
         if (r->mode & SOFT_ACCESS_DENY) {
@@ -518,7 +539,6 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
         if (!compiled_subject_matches(r, ctx->subject)) continue;
-        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
 
         any_matched = true;
         if (r->mode & SOFT_ACCESS_DENY) {
@@ -560,7 +580,6 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
         if (!compiled_subject_matches(r, ctx->subject)) continue;
-        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
         if (!compiled_rule_matches_path(r, path, ctx)) continue;
 
         if (r->mode & SOFT_ACCESS_DENY) {
@@ -693,7 +712,6 @@ static uint32_t match_spec_static(const effective_ruleset_t *eff,
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
         if (!compiled_subject_matches(r, ctx->subject)) continue;
-        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
 
         bool match = false;
         size_t pat_len = r->pattern_len;
@@ -734,7 +752,6 @@ static uint32_t match_spec_dynamic(const effective_ruleset_t *eff,
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
         if (!compiled_subject_matches(r, ctx->subject)) continue;
-        if (r->min_uid > 0 && ctx->uid < r->min_uid) continue;
         if (!compiled_rule_matches_path(r, path, ctx)) continue;
 
         size_t pat_len = r->pattern_len;
@@ -999,7 +1016,7 @@ int soft_ruleset_compile_err(soft_ruleset_t *rs,
             /* Same pattern and exact mode match → redundant */
             if (pending[i].rule.op_type != pending[j].rule.op_type) continue;
             if (pending[i].rule.flags != pending[j].rule.flags) continue;
-            if (pending[i].rule.min_uid != pending[j].rule.min_uid) continue;
+
             if (groups[i].mode != groups[j].mode) continue;  /* exact mode match required */
             removed[j] = true;
         }
@@ -1089,8 +1106,8 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
  *   Header:   magic(4) version(2) flags(2)
  *   Strings:  str_data_len(4) [string arena data...]
  *   Counts:   static(4) dynamic(4) spec_static(4) spec_dynamic(4)
- *   Rules:    mode(4) min_uid(4) flags(4) op_type(2) pattern_len(2)
- *             pat_off(4) subj_off(4)   [24 bytes per rule]
+ *   Rules:    mode(4) flags(4) op_type(2) pattern_len(2)
+ *             pat_off(4) subj_off(4)   [20 bytes per rule]
  *   CRC-32:   4 bytes  -- Ethernet polynomial over all preceding bytes
  *   FNV-1a:   4 bytes  -- FNV-1a 32-bit over all preceding bytes
  *
@@ -1098,7 +1115,7 @@ int soft_ruleset_compile(soft_ruleset_t *rs)
  */
 
 #define COMPILED_MAGIC "RBE\x01"
-#define COMPILED_VERSION 1
+#define COMPILED_VERSION 2
 
 /* CRC-32 (polynomial 0xEDB88320, standard Ethernet/AUTODIN-II) */
 static uint32_t crc32_update(uint32_t crc, const uint8_t *buf, size_t len)
@@ -1229,14 +1246,13 @@ int soft_ruleset_save_compiled(const soft_ruleset_t *rs,
         for (i = 0; i < count; i++) {
             const compiled_rule_t *r = &rules[i];
             uint32_t mode = r->mode;
-            uint32_t min_uid = r->min_uid;
+
             uint32_t flags_r = r->flags;
             uint16_t op_type = r->op_type;
             uint16_t pat_len = r->pattern_len;
             uint32_t pat_off = (uint32_t)(r->pattern - sa->buf);
             uint32_t subj_off = r->subject_regex ? (uint32_t)(r->subject_regex - sa->buf) : 0;
             memcpy(p, &mode, 4); p += 4;
-            memcpy(p, &min_uid, 4); p += 4;
             memcpy(p, &flags_r, 4); p += 4;
             memcpy(p, &op_type, 2); p += 2;
             memcpy(p, &pat_len, 2); p += 2;
@@ -1331,10 +1347,9 @@ soft_ruleset_t *soft_ruleset_load_compiled(const void *buf, size_t len)
             int i;
             for (i = 0; i < c; i++) {
                 compiled_rule_t *r = &(*targets[arr])[i];
-                uint32_t mode, min_uid, flags_r, pat_off, subj_off;
+                uint32_t mode, flags_r, pat_off, subj_off;
                 uint16_t op_type, pat_len;
                 READ_U32(mode);
-                READ_U32(min_uid);
                 READ_U32(flags_r);
                 READ_U16(op_type);
                 READ_U16(pat_len);
@@ -1343,7 +1358,6 @@ soft_ruleset_t *soft_ruleset_load_compiled(const void *buf, size_t len)
                 if (pat_off >= str_data_len || (subj_off > 0 && subj_off >= str_data_len))
                     goto fail;
                 r->mode = mode;
-                r->min_uid = min_uid;
                 r->flags = flags_r;
                 r->op_type = op_type;
                 r->pattern_len = pat_len;
