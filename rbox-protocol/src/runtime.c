@@ -18,6 +18,7 @@
 
 #include "runtime.h"
 #include "rbox_protocol_defs.h"
+#include "rbox_log.h"
 
 /* CRC32 table - used by protocol.c */
 static uint32_t crc32_table[256];
@@ -137,6 +138,7 @@ uint32_t rbox_calculate_retry_delay(uint32_t base_delay_ms, uint32_t attempt, ui
 __attribute__((constructor))
 static void constructor_rbox_runtime(void) {
     runtime_init_internal();
+    rbox_log_init_from_env();
 }
 
 /* Automatic cleanup after exit() */

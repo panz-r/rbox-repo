@@ -31,17 +31,7 @@
 #include "protocol_decoding.h"
 #include "error_internal.h"
 #include "error_messages.h"
-
-/* Debug flag – set to 1 to enable client tracing */
-#ifndef RBOX_CLIENT_DEBUG
-#define RBOX_CLIENT_DEBUG 0
-#endif
-
-#if RBOX_CLIENT_DEBUG
-#define CDBG(fmt, ...) fprintf(stderr, "[CLIENT] " fmt "\n", ##__VA_ARGS__)
-#else
-#define CDBG(fmt, ...) ((void)0)
-#endif
+#include "rbox_log.h"
 
 /* ============================================================
  * HEADER VALIDATION

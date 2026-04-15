@@ -32,17 +32,7 @@
 #include "protocol_encoding.h"
 #include "error_internal.h"
 #include "error_messages.h"
-
-/* Debug flag – set to 1 to enable verbose tracing */
-#ifndef RBOX_SERVER_DEBUG
-#define RBOX_SERVER_DEBUG 0
-#endif
-
-#if RBOX_SERVER_DEBUG
-#define DBG(fmt, ...) fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__)
-#else
-#define DBG(fmt, ...) ((void)0)
-#endif
+#include "rbox_log.h"
 
 uint64_t get_time_ms(void);
 

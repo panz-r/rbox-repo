@@ -12,7 +12,8 @@ CC = gcc
 # and the objects are used in the shared library
 CFLAGS = -Wall -Wextra -std=gnu11 -O2 -g -pthread -fPIC \
          -I./include \
-         -I../shellsplit/include
+         -I../shellsplit/include \
+         -DDEBUG_PRINTS=1
 LDFLAGS = -lpthread -lm -latomic -z noexecstack
 
 # ASAN (AddressSanitizer) support
@@ -44,7 +45,8 @@ SRCS = src/socket_io.c \
        src/server.c \
        src/protocol_encoding.c \
        src/protocol_decoding.c \
-       src/timer_heap.c
+       src/timer_heap.c \
+       src/log.c
 OBJS = $(SRCS:.c=.o)
 
 # Tests
@@ -68,6 +70,8 @@ TEST_ENCODING_SRC = tests/test_protocol_encoding.c
 TEST_ENCODING_BIN = test_protocol_encoding
 TEST_DECODING_SRC = tests/test_protocol_decoding.c
 TEST_DECODING_BIN = test_protocol_decoding
+TEST_LOG_SRC = tests/test_log.c
+TEST_LOG_BIN = test_log
 TEST_TIMER_SRC = tests/test_timer_heap.c
 TEST_TIMER_BIN = test_timer_heap
 
@@ -106,7 +110,7 @@ $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
 # Run both unit tests and integration tests
-test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) $(TEST_TIMER_BIN)
+test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) $(TEST_LOG_BIN) $(TEST_TIMER_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_BASIC_BIN)
@@ -116,6 +120,9 @@ test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(T
 	@echo ""
 	@echo "=== Running decoding unit tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_DECODING_BIN)
+	@echo ""
+	@echo "=== Running logging tests ==="
+	LD_LIBRARY_PATH=. ./$(TEST_LOG_BIN)
 	@echo ""
 	@echo "=== Running timer heap tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_TIMER_BIN)
@@ -187,11 +194,14 @@ $(TEST_ENCODING_BIN): $(TEST_ENCODING_SRC) $(SHLIB)
 $(TEST_DECODING_BIN): $(TEST_DECODING_SRC) $(SHLIB)
 	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
 
+$(TEST_LOG_BIN): $(TEST_LOG_SRC) $(SHLIB)
+	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
+
 $(TEST_TIMER_BIN): $(TEST_TIMER_SRC) $(SHLIB)
 	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
 
 clean:
-	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) $(TEST_TIMER_BIN)
+	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) $(TEST_LOG_BIN) $(TEST_TIMER_BIN)
 	-$(RM) fuzz/*.log
 
 help:
