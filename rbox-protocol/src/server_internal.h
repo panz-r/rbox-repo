@@ -105,7 +105,14 @@ typedef struct rbox_server_handle rbox_server_handle_t;
  * No temporary buffers or intermediate copies are used in the production code path.
  */
 
-/* Server request handle */
+/* Server request handle
+ *
+ * IMPORTANT: This structure is considered IMMUTABLE from the moment
+ * it is returned by rbox_server_get_request() until rbox_server_decide()
+ * is called. The server thread does not modify it during that window.
+ * Accessing it or any pointers obtained from it after decide() leads to
+ * undefined behavior.
+ */
 struct rbox_server_request {
     int fd;                         /* Client socket fd */
     uint8_t client_id[16];          /* Client identifier */
@@ -149,7 +156,7 @@ struct rbox_server_request {
     char internal_buf[4096];
     int using_internal_buf;         /* 1 if command_data points to internal_buf */
 
-    /* Queue link / free list link */
+    /* Queue link / free list link (internal use only) */
     struct rbox_server_request *next;
 };
 

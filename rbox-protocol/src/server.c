@@ -696,6 +696,7 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
  * ============================================================ */
 
 void rbox_server_request_free(rbox_server_request_t *req) {
+    /* Explicitly free the request without sending a response – handle invalid afterwards. */
     server_request_free(req);
 }
 
@@ -1702,6 +1703,7 @@ rbox_error_t rbox_server_decide(rbox_server_request_t *req,
     rbox_server_handle_t *server = req->server;
     if (!server) return RBOX_ERR_INVALID;
 
+    /* The request is consumed here; the handle becomes invalid after this call. */
     rbox_server_decision_t *dec = calloc(1, sizeof(*dec));
     if (!dec) return RBOX_ERR_MEMORY;
     dec->request = req;

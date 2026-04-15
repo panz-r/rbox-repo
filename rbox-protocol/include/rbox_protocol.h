@@ -251,6 +251,17 @@ void rbox_server_free(rbox_server_t *server);
  * Blocking server - uses epoll internally to handle many connections
  * Ideal for Go cgo integration
  *
+ * Typical server usage pattern:
+ *   1.  req = rbox_server_get_request(server);   // obtain read-only view
+ *   2.  inspect request via accessor functions
+ *   3.  rbox_server_decide(req, decision, ...);  // request becomes invalid
+ *
+ * WARNING: The request handle returned by rbox_server_get_request() is READ-ONLY.
+ * All pointers obtained from the request (e.g., via rbox_server_request_command(),
+ * rbox_server_request_arg(), etc.) point to internal buffers that are valid ONLY until
+ * rbox_server_decide() or rbox_server_request_free() is called.
+ * Accessing the request or any of its pointers after that results in undefined behavior.
+ *
  * Usage:
  *   1. rbox_server_new() - create server
  *   2. rbox_server_listen() - start listening
@@ -294,6 +305,11 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server);
  *
  * Returns request handle when request is fully read and parsed.
  * Zero-copy access to request data and shell parse result.
+ *
+ * @warning The returned request handle is READ-ONLY and remains valid only until
+ *          rbox_server_decide() or rbox_server_request_free() is called.
+ *          Accessing the request or any pointers obtained from it after that
+ *          point results in undefined behaviour.
  *
  * Call rbox_server_decide() to send response.
  * Then call rbox_server_get_request() again for next request.
@@ -350,7 +366,11 @@ float rbox_server_request_env_var_score(const rbox_server_request_t *req, int in
 
 /* Free a server request without sending a response
  * This closes the client socket and frees all request resources.
- * Use this if you want to discard the request without responding. */
+ * Use this if you want to discard the request without responding.
+ *
+ * @note After this function returns, the request handle `req` is no longer valid.
+ *       Do not access it again.
+ */
 void rbox_server_request_free(rbox_server_request_t *req);
 
 /*
@@ -358,6 +378,9 @@ void rbox_server_request_free(rbox_server_request_t *req);
  *
  * Must be called after get_request() to send the decision back
  * and release the request buffers
+ *
+ * @note After this function returns, the request handle `req` is no longer valid.
+ *       Do not access it again.
  *
  * Extended version with env decisions (v9)
  */
