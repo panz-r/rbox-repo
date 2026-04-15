@@ -17,22 +17,30 @@
 rbox_error_t rbox_validate_header(const uint8_t *packet, size_t len) {
     if (!packet || len < RBOX_HEADER_SIZE) return RBOX_ERR_TRUNCATED;
 
-    uint32_t magic = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_MAGIC);
+    /* Use reader helpers for endian-safe parsing */
+    rbox_reader_t r;
+    rbox_reader_init(&r, packet, RBOX_HEADER_SIZE);
+
+    uint32_t magic = rbox_read_u32(&r);
     if (magic != RBOX_MAGIC) {
         return RBOX_ERR_MAGIC;
     }
 
-    uint32_t version = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_VERSION);
+    uint32_t version = rbox_read_u32(&r);
     if (version != RBOX_VERSION) {
         return RBOX_ERR_VERSION;
     }
 
-    uint32_t chunk_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
+    rbox_reader_skip_to(&r, RBOX_HEADER_OFFSET_CHUNK_LEN);
+
+    uint32_t chunk_len = rbox_read_u32(&r);
     if (chunk_len > RBOX_CHUNK_MAX) {
         return RBOX_ERR_INVALID;
     }
 
-    uint32_t stored_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
+    rbox_reader_skip_to(&r, RBOX_HEADER_OFFSET_CHECKSUM);
+
+    uint32_t stored_checksum = rbox_read_u32(&r);
     uint32_t calc_checksum = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
 
     if (stored_checksum != calc_checksum) {
@@ -51,22 +59,29 @@ void rbox_decode_header_raw(const uint8_t *packet, size_t len, rbox_decoded_head
     memset(header, 0, sizeof(*header));
     if (len < RBOX_HEADER_SIZE) return;
 
-    header->magic = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_MAGIC);
+    /* Use reader helpers for endian-safe, position-based parsing */
+    rbox_reader_t r;
+    rbox_reader_init(&r, packet, RBOX_HEADER_SIZE);
+
+    header->magic = rbox_read_u32(&r);
     if (header->magic != RBOX_MAGIC) return;
-    header->version = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_VERSION);
+    header->version = rbox_read_u32(&r);
     if (header->version != RBOX_VERSION) return;
 
-    memcpy(header->client_id, packet + RBOX_HEADER_OFFSET_CLIENT_ID, 16);
-    memcpy(header->request_id, packet + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
-    memcpy(header->server_id, packet + RBOX_HEADER_OFFSET_SERVER_ID, 16);
-    header->cmd_type = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_TYPE);
-    header->flags = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_FLAGS);
-    header->offset = *(uint64_t *)(packet + RBOX_HEADER_OFFSET_OFFSET);
-    header->chunk_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
-    header->total_len = *(uint64_t *)(packet + RBOX_HEADER_OFFSET_TOTAL_LEN);
-    header->cmd_hash = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CMD_HASH);
-    header->fenv_hash = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_FENV_HASH);
-    header->checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
+    rbox_read_bytes(&r, header->client_id, 16);
+    rbox_read_bytes(&r, header->request_id, 16);
+    rbox_read_bytes(&r, header->server_id, 16);
+    header->cmd_type = rbox_read_u32(&r);
+    header->flags = rbox_read_u32(&r);
+    header->offset = rbox_read_u64(&r);
+    header->chunk_len = rbox_read_u32(&r);
+    header->total_len = rbox_read_u64(&r);
+    header->cmd_hash = rbox_read_u32(&r);
+    header->fenv_hash = rbox_read_u32(&r);
+
+    rbox_reader_skip_to(&r, RBOX_HEADER_OFFSET_CHECKSUM);
+
+    header->checksum = rbox_read_u32(&r);
 
     /* Verify header checksum */
     uint32_t hdr_crc = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);

@@ -220,7 +220,7 @@ int epoll_del(int epoll_fd, int fd);
 /* Free server request - returns to pool if from pool, otherwise frees */
 void server_request_free(rbox_server_request_t *req);
 
-/* Find client fd entry by fd (used by server_response.c) */
+/* Find client fd entry by fd */
 rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);
 
 /* Server handle */

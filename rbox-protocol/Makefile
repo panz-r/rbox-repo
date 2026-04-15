@@ -42,7 +42,6 @@ SRCS = src/socket_io.c \
        src/packet.c \
        src/parser.c \
        src/server.c \
-       src/server_response.c \
        src/protocol_encoding.c \
        src/protocol_decoding.c \
        src/timer_heap.c

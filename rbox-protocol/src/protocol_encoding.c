@@ -215,28 +215,29 @@ rbox_error_t rbox_encode_request(
 
     size_t body_len = pos - RBOX_HEADER_SIZE;
 
-    /* Fill header */
-    uint32_t magic = RBOX_MAGIC;
-    uint32_t version = RBOX_VERSION;
-    uint32_t type = RBOX_MSG_REQ;
-    uint32_t flags = RBOX_FLAG_FIRST;
-    uint64_t offset = 0;
-    uint32_t chunk_len = body_len;
-    uint64_t total_len = body_len;
+    /* Write header using writer helpers for endian-safe serialization */
+    rbox_writer_t w;
+    rbox_writer_init(&w, out_buf, RBOX_HEADER_SIZE);
 
-    memcpy(out_buf + 0, &magic, 4);
-    memcpy(out_buf + 4, &version, 4);
+    /* Header fields (v9 format) */
+    rbox_write_u32(&w, RBOX_MAGIC);
+    rbox_write_u32(&w, RBOX_VERSION);
     const uint8_t *client_id = rbox_get_client_id();
-    memcpy(out_buf + 8, client_id, 16);
-    rbox_generate_request_id(out_buf + 24);
-    memcpy(out_buf + 56, &type, 4);
-    memcpy(out_buf + 60, &flags, 4);
-    memcpy(out_buf + 64, &offset, 8);
-    memcpy(out_buf + 72, &chunk_len, 4);
-    memcpy(out_buf + 76, &total_len, 8);
+    rbox_write_bytes(&w, client_id, 16);
+    uint8_t request_id[16];
+    rbox_generate_request_id(request_id);
+    rbox_write_bytes(&w, request_id, 16);
+    rbox_write_bytes(&w, (uint8_t[16]){0}, 16);  /* server_id reserved (zeros) */
+    rbox_write_u32(&w, RBOX_MSG_REQ);
+    rbox_write_u32(&w, RBOX_FLAG_FIRST);
+    rbox_write_u64(&w, 0);  /* offset */
+    rbox_write_u32(&w, body_len);  /* chunk_len */
+    rbox_write_u64(&w, body_len);  /* total_len */
+
+    /* cmd_hash and fenv_hash */
     uint32_t cmd_hash = rbox_runtime_crc32(0, command, strlen(command));
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_CMD_HASH) = cmd_hash;
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_FENV_HASH) = fenv_hash;
+    rbox_write_u32(&w, cmd_hash);
+    rbox_write_u32(&w, fenv_hash);
 
     /* Caller/syscall sizes */
     size_t caller_len = caller ? strlen(caller) : 0;
@@ -244,21 +245,21 @@ rbox_error_t rbox_encode_request(
     if (caller_len > 15) caller_len = 15;
     if (syscall_len > 15) syscall_len = 15;
     uint8_t cs_size = ((syscall_len << 4) & 0xF0) | (caller_len & 0x0F);
-    memcpy(out_buf + RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE, &cs_size, 1);
-    if (caller && caller_len > 0) {
-        memcpy(out_buf + RBOX_HEADER_OFFSET_CALLER, caller, caller_len);
-    }
-    if (syscall && syscall_len > 0) {
-        memcpy(out_buf + RBOX_HEADER_OFFSET_SYSCALL, syscall, syscall_len);
-    }
+    rbox_write_u8(&w, cs_size);
+    rbox_write_bytes(&w, caller ? caller : "", caller_len);
+    rbox_writer_skip(&w, 15 - caller_len);
+    rbox_write_bytes(&w, syscall ? syscall : "", syscall_len);
+    rbox_writer_skip(&w, 15 - syscall_len);
+
+    rbox_writer_skip_to(&w, RBOX_HEADER_OFFSET_CHECKSUM);
 
     /* Header checksum */
     uint32_t checksum = rbox_runtime_crc32(0, out_buf, RBOX_HEADER_OFFSET_CHECKSUM);
-    memcpy(out_buf + RBOX_HEADER_OFFSET_CHECKSUM, &checksum, 4);
+    rbox_write_u32(&w, checksum);
 
     /* Body checksum */
     uint32_t body_checksum = rbox_runtime_crc32(0, out_buf + RBOX_HEADER_SIZE, body_len);
-    memcpy(out_buf + RBOX_HEADER_OFFSET_BODY_CHECKSUM, &body_checksum, 4);
+    rbox_write_u32(&w, body_checksum);
 
     *out_len = RBOX_HEADER_SIZE + body_len;
     return RBOX_OK;
@@ -298,40 +299,48 @@ rbox_error_t rbox_encode_response(
 
     memset(out_buf, 0, total_len);
 
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
-    if (client_id) memcpy(out_buf + RBOX_HEADER_OFFSET_CLIENT_ID, client_id, 16);
-    if (request_id) memcpy(out_buf + RBOX_HEADER_OFFSET_REQUEST_ID, request_id, 16);
-    memset(out_buf + RBOX_HEADER_OFFSET_SERVER_ID, 'S', 16);
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_TYPE) = 0;
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_FLAGS) = 0;
-    *(uint64_t *)(out_buf + RBOX_HEADER_OFFSET_OFFSET) = 0;
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_CHUNK_LEN) = body_len;
-    *(uint64_t *)(out_buf + RBOX_HEADER_OFFSET_TOTAL_LEN) = body_len;
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_CMD_HASH) = cmd_hash;
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_FENV_HASH) = fenv_hash;
+    /* Write header using writer helpers for endian-safe serialization */
+    rbox_writer_t w;
+    rbox_writer_init(&w, out_buf, RBOX_HEADER_SIZE);
 
+    rbox_write_u32(&w, RBOX_MAGIC);
+    rbox_write_u32(&w, RBOX_VERSION);
+    rbox_write_bytes(&w, client_id ? client_id : (uint8_t[16]){0}, 16);
+    rbox_write_bytes(&w, request_id ? request_id : (uint8_t[16]){0}, 16);
+    rbox_write_bytes(&w, (uint8_t[16]){'S','S','S','S','S','S','S','S','S','S','S','S','S','S','S','S'}, 16);  /* server_id = 'S' */
+    rbox_write_u32(&w, 0);  /* type */
+    rbox_write_u32(&w, 0);  /* flags */
+    rbox_write_u64(&w, 0);  /* offset */
+    rbox_write_u32(&w, body_len);  /* chunk_len */
+    rbox_write_u64(&w, body_len);  /* total_len */
+    rbox_write_u32(&w, cmd_hash);
+    rbox_write_u32(&w, fenv_hash);
+
+    rbox_writer_skip_to(&w, RBOX_HEADER_OFFSET_CHECKSUM);
+
+    /* Header checksum */
+    uint32_t checksum = rbox_runtime_crc32(0, out_buf, RBOX_HEADER_OFFSET_CHECKSUM);
+    rbox_write_u32(&w, checksum);
+
+    /* Body */
     uint8_t *body = out_buf + RBOX_HEADER_SIZE;
     size_t pos = 0;
-    body[pos++] = decision;
+    rbox_writer_t bw;
+    rbox_writer_init(&bw, body, body_len);
+    rbox_write_u8(&bw, decision);
     if (reason_len > 0) {
-        memcpy(body + pos, reason, reason_len);
-        pos += reason_len;
+        rbox_write_bytes(&bw, reason, reason_len);
     }
-    body[pos++] = '\0';
-    *(uint32_t *)(body + pos) = fenv_hash;
-    pos += 4;
-    *(uint16_t *)(body + pos) = (uint16_t)env_decision_count;
-    pos += 2;
+    rbox_write_u8(&bw, '\0');
+    rbox_write_u32(&bw, fenv_hash);
+    rbox_write_u16(&bw, (uint16_t)env_decision_count);
     if (bitmap_size > 0 && env_decisions) {
-        memcpy(body + pos, env_decisions, bitmap_size);
-        pos += bitmap_size;
+        rbox_write_bytes(&bw, env_decisions, bitmap_size);
     }
 
-    uint32_t checksum = rbox_runtime_crc32(0, out_buf, RBOX_HEADER_OFFSET_CHECKSUM);
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_CHECKSUM) = checksum;
+    /* Body checksum */
     uint32_t body_checksum = rbox_runtime_crc32(0, body, body_len);
-    *(uint32_t *)(out_buf + RBOX_HEADER_OFFSET_BODY_CHECKSUM) = body_checksum;
+    rbox_write_u32(&w, body_checksum);
 
     *out_len = total_len;
     return RBOX_OK;
@@ -361,30 +370,40 @@ char *rbox_encode_telemetry_response(
     if (!pkt) return NULL;
     memset(pkt, 0, total_len);
 
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_MAGIC) = RBOX_MAGIC;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_VERSION) = RBOX_VERSION;
-    if (client_id) memcpy(pkt + RBOX_HEADER_OFFSET_CLIENT_ID, client_id, 16);
-    if (request_id) memcpy(pkt + RBOX_HEADER_OFFSET_REQUEST_ID, request_id, 16);
-    memset(pkt + RBOX_HEADER_OFFSET_SERVER_ID, 'S', 16);
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_TYPE) = 0;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_FLAGS) = 0;
-    *(uint64_t *)(pkt + RBOX_HEADER_OFFSET_OFFSET) = 0;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHUNK_LEN) = body_len;
-    *(uint64_t *)(pkt + RBOX_HEADER_OFFSET_TOTAL_LEN) = body_len;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CMD_HASH) = 0;
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_FENV_HASH) = 0;
+    /* Write header using writer helpers */
+    rbox_writer_t w;
+    rbox_writer_init(&w, pkt, RBOX_HEADER_SIZE);
 
-    uint8_t *body = pkt + RBOX_HEADER_SIZE;
-    size_t pos = 0;
-    body[pos++] = RBOX_DECISION_UNKNOWN;
-    memcpy(body + pos, reason, reason_len);
-    pos += reason_len;
-    body[pos++] = '\0';
+    rbox_write_u32(&w, RBOX_MAGIC);
+    rbox_write_u32(&w, RBOX_VERSION);
+    rbox_write_bytes(&w, client_id ? client_id : (uint8_t[16]){0}, 16);
+    rbox_write_bytes(&w, request_id ? request_id : (uint8_t[16]){0}, 16);
+    rbox_write_bytes(&w, (uint8_t[16]){'S','S','S','S','S','S','S','S','S','S','S','S','S','S','S','S'}, 16);
+    rbox_write_u32(&w, 0);
+    rbox_write_u32(&w, 0);
+    rbox_write_u64(&w, 0);
+    rbox_write_u32(&w, body_len);
+    rbox_write_u64(&w, body_len);
+    rbox_write_u32(&w, 0);
+    rbox_write_u32(&w, 0);
 
+    rbox_writer_skip_to(&w, RBOX_HEADER_OFFSET_CHECKSUM);
+
+    /* Header checksum */
     uint32_t checksum = rbox_runtime_crc32(0, pkt, RBOX_HEADER_OFFSET_CHECKSUM);
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_CHECKSUM) = checksum;
+    rbox_write_u32(&w, checksum);
+
+    /* Body */
+    uint8_t *body = pkt + RBOX_HEADER_SIZE;
+    rbox_writer_t bw;
+    rbox_writer_init(&bw, body, body_len);
+    rbox_write_u8(&bw, RBOX_DECISION_UNKNOWN);
+    rbox_write_bytes(&bw, reason, reason_len);
+    rbox_write_u8(&bw, '\0');
+
+    /* Body checksum */
     uint32_t body_checksum = rbox_runtime_crc32(0, body, body_len);
-    *(uint32_t *)(pkt + RBOX_HEADER_OFFSET_BODY_CHECKSUM) = body_checksum;
+    rbox_write_u32(&w, body_checksum);
 
     *out_len = total_len;
     return (char *)pkt;

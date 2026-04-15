@@ -15,6 +15,7 @@ test_cache
 test_protocol_decoding
 test_protocol_encoding
 test_timer_heap
+test_serialize
 
 # Fuzzer
 fuzz/*.o
