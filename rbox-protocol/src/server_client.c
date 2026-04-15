@@ -37,9 +37,7 @@ int client_fd_add(rbox_server_handle_t *server, int fd) {
     }
     entry->fd = fd;
     entry->pending_request = NULL;
-    entry->header_start_time = 0;
-    entry->body_start_time = 0;
-    entry->waiting_for_header = 0;
+    entry->active_timer = NULL;
     entry->last_activity = get_time_ms();
     entry->header_bytes_read = 0;
     entry->prev = NULL;
@@ -192,9 +190,6 @@ void cleanup_pending_sends(rbox_server_handle_t *server, int fd) {
         }
         send_pool_put(server, send_entry);
     }
-
-    entry->waiting_for_header = 0;
-    entry->header_start_time = 0;
 }
 
 /* Centralized function to close a client connection and free all associated resources */
@@ -206,6 +201,10 @@ void client_connection_close(rbox_server_handle_t *server, int fd) {
     entry->pending_request = NULL;
 
     cleanup_pending_sends(server, fd);
+
+    /* Cancel any active timer for this fd */
+    rbox_timer_remove(server->timer_heap, fd);
+    entry->active_timer = NULL;
 
     epoll_del(server->epoll_fd, fd);
     close(fd);

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <limits.h>
 #include <sys/poll.h>
 #include <sys/epoll.h>
 #include <sys/stat.h>
@@ -257,6 +258,36 @@ void send_pool_destroy(rbox_server_handle_t *server) {
 }
 
 /* ============================================================
+ * TIMER HEAP HELPERS
+ * Centralised timeout management via min-heap
+ * ============================================================ */
+
+static void schedule_idle_timer(rbox_server_handle_t *server, int fd) {
+    if (server->client_idle_timeout > 0) {
+        uint64_t timeout_ms = (uint64_t)server->client_idle_timeout * 1000;
+        rbox_timer_add(server->timer_heap, fd, timeout_ms, RBOX_TIMEOUT_IDLE);
+    }
+}
+
+static void schedule_header_timer(rbox_server_handle_t *server, int fd) {
+    if (server->request_timeout > 0) {
+        uint64_t timeout_ms = (uint64_t)server->request_timeout * 1000;
+        rbox_timer_add(server->timer_heap, fd, timeout_ms, RBOX_TIMEOUT_HEADER);
+    }
+}
+
+static void schedule_body_timer(rbox_server_handle_t *server, int fd) {
+    if (server->request_timeout > 0) {
+        uint64_t timeout_ms = (uint64_t)server->request_timeout * 1000;
+        rbox_timer_add(server->timer_heap, fd, timeout_ms, RBOX_TIMEOUT_BODY);
+    }
+}
+
+static void cancel_timer(rbox_server_handle_t *server, int fd) {
+    rbox_timer_remove(server->timer_heap, fd);
+}
+
+/* ============================================================
  * CLIENT FD TRACKING
  * These functions are now in server_client.c
  * ============================================================ */
@@ -277,8 +308,9 @@ static void pending_request_set(rbox_server_handle_t *server, int fd, rbox_serve
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
     if (entry) {
         entry->pending_request = req;
-        if (req->reading_body && entry->body_start_time == 0) {
-            entry->body_start_time = get_time_ms();
+        if (req->reading_body) {
+            cancel_timer(server, fd);
+            schedule_body_timer(server, fd);
         }
     }
 }
@@ -292,7 +324,7 @@ static void pending_request_remove(rbox_server_handle_t *server, int fd) {
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
     if (entry) {
         entry->pending_request = NULL;
-        entry->body_start_time = 0;
+        cancel_timer(server, fd);
     }
 }
 
@@ -735,13 +767,13 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
                                           RBOX_HEADER_SIZE - *bytes_read);
         if (n == 0) {
             DBG("server_read_header: EOF on fd %d", fd);
-            entry->waiting_for_header = 0;
+            cancel_timer(server, fd);
             return -1;
         }
         if (n == -1) {
-            if (!entry->waiting_for_header) {
-                entry->waiting_for_header = 1;
-                entry->header_start_time = get_time_ms();
+            if (*bytes_read == 0) {
+                cancel_timer(server, fd);
+                schedule_header_timer(server, fd);
                 DBG("server_read_header: started header wait for fd %d", fd);
                 return 1;
             }
@@ -749,7 +781,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
         }
         if (n == -2) {
             DBG("server_read_header: error on fd %d: %s", fd, strerror(errno));
-            entry->waiting_for_header = 0;
+            cancel_timer(server, fd);
             return -1;
         }
 
@@ -757,7 +789,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
         entry->last_activity = get_time_ms();
     }
 
-    entry->waiting_for_header = 0;
+    cancel_timer(server, fd);
     entry->header_bytes_read = 0;
 
     uint32_t magic = *(uint32_t *)header;
@@ -1031,8 +1063,13 @@ static void *server_thread_func(void *arg) {
             shutdown_start = 0;
         }
 
-        /* Epoll wait and event handling */
-        int n = epoll_wait(server->epoll_fd, events, 64, 100);
+        /* Epoll wait and event handling - use timer heap to determine timeout */
+        uint64_t now = get_time_ms();
+        uint64_t next_expiry = rbox_timer_next_expiry(server->timer_heap, now);
+        int timeout_ms = (next_expiry == UINT64_MAX) ? 100 :
+                         (next_expiry > (uint64_t)INT_MAX ? INT_MAX : (int)next_expiry);
+
+        int n = epoll_wait(server->epoll_fd, events, 64, timeout_ms);
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
@@ -1081,6 +1118,7 @@ static void *server_thread_func(void *arg) {
                         rbox_client_fd_entry_t *new_entry = server->client_fds;
                         struct epoll_event cev = { .events = EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, .data.ptr = new_entry };
                         epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, cl_fd, &cev);
+                        schedule_idle_timer(server, cl_fd);
                     }
                     continue;
                 }
@@ -1366,53 +1404,15 @@ static void *server_thread_func(void *arg) {
             }
         }
 
-        /* Check for timeouts AFTER processing events to avoid use-after-free
-         * (events array may contain fds that were closed in a previous iteration) */
-        uint64_t now = get_time_ms();
-        pthread_mutex_lock(&server->client_fd_mutex);
-        rbox_client_fd_entry_t *tentry = server->client_fds;
-        while (tentry) {
-            rbox_client_fd_entry_t *next = tentry->next;
-            int should_close = 0;
-            int close_reason = 0;
-
-            if (server->request_timeout > 0) {
-                if (tentry->waiting_for_header && tentry->header_start_time > 0) {
-                    uint64_t elapsed = now - tentry->header_start_time;
-                    if (elapsed > (uint64_t)server->request_timeout * 1000) {
-                        should_close = 1;
-                        close_reason = 1;
-                    }
-                } else if (tentry->pending_request && tentry->pending_request->reading_body) {
-                    uint64_t elapsed = now - tentry->body_start_time;
-                    if (elapsed > (uint64_t)server->request_timeout * 1000) {
-                        should_close = 1;
-                        close_reason = 2;
-                    }
-                }
-            }
-
-            if (!should_close && server->client_idle_timeout > 0 && !tentry->pending_request) {
-                uint64_t idle = now - tentry->last_activity;
-                if (idle > (uint64_t)server->client_idle_timeout * 1000) {
-                    should_close = 1;
-                    close_reason = 3;
-                }
-            }
-
-            if (should_close) {
-                int fd = tentry->fd;
-                (void)close_reason;  /* unused when DBG is disabled */
-                DBG("Timeout check: fd %d reason %d, closing", fd, close_reason);
-                pthread_mutex_unlock(&server->client_fd_mutex);
-                client_connection_close(server, fd);
-                pthread_mutex_lock(&server->client_fd_mutex);
-                tentry = server->client_fds;
-                continue;
-            }
-            tentry = next;
+        /* Process any expired timers using the timer heap */
+        now = get_time_ms();
+        while (rbox_timer_next_expiry(server->timer_heap, now) == 0) {
+            rbox_timer_entry_t *timer = rbox_timer_get_expired(server->timer_heap);
+            if (!timer) break;
+            DBG("Timer expired: fd %d type %d, closing", timer->fd, timer->type);
+            client_connection_close(server, timer->fd);
+            free(timer);
         }
-        pthread_mutex_unlock(&server->client_fd_mutex);
     }
 
     /* Final cleanup: close any remaining client fds (should be none) */
@@ -1487,6 +1487,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path, rbox_error
     srv->client_fds = NULL;
     srv->active_client_count = 0;
     rbox_cache_init(&srv->cache, RBOX_RESPONSE_CACHE_SIZE);
+    srv->timer_heap = rbox_timer_heap_new();
     if (request_pool_init(srv, RBOX_REQUEST_POOL_SIZE) < 0) {
         /* Pool init completely failed - continue with malloc fallback */
     }
@@ -1628,6 +1629,9 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
 
     /* Destroy send pool */
     send_pool_destroy(server);
+
+    /* Destroy timer heap */
+    rbox_timer_heap_free(server->timer_heap);
 
     /* Destroy response cache */
     rbox_cache_destroy(&server->cache);

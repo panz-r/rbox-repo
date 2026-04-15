@@ -42,8 +42,10 @@ SRCS = src/socket_io.c \
        src/packet.c \
        src/parser.c \
        src/server.c \
+       src/server_response.c \
        src/protocol_encoding.c \
-       src/protocol_decoding.c
+       src/protocol_decoding.c \
+       src/timer_heap.c
 OBJS = $(SRCS:.c=.o)
 
 # Tests
@@ -67,12 +69,14 @@ TEST_ENCODING_SRC = tests/test_protocol_encoding.c
 TEST_ENCODING_BIN = test_protocol_encoding
 TEST_DECODING_SRC = tests/test_protocol_decoding.c
 TEST_DECODING_BIN = test_protocol_decoding
+TEST_TIMER_SRC = tests/test_timer_heap.c
+TEST_TIMER_BIN = test_timer_heap
 
 FUZZ_BIN = fuzz/protocol_fuzzer
 
-.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-env test-stress test-cache test-fuzz test-fuzz-1h test-fuzz-4h fuzz
+.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-env test-stress test-cache test-timer test-fuzz test-fuzz-1h test-fuzz-4h fuzz
 
-all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) fuzz
+all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) $(TEST_TIMER_BIN) fuzz
 
 build-all: $(SHLIB)
 	@echo "Shared library built."
@@ -103,7 +107,7 @@ $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
 # Run both unit tests and integration tests
-test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN)
+test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) $(TEST_TIMER_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_BASIC_BIN)
@@ -113,6 +117,9 @@ test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(T
 	@echo ""
 	@echo "=== Running decoding unit tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_DECODING_BIN)
+	@echo ""
+	@echo "=== Running timer heap tests ==="
+	LD_LIBRARY_PATH=. ./$(TEST_TIMER_BIN)
 	@echo ""
 	@echo "=== Running full protocol tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_FULL_BIN)
@@ -137,6 +144,9 @@ test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(T
 
 test-cache: $(TEST_CACHE_BIN)
 	LD_LIBRARY_PATH=. ./$(TEST_CACHE_BIN)
+
+test-timer: $(TEST_TIMER_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_TIMER_BIN)
 
 test-fuzz: $(FUZZ_BIN)
 	cd fuzz && make run-10m
@@ -178,8 +188,11 @@ $(TEST_ENCODING_BIN): $(TEST_ENCODING_SRC) $(SHLIB)
 $(TEST_DECODING_BIN): $(TEST_DECODING_SRC) $(SHLIB)
 	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
 
+$(TEST_TIMER_BIN): $(TEST_TIMER_SRC) $(SHLIB)
+	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
+
 clean:
-	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN)
+	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) $(TEST_TIMER_BIN)
 	-$(RM) fuzz/*.log
 
 help:
