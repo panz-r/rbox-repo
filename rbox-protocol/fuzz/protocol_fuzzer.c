@@ -9,6 +9,8 @@
 #include "rbox_protocol.h"
 #include "rbox_protocol_defs.h"
 #include "runtime.h"
+#include "protocol_encoding.h"
+#include "protocol_decoding.h"
 
 // Fuzzer entry point - called by libfuzzer
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t length) {
@@ -16,7 +18,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t length) {
 
     // === Test 1: Header validation ===
     if (length >= RBOX_HEADER_SIZE) {
-        rbox_header_validate((const char*)data, length);
+        rbox_validate_header(data, length);
     }
 
     // === Test 2: Header decoding ===
@@ -24,13 +26,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t length) {
     rbox_response_details_t details;
     memset(&header, 0, sizeof(header));
     memset(&details, 0, sizeof(details));
-    rbox_decode_header((const char*)data, length, &header);
-    rbox_decode_response_details(&header, (const char*)data, length, &details);
+    rbox_decode_header_raw(data, length, &header);
+    rbox_decode_response_details_raw(data, length, &header, &details);
 
     // === Test 3: Env decisions decoding ===
     rbox_env_decisions_t env_decisions;
     memset(&env_decisions, 0, sizeof(env_decisions));
-    rbox_decode_env_decisions(&header, &details, (const char*)data, length, &env_decisions);
+    rbox_decode_env_decisions_raw(data, length, &header, &details, &env_decisions);
     rbox_free_env_decisions(&env_decisions);
 
     // === Test 4: Checksum calculation ===
@@ -60,7 +62,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t length) {
 
     // === Test 6: Request building ===
     if (length >= 2) {
-        char *packet = malloc(4096);
+        uint8_t *packet = malloc(4096);
         if (!packet) return 0;
         size_t plen = 0;
         const char* args[] = {"test"};
@@ -80,15 +82,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t length) {
             const char **env_var_names = NULL; // Environment variable names
             const float *env_var_scores = NULL; // Environment variable scores
 
-            rbox_build_request(packet, 4096, &plen, cmd, caller, syscall, 1, args,
-                               env_var_count, env_var_names, env_var_scores);
+            rbox_encode_request(cmd, caller, syscall, 1, args,
+                               env_var_count, env_var_names, env_var_scores,
+                               packet, 4096, &plen);
 
             // === Test 7: Response building ===
-            char *resp = NULL;
+            uint8_t resp_buf[1024];
             size_t rlen = 0;
             uint8_t decision = (data[0] % 2);  // 0 = allow, 1 = deny
-            rbox_build_response(decision, "test reason", 0, 0, 0, NULL, &resp, &rlen);
-            free(resp);
+            rbox_encode_response(NULL, NULL, 0, decision, "test reason", 0, 0, NULL,
+                               resp_buf, sizeof(resp_buf), &rlen);
         }
         free(packet);
     }

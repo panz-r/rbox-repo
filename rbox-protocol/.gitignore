@@ -12,6 +12,8 @@ test_streaming
 test_persistent
 test_stress
 test_cache
+test_protocol_decoding
+test_protocol_encoding
 
 # Fuzzer
 fuzz/*.o

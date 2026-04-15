@@ -26,8 +26,8 @@
 #include "runtime.h"
 #include "packet.h"
 #include "server.h"
-#include "server_response.h"
 #include "server_client.h"
+#include "protocol_encoding.h"
 
 /* Debug flag – set to 1 to enable verbose tracing */
 #ifndef RBOX_SERVER_DEBUG
@@ -445,13 +445,22 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
                         &cached_decision, cached_reason, &cached_duration,
                         &cached_env_decision_count, &cached_env_decisions)) {
         DBG("Cache hit for request on fd %d", fd);
+        uint8_t *resp_buf = malloc(1024);
+        if (!resp_buf) {
+            free(cached_env_decisions);
+            server_request_free(req);
+            return;
+        }
         size_t resp_len;
-        char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
+        rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, req->cmd_hash,
             cached_decision, cached_reason,
-            req->fenv_hash, cached_env_decision_count, cached_env_decisions, &resp_len);
+            req->fenv_hash, cached_env_decision_count, cached_env_decisions,
+            resp_buf, 1024, &resp_len);
         free(cached_env_decisions);
-        if (resp) {
-            send_queue_add(server, fd, resp, resp_len, NULL);
+        if (err == RBOX_OK) {
+            send_queue_add(server, fd, (char *)resp_buf, resp_len, NULL);
+        } else {
+            free(resp_buf);
         }
         server_request_free(req);
         return;
@@ -474,12 +483,20 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
 
     if (rbox_command_parse(req->command_data, args_len, &req->parse) != RBOX_OK) {
         DBG("Failed to parse command from fd %d", fd);
+        uint8_t *resp_buf = malloc(1024);
+        if (!resp_buf) {
+            server_request_free(req);
+            return;
+        }
         size_t resp_len;
-        char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
+        rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, req->cmd_hash,
             RBOX_DECISION_DENY, "parse error",
-            req->fenv_hash, 0, NULL, &resp_len);
-        if (resp) {
-            send_queue_add(server, fd, resp, resp_len, NULL);
+            req->fenv_hash, 0, NULL,
+            resp_buf, 1024, &resp_len);
+        if (err == RBOX_OK) {
+            send_queue_add(server, fd, (char *)resp_buf, resp_len, NULL);
+        } else {
+            free(resp_buf);
         }
         server_request_free(req);
         return;
@@ -504,12 +521,20 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
             req->env_var_names = NULL;
             req->env_var_scores = NULL;
             req->env_var_count = 0;
+            uint8_t *resp_buf = malloc(1024);
+            if (!resp_buf) {
+                server_request_free(req);
+                return;
+            }
             size_t resp_len;
-            char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
+            rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, req->cmd_hash,
                 RBOX_DECISION_DENY, "memory allocation failed",
-                req->fenv_hash, 0, NULL, &resp_len);
-            if (resp) {
-                send_queue_add(server, fd, resp, resp_len, NULL);
+                req->fenv_hash, 0, NULL,
+                resp_buf, 1024, &resp_len);
+            if (err == RBOX_OK) {
+                send_queue_add(server, fd, (char *)resp_buf, resp_len, NULL);
+            } else {
+                free(resp_buf);
             }
             server_request_free(req);
             return;
@@ -948,7 +973,6 @@ static void *server_thread_func(void *arg) {
             }
 
             rbox_server_request_t *req = dec->request;
-            size_t resp_len;
             uint32_t cmd_hash = req->cmd_hash;
             uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
             uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_runtime_crc32(0, req->command_data, req->command_len) : 0;
@@ -956,17 +980,28 @@ static void *server_thread_func(void *arg) {
                             cmd_hash, cmd_hash2, dec->fenv_hash,
                             dec->decision, dec->reason, dec->duration,
                             dec->env_decision_count, dec->env_decisions);
-            char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
+            uint8_t *resp_buf = malloc(1024);
+            if (!resp_buf) {
+                DBG("Failed to allocate response buffer for fd %d", req->fd);
+                server_request_free(req);
+                free(dec->env_decisions);
+                free(dec);
+                continue;
+            }
+            size_t resp_len;
+            rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, cmd_hash,
                 dec->decision, dec->reason,
-                dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
-            if (resp) {
+                dec->fenv_hash, dec->env_decision_count, dec->env_decisions,
+                resp_buf, 1024, &resp_len);
+            if (err == RBOX_OK) {
                 DBG("Built response of size %zu for fd %d", resp_len, req->fd);
-                if (send_queue_add(server, req->fd, resp, resp_len, req) != 0) {
+                if (send_queue_add(server, req->fd, (char *)resp_buf, resp_len, req) != 0) {
                     DBG("send_queue_add failed for fd %d", req->fd);
                     req = NULL;
                 }
             } else {
                 DBG("Failed to build response for fd %d", req->fd);
+                free(resp_buf);
                 server_request_free(req);
             }
             free(dec->env_decisions);
@@ -1118,7 +1153,7 @@ static void *server_thread_func(void *arg) {
                         /* Handle telemetry request */
                         if (msg_type == RBOX_MSG_TELEMETRY) {
                             size_t resp_len;
-                            char *resp = rbox_server_build_telemetry_response(
+                            char *resp = rbox_encode_telemetry_response(
                                 client_id, request_id,
                                 atomic_load(&server->telemetry_allow_sent),
                                 atomic_load(&server->telemetry_deny_sent),

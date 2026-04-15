@@ -21,11 +21,6 @@ uint64_t get_time_ms(void);
 /* Send raw data on session (defined in session.c) */
 rbox_error_t rbox_session_send_raw(rbox_session_t *session, const char *data, size_t len);
 
-/* Validate response (defined in packet.c) */
-rbox_error_t validate_response(const char *packet, size_t len,
-                               const uint8_t *expected_request_id,
-                               rbox_response_t *out_response);
-
 /* Set response timeout (defined in session.c) */
 void rbox_session_set_timeout(rbox_session_t *session, uint32_t timeout_ms);
 

@@ -21,6 +21,7 @@
 #include "session_internal.h"
 #include "socket.h"
 #include "runtime.h"
+#include "protocol_decoding.h"
 
 /* Debug flag */
 #ifndef RBOX_CLIENT_DEBUG
@@ -454,7 +455,8 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                     }
                     if (session->recv_len >= total_needed) {
                         rbox_response_t resp;
-                        rbox_error_t err = validate_response(session->recv_buf,
+                        rbox_error_t err = rbox_decode_response_raw(
+                                            (const uint8_t *)session->recv_buf,
                                             session->recv_len, session->request_id, &resp);
                         if (err == RBOX_OK) {
                             session->response = resp;

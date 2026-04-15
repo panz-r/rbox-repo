@@ -37,12 +37,13 @@ SRCS = src/socket_io.c \
        src/runtime.c \
        src/session.c \
        src/server_client.c \
-       src/server_response.c \
        src/rbox_cache.c \
        src/socket.c \
        src/packet.c \
        src/parser.c \
-       src/server.c
+       src/server.c \
+       src/protocol_encoding.c \
+       src/protocol_decoding.c
 OBJS = $(SRCS:.c=.o)
 
 # Tests
@@ -62,13 +63,25 @@ TEST_STRESS_SRC = tests/test_stress.c
 TEST_STRESS_BIN = test_stress
 TEST_CACHE_SRC = tests/test_cache.c
 TEST_CACHE_BIN = test_cache
+TEST_ENCODING_SRC = tests/test_protocol_encoding.c
+TEST_ENCODING_BIN = test_protocol_encoding
+TEST_DECODING_SRC = tests/test_protocol_decoding.c
+TEST_DECODING_BIN = test_protocol_decoding
 
-.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-env test-stress test-cache test-fuzz test-fuzz-1h test-fuzz-4h
+FUZZ_BIN = fuzz/protocol_fuzzer
 
-all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN)
+.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-env test-stress test-cache test-fuzz test-fuzz-1h test-fuzz-4h fuzz
+
+all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN) fuzz
 
 build-all: $(SHLIB)
 	@echo "Shared library built."
+
+fuzz: $(FUZZ_BIN)
+	@echo "Fuzzer built."
+
+$(FUZZ_BIN): $(SHLIB)
+	cd fuzz && $(MAKE)
 
 # Parallel build setup
 ifneq ($(filter -j%,$(MAKEFLAGS)),)
@@ -90,10 +103,16 @@ $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
 # Run both unit tests and integration tests
-test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN)
+test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_BASIC_BIN)
+	@echo ""
+	@echo "=== Running encoding unit tests ==="
+	LD_LIBRARY_PATH=. ./$(TEST_ENCODING_BIN)
+	@echo ""
+	@echo "=== Running decoding unit tests ==="
+	LD_LIBRARY_PATH=. ./$(TEST_DECODING_BIN)
 	@echo ""
 	@echo "=== Running full protocol tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_FULL_BIN)
@@ -119,7 +138,7 @@ test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(T
 test-cache: $(TEST_CACHE_BIN)
 	LD_LIBRARY_PATH=. ./$(TEST_CACHE_BIN)
 
-test-fuzz:
+test-fuzz: $(FUZZ_BIN)
 	cd fuzz && make run-10m
 
 test-fuzz-1h:
@@ -153,8 +172,14 @@ $(TEST_STRESS_BIN): $(TEST_STRESS_SRC) $(SHLIB)
 $(TEST_CACHE_BIN): $(TEST_CACHE_SRC) $(SHLIB)
 	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
 
+$(TEST_ENCODING_BIN): $(TEST_ENCODING_SRC) $(SHLIB)
+	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
+
+$(TEST_DECODING_BIN): $(TEST_DECODING_SRC) $(SHLIB)
+	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
+
 clean:
-	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN)
+	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN) $(TEST_ENCODING_BIN) $(TEST_DECODING_BIN)
 	-$(RM) fuzz/*.log
 
 help:

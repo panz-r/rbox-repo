@@ -1,5 +1,9 @@
 /*
  * packet.c - Packet parsing and building for rbox-protocol
+ *
+ * NOTE: Pure protocol encoding/decoding has moved to:
+ *   - protocol_encoding.c (request/response building, ID generation, hashing)
+ *   - protocol_decoding.c (header validation, response parsing)
  */
 
 #define _GNU_SOURCE
@@ -22,7 +26,8 @@
 #include "protocol.h"
 #include "runtime.h"
 #include "session_internal.h"
-#include "server_response.h"
+#include "protocol_encoding.h"
+#include "protocol_decoding.h"
 
 /* Debug flag – set to 1 to enable client tracing */
 #ifndef RBOX_CLIENT_DEBUG
@@ -34,55 +39,6 @@
 #else
 #define CDBG(fmt, ...) ((void)0)
 #endif
-
-/* Thread-local seed for rand_r() - initialized on first use per thread */
-static __thread uint32_t g_rand_seed = 0;
-
-/* Initialize the thread-local seed if not yet initialized */
-static void ensure_rand_seed_init(void) {
-    if (g_rand_seed == 0) {
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        uintptr_t tid = (uintptr_t)pthread_self();
-        g_rand_seed = (uint32_t)((uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 32) ^ tid);
-    }
-}
-
-/* ============================================================
- * CHECKSUM
- * ============================================================ */
-
-/* Forward declarations for ID generation functions */
-static void generate_request_id(uint8_t *id_out);
-static void generate_client_id(uint8_t *id_out);
-static void init_client_id_once(void);
-
-/* Static client_id - generated once per process */
-static uint8_t g_client_id[16] = {0};
-static pthread_once_t g_client_id_once = PTHREAD_ONCE_INIT;
-
-/* 64-bit command hash - two-step hash with different constants */
-/* Used for time-limited decision matching - different from 32-bit cmd_hash */
-uint64_t rbox_hash64(const char *str, size_t len) {
-    if (!str || len == 0) return 0;
-
-    /* Two-step hash with different constants */
-    /* Step 1: Mix using FNV-1a like algorithm with different prime */
-    uint64_t hash = 14695981039346656037ULL;  /* FNV offset basis */
-    for (size_t i = 0; i < len; i++) {
-        hash ^= (uint64_t)(unsigned char)str[i];
-        hash *= 1099511628211ULL;  /* FNV prime 64-bit */
-    }
-
-    /* Step 2: Mix using DJB2-like algorithm with different constants */
-    uint64_t hash2 = 5381ULL;
-    for (size_t i = 0; i < len; i++) {
-        hash2 = ((hash2 << 5) + hash2) + (uint64_t)(unsigned char)str[i];  /* hash2 * 33 + c */
-    }
-
-    /* Combine both hashes */
-    return hash ^ (hash2 + 0x9e3779b97f4a7c15ULL);
-}
 
 /* ============================================================
  * HEADER VALIDATION
@@ -169,319 +125,9 @@ rbox_error_t rbox_build_request(char *packet, size_t capacity, size_t *out_len,
         return RBOX_ERR_INVALID;
     }
 
-    /* Estimate required capacity: header + command + caller + syscall + argv + env vars.
-       Each env var: name + null + 4 bytes score. Use checked arithmetic to prevent overflow. */
-    size_t needed = RBOX_HEADER_SIZE;
-    size_t addend = strlen(command) + 1;
-    if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
-    if (caller) {
-        addend = strlen(caller) + 1;
-        if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
-    } else {
-        if (__builtin_add_overflow(needed, 1, &needed)) return RBOX_ERR_INVALID;
-    }
-    if (syscall) {
-        addend = strlen(syscall) + 1;
-        if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
-    } else {
-        if (__builtin_add_overflow(needed, 1, &needed)) return RBOX_ERR_INVALID;
-    }
-    for (int i = 0; i < argc; i++) {
-        if (argv[i]) {
-            addend = strlen(argv[i]) + 1;
-            if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
-        }
-    }
-    if (__builtin_add_overflow(needed, 1, &needed)) return RBOX_ERR_INVALID;
-    for (int i = 0; i < env_var_count; i++) {
-        if (env_var_names[i]) {
-            addend = strlen(env_var_names[i]) + 1 + 4;
-            if (__builtin_add_overflow(needed, addend, &needed)) return RBOX_ERR_INVALID;
-        }
-    }
-    if (capacity < needed) {
-        *out_len = needed;
-        return RBOX_ERR_INVALID;
-    }
-
-    memset(packet, 0, RBOX_HEADER_SIZE + (needed - RBOX_HEADER_SIZE));
-
-    /* Encode body: command\0caller\0syscall\0argv[0]\0...\0\0 env_name\0score... */
-    size_t pos = RBOX_HEADER_SIZE;
-    char *body = packet + RBOX_HEADER_SIZE;
-
-    /* command */
-    size_t cmd_len = strlen(command);
-    memcpy(body + pos - RBOX_HEADER_SIZE, command, cmd_len + 1);
-    pos += cmd_len + 1;
-
-    /* caller */
-    if (caller && caller[0]) {
-        size_t caller_len = strlen(caller);
-        memcpy(body + pos - RBOX_HEADER_SIZE, caller, caller_len + 1);
-        pos += caller_len + 1;
-    } else {
-        body[pos - RBOX_HEADER_SIZE] = '\0';
-        pos += 1;
-    }
-
-    /* syscall */
-    if (syscall && syscall[0]) {
-        size_t syscall_len = strlen(syscall);
-        memcpy(body + pos - RBOX_HEADER_SIZE, syscall, syscall_len + 1);
-        pos += syscall_len + 1;
-    } else {
-        body[pos - RBOX_HEADER_SIZE] = '\0';
-        pos += 1;
-    }
-
-    /* argv */
-    for (int i = 0; i < argc; i++) {
-        if (!argv[i]) break;
-        size_t arg_len = strlen(argv[i]);
-        memcpy(body + pos - RBOX_HEADER_SIZE, argv[i], arg_len + 1);
-        pos += arg_len + 1;
-    }
-    /* End of argv marker (extra null) */
-    body[pos - RBOX_HEADER_SIZE] = '\0';
-    pos += 1;
-
-    /* Environment variables */
-    uint32_t fenv_hash = 0;
-    for (int i = 0; i < env_var_count; i++) {
-        if (!env_var_names[i]) continue;
-        size_t name_len = strlen(env_var_names[i]);
-        memcpy(body + pos - RBOX_HEADER_SIZE, env_var_names[i], name_len + 1);
-        pos += name_len + 1;
-        float score = env_var_scores[i];
-        memcpy(body + pos - RBOX_HEADER_SIZE, &score, 4);
-        pos += 4;
-
-        /* Update fenv_hash (simple djb2) */
-        const char *s = env_var_names[i];
-        uint32_t h = 5381;
-        while (*s) {
-            h = ((h << 5) + h) + (uint32_t)(unsigned char)*s++;
-        }
-        fenv_hash ^= h;
-    }
-
-    size_t body_len = pos - RBOX_HEADER_SIZE;
-
-    /* Fill header */
-    uint32_t magic = RBOX_MAGIC;
-    uint32_t version = RBOX_VERSION;
-    uint32_t type = RBOX_MSG_REQ;
-    uint32_t flags = RBOX_FLAG_FIRST;
-    uint64_t offset = 0;
-    uint32_t chunk_len = body_len;
-    uint64_t total_len = body_len;
-
-    memcpy(packet + 0, &magic, 4);
-    memcpy(packet + 4, &version, 4);
-    generate_client_id((uint8_t *)(packet + 8));
-    generate_request_id((uint8_t *)(packet + 24));
-    memcpy(packet + 56, &type, 4);
-    memcpy(packet + 60, &flags, 4);
-    memcpy(packet + 64, &offset, 8);
-    memcpy(packet + 72, &chunk_len, 4);
-    memcpy(packet + 76, &total_len, 8);
-    uint32_t cmd_hash = rbox_runtime_crc32(0, command, strlen(command));
-    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CMD_HASH) = cmd_hash;
-    /* Set fenv_hash */
-    *(uint32_t *)(packet + RBOX_HEADER_OFFSET_FENV_HASH) = fenv_hash;
-
-    /* Set caller and syscall sizes in header (same as before) */
-    size_t caller_len = caller ? strlen(caller) : 0;
-    size_t syscall_len = syscall ? strlen(syscall) : 0;
-    if (caller_len > 15) caller_len = 15;
-    if (syscall_len > 15) syscall_len = 15;
-    uint8_t cs_size = ((syscall_len << 4) & 0xF0) | (caller_len & 0x0F);
-    memcpy(packet + RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE, &cs_size, 1);
-    if (caller && caller_len > 0) {
-        memcpy(packet + RBOX_HEADER_OFFSET_CALLER, caller, caller_len);
-    }
-    if (syscall && syscall_len > 0) {
-        memcpy(packet + RBOX_HEADER_OFFSET_SYSCALL, syscall, syscall_len);
-    }
-
-    /* Calculate header checksum (bytes 0–118) */
-    uint32_t checksum = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
-    memcpy(packet + RBOX_HEADER_OFFSET_CHECKSUM, &checksum, 4);
-
-    /* Calculate body checksum (bytes from RBOX_HEADER_SIZE onward) */
-    uint32_t body_checksum = rbox_runtime_crc32(0, packet + RBOX_HEADER_SIZE, body_len);
-    memcpy(packet + RBOX_HEADER_OFFSET_BODY_CHECKSUM, &body_checksum, 4);
-
-    *out_len = RBOX_HEADER_SIZE + body_len;
-    return RBOX_OK;
-}
-
-/* Parse response packet - v9 format: header (127 bytes) + body with decision at RBOX_HEADER_SIZE */
-/* ============================================================
- * RESPONSE VALIDATION (Client-side)
- * ============================================================ */
-
-/* Validate response packet with full checksum and request_id matching
- *
- * Parameters:
- *   - packet: response data
- *   - len: response length
- *   - expected_request_id: the request_id we sent (16 bytes)
- *   - out_response: validated response output
- *
- * Returns:
- *   RBOX_OK: response is valid, out_response populated
- *   RBOX_ERR_TRUNCATED: response too short
- *   RBOX_ERR_MAGIC: invalid magic
- *   RBOX_ERR_VERSION: invalid version
- *   RBOX_ERR_CHECKSUM: checksum mismatch
- *   RBOX_ERR_MISMATCH: request_id doesn't match
- */
-rbox_error_t validate_response(const char *packet, size_t len,
-                                     const uint8_t *expected_request_id,
-                                     rbox_response_t *out_response) {
-    if (!packet || !out_response) {
-        return RBOX_ERR_INVALID;
-    }
-
-    /* Validate magic first */
-    uint32_t magic = *(uint32_t *)packet;
-    if (magic != RBOX_MAGIC) {
-        return RBOX_ERR_MAGIC;
-    }
-
-    /* Check for v5 format: version at offset 4 should be 5 */
-    /* v2 format: no version field, offset 4 is server_id[0] */
-    uint32_t version = *(uint32_t *)(packet + 4);
-    uint8_t decision;
-    uint32_t reason_len;
-    size_t reason_offset;
-    size_t request_id_offset;
-
-    if (version == RBOX_VERSION) {
-        /* v9 format */
-        if (len < RBOX_HEADER_SIZE) {
-            return RBOX_ERR_TRUNCATED;
-        }
-
-        uint32_t chunk_len = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHUNK_LEN);
-        if (chunk_len > RBOX_CHUNK_MAX) {
-            return RBOX_ERR_INVALID;
-        }
-        if (len < RBOX_HEADER_SIZE + chunk_len) {
-            return RBOX_ERR_TRUNCATED;
-        }
-
-        /* Validate header checksum before parsing body */
-        uint32_t stored_hdr_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_CHECKSUM);
-        uint32_t computed_hdr_checksum = rbox_runtime_crc32(0, packet, RBOX_HEADER_OFFSET_CHECKSUM);
-        if (stored_hdr_checksum != computed_hdr_checksum) {
-            return RBOX_ERR_CHECKSUM;
-        }
-
-        decision = packet[RBOX_HEADER_SIZE];  /* decision at offset 92 */
-        reason_offset = RBOX_HEADER_SIZE + 1;  /* reason starts after decision byte */
-        /* Parse reason string to find actual length (null-terminated, bounded by chunk_len) */
-        reason_len = 0;
-        size_t scan_offset = RBOX_HEADER_SIZE + 1;
-        size_t scan_bound = RBOX_HEADER_SIZE + chunk_len;
-        while (scan_offset < scan_bound && reason_len < RBOX_RESPONSE_MAX_REASON) {
-            if (packet[scan_offset] == '\0') break;
-            reason_len++;
-            scan_offset++;
-        }
-        request_id_offset = RBOX_HEADER_OFFSET_REQUEST_ID;
-
-        /* Calculate expected total size */
-        size_t expected_len = RBOX_HEADER_SIZE + 1 + reason_len + 1;  /* decision + reason + null */
-        if (len < expected_len) {
-            return RBOX_ERR_TRUNCATED;
-        }
-    } else {
-        /* v2 format (legacy) */
-        if (len < RBOX_RESPONSE_MIN_SIZE) {
-            return RBOX_ERR_TRUNCATED;
-        }
-
-        decision = packet[RBOX_RESPONSE_OFFSET_DECISION_V2];
-        reason_len = *(uint32_t *)(packet + RBOX_RESPONSE_OFFSET_REASON_LEN_V2);
-        reason_offset = RBOX_RESPONSE_OFFSET_REASON_V2;
-        request_id_offset = RBOX_RESPONSE_OFFSET_REQUEST_ID_V2;
-
-        /* Validate reason length */
-        if (reason_len > RBOX_RESPONSE_MAX_REASON) {
-            reason_len = RBOX_RESPONSE_MAX_REASON;
-        }
-
-        /* Calculate expected total size */
-        size_t expected_len = reason_offset + reason_len + 1;
-        if (len < expected_len) {
-            return RBOX_ERR_TRUNCATED;
-        }
-    }
-
-    /* Validate request_id matches */
-    const uint8_t *resp_request_id = (const uint8_t *)(packet + request_id_offset);
-    if (expected_request_id) {
-        if (memcmp(resp_request_id, expected_request_id, 16) != 0) {
-            /* Request ID mismatch - stale response from previous request */
-            return RBOX_ERR_MISMATCH;
-        }
-    }
-
-    /* Validate body checksum if body exists */
-    if (len > RBOX_HEADER_SIZE) {
-        uint32_t stored_body_checksum = *(uint32_t *)(packet + RBOX_HEADER_OFFSET_BODY_CHECKSUM);
-        uint32_t computed_body_checksum = rbox_runtime_crc32(0, packet + RBOX_HEADER_SIZE, len - RBOX_HEADER_SIZE);
-        if (stored_body_checksum != computed_body_checksum) {
-            return RBOX_ERR_CHECKSUM;
-        }
-    }
-
-    /* Populate response */
-    memset(out_response, 0, sizeof(*out_response));
-    out_response->decision = decision;
-
-    /* Copy reason string */
-    if (reason_len > 0 && len > reason_offset) {
-        size_t copy_len = reason_len;
-        if (copy_len >= sizeof(out_response->reason)) {
-            copy_len = sizeof(out_response->reason) - 1;
-        }
-        memcpy(out_response->reason, packet + reason_offset, copy_len);
-        out_response->reason[copy_len] = '\0';
-    } else {
-        out_response->reason[0] = '\0';
-    }
-
-    /* Duration is not in v1 response - set to 0 (one-shot) */
-    out_response->duration = 0;
-
-    /* Decode env decisions from response body (after reason)
-     * Body format: decision(1) + reason(reason_len) + \0 + fenv_hash(4) + env_count(2) + bitmap
-     * In v9, decision is at RBOX_HEADER_SIZE, so env_count is at RBOX_HEADER_SIZE + 1 + reason_len + 1 + 4 = RBOX_HEADER_SIZE + reason_len + 6 */
-    if (version == RBOX_VERSION) {
-        size_t env_offset = RBOX_HEADER_SIZE + 1 + reason_len + 1 + 4;
-        if (len >= env_offset + 2) {
-            uint16_t resp_env_count = *(uint16_t *)(packet + env_offset);
-            if (resp_env_count > 0 && resp_env_count <= 256) {
-                size_t bitmap_size = (resp_env_count + 7) / 8;
-                if (len >= env_offset + 2 + bitmap_size) {
-                    out_response->env_decision_count = resp_env_count;
-                    out_response->env_decisions = malloc(bitmap_size);
-                    if (out_response->env_decisions) {
-                        memcpy(out_response->env_decisions, packet + env_offset + 2, bitmap_size);
-                    } else {
-                        out_response->env_decision_count = 0;
-                    }
-                }
-            }
-        }
-    }
-    /* v2 format does not include env decisions */
-
-    return RBOX_OK;
+    return rbox_encode_request(command, caller, syscall, argc, argv,
+                               env_var_count, env_var_names, env_var_scores,
+                               (uint8_t *)packet, capacity, out_len);
 }
 
 /* Decode header from packet - verifies magic, version, checksum
@@ -584,55 +230,6 @@ void rbox_free_env_decisions(rbox_env_decisions_t *env_decisions) {
 /* ============================================================
  * CLIENT WORKFLOW - Send Request & Get Validated Response
  * ============================================================ */
-
-/* Generate a unique request ID using timestamp + random
- * This helps match responses to requests */
-static void generate_request_id(uint8_t *id_out) {
-    if (!id_out) return;
-
-    ensure_rand_seed_init();
-
-    /* Use current time + random to generate unique ID */
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-
-    /* Mix bits for uniqueness */
-    uint64_t a = (uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 32);
-    uint64_t b = (uint64_t)rand_r(&g_rand_seed) ^ ((uint64_t)getpid() << 32);
-
-    memcpy(id_out, &a, 8);
-    memcpy(id_out + 8, &b, 8);
-}
-
-/* Generate client ID using pid + ppid + random
- * Client ID should be consistent for a process across requests (generated once) */
-static void init_client_id_once(void) {
-    ensure_rand_seed_init();
-
-    pid_t pid = getpid();
-    pid_t ppid = getppid();
-
-    /* First 8 bytes: pid + ppid */
-    uint64_t id_part1 = ((uint64_t)(uint32_t)pid << 32) | (uint32_t)ppid;
-
-    /* Last 8 bytes: random + timestamp */
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    uint64_t random_part = ((uint64_t)rand_r(&g_rand_seed) << 32) ^ (uint64_t)ts.tv_nsec;
-
-    memcpy(g_client_id, &id_part1, 8);
-    memcpy(g_client_id + 8, &random_part, 8);
-}
-
-static void generate_client_id(uint8_t *id_out) {
-    if (!id_out) return;
-
-    /* Generate client_id once per process using pthread_once */
-    pthread_once(&g_client_id_once, init_client_id_once);
-
-    /* Copy the persistent client_id to output */
-    memcpy(id_out, g_client_id, 16);
-}
 
 /* Read response - uses proper rbox-protocol interface functions
  * Returns bytes read, 0 on close, -1 on error */
@@ -764,7 +361,7 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
     }
 
     /* Validate response with the extracted request_id */
-    err = validate_response(response_buf, resp_len, request_id, response);
+    err = rbox_decode_response_raw((const uint8_t *)response_buf, resp_len, request_id, response);
     if (err != RBOX_OK) {
         response->decision = RBOX_DECISION_UNKNOWN;
     }
@@ -999,17 +596,18 @@ session_failed:
 }
 
 
-/* rbox_response_send - uses rbox_build_response */
+/* rbox_response_send - uses rbox_encode_response */
 rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *response) {
     if (!client || !response) return RBOX_ERR_INVALID;
 
+    uint8_t resp_buf[1024];
     size_t pkt_len;
-    char *pkt = rbox_server_build_response(NULL, (uint8_t *)response->request_id, 0, response->decision,
-                                   response->reason, 0, 0, NULL, &pkt_len);
-    if (!pkt) return RBOX_ERR_MEMORY;
+    rbox_error_t err = rbox_encode_response(NULL, response->request_id, 0, response->decision,
+                                   response->reason, 0, 0, NULL,
+                                   resp_buf, sizeof(resp_buf), &pkt_len);
+    if (err != RBOX_OK) return RBOX_ERR_MEMORY;
 
-    ssize_t n = rbox_write(rbox_client_fd(client), pkt, pkt_len);
-    free(pkt);
+    ssize_t n = rbox_write(rbox_client_fd(client), (char *)resp_buf, pkt_len);
     if (n < 0) return RBOX_ERR_IO;
     return RBOX_OK;
 }
@@ -1026,11 +624,18 @@ rbox_error_t rbox_build_response(
     uint8_t client_id[16] = {0};
     uint8_t request_id[16] = {0};
 
-    char *pkt = rbox_server_build_response(client_id, request_id, 0, decision, reason,
-                                     fenv_hash, env_decision_count, env_decisions, out_len);
+    uint8_t *pkt = malloc(1024);
     if (!pkt) return RBOX_ERR_MEMORY;
 
-    *out_packet = pkt;
+    rbox_error_t err = rbox_encode_response(client_id, request_id, 0, decision, reason,
+                                     fenv_hash, env_decision_count, env_decisions,
+                                     pkt, 1024, out_len);
+    if (err != RBOX_OK) {
+        free(pkt);
+        return err;
+    }
+
+    *out_packet = (char *)pkt;
     return RBOX_OK;
 }
 
@@ -1038,8 +643,17 @@ char *rbox_build_response_internal(uint8_t *client_id, uint8_t *request_id, uint
                            uint8_t decision, const char *reason,
                            uint32_t fenv_hash, int env_decision_count, uint8_t *env_decisions,
                            size_t *out_len) {
-    return rbox_server_build_response(client_id, request_id, cmd_hash, decision, reason,
-                                     fenv_hash, env_decision_count, env_decisions, out_len);
+    uint8_t *pkt = malloc(1024);
+    if (!pkt) return NULL;
+
+    rbox_error_t err = rbox_encode_response(client_id, request_id, cmd_hash, decision, reason,
+                                     fenv_hash, env_decision_count, env_decisions,
+                                     pkt, 1024, out_len);
+    if (err != RBOX_OK) {
+        free(pkt);
+        return NULL;
+    }
+    return (char *)pkt;
 }
 
 
