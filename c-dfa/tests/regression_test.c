@@ -142,7 +142,7 @@ int main(void) {
         { "ls --color=auto -a x ", true, 0x01 },  // full optional content
     };
     run_group("BUG #8: Complex nested optional groups (FIXED)",
-             "ACCEPTANCE_MAPPING [safe] -> 0\n[safe] ls( (--color=auto )?(-(la|l|a) )?((x))* )?",
+             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::x] x\n[safe] ls( (--color=auto )?(-(la|l|a) )?((safe::x))* )?",
              complex_opt_cases, 4);
     
     // Bug #8 full pattern: Complex nested optional groups with fragment reference

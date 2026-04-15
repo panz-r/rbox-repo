@@ -106,63 +106,6 @@ static void parse_arguments(int argc, char* argv[], nfa_builder_context_t* ctx,
 }
 
 // ============================================================================
-// Alphabet construction (main binary variant with verbose flag)
-// ============================================================================
-
-static void construct_alphabet_main(nfa_builder_context_t* ctx) {
-    int size = 0;
-
-    // 1. Literal Bytes (0-255)
-    for (int i = 0; i < BYTE_VALUE_MAX; i++) {
-        ctx->alphabet[size].start_char = i;
-        ctx->alphabet[size].end_char = i;
-        ctx->alphabet[size].symbol_id = i;
-        ctx->alphabet[size].is_special = false;
-        size++;
-    }
-    
-    // 2. Virtual Symbols (256+)
-    ctx->alphabet[VSYM_BYTE_ANY].start_char = 0;
-    ctx->alphabet[VSYM_BYTE_ANY].end_char = 255;
-    ctx->alphabet[VSYM_BYTE_ANY].symbol_id = VSYM_BYTE_ANY;
-    ctx->alphabet[VSYM_BYTE_ANY].is_special = true;
-    size++;
-
-    ctx->alphabet[VSYM_EPS].start_char = 1;
-    ctx->alphabet[VSYM_EPS].end_char = 1;
-    ctx->alphabet[VSYM_EPS].symbol_id = VSYM_EPS;
-    ctx->alphabet[VSYM_EPS].is_special = true;
-    size++;
-
-    ctx->alphabet[VSYM_EOS].start_char = 5;
-    ctx->alphabet[VSYM_EOS].end_char = 5;
-    ctx->alphabet[VSYM_EOS].symbol_id = VSYM_EOS;
-    ctx->alphabet[VSYM_EOS].is_special = true;
-    size++;
-
-    ctx->alphabet[VSYM_SPACE].start_char = 32;
-    ctx->alphabet[VSYM_SPACE].end_char = 32;
-    ctx->alphabet[VSYM_SPACE].symbol_id = VSYM_SPACE;
-    ctx->alphabet[VSYM_SPACE].is_special = true;
-    size++;
-
-    ctx->alphabet[VSYM_TAB].start_char = 9;
-    ctx->alphabet[VSYM_TAB].end_char = 9;
-    ctx->alphabet[VSYM_TAB].symbol_id = VSYM_TAB;
-    ctx->alphabet[VSYM_TAB].is_special = true;
-    size++;
-
-    ctx->alphabet_size = size;
-
-    if (flag_verbose_alphabet) {
-        fprintf(stderr, "  Literal symbols: 256\n");
-        fprintf(stderr, "  Virtual symbols: %d\n", size - 256);
-        fprintf(stderr, "  Total alphabet size: %d\n", size);
-        fprintf(stderr, "\nAlphabet constructed successfully\n");
-    }
-}
-
-// ============================================================================
 // main() — orchestration
 // ============================================================================
 
@@ -233,11 +176,11 @@ int main(int argc, char* argv[]) {
         pattern_count = stats.original_count - stats.duplicates_found;
     }
 
-    // Build alphabet
+    // Build alphabet (CLI: use external alphabet file if provided, otherwise use library function)
     if (external_alphabet_file) {
         nfa_alphabet_load(ctx, external_alphabet_file);
     } else {
-        construct_alphabet_main(ctx);
+        nfa_alphabet_construct_from_patterns(ctx, spec_file);
     }
 
     // Initialize NFA

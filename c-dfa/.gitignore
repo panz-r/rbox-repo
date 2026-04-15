@@ -1,5 +1,5 @@
 .opencode
-
+Testing/
 # KiloCode telemetry-id
 telemetry-id
 
@@ -30,6 +30,7 @@ src/test_single_quant
 *.a
 
 # Build artifacts
+build-fuzz/
 build/
 build_test/
 bin/

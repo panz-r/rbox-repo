@@ -333,6 +333,13 @@ add_custom_target(fuzz ALL
         dfa_loader_fuzzer
 )
 
+# Run 4-hour fuzzing session
+add_custom_target(fuzz-4h
+    COMMAND ${CMAKE_SOURCE_DIR}/fuzz/run_fuzzing_4h.sh ${CMAKE_BINARY_DIR} ${ARGN}
+    COMMENT "Running 4-hour fuzzing session"
+    VERBATIM
+)
+
 # Setup corpus directories
 file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/fuzz/corpus/interesting/dfa_eval")
 file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/fuzz/corpus/interesting/pattern_parser")

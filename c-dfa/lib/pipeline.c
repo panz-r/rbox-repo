@@ -20,6 +20,7 @@
 #include "../tools/dfa_compress.h"
 #include "../tools/dfa_layout.h"
 #include "../tools/nfa_preminimize.h"
+#include "../tools/pattern_order.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +50,9 @@ struct pipeline {
     char temp_dfa_file[256];
     bool nfa_built;
     bool dfa_built;
+    bool nfa_loaded_from_file;
+    pattern_entry_t* ordered_patterns;
+    int pattern_count;
 };
 
 // ============================================================================
@@ -140,6 +144,9 @@ void pipeline_destroy(pipeline_t* p) {
     nfa_builder_context_destroy(p->builder_ctx);
     nfa2dfa_context_destroy(p->nfa2dfa_ctx);
     free(p->binary_data);
+    if (p->ordered_patterns) {
+        pattern_order_free(p->ordered_patterns, p->pattern_count);
+    }
     // Clean up temp files and directory
     unlink(p->temp_nfa_file);
     unlink(p->temp_dfa_file);
@@ -179,23 +186,100 @@ pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename) {
     return PIPELINE_OK;
 }
 
+pipeline_error_t pipeline_order_patterns(pipeline_t* p) {
+    if (!p || !p->builder_ctx) return PIPELINE_ERROR;
+
+    // Read patterns from file
+    int count = pattern_order_read_file(p->builder_ctx->current_input_file,
+                                        &p->ordered_patterns);
+    if (count < 0) {
+        set_error(p, PIPELINE_PARSE_ERROR, "Failed to read patterns for ordering");
+        return PIPELINE_PARSE_ERROR;
+    }
+
+    // Apply pattern ordering optimization
+    if (count > 1) {
+        pattern_order_options_t order_opts = pattern_order_default_options();
+        order_opts.verbose = p->config.verbose;
+        int reordered = pattern_order_optimize(p->ordered_patterns, count, &order_opts);
+
+        if (reordered < 0) {
+            pattern_order_free(p->ordered_patterns, count);
+            p->ordered_patterns = NULL;
+            set_error(p, PIPELINE_PARSE_ERROR, "Pattern validation failed");
+            return PIPELINE_PARSE_ERROR;
+        }
+
+        if (p->config.verbose && reordered > 0) {
+            fprintf(stderr, "[PIPELINE] Pattern ordering: reordered %d/%d patterns\n",
+                    reordered, count);
+        }
+    }
+
+    // Get stats and update pattern count
+    pattern_order_stats_t stats;
+    pattern_order_get_stats(&stats);
+    p->pattern_count = stats.original_count - stats.duplicates_found;
+
+    return PIPELINE_OK;
+}
+
 pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
-    if (!p->builder_ctx) return PIPELINE_INVALID_STATE;
+    if (!p || !p->builder_ctx) return PIPELINE_ERROR;
 
     // Build alphabet before constructing NFA
     if (!nfa_alphabet_construct_from_patterns(p->builder_ctx, p->builder_ctx->current_input_file)) {
         return PIPELINE_PARSE_ERROR;
     }
 
+    // Initialize nfa2dfa context for later conversion
+    if (!p->nfa2dfa_ctx) {
+        p->nfa2dfa_ctx = nfa2dfa_context_create();
+        if (!p->nfa2dfa_ctx) {
+            set_error(p, PIPELINE_OOM, "Failed to create nfa2dfa context");
+            return PIPELINE_OOM;
+        }
+        p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
+    }
+
     nfa_construct_init(p->builder_ctx);
-
-    // Use nfa_parser to read spec file directly
-    nfa_parser_read_spec_file(p->builder_ctx, p->builder_ctx->current_input_file);
-
-    // Write NFA to temp file
+    // Build NFA from reordered patterns
+    int patterns_added = 0;
+    for (int i = 0; i < p->pattern_count && p->ordered_patterns; i++) {
+        if (!p->ordered_patterns[i].is_duplicate && !p->ordered_patterns[i].has_error) {
+            nfa_parser_parse_pattern(p->builder_ctx, p->ordered_patterns[i].line);
+            patterns_added++;
+        }
+    }
     nfa_construct_write_file(p->builder_ctx, p->temp_nfa_file);
 
     p->nfa_built = true;
+    return PIPELINE_OK;
+}
+
+pipeline_error_t pipeline_load_nfa(pipeline_t* p, const char* nfa_file) {
+    if (!p || !nfa_file) return PIPELINE_ERROR;
+
+    // Initialize nfa2dfa context
+    if (!p->nfa2dfa_ctx) {
+        p->nfa2dfa_ctx = nfa2dfa_context_create();
+        if (!p->nfa2dfa_ctx) {
+            set_error(p, PIPELINE_OOM, "Failed to create nfa2dfa context");
+            return PIPELINE_OOM;
+        }
+        p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
+    }
+
+    // Initialize hash table for DFA construction
+    init_hash_table(p->nfa2dfa_ctx);
+
+    // Load NFA file
+    load_nfa_file(p->nfa2dfa_ctx, nfa_file);
+
+    p->nfa_built = true;
+    p->nfa_loaded_from_file = true;
+    p->dfa_built = false;
+
     return PIPELINE_OK;
 }
 
@@ -204,6 +288,7 @@ pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
 
     nfa_premin_options_t opts = nfa_premin_default_options();
     opts.verbose = p->config.verbose;
+    opts.enable_sat_optimal = p->config.enable_sat_optimal_premin;
     nfa_preminimize(p->nfa2dfa_ctx->nfa, &p->nfa2dfa_ctx->nfa_state_count, &opts);
 
     return PIPELINE_OK;
@@ -229,12 +314,15 @@ pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
         p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
     }
 
-    // Initialize NFA transitions to -1 (load_nfa_file skips nfa_init in library builds)
-    init_nfa_array(p->nfa2dfa_ctx);
+    // Only load from temp file if NFA was not pre-loaded via pipeline_load_nfa()
+    if (!p->nfa_loaded_from_file) {
+        // Initialize NFA transitions to -1 (load_nfa_file skips nfa_init in library builds)
+        init_nfa_array(p->nfa2dfa_ctx);
 
-    // Load NFA from temp file
-    init_hash_table(p->nfa2dfa_ctx);
-    load_nfa_file(p->nfa2dfa_ctx, p->temp_nfa_file);
+        // Load NFA from temp file
+        init_hash_table(p->nfa2dfa_ctx);
+        load_nfa_file(p->nfa2dfa_ctx, p->temp_nfa_file);
+    }
 
     // Pre-minimize NFA
     pipeline_preminimize_nfa(p);
@@ -267,6 +355,7 @@ pipeline_error_t pipeline_compress(pipeline_t* p) {
 
     compress_options_t opts = get_default_compress_options();
     opts.verbose = p->config.verbose;
+    opts.use_sat = p->config.use_sat_compress;
     dfa_compress(p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, &opts);
 
     return PIPELINE_OK;
@@ -304,6 +393,34 @@ pipeline_error_t pipeline_save_binary(pipeline_t* p, const char* filename) {
 }
 
 // ============================================================================
+// Pipeline stats
+// ============================================================================
+
+int pipeline_get_nfa_state_count(pipeline_t* p) {
+    if (!p || !p->nfa2dfa_ctx) return 0;
+    return p->nfa2dfa_ctx->nfa_state_count;
+}
+
+int pipeline_get_dfa_state_count(pipeline_t* p) {
+    if (!p || !p->nfa2dfa_ctx) return 0;
+    return p->nfa2dfa_ctx->dfa_state_count;
+}
+
+size_t pipeline_get_binary_size(pipeline_t* p) {
+    if (!p) return 0;
+    return p->binary_size;
+}
+
+void pipeline_get_ordering_stats(pipeline_t* p, pipeline_ordering_stats_t* stats) {
+    if (!p || !stats) return;
+    pattern_order_stats_t po_stats;
+    pattern_order_get_stats(&po_stats);
+    stats->patterns_read = po_stats.original_count;
+    stats->patterns_reordered = po_stats.patterns_reordered;
+    stats->duplicates_removed = po_stats.duplicates_found;
+}
+
+// ============================================================================
 // Convenience functions
 // ============================================================================
 
@@ -317,7 +434,11 @@ pipeline_error_t pipeline_run(pipeline_t* p, const char* pattern_file) {
     // Set input file for builder
     p->builder_ctx->current_input_file = pattern_file;
 
-    // 2. Build NFA
+    // 2. Order patterns (validation + reordering)
+    err = pipeline_order_patterns(p);
+    if (err != PIPELINE_OK) return err;
+
+    // 3. Build NFA
     err = pipeline_build_nfa(p);
     if (err != PIPELINE_OK) return err;
 

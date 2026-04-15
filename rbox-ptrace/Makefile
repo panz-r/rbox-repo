@@ -22,9 +22,9 @@ LDFLAGS += ../c-dfa/libdfa_eval.a
 LDFLAGS += ../rbox-ruleset/build/lib/liblandlock-builder.a
 
 # DFA Tools
-NFA_BUILDER = ../c-dfa/tools/nfa_builder
-NFA2DFA = ../c-dfa/tools/nfa2dfa_advanced
-DFA2C = ../c-dfa/tools/dfa2c_array
+NFA_BUILDER = ../c-dfa/build/tools/nfa_builder
+NFA2DFA = ../c-dfa/build/tools/nfa2dfa_advanced
+DFA2C = ../c-dfa/build/tools/dfa2c_array
 
 # Build directory for generated files
 BUILD_DIR = build
@@ -69,8 +69,13 @@ endif
 all: check-prereqs dfa
 	$(MAKE) $(TARGET)
 
+# Ensure c-dfa is built via CMake
+C_DFA_BUILD := ../c-dfa/build
+$(C_DFA_BUILD):
+	cd ../c-dfa && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+
 # Validate prerequisites
-check-prereqs:
+check-prereqs: | $(C_DFA_BUILD)
 	@which $(CC) > /dev/null 2>&1 || (echo "ERROR: $(CC) not found"; exit 1)
 	@test -x $(NFA_BUILDER) || (echo "ERROR: nfa_builder not found (run 'make deps' in ../c-dfa first)"; exit 1)
 	@test -x $(NFA2DFA) || (echo "ERROR: nfa2dfa_advanced not found (run 'make deps' in ../c-dfa first)"; exit 1)

@@ -50,15 +50,20 @@ target_include_directories(readonlybox_dfa PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../lib>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 )
-target_link_libraries(readonlybox_dfa PUBLIC readonlybox_dfa_headers)
+target_link_libraries(readonlybox_dfa PUBLIC 
+    readonlybox_dfa_headers
+    cadical
+)
 
 # ============================================================================
 # readonlybox_dfa Shared Library
 # ============================================================================
 add_library(readonlybox_dfa_shared SHARED ${LIB_C_SOURCES})
+add_dependencies(readonlybox_dfa_shared sat_modules)
 target_compile_definitions(readonlybox_dfa_shared PRIVATE
     NFABUILDER_NO_MAIN
     NFABUILDER_EXCLUDE_NFA_INIT
+    USE_CADICAL
 )
 target_include_directories(readonlybox_dfa_shared PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
@@ -66,7 +71,10 @@ target_include_directories(readonlybox_dfa_shared PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../lib>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 )
-target_link_libraries(readonlybox_dfa_shared PUBLIC readonlybox_dfa_headers)
+target_link_libraries(readonlybox_dfa_shared PRIVATE
+    -Wl,--whole-archive $<TARGET_FILE:sat_modules> -Wl,--no-whole-archive
+    readonlybox_dfa_headers
+)
 set_target_properties(readonlybox_dfa_shared PROPERTIES
     OUTPUT_NAME "readonlybox_dfa"
     VERSION ${PROJECT_VERSION}
@@ -75,6 +83,10 @@ set_target_properties(readonlybox_dfa_shared PROPERTIES
 
 # ============================================================================
 # SAT Modules Library
+# sat_modules provides C++ SAT implementations and wraps CaDiCaL.
+# All CaDiCaL usage goes through sat_modules.
+# Compiled with -fvisibility=hidden -flto to hide C++ symbols, only C entry
+# points are exported. Linked into readonlybox_dfa_shared via --whole-archive.
 # ============================================================================
 add_library(sat_modules STATIC ${SAT_CXX_SOURCES})
 target_link_libraries(sat_modules PUBLIC
@@ -83,6 +95,7 @@ target_link_libraries(sat_modules PUBLIC
     readonlybox_dfa_headers
 )
 target_compile_definitions(sat_modules PUBLIC USE_CADICAL)
+target_compile_options(sat_modules PRIVATE -fvisibility=hidden -flto)
 target_include_directories(sat_modules PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<BUILD_INTERFACE:${CADICAL_DIR}/src>

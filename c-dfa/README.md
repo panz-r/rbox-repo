@@ -60,8 +60,6 @@ Pattern Input → Validation → Ordering → NFA Build + Parsing → NFA Pre-Mi
 | Syntax | Meaning |
 |--------|---------|
 | `git status` | Literal bytes |
-| `[abc]` | Byte class |
-| `[^abc]` | Negated byte class |
 | `a*` | Zero or more |
 | `a+` | One or more |
 | `a?` | Optional |
@@ -157,6 +155,38 @@ Output includes:
 - Per-suite failure details (if any)
 - Aggregated summary line: `AGGREGATE SUMMARY: X/Y tests`
 
+### Running Fuzzers
+
+```bash
+# Build with fuzzing support (requires clang)
+cmake -B build -DENABLE_FUZZ=ON \
+    -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build
+
+# Run fuzzer with corpus
+./build/fuzz/dfa_eval_fuzzer corpus/ -max_total_time=60s
+
+# Run with dictionary
+./build/fuzz/dfa_eval_fuzzer corpus/ -dict=fuzz/dfa_eval.dict
+
+# Continuous fuzzing (no time limit, runs indefinitely)
+./build/fuzz/dfa_eval_fuzzer corpus/
+```
+
+### Running testgen
+
+```bash
+# Build testgen and its tests
+cmake --build build --target testgen
+cmake --build build --target testgen_test
+
+# Run unit tests
+./build/testgen/testgen_test
+
+# Generate patterns
+./build/testgen/testgen --count 100 --output patterns/generated.txt
+```
+
 ### Manual Test Runner
 Run individual test sets manually:
 
@@ -201,13 +231,21 @@ c-dfa/
 This project includes LibFuzzer-based fuzzers for continuous testing. See `fuzz/README.md` for details.
 
 ```bash
-# Build fuzzers (requires clang)
-cmake -B build -DENABLE_FUZZ=ON \
+# Build fuzzers in separate build directory (requires clang)
+cmake -B build-fuzz -DENABLE_FUZZ=ON \
     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-cmake --build build
+cmake --build build-fuzz
 
-# Fuzzers are in build/fuzz/
-./build/fuzz/dfa_eval_fuzzer ...
+# Run 4-hour fuzzing session via CMake target
+cmake --build build-fuzz --target fuzz-4h
+
+# Or run directly with custom workers/duration:
+./fuzz/run_fuzzing_4h.sh build-fuzz [workers] [duration]
+# Default: 2 workers, 4 hours (14400 seconds)
+# Each worker runs 144 cases per slot across all fuzzers
+
+# Run individual fuzzer manually
+./build-fuzz/fuzz/dfa_eval_fuzzer corpus/seed/dfa_binary -max_total_time=60s
 ```
 
 ## Security Considerations

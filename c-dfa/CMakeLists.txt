@@ -105,6 +105,23 @@ add_custom_target(test-full
 )
 
 # ============================================================================
+# Build Verification
+# ============================================================================
+
+find_program(NM_COMMAND nm REQUIRED)
+find_program(OBJDUMP_COMMAND objdump REQUIRED)
+
+add_custom_target(verify
+    DEPENDS readonlybox_dfa_shared sat_modules
+    COMMENT "Running build verification checks"
+)
+
+add_custom_command(TARGET verify
+    COMMAND ${CMAKE_SOURCE_DIR}/cmake/verify_build.sh ${CMAKE_BINARY_DIR}
+    COMMENT "Running verification script"
+)
+
+# ============================================================================
 # Summary
 # ============================================================================
 message(STATUS "")

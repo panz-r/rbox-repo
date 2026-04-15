@@ -1,14 +1,18 @@
 #!/bin/bash
 # Run fuzzing session with round-robin worker model
 # Each worker cycles through all fuzzers, running 144 cases per slot
-# Usage: ./run_fuzzing_4h.sh [workers] [total_duration]
-# Default: 2 workers, 4 hours total
+# Usage: ./run_fuzzing_4h.sh [BUILD_DIR] [workers] [total_duration]
+# Default: build-fuzz, 2 workers, 4 hours total
 
 set -e
 
-WORKERS="${1:-2}"
-TOTAL_DURATION="${2:-14400}"
+BUILD_DIR="${1:-build-fuzz}"
+WORKERS="${2:-2}"
+TOTAL_DURATION="${3:-14400}"
 RUNS_PER_SLOT=144
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FUZZER_DIR="$SCRIPT_DIR"
 
 FUZZERS=(dfa pattern nfa-build pipeline loader)
 
@@ -19,42 +23,42 @@ declare -A ARTIFACT_PREFIX
 declare -A MAX_LEN
 declare -A USE_DICT
 
-FUZZER_BIN[dfa]="./dfa_eval_fuzzer"
-CORPUS[dfa]="corpus/seed/dfa_binary"
-INTERESTING[dfa]="corpus/interesting/dfa_binary"
-ARTIFACT_PREFIX[dfa]="crashes/dfa_eval_"
+FUZZER_BIN[dfa]="$BUILD_DIR/fuzz/dfa_eval_fuzzer"
+CORPUS[dfa]="$FUZZER_DIR/corpus/seed/dfa_binary"
+INTERESTING[dfa]="$FUZZER_DIR/corpus/interesting/dfa_binary"
+ARTIFACT_PREFIX[dfa]="$FUZZER_DIR/crashes/dfa_eval_"
 MAX_LEN[dfa]=131072
 USE_DICT[dfa]="yes"
 
-FUZZER_BIN[pattern]="./pattern_parse_fuzzer"
-CORPUS[pattern]="corpus/seed/pattern_parser"
-INTERESTING[pattern]="corpus/interesting/pattern_parser"
-ARTIFACT_PREFIX[pattern]="crashes/pattern_parse_"
+FUZZER_BIN[pattern]="$BUILD_DIR/fuzz/pattern_parse_fuzzer"
+CORPUS[pattern]="$FUZZER_DIR/corpus/seed/pattern_parser"
+INTERESTING[pattern]="$FUZZER_DIR/corpus/interesting/pattern_parser"
+ARTIFACT_PREFIX[pattern]="$FUZZER_DIR/crashes/pattern_parse_"
 MAX_LEN[pattern]=8192
 USE_DICT[pattern]="no"
 
-FUZZER_BIN[nfa-build]="./nfa_build_fuzzer"
-CORPUS[nfa-build]="corpus/seed/pattern_parser"
-INTERESTING[nfa-build]="corpus/interesting/nfa_build"
-ARTIFACT_PREFIX[nfa-build]="crashes/nfa_build_"
+FUZZER_BIN[nfa-build]="$BUILD_DIR/fuzz/nfa_build_fuzzer"
+CORPUS[nfa-build]="$FUZZER_DIR/corpus/seed/pattern_parser"
+INTERESTING[nfa-build]="$FUZZER_DIR/corpus/interesting/nfa_build"
+ARTIFACT_PREFIX[nfa-build]="$FUZZER_DIR/crashes/nfa_build_"
 MAX_LEN[nfa-build]=32768
 USE_DICT[nfa-build]="no"
 
-FUZZER_BIN[pipeline]="./pipeline_fuzzer"
-CORPUS[pipeline]="corpus/seed/pattern_parser"
-INTERESTING[pipeline]="corpus/interesting/pipeline"
-ARTIFACT_PREFIX[pipeline]="crashes/pipeline_"
+FUZZER_BIN[pipeline]="$BUILD_DIR/fuzz/pipeline_fuzzer"
+CORPUS[pipeline]="$FUZZER_DIR/corpus/seed/pattern_parser"
+INTERESTING[pipeline]="$FUZZER_DIR/corpus/interesting/pipeline"
+ARTIFACT_PREFIX[pipeline]="$FUZZER_DIR/crashes/pipeline_"
 MAX_LEN[pipeline]=4096
 USE_DICT[pipeline]="no"
 
-FUZZER_BIN[loader]="./dfa_loader_fuzzer"
-CORPUS[loader]="corpus/seed/dfa_binary"
-INTERESTING[loader]="corpus/interesting/loader"
-ARTIFACT_PREFIX[loader]="crashes/loader_"
+FUZZER_BIN[loader]="$BUILD_DIR/fuzz/dfa_loader_fuzzer"
+CORPUS[loader]="$FUZZER_DIR/corpus/seed/dfa_binary"
+INTERESTING[loader]="$FUZZER_DIR/corpus/interesting/loader"
+ARTIFACT_PREFIX[loader]="$FUZZER_DIR/crashes/loader_"
 MAX_LEN[loader]=65536
 USE_DICT[loader]="no"
 
-LOG_DIR="logs/worker_$(date +%Y%m%d_%H%M%S)"
+LOG_DIR="$FUZZER_DIR/logs/worker_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$LOG_DIR"
 
 echo "========================================"
@@ -79,7 +83,7 @@ trap cleanup EXIT INT TERM
 for fuzzer in "${FUZZERS[@]}"; do
     if [ ! -f "${FUZZER_BIN[$fuzzer]}" ]; then
         echo "Building fuzzers..."
-        make all
+        cmake --build "$BUILD_DIR" --target fuzz
         break
     fi
 done

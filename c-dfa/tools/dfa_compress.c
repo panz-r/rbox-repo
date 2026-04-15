@@ -12,9 +12,9 @@
 #include "dfa_compress.h"
 #include "dfa_minimize.h"  // For build_dfa_state_t
 
-#ifdef USE_CADICAL
-#include <cadical.hpp>
-#endif
+// SAT compression functions are declared in dfa_compress.h
+// and implemented in dfa_compress_sat.cpp (C++).
+// CaDiCaL is linked via sat_modules or directly via cadical.
 
 // Statistics from last compression
 static compression_stats_t last_stats = {0};

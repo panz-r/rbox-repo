@@ -1,3 +1,4 @@
 [submodule "c-dfa/vendor/cadical"]
 	path = c-dfa/vendor/cadical
 	url = https://github.com/arminbiere/cadical.git
+	branch = rel-3.0.0

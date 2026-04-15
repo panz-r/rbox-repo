@@ -59,7 +59,7 @@ all: check-prereqs check-dfa validate-test-runner $(TARGET)
 check-prereqs:
 	@test -f ../memory.c || (echo "ERROR: ../memory.c not found"; exit 1)
 	@test -f ../syscall_handler.c || (echo "ERROR: ../syscall_handler.c not found"; exit 1)
-	@test -f ../../c-dfa/libdfa_eval.a || (echo "ERROR: libdfa_eval.a not found (run 'make' in ../../c-dfa first)"; exit 1)
+	@test -f ../../c-dfa/build/tools/libreadonlybox_dfa.a || (echo "ERROR: libreadonlybox_dfa.a not found (run 'make' in ../../c-dfa first)"; exit 1)
 	@which $(CC) > /dev/null 2>&1 || (echo "ERROR: $(CC) not found"; exit 1)
 	@which valgrind > /dev/null 2>&1 || echo "WARNING: valgrind not installed (valgrind target will be skipped)"
 	@which cppcheck > /dev/null 2>&1 || echo "WARNING: cppcheck not installed (cppcheck target will be skipped)"

@@ -10,15 +10,16 @@ LDFLAGS ?= -lpthread -lm
 # Paths
 RBOX_PROTOCOL = ../rbox-protocol
 C_DFA = ../c-dfa
+C_DFA_BUILD = $(C_DFA)/build
 
 # Libraries (protocol.so includes shellsplit statically)
 RBOX_LIB = $(RBOX_PROTOCOL)/librbox_protocol.so
-DFA_EVAL_LIB = $(C_DFA)/libdfa_eval.a
+DFA_EVAL_LIB = $(C_DFA_BUILD)/tools/libreadonlybox_dfa.a
 
 # Tools
-NFA_BUILDER = $(C_DFA)/tools/nfa_builder
-NFA2DFA = $(C_DFA)/tools/nfa2dfa_advanced
-DFA2C = $(C_DFA)/tools/dfa2c_array
+NFA_BUILDER = $(C_DFA_BUILD)/tools/nfa_builder
+NFA2DFA = $(C_DFA_BUILD)/tools/nfa2dfa_advanced
+DFA2C = $(C_DFA_BUILD)/tools/dfa2c_array
 
 # Pattern file and outputs
 PATTERN_FILE ?= rbox_wrap_commands.txt
@@ -47,15 +48,16 @@ endif
 # Default target
 all: dfa $(TARGET)
 
+# Build c-dfa using CMake
+$(C_DFA_BUILD):
+	cd $(C_DFA) && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
+
 # Build required tools from c-dfa if they don't exist
-$(NFA_BUILDER):
-	$(MAKE) -C $(C_DFA) tools/nfa_builder
+$(NFA_BUILDER): | $(C_DFA_BUILD)
 
-$(NFA2DFA): $(NFA_BUILDER)
-	$(MAKE) -C $(C_DFA) tools/nfa2dfa_advanced
+$(NFA2DFA): | $(NFA_BUILDER)
 
-$(DFA2C): $(NFA2DFA)
-	$(MAKE) -C $(C_DFA) tools/dfa2c_array
+$(DFA2C): | $(NFA2DFA)
 
 # Build DFA from pattern file
 dfa: $(DFA_DATA_C)
@@ -78,8 +80,7 @@ $(TARGET): $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(DFA_DATA_OBJ)
 $(RBOX_LIB):
 	$(MAKE) -C $(RBOX_PROTOCOL)
 
-$(DFA_EVAL_LIB):
-	$(MAKE) -C $(C_DFA) libdfa_eval.a
+$(DFA_EVAL_LIB): | $(C_DFA_BUILD)
 
 # Test targets
 $(TEST_BIN): $(TEST_SRC) $(RBOX_LIB)

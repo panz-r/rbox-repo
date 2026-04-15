@@ -12,6 +12,7 @@
 #include "../include/dfa_format.h"
 #include "../include/multi_target_array.h"
 #include "../include/nfa.h"
+#include "../include/pipeline.h"
 #include "nfa_builder.h"
 #include "dfa_minimize.h"
 #include "dfa_compress.h"
@@ -1891,11 +1892,13 @@ void load_nfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
 #ifndef NFABUILDER_NO_MAIN
 int main(int argc, char* argv[]) {
     bool minimize = true;
-    bool compress = true;   // Compression ON by default (greedy algorithm)
+    bool compress = true;
     bool compress_sat = false;
     bool verbose = false;
+    bool sat_optimal = false;
     const char* input_file = NULL;
     const char* output_file = "out.dfa";
+
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-') {
             if (strcmp(argv[i], "--no-minimize") == 0) minimize = false;
@@ -1906,67 +1909,58 @@ int main(int argc, char* argv[]) {
             else if (strcmp(argv[i], "--minimize-brzozowski") == 0) dfa_minimize_set_algorithm(DFA_MIN_BRZOZOWSKI);
             else if (strcmp(argv[i], "--minimize-sat") == 0) dfa_minimize_set_algorithm(DFA_MIN_SAT);
             else if (strcmp(argv[i], "--compress-sat") == 0) compress_sat = true;
+            else if (strcmp(argv[i], "--sat-optimal") == 0) sat_optimal = true;
         } else {
             if (input_file == NULL) input_file = argv[i];
             else output_file = argv[i];
         }
     }
     if (input_file == NULL) return 1;
-    
-    nfa2dfa_context_t* ctx = nfa2dfa_context_create();
-    if (!ctx) {
-        FATAL("Failed to create context");
+
+    pipeline_config_t config = {
+        .minimize_algo = dfa_minimize_get_algorithm(),
+        .preminimize = true,
+        .compress = compress,
+        .optimize_layout = minimize,
+        .verbose = verbose,
+        .use_sat_compress = compress_sat,
+        .enable_sat_optimal_premin = sat_optimal,
+    };
+
+    pipeline_t* p = pipeline_create(&config);
+    if (!p) {
+        FATAL("Failed to create pipeline");
         return 1;
     }
-    ctx->flag_verbose = verbose;
-    
-    load_nfa_file(ctx, input_file);
-    
-    // Pre-minimize NFA before subset construction (always on by default)
-    nfa_premin_options_t premin_opts = nfa_premin_default_options();
-    premin_opts.verbose = verbose;
-    
-    // Check for SAT optimal flag
-    for (int i = 1; i < argc - 1; i++) {
-        if (strcmp(argv[i], "--sat-optimal") == 0) {
-            premin_opts.enable_sat_optimal = true;
-        }
-    }
-    
-    nfa_preminimize(ctx->nfa, &ctx->nfa_state_count, &premin_opts);
-    
-    nfa_to_dfa(ctx);
-    flatten_dfa(ctx);
-    
+
+    pipeline_load_nfa(p, input_file);
+    pipeline_convert_to_dfa(p);
+
     if (minimize) {
-        dfa_min_algo_t algo = dfa_minimize_get_algorithm();
-        fprintf(stderr, "nfa2dfa: before minimize, state_count=%d, algo=%d\n", ctx->dfa_state_count, algo);
-        ctx->dfa_state_count = dfa_minimize(ctx->dfa, ctx->dfa_state_count, algo);
-        fprintf(stderr, "nfa2dfa: after minimize, state_count=%d\n", ctx->dfa_state_count);
-        // Don't re-flatten after Brzozowski - it already produces correct transitions
-        if (algo != DFA_MIN_BRZOZOWSKI) {
-            flatten_dfa(ctx);  // Re-flatten with new state indices after minimization
+        dfa_min_algo_t algo = config.minimize_algo;
+        fprintf(stderr, "nfa2dfa: before minimize, state_count=%d, algo=%d\n",
+                pipeline_get_dfa_state_count(p), algo);
+        pipeline_minimize_dfa(p, algo);
+        fprintf(stderr, "nfa2dfa: after minimize, state_count=%d\n",
+                pipeline_get_dfa_state_count(p));
+        if (config.optimize_layout) {
+            fprintf(stderr, "nfa2dfa: before layout, state_count=%d\n",
+                    pipeline_get_dfa_state_count(p));
+            pipeline_optimize_layout(p);
+            fprintf(stderr, "nfa2dfa: after layout\n");
         }
-        // Apply cache-optimized layout (now separate from minimization)
-        layout_options_t layout_opts = get_default_layout_options();
-        fprintf(stderr, "nfa2dfa: before layout, state_count=%d\n", ctx->dfa_state_count);
-        int* order = optimize_dfa_layout(ctx->dfa, ctx->dfa_state_count, &layout_opts);
-        if (order) free(order);
-        fprintf(stderr, "nfa2dfa: after layout\n");
     }
-    
+
     if (compress) {
-        compress_options_t opts = get_default_compress_options();
-        opts.verbose = verbose;
-        opts.use_sat = compress_sat;  // Enable SAT-based optimal merging if requested
-        dfa_compress(ctx->dfa, ctx->dfa_state_count, &opts);
+        pipeline_compress(p);
     }
-    
-    fprintf(stderr, "nfa2dfa: before write_dfa_file, state_count=%d\n", ctx->dfa_state_count);
-    write_dfa_file(ctx, output_file);
+
+    fprintf(stderr, "nfa2dfa: before write_dfa_file, state_count=%d\n",
+            pipeline_get_dfa_state_count(p));
+    pipeline_save_binary(p, output_file);
     fprintf(stderr, "nfa2dfa: after write_dfa_file\n");
-    
-    nfa2dfa_context_destroy(ctx);
+
+    pipeline_destroy(p);
     return 0;
 }
 #endif  // NFABUILDER_NO_MAIN

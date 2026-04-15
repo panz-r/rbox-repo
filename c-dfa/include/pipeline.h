@@ -67,6 +67,8 @@ typedef struct {
     bool optimize_layout;
     int max_states;      // 0 = use default
     int max_symbols;     // 0 = use default
+    bool use_sat_compress;           // Use SAT solver for optimal compression (default: false)
+    bool enable_sat_optimal_premin;  // Use SAT-based optimal pre-minimization (default: false)
 } pipeline_config_t;
 
 // ============================================================================
@@ -129,6 +131,17 @@ pipeline_error_t pipeline_compress(pipeline_t* p) ATTR_NONNULL(1);
  * Optimize DFA layout for cache performance.
  */
 pipeline_error_t pipeline_optimize_layout(pipeline_t* p) ATTR_NONNULL(1);
+
+// ============================================================================
+// Pipeline Input/Output
+// ============================================================================
+
+/**
+ * Load pre-built NFA file directly into pipeline.
+ * Used when input is already an NFA (e.g., from nfa_builder tool).
+ * After this, call pipeline_convert_to_dfa() to proceed.
+ */
+pipeline_error_t pipeline_load_nfa(pipeline_t* p, const char* nfa_file) ATTR_NONNULL(1, 2);
 
 // ============================================================================
 // Pipeline Results
@@ -207,6 +220,61 @@ const char* pipeline_error_string(pipeline_error_t err);
  * Returns NULL if no error.
  */
 const char* pipeline_get_last_error(pipeline_t* p) ATTR_NONNULL(1);
+
+// ============================================================================
+// Pipeline Stats (for verbose logging)
+// ============================================================================
+
+/**
+ * Get current NFA state count.
+ * Returns 0 if NFA not loaded or pipeline is NULL.
+ */
+int pipeline_get_nfa_state_count(pipeline_t* p) ATTR_NONNULL(1);
+
+/**
+ * Get current DFA state count.
+ * Returns 0 if DFA not built or pipeline is NULL.
+ */
+int pipeline_get_dfa_state_count(pipeline_t* p) ATTR_NONNULL(1);
+
+/**
+ * Get binary size (valid after pipeline_run() or pipeline_save_binary()).
+ * Returns 0 if binary not available or pipeline is NULL.
+ */
+size_t pipeline_get_binary_size(pipeline_t* p) ATTR_NONNULL(1);
+
+// ============================================================================
+// Pattern Ordering
+// ============================================================================
+
+/**
+ * Statistics from pattern ordering operation.
+ */
+typedef struct {
+    int patterns_read;
+    int patterns_reordered;
+    int duplicates_removed;
+} pipeline_ordering_stats_t;
+
+/**
+ * Order patterns for optimal NFA construction.
+ * 
+ * Reads patterns from the file specified in pipeline_parse_patterns(),
+ * reorders them to minimize NFA/DFA states, and validates:
+ * - Detects and marks duplicate patterns
+ * - Validates fragment references
+ * 
+ * Must be called after pipeline_parse_patterns() and before pipeline_build_nfa().
+ * 
+ * @return PIPELINE_OK on success, PIPELINE_PARSE_ERROR on validation failure.
+ */
+pipeline_error_t pipeline_order_patterns(pipeline_t* p) ATTR_NONNULL(1);
+
+/**
+ * Get statistics from last pattern ordering operation.
+ * Call after pipeline_order_patterns().
+ */
+void pipeline_get_ordering_stats(pipeline_t* p, pipeline_ordering_stats_t* stats) ATTR_NONNULL_ALL;
 
 #ifdef __cplusplus
 }
