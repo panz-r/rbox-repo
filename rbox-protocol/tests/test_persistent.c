@@ -21,6 +21,7 @@
 #include <time.h>
 
 #include "rbox_protocol.h"
+#include "../src/error_internal.h"
 #include "test_common.h"
 
 int g_pass_count = 0;
@@ -39,8 +40,9 @@ typedef struct {
 
 static void *server_worker_with_duration(void *arg) {
     worker_ctx_t *ctx = arg;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    ctx->srv = rbox_server_handle_new(ctx->path);
+    ctx->srv = rbox_server_handle_new(ctx->path, &err_info);
     if (!ctx->srv) return NULL;
 
     rbox_server_handle_listen(ctx->srv);
@@ -53,7 +55,7 @@ static void *server_worker_with_duration(void *arg) {
 
     int count = 0;
     while (count < ctx->max_requests) {
-        rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
+        rbox_server_request_t *req = rbox_server_get_request(ctx->srv, &err_info);
         if (!req) break;  /* Server stopped, exit loop */
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", ctx->duration, 0, NULL);
         
@@ -71,13 +73,14 @@ static void *server_worker_with_duration(void *arg) {
 static void *server_worker_1request(void *arg) {
     worker_ctx_t *ctx = arg;
     const char *path = ctx->path;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
     
-    ctx->srv = rbox_server_handle_new(path);
+    ctx->srv = rbox_server_handle_new(path, &err_info);
     if (!ctx->srv) return NULL;
     rbox_server_handle_listen(ctx->srv);
     rbox_server_start(ctx->srv);
 
-    rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
+    rbox_server_request_t *req = rbox_server_get_request(ctx->srv, &err_info);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
@@ -89,6 +92,7 @@ static void *server_worker_1request(void *arg) {
 static int test_single_request(void) {
     const char *path = "/tmp/rbox_test_single.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     pthread_t tid;
     worker_ctx_t ctx = { .path = path, .max_requests = 1, .duration = 0, .srv = NULL };
@@ -99,7 +103,7 @@ static int test_single_request(void) {
     }
 
     rbox_response_t resp;
-    rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0);
+    rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0, &err_info);
     
     if (ctx.srv) rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
@@ -112,6 +116,7 @@ static int test_single_request(void) {
 static int test_three_requests(void) {
     const char *path = "/tmp/rbox_test_three.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = { 
         .path = path, 
@@ -130,7 +135,7 @@ static int test_three_requests(void) {
 
     for (int i = 0; i < 3; i++) {
         rbox_response_t resp;
-        rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0);
+        rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0, &err_info);
         if (err != RBOX_OK) {
             if (ctx.srv) rbox_server_stop(ctx.srv);
             pthread_join(tid, NULL);
@@ -169,6 +174,7 @@ static int test_three_requests(void) {
 static int test_duration_decision(void) {
     const char *path = "/tmp/rbox_test_duration.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = { 
         .path = path, 
@@ -197,7 +203,7 @@ static int test_duration_decision(void) {
     /* Send two requests - server processes with duration=5 */
     for (int i = 0; i < 2; i++) {
         rbox_response_t resp;
-        rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0);
+        rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0, &err_info);
         if (err != RBOX_OK) {
             pthread_join(tid, NULL);
             return -1;
@@ -230,6 +236,7 @@ static int test_duration_decision(void) {
 static int test_cache_hit(void) {
     const char *path = "/tmp/rbox_test_cache_hit.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = { 
         .path = path, 
@@ -264,7 +271,7 @@ static int test_cache_hit(void) {
     /* First request - will be cache miss */
     rbox_response_t resp1;
     rbox_error_t err1 = rbox_blocking_request(path, cmd, 1, argv1, "test", "execve",
-                                              0, NULL, NULL, &resp1, 0, 0);
+                                              0, NULL, NULL, &resp1, 0, 0, &err_info);
     if (err1 != RBOX_OK) {
         TEST_ERROR("first request failed: %d", err1);
         if (ctx.srv) rbox_server_stop(ctx.srv);
@@ -279,7 +286,7 @@ static int test_cache_hit(void) {
     /* Second request - SAME command, should be cache HIT */
     rbox_response_t resp2;
     rbox_error_t err2 = rbox_blocking_request(path, cmd, 1, argv1, "test", "execve",
-                                              0, NULL, NULL, &resp2, 0, 0);
+                                              0, NULL, NULL, &resp2, 0, 0, &err_info);
     if (err2 != RBOX_OK) {
         TEST_ERROR("second request failed: %d", err2);
         if (ctx.srv) rbox_server_stop(ctx.srv);

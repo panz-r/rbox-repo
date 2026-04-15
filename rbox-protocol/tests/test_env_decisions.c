@@ -16,6 +16,7 @@
 #include <errno.h>
 
 #include "rbox_protocol.h"
+#include "../src/error_internal.h"
 #include "test_common.h"
 
 int g_pass_count = 0;
@@ -32,8 +33,9 @@ typedef struct {
 
 static void *server_worker_env_decisions(void *arg) {
     worker_ctx_t *ctx = arg;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    ctx->srv = rbox_server_handle_new(ctx->path);
+    ctx->srv = rbox_server_handle_new(ctx->path, &err_info);
     if (!ctx->srv) return NULL;
 
     rbox_server_handle_listen(ctx->srv);
@@ -44,7 +46,7 @@ static void *server_worker_env_decisions(void *arg) {
     pthread_mutex_unlock(&ctx->mutex);
 
     while (1) {
-        rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
+        rbox_server_request_t *req = rbox_server_get_request(ctx->srv, &err_info);
         if (!req) break;
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0,
                           ctx->env_decision_count, ctx->env_decisions);
@@ -88,6 +90,7 @@ static void free_env_names(const char **names, int count) {
 static int test_env_1_var(void) {
     const char *path = "/tmp/rbox_test_env_1.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     int env_count = 1;
     const char *env_names[] = {"KEY1"};
@@ -118,7 +121,7 @@ static int test_env_1_var(void) {
 
     rbox_error_t err = rbox_blocking_request(path, "ls", 1, argv, "test", "execve",
                                              env_count, env_names, (float[]){0.5},
-                                             &resp, 100, 1);
+                                             &resp, 100, 1, &err_info);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
@@ -160,6 +163,7 @@ static int test_env_1_var(void) {
 static int test_env_3_vars(void) {
     const char *path = "/tmp/rbox_test_env_3.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     int env_count = 3;
     const char *env_names[] = {"KEY1", "KEY2", "KEY3"};
@@ -191,7 +195,7 @@ static int test_env_3_vars(void) {
 
     rbox_error_t err = rbox_blocking_request(path, "ls", 1, argv, "test", "execve",
                                              env_count, env_names, scores,
-                                             &resp, 100, 1);
+                                             &resp, 100, 1, &err_info);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
@@ -236,6 +240,7 @@ static int test_env_3_vars(void) {
 static int test_env_5_vars(void) {
     const char *path = "/tmp/rbox_test_env_5.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     int env_count = 5;
     const char *env_names[] = {"KEY1", "KEY2", "KEY3", "KEY4", "KEY5"};
@@ -267,7 +272,7 @@ static int test_env_5_vars(void) {
 
     rbox_error_t err = rbox_blocking_request(path, "ls", 1, argv, "test", "execve",
                                              env_count, env_names, scores,
-                                             &resp, 100, 1);
+                                             &resp, 100, 1, &err_info);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
@@ -312,6 +317,7 @@ static int test_env_5_vars(void) {
 static int test_env_95_vars(void) {
     const char *path = "/tmp/rbox_test_env_95.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     int env_count = 95;
     const char **env_names = make_env_names(env_count);
@@ -350,7 +356,7 @@ static int test_env_95_vars(void) {
 
     rbox_error_t err = rbox_blocking_request(path, "ls", 1, argv, "test", "execve",
                                              env_count, env_names, scores,
-                                             &resp, 100, 1);
+                                             &resp, 100, 1, &err_info);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);
@@ -400,6 +406,7 @@ static int test_env_95_vars(void) {
 static int test_zero_env_decisions(void) {
     const char *path = "/tmp/rbox_test_env_zero.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = {
         .path = path,
@@ -422,7 +429,7 @@ static int test_zero_env_decisions(void) {
 
     rbox_error_t err = rbox_blocking_request(path, "pwd", 1, argv, "test", "execve",
                                              0, NULL, NULL,
-                                             &resp, 100, 1);
+                                             &resp, 100, 1, &err_info);
 
     rbox_server_stop(ctx.srv);
     pthread_join(tid, NULL);

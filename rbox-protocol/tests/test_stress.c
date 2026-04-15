@@ -23,6 +23,7 @@
 #include <time.h>
 
 #include "rbox_protocol.h"
+#include "../src/error_internal.h"
 #include "test_common.h"
 
 /*
@@ -86,8 +87,9 @@ typedef struct {
 
 static void *server_worker_stress(void *arg) {
     worker_ctx_t *ctx = arg;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    ctx->srv = rbox_server_handle_new(ctx->path);
+    ctx->srv = rbox_server_handle_new(ctx->path, &err_info);
     if (!ctx->srv) return NULL;
 
     rbox_server_handle_listen(ctx->srv);
@@ -99,7 +101,7 @@ static void *server_worker_stress(void *arg) {
 
     int count = 0;
     while (count < ctx->max_requests) {
-        rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
+        rbox_server_request_t *req = rbox_server_get_request(ctx->srv, &err_info);
         if (!req) break;
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
         count++;
@@ -113,6 +115,7 @@ static void *server_worker_stress(void *arg) {
 static int test_100_clients_persistent(void) {
     const char *path = "/tmp/rbox_test_stress_100.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     const int num_clients = 100;
     const int requests_per_client = 10;
@@ -135,14 +138,14 @@ static int test_100_clients_persistent(void) {
 
     /* Run multiple clients */
     for (int c = 0; c < num_clients; c++) {
-        rbox_client_t *cl = rbox_client_connect(path);
+        rbox_client_t *cl = rbox_client_connect(path, &err_info);
         if (!cl) continue;
 
         for (int r = 0; r < requests_per_client; r++) {
             const char *argv[] = {"echo", "test"};
             rbox_response_t resp = {0};
             rbox_error_t err = rbox_blocking_request(path, "echo", 2, argv, "test", "execve",
-                                                     0, NULL, NULL, &resp, 100, 1);
+                                                     0, NULL, NULL, &resp, 100, 1, &err_info);
             if (err == RBOX_OK) {
                 success_count++;
             }
@@ -168,6 +171,7 @@ static int test_100_clients_persistent(void) {
 static int test_edge_triggered_burst(void) {
     const char *path = "/tmp/rbox_test_edge_burst.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = {
         .path = path,
@@ -184,7 +188,7 @@ static int test_edge_triggered_burst(void) {
         return -1;
     }
 
-    rbox_client_t *cl = rbox_client_connect(path);
+    rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (!cl) {
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
@@ -199,9 +203,9 @@ static int test_edge_triggered_burst(void) {
     rbox_response_t resp1 = {0}, resp2 = {0};
 
     rbox_error_t err1 = rbox_blocking_request(path, "echo", 2, argv1, "test", "execve",
-                                             0, NULL, NULL, &resp1, 100, 1);
+                                             0, NULL, NULL, &resp1, 100, 1, &err_info);
     rbox_error_t err2 = rbox_blocking_request(path, "echo", 2, argv2, "test", "execve",
-                                             0, NULL, NULL, &resp2, 100, 1);
+                                             0, NULL, NULL, &resp2, 100, 1, &err_info);
 
     rbox_client_close(cl);
     rbox_server_stop(ctx.srv);
@@ -282,6 +286,7 @@ static int test_server_timeout_partial(void) {
 static int test_signal_graceful_shutdown(void) {
     const char *path = "/tmp/rbox_test_signal.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = {
         .path = path,
@@ -297,7 +302,8 @@ static int test_signal_graceful_shutdown(void) {
 
     if (pid == 0) {
         /* Child - run server */
-        ctx.srv = rbox_server_handle_new(ctx.path);
+        memset(&err_info, 0, sizeof(err_info));
+        ctx.srv = rbox_server_handle_new(ctx.path, &err_info);
         if (!ctx.srv) exit(1);
         rbox_server_handle_listen(ctx.srv);
         rbox_server_start(ctx.srv);
@@ -305,7 +311,7 @@ static int test_signal_graceful_shutdown(void) {
         /* Wait for a request then exit on signal */
         int count = 0;
         while (count < 5) {
-            rbox_server_request_t *req = rbox_server_get_request(ctx.srv);
+            rbox_server_request_t *req = rbox_server_get_request(ctx.srv, &err_info);
             if (!req) break;
             rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
             count++;
@@ -329,7 +335,7 @@ static int test_signal_graceful_shutdown(void) {
     const char *argv[] = {"echo", "test"};
     rbox_response_t resp = {0};
     rbox_error_t err = rbox_blocking_request(path, "echo", 2, argv, "test", "execve",
-                                             0, NULL, NULL, &resp, 100, 1);
+                                             0, NULL, NULL, &resp, 100, 1, &err_info);
 
     /* Send SIGTERM to server process */
     kill(pid, SIGTERM);
@@ -351,6 +357,7 @@ static int test_signal_graceful_shutdown(void) {
 static int test_rapid_connect_disconnect(void) {
     const char *path = "/tmp/rbox_test_rapid.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = {
         .path = path,
@@ -369,13 +376,13 @@ static int test_rapid_connect_disconnect(void) {
 
     int success = 0;
     for (int i = 0; i < 50; i++) {
-        rbox_client_t *cl = rbox_client_connect(path);
+        rbox_client_t *cl = rbox_client_connect(path, &err_info);
         if (!cl) continue;
 
         const char *argv[] = {"pwd"};
         rbox_response_t resp = {0};
         rbox_error_t err = rbox_blocking_request(path, "pwd", 1, argv, "test", "execve",
-                                                 0, NULL, NULL, &resp, 50, 1);
+                                                 0, NULL, NULL, &resp, 50, 1, &err_info);
         if (err == RBOX_OK) success++;
 
         rbox_client_close(cl);
@@ -400,6 +407,7 @@ static int test_rapid_connect_disconnect(void) {
 static int test_session_sequential(void) {
     const char *path = "/tmp/rbox_test_true_edge.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = {
         .path = path,
@@ -417,7 +425,7 @@ static int test_session_sequential(void) {
     }
 
     /* Use session API */
-    rbox_session_t *sess = rbox_session_new(path, 100, 1);
+    rbox_session_t *sess = rbox_session_new(path, 100, 1, &err_info);
     if (!sess) {
         rbox_server_stop(ctx.srv);
         pthread_join(tid, NULL);
@@ -426,7 +434,7 @@ static int test_session_sequential(void) {
     }
 
     /* Connect */
-    rbox_error_t err = rbox_session_connect(sess);
+    rbox_error_t err = rbox_session_connect(sess, &err_info);
     if (err != RBOX_OK) {
         rbox_session_free(sess);
         rbox_server_stop(ctx.srv);
@@ -441,7 +449,7 @@ static int test_session_sequential(void) {
     if (fd >= 0) {
         struct pollfd pfd = { .fd = fd, .events = events };
         poll(&pfd, 1, 2000);
-        rbox_session_heartbeat(sess, pfd.revents);
+        rbox_session_heartbeat(sess, pfd.revents, &err_info);
     }
 
     if (rbox_session_state(sess) != RBOX_SESSION_CONNECTED) {
@@ -454,7 +462,7 @@ static int test_session_sequential(void) {
 
     /* Send first request and wait for response */
     err = rbox_session_send_request(sess, "echo", "test", "execve", 1,
-                                   (const char *[]){"first"}, 0, NULL, NULL);
+                                   (const char *[]){"first"}, 0, NULL, NULL, &err_info);
     if (err != RBOX_OK) {
         TEST_ERROR("first send_request failed: %d", err);
         rbox_session_free(sess);
@@ -470,7 +478,7 @@ static int test_session_sequential(void) {
         if (fd >= 0) {
             struct pollfd pfd = { .fd = fd, .events = events };
             poll(&pfd, 1, 2000);
-            rbox_session_heartbeat(sess, pfd.revents);
+            rbox_session_heartbeat(sess, pfd.revents, &err_info);
         }
         if (rbox_session_state(sess) == RBOX_SESSION_RESPONSE_READY) break;
     }
@@ -497,7 +505,7 @@ static int test_session_sequential(void) {
 
     /* Send second request */
     err = rbox_session_send_request(sess, "echo", "test", "execve", 1,
-                                   (const char *[]){"second"}, 0, NULL, NULL);
+                                   (const char *[]){"second"}, 0, NULL, NULL, &err_info);
     if (err != RBOX_OK) {
         TEST_ERROR("second send_request failed: %d", err);
         rbox_session_free(sess);
@@ -513,7 +521,7 @@ static int test_session_sequential(void) {
         if (fd >= 0) {
             struct pollfd pfd = { .fd = fd, .events = events };
             poll(&pfd, 1, 2000);
-            rbox_session_heartbeat(sess, pfd.revents);
+            rbox_session_heartbeat(sess, pfd.revents, &err_info);
         }
         if (rbox_session_state(sess) == RBOX_SESSION_RESPONSE_READY) break;
     }
@@ -551,6 +559,7 @@ static int test_session_sequential(void) {
 static int test_graceful_shutdown_with_pending(void) {
     const char *path = "/tmp/rbox_test_graceful.sock";
     unlink(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     worker_ctx_t ctx = {
         .path = path,
@@ -583,7 +592,7 @@ static int test_graceful_shutdown_with_pending(void) {
         rbox_error_t err = rbox_blocking_request(path, "echo", 1,
                                                (const char *[]){ "test" },
                                                "test", "execve", 0, NULL, NULL,
-                                               &resp, 100, 1);
+                                               &resp, 100, 1, &err_info);
         if (err == RBOX_OK) success++;
     }
 

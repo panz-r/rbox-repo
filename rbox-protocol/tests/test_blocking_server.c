@@ -16,6 +16,7 @@
 #include <time.h>
 
 #include "rbox_protocol.h"
+#include "../src/error_internal.h"
 
 
 /*
@@ -108,8 +109,9 @@ static int test_total = 0;
 static void *worker_static(void *arg) {
     worker_ctx_t *ctx = arg;
     int errors = 0;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
     while (!*(ctx->done)) {
-        rbox_server_request_t *req = rbox_server_get_request(ctx->srv);
+        rbox_server_request_t *req = rbox_server_get_request(ctx->srv, &err_info);
         if (!req) break;
         (*(ctx->received))++;
         if (rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL) != RBOX_OK) {
@@ -349,8 +351,9 @@ static void *client_misbehave_multiple_requests(void *arg) {
 static int do_request_decision(const char *path, const char *cmd, int argc, const char **args,
                                uint8_t expected_decision) {
     rbox_response_t resp;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
     rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, NULL, NULL,
-                                              0, NULL, NULL, &resp, 0, 0);
+                                              0, NULL, NULL, &resp, 0, 0, &err_info);
     if (err != RBOX_OK) return -1;
     return (resp.decision == expected_decision) ? 0 : -1;
 }
@@ -365,12 +368,13 @@ static void *request_thread(void *arg) {
 /* Server that accepts one request and allows it */
 static void *server_epoll_allow_static(void *arg) {
     const char *path = arg;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
 
-    rbox_server_request_t *req = rbox_server_get_request(srv);
+    rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
@@ -441,12 +445,13 @@ static int test_multiple_args(void) {
 /* Server that returns DENY */
 static void *server_epoll_deny_static(void *arg) {
     const char *path = arg;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
 
-    rbox_server_request_t *req = rbox_server_get_request(srv);
+    rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_DENY, "denied", 0, 0, NULL);
     }
@@ -488,13 +493,14 @@ static int test_deny_decision(void) {
 /* Server that accepts two sequential requests and allows them */
 static void *server_epoll_allow_two_static(void *arg) {
     const char *path = arg;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
 
     for (int i = 0; i < 2; i++) {
-        rbox_server_request_t *req = rbox_server_get_request(srv);
+        rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
         if (req) {
             rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
         }
@@ -540,13 +546,14 @@ static int test_sequential_requests(void) {
 /* Server that accepts three sequential requests and allows them */
 static void *server_epoll_allow_three_static(void *arg) {
     const char *path = arg;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
 
     for (int i = 0; i < 3; i++) {
-        rbox_server_request_t *req = rbox_server_get_request(srv);
+        rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
         if (req) {
             rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
         }
@@ -710,14 +717,15 @@ static int test_reason_response(void) {
 /* Server that accepts multiple requests and allows them */
 static void *server_epoll_allow_many_static(void *arg) {
     const char *path = arg;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return NULL; }
 
     const int NUM_REQUESTS = 100;
     for (int i = 0; i < NUM_REQUESTS; i++) {
-        rbox_server_request_t *req = rbox_server_get_request(srv);
+        rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
         if (req) {
             rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
         }
@@ -786,8 +794,9 @@ static int test_many_clients(void) {
 static int test_misbehaving_clients(void) {
     signal(SIGPIPE, SIG_IGN);
     unlink(SOCKET_PATH);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    rbox_server_handle_t *srv = rbox_server_handle_new(SOCKET_PATH);
+    rbox_server_handle_t *srv = rbox_server_handle_new(SOCKET_PATH, &err_info);
     if (!srv) return -1;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
@@ -880,8 +889,9 @@ static int wait_for_server(const char *path, int timeout_ms) {
 static int test_misbehaving_client_type(thread_func_t behavior, const char *name) {
     signal(SIGPIPE, SIG_IGN);
     unlink(SOCKET_PATH);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    rbox_server_handle_t *srv = rbox_server_handle_new(SOCKET_PATH);
+    rbox_server_handle_t *srv = rbox_server_handle_new(SOCKET_PATH, &err_info);
     if (!srv) return -1;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
@@ -974,9 +984,10 @@ static int test_server_restart(void) {
     pthread_t clients[5];
     int received = 0;
     volatile sig_atomic_t done = 0;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* First server session */
-    rbox_server_handle_t *srv = rbox_server_handle_new(SOCKET_PATH);
+    rbox_server_handle_t *srv = rbox_server_handle_new(SOCKET_PATH, &err_info);
     if (!srv) return -1;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
@@ -1004,7 +1015,8 @@ static int test_server_restart(void) {
     /* Second server session */
     done = 0;
     received = 0;
-    srv = rbox_server_handle_new(SOCKET_PATH);
+    memset(&err_info, 0, sizeof(err_info));
+    srv = rbox_server_handle_new(SOCKET_PATH, &err_info);
     if (!srv) return -1;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
@@ -1037,8 +1049,9 @@ static int test_server_restart(void) {
 /* Test 13: Too large command rejection */
 static int test_too_large_command(void) {
     unlink(SOCKET_PATH);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    rbox_server_handle_t *srv = rbox_server_handle_new(SOCKET_PATH);
+    rbox_server_handle_t *srv = rbox_server_handle_new(SOCKET_PATH, &err_info);
     if (!srv) return -1;
     if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }
     if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); return -1; }

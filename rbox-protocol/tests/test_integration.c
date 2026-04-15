@@ -3,6 +3,8 @@
  * Tests all scenarios including hickups, retries, and edge cases
  */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +19,7 @@
 #include <time.h>
 
 #include "rbox_protocol.h"
+#include "../src/error_internal.h"
 #include "runtime.h"
 
 /* Consistent error reporting macro */
@@ -84,7 +87,8 @@ typedef struct {
 static void *server_epoll_allow(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
     const char *path = thread_arg->socket_path;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
 
     if (rbox_server_handle_listen(srv) != RBOX_OK) {
@@ -98,7 +102,7 @@ static void *server_epoll_allow(void *arg) {
 
     thread_arg->server = srv;
 
-    rbox_server_request_t *req = rbox_server_get_request(srv);
+    rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
@@ -111,7 +115,8 @@ static void *server_epoll_allow(void *arg) {
 static void *server_epoll_deny(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
     const char *path = thread_arg->socket_path;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
 
     if (rbox_server_handle_listen(srv) != RBOX_OK) {
@@ -125,7 +130,7 @@ static void *server_epoll_deny(void *arg) {
 
     thread_arg->server = srv;
 
-    rbox_server_request_t *req = rbox_server_get_request(srv);
+    rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_DENY, "denied", 0, 0, NULL);
     }
@@ -137,7 +142,8 @@ static void *server_epoll_deny(void *arg) {
 static void *server_epoll_delayed(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
     const char *path = thread_arg->socket_path;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
 
     if (rbox_server_handle_listen(srv) != RBOX_OK) {
@@ -151,7 +157,7 @@ static void *server_epoll_delayed(void *arg) {
 
     thread_arg->server = srv;
 
-    rbox_server_request_t *req = rbox_server_get_request(srv);
+    rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
         usleep(200000);  /* 200ms delay before responding */
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
@@ -164,7 +170,8 @@ static void *server_epoll_delayed(void *arg) {
 static void *server_epoll_drop(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
     const char *path = thread_arg->socket_path;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path);
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
     if (!srv) return NULL;
 
     if (rbox_server_handle_listen(srv) != RBOX_OK) {
@@ -178,7 +185,7 @@ static void *server_epoll_drop(void *arg) {
 
     thread_arg->server = srv;
 
-    rbox_server_request_t *req = rbox_server_get_request(srv);
+    rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
         /* Discard the request – server is stopping, cleanup will happen automatically */
     }
@@ -211,8 +218,9 @@ static int wait_for_server(const char *path, int timeout_ms) {
 static int do_request(const char *path, const char *cmd, int argc, const char **args,
                       uint8_t *decision, char *errmsg, size_t errlen) {
     rbox_response_t response;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
     rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, NULL, NULL,
-                                              0, NULL, NULL, &response, 0, 0);
+                                              0, NULL, NULL, &response, 0, 0, &err_info);
 
     if (err != RBOX_OK) {
         if (errmsg && errlen > 0) snprintf(errmsg, errlen, "%s", rbox_strerror(err));
@@ -228,9 +236,10 @@ static int do_request_retry(const char *path, const char *cmd, int argc, const c
                             uint8_t *decision, char *errmsg, size_t errlen,
                             uint32_t base_delay_ms, uint32_t max_retries) {
     rbox_response_t response;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
     rbox_error_t err = rbox_blocking_request(path, cmd, argc, args, NULL, NULL,
                                               0, NULL, NULL, &response,
-                                              base_delay_ms, max_retries);
+                                              base_delay_ms, max_retries, &err_info);
 
     if (err != RBOX_OK) {
         if (errmsg && errlen > 0) snprintf(errmsg, errlen, "%s", rbox_strerror(err));
@@ -276,8 +285,9 @@ static int test_simple(void) {
 static void *rbox_server_thread(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
     const char *socket_path = thread_arg->socket_path;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    rbox_server_handle_t *srv = rbox_server_handle_new(socket_path);
+    rbox_server_handle_t *srv = rbox_server_handle_new(socket_path, &err_info);
     if (!srv) return NULL;
 
     if (rbox_server_handle_listen(srv) != RBOX_OK) {
@@ -293,7 +303,7 @@ static void *rbox_server_thread(void *arg) {
 
     /* Run until server is stopped */
     while (1) {
-        rbox_server_request_t *req = rbox_server_get_request(srv);
+        rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
         if (!req) break;
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
@@ -307,6 +317,7 @@ static int test_hickup_bad_packet(void) {
     const char *path = "/tmp/rbox_t2.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* First server */
     server_thread_arg_t sa = { .socket_path = path, .server = NULL };
@@ -315,7 +326,7 @@ static int test_hickup_bad_packet(void) {
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
     /* Send garbage */
-    rbox_client_t *cl = rbox_client_connect(path);
+    rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
         write_all(rbox_client_fd(cl), "GARBAGE", 7);
         rbox_client_close(cl);
@@ -351,13 +362,14 @@ static int test_hickup_bad_magic(void) {
     const char *path = "/tmp/rbox_t3.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     server_thread_arg_t sa = { .socket_path = path, .server = NULL };
     pthread_t tid;
     if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
-    rbox_client_t *cl = rbox_client_connect(path);
+    rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
         char pkt[RBOX_HEADER_SIZE];
         memset(pkt, 0, RBOX_HEADER_SIZE);
@@ -397,13 +409,14 @@ static int test_hickup_bad_version(void) {
     const char *path = "/tmp/rbox_t4.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     server_thread_arg_t sa = { .socket_path = path, .server = NULL };
     pthread_t tid;
     if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
-    rbox_client_t *cl = rbox_client_connect(path);
+    rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
         char pkt[4096];
         size_t plen;
@@ -443,13 +456,14 @@ static int test_hickup_truncated_header(void) {
     const char *path = "/tmp/rbox_t5.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     server_thread_arg_t sa = { .socket_path = path, .server = NULL };
     pthread_t tid;
     if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
-    rbox_client_t *cl = rbox_client_connect(path);
+    rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
         char pkt[10];
         memset(pkt, 'A', 10);
@@ -484,13 +498,14 @@ static int test_hickup_truncated_body(void) {
     const char *path = "/tmp/rbox_t6.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     server_thread_arg_t sa = { .socket_path = path, .server = NULL };
     pthread_t tid;
     if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
-    rbox_client_t *cl = rbox_client_connect(path);
+    rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
         char pkt[4096];
         size_t plen;
@@ -551,6 +566,7 @@ static int test_hickup_dropped_response(void) {
     const char *path = "/tmp/rbox_t8.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* First: server drops response */
     pthread_t tid;
@@ -558,7 +574,7 @@ static int test_hickup_dropped_response(void) {
     if (checked_pthread_create(&tid, NULL, server_epoll_drop, &arg1) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
-    rbox_client_t *cl = rbox_client_connect(path);
+    rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
         char pkt[4096];
         size_t plen;
@@ -594,12 +610,13 @@ static int test_retry_until_success(void) {
     const char *path = "/tmp/rbox_t8b.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* Round 1: no server running - client should fail quickly */
     printf("    Round 1: no server (retry with backoff)...\n");
     int retry_success = 0;
     for (int i = 0; i < 3; i++) {
-        rbox_client_t *cl = rbox_client_connect(path);
+        rbox_client_t *cl = rbox_client_connect(path, &err_info);
         if (cl) {
             rbox_client_close(cl);
             retry_success = 1;
@@ -712,9 +729,10 @@ static int test_retry_connect(void) {
     const char *path = "/tmp/rbox_t15.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* First: try to connect to non-existent socket */
-    rbox_client_t *cl = rbox_client_connect("/tmp/nonexistent.sock");
+    rbox_client_t *cl = rbox_client_connect("/tmp/nonexistent.sock", &err_info);
     if (cl) rbox_client_close(cl);
 
     /* Second: connect to valid server */
@@ -766,6 +784,7 @@ static int test_env_vars(void) {
     const char *path = "/tmp/rbox_t17.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     pthread_t tid;
     server_thread_arg_t arg = { .socket_path = path, .server = NULL };
@@ -779,7 +798,7 @@ static int test_env_vars(void) {
     rbox_error_t err = rbox_blocking_request(path, "ls", 1, (const char*[]){"-la"},
                                              NULL, NULL,
                                              3, env_names, env_scores,
-                                             &response, 0, 0);
+                                             &response, 0, 0, &err_info);
 
     if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
@@ -796,6 +815,7 @@ static int test_zero_env_vars(void) {
     const char *path = "/tmp/rbox_t18.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     pthread_t tid;
     server_thread_arg_t arg = { .socket_path = path, .server = NULL };
@@ -806,7 +826,7 @@ static int test_zero_env_vars(void) {
     rbox_error_t err = rbox_blocking_request(path, "pwd", 0, NULL,
                                              NULL, NULL,
                                              0, NULL, NULL,
-                                             &response, 0, 0);
+                                             &response, 0, 0, &err_info);
 
     if (arg.server) rbox_server_stop(arg.server);
     pthread_join(tid, NULL);
@@ -823,13 +843,14 @@ static int test_session_api(void) {
     const char *path = "/tmp/rbox_t19.sock";
     unlink(path);
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     pthread_t tid;
     server_thread_arg_t arg = { .socket_path = path, .server = NULL };
     if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
     if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
 
-    rbox_session_t *session = rbox_session_new(path, 50, 3);
+    rbox_session_t *session = rbox_session_new(path, 50, 3, &err_info);
     if (!session) {
         if (arg.server) rbox_server_stop(arg.server);
         pthread_join(tid, NULL);
@@ -837,7 +858,7 @@ static int test_session_api(void) {
         goto cleanup;
     }
 
-    rbox_error_t err = rbox_session_connect(session);
+    rbox_error_t err = rbox_session_connect(session, &err_info);
     if (err != RBOX_OK && rbox_session_state(session) != RBOX_SESSION_CONNECTING) {
         rbox_session_free(session);
         if (arg.server) rbox_server_stop(arg.server);
@@ -858,7 +879,7 @@ static int test_session_api(void) {
                 timeout -= 100;
                 continue;
             }
-            state = rbox_session_heartbeat(session, pfd.revents);
+            state = rbox_session_heartbeat(session, pfd.revents, &err_info);
             if (state == RBOX_SESSION_CONNECTED) break;
             if (state == RBOX_SESSION_FAILED) break;
             timeout -= 100;
@@ -871,7 +892,7 @@ static int test_session_api(void) {
         goto cleanup;
     }
 
-    err = rbox_session_send_request(session, "ls", NULL, NULL, 1, (const char*[]){"-la"}, 0, NULL, NULL);
+    err = rbox_session_send_request(session, "ls", NULL, NULL, 1, (const char*[]){"-la"}, 0, NULL, NULL, &err_info);
     if (err != RBOX_OK) {
         rbox_session_free(session);
         pthread_join(tid, NULL);
@@ -888,7 +909,7 @@ static int test_session_api(void) {
             timeout -= 100;
             continue;
         }
-        state = rbox_session_heartbeat(session, pfd.revents);
+        state = rbox_session_heartbeat(session, pfd.revents, &err_info);
         if (state == RBOX_SESSION_RESPONSE_READY) break;
         if (state == RBOX_SESSION_FAILED) break;
         timeout -= 100;

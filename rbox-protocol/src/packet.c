@@ -7,6 +7,7 @@
  */
 
 #define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,8 @@
 #include "session_internal.h"
 #include "protocol_encoding.h"
 #include "protocol_decoding.h"
+#include "error_internal.h"
+#include "error_messages.h"
 
 /* Debug flag – set to 1 to enable client tracing */
 #ifndef RBOX_CLIENT_DEBUG
@@ -95,6 +98,21 @@ const char *rbox_strerror(rbox_error_t err) {
         case RBOX_ERR_MISMATCH: return "Request/response ID mismatch";
         default:                return "Unknown error";
     }
+}
+
+char *rbox_strerror_r(rbox_error_t err, int sys_errno, const char *message, char *buf, size_t buf_len) {
+    if (!buf || buf_len == 0) return buf;
+
+    const char *err_str = rbox_strerror(err);
+    if (message && message[0] != '\0') {
+        snprintf(buf, buf_len, "%s: %s", err_str, message);
+    } else if (sys_errno != 0) {
+        snprintf(buf, buf_len, "%s: %s", err_str, strerror(sys_errno));
+    } else {
+        snprintf(buf, buf_len, "%s", err_str);
+    }
+
+    return buf;
 }
 
 /* ============================================================
@@ -293,8 +311,9 @@ static ssize_t read_response(int fd, char *buf, size_t max_len) {
 rbox_error_t rbox_client_send_request(rbox_client_t *client,
     const char *command, const char *caller, const char *syscall, int argc, const char **argv,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
-    rbox_response_t *response) {
+    rbox_response_t *response, rbox_error_info_t *err_info) {
     if (!client || !command || !response) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
         return RBOX_ERR_INVALID;
     }
 
@@ -381,8 +400,10 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
     const char *caller, const char *syscall,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
     rbox_response_t *out_response,
-    uint32_t base_delay_ms, uint32_t max_retries) {
+    uint32_t base_delay_ms, uint32_t max_retries,
+    rbox_error_info_t *err_info) {
     if (!socket_path || !command || !out_response) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
         return RBOX_ERR_INVALID;
     }
 
@@ -394,7 +415,7 @@ rbox_error_t rbox_blocking_request(const char *socket_path,
     rbox_error_t err = rbox_blocking_request_raw(socket_path, command, argc, argv,
         caller, syscall,
         env_var_count, env_var_names, env_var_scores,
-        &packet, &packet_len, base_delay_ms, max_retries, 0);
+        &packet, &packet_len, base_delay_ms, max_retries, 0, NULL);
 
     if (err != RBOX_OK || !packet || packet_len == 0) {
         return err ? err : RBOX_ERR_IO;
@@ -442,9 +463,11 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     const char *caller, const char *syscall,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
     char **out_packet, size_t *out_packet_len,
-    uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms) {
+    uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms,
+    rbox_error_info_t *err_info) {
 
     if (!socket_path || !command || !out_packet || !out_packet_len) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
         return RBOX_ERR_INVALID;
     }
 
@@ -474,7 +497,7 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
         uint8_t request_id[16];
         memcpy(request_id, packet + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
 
-        rbox_session_t *session = rbox_session_new(socket_path, base_delay_ms, max_retries);
+        rbox_session_t *session = rbox_session_new(socket_path, base_delay_ms, max_retries, NULL);
         if (!session) {
             free(packet);
             return RBOX_ERR_MEMORY;
@@ -488,7 +511,7 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
 
             switch (state) {
                 case RBOX_SESSION_DISCONNECTED: {
-                    err = rbox_session_connect(session);
+                    err = rbox_session_connect(session, NULL);
                     if (err != RBOX_OK && err != RBOX_ERR_IO) {
                         free(packet);
                         rbox_session_free(session);
@@ -504,18 +527,18 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                         struct pollfd pfd = { .fd = fd, .events = POLLOUT };
                         int ret = poll(&pfd, 1, 10);
                         if (ret > 0) {
-                            rbox_session_heartbeat(session, POLLOUT);
+                            rbox_session_heartbeat(session, POLLOUT, NULL);
                         } else if (ret == 0) {
-                            rbox_session_heartbeat(session, 0);
+                            rbox_session_heartbeat(session, 0, NULL);
                         } else if (ret < 0 && errno != EINTR) {
-                            rbox_session_heartbeat(session, POLLERR);
+                            rbox_session_heartbeat(session, POLLERR, NULL);
                         }
                     } else {
                         /* No client fd (retry wait period) – drive the
                          * time-based retry logic by calling heartbeat
                          * with no events, then sleep briefly to avoid
                          * busy-looping. */
-                        rbox_session_heartbeat(session, 0);
+                        rbox_session_heartbeat(session, 0, NULL);
                         usleep(10000);
                     }
                     break;
@@ -533,7 +556,7 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                     short events;
                     int fd = rbox_session_pollfd(session, &events);
                     if (fd >= 0 && rbox_pollout(fd, 5000) > 0) {
-                        rbox_session_heartbeat(session, POLLOUT);
+                        rbox_session_heartbeat(session, POLLOUT, NULL);
                     }
                     break;
                 }
@@ -551,11 +574,11 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                         struct pollfd pfd = { .fd = fd, .events = events };
                         int ret = poll(&pfd, 1, 100);
                         if (ret > 0) {
-                            rbox_session_heartbeat(session, pfd.revents);
+                            rbox_session_heartbeat(session, pfd.revents, NULL);
                         } else if (ret == 0) {
-                            rbox_session_heartbeat(session, 0);
+                            rbox_session_heartbeat(session, 0, NULL);
                         } else if (ret < 0 && errno != EINTR) {
-                            rbox_session_heartbeat(session, POLLERR);
+                            rbox_session_heartbeat(session, POLLERR, NULL);
                         }
                     } else {
                         usleep(10000);
@@ -597,18 +620,27 @@ session_failed:
 
 
 /* rbox_response_send - uses rbox_encode_response */
-rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *response) {
-    if (!client || !response) return RBOX_ERR_INVALID;
+rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *response, rbox_error_info_t *err_info) {
+    if (!client || !response) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
+        return RBOX_ERR_INVALID;
+    }
 
     uint8_t resp_buf[1024];
     size_t pkt_len;
     rbox_error_t err = rbox_encode_response(NULL, response->request_id, 0, response->decision,
                                    response->reason, 0, 0, NULL,
                                    resp_buf, sizeof(resp_buf), &pkt_len);
-    if (err != RBOX_OK) return RBOX_ERR_MEMORY;
+    if (err != RBOX_OK) {
+        rbox_error_set(err_info, err, 0, RBOX_MSG_MEMORY);
+        return RBOX_ERR_MEMORY;
+    }
 
     ssize_t n = rbox_write(rbox_client_fd(client), (char *)resp_buf, pkt_len);
-    if (n < 0) return RBOX_ERR_IO;
+    if (n < 0) {
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_WRITE_FAILED);
+        return RBOX_ERR_IO;
+    }
     return RBOX_OK;
 }
 
@@ -684,14 +716,19 @@ void rbox_response_free(rbox_response_t *resp) {
 rbox_error_t rbox_telemetry_get_stats(
     const char *socket_path,
     uint32_t *out_allow,
-    uint32_t *out_deny) {
+    uint32_t *out_deny,
+    rbox_error_info_t *err_info) {
 
     if (!socket_path || !out_allow || !out_deny) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
         return RBOX_ERR_INVALID;
     }
 
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) return RBOX_ERR_IO;
+    if (fd < 0) {
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_CONN_FAILED);
+        return RBOX_ERR_IO;
+    }
 
     struct sockaddr_un addr = {0};
     addr.sun_family = AF_UNIX;
@@ -699,6 +736,7 @@ rbox_error_t rbox_telemetry_get_stats(
     addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
 
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_CONN_REFUSED);
         close(fd);
         return RBOX_ERR_IO;
     }
@@ -713,6 +751,7 @@ rbox_error_t rbox_telemetry_get_stats(
     *(uint32_t *)(header + RBOX_HEADER_OFFSET_BODY_CHECKSUM) = 0;
 
     if (rbox_write_exact(fd, header, RBOX_HEADER_SIZE) != (ssize_t)RBOX_HEADER_SIZE) {
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_WRITE_FAILED);
         close(fd);
         return RBOX_ERR_IO;
     }
@@ -720,24 +759,28 @@ rbox_error_t rbox_telemetry_get_stats(
     uint8_t resp_header[RBOX_HEADER_SIZE];
     ssize_t n = rbox_read(fd, resp_header, RBOX_HEADER_SIZE);
     if (n != RBOX_HEADER_SIZE) {
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_READ_FAILED);
         close(fd);
         return RBOX_ERR_IO;
     }
 
     uint32_t resp_magic = *(uint32_t *)resp_header;
     if (resp_magic != RBOX_MAGIC) {
+        rbox_error_set(err_info, RBOX_ERR_MAGIC, 0, RBOX_MSG_MAGIC_INVALID);
         close(fd);
         return RBOX_ERR_IO;
     }
 
     rbox_error_t hdr_err = rbox_header_validate((char *)resp_header, RBOX_HEADER_SIZE);
     if (hdr_err != RBOX_OK) {
+        rbox_error_set(err_info, hdr_err, 0, RBOX_MSG_HEADER_INVALID);
         close(fd);
         return RBOX_ERR_IO;
     }
 
     uint32_t resp_chunk_len = *(uint32_t *)(resp_header + RBOX_HEADER_OFFSET_CHUNK_LEN);
     if (resp_chunk_len > 4096) {
+        rbox_error_set(err_info, RBOX_ERR_TRUNCATED, 0, RBOX_MSG_TRUNCATED);
         close(fd);
         return RBOX_ERR_IO;
     }
@@ -745,6 +788,7 @@ rbox_error_t rbox_telemetry_get_stats(
     size_t total_resp_len = RBOX_HEADER_SIZE + resp_chunk_len;
     char *resp_body = malloc(total_resp_len);
     if (!resp_body) {
+        rbox_error_set(err_info, RBOX_ERR_MEMORY, 0, RBOX_MSG_MEMORY);
         close(fd);
         return RBOX_ERR_MEMORY;
     }
@@ -755,6 +799,7 @@ rbox_error_t rbox_telemetry_get_stats(
     while (remaining > 0) {
         n = rbox_read(fd, resp_body + pos, remaining);
         if (n <= 0) {
+            rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_READ_FAILED);
             free(resp_body);
             close(fd);
             return RBOX_ERR_IO;

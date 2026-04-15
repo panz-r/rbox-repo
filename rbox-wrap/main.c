@@ -1,4 +1,9 @@
 #define _GNU_SOURCE
+
+#ifndef RBOX_NO_COMPAT_MACROS
+#define RBOX_NO_COMPAT_MACROS
+#endif
+
 /*
  * rbox-wrap.c - ReadOnlyBox wrapper for executing read-only commands
  *
@@ -454,6 +459,7 @@ static int run_with_filter(const char *socket_path, const char *command,
                           uid_t target_uid, int clear_env) {
     char *packet = NULL;
     size_t pkt_len = 0;
+    rbox_error_info_t err_info = {0};
 
     rbox_error_t err = rbox_blocking_request_raw(
         socket_path,
@@ -469,12 +475,15 @@ static int run_with_filter(const char *socket_path, const char *command,
         &pkt_len,
             RBOX_RETRY_BASE_DELAY_MS,
             RBOX_RETRY_MAX_RETRIES,
-            0
+            0,
+            &err_info
         );
 
     if (err != RBOX_OK || !packet) {
+        char err_buf[256];
+        rbox_strerror_r(err, err_info.sys_errno, err_info.message, err_buf, sizeof(err_buf));
         fprintf(stderr, "%s: server request failed for command '%s': %s\n",
-                g_program_name, command, rbox_strerror(err));
+                g_program_name, command, err_buf);
         return EXIT_ERROR;
     }
 
@@ -698,6 +707,7 @@ int main(int argc, char *argv[]) {
     if (mode_bin) {
         char *packet = NULL;
         size_t pkt_len = 0;
+        rbox_error_info_t err_info = {0};
         rbox_error_t err = rbox_blocking_request_raw(
             socket_path,
             command,
@@ -712,7 +722,8 @@ int main(int argc, char *argv[]) {
             &pkt_len,
             RBOX_RETRY_BASE_DELAY_MS,
             RBOX_RETRY_MAX_RETRIES,
-            0
+            0,
+            &err_info
         );
 
         free_flagged_envs(flagged_count, flagged_names);
@@ -720,7 +731,9 @@ int main(int argc, char *argv[]) {
         free(socket_path);
 
         if (err != RBOX_OK || !packet) {
-            fprintf(stderr, "%s: %s\n", g_program_name, rbox_strerror(err));
+            char err_buf[256];
+            rbox_strerror_r(err, err_info.sys_errno, err_info.message, err_buf, sizeof(err_buf));
+            fprintf(stderr, "%s: %s\n", g_program_name, err_buf);
             return EXIT_ERROR;
         }
 
@@ -736,6 +749,7 @@ int main(int argc, char *argv[]) {
     /* Default: text mode query to server (judge mode) */
     char *packet = NULL;
     size_t pkt_len = 0;
+    rbox_error_info_t err_info = {0};
     rbox_error_t err = rbox_blocking_request_raw(
         socket_path,
         command,
@@ -750,11 +764,14 @@ int main(int argc, char *argv[]) {
         &pkt_len,
             RBOX_RETRY_BASE_DELAY_MS,
             RBOX_RETRY_MAX_RETRIES,
-            0
+            0,
+            &err_info
         );
 
     if (err != RBOX_OK || !packet) {
-        fprintf(stderr, "%s: %s\n", g_program_name, rbox_strerror(err));
+        char err_buf[256];
+        rbox_strerror_r(err, err_info.sys_errno, err_info.message, err_buf, sizeof(err_buf));
+        fprintf(stderr, "%s: %s\n", g_program_name, err_buf);
         free_flagged_envs(flagged_count, flagged_names);
         free(flagged_scores);
         free(socket_path);

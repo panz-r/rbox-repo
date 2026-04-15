@@ -108,6 +108,14 @@ func BuildDependencies() error {
 	if err := runMake(filepath.Join(wd, rboxProtocolDir), true); err != nil {
 		return fmt.Errorf("rbox-protocol build failed: %w", err)
 	}
+
+	// Create lib symlink for projects that link against librbox_protocol.so
+	// This symlink allows -L../lib to work both in the build tree and outside it
+	if err := os.Symlink(rboxProtocolDir, filepath.Join(wd, "lib")); err != nil {
+		if !os.IsExist(err) {
+			return fmt.Errorf("failed to create lib symlink: %w", err)
+		}
+	}
 	return nil
 }
 

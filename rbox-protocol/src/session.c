@@ -6,6 +6,7 @@
  */
 
 #define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,8 @@
 #include "socket.h"
 #include "runtime.h"
 #include "protocol_decoding.h"
+#include "error_internal.h"
+#include "error_messages.h"
 
 /* Debug flag */
 #ifndef RBOX_CLIENT_DEBUG
@@ -52,8 +55,11 @@ static int should_retry(rbox_session_t *session) {
  * ============================================================ */
 
 rbox_session_t *rbox_session_new(const char *socket_path,
-    uint32_t base_delay_ms, uint32_t max_retries) {
-    if (!socket_path) return NULL;
+    uint32_t base_delay_ms, uint32_t max_retries, rbox_error_info_t *err_info) {
+    if (!socket_path) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
+        return NULL;
+    }
 
     rbox_session_t *session = calloc(1, sizeof(rbox_session_t));
     if (!session) return NULL;
@@ -124,12 +130,16 @@ rbox_error_t rbox_session_error(const rbox_session_t *session) {
     return session ? session->error : RBOX_ERR_INVALID;
 }
 
-rbox_error_t rbox_session_connect(rbox_session_t *session) {
-    if (!session) return RBOX_ERR_INVALID;
+rbox_error_t rbox_session_connect(rbox_session_t *session, rbox_error_info_t *err_info) {
+    if (!session) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
+        return RBOX_ERR_INVALID;
+    }
     if (session->state == RBOX_SESSION_CONNECTING ||
         session->state == RBOX_SESSION_CONNECTED ||
         session->state == RBOX_SESSION_WAITING ||
         session->state == RBOX_SESSION_RESPONSE_READY) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_STATE_ERROR);
         return RBOX_ERR_INVALID;
     }
 
@@ -138,7 +148,7 @@ rbox_error_t rbox_session_connect(rbox_session_t *session) {
         session->client = NULL;
     }
 
-    session->client = rbox_client_connect_nb(session->socket_path);
+    session->client = rbox_client_connect_nb(session->socket_path, NULL);
     if (session->client) {
         session->state = RBOX_SESSION_CONNECTED;
         session->retry_attempt = 0;
@@ -148,6 +158,7 @@ rbox_error_t rbox_session_connect(rbox_session_t *session) {
     if (session->base_delay_ms == 0) {
         session->state = RBOX_SESSION_FAILED;
         session->error = RBOX_ERR_IO;
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_CONN_FAILED);
         return RBOX_ERR_IO;
     }
 
@@ -168,9 +179,16 @@ rbox_error_t rbox_session_connect(rbox_session_t *session) {
 rbox_error_t rbox_session_send_request(rbox_session_t *session,
     const char *command, const char *caller, const char *syscall,
     int argc, const char **argv,
-    int env_var_count, const char **env_var_names, const float *env_var_scores) {
-    if (!session || !command) return RBOX_ERR_INVALID;
-    if (session->state != RBOX_SESSION_CONNECTED) return RBOX_ERR_INVALID;
+    int env_var_count, const char **env_var_names, const float *env_var_scores,
+    rbox_error_info_t *err_info) {
+    if (!session || !command) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
+        return RBOX_ERR_INVALID;
+    }
+    if (session->state != RBOX_SESSION_CONNECTED) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_STATE_ERROR);
+        return RBOX_ERR_INVALID;
+    }
 
     char tmp[65536];
     size_t tmp_len;
@@ -258,7 +276,7 @@ rbox_error_t rbox_session_send_raw(rbox_session_t *session, const char *data, si
     return RBOX_OK;
 }
 
-rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short events) {
+rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short events, rbox_error_info_t *err_info) {
     if (!session) return RBOX_SESSION_FAILED;
 
     CDBG("heartbeat: state=%d events=0x%x", session->state, events);
@@ -267,7 +285,7 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
         case RBOX_SESSION_DISCONNECTED:
             if (events & POLLOUT) {
                 CDBG("disconnected -> connecting");
-                rbox_session_connect(session);
+                rbox_session_connect(session, NULL);
             }
             break;
 
@@ -292,6 +310,7 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                     } else {
                         session->state = RBOX_SESSION_FAILED;
                         session->error = RBOX_ERR_IO;
+                        rbox_error_set(err_info, RBOX_ERR_IO, so_error, RBOX_MSG_CONN_FAILED);
                         CDBG("connecting -> failed (no retries)");
                     }
                     break;
@@ -303,11 +322,12 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                     break;
                 }
                 CDBG("connecting timeout, retrying connection");
-                session->client = rbox_client_connect_nb(session->socket_path);
+                session->client = rbox_client_connect_nb(session->socket_path, NULL);
                 if (!session->client) {
                     if (!should_retry(session)) {
                         session->state = RBOX_SESSION_FAILED;
                         session->error = RBOX_ERR_IO;
+                        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_CONN_FAILED);
                         CDBG("connecting -> failed (no retries left)");
                     } else {
                         session->retry_attempt++;

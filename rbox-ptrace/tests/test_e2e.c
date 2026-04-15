@@ -9,6 +9,11 @@
  */
 
 #define _GNU_SOURCE
+
+#ifndef RBOX_NO_COMPAT_MACROS
+#define RBOX_NO_COMPAT_MACROS
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,7 +76,8 @@ static void server_cleanup_signal(int sig) {
 static int server_get_stats(const char *socket_path, int *out_allow, int *out_deny) {
     uint32_t allow = 0;
     uint32_t deny = 0;
-    rbox_error_t err = rbox_telemetry_get_stats(socket_path, &allow, &deny);
+    rbox_error_info_t err_info = {0};
+    rbox_error_t err = rbox_telemetry_get_stats(socket_path, &allow, &deny, &err_info);
     if (err != RBOX_OK) {
         return -1;
     }

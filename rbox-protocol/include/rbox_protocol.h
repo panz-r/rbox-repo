@@ -36,6 +36,17 @@ typedef enum {
     RBOX_ERR_TIMEOUT   = -9,  /* Response timeout */
 } rbox_error_t;
 
+/* Detailed error information - caller-allocated, no memory allocation by library.
+ * On error, the library fills this structure with error details.
+ * The message field points to a static string literal (do not free). */
+typedef struct rbox_error_info {
+    rbox_error_t code;          /* Primary error code (same as return value) */
+    int sys_errno;              /* System errno if applicable, otherwise 0 */
+    const char *message;        /* Static string literal, or NULL */
+} rbox_error_info_t;
+
+#define RBOX_ERROR_INITIALIZER { .code = RBOX_OK, .sys_errno = 0, .message = NULL }
+
 /* ============================================================
  * REQUEST/RESPONSE STRUCTURES
  * ============================================================ */
@@ -136,17 +147,20 @@ void rbox_free_env_decisions(rbox_env_decisions_t *env_decisions);
 
 typedef struct rbox_client rbox_client_t;
 
-/* Create client socket and connect to server */
-rbox_client_t *rbox_client_connect(const char *socket_path);
+/* Create client socket and connect to server.
+ * err_info: optional caller-allocated error info (may be NULL). */
+rbox_client_t *rbox_client_connect(const char *socket_path, rbox_error_info_t *err_info);
 
 /* Connect with retry (exponential backoff + jitter)
  * base_delay_ms: base delay in ms (0 = no retry)
- * max_retries: max attempts (0 = unlimited) */
-rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_delay_ms, uint32_t max_retries);
+ * max_retries: max attempts (0 = unlimited)
+ * err_info: optional caller-allocated error info (may be NULL). */
+rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_delay_ms, uint32_t max_retries, rbox_error_info_t *err_info);
 
 /* Non-blocking connect - initiates connection and returns immediately.
- * Does not retry. Caller manages connection state via session heartbeat. */
-rbox_client_t *rbox_client_connect_nb(const char *socket_path);
+ * Does not retry. Caller manages connection state via session heartbeat.
+ * err_info: optional caller-allocated error info (may be NULL). */
+rbox_client_t *rbox_client_connect_nb(const char *socket_path, rbox_error_info_t *err_info);
 
 /* Calculate retry delay with exponential backoff + jitter
  * base_delay_ms: base delay in ms
@@ -167,6 +181,10 @@ int rbox_client_is_closed(const rbox_client_t *client);
 
 /* Get last error code */
 int rbox_client_error(const rbox_client_t *client);
+
+/* Get last error info (err_info must be caller-allocated, may be NULL).
+ * Returns RBOX_OK and fills err_info if error info available, otherwise returns current error code. */
+rbox_error_t rbox_client_error_info(const rbox_client_t *client, rbox_error_info_t *err_info);
 
 /* Send request and receive validated response
  *
@@ -196,11 +214,11 @@ int rbox_client_error(const rbox_client_t *client);
  *   RBOX_ERR_VERSION: invalid version in response (don't retry)
  *   RBOX_ERR_CHECKSUM: checksum mismatch (may retry - corrupted)
  *   RBOX_ERR_MISMATCH: request_id mismatch (may retry - stale response)
- */
+ * err_info: optional caller-allocated error info (may be NULL). */
 rbox_error_t rbox_client_send_request(rbox_client_t *client,
     const char *command, const char *caller, const char *syscall, int argc, const char **argv,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
-    rbox_response_t *response);
+    rbox_response_t *response, rbox_error_info_t *err_info);
 
 /* ============================================================
  * SERVER HANDLE
@@ -208,17 +226,19 @@ rbox_error_t rbox_client_send_request(rbox_client_t *client,
 
 typedef struct rbox_server rbox_server_t;
 
-/* Create server socket */
-rbox_server_t *rbox_server_new(const char *socket_path);
+/* Create server socket.
+ * err_info: optional caller-allocated error info (may be NULL). */
+rbox_server_t *rbox_server_new(const char *socket_path, rbox_error_info_t *err_info);
 
 /* Start listening */
-rbox_error_t rbox_server_listen(rbox_server_t *server);
+rbox_error_t rbox_server_listen(rbox_server_t *server, rbox_error_info_t *err_info);
 
 /* Get server listen file descriptor */
 int rbox_server_fd(const rbox_server_t *server);
 
-/* Accept incoming connection (for non-blocking use) */
-rbox_client_t *rbox_server_accept(rbox_server_t *server);
+/* Accept incoming connection (for non-blocking use).
+ * err_info: optional caller-allocated error info (may be NULL). */
+rbox_client_t *rbox_server_accept(rbox_server_t *server, rbox_error_info_t *err_info);
 
 /* Free server */
 void rbox_server_free(rbox_server_t *server);
@@ -249,9 +269,10 @@ typedef struct rbox_server_handle rbox_server_handle_t;
 /* Opaque request handle - returned when request is ready */
 typedef struct rbox_server_request rbox_server_request_t;
 
-/* Create blocking server socket */
+/* Create blocking server socket.
+ * err_info: optional caller-allocated error info (may be NULL). */
 //export rbox_server_handle_new
-rbox_server_handle_t *rbox_server_handle_new(const char *socket_path);
+rbox_server_handle_t *rbox_server_handle_new(const char *socket_path, rbox_error_info_t *err_info);
 
 /* Start listening */
 //export rbox_server_handle_listen
@@ -280,7 +301,7 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server);
  * Returns: request handle, or NULL on error / shutdown
  */
 //export rbox_server_get_request
-rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server);
+rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server, rbox_error_info_t *err_info);
 
 /* Check if server is still running
  * Returns: 1 if running, 0 if stopped
@@ -359,27 +380,37 @@ void rbox_server_stop(rbox_server_handle_t *server);
  * RESPONSE SENDING
  * ============================================================ */
 
-/* Send response to client */
-rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *response);
+/* Send response to client.
+ * err_info: optional caller-allocated error info (may be NULL). */
+rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *response, rbox_error_info_t *err_info);
 
 /* ============================================================
  * UTILITY FUNCTIONS
  * ============================================================ */
 
-/* Get error string */
+/* Get error string (simple version - returns static string) */
 //export rbox_strerror
 const char *rbox_strerror(rbox_error_t err);
+
+/* Get detailed error string (thread-safe version).
+ * Fills the caller-provided buffer with a human-readable error message.
+ * If err_info is NULL, uses generic strerror for sys_errno.
+ * Returns the buffer for convenience. */
+//export rbox_strerror_r
+char *rbox_strerror_r(rbox_error_t err, int sys_errno, const char *message, char *buf, size_t buf_len);
 
 /* Validate packet header */
 rbox_error_t rbox_header_validate(const char *packet, size_t len);
 
 /* Telemetry stats query
  * Returns: RBOX_OK on success, error code on failure
- * On success: *out_allow and *out_deny contain cumulative decision counts */
+ * On success: *out_allow and *out_deny contain cumulative decision counts
+ * err_info: optional caller-allocated error info (may be NULL). */
 rbox_error_t rbox_telemetry_get_stats(
     const char *socket_path,
     uint32_t *out_allow,
-    uint32_t *out_deny);
+    uint32_t *out_deny,
+    rbox_error_info_t *err_info);
 
 /* Initialize library (call once at startup) */
 void rbox_init(void);
@@ -413,18 +444,21 @@ void rbox_init(void);
  *   RBOX_ERR_*: error (out_response not valid)
  */
 
-/* Blocking request - supports flagged env vars for decisions */
+/* Blocking request - supports flagged env vars for decisions
+ * err_info: optional caller-allocated error info (may be NULL). */
 rbox_error_t rbox_blocking_request(const char *socket_path,
     const char *command, int argc, const char **argv,
     const char *caller, const char *syscall,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
     rbox_response_t *out_response,
-    uint32_t base_delay_ms, uint32_t max_retries);
+    uint32_t base_delay_ms, uint32_t max_retries,
+    rbox_error_info_t *err_info);
 
 /* Extended version that returns raw response packet (for --bin mode)
  * Caller must free the returned packet with free()
  * Returns packet starting from magic (includes full header)
  * timeout_ms: 0 means no timeout (wait forever), otherwise max wait in milliseconds
+ * err_info: optional caller-allocated error info (may be NULL).
  */
 //export rbox_blocking_request_raw
 rbox_error_t rbox_blocking_request_raw(const char *socket_path,
@@ -432,7 +466,8 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     const char *caller, const char *syscall,
     int env_var_count, const char **env_var_names, const float *env_var_scores,
     char **out_packet, size_t *out_packet_len,
-    uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms);
+    uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms,
+    rbox_error_info_t *err_info);
 
 /* ============================================================
  * RESPONSE PACKET BUILDING (For DFA fast-path and testing)
@@ -476,10 +511,11 @@ typedef struct rbox_session rbox_session_t;
  *   - socket_path: path to server socket
  *   - base_delay_ms: base delay for connection retry (0 = fail immediately)
  *   - max_retries: max connection attempts (0 = unlimited)
+ *   - err_info: optional caller-allocated error info (may be NULL)
  *
  * Returns: session object or NULL on error */
 rbox_session_t *rbox_session_new(const char *socket_path,
-    uint32_t base_delay_ms, uint32_t max_retries);
+    uint32_t base_delay_ms, uint32_t max_retries, rbox_error_info_t *err_info);
 
 /* Free session
  *
@@ -527,11 +563,13 @@ rbox_error_t rbox_session_error(const rbox_session_t *session);
  *   RBOX_ERR_INVALID: wrong state or null params
  *   RBOX_ERR_IO: send failed (state -> FAILED)
  *
- * caller and syscall: optional caller identification (truncated to 15 chars each) */
+ * caller and syscall: optional caller identification (truncated to 15 chars each)
+ * err_info: optional caller-allocated error info (may be NULL). */
 rbox_error_t rbox_session_send_request(rbox_session_t *session,
     const char *command, const char *caller, const char *syscall,
     int argc, const char **argv,
-    int env_var_count, const char **env_var_names, const float *env_var_scores);
+    int env_var_count, const char **env_var_names, const float *env_var_scores,
+    rbox_error_info_t *err_info);
 
 /* Session heartbeat - call when fd is ready
  *
@@ -540,9 +578,10 @@ rbox_error_t rbox_session_send_request(rbox_session_t *session,
  * - POLLIN: data available to read
  *
  * This function advances the state machine and returns the new state.
+ * err_info: optional caller-allocated error info (may be NULL).
  *
  * Returns: current state after processing */
-rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short events);
+rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short events, rbox_error_info_t *err_info);
 
 /* Get response (valid when state is RESPONSE_READY)
  *
@@ -589,8 +628,9 @@ void rbox_session_set_timeout(rbox_session_t *session, uint32_t timeout_ms);
  *
  * Returns:
  *   RBOX_OK: connection in progress, state -> CONNECTING
- *   RBOX_ERR_IO: failed to start connect */
-rbox_error_t rbox_session_connect(rbox_session_t *session);
+ *   RBOX_ERR_IO: failed to start connect
+ * err_info: optional caller-allocated error info (may be NULL). */
+rbox_error_t rbox_session_connect(rbox_session_t *session, rbox_error_info_t *err_info);
 
 /* Build request packet (v9 protocol)
  * Parameters:

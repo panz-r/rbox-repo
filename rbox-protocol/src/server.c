@@ -3,6 +3,7 @@
  */
 
 #define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,8 @@
 #include "server.h"
 #include "server_client.h"
 #include "protocol_encoding.h"
+#include "error_internal.h"
+#include "error_messages.h"
 
 /* Debug flag – set to 1 to enable verbose tracing */
 #ifndef RBOX_SERVER_DEBUG
@@ -1423,8 +1426,11 @@ static void *server_thread_func(void *arg) {
  * SERVER HANDLE MANAGEMENT
  * ============================================================ */
 
-rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
-    if (!socket_path) return NULL;
+rbox_server_handle_t *rbox_server_handle_new(const char *socket_path, rbox_error_info_t *err_info) {
+    if (!socket_path) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
+        return NULL;
+    }
     rbox_server_handle_t *srv = calloc(1, sizeof(*srv));
     if (!srv) return NULL;
     srv->epoll_fd = -1;
@@ -1661,8 +1667,11 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server) {
     return RBOX_OK;
 }
 
-rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server) {
-    if (!server) return NULL;
+rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server, rbox_error_info_t *err_info) {
+    if (!server) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
+        return NULL;
+    }
     while (atomic_load(&server->running)) {
         rbox_server_request_t *req = request_queue_pop(server);
         if (req) return req;

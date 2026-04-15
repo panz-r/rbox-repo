@@ -2,11 +2,18 @@
  * test_protocol.c - Basic test for rbox-protocol
  */
 
+#define _GNU_SOURCE
+
+#ifndef RBOX_NO_COMPAT_MACROS
+#define RBOX_NO_COMPAT_MACROS
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "rbox_protocol.h"
 #include "runtime.h"
@@ -92,7 +99,8 @@ void test_session(void) {
     printf("Testing session interface...\n");
     
     /* Create session with no retry */
-    rbox_session_t *session = rbox_session_new("/nonexistent.sock", 0, 0);
+    rbox_error_info_t err_info = {0};
+    rbox_session_t *session = rbox_session_new("/nonexistent.sock", 0, 0, &err_info);
     assert(session != NULL);
     short events;
     assert(rbox_session_pollfd(session, &events) == -1);
@@ -100,12 +108,14 @@ void test_session(void) {
     printf("  ✓ Session created in DISCONNECTED state\n");
     
     /* Try to send without connecting - should fail */
-    rbox_error_t err = rbox_session_send_request(session, "ls", NULL, NULL, 0, NULL, 0, NULL, NULL);
+    err_info = (rbox_error_info_t){0};
+    rbox_error_t err = rbox_session_send_request(session, "ls", NULL, NULL, 0, NULL, 0, NULL, NULL, &err_info);
     assert(err == RBOX_ERR_INVALID);
     printf("  ✓ Send request without connection returns INVALID\n");
     
     /* Try to connect to nonexistent socket */
-    err = rbox_session_connect(session);
+    err_info = (rbox_error_info_t){0};
+    err = rbox_session_connect(session, &err_info);
     assert(err == RBOX_ERR_IO);
     assert(rbox_session_state(session) == RBOX_SESSION_FAILED);
     printf("  ✓ Connect to nonexistent socket returns FAILED\n");
@@ -115,7 +125,8 @@ void test_session(void) {
     printf("  ✓ Session freed\n");
     
     /* Test session with retry */
-    session = rbox_session_new("/nonexistent.sock", 10, 3);
+    err_info = (rbox_error_info_t){0};
+    session = rbox_session_new("/nonexistent.sock", 10, 3, &err_info);
     assert(session != NULL);
     assert(rbox_session_state(session) == RBOX_SESSION_DISCONNECTED);
     rbox_session_free(session);

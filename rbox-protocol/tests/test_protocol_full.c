@@ -19,6 +19,7 @@
 #include <sys/time.h>
 
 #include "rbox_protocol.h"
+#include "../src/error_internal.h"
 #include "test_common.h"
 
 /* Include internal headers */
@@ -170,14 +171,15 @@ static int test_strerror(void) {
 
 static int test_socket_create(void) {
     TEST("server socket create/bind");
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     const char *test_sock = "/tmp/rbox_test.sock";
     unlink(test_sock);
 
-    rbox_server_t *server = rbox_server_new(test_sock);
+    rbox_server_t *server = rbox_server_new(test_sock, &err_info);
     ASSERT(server != NULL, "server should be created");
 
-    rbox_error_t err = rbox_server_listen(server);
+    rbox_error_t err = rbox_server_listen(server, &err_info);
     ASSERT(err == RBOX_OK, "server should listen");
 
     rbox_server_free(server);
@@ -191,18 +193,19 @@ static int test_socket_create(void) {
 
 static int test_socket_connect(void) {
     TEST("client connect");
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     const char *test_sock = "/tmp/rbox_test_connect.sock";
     unlink(test_sock);
 
     /* Create server */
-    rbox_server_t *server = rbox_server_new(test_sock);
+    rbox_server_t *server = rbox_server_new(test_sock, &err_info);
     ASSERT(server != NULL, "server created");
 
-    rbox_server_listen(server);
+    rbox_server_listen(server, &err_info);
 
     /* Connect client */
-    rbox_client_t *client = rbox_client_connect(test_sock);
+    rbox_client_t *client = rbox_client_connect(test_sock, &err_info);
     ASSERT(client != NULL, "client should connect");
 
     rbox_client_close(client);
@@ -213,20 +216,21 @@ static int test_socket_connect(void) {
 
 static int test_accept_loop(void) {
     TEST("accept and communication");
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     const char *test_sock = "/tmp/rbox_test_accept.sock";
     unlink(test_sock);
 
     /* Create server */
-    rbox_server_t *server = rbox_server_new(test_sock);
-    rbox_server_listen(server);
+    rbox_server_t *server = rbox_server_new(test_sock, &err_info);
+    rbox_server_listen(server, &err_info);
 
     /* Client connect */
-    rbox_client_t *client = rbox_client_connect(test_sock);
+    rbox_client_t *client = rbox_client_connect(test_sock, &err_info);
     ASSERT(client != NULL, "client connected");
 
     /* Server accept */
-    rbox_client_t *server_client = rbox_server_accept(server);
+    rbox_client_t *server_client = rbox_server_accept(server, &err_info);
     ASSERT(server_client != NULL, "server accepted");
 
     rbox_client_close(client);
@@ -612,9 +616,10 @@ typedef struct {
 static void *rbox_server_thread(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
     const char *socket_path = thread_arg->socket_path;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* Create server using full handle API */
-    rbox_server_handle_t *server = rbox_server_handle_new(socket_path);
+    rbox_server_handle_t *server = rbox_server_handle_new(socket_path, &err_info);
     if (!server) {
         printf("    ERROR: failed to create server on %s\n", socket_path);
         return NULL;
@@ -640,7 +645,7 @@ static void *rbox_server_thread(void *arg) {
 
     /* Blocking request loop - exits when rbox_server_stop() is called */
     while (1) {
-        rbox_server_request_t *req = rbox_server_get_request(server);
+        rbox_server_request_t *req = rbox_server_get_request(server, &err_info);
         if (!req) {
             /* NULL means server was stopped */
             break;
@@ -663,6 +668,7 @@ static int run_proxy_test(const char *server_socket, const char *proxy_socket,
                          double s2c_bit, double s2c_byte,
                          int num_requests, uint8_t expected_decision) {
     pthread_t server_tid;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
     server_thread_arg_t thread_arg = { .socket_path = server_socket, .server = NULL };
     pthread_create(&server_tid, NULL, rbox_server_thread, &thread_arg);
     usleep(100000);
@@ -676,13 +682,13 @@ static int run_proxy_test(const char *server_socket, const char *proxy_socket,
     int success = 0;
     for (int i = 0; i < num_requests; i++) {
         /* Connect to proxy via rbox_client (uses high-level API) */
-        rbox_client_t *client = rbox_client_connect(proxy_socket);
+        rbox_client_t *client = rbox_client_connect(proxy_socket, &err_info);
         if (!client) continue;
 
         char *cmd = "ls";
         const char *args[] = { cmd };
         rbox_response_t resp;
-        rbox_error_t err = rbox_client_send_request(client, cmd, NULL, NULL, 1, args, 0, NULL, NULL, &resp);
+        rbox_error_t err = rbox_client_send_request(client, cmd, NULL, NULL, 1, args, 0, NULL, NULL, &resp, &err_info);
         if (err == RBOX_OK && resp.decision == expected_decision) {
             success++;
         }
@@ -705,6 +711,7 @@ static int run_proxy_test(const char *server_socket, const char *proxy_socket,
 /* Test 1: Direct connection (no proxy) - using real rbox server on Unix socket */
 static int test_proxy_direct(void) {
     TEST("direct connection (no proxy)");
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     const char *server_sock = "/tmp/rbox_test_direct.sock";
     unlink(server_sock);
@@ -716,13 +723,13 @@ static int test_proxy_direct(void) {
 
     int success = 0;
     for (int i = 0; i < 35; i++) {
-        rbox_client_t *client = rbox_client_connect(server_sock);
+        rbox_client_t *client = rbox_client_connect(server_sock, &err_info);
         if (!client) continue;
 
         char *cmd = "ls";
         const char *args[] = { cmd };
         rbox_response_t resp;
-        rbox_error_t err = rbox_client_send_request(client, cmd, NULL, NULL, 1, args, 0, NULL, NULL, &resp);
+        rbox_error_t err = rbox_client_send_request(client, cmd, NULL, NULL, 1, args, 0, NULL, NULL, &resp, &err_info);
         if (err == RBOX_OK && resp.decision == RBOX_DECISION_ALLOW) {
             success++;
         }

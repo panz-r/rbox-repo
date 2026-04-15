@@ -17,7 +17,7 @@
  * ============================================================ */
 
 /* Create server handle (includes socket creation, bind, and listen) */
-rbox_server_handle_t *rbox_server_handle_new(const char *socket_path);
+rbox_server_handle_t *rbox_server_handle_new(const char *socket_path, rbox_error_info_t *err_info);
 
 /* Free server handle */
 void rbox_server_handle_free(rbox_server_handle_t *server);
@@ -29,7 +29,7 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server);
 void rbox_server_stop(rbox_server_handle_t *server);
 
 /* Get request from server (blocking) */
-rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server);
+rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server, rbox_error_info_t *err_info);
 
 /* Check if server is running */
 int rbox_server_is_running(rbox_server_handle_t *server);

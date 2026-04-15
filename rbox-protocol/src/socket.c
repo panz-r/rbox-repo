@@ -6,6 +6,7 @@
  */
 
 #define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,8 @@
 
 #include "rbox_protocol.h"
 #include "socket.h"
+#include "error_internal.h"
+#include "error_messages.h"
 
 /* Thread-local seed for rand_r() - each thread gets its own seed */
 static __thread uint32_t g_rand_seed = 0;
@@ -55,17 +58,18 @@ struct rbox_server {
  * CLIENT FUNCTIONS
  * ============================================================ */
 
-rbox_client_t *rbox_client_connect(const char *socket_path) {
-    return rbox_client_connect_retry(socket_path, 0, 0);
+rbox_client_t *rbox_client_connect(const char *socket_path, rbox_error_info_t *err_info) {
+    return rbox_client_connect_retry(socket_path, 0, 0, err_info);
 }
 
 /* Non-blocking connect - initiates connection and returns immediately.
  * Does not retry. Caller should use session heartbeat for retry logic.
  * Returns: connected client (if connect succeeded immediately), or NULL.
  * On EINPROGRESS, returns client with state that caller must poll. */
-rbox_client_t *rbox_client_connect_nb(const char *socket_path) {
+rbox_client_t *rbox_client_connect_nb(const char *socket_path, rbox_error_info_t *err_info) {
     if (!socket_path) {
         errno = EINVAL;
+        rbox_error_set(err_info, RBOX_ERR_INVALID, EINVAL, RBOX_MSG_INVALID_PARAM);
         return NULL;
     }
 
@@ -119,6 +123,7 @@ rbox_client_t *rbox_client_connect_nb(const char *socket_path) {
  *   - socket_path: path to Unix domain socket
  *   - base_delay_ms: base delay in milliseconds for backoff (0 = no retry, fail immediately)
  *   - max_retries: maximum number of connection attempts (0 = unlimited)
+ *   - err_info: optional caller-allocated error info (may be NULL)
  *
  * Returns: connected client, or NULL on failure after all retries exhausted
  *
@@ -126,9 +131,10 @@ rbox_client_t *rbox_client_connect_nb(const char *socket_path) {
  *   delay = min(base_delay_ms * 2^attempt + random(0..base_delay_ms), max_delay)
  *   where max_delay = base_delay_ms * 64 (caps at 64x base)
  */
-rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_delay_ms, uint32_t max_retries) {
+rbox_client_t *rbox_client_connect_retry(const char *socket_path, uint32_t base_delay_ms, uint32_t max_retries, rbox_error_info_t *err_info) {
     if (!socket_path) {
         errno = EINVAL;
+        rbox_error_set(err_info, RBOX_ERR_INVALID, EINVAL, RBOX_MSG_INVALID_PARAM);
         return NULL;
     }
 
@@ -272,14 +278,18 @@ int rbox_client_error(const rbox_client_t *client) {
  * SERVER FUNCTIONS
  * ============================================================ */
 
-rbox_server_t *rbox_server_new(const char *socket_path) {
+rbox_server_t *rbox_server_new(const char *socket_path, rbox_error_info_t *err_info) {
     if (!socket_path) {
         errno = EINVAL;
+        rbox_error_set(err_info, RBOX_ERR_INVALID, EINVAL, RBOX_MSG_INVALID_PARAM);
         return NULL;
     }
 
     rbox_server_t *server = calloc(1, sizeof(rbox_server_t));
-    if (!server) return NULL;
+    if (!server) {
+        rbox_error_set(err_info, RBOX_ERR_MEMORY, 0, RBOX_MSG_MEMORY);
+        return NULL;
+    }
 
     strncpy(server->socket_path, socket_path, sizeof(server->socket_path) - 1);
     server->socket_path[sizeof(server->socket_path) - 1] = '\0';
@@ -287,6 +297,7 @@ rbox_server_t *rbox_server_new(const char *socket_path) {
     /* Create socket */
     server->fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server->fd < 0) {
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_CONN_FAILED);
         free(server);
         return NULL;
     }
@@ -304,6 +315,7 @@ rbox_server_t *rbox_server_new(const char *socket_path) {
     addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
 
     if (bind(server->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_CONN_FAILED);
         close(server->fd);
         free(server);
         return NULL;
@@ -315,20 +327,23 @@ rbox_server_t *rbox_server_new(const char *socket_path) {
     return server;
 }
 
-rbox_error_t rbox_server_listen(rbox_server_t *server) {
+rbox_error_t rbox_server_listen(rbox_server_t *server, rbox_error_info_t *err_info) {
     if (!server || server->fd < 0) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
         return RBOX_ERR_INVALID;
     }
 
     if (listen(server->fd, 10) < 0) {
+        rbox_error_set(err_info, RBOX_ERR_IO, errno, RBOX_MSG_CONN_FAILED);
         return RBOX_ERR_IO;
     }
 
     return RBOX_OK;
 }
 
-rbox_client_t *rbox_server_accept(rbox_server_t *server) {
+rbox_client_t *rbox_server_accept(rbox_server_t *server, rbox_error_info_t *err_info) {
     if (!server || server->fd < 0) {
+        rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
         return NULL;
     }
 

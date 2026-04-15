@@ -42,7 +42,8 @@ func NewRBoxServer(socketPath string) (*RBoxServer, error) {
 	os.Remove(socketPath)
 
 	// Create the server
-	cServer := C.rbox_server_handle_new(cPath)
+	var errInfo C.rbox_error_info_t
+	cServer := C.rbox_server_handle_new(cPath, &errInfo)
 	if cServer == nil {
 		return nil, fmt.Errorf("failed to create C server")
 	}
@@ -72,7 +73,8 @@ func (s *RBoxServer) GetRequest() *RBoxRequest {
 		return nil
 	}
 
-	cReq := C.rbox_server_get_request(s.cServer)
+	var errInfo C.rbox_error_info_t
+	cReq := C.rbox_server_get_request(s.cServer, &errInfo)
 	if cReq == nil {
 		return nil
 	}
