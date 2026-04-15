@@ -212,18 +212,6 @@ std::shared_ptr<PatternNode> factorAlternation(
         return node;
     }
     
-    // DEBUG: Check if this alternation contains wzwz
-    bool has_wzwz = false;
-    for (const auto& child : node->children) {
-        if (child->type == PatternType::LITERAL && child->value == "wzwz") {
-            has_wzwz = true;
-            break;
-        }
-    }
-    if (has_wzwz && proof_out) {
-        proof_out->valid = false;  // Mark for debugging
-    }
-    
     // Get all literal alternatives
     std::vector<std::string> alternatives;
     for (const auto& child : node->children) {
@@ -282,43 +270,12 @@ std::shared_ptr<PatternNode> factorAlternation(
                 }
             }
             
-            // DEBUG: Check if we have matching seeds for all alternatives
-            if (proof_out && group_seeds.size() != group_alts.size()) {
-                proof_out->valid = false;  // Mismatch - some alternatives lost their seeds
-            }
-            
-            // DEBUG: Check for specific case
-            if (proof_out && prefix == "wz") {
-                // Detailed debug for wz group
-                std::string debug_info = "WZ_GROUP: alts=[";
-                for (size_t i = 0; i < group_alts.size(); i++) {
-                    if (i > 0) debug_info += ",";
-                    debug_info += group_alts[i];
-                }
-                debug_info += "] seeds=[";
-                for (size_t i = 0; i < group_seeds.size(); i++) {
-                    if (i > 0) debug_info += ",";
-                    debug_info += group_seeds[i];
-                }
-                debug_info += "]";
-                proof_out->before = debug_info;
-            }
-            
             if (group_alts.size() == 1) {
                 // Single alternative in group - keep as literal with its seed only
                 auto lit = PatternNode::createLiteral(group_alts[0], {group_seeds[0]}, all_counter_seeds);
                 new_children.push_back(lit);
                 new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
             } else {
-                // DEBUG: Trace group processing for wz group
-                if (proof_out && prefix == "wz") {
-                    proof_out->valid = false;  // Mark for debugging
-                    // Log detailed info about this group
-                    // Add debug info to proof
-                    if (proof_out->steps.empty()) {
-                        proof_out->before = "GROUP_WZ_DEBUG:";
-                    }
-                }
                 // Multiple alternatives share a prefix - create inner alternation with factored prefix
                 // Structure: prefix + (remainder1 | remainder2 | ...)
                 // CRITICAL: Check if any input equals the prefix exactly (would have empty remainder)
@@ -360,29 +317,6 @@ std::shared_ptr<PatternNode> factorAlternation(
                 
                 // Also check: all remainders must be valid (non-empty or explicitly empty)
                 bool all_remainders_valid = (remainders.size() + (has_empty_remainder ? 1 : 0)) == group_alts.size();
-                
-                // DEBUG: Trace wz group specifically
-                if (proof_out && prefix == "wz") {
-                    std::string debug = "WZ_GROUP:[";
-                    for (size_t i = 0; i < group_alts.size(); i++) {
-                        if (i > 0) debug += ",";
-                        debug += group_alts[i];
-                    }
-                    debug += "] seeds=[";
-                    for (size_t i = 0; i < group_seeds.size(); i++) {
-                        if (i > 0) debug += ",";
-                        debug += group_seeds[i];
-                    }
-                    debug += "] remainders=[";
-                    for (size_t i = 0; i < remainders.size(); i++) {
-                        if (i > 0) debug += ",";
-                        debug += remainders[i];
-                    }
-                    debug += "] common=" + remainder_common + " compatible=" + 
-                             (remainders_compatible ? "true" : "false") + " valid=" +
-                             (all_remainders_valid ? "true" : "false");
-                    proof_out->before = debug;
-                }
                 
                 if (!remainders_compatible || !all_remainders_valid) {
                     // Remainders don't share structure - don't factor this group
@@ -498,55 +432,6 @@ std::shared_ptr<PatternNode> factorAlternation(
                     new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
                 }
             }
-        }
-        
-        // DEBUG: Check if we lost any alternatives
-        if (proof_out && new_children.size() < alternatives.size()) {
-            proof_out->valid = false;  // Lost alternatives!
-            // Build debug info with detailed SEQ contents
-            std::string debug = "LOST:" + std::to_string(new_children.size()) + "vs" + 
-                               std::to_string(alternatives.size()) + " [";
-            for (size_t i = 0; i < alternatives.size(); i++) {
-                if (i > 0) debug += ",";
-                debug += alternatives[i];
-            }
-            debug += "]->[";
-            for (size_t i = 0; i < new_children.size(); i++) {
-                if (i > 0) debug += ",";
-                if (new_children[i]->type == PatternType::LITERAL) {
-                    debug += new_children[i]->value;
-                } else if (new_children[i]->type == PatternType::SEQUENCE) {
-                    debug += "SEQ{";
-                    // Show what's in the sequence
-                    for (size_t j = 0; j < new_children[i]->children.size(); j++) {
-                        if (j > 0) debug += ",";
-                        if (new_children[i]->children[j]->type == PatternType::LITERAL) {
-                            debug += new_children[i]->children[j]->value;
-                        } else if (new_children[i]->children[j]->type == PatternType::ALTERNATION) {
-                            debug += "ALT(" + std::to_string(new_children[i]->children[j]->children.size()) + ")[";
-                            // Show alternation children
-                            for (size_t k = 0; k < new_children[i]->children[j]->children.size(); k++) {
-                                if (k > 0) debug += ",";
-                                if (new_children[i]->children[j]->children[k]->type == PatternType::LITERAL) {
-                                    debug += new_children[i]->children[j]->children[k]->value;
-                                } else {
-                                    debug += "?";
-                                }
-                            }
-                            debug += "]";
-                        } else if (new_children[i]->children[j]->type == PatternType::OPTIONAL) {
-                            debug += "OPT";
-                        } else {
-                            debug += "?";
-                        }
-                    }
-                    debug += "}";
-                } else {
-                    debug += "OTHER";
-                }
-            }
-            debug += "]";
-            proof_out->after = debug;
         }
         
         // Create new alternation with factored children

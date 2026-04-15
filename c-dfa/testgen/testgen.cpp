@@ -308,38 +308,7 @@ static void collectFragmentNames(std::shared_ptr<PatternNode> node, std::set<std
     }
 }
 
-// Check if all FRAGMENT_REF nodes in AST have definitions in the fragments map
-static bool hasAllFragmentDefs(std::shared_ptr<PatternNode> ast,
-                               const std::map<std::string, std::string>& fragments) {
-    std::set<std::string> names;
-    collectFragmentNames(ast, names);
-    for (const auto& name : names) {
-        if (fragments.find(name) == fragments.end()) {
-            return false;
-        }
-    }
-    return true;
-}
 
-// Add missing fragment definitions from AST to the fragments map
-// Returns the number of missing fragments found and added
-static int addMissingFragmentDefs(std::shared_ptr<PatternNode> ast,
-                                 std::map<std::string, std::string>& fragments,
-                                 std::mt19937& rng) {
-    std::set<std::string> names;
-    collectFragmentNames(ast, names);
-    int missing_count = 0;
-    for (const auto& name : names) {
-        if (fragments.find(name) == fragments.end()) {
-            // Fragment referenced but not defined - this is a bug upstream
-            // Add placeholder definition to allow processing to continue
-            fprintf(stderr, "WARNING: Fragment '%s' referenced but not defined, adding placeholder\n", name.c_str());
-            fragments[name] = ".";
-            missing_count++;
-        }
-    }
-    return missing_count;
-}
 
 // Parse pattern string to AST (simple parser for basic patterns)
 std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
@@ -356,9 +325,6 @@ std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
         if (rest.empty() || (rest[0] != '+' && rest[0] != '*' && rest[0] != '?')) return nullptr;
         
         std::string frag_name = pattern.substr(2, closing - 2);
-        if (frag_name == "fNag747" || frag_name == "frag747") {
-            fprintf(stderr, "DEBUG PARSE: pattern='%s', frag_name='%s'\n", pattern.c_str(), frag_name.c_str());
-        }
         if (!frag_name.empty()) {
             auto node = PatternNode::createFragment(frag_name, {}, {});
             
@@ -787,29 +753,6 @@ std::vector<TestCase> TestGenerator::generate() {
             
             for (auto& mut_result : mutations) {
                 if (mut_result.valid) {
-                    // Debug: check what mutation is doing
-                    std::string mutated_pattern = mut_result.mutated_tc.pattern();
-                    if (mutated_pattern.find("fNag") != std::string::npos) {
-                        fprintf(stderr, "DEBUG MUT: Pattern has fNag: %s\n", mutated_pattern.c_str());
-                        // Now check AST IMMEDIATELY after pattern()
-                        if (mut_result.mutated_tc.ast) {
-                            fprintf(stderr, "DEBUG MUT: AST root type: %d (SEQUENCE=%d, ALTERNATION=%d, LITERAL=%d, FRAGMENT_REF=%d)\n", 
-                                (int)mut_result.mutated_tc.ast->type,
-                                (int)PatternType::SEQUENCE,
-                                (int)PatternType::ALTERNATION,
-                                (int)PatternType::LITERAL,
-                                (int)PatternType::FRAGMENT_REF);
-                            fprintf(stderr, "DEBUG MUT: AST value: '%s'\n", mut_result.mutated_tc.ast->value.c_str());
-                            fprintf(stderr, "DEBUG MUT: AST children count: %zu\n", mut_result.mutated_tc.ast->children.size());
-                            fprintf(stderr, "DEBUG MUT: AST has quantified: %d\n", mut_result.mutated_tc.ast->quantified ? 1 : 0);
-                        }
-                        std::set<std::string> ast_frags;
-                        collectFragmentNames(mut_result.mutated_tc.ast, ast_frags);
-                        fprintf(stderr, "DEBUG MUT: AST-fragments count: %zu\n", ast_frags.size());
-                        for (const auto& f : ast_frags) {
-                            fprintf(stderr, "DEBUG MUT:   frag='%s'\n", f.c_str());
-                        }
-                    }
                     next_core = mut_result.mutated_tc;
                     mut_proof = mut_result.proof;
                     found_valid = true;
@@ -1375,6 +1318,7 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
         
         if (ib_result.success && ib_result.ast) {
             result.ast = ib_result.ast;
+            result.fragments = ib_result.fragments;
             result.pattern = serializePattern(ib_result.ast);
             result.proof = ib_result.proof;
         } else {
@@ -1422,14 +1366,6 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
             result.proof += "    Before: " + before + "\n";
             result.proof += "    After:  " + after_factor + "\n";
             result.proof += "    Constraint: must-match(" + std::to_string(after_match) + "), must-not-match(" + std::to_string(after_counters) + ")\n";
-            
-            // DEBUG: Add any debug info from factorization
-            if (!factor_proof.before.empty() && factor_proof.before.substr(0, 3) == "WZ_") {
-                result.proof += "    DEBUG: " + factor_proof.before + "\n";
-            }
-            if (!factor_proof.after.empty() && factor_proof.after.substr(0, 5) == "LOST:") {
-                result.proof += "    DEBUG: " + factor_proof.after + "\n";
-            }
             
             // Generate detailed per-input derivation proof
             result.proof += "\n    DERIVATION (per input):\n";
@@ -1763,23 +1699,17 @@ void TestGenerator::writePatternFile(const std::vector<TestCase>& tests, const s
     
     // Validate: ensure every FRAGMENT_REF in patterns has a definition
     for (const auto& tc : tests) {
-        // Debug: check if the pattern matches what serializePattern would produce
-        fprintf(stderr, "DEBUG WRITE: tc.pattern = '%s' (len=%zu)\n", tc.pattern.c_str(), tc.pattern.size());
         auto refs = extractFragmentRefsFromPattern(tc.pattern);
-        fprintf(stderr, "DEBUG WRITE: extracted %zu fragment refs\n", refs.size());
         for (const auto& ref : refs) {
-            fprintf(stderr, "DEBUG WRITE: ref = '%s'\n", ref.c_str());
             if (all_fragments.find(ref) == all_fragments.end()) {
                 fprintf(stderr, "ERROR: Pattern references undefined fragment '%s' in test %d - this is a bug in testgen\n", 
                         ref.c_str(), tc.test_id);
-                // DON'T add placeholder - the NFA builder will fail and help identify the bug
-                // Debug: print first 50 chars of pattern to help trace
                 std::string pattern_short = tc.pattern.substr(0, 50);
                 fprintf(stderr, "ERROR: Pattern (first 50 chars): %s\n", pattern_short.c_str());
-                fprintf(stderr, "ERROR: Available fragments in tc.fragments (%zu total):\n", tc.fragments.size());
-                for (const auto& f : tc.fragments) {
+                fprintf(stderr, "ERROR: Available fragments (%zu total):\n", all_fragments.size());
+                for (const auto& f : all_fragments) {
                     fprintf(stderr, "ERROR:   '%s' -> '%s'\n", f.first.c_str(), f.second.c_str());
-                    if (tc.fragments.size() > 10) break; // Limit output
+                    if (all_fragments.size() > 10) break;
                 }
             }
         }
@@ -1973,7 +1903,6 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
             int category_mask = 0;
             
             // Parse stdout for matched, category, and category_mask
-            // DEBUG: Print the actual stdout to diagnose parsing issues
             if (res.stdout.empty()) {
                 all_matched = false;
                 match_fail_reason = "stdout was empty";

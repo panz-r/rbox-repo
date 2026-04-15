@@ -95,6 +95,23 @@ static bool hasAllFragmentDefs(std::shared_ptr<PatternNode> node, const std::map
     return true;
 }
 
+// Ensure all FRAGMENT_REF nodes in AST have definitions in fragments map
+// Adds placeholder definitions for any missing fragment refs
+static void ensureFragmentDefs(std::shared_ptr<PatternNode> node, std::map<std::string, std::string>& fragments) {
+    if (!node) return;
+    if (node->type == PatternType::FRAGMENT_REF) {
+        if (fragments.find(node->fragment_name) == fragments.end()) {
+            fragments[node->fragment_name] = ".";
+        }
+    }
+    if (node->quantified) {
+        ensureFragmentDefs(node->quantified, fragments);
+    }
+    for (auto& child : node->children) {
+        ensureFragmentDefs(child, fragments);
+    }
+}
+
 static bool patternMatchesPlus(const std::string& content, const std::string& str) {
     if (str.empty() || content.empty()) return false;
     size_t content_len = content.size();
@@ -310,6 +327,7 @@ CoordinatedMutationResult CharSubstituteCoordOp::apply(const TestCaseCore& origi
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | CHAR_SUB(" + old_char + "→" + new_char + ")";
     
     Expectation e;
@@ -369,6 +387,7 @@ CoordinatedMutationResult AddAlternativeCoordOp::apply(const TestCaseCore& origi
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | ADD_ALT(+" + new_alt_val + ")";
     
     Expectation e;
@@ -433,6 +452,7 @@ CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& origi
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | NEST_Q(+)";
     
     Expectation e;
@@ -502,6 +522,7 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | EXTEND(+" + extra + ")";
     
     Expectation e;
@@ -567,6 +588,7 @@ CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& origin
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | DEEPEN_NESTING";
     
     Expectation e;
@@ -1041,6 +1063,7 @@ CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, s
     }
     
     result.mutated_tc.ast = mutated_ast;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.valid = true;
     result.proof = original.proof + " | CUT_BASED(type=" + std::to_string(mutation_type) + ")";
     
@@ -1117,6 +1140,7 @@ CoordinatedMutationResult ExtendAlternationCoordOp::apply(const TestCaseCore& or
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | EXTEND_ALT(+" + new_alt_val + ")";
     
     Expectation e;
@@ -1185,6 +1209,7 @@ CoordinatedMutationResult RemoveQuantifierCoordOp::apply(const TestCaseCore& ori
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | REMOVE_QUANTIFIER";
     
     Expectation e;
@@ -1256,6 +1281,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         result.mutated_tc.ast = mutated_ast;
         result.mutated_tc.fragments = original.fragments;
+        ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
         result.mutated_tc.proof = original.proof + " | ALTER_ALT(" + std::string(1, old_char) + "→" + std::string(1, new_char) + ")";
         
         Expectation e;
@@ -1317,6 +1343,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         result.mutated_tc.ast = mutated_ast;
         result.mutated_tc.fragments = original.fragments;
+        ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
         result.mutated_tc.proof = original.proof + " | ALTER_ALT_EXTEND(+" + std::string(1, extra) + ")";
         
         Expectation e;
@@ -1396,6 +1423,7 @@ CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore&
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | FLATTEN_QUANTIFIED_ALT";
     
     Expectation e;
@@ -1473,6 +1501,7 @@ CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& or
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | UNWRAP_FRAGMENT_REF";
     
     Expectation e;
@@ -1539,6 +1568,7 @@ CoordinatedMutationResult SequenceToAlternationCoordOp::apply(const TestCaseCore
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | SEQ_TO_ALT";
     
     Expectation e;
@@ -1602,6 +1632,7 @@ CoordinatedMutationResult QuantifyAlternationCoordOp::apply(const TestCaseCore& 
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     
     std::string quant_name = (idx == 0) ? "+" : (idx == 1) ? "*" : "?";
     result.mutated_tc.proof = original.proof + " | QUANTIFY_ALT(" + quant_name + ")";
@@ -1671,6 +1702,7 @@ CoordinatedMutationResult PrefixSuffixAlternationCoordOp::apply(const TestCaseCo
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
+    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
     result.mutated_tc.proof = original.proof + " | PREFIX_SUFFIX_ALT(+" + prefix + ", +" + suffix + ")";
     
     Expectation e;
@@ -1709,45 +1741,9 @@ std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(
 ) const {
     std::vector<CoordinatedMutationResult> all_results;
     
-    // Debug: check original tc.ast before mutation
-    if (tc.fragments.find("frag747") != tc.fragments.end()) {
-        std::string pat = tc.pattern();
-        fprintf(stderr, "DEBUG MUTATE INPUT: tc has frag747, pattern=%s\n", pat.c_str());
-        if (tc.ast) {
-            std::set<std::string> frag_names;
-            std::function<void(std::shared_ptr<PatternNode>)> collect = [&](std::shared_ptr<PatternNode> n) {
-                if (!n) return;
-                if (n->type == PatternType::FRAGMENT_REF) frag_names.insert(n->fragment_name);
-                if (n->quantified) collect(n->quantified);
-                for (auto& c : n->children) collect(c);
-            };
-            collect(tc.ast);
-            fprintf(stderr, "DEBUG MUTATE INPUT: AST has %zu fragment nodes, types: ", frag_names.size());
-            for (auto& f : frag_names) fprintf(stderr, "%s ", f.c_str());
-            fprintf(stderr, "\n");
-        }
-    }
-    
     for (auto& op : operators) {
         auto result = op->apply(tc, rng);
         if (result.valid) {
-            // Debug: check the mutated pattern
-            if (result.mutated_tc.ast && result.mutated_tc.fragments.find("frag747") != result.mutated_tc.fragments.end()) {
-                std::string pat = result.mutated_tc.pattern();
-                if (pat.find("fNag") != std::string::npos) {
-                    fprintf(stderr, "DEBUG MUTATE: op=%s, pattern=%s\n", op->name().c_str(), pat.c_str());
-                    std::set<std::string> frag_names;
-                    std::function<void(std::shared_ptr<PatternNode>)> collect = [&](std::shared_ptr<PatternNode> n) {
-                        if (!n) return;
-                        if (n->type == PatternType::FRAGMENT_REF) frag_names.insert(n->fragment_name);
-                        if (n->quantified) collect(n->quantified);
-                        for (auto& c : n->children) collect(c);
-                    };
-                    collect(result.mutated_tc.ast);
-                    fprintf(stderr, "DEBUG MUTATE: AST has %zu fragment nodes\n", frag_names.size());
-                    for (auto& f : frag_names) fprintf(stderr, "DEBUG MUTATE:   frag='%s'\n", f.c_str());
-                }
-            }
             if (isValidPattern(result.mutated_tc.ast) && 
                 hasAllFragmentDefs(result.mutated_tc.ast, result.mutated_tc.fragments)) {
                 all_results.push_back(result);

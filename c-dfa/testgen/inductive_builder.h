@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <random>
+#include <map>
 
 // Forward declarations
 struct PatternNode;
@@ -25,6 +26,7 @@ struct InputState {
 
 struct BuildResult {
     std::shared_ptr<PatternNode> ast;
+    std::map<std::string, std::string> fragments;  // Fragment definitions
     std::string proof;
     bool success;
     

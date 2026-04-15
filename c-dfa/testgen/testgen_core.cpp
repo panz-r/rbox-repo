@@ -6,11 +6,7 @@ namespace TestGen {
 
 std::string TestCaseCore::pattern() const {
     if (ast) {
-        std::string result = serializePattern(ast);
-        if (result.find("fNag") != std::string::npos) {
-            fprintf(stderr, "DEBUG PATTERN: serialize produced fNag in: %s\n", result.c_str());
-        }
-        return result;
+        return serializePattern(ast);
     }
     return "";
 }

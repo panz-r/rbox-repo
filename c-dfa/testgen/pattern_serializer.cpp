@@ -100,9 +100,6 @@ std::string serializePattern(std::shared_ptr<PatternNode> node) {
         }
 
         case PatternType::FRAGMENT_REF:
-            if (node->fragment_name.find("fNag") != std::string::npos) {
-                fprintf(stderr, "DEBUG SERIAL: FRAGMENT_REF node->fragment_name='%s'\n", node->fragment_name.c_str());
-            }
             return "((" + node->fragment_name + "))+";
 
         default:
