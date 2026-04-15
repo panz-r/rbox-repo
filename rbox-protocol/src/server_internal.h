@@ -15,53 +15,11 @@
 #include "rbox_protocol_defs.h"
 #include "protocol.h"
 #include "rbox_protocol.h"
+#include "rbox_cache.h"
 
 /* Forward declaration */
 typedef struct rbox_server_request rbox_server_request_t;
 typedef struct rbox_server_handle rbox_server_handle_t;
-
-/* Response cache configuration */
-#define RBOX_RESPONSE_CACHE_SIZE 256
-#define RBOX_CACHE_SLOT_EMPTY 0
-#define RBOX_CACHE_SLOT_OCCUPIED 1
-#define RBOX_CACHE_SLOT_TOMBSTONE 2
-
-/* Server response cache entry - used in open-addressing hash table with LRU */
-typedef struct rbox_response_cache_entry {
-    /* key fields */
-    uint8_t client_id[16];
-    uint8_t request_id[16];
-    uint32_t packet_checksum;
-    uint32_t cmd_hash;
-    uint64_t cmd_hash2;
-    uint32_t fenv_hash;
-    uint32_t key_hash;            /* precomputed hash for quick mismatch detection */
-
-    /* value fields */
-    uint8_t decision;
-    char reason[256];
-    uint32_t duration;
-    time_t timestamp;
-    time_t expires_at;
-
-    /* Env decisions (v9) */
-    int env_decision_count;
-    uint8_t *env_decisions;       /* bitmap: bit i = decision for env var i */
-
-    /* LRU list pointers */
-    struct rbox_response_cache_entry *lru_prev;
-    struct rbox_response_cache_entry *lru_next;
-} rbox_response_cache_entry_t;
-
-/* Hash table cache structure with LRU eviction */
-typedef struct {
-    rbox_response_cache_entry_t *slots[RBOX_RESPONSE_CACHE_SIZE];
-    uint8_t slot_state[RBOX_RESPONSE_CACHE_SIZE];
-    int tombstone_count;
-    rbox_response_cache_entry_t *lru_head;
-    rbox_response_cache_entry_t *lru_tail;
-    int count;
-} rbox_response_cache_t;
 
 /* Decision queue for thread-safe decision passing */
 typedef struct rbox_server_decision {
@@ -277,9 +235,8 @@ struct rbox_server_handle {
     pthread_cond_t startup_cond;
     int startup_complete;          /* 1 once thread signals it has entered main loop */
 
-    /* Response cache (hash table with LRU) */
-    rbox_response_cache_t cache;
-    pthread_mutex_t cache_mutex;   /* Protects response cache */
+    /* Response cache */
+    rbox_cache_t cache;
 
     /* Request queue - lock-free MPSC (Michael & Scott) */
     rbox_request_queue_t request_queue;

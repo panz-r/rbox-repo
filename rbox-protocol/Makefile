@@ -38,7 +38,7 @@ SRCS = src/socket_io.c \
        src/session.c \
        src/server_client.c \
        src/server_response.c \
-       src/server_cache.c \
+       src/rbox_cache.c \
        src/socket.c \
        src/packet.c \
        src/parser.c \
@@ -60,10 +60,12 @@ TEST_ENV_SRC = tests/test_env_decisions.c
 TEST_ENV_BIN = test_env_decisions
 TEST_STRESS_SRC = tests/test_stress.c
 TEST_STRESS_BIN = test_stress
+TEST_CACHE_SRC = tests/test_cache.c
+TEST_CACHE_BIN = test_cache
 
-.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-env test-stress test-fuzz test-fuzz-1h test-fuzz-4h
+.PHONY: all clean test test-unit test-full test-integration test-blocking test-persistent test-env test-stress test-cache test-fuzz test-fuzz-1h test-fuzz-4h
 
-all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
+all: $(SHLIB) $(TEST_BASIC_BIN) $(TEST_INTEG_BIN) $(TEST_FULL_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN)
 
 build-all: $(SHLIB)
 	@echo "Shared library built."
@@ -88,7 +90,7 @@ $(SHELLSPLIT_OBJ):
 	$(CC) $(CFLAGS) -c -o $@ $(SHELLSPLIT_SRC)
 
 # Run both unit tests and integration tests
-test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
+test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN)
 	@echo ""
 	@echo "=== Running unit tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_BASIC_BIN)
@@ -110,6 +112,12 @@ test: $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(T
 	@echo ""
 	@echo "=== Running stress tests ==="
 	LD_LIBRARY_PATH=. ./$(TEST_STRESS_BIN)
+	@echo ""
+	@echo "=== Running cache tests ==="
+	LD_LIBRARY_PATH=. ./$(TEST_CACHE_BIN)
+
+test-cache: $(TEST_CACHE_BIN)
+	LD_LIBRARY_PATH=. ./$(TEST_CACHE_BIN)
 
 test-fuzz:
 	cd fuzz && make run-10m
@@ -142,8 +150,11 @@ $(TEST_ENV_BIN): $(TEST_ENV_SRC) $(SHLIB)
 $(TEST_STRESS_BIN): $(TEST_STRESS_SRC) $(SHLIB)
 	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
 
+$(TEST_CACHE_BIN): $(TEST_CACHE_SRC) $(SHLIB)
+	$(CC) $(CFLAGS) -o $@ $< $(SHLIB) $(LDFLAGS)
+
 clean:
-	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN)
+	$(RM) $(OBJS) $(SHLIB) $(TEST_BASIC_BIN) $(TEST_FULL_BIN) $(TEST_INTEG_BIN) $(TEST_BLOCK_BIN) $(TEST_PERSIST_BIN) $(TEST_ENV_BIN) $(TEST_STRESS_BIN) $(TEST_CACHE_BIN)
 	-$(RM) fuzz/*.log
 
 help:

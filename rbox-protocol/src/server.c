@@ -26,7 +26,6 @@
 #include "runtime.h"
 #include "packet.h"
 #include "server.h"
-#include "server_cache.h"
 #include "server_response.h"
 #include "server_client.h"
 
@@ -441,10 +440,10 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
     uint32_t cached_duration;
     int cached_env_decision_count = 0;
     uint8_t *cached_env_decisions = NULL;
-    if (rbox_server_cache_lookup(server, req->client_id, req->request_id, packet_checksum,
-                                req->cmd_hash, cmd_hash2, req->fenv_hash,
-                                &cached_decision, cached_reason, &cached_duration,
-                                &cached_env_decision_count, &cached_env_decisions)) {
+    if (rbox_cache_lookup(&server->cache, req->client_id, req->request_id, packet_checksum,
+                        req->cmd_hash, cmd_hash2, req->fenv_hash,
+                        &cached_decision, cached_reason, &cached_duration,
+                        &cached_env_decision_count, &cached_env_decisions)) {
         DBG("Cache hit for request on fd %d", fd);
         size_t resp_len;
         char *resp = rbox_server_build_response(req->client_id, req->request_id, req->cmd_hash,
@@ -953,10 +952,10 @@ static void *server_thread_func(void *arg) {
             uint32_t cmd_hash = req->cmd_hash;
             uint64_t cmd_hash2 = (req->command_data && req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
             uint32_t packet_checksum = (req->command_data && req->command_len > 0) ? rbox_runtime_crc32(0, req->command_data, req->command_len) : 0;
-            rbox_server_cache_insert(server, req->client_id, req->request_id, packet_checksum,
-                                  cmd_hash, cmd_hash2, dec->fenv_hash,
-                                  dec->decision, dec->reason, dec->duration,
-                                  dec->env_decision_count, dec->env_decisions);
+            rbox_cache_insert(&server->cache, req->client_id, req->request_id, packet_checksum,
+                            cmd_hash, cmd_hash2, dec->fenv_hash,
+                            dec->decision, dec->reason, dec->duration,
+                            dec->env_decision_count, dec->env_decisions);
             char *resp = rbox_server_build_response(req->client_id, req->request_id, cmd_hash,
                 dec->decision, dec->reason,
                 dec->fenv_hash, dec->env_decision_count, (uint8_t *)dec->env_decisions, &resp_len);
@@ -1419,14 +1418,8 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         free(srv);
         return NULL;
     }
-    if (pthread_mutex_init(&srv->cache_mutex, NULL) != 0) {
-        close(srv->listen_fd);
-        unlink(socket_path);
-        free(srv);
-        return NULL;
-    }
+    /* Initialize pthread primitives - cleanup on failure */
     if (pthread_mutex_init(&srv->client_fd_mutex, NULL) != 0) {
-        pthread_mutex_destroy(&srv->cache_mutex);
         close(srv->listen_fd);
         unlink(socket_path);
         free(srv);
@@ -1434,7 +1427,6 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     }
     if (pthread_mutex_init(&srv->startup_mutex, NULL) != 0) {
         pthread_mutex_destroy(&srv->client_fd_mutex);
-        pthread_mutex_destroy(&srv->cache_mutex);
         close(srv->listen_fd);
         unlink(socket_path);
         free(srv);
@@ -1443,7 +1435,6 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     if (pthread_cond_init(&srv->startup_cond, NULL) != 0) {
         pthread_mutex_destroy(&srv->startup_mutex);
         pthread_mutex_destroy(&srv->client_fd_mutex);
-        pthread_mutex_destroy(&srv->cache_mutex);
         close(srv->listen_fd);
         unlink(socket_path);
         free(srv);
@@ -1453,7 +1444,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     atomic_flag_clear(&srv->stop_flag);
     srv->client_fds = NULL;
     srv->active_client_count = 0;
-    rbox_server_cache_init(srv);
+    rbox_cache_init(&srv->cache, RBOX_RESPONSE_CACHE_SIZE);
     if (request_pool_init(srv, RBOX_REQUEST_POOL_SIZE) < 0) {
         /* Pool init completely failed - continue with malloc fallback */
     }
@@ -1466,7 +1457,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     if (!req_dummy) {
         request_pool_destroy(srv);
         send_pool_destroy(srv);
-        pthread_mutex_destroy(&srv->cache_mutex);
+        rbox_cache_destroy(&srv->cache);
         pthread_mutex_destroy(&srv->client_fd_mutex);
         pthread_mutex_destroy(&srv->startup_mutex);
         pthread_cond_destroy(&srv->startup_cond);
@@ -1482,8 +1473,10 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
     if (srv->request_wake_fd < 0) {
         request_pool_destroy(srv);
         send_pool_destroy(srv);
-        pthread_mutex_destroy(&srv->cache_mutex);
+        rbox_cache_destroy(&srv->cache);
         pthread_mutex_destroy(&srv->client_fd_mutex);
+        pthread_mutex_destroy(&srv->startup_mutex);
+        pthread_cond_destroy(&srv->startup_cond);
         close(srv->listen_fd);
         unlink(srv->socket_path);
         free(srv);
@@ -1495,7 +1488,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         close(srv->request_wake_fd);
         request_pool_destroy(srv);
         send_pool_destroy(srv);
-        pthread_mutex_destroy(&srv->cache_mutex);
+        rbox_cache_destroy(&srv->cache);
         pthread_mutex_destroy(&srv->client_fd_mutex);
         pthread_mutex_destroy(&srv->startup_mutex);
         pthread_cond_destroy(&srv->startup_cond);
@@ -1513,7 +1506,7 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path) {
         close(srv->request_wake_fd);
         request_pool_destroy(srv);
         send_pool_destroy(srv);
-        pthread_mutex_destroy(&srv->cache_mutex);
+        rbox_cache_destroy(&srv->cache);
         pthread_mutex_destroy(&srv->client_fd_mutex);
         pthread_mutex_destroy(&srv->startup_mutex);
         pthread_cond_destroy(&srv->startup_cond);
@@ -1595,9 +1588,8 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
     send_pool_destroy(server);
 
     /* Destroy response cache */
-    rbox_server_cache_destroy(server);
+    rbox_cache_destroy(&server->cache);
 
-    pthread_mutex_destroy(&server->cache_mutex);
     pthread_mutex_destroy(&server->client_fd_mutex);
     pthread_mutex_destroy(&server->startup_mutex);
     pthread_cond_destroy(&server->startup_cond);
