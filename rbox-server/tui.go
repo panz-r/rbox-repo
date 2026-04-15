@@ -294,6 +294,7 @@ const (
 	EventLog
 	EventRequest
 	EventStoreRequest
+	EventNewRequest // Combined store + display event - never drops
 	EventAddPendingRetry
 )
 
@@ -746,6 +747,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.AddLog(msg.Log)
 		case EventStoreRequest:
 			StoreRequest(msg.RequestID, msg.Req)
+		case EventNewRequest:
+			// Combined event: store request AND display - never drops
+			StoreRequest(msg.RequestID, msg.Req)
+			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars)
 		case EventAddPendingRetry:
 			// Find the command log for this request
 			var cmdLog *CommandLog
@@ -1837,13 +1842,17 @@ func RunTUIMode() {
 				}
 			}
 
-			// Store request for later decision
-			model.eventChan <- Event{Type: EventStoreRequest, RequestID: requestID, Req: req}
-
-			// Send request event to TUI
-			select {
-			case model.eventChan <- Event{Type: EventRequest, RequestID: requestID, Command: cmd, Args: argsStr, Caller: caller, Syscall: syscall, EnvVars: envVars}:
-			default:
+			// Store request AND send display event in one atomic blocking operation
+			// This ensures no requests are ever dropped - backpressure if TUI is busy
+			model.eventChan <- Event{
+				Type:      EventNewRequest,
+				RequestID: requestID,
+				Req:       req,
+				Command:   cmd,
+				Args:      argsStr,
+				Caller:    caller,
+				Syscall:   syscall,
+				EnvVars:   envVars,
 			}
 		}
 	}()
