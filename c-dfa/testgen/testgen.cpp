@@ -1849,26 +1849,17 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
     std::string abs_pattern = cwd + "/" + pattern_file;
     std::string output_dir = abs_pattern.substr(0, abs_pattern.rfind('/'));
     
-    std::cout << "1. Building NFA...\n";
-    std::string nfa_file = output_dir + "/test.nfa";
-    std::string nfa_cmd = tools_dir + "/nfa_builder " + abs_pattern + " " + nfa_file + " 2>&1";
-    int result = system(nfa_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "NFA builder failed!\n";
-        return 1;
-    }
-    std::cout << "   NFA built successfully\n\n";
-    
-    std::cout << "2. Building DFA...\n";
+    std::cout << "1. Building DFA...\n";
     std::string dfa_file = output_dir + "/test.dfa";
-    result = system((tools_dir + "/nfa2dfa_advanced " + nfa_file + " " + dfa_file + " 2>&1").c_str());
+    std::string dfa_cmd = tools_dir + "/cdfatool compile " + abs_pattern + " -o " + dfa_file + " 2>&1";
+    int result = system(dfa_cmd.c_str());
     if (result != 0) {
-        std::cerr << "DFA builder failed!\n";
+        std::cerr << "cdfatool compile failed!\n";
         return 1;
     }
     std::cout << "   DFA built successfully\n\n";
     
-    std::cout << "3. Testing patterns...\n";
+    std::cout << "2. Testing patterns...\n";
     
     int passed = 0;
     int failed = 0;
@@ -1890,7 +1881,7 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
         bool all_matched = true;
         std::string match_fail_reason;
         for (const auto& match_in : tc.matching_inputs) {
-            std::string cmd = tools_dir + "/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\"";
+            std::string cmd = tools_dir + "/cdfatool eval " + dfa_file + " <<< \"" + match_in + "\"";
             CommandResult res = runCommand(cmd);
             
             if (res.exit_code != 0) {
@@ -2039,7 +2030,7 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
         bool any_counter_matched = false;
         std::string counter_fail_reason;
         for (const auto& counter : tc.counter_inputs) {
-            std::string counter_cmd = tools_dir + "/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\"";
+            std::string counter_cmd = tools_dir + "/cdfatool eval " + dfa_file + " <<< \"" + counter + "\"";
             CommandResult res = runCommand(counter_cmd);
             
             if (res.exit_code != 0) {
@@ -2084,7 +2075,7 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
                     }
                 }
                 
-                std::string cmd = tools_dir + "/dfa_eval_wrapper " + dfa_file + " \"" + test_input + "\"";
+                std::string cmd = tools_dir + "/cdfatool eval " + dfa_file + " <<< \"" + test_input + "\"";
                 CommandResult res = runCommand(cmd);
                 
                 // Check for errors (ignore LOADING DFA debug messages)
@@ -2267,16 +2258,9 @@ int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const 
         std::string nfa_file = output_dir + "/temp.nfa";
         std::string dfa_file = output_dir + "/temp.dfa";
         
-        CommandResult nfa_res = runCommand(tools_dir + "/nfa_builder " + temp_pattern + " " + nfa_file);
-        if (nfa_res.exit_code != 0 || !nfa_res.stderr.empty()) { 
-            std::cout << "   FAIL #" << i << ": nfa_builder failed (exit=" << nfa_res.exit_code << ")\n";
-            failed++; 
-            continue; 
-        }
-        
-        CommandResult dfa_res = runCommand(tools_dir + "/nfa2dfa_advanced " + nfa_file + " " + dfa_file);
-        if (dfa_res.exit_code != 0 || !dfa_res.stderr.empty()) { 
-            std::cout << "   FAIL #" << i << ": nfa2dfa_advanced failed (exit=" << dfa_res.exit_code << ")\n";
+        CommandResult compile_res = runCommand(tools_dir + "/cdfatool compile " + temp_pattern + " -o " + dfa_file);
+        if (compile_res.exit_code != 0 || !compile_res.stderr.empty()) { 
+            std::cout << "   FAIL #" << i << ": cdfatool compile failed (exit=" << compile_res.exit_code << ")\n";
             failed++; 
             continue; 
         }
@@ -2284,11 +2268,11 @@ int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const 
         bool all_matched = true;
         int expected_category_0idx = static_cast<int>(tc.category) - 1;  // Convert 1-indexed to 0-indexed
         for (const auto& match_in : tc.matching_inputs) {
-            CommandResult res = runCommand(tools_dir + "/dfa_eval_wrapper " + dfa_file + " \"" + match_in + "\"");
+            CommandResult res = runCommand(tools_dir + "/cdfatool eval " + dfa_file + " <<< \"" + match_in + "\"");
             
             // Check for errors (ignore LOADING DFA debug messages)
             if (res.exit_code != 0) {
-                std::cout << "   FAIL #" << i << ": dfa_eval_wrapper error (exit=" << res.exit_code << ")\n";
+                std::cout << "   FAIL #" << i << ": cdfatool eval error (exit=" << res.exit_code << ")\n";
                 all_matched = false;
                 break;
             }
@@ -2362,7 +2346,7 @@ int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const 
         
         bool any_counter_matched = false;
         for (const auto& counter : tc.counter_inputs) {
-            CommandResult res = runCommand(tools_dir + "/dfa_eval_wrapper " + dfa_file + " \"" + counter + "\"");
+            CommandResult res = runCommand(tools_dir + "/cdfatool eval " + dfa_file + " <<< \"" + counter + "\"");
             
             // Check for errors (ignore LOADING DFA debug messages)
             bool is_debug_only = (res.stderr.find("LOADING DFA:") != std::string::npos);

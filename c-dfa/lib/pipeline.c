@@ -89,6 +89,10 @@ const char* pipeline_get_last_error(pipeline_t* p) {
     return p->last_error;
 }
 
+const char* pipeline_get_version(void) {
+    return "1.0.0";
+}
+
 static void set_error(pipeline_t* p, pipeline_error_t code, const char* msg) {
     p->last_error_code = code;
     snprintf(p->last_error, sizeof(p->last_error), "%s", msg);

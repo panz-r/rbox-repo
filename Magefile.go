@@ -18,7 +18,7 @@ const (
 	binDir          = "bin"
 	clientDir       = "rbox-preload"
 	cDfaDir         = "c-dfa"
-	cDfaToolsDir    = cDfaDir + "/tools"
+	cDfaToolsDir    = cDfaDir + "/build/tools"
 	cDfaSrcDir      = cDfaDir + "/src"
 	cDfaIncludeDir  = cDfaDir + "/include"
 	shellsplitDir   = "shellsplit"
@@ -50,7 +50,7 @@ func Desc(target string) string {
 		"Clean":             "Remove all build artifacts",
 		"Test":              "Run all tests",
 		"ValidatePatterns":  "Validate command pattern files (needs c-dfa tools)",
-		"Deps":              "Build DFA tools (nfa_builder, nfa2dfa, dfa2c) first",
+		"Deps":              "Build DFA tools (cdfatool) first",
 		"Install":           "Install binaries to system (requires root)",
 	}
 	return descriptions[target]
@@ -75,7 +75,7 @@ Install:
   mage install    - Install binaries to /usr/local (requires root)
 
 Dependencies:
-  mage deps       - Build DFA tools (nfa_builder, nfa2dfa_advanced, dfa2c_array)
+  mage deps       - Build DFA tools (cdfatool)
 
 Validation:
   mage validate   - Validate command pattern files
@@ -100,7 +100,7 @@ func BuildDependencies() error {
 		return fmt.Errorf("c-dfa build failed: %w", err)
 	}
 
-	// Now validate patterns (needs nfa_builder from c-dfa)
+	// Now validate patterns (needs cdfatool from c-dfa)
 	if err := ValidatePatterns(); err != nil {
 		return fmt.Errorf("pattern validation failed: %w", err)
 	}
@@ -155,16 +155,14 @@ func Deps() error {
 	fmt.Println("=== Building DFA tools ===")
 	wd, _ := os.Getwd()
 
-	// Build c-dfa using CMake which produces nfa_builder, nfa2dfa_advanced, dfa2c_array
+	// Build c-dfa using CMake which produces cdfatool
 	if err := runCMake(filepath.Join(wd, cDfaDir), true); err != nil {
 		return fmt.Errorf("c-dfa build failed: %w", err)
 	}
 
 	// Verify tools exist
 	tools := []string{
-		filepath.Join(wd, cDfaToolsDir, "nfa_builder"),
-		filepath.Join(wd, cDfaToolsDir, "nfa2dfa_advanced"),
-		filepath.Join(wd, cDfaToolsDir, "dfa2c_array"),
+		filepath.Join(wd, cDfaToolsDir, "cdfatool"),
 	}
 	for _, tool := range tools {
 		if _, err := os.Stat(tool); os.IsNotExist(err) {
@@ -202,9 +200,7 @@ func validateDFATools(wd string) error {
 		path string
 		name string
 	}{
-		{filepath.Join(wd, cDfaToolsDir, "nfa_builder"), "nfa_builder"},
-		{filepath.Join(wd, cDfaToolsDir, "nfa2dfa_advanced"), "nfa2dfa_advanced"},
-		{filepath.Join(wd, cDfaToolsDir, "dfa2c_array"), "dfa2c_array"},
+		{filepath.Join(wd, cDfaToolsDir, "cdfatool"), "cdfatool"},
 	}
 
 	var missing []string
@@ -243,49 +239,35 @@ func BuildDFA() error {
 		cc = "gcc"
 	}
 
-	nfaBuilder := filepath.Join(wd, cDfaToolsDir, "nfa_builder")
-	nfa2dfa := filepath.Join(wd, cDfaToolsDir, "nfa2dfa_advanced")
-	dfa2cArray := filepath.Join(wd, cDfaToolsDir, "dfa2c_array")
+	cdfatool := filepath.Join(wd, cDfaToolsDir, "cdfatool")
 	clientDirPath := filepath.Join(wd, clientDir)
 
 	patternFile := filepath.Join(clientDirPath, "rbox_client_safe_commands.txt")
-	nfaFile := filepath.Join(clientDirPath, "readonlybox.nfa")
 	dfaFile := filepath.Join(clientDirPath, "readonlybox.dfa")
 	cArrayFile := filepath.Join(clientDirPath, "readonlybox_dfa.c")
 	staticDataFile := filepath.Join(clientDirPath, "dfa_static_data.c")
 	outputFile := filepath.Join(wd, binDir, "libreadonlybox_client.so")
 
-	// Step 1: Pattern → NFA
-	if needsRebuild(nfaFile, patternFile) {
+	// Step 1: Pattern → DFA (direct, no NFA intermediate)
+	if needsRebuild(dfaFile, patternFile) {
 		fmt.Println("=== Pattern file changed, regenerating DFA ===")
-		cmd := exec.Command(nfaBuilder, patternFile, nfaFile)
+		cmd := exec.Command(cdfatool, "compile", patternFile, "-o", dfaFile)
 		cmd.Dir = clientDirPath
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("nfa_builder failed: %w", err)
+			return fmt.Errorf("cdfatool compile failed: %w", err)
 		}
 	}
 
-	// Step 2: NFA → DFA
-	if needsRebuild(dfaFile, nfaFile) {
-		cmd := exec.Command(nfa2dfa, nfaFile, dfaFile)
-		cmd.Dir = clientDirPath
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("nfa2dfa_advanced failed: %w", err)
-		}
-	}
-
-	// Step 3: DFA → C array
+	// Step 2: DFA → C array
 	if needsRebuild(cArrayFile, dfaFile) {
-		cmd := exec.Command(dfa2cArray, dfaFile, cArrayFile, "readonlybox_dfa_data")
+		cmd := exec.Command(cdfatool, "embedd", dfaFile, "-o", cArrayFile)
 		cmd.Dir = clientDirPath
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("dfa2c_array failed: %w", err)
+			return fmt.Errorf("cdfatool embedd failed: %w", err)
 		}
 	}
 
@@ -348,7 +330,7 @@ func BuildBinaries() error {
 		cc = "gcc"
 	}
 
-	// Ensure c-dfa tools are fully built before rbox-wrap (which needs dfa2c_array)
+	// Ensure c-dfa tools are fully built before rbox-wrap (which needs cdfatool)
 	// Build c-dfa tools using CMake
 	if err := runCMakeTools(filepath.Join(wd, cDfaDir)); err != nil {
 		return fmt.Errorf("c-dfa tools build failed: %w", err)
@@ -594,13 +576,13 @@ func ValidatePatterns() error {
 	fmt.Println("Validating patterns...")
 	wd, _ := os.Getwd()
 
-	// Check that nfa_builder exists before trying to use it
-	nfaBuilder := filepath.Join(wd, cDfaToolsDir, "nfa_builder")
-	if _, err := os.Stat(nfaBuilder); os.IsNotExist(err) {
-		return fmt.Errorf("nfa_builder not found: %s (run 'mage deps' first)", nfaBuilder)
+	// Check that cdfatool exists before trying to use it
+	cdfatool := filepath.Join(wd, cDfaToolsDir, "cdfatool")
+	if _, err := os.Stat(cdfatool); os.IsNotExist(err) {
+		return fmt.Errorf("cdfatool not found: %s (run 'mage deps' first)", cdfatool)
 	}
 
-	cmd := exec.Command(nfaBuilder, "--validate-only",
+	cmd := exec.Command(cdfatool, "validate",
 		filepath.Join(wd, clientDir, "rbox_client_safe_commands.txt"))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

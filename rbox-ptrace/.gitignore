@@ -1,8 +1,7 @@
 # Generated DFA files
-rbox_ptrace.nfa
 rbox_ptrace.dfa
+rbox_ptrace_dfa.c
 rbox_ptrace_dfa_data.c
-rbox_ptrace_dfa_data.o
 
 # Object files
 *.o

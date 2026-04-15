@@ -26,6 +26,10 @@ set(LIB_C_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/multi_target_array.c
 )
 
+# Note: nfa2dfa.c contains utility functions (init_hash_table, load_nfa_file, etc.)
+# that are used by the pipeline. It is compiled with NFABUILDER_NO_MAIN to exclude
+# its main() function from the library build.
+
 # SAT C++ modules
 set(SAT_CXX_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/dfa_minimize_sat.cpp
@@ -105,28 +109,26 @@ target_include_directories(sat_modules PUBLIC
 # Standalone Executables
 # ============================================================================
 
-# nfa_builder - uses C library
-add_executable(nfa_builder nfa_builder.c)
-target_link_libraries(nfa_builder PRIVATE readonlybox_dfa)
-target_compile_definitions(nfa_builder PRIVATE NFABUILDER_EXCLUDE_NFA_INIT)
-
-# dfa_eval_wrapper - uses C library
-add_executable(dfa_eval_wrapper dfa_eval_wrapper.c)
-target_link_libraries(dfa_eval_wrapper PRIVATE readonlybox_dfa)
-
-# dfa2c_array - standalone
-add_executable(dfa2c_array dfa2c_array.c)
-target_link_libraries(dfa2c_array PRIVATE readonlybox_dfa_headers)
-
-# nfa2dfa_advanced - uses C library and SAT modules
-add_executable(nfa2dfa_advanced nfa2dfa.c)
-target_link_libraries(nfa2dfa_advanced PRIVATE
+# cdfatool - unified CLI for all DFA operations
+add_executable(cdfatool dfa_cli.c)
+target_link_libraries(cdfatool PRIVATE
     readonlybox_dfa
     sat_modules
     cadical
     readonlybox_dfa_headers
 )
-target_compile_definitions(nfa2dfa_advanced PRIVATE
+target_compile_definitions(cdfatool PRIVATE
+    USE_CADICAL
+)
+
+# dfa_eval_wrapper - used for fuzzing
+add_executable(dfa_eval_wrapper dfa_eval_wrapper.c)
+target_link_libraries(dfa_eval_wrapper PRIVATE
+    readonlybox_dfa
+    sat_modules
+    cadical
+)
+target_compile_definitions(dfa_eval_wrapper PRIVATE
     NFABUILDER_EXCLUDE_NFA_INIT
     USE_CADICAL
 )
@@ -138,8 +140,6 @@ add_custom_target(tools ALL DEPENDS
     readonlybox_dfa
     readonlybox_dfa_shared
     sat_modules
-    nfa_builder
+    cdfatool
     dfa_eval_wrapper
-    dfa2c_array
-    nfa2dfa_advanced
 )

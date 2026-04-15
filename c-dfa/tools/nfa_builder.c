@@ -12,6 +12,7 @@
 
 #include "nfa_builder.h"
 #include "pattern_order.h"
+#include "../include/pipeline.h"
 
 // ============================================================================
 // CLI code (main binary only)
@@ -23,32 +24,41 @@
 static bool flag_validate_only = false;
 static bool flag_verbose_alphabet = false;
 static bool flag_verbose_validation = false;
+static int verbosity = 0;
 static const char* external_alphabet_file = NULL;
 
 // ============================================================================
 // Usage and argument parsing
 // ============================================================================
 
+static void print_version(void) {
+    fprintf(stderr, "nfa_builder version %s\n", pipeline_get_version());
+}
+
 static void print_usage(const char* progname) {
     fprintf(stderr, "Usage: %s [options] <spec_file> [output.nfa]\n", progname);
     fprintf(stderr, "\n");
-    fprintf(stderr, "Advanced NFA Builder with Integrated Validation and Alphabet Construction\n");
+    fprintf(stderr, "Build NFA from command pattern specification.\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  --validate-only       Only validate pattern file, don't build NFA\n");
-    fprintf(stderr, "  --verbose              Enable verbose output\n");
+    fprintf(stderr, "  -h, --help             Show this help message\n");
+    fprintf(stderr, "  --version              Show version information\n");
+    fprintf(stderr, "  -v                     Enable verbose output\n");
+    fprintf(stderr, "  -vv                    Enable very verbose debug output\n");
+    fprintf(stderr, "  --validate-only        Only validate pattern file, don't build NFA\n");
     fprintf(stderr, "  --verbose-alphabet     Show alphabet construction details\n");
     fprintf(stderr, "  --verbose-validation   Show validation details\n");
     fprintf(stderr, "  --verbose-nfa          Show NFA building details\n");
     fprintf(stderr, "  --alphabet FILE        Use external alphabet file (optional)\n");
     fprintf(stderr, "\n");
-    fprintf(stderr, "If no external alphabet is provided, the builder constructs one automatically\n");
-    fprintf(stderr, "from the pattern file.\n");
+    fprintf(stderr, "Arguments:\n");
+    fprintf(stderr, "  spec_file              Pattern specification file (required)\n");
+    fprintf(stderr, "  output.nfa             Output NFA file (default: readonlybox.nfa)\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Examples:\n");
-    fprintf(stderr, "  %s patterns_safe_commands.txt readonlybox.nfa\n", progname);
-    fprintf(stderr, "  %s --validate-only patterns_safe_commands.txt\n", progname);
-    fprintf(stderr, "  %s --verbose patterns_safe_commands.txt\n", progname);
+    fprintf(stderr, "  %s patterns.txt commands.nfa\n", progname);
+    fprintf(stderr, "  %s --validate-only patterns.txt\n", progname);
+    fprintf(stderr, "  %s -v patterns.txt\n", progname);
 }
 
 static void parse_arguments(int argc, char* argv[], nfa_builder_context_t* ctx,
@@ -66,10 +76,20 @@ static void parse_arguments(int argc, char* argv[], nfa_builder_context_t* ctx,
     argv++;
 
     while (argc > 0) {
-        if (strcmp(argv[0], "--validate-only") == 0) {
-            flag_validate_only = true;
-        } else if (strcmp(argv[0], "--verbose") == 0) {
+        if (strcmp(argv[0], "-h") == 0 || strcmp(argv[0], "--help") == 0) {
+            print_usage(progname);
+            exit(0);
+        } else if (strcmp(argv[0], "--version") == 0) {
+            print_version();
+            exit(0);
+        } else if (strcmp(argv[0], "-v") == 0) {
+            verbosity = 1;
             ctx->flag_verbose = true;
+        } else if (strcmp(argv[0], "-vv") == 0) {
+            verbosity = 2;
+            ctx->flag_verbose = true;
+        } else if (strcmp(argv[0], "--validate-only") == 0) {
+            flag_validate_only = true;
         } else if (strcmp(argv[0], "--verbose-alphabet") == 0) {
             flag_verbose_alphabet = true;
         } else if (strcmp(argv[0], "--verbose-validation") == 0) {
@@ -78,16 +98,17 @@ static void parse_arguments(int argc, char* argv[], nfa_builder_context_t* ctx,
             ctx->flag_verbose_nfa = true;
         } else if (strcmp(argv[0], "--alphabet") == 0) {
             if (argc < 2) {
-                ERROR("--alphabet requires a filename");
-                exit(EXIT_FAILURE);
+                fprintf(stderr, "Error: --alphabet requires a filename\n");
+                print_usage(progname);
+                exit(2);
             }
             external_alphabet_file = argv[1];
             argc--;
             argv++;
         } else if (argv[0][0] == '-') {
-            ERROR("Unknown option '%s'", argv[0]);
+            fprintf(stderr, "Error: unknown option '%s'\n", argv[0]);
             print_usage(progname);
-            exit(EXIT_FAILURE);
+            exit(2);
         } else {
             break;
         }
@@ -96,9 +117,9 @@ static void parse_arguments(int argc, char* argv[], nfa_builder_context_t* ctx,
     }
 
     if (argc < 1) {
-        ERROR("No spec file provided");
+        fprintf(stderr, "Error: no spec file provided\n");
         print_usage(progname);
-        exit(EXIT_FAILURE);
+        exit(2);
     }
 
     *spec_file = argv[0];

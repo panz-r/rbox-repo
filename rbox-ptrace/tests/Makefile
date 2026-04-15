@@ -37,8 +37,8 @@ SRCS = ../progname.c \
        ../pkexec.c \
        ../judge.c \
        ../trampoline_allowance.c \
+       ../build/rbox_ptrace_dfa.c \
        ../soft_ruleset_access.c \
-       ../build/rbox_ptrace_dfa_data.c \
        ../../shellsplit/src/env_screener.c \
        ../../shellsplit/src/relative_permutation_entropy.c \
        ../../shellsplit/src/shell_tokenizer.c
@@ -80,8 +80,8 @@ $(TARGET): $(TEST_OBJS) $(OBJS)
 ../%.o: ../%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# dfa.o depends on rbox_ptrace_dfa_data.c
-../dfa.o: ../dfa.c ../build/rbox_ptrace_dfa_data.c
+# dfa.o depends on rbox_ptrace_dfa.c
+../dfa.o: ../dfa.c ../build/rbox_ptrace_dfa.c
 
 # Compile shellsplit source files
 ../../shellsplit/src/%.o: ../../shellsplit/src/%.c

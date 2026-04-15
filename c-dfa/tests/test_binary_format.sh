@@ -27,6 +27,9 @@ if [ ! -e "$SRC_DIR/build_test" ]; then
     ln -s "$BUILD" "$SRC_DIR/build_test"
 fi
 
+# Clean up DFA files from previous runs (cdfatool refuses to overwrite)
+rm -f "$BUILD"/*.dfa
+
 # Libraries needed for linking
 readonlybox_lib="$LIB_DIR/libreadonlybox_dfa.a"
 sat_lib="$LIB_DIR/libsat_modules.a"
@@ -39,11 +42,10 @@ TESTS_PASSED=0
 pass() { TESTS_PASSED=$((TESTS_PASSED + 1)); echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; }
 
-# Helper: build a DFA from patterns file using nfa_builder + nfa2dfa
+# Helper: build a DFA from patterns file using cdfatool
 build_dfa() {
     local patterns="$1" output="$2"
-    "$TOOLS_DIR/nfa_builder" "$patterns" "$BUILD/test.nfa" 2>/dev/null || return 1
-    "$TOOLS_DIR/nfa2dfa_advanced" "$BUILD/test.nfa" "$output" 2>/dev/null || return 1
+    "$TOOLS_DIR/cdfatool" compile "$patterns" -o "$output" 2>/dev/null || return 1
 }
 
 # Helper: compile and link test program
@@ -633,7 +635,7 @@ cat > "$BUILD/bad_parens.txt" << 'EOF'
 [safe] (unclosed paren
 EOF
 set +e
-"$TOOLS_DIR/nfa_builder" "$BUILD/bad_parens.txt" "$BUILD/bad_parens.nfa" 2>/dev/null
+"$TOOLS_DIR/cdfatool" validate "$BUILD/bad_parens.txt" 2>/dev/null
 RC=$?
 set -e
 if [ $RC -ne 0 ]; then pass "validation_unmatched_parens"; else fail "validation_unmatched_parens: should have failed"; fi

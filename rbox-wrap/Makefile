@@ -16,14 +16,11 @@ C_DFA_BUILD = $(C_DFA)/build
 RBOX_LIB = $(RBOX_PROTOCOL)/librbox_protocol.so
 DFA_EVAL_LIB = $(C_DFA_BUILD)/tools/libreadonlybox_dfa.a
 
-# Tools
-NFA_BUILDER = $(C_DFA_BUILD)/tools/nfa_builder
-NFA2DFA = $(C_DFA_BUILD)/tools/nfa2dfa_advanced
-DFA2C = $(C_DFA_BUILD)/tools/dfa2c_array
+# Unified CLI tool
+CDFATOOL = $(C_DFA_BUILD)/tools/cdfatool
 
 # Pattern file and outputs
 PATTERN_FILE ?= rbox_wrap_commands.txt
-NFA_FILE = rbox_wrap.nfa
 DFA_FILE = rbox_wrap.dfa
 DFA_DATA_C = rbox_wrap_dfa_data.c
 DFA_DATA_OBJ = rbox_wrap_dfa_data.o
@@ -52,24 +49,14 @@ all: dfa $(TARGET)
 $(C_DFA_BUILD):
 	cd $(C_DFA) && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 
-# Build required tools from c-dfa if they don't exist
-$(NFA_BUILDER): | $(C_DFA_BUILD)
+# Build DFA from pattern file using cdfatool (direct: pattern -> DFA -> C array)
+dfa: $(CDFATOOL) $(DFA_DATA_C)
 
-$(NFA2DFA): | $(NFA_BUILDER)
+$(DFA_DATA_C): $(DFA_FILE)
+	$(CDFATOOL) embedd $(DFA_FILE) -o $(DFA_DATA_C)
 
-$(DFA2C): | $(NFA2DFA)
-
-# Build DFA from pattern file
-dfa: $(DFA_DATA_C)
-
-$(NFA_FILE): $(PATTERN_FILE) | $(NFA_BUILDER)
-	$(NFA_BUILDER) $(PATTERN_FILE) $(NFA_FILE)
-
-$(DFA_FILE): $(NFA_FILE)
-	$(NFA2DFA) $(NFA_FILE) $(DFA_FILE)
-
-$(DFA_DATA_C): $(DFA_FILE) $(DFA2C)
-	$(DFA2C) $(DFA_FILE) $(DFA_DATA_C) rbox_wrap_dfa_data
+$(DFA_FILE): $(CDFATOOL) $(PATTERN_FILE)
+	$(CDFATOOL) compile $(PATTERN_FILE) -o $(DFA_FILE)
 
 $(DFA_DATA_OBJ): $(DFA_DATA_C)
 	$(CC) $(CFLAGS) -c -o $@ $(DFA_DATA_C)
@@ -95,4 +82,4 @@ test: dfa $(TARGET) $(TEST_BIN) $(DECODE_PACKET)
 
 clean:
 	rm -f $(TARGET) $(TEST_BIN) tests/decode_packet
-	rm -f $(NFA_FILE) $(DFA_FILE) $(DFA_DATA_C) $(DFA_DATA_OBJ)
+	rm -f $(DFA_FILE) $(DFA_DATA_C) $(DFA_DATA_OBJ)

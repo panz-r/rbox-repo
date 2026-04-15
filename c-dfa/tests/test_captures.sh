@@ -42,8 +42,7 @@ fail() { echo "  [FAIL] $1"; }
 # Helper: build DFA from pattern file
 build_dfa() {
     local patterns_file="$1" dfa_file="$2"
-    "$TOOLS_DIR/nfa_builder" "$patterns_file" "$BUILD/cap_test.nfa" 2>/dev/null || return 1
-    "$TOOLS_DIR/nfa2dfa_advanced" "$BUILD/cap_test.nfa" "$dfa_file" 2>/dev/null || return 1
+    "$TOOLS_DIR/cdfatool" compile "$patterns_file" -o "$dfa_file" 2>/dev/null || return 1
 }
 
 # Helper: test eval with DFA file

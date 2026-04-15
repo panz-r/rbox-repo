@@ -21,19 +21,16 @@ LDFLAGS += -Wl,-rpath,'$$ORIGIN/../lib'
 LDFLAGS += ../c-dfa/libdfa_eval.a
 LDFLAGS += ../rbox-ruleset/build/lib/liblandlock-builder.a
 
-# DFA Tools
-NFA_BUILDER = ../c-dfa/build/tools/nfa_builder
-NFA2DFA = ../c-dfa/build/tools/nfa2dfa_advanced
-DFA2C = ../c-dfa/build/tools/dfa2c_array
+# Unified CLI tool
+CDFATOOL = ../c-dfa/build/tools/cdfatool
 
 # Build directory for generated files
 BUILD_DIR = build
 
 # Pattern and DFA files
 PATTERN_FILE = rbox_ptrace_embedded_commands.txt
-NFA_FILE = $(BUILD_DIR)/rbox_ptrace.nfa
 DFA_FILE = $(BUILD_DIR)/rbox_ptrace.dfa
-DFA_DATA_C = $(BUILD_DIR)/rbox_ptrace_dfa_data.c
+DFA_DATA_C = $(BUILD_DIR)/rbox_ptrace_dfa.c
 
 # Source files
 SRCS = main.c \
@@ -77,26 +74,21 @@ $(C_DFA_BUILD):
 # Validate prerequisites
 check-prereqs: | $(C_DFA_BUILD)
 	@which $(CC) > /dev/null 2>&1 || (echo "ERROR: $(CC) not found"; exit 1)
-	@test -x $(NFA_BUILDER) || (echo "ERROR: nfa_builder not found (run 'make deps' in ../c-dfa first)"; exit 1)
-	@test -x $(NFA2DFA) || (echo "ERROR: nfa2dfa_advanced not found (run 'make deps' in ../c-dfa first)"; exit 1)
-	@test -x $(DFA2C) || (echo "ERROR: dfa2c_array not found (run 'make deps' in ../c-dfa first)"; exit 1)
+	@test -x $(CDFATOOL) || (echo "ERROR: cdfatool not found (run 'make deps' in ../c-dfa first)"; exit 1)
 	@which valgrind > /dev/null 2>&1 || echo "WARNING: valgrind not installed (valgrind target will be skipped)"
 	@which cppcheck > /dev/null 2>&1 || echo "WARNING: cppcheck not installed (cppcheck target will be skipped)"
 
-# Build DFA from pattern file
-dfa: $(BUILD_DIR) $(NFA_FILE) $(DFA_FILE) $(DFA_DATA_C)
+# Build DFA from pattern file using cdfatool (direct: pattern -> DFA -> C array)
+dfa: $(BUILD_DIR) $(DFA_FILE) $(DFA_DATA_C)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(NFA_FILE): $(PATTERN_FILE) | $(BUILD_DIR)
-	$(NFA_BUILDER) $(PATTERN_FILE) $(NFA_FILE)
+$(DFA_FILE): $(CDFATOOL) $(PATTERN_FILE) | $(BUILD_DIR)
+	$(CDFATOOL) compile $(PATTERN_FILE) -o $(DFA_FILE)
 
-$(DFA_FILE): $(NFA_FILE)
-	$(NFA2DFA) $(NFA_FILE) $(DFA_FILE)
-
-$(DFA_DATA_C): $(DFA_FILE) $(DFA2C)
-	$(DFA2C) $(DFA_FILE) $(DFA_DATA_C) rbox_ptrace_dfa
+$(DFA_DATA_C): $(DFA_FILE)
+	$(CDFATOOL) embedd $(DFA_FILE) -o $(DFA_DATA_C)
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)

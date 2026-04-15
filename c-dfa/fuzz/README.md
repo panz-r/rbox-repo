@@ -75,9 +75,9 @@ Fuzzes `dfa_eval()` with random command strings.
 
 ### pattern_parse_fuzzer
 
-Fuzzes pattern validation via `nfa_builder --validate-only`.
+Fuzzes pattern validation via `cdfatool validate`.
 
-**Target:** `tools/nfa_builder` pattern validation
+**Target:** `tools/cdfatool validate` pattern validation
 
 **What it tests:**
 - Pattern file parsing
@@ -86,13 +86,13 @@ Fuzzes pattern validation via `nfa_builder --validate-only`.
 
 ### nfa_build_fuzzer
 
-Fuzzes NFA construction by running `nfa_builder` as subprocess.
+Fuzzes DFA construction by running `cdfatool compile` as subprocess.
 
-**Target:** `tools/nfa_builder` (full NFA construction)
+**Target:** `tools/cdfatool compile` (full pattern to DFA compilation)
 
 **What it tests:**
 - Pattern file parsing
-- NFA state construction
+- DFA state construction
 - Memory allocation during build
 
 ### pipeline_fuzzer
@@ -142,7 +142,7 @@ Three layers of protection prevent OOM crashes:
 | Per-fuzzer | `-rss_limit_mb` | 4 GB LibFuzzer limit |
 | Session | `systemd-run` | 8 GB total |
 
-**Note:** The 8 GB per-process limit is required because `nfa_builder` is compiled with `-mcmodel=medium` which requires larger address space.
+**Note:** The 8 GB per-process limit is required because `cdfatool` is compiled with `-mcmodel=medium` which requires larger address space.
 
 ## Build Requirements
 

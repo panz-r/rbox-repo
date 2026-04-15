@@ -78,8 +78,7 @@ cd c-dfa && make clean
 
 | Component | Purpose |
 |-----------|---------|
-| `tools/nfa_builder` | Converts command specifications to NFA |
-| `tools/nfa2dfa_advanced` | Converts NFA to DFA with minimization |
+| `tools/cdfatool` | Unified CLI for all DFA operations |
 | `src/dfa_eval.c` | Core DFA evaluation engine |
 | `src/dfa_test.c` | Comprehensive test runner |
 

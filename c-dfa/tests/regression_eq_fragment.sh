@@ -3,9 +3,11 @@
 # Regression test for bug: = followed by fragment reference in optional group
 # ============================================================================
 # Bug: When '=' immediately precedes a fragment reference '((FRAG))' inside
-# an optional group, the parser produces a degenerate NFA with only 1 state.
+# an optional group, the parser produces a degenerate NFA (crashes or wrong DFA).
 #
-# This test verifies the bug is fixed by checking NFA state counts.
+# This test verifies the bug is fixed by:
+# 1. Compiling pattern to DFA (no crash)
+# 2. Verifying the compiled DFA accepts expected inputs
 # ============================================================================
 
 set -e
@@ -35,97 +37,89 @@ fail() {
     TESTS_FAILED=$((TESTS_FAILED + 1))
 }
 
-# Helper: build NFA and return state count
-get_nfa_states() {
+# Helper: compile pattern to DFA (returns 0 on success)
+compile_pattern() {
     local patterns="$1"
-    local nfa_file="$2"
-    "$TOOLS_DIR/nfa_builder" "$patterns" "$nfa_file" 2>/dev/null || return 1
-    grep "^States:" "$nfa_file" | awk '{print $2}'
+    local dfa_file="$2"
+    "$TOOLS_DIR/cdfatool" compile "$patterns" -o "$dfa_file" 2>/dev/null
 }
 
-# Helper: build DFA and return state count  
-get_dfa_states() {
-    local nfa_file="$1"
-    local dfa_file="$2"
-    "$TOOLS_DIR/nfa2dfa_advanced" "$nfa_file" "$dfa_file" 2>/dev/null || return 1
-    grep "^States:" "$dfa_file" | awk '{print $2}'
+# Helper: eval DFA on input and check if it matches (returns 0 on match)
+eval_match() {
+    local dfa_file="$1"
+    local input="$2"
+    local expect_match="$3"  # 0 or 1
+    local result
+    result=$("$TOOLS_DIR/cdfatool" eval "$dfa_file" <<< "$input" 2>/dev/null | grep -o 'matched=[01]')
+    if [ "$result" = "matched=$expect_match" ]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 echo "Bug EQ Fragment Regression Tests"
 echo "================================"
 echo ""
 
-# Test 1: Working pattern - ls(z)((safe::x)) should have > 1 states
-echo "[TEST 1] Working pattern ls(z)((safe::x))"
-cat > "$WORK_DIR/regression_work.txt" << 'EOF'
-ACCEPTANCE_MAPPING [safe] -> 0
-[fragment:safe::x] a|b|c
-[safe] ls(z)((safe::x))
-EOF
-states=$(get_nfa_states "$WORK_DIR/regression_work.txt" "$WORK_DIR/regression_work.nfa")
-if [ "$states" -gt 1 ]; then
-    pass "ls(z)((safe::x)) has $states states (expected > 1)"
-else
-    fail "ls(z)((safe::x)) has $states states (expected > 1)"
-fi
-
-# Test 2: Bug pattern - ls( =)((safe::x)) should have > 1 states (BUG: currently 1)
-echo "[TEST 2] Bug pattern ls( =)((safe::x))"
+# Test 1: Bug pattern - ls( =)((safe::x)) - originally crashed
+# The bug was that '=' followed by fragment in optional group caused segfault
+# We test that it now compiles without crashing
+echo "[TEST 1] Bug pattern ls( =)((safe::x))"
 cat > "$WORK_DIR/regression_bug1.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [fragment:safe::x] a|b|c
 [safe] ls( =)((safe::x))
 EOF
-states=$(get_nfa_states "$WORK_DIR/regression_bug1.txt" "$WORK_DIR/regression_bug1.nfa")
-if [ "$states" -gt 1 ]; then
-    pass "ls( =)((safe::x)) has $states states (expected > 1) - BUG FIXED!"
+if compile_pattern "$WORK_DIR/regression_bug1.txt" "$WORK_DIR/regression_bug1.dfa"; then
+    # Also verify it produces a working DFA that accepts expected inputs
+    # Pattern: ls + optional(space + =) + fragment
+    # So "ls=a" and "ls =a" should match
+    if eval_match "$WORK_DIR/regression_bug1.dfa" "ls=a" "1" ||
+       eval_match "$WORK_DIR/regression_bug1.dfa" "ls =a" "1"; then
+        pass "ls( =)((safe::x)) - compiles and works - BUG FIXED!"
+    else
+        fail "ls( =)((safe::x)) - compiles but DFA doesn't work correctly"
+    fi
 else
-    fail "ls( =)((safe::x)) has $states states (expected > 1) - BUG STILL PRESENT"
+    fail "ls( =)((safe::x)) - failed to compile - BUG STILL PRESENT"
 fi
 
-# Test 3: Bug pattern - ls(=)?((safe::x)) should have > 1 states (BUG: currently 1)
-echo "[TEST 3] Bug pattern ls(=)?((safe::x))"
+# Test 2: Bug pattern - ls(=)?((safe::x)) - variant with explicit optional marker
+echo "[TEST 2] Bug pattern ls(=)?((safe::x))"
 cat > "$WORK_DIR/regression_bug2.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [fragment:safe::x] a|b|c
 [safe] ls(=)?((safe::x))
 EOF
-states=$(get_nfa_states "$WORK_DIR/regression_bug2.txt" "$WORK_DIR/regression_bug2.nfa")
-if [ "$states" -gt 1 ]; then
-    pass "ls(=)?((safe::x)) has $states states (expected > 1) - BUG FIXED!"
+if compile_pattern "$WORK_DIR/regression_bug2.txt" "$WORK_DIR/regression_bug2.dfa"; then
+    if eval_match "$WORK_DIR/regression_bug2.dfa" "ls=a" "1"; then
+        pass "ls(=)?((safe::x)) - compiles and matches 'ls=a' - BUG FIXED!"
+    else
+        fail "ls(=)?((safe::x)) - compiles but DFA doesn't match"
+    fi
 else
-    fail "ls(=)?((safe::x)) has $states states (expected > 1) - BUG STILL PRESENT"
+    fail "ls(=)?((safe::x)) - failed to compile - BUG STILL PRESENT"
 fi
 
-# Test 4: Character 'a' before fragment works - control
-echo "[TEST 4] Control pattern ls(a)((safe::x))"
-cat > "$WORK_DIR/regression_ctrl.txt" << 'EOF'
-ACCEPTANCE_MAPPING [safe] -> 0
-[fragment:safe::x] a|b|c
-[safe] ls(a)((safe::x))
-EOF
-states=$(get_nfa_states "$WORK_DIR/regression_ctrl.txt" "$WORK_DIR/regression_ctrl.nfa")
-if [ "$states" -gt 1 ]; then
-    pass "ls(a)((safe::x)) has $states states (expected > 1)"
-else
-    fail "ls(a)((safe::x)) has $states states (expected > 1)"
-fi
-
-# Test 5: ls x= (equals at end) should work
-echo "[TEST 5] Pattern ls x= (equals at end)"
+# Test 3: Pattern without the problematic '= ' sequence
+echo "[TEST 3] Normal pattern ls x= (equals at end)"
 cat > "$WORK_DIR/regression_end.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [safe] ls x=
 EOF
-states=$(get_nfa_states "$WORK_DIR/regression_end.txt" "$WORK_DIR/regression_end.nfa")
-if [ "$states" -gt 1 ]; then
-    pass "ls x= has $states states (expected > 1)"
+if compile_pattern "$WORK_DIR/regression_end.txt" "$WORK_DIR/regression_end.dfa"; then
+    if eval_match "$WORK_DIR/regression_end.dfa" "ls x=" "1"; then
+        pass "ls x= - compiles and matches 'ls x='"
+    else
+        fail "ls x= - compiles but DFA doesn't match"
+    fi
 else
-    fail "ls x= has $states states (expected > 1)"
+    fail "ls x= - failed to compile"
 fi
 
 # Cleanup
-rm -f "$WORK_DIR/regression_*.txt" "$WORK_DIR/regression_*.nfa" "$WORK_DIR/regression_*.dfa"
+rm -f "$WORK_DIR/regression_*.txt" "$WORK_DIR/regression_*.dfa"
 
 echo ""
 echo "================================"

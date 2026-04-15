@@ -221,6 +221,11 @@ const char* pipeline_error_string(pipeline_error_t err);
  */
 const char* pipeline_get_last_error(pipeline_t* p) ATTR_NONNULL(1);
 
+/**
+ * Get library version string.
+ */
+const char* pipeline_get_version(void);
+
 // ============================================================================
 // Pipeline Stats (for verbose logging)
 // ============================================================================

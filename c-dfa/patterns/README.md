@@ -85,9 +85,6 @@ Fragment definition and expansion tests:
 # Build tools first
 cmake -B build && cmake --build build
 
-# Build NFA from patterns
-./build/tools/nfa_builder patterns/commands/safe_commands.txt readonlybox.nfa
-
-# Convert to minimized DFA
-./build/tools/nfa2dfa_advanced --minimize-hopcroft readonlybox.nfa readonlybox.dfa
+# Build DFA from patterns (direct compilation)
+./build/tools/cdfatool compile patterns/commands/safe_commands.txt -o readonlybox.dfa
 ```

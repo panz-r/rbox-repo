@@ -41,10 +41,8 @@ Pattern Input → Validation → Ordering → NFA Build + Parsing → NFA Pre-Mi
 |--------|----------|---------|
 | `libreadonlybox_dfa.a` | `build/tools/` | Full library (building + evaluating) |
 | `libreadonlybox_dfa.so` | `build/tools/` | Shared library |
-| `nfa_builder` | `build/tools/` | Pattern file to NFA |
-| `nfa2dfa_advanced` | `build/tools/` | NFA to DFA with minimization |
-| `dfa_eval_wrapper` | `build/tools/` | Command-line DFA evaluation |
-| `dfa2c_array` | `build/tools/` | DFA to C array converter |
+| `cdfatool` | `build/tools/` | Unified CLI for all DFA operations |
+| `dfa_eval_wrapper` | `build/tools/` | Command-line DFA evaluation (legacy) |
 
 ## Minimization Algorithms
 
