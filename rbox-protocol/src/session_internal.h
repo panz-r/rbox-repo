@@ -66,6 +66,12 @@ struct rbox_session {
     uint32_t retry_attempt;
     uint32_t retry_seed;  /* Persistent seed for retry delay jitter */
     uint64_t next_retry_time;
+
+    /* Negotiated version info (populated from server response) */
+    uint16_t negotiated_major;
+    uint16_t negotiated_minor;
+    uint32_t negotiated_capabilities;
+    int handshake_done;
 };
 
 #endif /* RBOX_SESSION_INTERNAL_H */

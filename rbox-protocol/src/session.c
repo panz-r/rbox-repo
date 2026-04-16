@@ -41,6 +41,17 @@ static int should_retry(rbox_session_t *session) {
 }
 
 /* ============================================================
+ * VERSION INFO HELPERS
+ * ============================================================ */
+
+static void decode_version_from_server_id(const uint8_t server_id[16], uint16_t *major, uint16_t *minor, uint32_t *capabilities) {
+    if (!server_id) return;
+    if (major) *major = le16toh(*(uint16_t *)(server_id + 0));
+    if (minor) *minor = le16toh(*(uint16_t *)(server_id + 2));
+    if (capabilities) *capabilities = le32toh(*(uint32_t *)(server_id + 4));
+}
+
+/* ============================================================
  * SESSION FUNCTIONS
  * ============================================================ */
 
@@ -65,6 +76,12 @@ rbox_session_t *rbox_session_new(const char *socket_path,
     session->state = RBOX_SESSION_DISCONNECTED;
     session->timeout_ms = 0;
     session->request_start_time = 0;
+
+    /* Initialize version info - will be populated from server response */
+    session->negotiated_major = RBOX_PROTOCOL_MAJOR;
+    session->negotiated_minor = RBOX_PROTOCOL_MINOR;
+    session->negotiated_capabilities = RBOX_DEFAULT_CAPABILITIES;
+    session->handshake_done = 0;
 
     return session;
 }
@@ -476,6 +493,15 @@ rbox_session_state_t rbox_session_heartbeat(rbox_session_t *session, short event
                             session->recv_len = 0;
                             session->recv_capacity = 0;
                             session->state = RBOX_SESSION_RESPONSE_READY;
+
+                            /* Extract version info from server_id in response */
+                            const uint8_t *server_id = (const uint8_t *)session->response_data + RBOX_HEADER_OFFSET_SERVER_ID;
+                            decode_version_from_server_id(server_id,
+                                &session->negotiated_major,
+                                &session->negotiated_minor,
+                                &session->negotiated_capabilities);
+                            session->handshake_done = 1;
+
                             CDBG("waiting: response ready");
                         } else if (err == RBOX_ERR_MISMATCH || err == RBOX_ERR_IO) {
                             free(session->recv_buf);
@@ -563,4 +589,9 @@ void rbox_session_disconnect(rbox_session_t *session) {
     }
     session->state = RBOX_SESSION_DISCONNECTED;
     CDBG("disconnect");
+}
+
+uint32_t rbox_session_get_negotiated_capabilities(const rbox_session_t *session) {
+    if (!session) return 0;
+    return session->negotiated_capabilities;
 }

@@ -134,6 +134,26 @@ uint32_t rbox_calculate_retry_delay(uint32_t base_delay_ms, uint32_t attempt, ui
     return (uint32_t)delay;
 }
 
+/* ============================================================
+ * VERSION AND CAPABILITY API
+ * ============================================================ */
+
+uint16_t rbox_get_protocol_major(void) {
+    return RBOX_PROTOCOL_MAJOR;
+}
+
+uint16_t rbox_get_protocol_minor(void) {
+    return RBOX_PROTOCOL_MINOR;
+}
+
+uint32_t rbox_get_supported_capabilities(void) {
+    return RBOX_DEFAULT_CAPABILITIES;
+}
+
+int rbox_version_is_compatible(uint16_t major) {
+    return (major == RBOX_PROTOCOL_MAJOR) ? 1 : 0;
+}
+
 /* Automatic initialization before main() */
 __attribute__((constructor))
 static void constructor_rbox_runtime(void) {

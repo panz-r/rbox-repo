@@ -156,6 +156,7 @@ rbox_error_t rbox_encode_request(
  *   - out_buf: output buffer (must be at least RBOX_HEADER_SIZE)
  *   - buf_capacity: size of output buffer
  *   - out_len: (out) actual packet length written
+ *   - negotiated_version: optional version info to echo in server_id (may be NULL for legacy)
  */
 rbox_error_t rbox_encode_response(
     const uint8_t *client_id,
@@ -168,7 +169,8 @@ rbox_error_t rbox_encode_response(
     const uint8_t *env_decisions,
     uint8_t *out_buf,
     size_t buf_capacity,
-    size_t *out_len
+    size_t *out_len,
+    const rbox_version_info_t *negotiated_version
 );
 
 /* Build a telemetry response packet.

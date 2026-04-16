@@ -158,6 +158,14 @@ struct rbox_server_request {
     char internal_buf[4096];
     int using_internal_buf;         /* 1 if command_data points to internal_buf */
 
+    /* Version negotiation info */
+    uint16_t client_major;
+    uint16_t client_minor;
+    uint32_t client_capabilities;
+    uint16_t negotiated_major;
+    uint16_t negotiated_minor;
+    uint32_t negotiated_capabilities;
+
     /* Queue link / free list link (internal use only) */
     struct rbox_server_request *next;
 };

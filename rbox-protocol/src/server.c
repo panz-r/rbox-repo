@@ -478,10 +478,15 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
             return;
         }
         size_t resp_len;
+        rbox_version_info_t negotiated_version = {
+            .major = req->negotiated_major,
+            .minor = req->negotiated_minor,
+            .capabilities = req->negotiated_capabilities
+        };
         rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, req->cmd_hash,
             cached_decision, cached_reason,
             req->fenv_hash, cached_env_decision_count, cached_env_decisions,
-            resp_buf, 1024, &resp_len);
+            resp_buf, 1024, &resp_len, &negotiated_version);
         free(cached_env_decisions);
         if (err == RBOX_OK) {
             send_queue_add(server, fd, (char *)resp_buf, resp_len, NULL);
@@ -657,7 +662,8 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
                                uint32_t *fenv_hash,
                                char *caller, size_t caller_len, char *syscall, size_t syscall_len,
                                uint32_t *chunk_len, uint32_t *flags, uint64_t *total_len,
-                               uint32_t *msg_type) {
+                               uint32_t *msg_type,
+                               uint16_t *client_major, uint16_t *client_minor, uint32_t *client_capabilities) {
     rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
     if (!entry) return -1;
     char *header = entry->header_buf;
@@ -695,7 +701,8 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
 
     uint32_t magic = *(uint32_t *)header;
     uint32_t version = *(uint32_t *)(header + 4);
-    if (magic != RBOX_MAGIC || version != RBOX_VERSION) return -1;
+    uint16_t major = (uint16_t)(version >> 16);
+    if (magic != RBOX_MAGIC || major != RBOX_PROTOCOL_MAJOR) return -1;
     if (rbox_header_validate(header, RBOX_HEADER_SIZE) != RBOX_OK) return -1;
     entry->last_activity = get_time_ms();
     *msg_type = *(uint32_t *)(header + RBOX_HEADER_OFFSET_TYPE);
@@ -703,6 +710,20 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
     memcpy(request_id, header + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
     *cmd_hash = *(uint32_t *)(header + RBOX_HEADER_OFFSET_CMD_HASH);
     *fenv_hash = *(uint32_t *)(header + RBOX_HEADER_OFFSET_FENV_HASH);
+
+    /* Extract client version info from server_id field (client sends version in request server_id) */
+    const uint8_t *server_id = (const uint8_t *)(header + RBOX_HEADER_OFFSET_SERVER_ID);
+    if (server_id[0] == 'S' && server_id[1] == 'S') {
+        /* Legacy client - no version info */
+        if (client_major) *client_major = 0;
+        if (client_minor) *client_minor = 0;
+        if (client_capabilities) *client_capabilities = 0;
+    } else {
+        if (client_major) *client_major = le16toh(*(uint16_t *)(server_id + 0));
+        if (client_minor) *client_minor = le16toh(*(uint16_t *)(server_id + 2));
+        if (client_capabilities) *client_capabilities = le32toh(*(uint32_t *)(server_id + 4));
+    }
+
     uint8_t cs_size = *(uint8_t *)(header + RBOX_HEADER_OFFSET_CALLER_SYSCALL_SIZE);
     size_t caller_size = cs_size & 0x0F;
     if (caller_size > 15) caller_size = 15;
@@ -926,10 +947,15 @@ static void *server_thread_func(void *arg) {
                 continue;
             }
             size_t resp_len;
+            rbox_version_info_t negotiated_version = {
+                .major = req->negotiated_major,
+                .minor = req->negotiated_minor,
+                .capabilities = req->negotiated_capabilities
+            };
             rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, cmd_hash,
                 dec->decision, dec->reason,
                 dec->fenv_hash, dec->env_decision_count, dec->env_decisions,
-                resp_buf, 1024, &resp_len);
+                resp_buf, 1024, &resp_len, &negotiated_version);
             if (err == RBOX_OK) {
                 DBG("Built response of size %zu for fd %d", resp_len, req->fd);
                 if (send_queue_add(server, req->fd, (char *)resp_buf, resp_len, req) != 0) {
@@ -1079,9 +1105,12 @@ static void *server_thread_func(void *arg) {
                         uint64_t total_len;
                         char caller[RBOX_MAX_CALLER_LEN + 1];
                         char syscall[RBOX_MAX_SYSCALL_LEN + 1];
+                        uint16_t client_major, client_minor;
+                        uint32_t client_capabilities;
 
                         int hdr_result = server_read_header(server, cl_fd, client_id, request_id, &cmd_hash, &fenv_hash,
-                            caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len, &flags, &total_len, &msg_type);
+                            caller, sizeof(caller), syscall, sizeof(syscall), &chunk_len, &flags, &total_len, &msg_type,
+                            &client_major, &client_minor, &client_capabilities);
                         if (hdr_result == 1) {
                             /* Partial header – stop reading for now */
                             keep_reading = 0;
@@ -1159,6 +1188,12 @@ static void *server_thread_func(void *arg) {
                             req->caller[RBOX_MAX_CALLER_LEN] = '\0';
                             strncpy(req->syscall, syscall, RBOX_MAX_SYSCALL_LEN);
                             req->syscall[RBOX_MAX_SYSCALL_LEN] = '\0';
+                            req->client_major = client_major;
+                            req->client_minor = client_minor;
+                            req->client_capabilities = client_capabilities;
+                            req->negotiated_major = RBOX_PROTOCOL_MAJOR;
+                            req->negotiated_minor = (client_minor > RBOX_PROTOCOL_MINOR) ? RBOX_PROTOCOL_MINOR : client_minor;
+                            req->negotiated_capabilities = client_capabilities & RBOX_DEFAULT_CAPABILITIES;
                             if ((size_t)total_len > RBOX_MAX_TOTAL_SIZE) {
                                 request_pool_put(server, req);
                                 client_connection_close(server, cl_fd);
@@ -1222,6 +1257,12 @@ static void *server_thread_func(void *arg) {
                         req->caller[RBOX_MAX_CALLER_LEN] = '\0';
                         strncpy(req->syscall, syscall, RBOX_MAX_SYSCALL_LEN);
                         req->syscall[RBOX_MAX_SYSCALL_LEN] = '\0';
+                        req->client_major = client_major;
+                        req->client_minor = client_minor;
+                        req->client_capabilities = client_capabilities;
+                        req->negotiated_major = RBOX_PROTOCOL_MAJOR;
+                        req->negotiated_minor = (client_minor > RBOX_PROTOCOL_MINOR) ? RBOX_PROTOCOL_MINOR : client_minor;
+                        req->negotiated_capabilities = client_capabilities & RBOX_DEFAULT_CAPABILITIES;
 
                         if (chunk_len + 1 <= sizeof(req->internal_buf)) {
                             req->command_data = req->internal_buf;

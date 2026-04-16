@@ -16,7 +16,31 @@
  * ============================================================ */
 
 #define RBOX_MAGIC       0x524F424F  /* "ROBO" */
-#define RBOX_VERSION     9  /* Protocol version with separate header/body checksums */
+#define RBOX_PROTOCOL_MAJOR 9  /* Major version - incompatible if different */
+#define RBOX_PROTOCOL_MINOR 0  /* Minor version - negotiated */
+#define RBOX_VERSION     ((RBOX_PROTOCOL_MAJOR << 16) | (RBOX_PROTOCOL_MINOR))  /* Combined version */
+
+/* ============================================================
+ * CAPABILITY FLAGS
+ * ============================================================ */
+
+#define RBOX_CAP_ENV_DECISIONS   (1 << 0)  /* Environment variable decisions */
+#define RBOX_CAP_CHUNKED_STREAM  (1 << 1)  /* Chunked streaming transfer */
+#define RBOX_CAP_TELEMETRY       (1 << 2)  /* Telemetry/stats support */
+
+#define RBOX_CAP_ALL (RBOX_CAP_ENV_DECISIONS | RBOX_CAP_CHUNKED_STREAM | RBOX_CAP_TELEMETRY)
+
+#define RBOX_DEFAULT_CAPABILITIES RBOX_CAP_ALL  /* Default capabilities offered by client/server */
+
+/* ============================================================
+ * VERSION INFO STRUCT
+ * ============================================================ */
+
+typedef struct __attribute__((packed)) {
+    uint16_t major;
+    uint16_t minor;
+    uint32_t capabilities;
+} rbox_version_info_t;
 
 /* ============================================================
  * MESSAGE TYPES

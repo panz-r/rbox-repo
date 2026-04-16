@@ -227,7 +227,7 @@ static void test_encode_response_basic(void) {
         "OK",
         0,
         0, NULL,
-        buf, sizeof(buf), &out_len
+        buf, sizeof(buf), &out_len, NULL
     );
 
     assert(err == RBOX_OK);
@@ -265,7 +265,7 @@ static void test_encode_response_with_env(void) {
         "allowed",
         0x12345678,
         env_count, env_decisions,
-        buf, sizeof(buf), &out_len
+        buf, sizeof(buf), &out_len, NULL
     );
 
     assert(err == RBOX_OK);
@@ -292,7 +292,7 @@ static void test_encode_response_buffer_too_small(void) {
         RBOX_DECISION_ALLOW,
         "this_reason_string_is_way_too_long_to_fit_in_the_buffer",
         0, 0, NULL,
-        buf, sizeof(buf), &out_len
+        buf, sizeof(buf), &out_len, NULL
     );
 
     assert(err == RBOX_ERR_INVALID);
@@ -478,7 +478,7 @@ static void test_encode_response_deny(void) {
         RBOX_DECISION_DENY,
         "access denied because something went wrong",
         0, 0, NULL,
-        buf, sizeof(buf), &out_len
+        buf, sizeof(buf), &out_len, NULL
     );
 
     assert(err == RBOX_OK);

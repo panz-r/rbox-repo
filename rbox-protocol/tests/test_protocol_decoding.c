@@ -63,7 +63,7 @@ static void test_validate_header_invalid_version(void) {
     *(uint32_t *)(buf + RBOX_HEADER_OFFSET_VERSION) = 999;
 
     rbox_error_t err = rbox_validate_header(buf, out_len);
-    assert(err == RBOX_ERR_VERSION);
+    assert(err == RBOX_ERR_VERSION_MISMATCH);
     printf("  ✓ Invalid version detected\n");
 
     printf("test_validate_header_invalid_version: PASSED\n\n");
@@ -142,7 +142,7 @@ static void test_decode_response_raw_basic(void) {
 
     rbox_encode_response(request_id, request_id, 0, RBOX_DECISION_ALLOW,
                         "OK", 0, 0, NULL,
-                        buf, sizeof(buf), &out_len);
+                        buf, sizeof(buf), &out_len, NULL);
 
     rbox_response_t response;
     rbox_error_t err = rbox_decode_response_raw(buf, out_len, request_id, &response);
@@ -170,7 +170,7 @@ static void test_decode_response_raw_mismatch(void) {
 
     rbox_encode_response(request_id, request_id, 0, RBOX_DECISION_ALLOW,
                         "OK", 0, 0, NULL,
-                        buf, sizeof(buf), &out_len);
+                        buf, sizeof(buf), &out_len, NULL);
 
     rbox_response_t response;
     rbox_error_t err = rbox_decode_response_raw(buf, out_len, wrong_id, &response);
@@ -192,7 +192,7 @@ static void test_decode_response_raw_with_env(void) {
 
     rbox_encode_response(request_id, request_id, 0, RBOX_DECISION_ALLOW,
                         "allowed", 0x12345678, 24, env_decisions,
-                        buf, sizeof(buf), &out_len);
+                        buf, sizeof(buf), &out_len, NULL);
 
     rbox_response_t response;
     rbox_error_t err = rbox_decode_response_raw(buf, out_len, request_id, &response);
@@ -220,7 +220,7 @@ static void test_decode_response_raw_checksum_error(void) {
 
     rbox_encode_response(request_id, request_id, 0, RBOX_DECISION_ALLOW,
                         "OK", 0, 0, NULL,
-                        buf, sizeof(buf), &out_len);
+                        buf, sizeof(buf), &out_len, NULL);
 
     *(uint32_t *)(buf + RBOX_HEADER_OFFSET_BODY_CHECKSUM) ^= 0xFFFF0000;
 
@@ -260,7 +260,7 @@ static void test_decode_response_details_raw(void) {
 
     rbox_encode_response(request_id, request_id, 0, RBOX_DECISION_DENY,
                         "permission denied", 0, 0, NULL,
-                        buf, sizeof(buf), &out_len);
+                        buf, sizeof(buf), &out_len, NULL);
 
     rbox_decoded_header_t header;
     rbox_decode_header_raw(buf, out_len, &header);
@@ -292,7 +292,7 @@ static void test_decode_env_decisions_raw(void) {
 
     rbox_encode_response(request_id, request_id, 0, RBOX_DECISION_ALLOW,
                         "OK", 0xDEADBEEF, 8, env_decisions,
-                        buf, sizeof(buf), &out_len);
+                        buf, sizeof(buf), &out_len, NULL);
 
     rbox_decoded_header_t header;
     rbox_decode_header_raw(buf, out_len, &header);
@@ -327,7 +327,7 @@ static void test_decode_response_details_no_reason(void) {
 
     rbox_encode_response(request_id, request_id, 0, RBOX_DECISION_ALLOW,
                         "", 0, 0, NULL,
-                        buf, sizeof(buf), &out_len);
+                        buf, sizeof(buf), &out_len, NULL);
 
     rbox_decoded_header_t header;
     rbox_decode_header_raw(buf, out_len, &header);
@@ -357,7 +357,7 @@ static void test_decode_env_decisions_empty(void) {
 
     rbox_encode_response(request_id, request_id, 0, RBOX_DECISION_ALLOW,
                         "OK", 0, 0, NULL,
-                        buf, sizeof(buf), &out_len);
+                        buf, sizeof(buf), &out_len, NULL);
 
     rbox_decoded_header_t header;
     rbox_decode_header_raw(buf, out_len, &header);

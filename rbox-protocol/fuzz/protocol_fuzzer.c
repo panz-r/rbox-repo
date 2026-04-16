@@ -91,7 +91,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t length) {
             size_t rlen = 0;
             uint8_t decision = (data[0] % 2);  // 0 = allow, 1 = deny
             rbox_encode_response(NULL, NULL, 0, decision, "test reason", 0, 0, NULL,
-                               resp_buf, sizeof(resp_buf), &rlen);
+                               resp_buf, sizeof(resp_buf), &rlen, NULL);
         }
         free(packet);
     }

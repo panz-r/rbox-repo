@@ -27,8 +27,10 @@ rbox_error_t rbox_validate_header(const uint8_t *packet, size_t len) {
     }
 
     uint32_t version = rbox_read_u32(&r);
-    if (version != RBOX_VERSION) {
-        return RBOX_ERR_VERSION;
+    uint16_t major = (uint16_t)(version >> 16);
+    uint16_t minor = (uint16_t)(version & 0xFFFF);
+    if (major != RBOX_PROTOCOL_MAJOR) {
+        return RBOX_ERR_VERSION_MISMATCH;
     }
 
     rbox_reader_skip_to(&r, RBOX_HEADER_OFFSET_CHUNK_LEN);
@@ -47,6 +49,7 @@ rbox_error_t rbox_validate_header(const uint8_t *packet, size_t len) {
         return RBOX_ERR_CHECKSUM;
     }
 
+    (void)minor;
     return RBOX_OK;
 }
 
@@ -66,7 +69,8 @@ void rbox_decode_header_raw(const uint8_t *packet, size_t len, rbox_decoded_head
     header->magic = rbox_read_u32(&r);
     if (header->magic != RBOX_MAGIC) return;
     header->version = rbox_read_u32(&r);
-    if (header->version != RBOX_VERSION) return;
+    uint16_t major = (uint16_t)(header->version >> 16);
+    if (major != RBOX_PROTOCOL_MAJOR) return;
 
     rbox_read_bytes(&r, header->client_id, 16);
     rbox_read_bytes(&r, header->request_id, 16);
@@ -180,15 +184,16 @@ rbox_error_t rbox_decode_response_raw(
         return RBOX_ERR_MAGIC;
     }
 
-    /* Check version */
+    /* Check version - compare major version only */
     uint32_t version = *(uint32_t *)(packet + 4);
+    uint16_t major = (uint16_t)(version >> 16);
     uint8_t decision;
     uint32_t reason_len;
     size_t reason_offset;
     size_t request_id_offset;
 
-    if (version == RBOX_VERSION) {
-        /* v9 format */
+    if (major == RBOX_PROTOCOL_MAJOR) {
+        /* Current protocol format */
         if (len < RBOX_HEADER_SIZE) {
             return RBOX_ERR_TRUNCATED;
         }
@@ -279,20 +284,24 @@ rbox_error_t rbox_decode_response_raw(
 
     out_response->duration = 0;
 
-    /* Decode env decisions for v9 */
-    if (version == RBOX_VERSION) {
-        size_t env_offset = RBOX_HEADER_SIZE + 1 + reason_len + 1 + 4;
-        if (len >= env_offset + 2) {
-            uint16_t resp_env_count = *(uint16_t *)(packet + env_offset);
-            if (resp_env_count > 0 && resp_env_count <= 256) {
-                size_t bitmap_size = (resp_env_count + 7) / 8;
-                if (len >= env_offset + 2 + bitmap_size) {
-                    out_response->env_decision_count = resp_env_count;
-                    out_response->env_decisions = malloc(bitmap_size);
-                    if (out_response->env_decisions) {
-                        memcpy(out_response->env_decisions, packet + env_offset + 2, bitmap_size);
-                    } else {
-                        out_response->env_decision_count = 0;
+    /* Decode env decisions - only if RBOX_CAP_ENV_DECISIONS is set in server_id capabilities */
+    if (major == RBOX_PROTOCOL_MAJOR) {
+        const uint8_t *server_id = packet + RBOX_HEADER_OFFSET_SERVER_ID;
+        uint32_t server_caps = le32toh(*(uint32_t *)(server_id + 4));
+        if (server_caps & RBOX_CAP_ENV_DECISIONS) {
+            size_t env_offset = RBOX_HEADER_SIZE + 1 + reason_len + 1 + 4;
+            if (len >= env_offset + 2) {
+                uint16_t resp_env_count = *(uint16_t *)(packet + env_offset);
+                if (resp_env_count > 0 && resp_env_count <= 256) {
+                    size_t bitmap_size = (resp_env_count + 7) / 8;
+                    if (len >= env_offset + 2 + bitmap_size) {
+                        out_response->env_decision_count = resp_env_count;
+                        out_response->env_decisions = malloc(bitmap_size);
+                        if (out_response->env_decisions) {
+                            memcpy(out_response->env_decisions, packet + env_offset + 2, bitmap_size);
+                        } else {
+                            out_response->env_decision_count = 0;
+                        }
                     }
                 }
             }
@@ -300,4 +309,22 @@ rbox_error_t rbox_decode_response_raw(
     }
 
     return RBOX_OK;
+}
+
+/* ============================================================
+ * VERSION INFO EXTRACTION
+ * ============================================================ */
+
+void rbox_decode_version_info_from_server_id(const uint8_t server_id[16], rbox_version_info_t *out_info) {
+    if (!server_id || !out_info) return;
+    memset(out_info, 0, sizeof(*out_info));
+
+    /* Check for legacy 'S' marker */
+    if (server_id[0] == 'S' && server_id[1] == 'S') {
+        return;
+    }
+
+    out_info->major = le16toh(*(uint16_t *)(server_id + 0));
+    out_info->minor = le16toh(*(uint16_t *)(server_id + 2));
+    out_info->capabilities = le32toh(*(uint32_t *)(server_id + 4));
 }

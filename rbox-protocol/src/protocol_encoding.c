@@ -280,7 +280,8 @@ rbox_error_t rbox_encode_response(
     const uint8_t *env_decisions,
     uint8_t *out_buf,
     size_t buf_capacity,
-    size_t *out_len) {
+    size_t *out_len,
+    const rbox_version_info_t *negotiated_version) {
 
     if (!out_len) return RBOX_ERR_INVALID;
 
@@ -307,7 +308,18 @@ rbox_error_t rbox_encode_response(
     rbox_write_u32(&w, RBOX_VERSION);
     rbox_write_bytes(&w, client_id ? client_id : (uint8_t[16]){0}, 16);
     rbox_write_bytes(&w, request_id ? request_id : (uint8_t[16]){0}, 16);
-    rbox_write_bytes(&w, (uint8_t[16]){'S','S','S','S','S','S','S','S','S','S','S','S','S','S','S','S'}, 16);  /* server_id = 'S' */
+
+    /* server_id: encode negotiated version if provided, otherwise legacy 'S' marker */
+    if (negotiated_version) {
+        uint8_t server_id[16] = {0};
+        *(uint16_t *)(server_id + 0) = htole16(negotiated_version->major);
+        *(uint16_t *)(server_id + 2) = htole16(negotiated_version->minor);
+        *(uint32_t *)(server_id + 4) = htole32(negotiated_version->capabilities);
+        rbox_write_bytes(&w, server_id, 16);
+    } else {
+        rbox_write_bytes(&w, (uint8_t[16]){'S','S','S','S','S','S','S','S','S','S','S','S','S','S','S','S'}, 16);
+    }
+
     rbox_write_u32(&w, 0);  /* type */
     rbox_write_u32(&w, 0);  /* flags */
     rbox_write_u64(&w, 0);  /* offset */

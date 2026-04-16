@@ -34,6 +34,7 @@ typedef enum {
     RBOX_ERR_MEMORY    = -7,  /* Memory allocation failed */
     RBOX_ERR_MISMATCH  = -8,  /* Request/response ID mismatch (stale response) */
     RBOX_ERR_TIMEOUT   = -9,  /* Response timeout */
+    RBOX_ERR_VERSION_MISMATCH = -10,  /* Major version mismatch (incompatible) */
 } rbox_error_t;
 
 /* Detailed error information - caller-allocated, no memory allocation by library.
@@ -745,5 +746,25 @@ char *rbox_dup_subcommand(const char *command, const rbox_subcommand_t *sub);
 /* Get command name from parse result */
 const char *rbox_get_command_name(const char *command,
                                    const rbox_parse_result_t *parse);
+
+/* ============================================================
+ * VERSION AND CAPABILITY API
+ * ============================================================ */
+
+/* Get protocol major version */
+uint16_t rbox_get_protocol_major(void);
+
+/* Get protocol minor version */
+uint16_t rbox_get_protocol_minor(void);
+
+/* Get supported capabilities (bitmask of RBOX_CAP_* flags) */
+uint32_t rbox_get_supported_capabilities(void);
+
+/* Check if a major version is compatible with this implementation
+ * Returns 1 if compatible (same major version), 0 otherwise */
+int rbox_version_is_compatible(uint16_t major);
+
+/* Get negotiated capabilities for a session (0 if not negotiated) */
+uint32_t rbox_session_get_negotiated_capabilities(const rbox_session_t *session);
 
 #endif /* RBOX_PROTOCOL_H */

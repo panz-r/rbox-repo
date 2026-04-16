@@ -620,7 +620,7 @@ rbox_error_t rbox_response_send(rbox_client_t *client, const rbox_response_t *re
     size_t pkt_len;
     rbox_error_t err = rbox_encode_response(NULL, response->request_id, 0, response->decision,
                                    response->reason, 0, 0, NULL,
-                                   resp_buf, sizeof(resp_buf), &pkt_len);
+                                   resp_buf, sizeof(resp_buf), &pkt_len, NULL);
     if (err != RBOX_OK) {
         rbox_error_set(err_info, err, 0, RBOX_MSG_MEMORY);
         return RBOX_ERR_MEMORY;
@@ -651,8 +651,9 @@ rbox_error_t rbox_build_response(
 
     rbox_error_t err = rbox_encode_response(client_id, request_id, 0, decision, reason,
                                      fenv_hash, env_decision_count, env_decisions,
-                                     pkt, 1024, out_len);
+                                     pkt, 1024, out_len, NULL);
     if (err != RBOX_OK) {
+
         free(pkt);
         return err;
     }
@@ -670,11 +671,12 @@ char *rbox_build_response_internal(uint8_t *client_id, uint8_t *request_id, uint
 
     rbox_error_t err = rbox_encode_response(client_id, request_id, cmd_hash, decision, reason,
                                      fenv_hash, env_decision_count, env_decisions,
-                                     pkt, 1024, out_len);
+                                     pkt, 1024, out_len, NULL);
     if (err != RBOX_OK) {
         free(pkt);
         return NULL;
     }
+    *out_len = 1024;
     return (char *)pkt;
 }
 
