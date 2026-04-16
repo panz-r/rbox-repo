@@ -338,7 +338,6 @@ static std::set<int> solve_optimal_merges_greedy(
  */
 struct TotNode {
     bool is_leaf;
-    int input_idx;                        // Only for leaves: candidate index
     int left;                             // Left child node index (-1 for leaves)
     int right;                            // Right child node index (-1 for leaves)
     int subtree_size;                     // Number of leaves in subtree
@@ -368,7 +367,6 @@ static std::vector<TotNode> build_totalizer_tree(
     // Initialize leaves (indices 0 .. n-1)
     for (int i = 0; i < n; i++) {
         tree[i].is_leaf = true;
-        tree[i].input_idx = i;
         tree[i].left = -1;
         tree[i].right = -1;
         tree[i].subtree_size = 1;

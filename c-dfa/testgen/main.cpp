@@ -79,7 +79,6 @@ int main(int argc, char* argv[]) {
     int total_passed = 0;
     int total_failed = 0;
     int total_skipped = 0;
-    int file_num = 0;
     
     for (int file_num = 0; file_num < num_files; file_num++) {
         // Adjust seed for each batch
@@ -87,7 +86,6 @@ int main(int argc, char* argv[]) {
         
         // Generate test cases for this batch (max 8 for more complex combined DFAs)
         TestGenerator gen(opts);
-        int num_in_batch = std::min(tests_per_file, opts.num_tests - file_num * tests_per_file);
         gen.setTestsPerBatch(tests_per_file);
         auto tests = gen.generate();
         

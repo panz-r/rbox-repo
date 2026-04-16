@@ -44,8 +44,9 @@ typedef enum {
 /**
  * Minimize a DFA in-place.
  * Note: Thread-safe when called with algo parameter; avoid dfa_minimize_set_algorithm().
+ * @param verbose If true, print minimization progress to stderr
  */
-int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo);
+int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo, bool verbose);
 
 /**
  * Enable/disable debug output for minimization
@@ -63,6 +64,11 @@ typedef struct {
 } dfa_minimize_stats_t;
 
 void dfa_minimize_get_stats(dfa_minimize_stats_t* stats);
+
+/**
+ * Set iterations count for the last minimization
+ */
+void dfa_minimize_set_iterations(int iterations);
 
 /**
  * Select minimization algorithm (not thread-safe - use dfa_minimize with algo param)

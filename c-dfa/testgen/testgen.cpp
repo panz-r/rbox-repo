@@ -1143,7 +1143,7 @@ bool charClassPlusMatches(const std::string& char_class, const std::string& str)
 // Main pattern generator - try all strategies
 PatternResult generateSeparatingPattern(const std::vector<std::string>& matching,
                                         const std::vector<std::string>& counters,
-                                        Complexity complexity,
+                                        [[maybe_unused]] Complexity complexity,
                                         std::mt19937& rng) {
     PatternResult final_result;
     final_result.proof = "PROOF:\n";
@@ -1226,7 +1226,7 @@ PatternResult generateSeparatingPattern(const std::vector<std::string>& matching
     return final_result;
 }
 
-std::map<std::string, std::string> generateFragmentsForPattern(const std::string& pattern) {
+std::map<std::string, std::string> generateFragmentsForPattern([[maybe_unused]] const std::string& pattern) {
     std::map<std::string, std::string> fragments;
     return fragments;
 }
@@ -1546,7 +1546,7 @@ TestGenerator::generateInputs(Complexity complexity) {
     return generateSeeds(complexity, empty_set);
 }
 
-std::map<std::string, std::string> TestGenerator::generateFragments(Complexity complexity) {
+std::map<std::string, std::string> TestGenerator::generateFragments([[maybe_unused]] Complexity complexity) {
     return {};
 }
 
@@ -1554,7 +1554,7 @@ std::string TestGenerator::generateSimpleArg() {
     return "";
 }
 
-std::string TestGenerator::generateFlags(int count) {
+std::string TestGenerator::generateFlags([[maybe_unused]] int count) {
     return "";
 }
 
@@ -1564,7 +1564,7 @@ std::string TestGenerator::generatePath() {
 
 std::string TestGenerator::generatePattern(const std::vector<std::string>& matching_inputs, 
                                            const std::vector<std::string>& counter_inputs,
-                                           const std::map<std::string, std::string>& fragments,
+                                           [[maybe_unused]] const std::map<std::string, std::string>& fragments,
                                            Complexity complexity,
                                            std::string& proof_out) {
     PatternResult result = generateSeparatingPattern(matching_inputs, counter_inputs, complexity, rng);
@@ -1573,21 +1573,21 @@ std::string TestGenerator::generatePattern(const std::vector<std::string>& match
 }
 
 std::string TestGenerator::transformPart(const std::string& part,
-                                        const std::map<std::string, std::string>& fragments,
-                                        Complexity complexity,
-                                        bool allow_wildcard,
-                                        const std::vector<std::string>& counter_inputs,
-                                        const std::string& current_pattern,
+                                        [[maybe_unused]] const std::map<std::string, std::string>& fragments,
+                                        [[maybe_unused]] Complexity complexity,
+                                        [[maybe_unused]] bool allow_wildcard,
+                                        [[maybe_unused]] const std::vector<std::string>& counter_inputs,
+                                        [[maybe_unused]] const std::string& current_pattern,
                                         std::string& proof_out) {
     proof_out = "no transformation";
     return part;
 }
 
-bool TestGenerator::wouldMatchWithoutOptional(const std::string& pattern_prefix, const std::string& counter_input) {
+bool TestGenerator::wouldMatchWithoutOptional([[maybe_unused]] const std::string& pattern_prefix, [[maybe_unused]] const std::string& counter_input) {
     return false;
 }
 
-bool TestGenerator::wouldMatchWithAlternation(const std::string& pattern_prefix, const std::string& literal_part, const std::string& counter_input) {
+bool TestGenerator::wouldMatchWithAlternation([[maybe_unused]] const std::string& pattern_prefix, [[maybe_unused]] const std::string& literal_part, [[maybe_unused]] const std::string& counter_input) {
     return false;
 }
 
@@ -1600,27 +1600,27 @@ std::string TestGenerator::makeLiteralPattern(const std::vector<std::string>& pa
     return result;
 }
 
-std::string TestGenerator::makeMediumPattern(const std::vector<std::string>& parts, const std::map<std::string, std::string>& fragments) {
+std::string TestGenerator::makeMediumPattern(const std::vector<std::string>& parts, [[maybe_unused]] const std::map<std::string, std::string>& fragments) {
     return makeLiteralPattern(parts);
 }
 
-std::string TestGenerator::makeComplexPattern(const std::vector<std::string>& parts, const std::map<std::string, std::string>& fragments) {
+std::string TestGenerator::makeComplexPattern(const std::vector<std::string>& parts, [[maybe_unused]] const std::map<std::string, std::string>& fragments) {
     return makeLiteralPattern(parts);
 }
 
-std::vector<std::string> TestGenerator::generateCounterInputsSimple(const std::string& arg, const std::string& cmd) {
+std::vector<std::string> TestGenerator::generateCounterInputsSimple([[maybe_unused]] const std::string& arg, [[maybe_unused]] const std::string& cmd) {
     return {};
 }
 
-std::vector<std::string> TestGenerator::generateCounterInputsMedium(const std::string& flags, const std::string& arg, const std::string& cmd) {
+std::vector<std::string> TestGenerator::generateCounterInputsMedium([[maybe_unused]] const std::string& flags, [[maybe_unused]] const std::string& arg, [[maybe_unused]] const std::string& cmd) {
     return {};
 }
 
-std::vector<std::string> TestGenerator::generateCounterInputsComplex(const std::string& flags, const std::vector<std::string>& args, const std::string& cmd) {
+std::vector<std::string> TestGenerator::generateCounterInputsComplex([[maybe_unused]] const std::string& flags, [[maybe_unused]] const std::vector<std::string>& args, [[maybe_unused]] const std::string& cmd) {
     return {};
 }
 
-bool TestGenerator::wouldPatternMatch(const std::string& input, const std::string& pattern) {
+bool TestGenerator::wouldPatternMatch([[maybe_unused]] const std::string& input, [[maybe_unused]] const std::string& pattern) {
     return false;
 }
 
@@ -1841,7 +1841,7 @@ void TestGenerator::writeExpectations(const std::vector<TestCase>& tests, const 
     std::cout << "Written expectations: " << filename << "\n";
 }
 
-int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file, int* passed_out, int* failed_out, int* skipped_out) {
+int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, [[maybe_unused]] const std::string& expectations_file, int* passed_out, int* failed_out, int* skipped_out) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa...\n";
     std::cout << std::string(60, '=') << "\n\n";
@@ -1875,7 +1875,6 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
         }
         
         int expected_match_category = static_cast<int>(tc.category) - 1;
-        int expected_counter_category = static_cast<int>(tc.counter_category) - 1;
         
         // Check: matching inputs MUST match with the MATCHING category
         bool all_matched = true;
@@ -2220,7 +2219,7 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
     return failed > 0 ? 1 : 0;
 }
 
-int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file, int* passed_out, int* failed_out, int* skipped_out) {
+int TestGenerator::runTestsIndividual(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, [[maybe_unused]] const std::string& expectations_file, int* passed_out, int* failed_out, int* skipped_out) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa (INDIVIDUALLY)...\n";
     std::cout << std::string(60, '=') << "\n\n";

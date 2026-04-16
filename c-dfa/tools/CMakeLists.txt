@@ -99,7 +99,7 @@ target_link_libraries(sat_modules PUBLIC
     readonlybox_dfa_headers
 )
 target_compile_definitions(sat_modules PUBLIC USE_CADICAL)
-target_compile_options(sat_modules PRIVATE -fvisibility=hidden -flto)
+target_compile_options(sat_modules PRIVATE -fvisibility=hidden)
 target_include_directories(sat_modules PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<BUILD_INTERFACE:${CADICAL_DIR}/src>

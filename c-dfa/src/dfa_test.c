@@ -1,3 +1,7 @@
+// Suppress warnings for intentionally incomplete initializers in test cases
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
 #include "dfa_internal.h"
 #include "dfa_types.h"
 #include "pipeline.h"
@@ -2066,3 +2070,5 @@ static void run_multi_category_mask_tests(void) {
     run_test_group("MULTI CATEGORY MASK TESTS", "patterns_combined.txt",
                    "build_test/multi_cat_mask.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
+
+#pragma GCC diagnostic pop

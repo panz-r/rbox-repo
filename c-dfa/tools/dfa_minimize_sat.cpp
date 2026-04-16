@@ -111,6 +111,7 @@ private:
     std::vector<PatternSet> reachability;
     MarkerList* marker_lists;
     int marker_list_count;
+    int total_iterations;
 
     int eq_var(int i, int j) {
         if (i == j) return 0;
@@ -208,7 +209,7 @@ private:
 
 public:
     ScalableSATMinimizer(const build_dfa_state_t* dfa, int states) 
-        : n_states(states), original_dfa(dfa) {
+        : n_states(states), original_dfa(dfa), total_iterations(0) {
         solver = new CaDiCaL::Solver();
         
         long long num_vars = (long long)n_states * (n_states - 1) / 2;
@@ -222,6 +223,8 @@ public:
     }
 
     ~ScalableSATMinimizer() { delete solver; }
+
+    int getTotalIterations() const { return total_iterations; }
 
     int run() {
         fprintf(stderr, "[SAT] Initializing base constraints...\n");
@@ -319,6 +322,7 @@ public:
             fprintf(stderr, "[SAT] Added %zu clauses in %ldms\n", violations.size(), dur);
             if (iteration > 500) break;
         }
+        total_iterations = iteration;
         return extract_result();
     }
 
@@ -411,6 +415,8 @@ int dfa_minimize_sat(build_dfa_state_t** dfa, int state_count) {
     if (hop_count <= 1) return hop_count;
 
     ScalableSATMinimizer minimizer(*dfa, hop_count);
-    return minimizer.run();
+    int result = minimizer.run();
+    dfa_minimize_set_iterations(minimizer.getTotalIterations());
+    return result;
 }
 }

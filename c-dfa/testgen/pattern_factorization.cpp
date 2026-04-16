@@ -55,9 +55,9 @@ char pickDistinguishingChar(const std::vector<std::string>& counter_seeds,
 // Returns vector of counter sets for each child (prefix, middle, suffix)
 std::vector<std::vector<std::string>> subdivideCounterConstraints(
     const std::vector<std::string>& all_counters,
-    const std::vector<std::string>& matching_seeds,
+    [[maybe_unused]] const std::vector<std::string>& matching_seeds,
     int num_children,
-    std::mt19937& rng) {
+    [[maybe_unused]] std::mt19937& rng) {
     
     if (num_children <= 1 || all_counters.empty()) {
         return std::vector<std::vector<std::string>>(num_children, all_counters);
@@ -69,10 +69,6 @@ std::vector<std::vector<std::string>> subdivideCounterConstraints(
     // For each counter, assign it to children based on position constraints
     for (const auto& counter : all_counters) {
         if (counter.empty()) continue;
-        
-        // Pick a distinguishing position in this counter
-        int pos = dist(rng) % std::min((int)counter.length(), 3);  // First 3 chars
-        char dist_char = counter[pos];
         
         // Assign to children based on position
         // First child: block counters ending with suffix after pos
@@ -1642,8 +1638,8 @@ struct SequenceSplitSafety {
 SequenceSplitSafety checkSequenceSplitSafety(
     const std::string& literal,
     size_t split_point,
-    const std::vector<std::string>& matching_inputs,
-    const std::vector<std::string>& counter_inputs) {
+    [[maybe_unused]] const std::vector<std::string>& matching_inputs,
+    [[maybe_unused]] const std::vector<std::string>& counter_inputs) {
     
     SequenceSplitSafety result;
     result.is_safe = true;
@@ -1681,8 +1677,8 @@ SequenceSplitSafety checkSequenceSplitSafety(
 SequenceSplitSafety checkSequenceMergeSafety(
     const std::string& lit1,
     const std::string& lit2,
-    const std::vector<std::string>& matching_inputs,
-    const std::vector<std::string>& counter_inputs) {
+    [[maybe_unused]] const std::vector<std::string>& matching_inputs,
+    [[maybe_unused]] const std::vector<std::string>& counter_inputs) {
     
     SequenceSplitSafety result;
     result.is_safe = true;

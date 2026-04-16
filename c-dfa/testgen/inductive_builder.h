@@ -17,18 +17,19 @@ struct PatternNode;
 namespace InductiveBuilder {
 
 struct InputState {
-    std::string full_input;
-    std::string remaining;
-    bool is_matching;
+    std::string full_input = {};
+    std::string remaining = {};
+    bool is_matching = false;
     
+    InputState() = default;
     InputState(const std::string& input, bool matching);
 };
 
 struct BuildResult {
-    std::shared_ptr<PatternNode> ast;
-    std::map<std::string, std::string> fragments;  // Fragment definitions
-    std::string proof;
-    bool success;
+    std::shared_ptr<PatternNode> ast = nullptr;
+    std::map<std::string, std::string> fragments = {};
+    std::string proof = {};
+    bool success = false;
     
     BuildResult();
     BuildResult(std::shared_ptr<PatternNode> a, const std::string& p, bool s);

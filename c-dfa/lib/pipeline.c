@@ -8,6 +8,10 @@
 #define _POSIX_C_SOURCE 200809L
 #define DFA_ERROR_PROGRAM "pipeline"
 
+// Suppress warnings for defensive NULL checks on nonnull-marked pointers
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnonnull-compare"
+
 #include "pipeline.h"
 #include "dfa_internal.h"
 #include "dfa_types.h"
@@ -53,6 +57,14 @@ struct pipeline {
     bool nfa_loaded_from_file;
     pattern_entry_t* ordered_patterns;
     int pattern_count;
+    
+    // Minimize stats
+    bool minimize_stats_valid;
+    pipeline_minimize_stats_t minimize_stats;
+    
+    // Pre-minimize stats
+    bool premin_stats_valid;
+    pipeline_premin_stats_t premin_stats;
 };
 
 // ============================================================================
@@ -290,10 +302,27 @@ pipeline_error_t pipeline_load_nfa(pipeline_t* p, const char* nfa_file) {
 pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
     if (!p->nfa2dfa_ctx) return PIPELINE_INVALID_STATE;
 
+    int initial_count = p->nfa2dfa_ctx->nfa_state_count;
+
     nfa_premin_options_t opts = nfa_premin_default_options();
     opts.verbose = p->config.verbose;
     opts.enable_sat_optimal = p->config.enable_sat_optimal_premin;
     nfa_preminimize(p->nfa2dfa_ctx->nfa, &p->nfa2dfa_ctx->nfa_state_count, &opts);
+
+    // Capture pre-min stats
+    nfa_premin_stats_t premin_stats;
+    nfa_premin_get_stats(&premin_stats);
+    p->premin_stats.initial_states = initial_count;
+    p->premin_stats.final_states = p->nfa2dfa_ctx->nfa_state_count;
+    p->premin_stats.states_removed = initial_count - p->nfa2dfa_ctx->nfa_state_count;
+    p->premin_stats.states_merged = premin_stats.states_merged;
+    p->premin_stats.identical_merged = premin_stats.identical_merged;
+    p->premin_stats.prefix_merged = premin_stats.prefix_merged;
+    p->premin_stats.final_deduped = premin_stats.final_deduped;
+    p->premin_stats.suffix_merged = premin_stats.suffix_merged;
+    p->premin_stats.sat_merged = premin_stats.sat_merged;
+    p->premin_stats.sat_optimal = premin_stats.sat_optimal;
+    p->premin_stats_valid = true;
 
     return PIPELINE_OK;
 }
@@ -344,7 +373,17 @@ pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
     if (!p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
 
     p->nfa2dfa_ctx->dfa_state_count = dfa_minimize(
-        p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, (dfa_min_algo_t)algo);
+        p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, 
+        (dfa_min_algo_t)algo, p->config.verbose);
+
+    // Capture minimize stats
+    dfa_minimize_stats_t min_stats;
+    dfa_minimize_get_stats(&min_stats);
+    p->minimize_stats.initial_states = min_stats.initial_states;
+    p->minimize_stats.final_states = min_stats.final_states;
+    p->minimize_stats.states_removed = min_stats.states_removed;
+    p->minimize_stats.iterations = min_stats.iterations;
+    p->minimize_stats_valid = true;
 
     // Re-flatten after minimization (except Brzozowski)
     if (algo != PIPELINE_MIN_BRZOZOWSKI) {
@@ -422,6 +461,36 @@ void pipeline_get_ordering_stats(pipeline_t* p, pipeline_ordering_stats_t* stats
     stats->patterns_read = po_stats.original_count;
     stats->patterns_reordered = po_stats.patterns_reordered;
     stats->duplicates_removed = po_stats.duplicates_found;
+}
+
+void pipeline_get_minimize_stats(pipeline_t* p, pipeline_minimize_stats_t* stats) {
+    if (!p || !stats) return;
+    if (p->minimize_stats_valid) {
+        stats->initial_states = p->minimize_stats.initial_states;
+        stats->final_states = p->minimize_stats.final_states;
+        stats->states_removed = p->minimize_stats.states_removed;
+        stats->iterations = p->minimize_stats.iterations;
+    } else {
+        memset(stats, 0, sizeof(*stats));
+    }
+}
+
+void pipeline_get_premin_stats(pipeline_t* p, pipeline_premin_stats_t* stats) {
+    if (!p || !stats) return;
+    if (p->premin_stats_valid) {
+        stats->initial_states = p->premin_stats.initial_states;
+        stats->final_states = p->premin_stats.final_states;
+        stats->states_removed = p->premin_stats.states_removed;
+        stats->states_merged = p->premin_stats.states_merged;
+        stats->identical_merged = p->premin_stats.identical_merged;
+        stats->prefix_merged = p->premin_stats.prefix_merged;
+        stats->final_deduped = p->premin_stats.final_deduped;
+        stats->suffix_merged = p->premin_stats.suffix_merged;
+        stats->sat_merged = p->premin_stats.sat_merged;
+        stats->sat_optimal = p->premin_stats.sat_optimal;
+    } else {
+        memset(stats, 0, sizeof(*stats));
+    }
 }
 
 // ============================================================================
@@ -560,4 +629,6 @@ dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input) {
     result.matched = dfa_eval(e->data, e->size, input, strlen(input), &result);
     return result;
 }
+
+#pragma GCC diagnostic pop
 

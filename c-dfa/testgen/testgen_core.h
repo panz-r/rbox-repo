@@ -16,15 +16,15 @@ namespace TestGen {
 // ============================================================================
 
 struct InputNode {
-    std::string id;
-    std::string value;
-    std::set<std::string> categories;
-    std::map<std::string, std::string> meta;
+    std::string id = {};
+    std::string value = {};
+    std::set<std::string> categories = {};
+    std::map<std::string, std::string> meta = {};
 };
 
 struct DependencyEdge {
-    std::string from;
-    std::string to;
+    std::string from = {};
+    std::string to = {};
     enum class Type {
         DIFFERS_AT,
         SHARES_STRUCTURE,
@@ -32,8 +32,8 @@ struct DependencyEdge {
         NUMERICAL_RELATION,
         SAME_CATEGORY
     };
-    Type type;
-    std::map<std::string, std::string> meta;
+    Type type = Type::DIFFERS_AT;
+    std::map<std::string, std::string> meta = {};
     
     static std::string typeToString(Type t) {
         switch (t) {
@@ -48,8 +48,8 @@ struct DependencyEdge {
 };
 
 struct InputGraph {
-    std::vector<InputNode> nodes;
-    std::vector<DependencyEdge> edges;
+    std::vector<InputNode> nodes = {};
+    std::vector<DependencyEdge> edges = {};
     
     InputNode& add(const std::string& value, const std::set<std::string>& cats = {}) {
         InputNode node;
@@ -109,17 +109,17 @@ struct InputGraph {
 // ============================================================================
 
 struct FragmentBuildState {
-    std::string name;
-    std::string current_definition;
+    std::string name = {};
+    std::string current_definition = {};
     bool complete = false;
     int build_step = 0;
 };
 
 struct GenerationContext {
-    InputGraph graph;
-    std::map<std::string, int> counters;
-    std::mt19937 rng;
-    std::vector<FragmentBuildState> fragment_builds;
+    InputGraph graph = {};
+    std::map<std::string, int> counters = {};
+    std::mt19937 rng = {};
+    std::vector<FragmentBuildState> fragment_builds = {};
     
     int getAndIncrement(const std::string& counter) {
         int val = counters[counter];
@@ -161,11 +161,11 @@ struct GenerationContext {
 // ============================================================================
 
 struct ExpectationSet {
-    std::vector<Expectation> match;
-    std::vector<Expectation> no_match;
-    std::vector<Expectation> fragment;
-    std::vector<Expectation> quantifier;
-    std::vector<Expectation> structure;
+    std::vector<Expectation> match = {};
+    std::vector<Expectation> no_match = {};
+    std::vector<Expectation> fragment = {};
+    std::vector<Expectation> quantifier = {};
+    std::vector<Expectation> structure = {};
     
     void add(const Expectation& e) {
         switch (e.type) {
@@ -211,12 +211,12 @@ struct ExpectationSet {
 // ============================================================================
 
 struct TestCaseCore {
-    std::string id;
-    std::shared_ptr<PatternNode> ast;
-    InputGraph inputs;
-    std::map<std::string, std::string> fragments;
-    ExpectationSet expectations;
-    std::string proof;
+    std::string id = {};
+    std::shared_ptr<PatternNode> ast = nullptr;
+    InputGraph inputs = {};
+    std::map<std::string, std::string> fragments = {};
+    ExpectationSet expectations = {};
+    std::string proof = {};
     double score = 0.0;
     
     std::string pattern() const;

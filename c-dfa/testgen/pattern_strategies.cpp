@@ -20,8 +20,8 @@ using namespace std;
 
 // Strategy 1: Literal (exact match)
 PatternResult tryLiteral(const std::vector<std::string>& matching,
-                        const std::vector<std::string>& counters,
-                        std::mt19937& rng) {
+                        [[maybe_unused]] const std::vector<std::string>& counters,
+                        [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() != 1) {
@@ -345,7 +345,7 @@ PatternResult trySuffixPlusFragment(const std::vector<std::string>& matching,
     for (size_t suffix_start = 0; suffix_start <= suffix_len; suffix_start++) {
         std::set<char> match_chars;
         for (const auto& m : matching) {
-            if (m.size() > suffix_len && (m.size() - suffix_len - 1) >= 0) {
+            if (m.size() > suffix_len) {
                 size_t pos = m.size() - suffix_len - 1;
                 if (pos < m.size()) match_chars.insert(m[pos]);
             }
@@ -701,8 +701,8 @@ PatternResult tryFragmentOnly(const std::vector<std::string>& matching,
 
 // Strategy: Optional quantifier - try (unit)? instead of alternation
 PatternResult tryOptionalQuantifier(const std::vector<std::string>& matching,
-                                   const std::vector<std::string>& counters,
-                                   std::mt19937& rng) {
+                                   [[maybe_unused]] const std::vector<std::string>& counters,
+                                   [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 2) {
@@ -791,8 +791,8 @@ PatternResult tryOptionalQuantifier(const std::vector<std::string>& matching,
 
 // Strategy: Empty alternative - try adding | to alternation
 PatternResult tryEmptyAlternative(const std::vector<std::string>& matching,
-                                const std::vector<std::string>& counters,
-                                std::mt19937& rng) {
+                                [[maybe_unused]] const std::vector<std::string>& counters,
+                                [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 2) {
@@ -871,8 +871,8 @@ PatternResult tryEmptyAlternative(const std::vector<std::string>& matching,
 
 // Strategy: Nested group - wrap pattern in extra parens
 PatternResult tryNestedGroup(const std::vector<std::string>& matching,
-                           const std::vector<std::string>& counters,
-                           std::mt19937& rng,
+                           [[maybe_unused]] const std::vector<std::string>& counters,
+                           [[maybe_unused]] std::mt19937& rng,
                            const std::string& base_pattern) {
     PatternResult result;
     
@@ -1311,8 +1311,8 @@ PatternResult trySequenceWithQuantifier(const std::vector<std::string>& matching
 
 // Strategy: Optional sequence - (abc)? 
 PatternResult tryOptionalSequence(const std::vector<std::string>& matching,
-                                  const std::vector<std::string>& counters,
-                                  std::mt19937& rng) {
+                                  [[maybe_unused]] const std::vector<std::string>& counters,
+                                  [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 2) {
@@ -1530,8 +1530,8 @@ PatternResult tryNestedQuantifiers(const std::vector<std::string>& matching,
 
 // Strategy: Char class sequence - (a|b|c)+ with different chars
 PatternResult tryCharClassSequence(const std::vector<std::string>& matching,
-                                   const std::vector<std::string>& counters,
-                                   std::mt19937& rng) {
+                                   [[maybe_unused]] const std::vector<std::string>& counters,
+                                   [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 2) {
@@ -1707,8 +1707,8 @@ PatternResult tryStarQuantifier(const std::vector<std::string>& matching,
 
 // Strategy: CharClassPlus - inline character class with plus (not fragment)
 PatternResult tryCharClassPlus(const std::vector<std::string>& matching,
-                               const std::vector<std::string>& counters,
-                               std::mt19937& rng) {
+                               [[maybe_unused]] const std::vector<std::string>& counters,
+                               [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 2) {
@@ -1811,8 +1811,8 @@ PatternResult tryCharClassPlus(const std::vector<std::string>& matching,
 
 // Strategy: Mixed quantifiers - combine different quantifiers
 PatternResult tryMixedQuantifiers(const std::vector<std::string>& matching,
-                                  const std::vector<std::string>& counters,
-                                  std::mt19937& rng) {
+                                  [[maybe_unused]] const std::vector<std::string>& counters,
+                                  [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 2) {
@@ -2170,8 +2170,8 @@ PatternResult tryDeepNesting(const std::vector<std::string>& matching,
 // Strategy: Multi-fragment combination - two fragments used together
 // Pattern: ((frag1))+((frag2))+ - tests fragment isolation when combined
 PatternResult tryMultiFragmentCombo(const std::vector<std::string>& matching,
-                                   const std::vector<std::string>& counters,
-                                   std::mt19937& rng) {
+                                   [[maybe_unused]] const std::vector<std::string>& counters,
+                                   [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 4) {
@@ -2292,8 +2292,8 @@ PatternResult tryMultiFragmentCombo(const std::vector<std::string>& matching,
 
 // Strategy: Nested alternation - alternation within alternation
 PatternResult tryNestedAlternation(const std::vector<std::string>& matching,
-                                   const std::vector<std::string>& counters,
-                                   std::mt19937& rng) {
+                                   [[maybe_unused]] const std::vector<std::string>& counters,
+                                   [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 4) {
@@ -2322,8 +2322,8 @@ PatternResult tryNestedAlternation(const std::vector<std::string>& matching,
 
 // Strategy: Complex quantifier stack - (a*)+, (a+)*, (a?)+
 PatternResult tryQuantifierStack(const std::vector<std::string>& matching,
-                                  const std::vector<std::string>& counters,
-                                  std::mt19937& rng) {
+                                  [[maybe_unused]] const std::vector<std::string>& counters,
+                                  [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.empty()) {
@@ -2389,8 +2389,8 @@ PatternResult tryQuantifierStack(const std::vector<std::string>& matching,
 
 // Strategy: Long literal alternation - 10-20 alternatives with long strings
 PatternResult tryLongAlternation(const std::vector<std::string>& matching,
-                               const std::vector<std::string>& counters,
-                               std::mt19937& rng) {
+                               [[maybe_unused]] const std::vector<std::string>& counters,
+                               [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 2) {
@@ -2454,8 +2454,8 @@ PatternResult tryLongAlternation(const std::vector<std::string>& matching,
 
 // Strategy: Alternation with prefix/suffix - simplified with proper verification
 PatternResult tryAltWithAffix(const std::vector<std::string>& matching,
-                             const std::vector<std::string>& counters,
-                             std::mt19937& rng) {
+                             [[maybe_unused]] const std::vector<std::string>& counters,
+                             [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.size() < 2) {
@@ -2496,8 +2496,8 @@ PatternResult tryAltWithAffix(const std::vector<std::string>& matching,
 
 // Strategy: Triple quantifier nesting
 PatternResult tryTripleQuant(const std::vector<std::string>& matching,
-                            const std::vector<std::string>& counters,
-                            std::mt19937& rng) {
+                            [[maybe_unused]] const std::vector<std::string>& counters,
+                            [[maybe_unused]] std::mt19937& rng) {
     PatternResult result;
     
     if (matching.empty()) {

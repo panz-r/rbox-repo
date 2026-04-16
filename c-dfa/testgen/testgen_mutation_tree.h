@@ -10,12 +10,12 @@
 namespace TestGen {
 
 struct MutationTreeNode {
-    TestCaseCore tc;
-    double score;
-    MutationTreeNode* parent;
-    std::vector<MutationTreeNode*> children;
-    int depth;
-    std::string operator_name;
+    TestCaseCore tc = {};
+    double score = 0.0;
+    MutationTreeNode* parent = nullptr;
+    std::vector<MutationTreeNode*> children = {};
+    int depth = 0;
+    std::string operator_name = {};
     
     MutationTreeNode(const TestCaseCore& tc_, MutationTreeNode* parent_ = nullptr)
         : tc(tc_), score(0.0), parent(parent_), depth(parent_ ? parent_->depth + 1 : 0) {}
@@ -28,8 +28,8 @@ struct MutationTreeNode {
 class DFACoverageTracker {
 public:
     struct CoverageData {
-        std::set<int> covered_lines;
-        std::set<std::pair<int,int>> covered_edges;
+        std::set<int> covered_lines = {};
+        std::set<std::pair<int,int>> covered_edges = {};
         
         bool operator==(const CoverageData& other) const {
             return covered_lines == other.covered_lines && 
@@ -45,7 +45,7 @@ public:
         coverage_map[test_id] = data;
     }
     
-    double coverageGain(const TestCaseCore& tc) const {
+    double coverageGain([[maybe_unused]] const TestCaseCore& tc) const {
         return 0.0;
     }
     

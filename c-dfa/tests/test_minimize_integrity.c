@@ -87,7 +87,7 @@ static int test_marker_aware_partitioning(void) {
     dfa_ptr[5]->eos_marker_offset = 0x30;
     dfa_ptr[5]->flags = 0;
 
-    int result = dfa_minimize(dfa_ptr, 6, DFA_MIN_HOPCROFT);
+    int result = dfa_minimize(dfa_ptr, 6, DFA_MIN_HOPCROFT, false);
 
     check(result > 0, "Minimization produced valid state count");
     check(result <= 6, "Minimization reduced or maintained state count");
@@ -150,7 +150,7 @@ static int test_marker_offset_spread(void) {
         dfa_ptr[i]->flags = 0x0100;
     }
 
-    int result = dfa_minimize(dfa_ptr, 20, DFA_MIN_HOPCROFT);
+    int result = dfa_minimize(dfa_ptr, 20, DFA_MIN_HOPCROFT, false);
 
     check(result > 0, "Minimization completed with spread markers");
     check(result < 20, "Minimization reduced state count");

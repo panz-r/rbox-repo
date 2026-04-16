@@ -537,6 +537,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
     inverse_graph_t inv;
     if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
     int head = 0, tail = 0;
+    int iterations = 0;
     int* worklist = alloc_or_abort(malloc(MAX_STATES * 4 * sizeof(int)), "Alloc worklist");
     bool* in_worklist = alloc_or_abort(calloc(MAX_STATES, sizeof(bool)), "Alloc in_worklist");
     for (int p = 0; p < ms->partition_count; p++) { worklist[tail++] = p; in_worklist[p] = true; }
@@ -545,6 +546,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
     int* char_pred_offsets = alloc_or_abort(calloc(TOTAL_SYMBOLS, sizeof(int)), "Alloc char_pred_offsets");
     sort_entry_t* sort_buf = alloc_or_abort(malloc(state_count * sizeof(sort_entry_t)), "Alloc sort_buf");
     while (head < tail) {
+        iterations++;
         int S = worklist[head++]; in_worklist[S] = false;
         memset(char_pred_counts, 0, TOTAL_SYMBOLS * sizeof(int));
         for (int i = 0; i < ms->partitions[S].count; i++) {
@@ -598,6 +600,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
 
     int new_count = build_minimized_dfa(dfa, ms, state_count);
     VERBOSE_PRINT("Minimized to %d states (from %d)\n", new_count, state_count);
+    last_stats.iterations = iterations;
     free_minimizer(ms); free(worklist); free(in_worklist); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
     
     return new_count;
@@ -662,6 +665,7 @@ int dfa_minimize_moore(build_dfa_state_t** dfa, int state_count) {
         if (!changed) break;
     }
     int new_count = build_minimized_dfa(dfa, ms, state_count);
+    last_stats.iterations = iterations;
     free_minimizer(ms);
     free(state_to_sg); free(sg_reps); free(new_p_ids); free(kept);
     return new_count;
@@ -676,6 +680,7 @@ dfa_min_algo_t dfa_minimize_get_algorithm(void) { return current_algo; }
 void dfa_minimize_set_moore(bool use_moore) { current_algo = use_moore ? DFA_MIN_MOORE : DFA_MIN_HOPCROFT; }
 void dfa_minimize_set_verbose(bool verbose) { minimize_verbose = verbose; }
 void dfa_minimize_get_stats(dfa_minimize_stats_t* stats) { if(stats) *stats = last_stats; }
+void dfa_minimize_set_iterations(int iterations) { last_stats.iterations = iterations; }
 
 static bool verify_minimized_dfa(build_dfa_state_t** dfa, int state_count) {
     if (state_count <= 0) return false;
@@ -689,9 +694,13 @@ static bool verify_minimized_dfa(build_dfa_state_t** dfa, int state_count) {
     return true;
 }
 
-int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo) {
+int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo, bool verbose) {
     if (state_count <= 0) return 0;
     int original = state_count;
+
+    // Save and override verbose setting for internal calls
+    bool saved_verbose = minimize_verbose;
+    minimize_verbose = verbose;
 
     // Pass 1: Structural optimization
     state_count = prune_dead_states(dfa, state_count);
@@ -707,6 +716,9 @@ int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo) 
     } else {
         new_count = dfa_minimize_hopcroft(dfa, state_count);
     }
+
+    // Restore verbose setting
+    minimize_verbose = saved_verbose;
     
     last_stats.initial_states = original;
     last_stats.final_states = new_count;

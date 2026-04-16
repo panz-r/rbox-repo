@@ -35,9 +35,9 @@ enum class CoordinatedMutationType {
 };
 
 struct CoordinatedMutationResult {
-    TestCaseCore mutated_tc;
-    std::string proof;
-    bool valid;
+    TestCaseCore mutated_tc = {};
+    std::string proof = {};
+    bool valid = false;
 };
 
 class CoordinatedMutationOperator {

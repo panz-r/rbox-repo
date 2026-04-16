@@ -13,11 +13,11 @@ enum class ExpectationType;
 struct Expectation;
 
 struct PatternResult {
-    std::string pattern;
-    std::map<std::string, std::string> fragments;
-    std::string proof;
-    std::vector<Expectation> expectations;
-    std::shared_ptr<PatternNode> ast;
+    std::string pattern = {};
+    std::map<std::string, std::string> fragments = {};
+    std::string proof = {};
+    std::vector<Expectation> expectations = {};
+    std::shared_ptr<PatternNode> ast = nullptr;
 };
 
 bool patternMatchesLiteral(const std::string& literal, const std::string& str);

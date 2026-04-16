@@ -1029,9 +1029,10 @@ typedef struct { uint8_t start; uint8_t end; int target_idx; bool is_default; } 
  *          a->1, b->1, c->1 → entries: [a-c->1] (merged)
  *          DEFAULT->1       → entries: [DEFAULT->1]
  */
-static int compute_packed_entries(ATTR_UNUSED nfa2dfa_context_t* ctx, int state_idx, const intermediate_rule_t* rules, int rule_count,
+static int compute_packed_entries(ATTR_UNUSED nfa2dfa_context_t* ctx, ATTR_UNUSED int state_idx, const intermediate_rule_t* rules, int rule_count,
                                    pack_entry_t* entries, int max_entries) {
     (void)ctx;
+    (void)state_idx;
     int ne = 0;
     int cur_target = -1;
     uint8_t range_start = 0, range_end = 0;

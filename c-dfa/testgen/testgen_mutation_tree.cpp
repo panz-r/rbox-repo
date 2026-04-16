@@ -81,7 +81,7 @@ void MutationTree::setCoverageTracker(DFACoverageTracker* tracker) {
 
 std::vector<TestCaseCore> MutationTree::scoreAndRank(
     const std::vector<TestCaseCore>& candidates,
-    std::mt19937& rng
+    [[maybe_unused]] std::mt19937& rng
 ) {
     std::vector<std::pair<TestCaseCore, double>> scored;
     for (const auto& tc : candidates) {

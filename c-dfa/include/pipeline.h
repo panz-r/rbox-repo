@@ -281,6 +281,48 @@ pipeline_error_t pipeline_order_patterns(pipeline_t* p) ATTR_NONNULL(1);
  */
 void pipeline_get_ordering_stats(pipeline_t* p, pipeline_ordering_stats_t* stats) ATTR_NONNULL_ALL;
 
+// ============================================================================
+// Minimization Statistics
+// ============================================================================
+
+/**
+ * Statistics from DFA minimization pass (Hopcroft/Moore/Brzozowski).
+ */
+typedef struct {
+    int initial_states;      // States before minimization
+    int final_states;        // States after minimization
+    int states_removed;      // Difference (initial - final)
+    int iterations;           // Algorithm iterations
+} pipeline_minimize_stats_t;
+
+/**
+ * Statistics from NFA pre-minimization pass.
+ */
+typedef struct {
+    int initial_states;       // States before pre-minimize
+    int final_states;         // States after pre-minimize
+    int states_removed;        // Difference (initial - final)
+    int states_merged;         // Total states merged
+    int identical_merged;     // States merged by identical state detection
+    int prefix_merged;        // States merged by bidirectional merging
+    int final_deduped;        // Final states deduplicated
+    int suffix_merged;        // States merged by suffix merging
+    int sat_merged;           // States merged via SAT verification
+    int sat_optimal;           // States merged via SAT optimal selection
+} pipeline_premin_stats_t;
+
+/**
+ * Get statistics from DFA minimization pass.
+ * Call after pipeline_minimize_dfa().
+ */
+void pipeline_get_minimize_stats(pipeline_t* p, pipeline_minimize_stats_t* stats) ATTR_NONNULL_ALL;
+
+/**
+ * Get statistics from NFA pre-minimization pass.
+ * Call after pipeline_preminimize_nfa().
+ */
+void pipeline_get_premin_stats(pipeline_t* p, pipeline_premin_stats_t* stats) ATTR_NONNULL_ALL;
+
 #ifdef __cplusplus
 }
 #endif

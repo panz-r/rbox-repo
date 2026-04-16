@@ -55,6 +55,17 @@ if(ENABLE_COVERAGE)
 endif()
 
 # ============================================================================
+# LTO (Link Time Optimization) Configuration
+# ============================================================================
+# Enable LTO for Release and RelWithDebInfo builds to improve optimization
+if(CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    # Enable IPO globally - CMake adds -flto automatically for GCC/Clang
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    
+    message(STATUS "LTO enabled")
+endif()
+
+# ============================================================================
 # CaDiCaL SAT Solver
 # ============================================================================
 set(CADICAL_DIR "${CMAKE_SOURCE_DIR}/vendor/cadical")

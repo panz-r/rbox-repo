@@ -7,12 +7,6 @@
 
 namespace TestGen {
 
-static std::string randomChar(std::mt19937& rng) {
-    static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    std::uniform_int_distribution<int> dist(0, sizeof(charset) - 2);
-    return std::string(1, charset[dist(rng)]);
-}
-
 static bool findLiteralNode(std::shared_ptr<PatternNode> node, std::vector<std::shared_ptr<PatternNode>>& out) {
     if (!node) return false;
     if (node->type == PatternType::LITERAL && !node->value.empty()) {
@@ -402,7 +396,7 @@ CoordinatedMutationResult AddAlternativeCoordOp::apply(const TestCaseCore& origi
     return result;
 }
 
-CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
     
@@ -538,7 +532,7 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     return result;
 }
 
-CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
     
@@ -604,7 +598,7 @@ CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& origin
     return result;
 }
 
-CoordinatedMutationResult SplitAlternationCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult SplitAlternationCoordOp::apply([[maybe_unused]] const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
     return result;
@@ -965,7 +959,7 @@ static std::vector<CutPosition> findValidCuts(const TestCaseCore& tc) {
     return valid_cuts;
 }
 
-static std::shared_ptr<PatternNode> buildMutatedPattern(const CutPosition& cut, int mutation_type, std::mt19937& rng) {
+static std::shared_ptr<PatternNode> buildMutatedPattern(const CutPosition& cut, int mutation_type, [[maybe_unused]] std::mt19937& rng) {
     auto mutated = std::make_shared<PatternNode>();
     mutated->type = PatternType::SEQUENCE;
     
@@ -1000,7 +994,7 @@ static std::string generateMiddleExtension(std::shared_ptr<PatternNode> middle_n
     return randomAlpha(2, rng);
 }
 
-CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
     
@@ -1362,7 +1356,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
     return result;
 }
 
-CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
     
@@ -1439,7 +1433,7 @@ CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore&
     return result;
 }
 
-CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
     
@@ -1517,7 +1511,7 @@ CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& or
     return result;
 }
 
-CoordinatedMutationResult SequenceToAlternationCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult SequenceToAlternationCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
     

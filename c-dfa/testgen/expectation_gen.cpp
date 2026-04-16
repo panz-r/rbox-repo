@@ -123,8 +123,8 @@ std::map<std::string, std::string> extractFragmentDefs(const std::string& patter
 
 std::vector<Expectation> generateFragmentExpectations(const std::string& pattern,
                                                        const std::map<std::string, std::string>& fragment_defs,
-                                                       const std::vector<std::string>& matching,
-                                                       const std::vector<std::string>& counters) {
+                                                       [[maybe_unused]] const std::vector<std::string>& matching,
+                                                       [[maybe_unused]] const std::vector<std::string>& counters) {
     std::vector<Expectation> expectations;
     
     if (fragment_defs.empty()) return expectations;
@@ -175,8 +175,8 @@ std::vector<Expectation> generateFragmentExpectations(const std::string& pattern
 }
 
 std::vector<Expectation> generateQuantifierExpectations(const std::string& pattern,
-                                                         const std::vector<std::string>& matching,
-                                                         const std::vector<std::string>& counters) {
+                                                          const std::vector<std::string>& matching,
+                                                          [[maybe_unused]] const std::vector<std::string>& counters) {
     std::vector<Expectation> expectations;
     
     if (hasStarQuantifier(pattern)) {
@@ -227,7 +227,7 @@ std::string extractPrefixBeforeAlternation(const std::string& pattern) {
 
 std::vector<Expectation> generateAlternationExpectations(const std::string& pattern,
                                                            const std::vector<std::string>& matching,
-                                                           const std::vector<std::string>& counters) {
+                                                           [[maybe_unused]] const std::vector<std::string>& counters) {
     std::vector<Expectation> expectations;
     
     if (!hasAlternation(pattern)) return expectations;
@@ -277,8 +277,8 @@ std::vector<Expectation> generateAlternationExpectations(const std::string& patt
 }
 
 std::vector<Expectation> generateCaptureTagExpectations(const std::string& pattern,
-                                                          const std::vector<std::string>& matching,
-                                                          const std::vector<std::string>& counters) {
+                                                          [[maybe_unused]] const std::vector<std::string>& matching,
+                                                          [[maybe_unused]] const std::vector<std::string>& counters) {
     std::vector<Expectation> expectations;
     
     if (!hasCaptureTags(pattern)) return expectations;
@@ -315,8 +315,8 @@ std::vector<Expectation> generateCaptureTagExpectations(const std::string& patte
 }
 
 std::vector<Expectation> generateCharClassExpectations(const std::string& pattern,
-                                                        const std::vector<std::string>& matching,
-                                                        const std::vector<std::string>& counters) {
+                                                        [[maybe_unused]] const std::vector<std::string>& matching,
+                                                        [[maybe_unused]] const std::vector<std::string>& counters) {
     std::vector<Expectation> expectations;
     
     std::string char_class = extractCharClass(pattern);
@@ -514,8 +514,8 @@ void collectExpectationsFromNode(std::shared_ptr<PatternNode> node,
 std::vector<Expectation> generateExpectationsFromAST(
     std::shared_ptr<PatternNode> ast,
     const std::map<std::string, std::string>& fragment_defs,
-    const std::vector<std::string>& matching,
-    const std::vector<std::string>& counters) {
+    [[maybe_unused]] const std::vector<std::string>& matching,
+    [[maybe_unused]] const std::vector<std::string>& counters) {
     
     std::vector<Expectation> expectations;
     

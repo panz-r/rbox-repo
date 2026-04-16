@@ -209,22 +209,6 @@ void cli_help_for(const char* progname, cli_cmd_t cmd) {
 // Input/Output Type Inference
 // ============================================================================
 
-static output_type_t infer_output_type(const char* filename) {
-    if (!filename) return OUTPUT_AUTO;
-    size_t len = strlen(filename);
-    if (len > 4) {
-        const char* ext = filename + len - 4;
-        if (strcmp(ext, ".dfa") == 0) return OUTPUT_DFA;
-        if (strcmp(ext, ".bin") == 0) return OUTPUT_DFA;
-    }
-    if (len > 2) {
-        const char* ext = filename + len - 2;
-        if (strcmp(ext, ".c") == 0) return OUTPUT_C;
-        if (strcmp(ext, ".h") == 0) return OUTPUT_C;
-    }
-    return OUTPUT_AUTO;
-}
-
 static bool is_pattern_file(const char* filename) {
     if (!filename) return false;
     size_t len = strlen(filename);
@@ -275,19 +259,6 @@ static void json_comma(FILE* out) {
     fputc(',', out);
 }
 
-static void jsoncolon(FILE* out) {
-    fputc(':', out);
-}
-
-static void json_key_value(FILE* out, const char* key, const char* value, bool is_string) {
-    fprintf(out, "\"%s\":", key);
-    if (is_string) {
-        json_escape_string(out, value);
-    } else {
-        fprintf(out, "%s", value);
-    }
-}
-
 static void json_key_value_int(FILE* out, const char* key, long long value) {
     fprintf(out, "\"%s\":%lld", key, value);
 }
@@ -307,13 +278,39 @@ static void json_key_value_str(FILE* out, const char* key, const char* value) {
 
 // CSV stats output
 static void csv_stats_header(FILE* out) {
-    fprintf(out, "command,status,input,output,size,states,time_ms\n");
+    fprintf(out, "command,status,input,output,size,states,premin_removed,min_removed,min_iterations,time_ms\n");
 }
 
 static void csv_stats_row(FILE* out, const char* cmd, const char* status, 
                           const char* input, const char* output,
-                          size_t size, int states, long time_ms) {
-    fprintf(out, "%s,%s,%s,%s,%zu,%d,%ld\n", cmd, status, input, output, size, states, time_ms);
+                          size_t size, int states, int premin_removed, 
+                          int min_removed, int min_iterations, long time_ms) {
+    fprintf(out, "%s,%s,%s,%s,%zu,%d,%d,%d,%d,%ld\n", 
+            cmd, status, input, output, size, states, 
+            premin_removed, min_removed, min_iterations, time_ms);
+}
+
+// CPU time tracking helper
+#include <sys/resource.h>
+
+typedef struct {
+    long user_ms;
+    long sys_ms;
+} cpu_time_t;
+
+static void get_cpu_time(cpu_time_t* t) {
+    struct rusage u;
+    if (getrusage(RUSAGE_SELF, &u) == 0) {
+        t->user_ms = u.ru_utime.tv_sec * 1000 + u.ru_utime.tv_usec / 1000;
+        t->sys_ms = u.ru_stime.tv_sec * 1000 + u.ru_stime.tv_usec / 1000;
+    } else {
+        t->user_ms = 0;
+        t->sys_ms = 0;
+    }
+}
+
+static long time_diff_ms(cpu_time_t* start, cpu_time_t* end) {
+    return (end->user_ms + end->sys_ms) - (start->user_ms + start->sys_ms);
 }
 
 // ============================================================================
@@ -1180,12 +1177,17 @@ int cli_validate(const cli_args_t* args) {
         fprintf(stderr, "Validating pattern file: %s\n", args->validate_pattern);
     }
 
+    cpu_time_t start = {0, 0}, end = {0, 0};
+    get_cpu_time(&start);
+
     pipeline_config_t config = {
         .verbose = false,
     };
 
     pipeline_t* p = pipeline_create(&config);
     if (!p) {
+        get_cpu_time(&end);
+        long elapsed = time_diff_ms(&start, &end);
         if (args->json_output) {
             json_start_object(stdout);
             json_key_value_str(stdout, "command", "validate");
@@ -1195,6 +1197,8 @@ int cli_validate(const cli_args_t* args) {
             json_key_value_str(stdout, "error", "failed to create pipeline");
             json_comma(stdout);
             json_key_value_str(stdout, "input", args->validate_pattern);
+            json_comma(stdout);
+            json_key_value_int(stdout, "time_ms", elapsed);
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
@@ -1204,6 +1208,9 @@ int cli_validate(const cli_args_t* args) {
     }
 
     pipeline_error_t err = pipeline_parse_patterns(p, args->validate_pattern);
+    get_cpu_time(&end);
+    long elapsed = time_diff_ms(&start, &end);
+
     if (err != PIPELINE_OK) {
         const char* err_msg = pipeline_get_last_error(p);
         if (args->json_output) {
@@ -1215,6 +1222,8 @@ int cli_validate(const cli_args_t* args) {
             json_key_value_str(stdout, "error", err_msg ? err_msg : pipeline_error_string(err));
             json_comma(stdout);
             json_key_value_str(stdout, "input", args->validate_pattern);
+            json_comma(stdout);
+            json_key_value_int(stdout, "time_ms", elapsed);
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
@@ -1237,6 +1246,8 @@ int cli_validate(const cli_args_t* args) {
         json_key_value_bool(stdout, "success", true);
         json_comma(stdout);
         json_key_value_str(stdout, "input", args->validate_pattern);
+        json_comma(stdout);
+        json_key_value_int(stdout, "time_ms", elapsed);
         json_end_object(stdout);
         fputc('\n', stdout);
         fflush(stdout);
@@ -1293,6 +1304,10 @@ int cli_compile(const cli_args_t* args) {
         return 1;
     }
 
+    cpu_time_t start = {0, 0}, end = {0, 0};
+    long elapsed = 0;
+    get_cpu_time(&start);
+
     pipeline_config_t config = {
         .verbose = !args->quiet && args->verbosity > 0,
         .preminimize = args->preminimize && !args->no_preminimize,
@@ -1316,12 +1331,16 @@ int cli_compile(const cli_args_t* args) {
 
     pipeline_t* p = pipeline_create(&config);
     if (!p) {
+        get_cpu_time(&end);
+        elapsed = time_diff_ms(&start, &end);
         fprintf(stderr, "Error: failed to create pipeline\n");
         return 1;
     }
 
     pipeline_error_t err = pipeline_run(p, args->compile_input);
     if (err != PIPELINE_OK) {
+        get_cpu_time(&end);
+        elapsed = time_diff_ms(&start, &end);
         const char* err_msg = pipeline_get_last_error(p);
         if (args->json_output) {
             json_start_object(stdout);
@@ -1334,6 +1353,8 @@ int cli_compile(const cli_args_t* args) {
             json_key_value_str(stdout, "input", args->compile_input);
             json_comma(stdout);
             json_key_value_str(stdout, "output", args->compile_output);
+            json_comma(stdout);
+            json_key_value_int(stdout, "time_ms", elapsed);
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
@@ -1345,6 +1366,8 @@ int cli_compile(const cli_args_t* args) {
     }
 
     if (args->validate_only) {
+        get_cpu_time(&end);
+        elapsed = time_diff_ms(&start, &end);
         if (args->json_output) {
             json_start_object(stdout);
             json_key_value_str(stdout, "command", "compile");
@@ -1356,6 +1379,8 @@ int cli_compile(const cli_args_t* args) {
             json_key_value_str(stdout, "output", args->compile_output);
             json_comma(stdout);
             json_key_value_bool(stdout, "validated_only", true);
+            json_comma(stdout);
+            json_key_value_int(stdout, "time_ms", elapsed);
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet && args->verbosity > 0) {
@@ -1368,6 +1393,8 @@ int cli_compile(const cli_args_t* args) {
     // Save binary
     err = pipeline_save_binary(p, args->compile_output);
     if (err != PIPELINE_OK) {
+        get_cpu_time(&end);
+        elapsed = time_diff_ms(&start, &end);
         const char* err_msg = pipeline_get_last_error(p);
         if (args->json_output) {
             json_start_object(stdout);
@@ -1380,6 +1407,8 @@ int cli_compile(const cli_args_t* args) {
             json_key_value_str(stdout, "input", args->compile_input);
             json_comma(stdout);
             json_key_value_str(stdout, "output", args->compile_output);
+            json_comma(stdout);
+            json_key_value_int(stdout, "time_ms", elapsed);
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
@@ -1392,6 +1421,15 @@ int cli_compile(const cli_args_t* args) {
 
     size_t binary_size = pipeline_get_binary_size(p);
     int state_count = pipeline_get_dfa_state_count(p);
+
+    // Get minimize and pre-minimize stats
+    pipeline_minimize_stats_t min_stats = {0};
+    pipeline_premin_stats_t premin_stats = {0};
+    pipeline_get_minimize_stats(p, &min_stats);
+    pipeline_get_premin_stats(p, &premin_stats);
+
+    get_cpu_time(&end);
+    elapsed = time_diff_ms(&start, &end);
 
     if (args->stats) {
         if (args->json_output) {
@@ -1407,12 +1445,22 @@ int cli_compile(const cli_args_t* args) {
             json_key_value_uint(stdout, "size", (unsigned long long)binary_size);
             json_comma(stdout);
             json_key_value_int(stdout, "states", state_count);
+            json_comma(stdout);
+            json_key_value_int(stdout, "premin_removed", premin_stats.states_removed);
+            json_comma(stdout);
+            json_key_value_int(stdout, "min_removed", min_stats.states_removed);
+            json_comma(stdout);
+            json_key_value_int(stdout, "min_iterations", min_stats.iterations);
+            json_comma(stdout);
+            json_key_value_int(stdout, "time_ms", elapsed);
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
             csv_stats_header(stdout);
             csv_stats_row(stdout, "compile", "success", args->compile_input, 
-                         args->compile_output, binary_size, state_count, 0);
+                         args->compile_output, binary_size, state_count, 
+                         premin_stats.states_removed, min_stats.states_removed, 
+                         min_stats.iterations, elapsed);
         }
     } else if (!args->quiet && args->verbosity > 0) {
         fprintf(stderr, "  Wrote %zu bytes (%d states) to %s\n", 
@@ -1637,6 +1685,10 @@ static int embedd_validate_dfa(const uint8_t* dfa_data, long file_size, bool qui
 }
 
 int cli_embedd(const cli_args_t* args) {
+    cpu_time_t start = {0, 0}, end = {0, 0};
+    long elapsed = 0;
+    get_cpu_time(&start);
+
     if (!args->embedd_input) {
         fprintf(stderr, "Error: no DFA file specified\n");
         return 2;
@@ -1652,6 +1704,8 @@ int cli_embedd(const cli_args_t* args) {
     }
 
     if (!args->force && check_output_exists(args->embedd_output)) {
+        get_cpu_time(&end);
+        elapsed = time_diff_ms(&start, &end);
         if (args->json_output) {
             json_start_object(stdout);
             json_key_value_str(stdout, "command", "embedd");
@@ -1663,6 +1717,8 @@ int cli_embedd(const cli_args_t* args) {
             json_key_value_str(stdout, "input", args->embedd_input);
             json_comma(stdout);
             json_key_value_str(stdout, "output", args->embedd_output);
+            json_comma(stdout);
+            json_key_value_int(stdout, "time_ms", elapsed);
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
@@ -1830,7 +1886,8 @@ int cli_embedd(const cli_args_t* args) {
         } else {
             csv_stats_header(stdout);
             csv_stats_row(stdout, "embedd", "success", args->embedd_input, 
-                         args->embedd_output, (size_t)dfa_size, state_count, 0);
+                         args->embedd_output, (size_t)dfa_size, state_count, 
+                         0, 0, 0, 0);
         }
     } else if (!args->quiet && args->verbosity > 0) {
         fprintf(stderr, "  Wrote %zu bytes to %s\n", (size_t)dfa_size, args->embedd_output);
@@ -2048,7 +2105,7 @@ int cli_verify(const cli_args_t* args) {
             fputc('\n', stdout);
         } else if (args->stats) {
             csv_stats_header(stdout);
-            csv_stats_row(stdout, "verify", "valid", args->verify_dfa, "", (size_t)file_size, state_count, 0);
+            csv_stats_row(stdout, "verify", "valid", args->verify_dfa, "", (size_t)file_size, state_count, 0, 0, 0, 0);
         } else if (!args->quiet) {
             if (args->verbosity > 0) {
                 fprintf(stderr, "PASS: DFA is valid (%u states, encoding %d, %zu bytes)\n",

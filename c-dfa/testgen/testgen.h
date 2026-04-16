@@ -78,12 +78,12 @@ enum class EdgeCaseType {
 };
 
 struct EdgeCaseResult {
-    std::vector<std::string> matching_seeds;
-    std::vector<std::string> counter_seeds;
-    std::shared_ptr<PatternNode> initial_ast;
-    std::string proof;
-    EdgeCaseType type;
-    std::map<std::string, std::string> fragments;  // fragment definitions
+    std::vector<std::string> matching_seeds = {};
+    std::vector<std::string> counter_seeds = {};
+    std::shared_ptr<PatternNode> initial_ast = nullptr;
+    std::string proof = {};
+    EdgeCaseType type = EdgeCaseType::RANGE_BOUNDARY;
+    std::map<std::string, std::string> fragments = {};
 };
 
 // Generate edge-case coordinated seeds + pattern
@@ -127,24 +127,24 @@ enum class ExpectationType {
 };
 
 struct Expectation {
-    ExpectationType type;
-    std::string input;           // The input to test
-    std::string expected_match;  // "yes" or "no"
-    std::string description;     // Human-readable description
-    std::map<std::string, std::string> meta;  // Additional metadata
+    ExpectationType type = ExpectationType::MATCH_EXACT;
+    std::string input = {};
+    std::string expected_match = {};
+    std::string description = {};
+    std::map<std::string, std::string> meta = {};
 };
 
 struct TestCase {
-    int test_id;
-    std::string pattern;
-    Category category;           // Category for matching inputs
-    Category counter_category;   // Category for counter inputs (different to distinguish)
-    std::vector<std::string> matching_inputs;  // ALL must match with category
-    std::vector<std::string> counter_inputs;   // NONE must match with category
-    std::map<std::string, std::string> fragments;
-    Complexity complexity;
-    std::string proof;           // Proof of correctness
-    std::vector<Expectation> expectations;  // Deep semantic expectations
+    int test_id = 0;
+    std::string pattern = {};
+    Category category = Category::SAFE;
+    Category counter_category = Category::SAFE;
+    std::vector<std::string> matching_inputs = {};
+    std::vector<std::string> counter_inputs = {};
+    std::map<std::string, std::string> fragments = {};
+    Complexity complexity = Complexity::MEDIUM;
+    std::string proof = {};
+    std::vector<Expectation> expectations = {};
 };
 
 // ============================================================================
@@ -152,22 +152,22 @@ struct TestCase {
 // ============================================================================
 
 struct FactorizationStep {
-    std::string input;              // Original input
-    std::string alternative;        // Which alternative it came from
-    std::string prefix;             // Extracted prefix
-    std::string remainder;          // Remainder after prefix
-    std::string target_alternative; // Which alternative in factored pattern
-    bool valid;                     // Does it match?
-    std::string reason;             // Why valid/invalid
+    std::string input = {};
+    std::string alternative = {};
+    std::string prefix = {};
+    std::string remainder = {};
+    std::string target_alternative = {};
+    bool valid = false;
+    std::string reason = {};
 };
 
 struct FactorizationProof {
-    std::string before;           // Pattern before factoring
-    std::string after;            // Pattern after factoring
-    std::string common_prefix;    // Common prefix found (if any)
-    std::vector<FactorizationStep> steps;  // Per-input derivations
-    std::vector<std::string> failed_inputs;  // Inputs that don't match
-    bool valid;                   // Is the factorization valid overall?
+    std::string before = {};
+    std::string after = {};
+    std::string common_prefix = {};
+    std::vector<FactorizationStep> steps = {};
+    std::vector<std::string> failed_inputs = {};
+    bool valid = false;
 };
 
 int run_factorization_tests();
