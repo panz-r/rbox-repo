@@ -89,7 +89,10 @@ static void test_null_and_zero_inputs(void)
     size_t count;
 
     /* Case 1: NULL input handling */
-    TEST_ASSERT(radix_tree_new() != NULL, "null: new tree succeeds");
+    radix_tree_t *test_tree = radix_tree_new();
+    TEST_ASSERT(test_tree != NULL, "null: new tree succeeds");
+    radix_tree_free(test_tree);
+    
     TEST_ASSERT_EQ(radix_tree_allow(NULL, "/x", 1), -1,
                    "null: allow NULL tree fails");
     TEST_ASSERT_EQ(radix_tree_allow(NULL, NULL, 1), -1,

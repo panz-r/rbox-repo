@@ -14,6 +14,10 @@
 
 #include "rule_engine.h"
 #include "rule_engine_internal.h"
+
+/* Forward declarations for helper functions */
+static inline const char *get_pattern(const effective_ruleset_t *eff, const compiled_rule_t *r);
+static inline const char *get_subject(const effective_ruleset_t *eff, const compiled_rule_t *r);
 #include "landlock_builder.h"
 #include "landlock_bridge.h"
 
@@ -197,17 +201,21 @@ const char *const landlock_compat_error_msgs[] = {
 /*  Internal: validate a single compiled rule, return error enum      */
 /* ------------------------------------------------------------------ */
 
-static landlock_compat_error_t validate_compiled_rule(const compiled_rule_t *cr,
+static landlock_compat_error_t validate_compiled_rule(const effective_ruleset_t *eff,
+                                                       const compiled_rule_t *cr,
                                                        int *error_line)
 {
-    if (cr->subject_regex && cr->subject_regex[0] != '\0')
+    const char *subject = get_subject(eff, cr);
+    if (subject && subject[0] != '\0')
         return LANDLOCK_COMPAT_SUBJECT;
 
     if (cr->flags & SOFT_RULE_TEMPLATE)
         return LANDLOCK_COMPAT_TEMPLATE;
-    if (is_single_star_suffix(cr->pattern))
+    
+    const char *pattern = get_pattern(eff, cr);
+    if (is_single_star_suffix(pattern))
         return LANDLOCK_COMPAT_SINGLE_STAR;
-    pattern_class_t pc = soft_pattern_classify(cr->pattern);
+    pattern_class_t pc = soft_pattern_classify(pattern);
     if (pc == PATTERN_WILDCARD)
         return LANDLOCK_COMPAT_WILDCARD;
     (void)error_line;  /* caller sets the rule index */
@@ -256,28 +264,28 @@ landlock_compat_error_t soft_ruleset_validate_for_landlock_ex(
 
         /* Check static rules */
         for (int i = 0; i < eff->static_count; i++) {
-            landlock_compat_error_t e = validate_compiled_rule(&eff->static_rules[i], error_line);
+            landlock_compat_error_t e = validate_compiled_rule(eff, &eff->static_rules[i], error_line);
             if (e != LANDLOCK_COMPAT_OK) { if (error_line) *error_line = idx; return e; }
             idx++;
         }
 
         /* Check dynamic rules */
         for (int i = 0; i < eff->dynamic_count; i++) {
-            landlock_compat_error_t e = validate_compiled_rule(&eff->dynamic_rules[i], error_line);
+            landlock_compat_error_t e = validate_compiled_rule(eff, &eff->dynamic_rules[i], error_line);
             if (e != LANDLOCK_COMPAT_OK) { if (error_line) *error_line = idx; return e; }
             idx++;
         }
 
         /* Check SPECIFICITY static rules (already rejected above, but check for completeness) */
         for (int i = 0; i < eff->spec_static_count; i++) {
-            landlock_compat_error_t e = validate_compiled_rule(&eff->spec_static_rules[i], error_line);
+            landlock_compat_error_t e = validate_compiled_rule(eff, &eff->spec_static_rules[i], error_line);
             if (e != LANDLOCK_COMPAT_OK) { if (error_line) *error_line = idx; return e; }
             idx++;
         }
 
         /* Check SPECIFICITY dynamic rules */
         for (int i = 0; i < eff->spec_dynamic_count; i++) {
-            landlock_compat_error_t e = validate_compiled_rule(&eff->spec_dynamic_rules[i], error_line);
+            landlock_compat_error_t e = validate_compiled_rule(eff, &eff->spec_dynamic_rules[i], error_line);
             if (e != LANDLOCK_COMPAT_OK) { if (error_line) *error_line = idx; return e; }
             idx++;
         }
@@ -386,20 +394,25 @@ landlock_builder_t *soft_ruleset_to_landlock(const soft_ruleset_t *rs,
             const compiled_rule_t *cr = &all_rules[arr][i];
 
             /* Skip rules with constraints Landlock can't express */
-            if ((cr->subject_regex && cr->subject_regex[0] != '\0') ||
+            const char *subject = get_subject(eff, cr);
+            if ((subject && subject[0] != '\0') ||
 
                 (cr->flags & SOFT_RULE_TEMPLATE)) {
                 continue;  /* skip inexpressible rules */
             }
 
             /* Classify pattern */
-            pattern_class_t pc = soft_pattern_classify(cr->pattern);
+            const char *pattern = get_pattern(eff, cr);
+            if (!pattern || !*pattern) {
+                continue;  /* skip empty/null patterns */
+            }
+            pattern_class_t pc = soft_pattern_classify(pattern);
             if (pc == PATTERN_WILDCARD) {
                 continue;  /* skip mid-path wildcards */
             }
 
             /* Convert pattern to Landlock-compatible prefix */
-            const char *prefix = pattern_to_prefix(cr->pattern);
+            const char *prefix = pattern_to_prefix(pattern);
             if (!prefix || !*prefix) {
                 continue;
             }
@@ -489,7 +502,7 @@ int soft_ruleset_validate_for_landlock_report(
 
         for (int arr = 0; arr < 4; arr++) {
             for (int i = 0; i < all_counts[arr]; i++) {
-                landlock_compat_error_t e = validate_compiled_rule(&all_rules[arr][i], NULL);
+                landlock_compat_error_t e = validate_compiled_rule(eff, &all_rules[arr][i], NULL);
                 if (e != LANDLOCK_COMPAT_OK) {
                     if (count < LANDLOCK_VALIDATION_REPORT_MAX) {
                         report[count].error = e;
@@ -588,7 +601,8 @@ landlock_builder_t *soft_ruleset_to_landlock_with_report(
             const compiled_rule_t *cr = &all_rules[arr][i];
 
             /* Track skip reasons */
-            if (cr->subject_regex && cr->subject_regex[0] != '\0') {
+            const char *subject = get_subject(eff, cr);
+            if (subject && subject[0] != '\0') {
                 rep.skipped_rules++; rep.skipped_subject++; continue;
             }
 
@@ -597,13 +611,17 @@ landlock_builder_t *soft_ruleset_to_landlock_with_report(
             }
 
             /* Classify pattern */
-            pattern_class_t pc = soft_pattern_classify(cr->pattern);
+            const char *pattern = get_pattern(eff, cr);
+            if (!pattern || !*pattern) {
+                rep.skipped_rules++; continue;  /* skip empty/null patterns */
+            }
+            pattern_class_t pc = soft_pattern_classify(pattern);
             if (pc == PATTERN_WILDCARD) {
                 rep.skipped_rules++; rep.skipped_wildcard++; continue;
             }
 
             /* Convert pattern to Landlock-compatible prefix */
-            const char *prefix = pattern_to_prefix(cr->pattern);
+            const char *prefix = pattern_to_prefix(pattern);
             if (!prefix || !*prefix) continue;
 
             /* Check if this is a deny rule */
@@ -710,4 +728,17 @@ int soft_ruleset_save_landlock_policy(const soft_ruleset_t *rs,
 
     if (error_msg) *error_msg = NULL;
     return 0;
+}
+
+/* Helper function implementations */
+static inline const char *get_pattern(const effective_ruleset_t *eff, const compiled_rule_t *r)
+{
+    if (r->pattern_offset == UINT32_MAX) return NULL;
+    return eff->strings.buf + r->pattern_offset;
+}
+
+static inline const char *get_subject(const effective_ruleset_t *eff, const compiled_rule_t *r)
+{
+    if (r->subject_offset == UINT32_MAX) return NULL;
+    return eff->strings.buf + r->subject_offset;
 }

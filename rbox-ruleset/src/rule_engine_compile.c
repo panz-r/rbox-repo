@@ -55,7 +55,11 @@ static void arena_free(str_arena_t *a)
     a->capacity = 0;
 }
 
-/** Shrink arena buffer to exact used size (call after all interning is done). */
+/** Shrink arena buffer to exact used size.
+ * 
+ * Now safe to call because compiled rules store uint32_t offsets instead of
+ * direct pointers. The arena can be realloced without invalidating references.
+ */
 static void arena_shrink(str_arena_t *a)
 {
     if (!a->buf || a->used >= a->capacity) return;
@@ -147,13 +151,33 @@ void eff_free(effective_ruleset_t *eff)
     eff->spec_dynamic_count = 0;
 }
 
+/** Get string from arena using offset. */
+static inline const char *get_pattern(const effective_ruleset_t *eff, const compiled_rule_t *r)
+{
+    if (r->pattern_offset == UINT32_MAX) return NULL;
+    return eff->strings.buf + r->pattern_offset;
+}
+
+/** Get subject regex from arena using offset. */
+static inline const char *get_subject(const effective_ruleset_t *eff, const compiled_rule_t *r)
+{
+    if (r->subject_offset == UINT32_MAX) return NULL;
+    return eff->strings.buf + r->subject_offset;
+}
+
+/** Get pattern length from compiled rule. */
+static inline uint16_t get_pattern_len(const compiled_rule_t *r)
+{
+    return r->pattern_len;
+}
+
 /** Convert a descriptive rule_t to a compiled_rule_t, interning strings. */
 static int compile_rule(effective_ruleset_t *eff, const rule_t *r,
                         compiled_rule_t *out)
 {
     const char *pat = arena_intern(&eff->strings, r->pattern);
     if (!pat) return -1;
-    out->pattern = pat;
+    out->pattern_offset = (uint32_t)(pat - eff->strings.buf);
     out->pattern_len = (uint16_t)strlen(r->pattern);
     out->mode = r->mode;
 
@@ -162,9 +186,9 @@ static int compile_rule(effective_ruleset_t *eff, const rule_t *r,
     if (r->subject_regex[0] != '\0') {
         const char *subj = arena_intern(&eff->strings, r->subject_regex);
         if (!subj) return -1;
-        out->subject_regex = subj;
+        out->subject_offset = (uint32_t)(subj - eff->strings.buf);
     } else {
-        out->subject_regex = NULL;
+        out->subject_offset = UINT32_MAX;
     }
     return 0;
 }
@@ -218,24 +242,28 @@ static bool compiled_match_with_var(const char *pattern, const char *var_name,
 
 /** Check if compiled rule matches the given path in context. */
 static bool compiled_rule_matches_path(const compiled_rule_t *rule,
+                                        const effective_ruleset_t *eff,
                                         const char *path,
                                         const soft_access_ctx_t *ctx)
 {
-    if (!rule || !path) return false;
+    if (!rule || !eff || !path) return false;
+
+    const char *pattern = get_pattern(eff, rule);
+    if (!pattern) return false;
 
     bool is_template = (rule->flags & SOFT_RULE_TEMPLATE) != 0;
 
     if (is_template) {
         /* Try ${SRC} first, then ${DST} */
-        if (strstr(rule->pattern, "${SRC}") != NULL) {
-            return compiled_match_with_var(rule->pattern, "SRC", ctx, path);
+        if (strstr(pattern, "${SRC}") != NULL) {
+            return compiled_match_with_var(pattern, "SRC", ctx, path);
         }
-        if (strstr(rule->pattern, "${DST}") != NULL) {
-            return compiled_match_with_var(rule->pattern, "DST", ctx, path);
+        if (strstr(pattern, "${DST}") != NULL) {
+            return compiled_match_with_var(pattern, "DST", ctx, path);
         }
     }
 
-    return path_matches(rule->pattern, path);
+    return path_matches(pattern, path);
 }
 
 bool pattern_covers_classified(const char *a, size_t la, bool a_rec, bool a_star,
@@ -415,13 +443,13 @@ static bool subject_rule_redundant(const rule_t *unconstrained,
 /*  Compiled subject matching                                           */
 /* ------------------------------------------------------------------ */
 
-static bool compiled_subject_matches(const compiled_rule_t *rule,
+static bool compiled_subject_matches(const compiled_rule_t *rule, const effective_ruleset_t *eff,
                                      const char *subject)
 {
-    if (!rule->subject_regex) return true;
+    if (rule->subject_offset == UINT32_MAX) return true;
     if (!subject) return false;
 
-    const char *pat = rule->subject_regex;
+    const char *pat = get_subject(eff, rule);
     size_t plen = strlen(pat);
     size_t slen = strlen(subject);
 
@@ -462,11 +490,17 @@ static bool compiled_subject_matches(const compiled_rule_t *rule,
 /*  Binary search for static rules (sorted by pattern string)           */
 /* ------------------------------------------------------------------ */
 
+/** Comparison context for sorting compiled rules by pattern */
+static const effective_ruleset_t *sort_eff_ctx = NULL;
+
+/** Pattern comparison for qsort - uses global context */
 static int compare_rule_by_pattern(const void *a, const void *b)
 {
     const compiled_rule_t *ra = (const compiled_rule_t *)a;
     const compiled_rule_t *rb = (const compiled_rule_t *)b;
-    return strcmp(ra->pattern, rb->pattern);
+    const char *pa = get_pattern(sort_eff_ctx, ra);
+    const char *pb = get_pattern(sort_eff_ctx, rb);
+    return strcmp(pa, pb);
 }
 
 /**
@@ -500,7 +534,8 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
     int lo = 0, hi = eff->static_count;
     while (lo < hi) {
         int mid = lo + (hi - lo) / 2;
-        int cmp = strcmp(eff->static_rules[mid].pattern, path);
+        const char *mid_pattern = get_pattern(eff, &eff->static_rules[mid]);
+        int cmp = strcmp(mid_pattern, path);
         if (cmp < 0) lo = mid + 1;
         else hi = mid;
     }
@@ -508,47 +543,49 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
     /* Scan forward from lo to find all exact matches. */
     for (int i = lo; i < eff->static_count; i++) {
         const compiled_rule_t *r = &eff->static_rules[i];
-        size_t pat_len = r->pattern_len;
+        const char *pat = get_pattern(eff, r);
+        size_t pat_len = get_pattern_len(r);
         if (pat_len != path_len) break;  /* past exact matches */
-        if (memcmp(r->pattern, path, pat_len) != 0) break;
+        if (memcmp(pat, path, pat_len) != 0) break;
 
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
-        if (!compiled_subject_matches(r, ctx->subject)) continue;
+        if (!compiled_subject_matches(r, eff, ctx->subject)) continue;
         
 
         any_matched = true;
         if (r->mode & SOFT_ACCESS_DENY) {
             deny_matched = true;
-            if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            if (out_matched_pattern) *out_matched_pattern = pat;
             if (out_deny) *out_deny = true;
             return 0; /* DENY short-circuit */
         }
         granted &= r->mode;
-        last_pattern = r->pattern;
+        last_pattern = pat;
     }
 
     /* Scan backwards from lo-1 to find prefix matches. */
     for (int i = lo - 1; i >= 0; i--) {
         const compiled_rule_t *r = &eff->static_rules[i];
-        size_t pat_len = r->pattern_len;
+        const char *pat = get_pattern(eff, r);
+        size_t pat_len = get_pattern_len(r);
         if (pat_len >= path_len) continue;  /* can't be a prefix of shorter path */
-        if (memcmp(r->pattern, path, pat_len) != 0 || path[pat_len] != '/')
+        if (memcmp(pat, path, pat_len) != 0 || path[pat_len] != '/')
             continue;
 
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
-        if (!compiled_subject_matches(r, ctx->subject)) continue;
+        if (!compiled_subject_matches(r, eff, ctx->subject)) continue;
 
         any_matched = true;
         if (r->mode & SOFT_ACCESS_DENY) {
             deny_matched = true;
-            if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            if (out_matched_pattern) *out_matched_pattern = pat;
             if (out_deny) *out_deny = true;
             return 0; /* DENY short-circuit */
         }
         granted &= r->mode;
-        last_pattern = r->pattern;
+        last_pattern = pat;
     }
 
     if (out_matched_pattern) *out_matched_pattern = last_pattern;
@@ -579,17 +616,17 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
         const compiled_rule_t *r = &eff->dynamic_rules[i];
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
-        if (!compiled_subject_matches(r, ctx->subject)) continue;
-        if (!compiled_rule_matches_path(r, path, ctx)) continue;
+        if (!compiled_subject_matches(r, eff, ctx->subject)) continue;
+        if (!compiled_rule_matches_path(r, eff, path, ctx)) continue;
 
         if (r->mode & SOFT_ACCESS_DENY) {
             deny_matched = true;
-            if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            if (out_matched_pattern) *out_matched_pattern = get_pattern(eff, r);
             if (out_deny) *out_deny = true;
             return 0;
         }
         granted &= r->mode;
-        last_pattern = r->pattern;
+        last_pattern = get_pattern(eff, r);
     }
 
     if (out_matched_pattern) *out_matched_pattern = last_pattern;
@@ -711,20 +748,21 @@ static uint32_t match_spec_static(const effective_ruleset_t *eff,
         const compiled_rule_t *r = &eff->spec_static_rules[i];
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
-        if (!compiled_subject_matches(r, ctx->subject)) continue;
+        if (!compiled_subject_matches(r, eff, ctx->subject)) continue;
 
         bool match = false;
-        size_t pat_len = r->pattern_len;
-        if (pat_len == path_len && memcmp(r->pattern, path, pat_len) == 0) {
+        const char *pat = get_pattern(eff, r);
+        size_t pat_len = get_pattern_len(r);
+        if (pat_len == path_len && memcmp(pat, path, pat_len) == 0) {
             match = true;
         } else if (pat_len < path_len &&
-                   memcmp(r->pattern, path, pat_len) == 0 &&
+                   memcmp(pat, path, pat_len) == 0 &&
                    path[pat_len] == '/') {
             match = true;
         }
 
         if (match) {
-            if (out_matched_pattern) *out_matched_pattern = r->pattern;
+            if (out_matched_pattern) *out_matched_pattern = pat;
             return r->mode & SOFT_ACCESS_DENY ? 0 : r->mode;
         }
     }
@@ -751,13 +789,13 @@ static uint32_t match_spec_dynamic(const effective_ruleset_t *eff,
         const compiled_rule_t *r = &eff->spec_dynamic_rules[i];
         if (r->op_type != op && r->op_type != SOFT_OP_READ &&
             r->op_type != SOFT_OP_WRITE) continue;
-        if (!compiled_subject_matches(r, ctx->subject)) continue;
-        if (!compiled_rule_matches_path(r, path, ctx)) continue;
+        if (!compiled_subject_matches(r, eff, ctx->subject)) continue;
+        if (!compiled_rule_matches_path(r, eff, path, ctx)) continue;
 
-        size_t pat_len = r->pattern_len;
+        size_t pat_len = get_pattern_len(r);
         if (!found || pat_len > best_len) {
             best_len = pat_len;
-            best_pattern = r->pattern;
+            best_pattern = get_pattern(eff, r);
             best_mode = r->mode;
             found = true;
         }
@@ -1052,10 +1090,11 @@ int soft_ruleset_compile_err(soft_ruleset_t *rs,
     }
 
     /* Phase 4: Sort PRECEDENCE static rules by pattern */
-
+    sort_eff_ctx = &eff;
     if (eff.static_count > 1)
         qsort(eff.static_rules, (size_t)eff.static_count,
               sizeof(compiled_rule_t), compare_rule_by_pattern);
+    sort_eff_ctx = NULL;
 
     /* Phase 5: Sort PRECEDENCE dynamic rules — DENY first */
     if (eff.dynamic_count > 1)
@@ -1222,7 +1261,9 @@ int soft_ruleset_save_compiled(const soft_ruleset_t *rs,
     /* Strings: length then raw arena data */
     uint32_t sdl = (uint32_t)sa->used;
     memcpy(p, &sdl, 4); p += 4;
-    memcpy(p, sa->buf, sa->used); p += sa->used;
+    if (sa->buf && sa->used > 0) {
+        memcpy(p, sa->buf, sa->used); p += sa->used;
+    }
 
     /* Rule counts */
     uint32_t cnt[4];
@@ -1249,9 +1290,9 @@ int soft_ruleset_save_compiled(const soft_ruleset_t *rs,
 
             uint32_t flags_r = r->flags;
             uint16_t op_type = r->op_type;
-            uint16_t pat_len = r->pattern_len;
-            uint32_t pat_off = (uint32_t)(r->pattern - sa->buf);
-            uint32_t subj_off = r->subject_regex ? (uint32_t)(r->subject_regex - sa->buf) : 0;
+            uint16_t pat_len = get_pattern_len(r);
+            uint32_t pat_off = r->pattern_offset;
+            uint32_t subj_off = r->subject_offset != UINT32_MAX ? r->subject_offset : 0;
             memcpy(p, &mode, 4); p += 4;
             memcpy(p, &flags_r, 4); p += 4;
             memcpy(p, &op_type, 2); p += 2;
@@ -1361,8 +1402,8 @@ soft_ruleset_t *soft_ruleset_load_compiled(const void *buf, size_t len)
                 r->flags = flags_r;
                 r->op_type = op_type;
                 r->pattern_len = pat_len;
-                r->pattern = sa->buf + pat_off;
-                r->subject_regex = subj_off > 0 ? sa->buf + subj_off : NULL;
+                r->pattern_offset = pat_off;
+                r->subject_offset = subj_off > 0 ? subj_off : UINT32_MAX;
             }
         } else {
             *targets[arr] = NULL;

@@ -1,5 +1,37 @@
 @PACKAGE_INIT@
 
-include("${CMAKE_CURRENT_LIST_DIR}/landlock-builder-targets.cmake")
+# Compatibility check
+set(landlock-builder_REQUIRED_VERSION "@PROJECT_VERSION@")
 
-check_required_components(landlock-builder)
+# Library information
+set(landlock-builder_VERSION "@PROJECT_VERSION@")
+
+# Imported targets
+include("${CMAKE_CURRENT_LIST_DIR}/landlock-builderTargets.cmake")
+
+# Check required components
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(landlock-builder
+  REQUIRED_VARS landlock-builder_VERSION
+  VERSION_VAR landlock-builder_VERSION
+)
+
+# Provide compatibility variables
+if(NOT TARGET landlock::landlock-builder)
+  add_library(landlock::landlock-builder INTERFACE IMPORTED)
+  set_target_properties(landlock::landlock-builder PROPERTIES
+    INTERFACE_LINK_LIBRARIES "landlock-builder"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/../../include"
+  )
+endif()
+
+# Export build options
+set(landlock-builder_BUILD_TESTING @BUILD_TESTING@)
+set(landlock-builder_ENABLE_ASAN @ENABLE_ASAN@)
+set(landlock-builder_ENABLE_LTO @ENABLE_LTO@)
+
+# Print status
+message(STATUS "Found landlock-builder ${landlock-builder_VERSION}")
+message(STATUS "  - Testing: ${landlock-builder_BUILD_TESTING}")
+message(STATUS "  - ASAN: ${landlock-builder_ENABLE_ASAN}")
+message(STATUS "  - LTO: ${landlock-builder_ENABLE_LTO}")

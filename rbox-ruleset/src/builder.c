@@ -150,21 +150,15 @@ static char *normalise_path(const char *path)
 
     char buf[PATH_MAX];
 
-    /* If relative, prepend cwd */
+    /* If relative, treat as relative to root (/) for consistency */
     if (path[0] != '/') {
-        char *cwd = getcwd(NULL, 0);
-        if (!cwd) return NULL;
-        int cwd_len = (int)strlen(cwd);
         int path_len = (int)strlen(path);
-        if (cwd_len + 1 + path_len >= PATH_MAX) {
-            free(cwd);
+        if (path_len + 1 >= PATH_MAX) {
             errno = ENAMETOOLONG;
             return NULL;
         }
-        memcpy(buf, cwd, (size_t)cwd_len);
-        buf[cwd_len] = '/';
-        memcpy(buf + cwd_len + 1, path, (size_t)path_len + 1);
-        free(cwd);
+        buf[0] = '/';
+        memcpy(buf + 1, path, (size_t)path_len + 1);
     } else {
         strncpy(buf, path, sizeof(buf) - 1);
         buf[PATH_MAX - 1] = '\0';

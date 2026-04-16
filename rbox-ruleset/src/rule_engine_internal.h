@@ -108,12 +108,12 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    const char     *pattern;       /**< Interned path pattern */
+    uint32_t        pattern_offset; /**< Offset into arena for path pattern */
     uint32_t        mode;          /**< SOFT_ACCESS_* or DENY */
     uint32_t        flags;         /**< Rule flags (RECURSIVE, TEMPLATE) */
     uint16_t        op_type;       /**< soft_binary_op_t */
     uint16_t        pattern_len;   /**< strlen(pattern), cached */
-    const char     *subject_regex;  /**< Interned, or NULL */
+    uint32_t        subject_offset; /**< Offset into arena, or UINT32_MAX if NULL */
 } compiled_rule_t;
 
 /* ------------------------------------------------------------------ */

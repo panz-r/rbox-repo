@@ -1,0 +1,27 @@
+// Generated configuration header
+#pragma once
+
+#define LANDLOCK_BUILDER_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define LANDLOCK_BUILDER_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define LANDLOCK_BUILDER_VERSION_PATCH @PROJECT_VERSION_PATCH@
+
+#define LANDLOCK_BUILDER_VERSION "@PROJECT_VERSION@"
+
+/* Build configuration */
+#define BUILD_TESTING @BUILD_TESTING@
+#define ENABLE_ASAN @ENABLE_ASAN@
+#define ENABLE_LTO @ENABLE_LTO@
+
+/* Compiler detection */
+#if defined(__GNUC__)
+#define LANDLOCK_COMPILER_GCC
+#elif defined(__clang__)
+#define LANDLOCK_COMPILER_CLANG
+#elif defined(_MSC_VER)
+#define LANDLOCK_COMPILER_MSVC
+#endif
+
+/* Feature macros */
+#define LANDLOCK_HAVE_RADIX_TREE 1
+#define LANDLOCK_HAVE_POLICY_PARSER 1
+#define LANDLOCK_HAVE_LANDLOCK_BRIDGE 1

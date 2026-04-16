@@ -68,22 +68,9 @@ int mock_fs_exists(const char *path);
 /*  Interpose real syscalls when MOCK_FS is defined                   */
 /* ------------------------------------------------------------------ */
 
-#ifdef MOCK_FS
-
-/* Skip macro redirections when compiling mock_fs.c itself */
-#ifndef MOCK_FS_INTERNAL
-
-/* Redirect standard library calls to mock versions.
- * We use #define tricks so the library's calls to realpath/stat/lstat
- * are transparently replaced. */
-
-#define realpath(p, r)   mock_realpath((p), (r))
-#define stat(p, b)       mock_stat((p), (b))
-#define lstat(p, b)      mock_lstat((p), (b))
-#define readlink(p, b, s) mock_readlink((p), (b), (s))
-
-#endif /* MOCK_FS_INTERNAL */
-
-#endif /* MOCK_FS */
+/*
+ * Mock filesystem header - provides __wrap_ functions for filesystem calls
+ * that are intercepted using gcc/clang's --wrap linker feature.
+ */
 
 #endif /* MOCK_FS_H */

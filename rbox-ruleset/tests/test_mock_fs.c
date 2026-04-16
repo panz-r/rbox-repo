@@ -8,6 +8,14 @@
 #include "mock_fs.h"
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+/* Declare wrapper functions that will be provided by --wrap */
+char *__real_realpath(const char *path, char *resolved);
+int __real_stat(const char *path, struct stat *buf);
+int __real_lstat(const char *path, struct stat *buf);
+ssize_t __real_readlink(const char *path, char *buf, size_t bufsiz);
 #include <limits.h>
 #include <sys/param.h>
 

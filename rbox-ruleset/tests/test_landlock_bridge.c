@@ -345,6 +345,7 @@ static void test_bridge_translation_with_deny(void)
         for (int i = 0; deny_prefixes[i] != NULL; i++) deny_count++;
         TEST_ASSERT(deny_count >= 2, "translate: at least 2 deny prefixes");
     }
+    landlock_builder_free(b);
     soft_landlock_deny_prefixes_free(deny_prefixes);
     soft_ruleset_free(rs);
 
@@ -357,6 +358,7 @@ static void test_bridge_translation_with_deny(void)
     soft_ruleset_compile(rs);
     b = soft_ruleset_to_landlock(rs, &deny_prefixes);
     TEST_ASSERT(b != NULL, "translate: recursive DENY translated");
+    landlock_builder_free(b);
     soft_landlock_deny_prefixes_free(deny_prefixes);
     soft_ruleset_free(rs);
 }
@@ -519,6 +521,7 @@ static void test_bridge_integration(void)
         TEST_ASSERT(deny_count >= 1, "integration_deny: at least 1 deny prefix");
     }
 
+    landlock_builder_free(b);
     soft_landlock_deny_prefixes_free(deny_prefixes);
     soft_ruleset_free(rs);
 }

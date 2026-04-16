@@ -359,7 +359,7 @@ bool mock_fs_active(void)
 /*  Mock syscall replacements                                          */
 /* ------------------------------------------------------------------ */
 
-char *mock_realpath(const char *path, char *resolved)
+char *__wrap_realpath(const char *path, char *resolved)
 {
     if (!path) { errno = EINVAL; return NULL; }
 
@@ -452,17 +452,17 @@ static int fill_stat(const char *path, struct stat *buf, int follow_symlinks)
     return 0;
 }
 
-int mock_stat(const char *path, struct stat *buf)
+int __wrap_stat(const char *path, struct stat *buf)
 {
     return fill_stat(path, buf, 1 /* follow symlinks */);
 }
 
-int mock_lstat(const char *path, struct stat *buf)
+int __wrap_lstat(const char *path, struct stat *buf)
 {
     return fill_stat(path, buf, 0 /* don't follow symlinks */);
 }
 
-ssize_t mock_readlink(const char *path, char *buf, size_t bufsiz)
+ssize_t __wrap_readlink(const char *path, char *buf, size_t bufsiz)
 {
     if (!path || !buf || bufsiz == 0) { errno = EINVAL; return -1; }
 
