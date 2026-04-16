@@ -46,51 +46,26 @@ typedef struct {
  * ============================================================ */
 
 typedef struct {
-    uint32_t    children_base;
-    uint16_t    literal_count;
-    uint16_t    wildcard_count;
-    uint16_t    pattern_id;
-    uint16_t    wildcard_mask;
+    child_entry_t *children;
+    uint16_t       literal_count;
+    uint16_t       wildcard_count;
+    uint16_t       pattern_id;
+    uint16_t       wildcard_mask;
+    uint16_t       children_cap;
 } policy_state_t;
 
 /* ============================================================
- * CHILDREN ARENA
+ * CHILDREN — per-node dynamically allocated array
  * ============================================================ */
 
-typedef struct {
-    child_entry_t *entries;
-    size_t         count;
-    size_t         capacity;
-} children_arena_t;
-
-static bool children_arena_init(children_arena_t *a)
+static child_entry_t *children_grow(child_entry_t *old, uint16_t *cap)
 {
-    a->capacity = CHILDREN_ARENA_INIT;
-    a->entries = calloc(a->capacity, sizeof(child_entry_t));
-    if (!a->entries) return false;
-    a->count = 0;
-    return true;
-}
-
-static void children_arena_free(children_arena_t *a)
-{
-    free(a->entries);
-    a->entries = NULL;
-}
-
-static uint32_t children_arena_reserve(children_arena_t *a, size_t n)
-{
-    if (a->count + n > a->capacity) {
-        size_t new_cap = a->capacity * 2;
-        while (new_cap < a->count + n) new_cap *= 2;
-        child_entry_t *new_entries = realloc(a->entries, new_cap * sizeof(child_entry_t));
-        if (!new_entries) return UINT32_MAX;
-        a->entries = new_entries;
-        a->capacity = new_cap;
-    }
-    uint32_t idx = (uint32_t)a->count;
-    a->count += n;
-    return idx;
+    size_t new_cap = *cap == 0 ? 4 : (size_t)*cap * 2;
+    child_entry_t *new = realloc(old, new_cap * sizeof(child_entry_t));
+    if (!new) return NULL;
+    memset(new + *cap, 0, (new_cap - *cap) * sizeof(child_entry_t));
+    *cap = (uint16_t)new_cap;
+    return new;
 }
 
 /* ============================================================
@@ -109,13 +84,16 @@ static bool states_array_init(states_array_t *a)
     a->states = calloc(a->capacity, sizeof(policy_state_t));
     if (!a->states) return false;
     a->count = 1;
-    a->states[0].children_base = UINT32_MAX;
+    a->states[0].children = NULL;
     a->states[0].pattern_id = UINT16_MAX;
     return true;
 }
 
 static void states_array_free(states_array_t *a)
 {
+    for (size_t i = 0; i < a->count; i++) {
+        free(a->states[i].children);
+    }
     free(a->states);
     a->states = NULL;
 }
@@ -130,7 +108,7 @@ static uint32_t states_array_alloc(states_array_t *a)
         a->capacity = new_cap;
     }
     uint32_t idx = (uint32_t)a->count;
-    a->states[idx].children_base = UINT32_MAX;
+    a->states[idx].children = NULL;
     a->states[idx].pattern_id = UINT16_MAX;
     a->states[idx].literal_count = 0;
     a->states[idx].wildcard_count = 0;
@@ -193,9 +171,10 @@ static uint16_t pattern_reg_add(pattern_reg_t *r, cpl_policy_ctx_t *ctx, const c
 struct cpl_policy {
     cpl_policy_ctx_t *ctx;
     states_array_t    states;
-    children_arena_t  children;
     pattern_reg_t     patterns;
     size_t            pattern_count;
+    size_t            children_count;  /* total child entries across all nodes */
+    size_t            children_alloc;  /* total child capacity across all nodes */
 };
 
 /* ============================================================
@@ -228,11 +207,10 @@ static inline uint16_t compat_mask(cpl_token_type_t t)
  * CHILD ACCESS
  * ============================================================ */
 
-static inline child_entry_t *get_child(const policy_state_t *node,
-                                       const children_arena_t *arena, uint16_t idx)
+static inline child_entry_t *get_child(const policy_state_t *node, uint16_t idx)
 {
-    if (node->children_base == UINT32_MAX) return NULL;
-    return &arena->entries[node->children_base + idx];
+    if (!node->children || idx >= node->literal_count + node->wildcard_count) return NULL;
+    return &node->children[idx];
 }
 
 /* ============================================================
@@ -244,24 +222,19 @@ static int cmp_literal_child(const void *key, const void *entry)
     return strcmp((const char *)key, ((const child_entry_t *)entry)->text);
 }
 
-static child_entry_t *find_literal_child(const policy_state_t *node,
-                                         const children_arena_t *arena,
-                                         const char *text)
+static child_entry_t *find_literal_child(const policy_state_t *node, const char *text)
 {
     uint16_t n = node->literal_count;
-    if (n == 0 || node->children_base == UINT32_MAX) return NULL;
-    return bsearch(text, &arena->entries[node->children_base], n,
-                   sizeof(child_entry_t), cmp_literal_child);
+    if (n == 0 || !node->children) return NULL;
+    return bsearch(text, node->children, n, sizeof(child_entry_t), cmp_literal_child);
 }
 
-static child_entry_t *find_wildcard_child(const policy_state_t *node,
-                                          const children_arena_t *arena,
-                                          cpl_token_type_t type)
+static child_entry_t *find_wildcard_child(const policy_state_t *node, cpl_token_type_t type)
 {
-    if (node->wildcard_count == 0 || node->children_base == UINT32_MAX) return NULL;
+    if (node->wildcard_count == 0 || !node->children) return NULL;
     if (!(node->wildcard_mask & compat_mask(type))) return NULL;
 
-    child_entry_t *base = &arena->entries[node->children_base + node->literal_count];
+    child_entry_t *base = node->children + node->literal_count;
     for (uint16_t i = 0; i < node->wildcard_count; i++) {
         if (cpl_is_compatible(type, (cpl_token_type_t)base[i].type)) return &base[i];
     }
@@ -272,9 +245,8 @@ static child_entry_t *find_wildcard_child(const policy_state_t *node,
  * CHILD INSERTION
  * ============================================================ */
 
-static bool insert_child(policy_state_t *node, children_arena_t *arena,
-                         cpl_policy_ctx_t *ctx, const char *text,
-                         cpl_token_type_t type, uint32_t target)
+static bool insert_child(policy_state_t *node, cpl_policy_t *policy,
+                         const char *text, cpl_token_type_t type, uint32_t target)
 {
     bool is_literal = (type == CPL_TYPE_LITERAL);
     uint16_t total = node->literal_count + node->wildcard_count;
@@ -283,46 +255,38 @@ static bool insert_child(policy_state_t *node, children_arena_t *arena,
     if (is_literal) {
         insert_pos = 0;
         for (uint16_t i = 0; i < node->literal_count; i++) {
-            child_entry_t *c = get_child(node, arena, i);
-            if (!c) return false;
-            if (strcmp(text, c->text) < 0) break;
+            if (strcmp(text, node->children[i].text) < 0) break;
             insert_pos = i + 1;
         }
-        if (insert_pos < node->literal_count) {
-            child_entry_t *c = get_child(node, arena, insert_pos);
-            if (c && c->type == CPL_TYPE_LITERAL && strcmp(text, c->text) == 0) return false;
-        }
+        if (insert_pos < node->literal_count &&
+            node->children[insert_pos].type == CPL_TYPE_LITERAL &&
+            strcmp(text, node->children[insert_pos].text) == 0) return false;
     } else {
         insert_pos = node->literal_count;
         for (uint16_t i = node->literal_count; i < total; i++) {
-            child_entry_t *c = get_child(node, arena, i);
-            if (!c) return false;
-            if (type < c->type) break;
+            if (type < node->children[i].type) break;
             insert_pos = i + 1;
         }
-        if (insert_pos >= node->literal_count && insert_pos < total) {
-            child_entry_t *c = get_child(node, arena, insert_pos);
-            if (c && c->type == type) return false;
-        }
+        if (insert_pos < total && node->children[insert_pos].type == type) return false;
     }
 
-    const char *interned = is_literal ? cpl_policy_ctx_intern(ctx, text) : NULL;
+    const char *interned = is_literal ? cpl_policy_ctx_intern(policy->ctx, text) : NULL;
     child_entry_t new_child = { .text = interned, .target = target, .type = (uint8_t)type };
 
-    uint32_t new_base = children_arena_reserve(arena, total + 1);
-    if (new_base == UINT32_MAX) return false;
-
-    for (uint16_t i = 0; i < insert_pos; i++) {
-        child_entry_t *src = get_child(node, arena, i);
-        if (src) arena->entries[new_base + i] = *src;
-    }
-    arena->entries[new_base + insert_pos] = new_child;
-    for (uint16_t i = insert_pos; i < total; i++) {
-        child_entry_t *src = get_child(node, arena, i);
-        if (src) arena->entries[new_base + i + 1] = *src;
+    if (total + 1 > node->children_cap) {
+        size_t old_cap = node->children_cap;
+        child_entry_t *grown = children_grow(node->children, &node->children_cap);
+        if (!grown) return false;
+        node->children = grown;
+        policy->children_alloc += node->children_cap - old_cap;
     }
 
-    node->children_base = new_base;
+    memmove(node->children + insert_pos + 1,
+            node->children + insert_pos,
+            (total - insert_pos) * sizeof(child_entry_t));
+    node->children[insert_pos] = new_child;
+    policy->children_count++;
+
     if (is_literal) {
         node->literal_count++;
     } else {
@@ -391,16 +355,14 @@ cpl_policy_t *cpl_policy_new(cpl_policy_ctx_t *ctx)
     if (!policy) return NULL;
 
     if (!states_array_init(&policy->states)) { free(policy); return NULL; }
-    if (!children_arena_init(&policy->children)) {
-        states_array_free(&policy->states); free(policy); return NULL;
-    }
     if (!pattern_reg_init(&policy->patterns)) {
-        children_arena_free(&policy->children);
         states_array_free(&policy->states); free(policy); return NULL;
     }
 
     policy->ctx = ctx;
     policy->pattern_count = 0;
+    policy->children_count = 0;
+    policy->children_alloc = 0;
     return policy;
 }
 
@@ -408,7 +370,6 @@ void cpl_policy_free(cpl_policy_t *policy)
 {
     if (!policy) return;
     pattern_reg_free(&policy->patterns);
-    children_arena_free(&policy->children);
     states_array_free(&policy->states);
     free(policy);
 }
@@ -433,9 +394,9 @@ cpl_error_t cpl_policy_add(cpl_policy_t *policy, const char *pattern)
         child_entry_t *existing = NULL;
 
         if (tokens[i].type == CPL_TYPE_LITERAL) {
-            existing = find_literal_child(node, &policy->children, tokens[i].text);
+            existing = find_literal_child(node, tokens[i].text);
         } else {
-            existing = find_wildcard_child(node, &policy->children, tokens[i].type);
+            existing = find_wildcard_child(node, tokens[i].type);
         }
 
         if (existing) {
@@ -446,7 +407,7 @@ cpl_error_t cpl_policy_add(cpl_policy_t *policy, const char *pattern)
                 free_pattern_tokens(tokens, token_count);
                 return CPL_ERR_MEMORY;
             }
-            if (!insert_child(node, &policy->children, policy->ctx,
+            if (!insert_child(node, policy,
                               tokens[i].text, tokens[i].type, new_state)) {
                 free_pattern_tokens(tokens, token_count);
                 return CPL_ERR_MEMORY;
@@ -485,9 +446,9 @@ cpl_error_t cpl_policy_remove(cpl_policy_t *policy, const char *pattern)
         policy_state_t *node = &policy->states.states[current];
         child_entry_t *child = NULL;
         if (tokens[i].type == CPL_TYPE_LITERAL) {
-            child = find_literal_child(node, &policy->children, tokens[i].text);
+            child = find_literal_child(node, tokens[i].text);
         } else {
-            child = find_wildcard_child(node, &policy->children, tokens[i].type);
+            child = find_wildcard_child(node, tokens[i].type);
         }
         if (!child) {
             free_pattern_tokens(tokens, token_count);
@@ -546,13 +507,13 @@ cpl_error_t cpl_policy_verify(const cpl_policy_t *policy,
         child_entry_t *found = NULL;
 
         if (ctype == CPL_TYPE_LITERAL) {
-            found = find_literal_child(node, &policy->children, ctext);
+            found = find_literal_child(node, ctext);
         }
 
         if (!found) {
             uint16_t compat = compat_mask(ctype) & node->wildcard_mask;
             if (compat) {
-                found = find_wildcard_child(node, &policy->children, ctype);
+                found = find_wildcard_child(node, ctype);
             }
         }
 
@@ -643,7 +604,7 @@ cpl_error_t cpl_policy_verify_all(const cpl_policy_t *policy,
         const char *ctext = cmd.tokens[entry.token_idx].text;
 
         if (ctype == CPL_TYPE_LITERAL) {
-            child_entry_t *c = find_literal_child(state, &policy->children, ctext);
+            child_entry_t *c = find_literal_child(state, ctext);
             if (c) {
                 ring[tail].state_idx = c->target;
                 ring[tail].token_idx = entry.token_idx + 1;
@@ -655,7 +616,7 @@ cpl_error_t cpl_policy_verify_all(const cpl_policy_t *policy,
         while (compat) {
             int t = __builtin_ctz(compat);
             compat &= ~(1u << t);
-            child_entry_t *c = find_wildcard_child(state, &policy->children, (cpl_token_type_t)t);
+            child_entry_t *c = find_wildcard_child(state, (cpl_token_type_t)t);
             if (c) {
                 ring[tail].state_idx = c->target;
                 ring[tail].token_idx = entry.token_idx + 1;
@@ -715,7 +676,7 @@ static void nfa_count_states(nfa_count_ctx_t *ctx, cpl_policy_t *policy,
     uint16_t total = node->literal_count + node->wildcard_count;
 
     for (uint16_t i = 0; i < total; i++) {
-        child_entry_t *c = get_child(node, &policy->children, i);
+        child_entry_t *c = get_child(node, i);
         if (!c) continue;
 
         if (need_space) ctx->count++;
@@ -758,7 +719,7 @@ static void nfa_dfs_render(nfa_render_ctx_t *ctx, cpl_policy_t *policy,
 
     int trans_count = 0;
     for (uint16_t i = 0; i < total; i++) {
-        child_entry_t *c = get_child(node, &policy->children, i);
+        child_entry_t *c = get_child(node, i);
         if (!c) continue;
         if (c->type == CPL_TYPE_LITERAL) {
             trans_count += (int)strlen(c->text);
@@ -783,7 +744,7 @@ static void nfa_dfs_render(nfa_render_ctx_t *ctx, cpl_policy_t *policy,
     if (fprintf(ctx->fp, "  Transitions: %d\n", trans_count) < 0) { ctx->error = CPL_ERR_IO; return; }
 
     for (uint16_t i = 0; i < total; i++) {
-        child_entry_t *c = get_child(node, &policy->children, i);
+        child_entry_t *c = get_child(node, i);
         if (!c) continue;
 
         if (need_space) {
@@ -898,7 +859,7 @@ static void dfs_save(cpl_policy_t *policy, uint32_t idx, policy_save_ctx_t *ctx)
     }
 
     for (uint16_t i = 0; i < total; i++) {
-        child_entry_t *c = get_child(node, &policy->children, i);
+        child_entry_t *c = get_child(node, i);
         if (c) dfs_save(policy, c->target, ctx);
     }
 }
@@ -950,10 +911,17 @@ cpl_error_t cpl_policy_load(cpl_policy_t *policy, const char *path)
 size_t cpl_policy_memory_usage(const cpl_policy_t *policy)
 {
     if (!policy) return 0;
-    return sizeof(cpl_policy_t)
-           + policy->states.capacity * sizeof(policy_state_t)
-           + policy->children.count * sizeof(child_entry_t)
-           + policy->patterns.capacity * sizeof(const char *);
+    size_t states_alloc = policy->states.capacity * sizeof(policy_state_t);
+    size_t patterns_alloc = policy->patterns.capacity * sizeof(const char *);
+    return sizeof(cpl_policy_t) + states_alloc + policy->children_alloc * sizeof(child_entry_t) + patterns_alloc;
+}
+
+size_t cpl_policy_working_set(const cpl_policy_t *policy)
+{
+    if (!policy) return 0;
+    size_t states_used = policy->states.count * sizeof(policy_state_t);
+    size_t patterns_used = policy->patterns.count * sizeof(const char *);
+    return sizeof(cpl_policy_t) + states_used + policy->children_count * sizeof(child_entry_t) + patterns_used;
 }
 
 size_t cpl_policy_state_count(const cpl_policy_t *policy)

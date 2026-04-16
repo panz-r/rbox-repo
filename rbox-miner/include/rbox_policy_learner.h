@@ -330,6 +330,7 @@ cpl_error_t cpl_policy_load(cpl_policy_t *policy, const char *path);
 /* --- Diagnostics --- */
 
 size_t cpl_policy_memory_usage(const cpl_policy_t *policy);
+size_t cpl_policy_working_set(const cpl_policy_t *policy);
 size_t cpl_policy_state_count(const cpl_policy_t *policy);
 
 #ifdef __cplusplus

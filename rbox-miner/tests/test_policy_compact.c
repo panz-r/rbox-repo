@@ -548,8 +548,9 @@ static int test_large_policy(void)
     err = cpl_policy_verify(policy, "cmd1000 --option x /path/to/file1000", &matched);
     ASSERT(err == CPL_ERR_INVALID);
 
-    size_t usage = cpl_policy_memory_usage(policy);
-    printf("  (memory: %zu bytes for 1000 patterns) ", usage);
+    size_t alloc = cpl_policy_memory_usage(policy);
+    size_t ws = cpl_policy_working_set(policy);
+    printf("  (allocated: %zu bytes, working set: %zu bytes for 1000 patterns) ", alloc, ws);
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
