@@ -60,7 +60,7 @@ void rbox_log_set_callback(rbox_log_callback_t cb) {
 
 __attribute__((visibility("default")))
 void rbox_log(rbox_log_level_t level, const char *file, int line, const char *fmt, ...) {
-    if (level > atomic_load_explicit(&g_log_level, memory_order_relaxed)) {
+    if ((int)level > (int)atomic_load_explicit(&g_log_level, memory_order_relaxed)) {
         return;
     }
 

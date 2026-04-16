@@ -340,6 +340,10 @@ int rbox_server_request_argc(const rbox_server_request_t *req);
 //export rbox_server_request_is_stop
 int rbox_server_request_is_stop(const rbox_server_request_t *req);
 
+/* Check if shell parse result is valid */
+//export rbox_server_request_parse_valid
+int rbox_server_request_parse_valid(const rbox_server_request_t *req);
+
 /* Get shell parse result from request */
 //export rbox_server_request_parse
 const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t *req);

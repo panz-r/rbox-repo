@@ -94,6 +94,7 @@ rbox_server_request_t *request_pool_get(rbox_server_handle_t *server) {
     head->command_data = NULL;
     head->command_len = 0;
     memset(&head->parse, 0, sizeof(head->parse));
+    head->parse_valid = 0;
     head->env_var_count = 0;
     head->env_var_names = NULL;
     head->env_var_scores = NULL;
@@ -489,96 +490,6 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         }
         server_request_free(req);
         return;
-    }
-
-    /* First, find args_end to know where argv ends (before env vars) */
-    const char *p = req->command_data;
-    const char *args_end = req->command_data;
-    while (p < req->command_data + req->command_len) {
-        if (*p == '\0') {
-            if (p == args_end || *(p-1) == '\0') {
-                args_end = p + 1;
-                break;
-            }
-            args_end = p + 1;
-        }
-        p++;
-    }
-    size_t args_len = args_end - req->command_data;
-
-    if (rbox_command_parse(req->command_data, args_len, &req->parse) != RBOX_OK) {
-        DBG("Failed to parse command from fd %d", fd);
-        uint8_t *resp_buf = malloc(1024);
-        if (!resp_buf) {
-            server_request_free(req);
-            return;
-        }
-        size_t resp_len;
-        rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, req->cmd_hash,
-            RBOX_DECISION_DENY, "parse error",
-            req->fenv_hash, 0, NULL,
-            resp_buf, 1024, &resp_len);
-        if (err == RBOX_OK) {
-            send_queue_add(server, fd, (char *)resp_buf, resp_len, NULL);
-        } else {
-            free(resp_buf);
-        }
-        server_request_free(req);
-        return;
-    }
-
-    p = args_end;
-    size_t remaining = req->command_len - (p - req->command_data);
-    while (remaining > 5) {
-        if (p >= req->command_data + req->command_len) break;
-        size_t name_len = strnlen(p, remaining);
-        if (name_len == 0 || name_len + 5 > remaining) break;
-        req->env_var_count++;
-        p += name_len + 1 + 4;
-        remaining -= name_len + 1 + 4;
-    }
-    if (req->env_var_count > 0) {
-        req->env_var_names = calloc(req->env_var_count, sizeof(const char *));
-        req->env_var_scores = calloc(req->env_var_count, sizeof(float));
-        if (!req->env_var_names || !req->env_var_scores) {
-            free(req->env_var_names);
-            free(req->env_var_scores);
-            req->env_var_names = NULL;
-            req->env_var_scores = NULL;
-            req->env_var_count = 0;
-            uint8_t *resp_buf = malloc(1024);
-            if (!resp_buf) {
-                server_request_free(req);
-                return;
-            }
-            size_t resp_len;
-            rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, req->cmd_hash,
-                RBOX_DECISION_DENY, "memory allocation failed",
-                req->fenv_hash, 0, NULL,
-                resp_buf, 1024, &resp_len);
-            if (err == RBOX_OK) {
-                send_queue_add(server, fd, (char *)resp_buf, resp_len, NULL);
-            } else {
-                free(resp_buf);
-            }
-            server_request_free(req);
-            return;
-        }
-        p = args_end;
-        remaining = req->command_len - (p - req->command_data);
-        int idx = 0;
-        while (remaining > 5 && idx < req->env_var_count) {
-            size_t name_len = strnlen(p, remaining);
-            req->env_var_names[idx] = p;  /* pointer into command_data, no copy */
-            memcpy(&req->env_var_scores[idx], p + name_len + 1, 4);
-            const char *s = req->env_var_names[idx];
-            uint32_t h = 5381;
-            while (*s) h = ((h << 5) + h) + (uint32_t)(unsigned char)*s++;
-            req->fenv_hash ^= h;
-            p += name_len + 1 + 4;
-            remaining -= name_len + 1 + 4;
-            idx++;
-        }
     }
 
     if (request_queue_push(server, req) != 0) {
@@ -1662,6 +1573,70 @@ rbox_error_t rbox_server_start(rbox_server_handle_t *server) {
     return RBOX_OK;
 }
 
+static void extract_env_vars(rbox_server_request_t *req) {
+    if (!req) return;
+
+    const char *args_end = req->command_data;
+    const char *p = req->command_data;
+    while (p < req->command_data + req->command_len) {
+        if (*p == '\0') {
+            if (p == args_end || *(p-1) == '\0') {
+                args_end = p + 1;
+                break;
+            }
+            args_end = p + 1;
+        }
+        p++;
+    }
+
+    size_t args_len = args_end - req->command_data;
+
+    rbox_parse_result_t parse_result;
+    rbox_error_t parse_err = rbox_command_parse(req->command_data, args_len, &parse_result);
+    req->parse_valid = (parse_err == RBOX_OK);
+    if (req->parse_valid) {
+        req->parse = parse_result;
+    }
+
+    p = args_end;
+    size_t remaining = req->command_len - (p - req->command_data);
+    while (remaining > 5) {
+        if (p >= req->command_data + req->command_len) break;
+        size_t name_len = strnlen(p, remaining);
+        if (name_len == 0 || name_len + 5 > remaining) break;
+        req->env_var_count++;
+        p += name_len + 1 + 4;
+        remaining -= name_len + 1 + 4;
+    }
+    if (req->env_var_count > 0) {
+        req->env_var_names = calloc(req->env_var_count, sizeof(const char *));
+        req->env_var_scores = calloc(req->env_var_count, sizeof(float));
+        if (!req->env_var_names || !req->env_var_scores) {
+            free(req->env_var_names);
+            free(req->env_var_scores);
+            req->env_var_names = NULL;
+            req->env_var_scores = NULL;
+            req->env_var_count = 0;
+            return;
+        }
+        p = args_end;
+        remaining = req->command_len - (p - req->command_data);
+        int idx = 0;
+        while (remaining > 5 && idx < req->env_var_count) {
+            size_t name_len = strnlen(p, remaining);
+            req->env_var_names[idx] = p;
+            memcpy(&req->env_var_scores[idx], p + name_len + 1, 4);
+            const char *s = req->env_var_names[idx];
+            uint32_t h = 5381;
+            while (*s) h = ((h << 5) + h) + (uint32_t)(unsigned char)*s++;
+            req->fenv_hash ^= h;
+            p += name_len + 1 + 4;
+            remaining -= name_len + 1 + 4;
+            idx++;
+        }
+    }
+}
+
 rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server, rbox_error_info_t *err_info) {
     if (!server) {
         rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
@@ -1669,7 +1644,10 @@ rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server, rbo
     }
     while (atomic_load(&server->running)) {
         rbox_server_request_t *req = request_queue_pop(server);
-        if (req) return req;
+        if (req) {
+            extract_env_vars(req);
+            return req;
+        }
 
         /* Wait for wakeup */
         struct pollfd pfd = { .fd = server->request_wake_fd, .events = POLLIN };
@@ -1683,7 +1661,11 @@ rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server, rbo
         (void)r;
     }
     /* Server stopped - drain queue one more time */
-    return request_queue_pop(server);
+    rbox_server_request_t *req = request_queue_pop(server);
+    if (req) {
+        extract_env_vars(req);
+    }
+    return req;
 }
 
 int rbox_server_is_running(rbox_server_handle_t *server) {
@@ -1781,13 +1763,23 @@ const char *rbox_server_request_command(const rbox_server_request_t *req) {
 }
 
 const char *rbox_server_request_arg(const rbox_server_request_t *req, int index) {
-    uint32_t len;
-    if (!req || index < 0 || (uint32_t)index >= req->parse.count) return NULL;
-    return rbox_get_subcommand(req->command_data, &req->parse.subcommands[index], &len);
+    if (!req || index < 0) return NULL;
+    if (req->parse_valid && (uint32_t)index < req->parse.count) {
+        uint32_t len;
+        return rbox_get_subcommand(req->command_data, &req->parse.subcommands[index], &len);
+    }
+    if (!req->parse_valid && index == 0) return req->command_data;
+    return NULL;
 }
 
 int rbox_server_request_argc(const rbox_server_request_t *req) {
-    return req ? (int)req->parse.count : 0;
+    if (!req) return 0;
+    if (req->parse_valid) return (int)req->parse.count;
+    return 1;
+}
+
+int rbox_server_request_parse_valid(const rbox_server_request_t *req) {
+    return req ? req->parse_valid : 0;
 }
 
 const rbox_parse_result_t *rbox_server_request_parse(const rbox_server_request_t *req) {

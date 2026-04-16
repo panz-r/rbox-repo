@@ -324,7 +324,6 @@ rbox_error_t rbox_encode_response(
 
     /* Body */
     uint8_t *body = out_buf + RBOX_HEADER_SIZE;
-    size_t pos = 0;
     rbox_writer_t bw;
     rbox_writer_init(&bw, body, body_len);
     rbox_write_u8(&bw, decision);

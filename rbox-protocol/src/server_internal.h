@@ -130,6 +130,7 @@ struct rbox_server_request {
     char *command_data;
     size_t command_len;
     rbox_parse_result_t parse;
+    int parse_valid;                  /* 1 if parse result is valid, 0 otherwise */
 
     /* Flagged env vars - pointers into command_data, no copies */
     int env_var_count;
