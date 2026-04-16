@@ -1,0 +1,25 @@
+# Build artifacts
+obj/
+rbox-cpl-tool
+
+# Test artifacts
+tests/test_cpl
+tests/test_policy
+tests/test_verify
+tests/test_token_types
+tests/test_cpl_integration
+tests/test_policy_compact
+tests/*.tmp
+tests/test_*.nfa
+tests/test_output.txt
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

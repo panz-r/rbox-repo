@@ -27,6 +27,7 @@ const (
 	rboxPtraceDir   = "rbox-ptrace"
 	rboxServerDir   = "rbox-server"
 	rboxRulesetDir  = "rbox-ruleset"
+	rboxMinerDir    = "rbox-miner"
 
 	socketDir  = "/run/readonlybox"
 	socketPath = socketDir + "/readonlybox.sock"
@@ -458,7 +459,8 @@ func Clean() error {
 	var errs []error
 
 	// Clean subprojects (use cmake clean for rbox-protocol, make clean for others)
-	for _, dir := range []string{cDfaDir, shellsplitDir, rboxWrapDir, rboxPtraceDir, rboxServerDir} {
+	subprojects := []string{cDfaDir, shellsplitDir, rboxProtocolDir, rboxWrapDir, rboxPtraceDir, rboxServerDir, rboxMinerDir}
+	for _, dir := range subprojects {
 		if err := runMakeClean(filepath.Join(wd, dir)); err != nil {
 			errs = append(errs, fmt.Errorf("%s clean failed: %w", dir, err))
 		}
@@ -550,8 +552,14 @@ func Test() error {
 
 	// Run rbox-ptrace tests
 	fmt.Println("=== Running rbox-ptrace tests ===")
-	if err := runMakeTest(filepath.Join(rboxPtraceDir)); err != nil {
+	if err := runMakeTest(filepath.Join(wd, rboxPtraceDir)); err != nil {
 		return fmt.Errorf("rbox-ptrace tests failed: %w", err)
+	}
+
+	// Run rbox-miner tests
+	fmt.Println("=== Running rbox-miner tests ===")
+	if err := runMakeTest(rboxMinerDir); err != nil {
+		return fmt.Errorf("rbox-miner tests failed: %w", err)
 	}
 
 	fmt.Println("=== All tests passed ===")
