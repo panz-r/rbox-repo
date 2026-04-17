@@ -14,6 +14,8 @@
  */
 
 #include "rbox_policy_learner.h"
+#include "vacuum_filter.h"
+#include "filter_hash.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +31,8 @@
 #define PATTERN_REG_INIT     256
 #define VERIFY_ALL_RING_CAP  64
 #define MAX_CMD_TOKENS       128
+#define FILTER_POS_LEVELS    4
+#define FILTER_POS_CAPACITY  1024
 
 /* ============================================================
  * CHILD ENTRY — 16 bytes, packed
@@ -169,12 +173,16 @@ static uint16_t pattern_reg_add(pattern_reg_t *r, cpl_policy_ctx_t *ctx, const c
  * ============================================================ */
 
 struct cpl_policy {
-    cpl_policy_ctx_t *ctx;
-    states_array_t    states;
-    pattern_reg_t     patterns;
-    size_t            pattern_count;
-    size_t            children_count;  /* total child entries across all nodes */
-    size_t            children_alloc;  /* total child capacity across all nodes */
+    cpl_policy_ctx_t   *ctx;
+    states_array_t      states;
+    pattern_reg_t       patterns;
+    uint64_t            epoch;
+    vacuum_filter_t    *pos_filters[FILTER_POS_LEVELS];
+    uint16_t            pos_wildcard_mask[FILTER_POS_LEVELS];
+    uint64_t            pos_built_epoch[FILTER_POS_LEVELS];
+    size_t              pattern_count;
+    size_t              children_count;
+    size_t              children_alloc;
 };
 
 /* ============================================================
@@ -344,6 +352,73 @@ static void free_pattern_tokens(cpl_token_t *tokens, size_t count)
 }
 
 /* ============================================================
+ * PER-POSITION FILTER REBUILD
+ *
+ * BFS-walk the trie up to depth FILTER_POS_LEVELS (4).
+ * At each depth N, collect all children across all nodes at that depth:
+ *   - Literals → insert into pos_filters[N]
+ *   - Wildcards → OR into pos_wildcard_mask[N]
+ *
+ * Called lazily when pos_built_epoch[N] != policy->epoch.
+ * ============================================================ */
+
+static void policy_rebuild_filters(cpl_policy_t *policy)
+{
+    /* Reset or create filters, clear masks */
+    for (int i = 0; i < FILTER_POS_LEVELS; i++) {
+        if (policy->pos_filters[i]) {
+            vacuum_filter_reset(policy->pos_filters[i]);
+        } else {
+            policy->pos_filters[i] = vacuum_filter_create(FILTER_POS_CAPACITY, 0, 0, 0);
+        }
+        policy->pos_wildcard_mask[i] = 0;
+    }
+
+    /* BFS walk: track (state_idx, depth) pairs */
+    typedef struct { uint32_t idx; uint8_t depth; } bfs_q;
+    bfs_q q[STATES_INIT * 2];
+    size_t head = 0, tail = 0;
+
+    q[tail].idx = 0;
+    q[tail].depth = 0;
+    tail++;
+
+    while (head < tail) {
+        bfs_q entry = q[head++];
+        if (entry.depth >= FILTER_POS_LEVELS) continue;
+
+        policy_state_t *node = &policy->states.states[entry.idx];
+        uint16_t total = node->literal_count + node->wildcard_count;
+
+        for (uint16_t i = 0; i < total; i++) {
+            child_entry_t *c = &node->children[i];
+            if (c->type == CPL_TYPE_LITERAL && !c->text) continue;
+
+            uint8_t d = entry.depth;
+
+            if (c->type == CPL_TYPE_LITERAL) {
+                if (policy->pos_filters[d]) {
+                    uint64_t h = filter_hash_fnv1a(c->text, strlen(c->text));
+                    vacuum_filter_insert(policy->pos_filters[d], h);
+                }
+            } else {
+                policy->pos_wildcard_mask[d] |= (1u << c->type);
+            }
+
+            if (tail < sizeof(q) / sizeof(q[0])) {
+                q[tail].idx = c->target;
+                q[tail].depth = d + 1;
+                tail++;
+            }
+        }
+    }
+
+    for (int i = 0; i < FILTER_POS_LEVELS; i++) {
+        policy->pos_built_epoch[i] = policy->epoch;
+    }
+}
+
+/* ============================================================
  * LIFECYCLE
  * ============================================================ */
 
@@ -360,6 +435,7 @@ cpl_policy_t *cpl_policy_new(cpl_policy_ctx_t *ctx)
     }
 
     policy->ctx = ctx;
+    policy->epoch = 1;
     policy->pattern_count = 0;
     policy->children_count = 0;
     policy->children_alloc = 0;
@@ -369,6 +445,9 @@ cpl_policy_t *cpl_policy_new(cpl_policy_ctx_t *ctx)
 void cpl_policy_free(cpl_policy_t *policy)
 {
     if (!policy) return;
+    for (int i = 0; i < FILTER_POS_LEVELS; i++) {
+        vacuum_filter_destroy(policy->pos_filters[i]);
+    }
     pattern_reg_free(&policy->patterns);
     states_array_free(&policy->states);
     free(policy);
@@ -427,6 +506,7 @@ cpl_error_t cpl_policy_add(cpl_policy_t *policy, const char *pattern)
         policy->pattern_count++;
     }
 
+    policy->epoch++;
     free_pattern_tokens(tokens, token_count);
     return CPL_OK;
 }
@@ -466,6 +546,7 @@ cpl_error_t cpl_policy_remove(cpl_policy_t *policy, const char *pattern)
     node->pattern_id = UINT16_MAX;
     policy->pattern_count--;
 
+    policy->epoch++;
     free_pattern_tokens(tokens, token_count);
     return CPL_OK;
 }
@@ -496,6 +577,42 @@ cpl_error_t cpl_policy_verify(const cpl_policy_t *policy,
     if (cmd.count == 0 || cmd.count > MAX_CMD_TOKENS) {
         cpl_free_token_array(&cmd);
         return CPL_ERR_INVALID;
+    }
+
+    /* Per-position filter fast-path: reject definite no-matches before trie walk */
+    size_t check_len = cmd.count < FILTER_POS_LEVELS ? cmd.count : FILTER_POS_LEVELS;
+    for (size_t i = 0; i < check_len; i++) {
+        if (policy->pos_built_epoch[i] != policy->epoch) {
+            /* Lazy rebuild — need mutable policy pointer */
+            cpl_policy_t *mutable = (cpl_policy_t *)policy;
+            policy_rebuild_filters(mutable);
+            break;
+        }
+    }
+
+    for (size_t i = 0; i < check_len; i++) {
+        cpl_token_type_t ctype = cmd.tokens[i].type;
+
+        if (ctype == CPL_TYPE_LITERAL) {
+            /* Skip if any wildcard covers this position (including *) */
+            if (policy->pos_wildcard_mask[i] != 0) continue;
+            /* No filter = no literals indexed at this position, skip */
+            if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) continue;
+            uint64_t h = filter_hash_fnv1a(cmd.tokens[i].text, strlen(cmd.tokens[i].text));
+            if (!vacuum_filter_lookup(policy->pos_filters[i], h)) {
+                cpl_free_token_array(&cmd);
+                return CPL_ERR_INVALID;
+            }
+        } else {
+            /* Wildcard command token: check compatibility with policy wildcards */
+            if ((policy->pos_wildcard_mask[i] & compat_mask(ctype)) == 0) {
+                /* No compatible wildcard — check if there are any literals at this position */
+                if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) {
+                    cpl_free_token_array(&cmd);
+                    return CPL_ERR_INVALID;
+                }
+            }
+        }
     }
 
     uint32_t current = 0;
@@ -913,7 +1030,13 @@ size_t cpl_policy_memory_usage(const cpl_policy_t *policy)
     if (!policy) return 0;
     size_t states_alloc = policy->states.capacity * sizeof(policy_state_t);
     size_t patterns_alloc = policy->patterns.capacity * sizeof(const char *);
-    return sizeof(cpl_policy_t) + states_alloc + policy->children_alloc * sizeof(child_entry_t) + patterns_alloc;
+    size_t filter_bytes = 0;
+    for (int i = 0; i < FILTER_POS_LEVELS; i++) {
+        if (policy->pos_filters[i]) {
+            filter_bytes += vacuum_filter_memory_bytes(policy->pos_filters[i]);
+        }
+    }
+    return sizeof(cpl_policy_t) + filter_bytes + states_alloc + policy->children_alloc * sizeof(child_entry_t) + patterns_alloc;
 }
 
 size_t cpl_policy_working_set(const cpl_policy_t *policy)
@@ -921,7 +1044,13 @@ size_t cpl_policy_working_set(const cpl_policy_t *policy)
     if (!policy) return 0;
     size_t states_used = policy->states.count * sizeof(policy_state_t);
     size_t patterns_used = policy->patterns.count * sizeof(const char *);
-    return sizeof(cpl_policy_t) + states_used + policy->children_count * sizeof(child_entry_t) + patterns_used;
+    size_t filter_bytes = 0;
+    for (int i = 0; i < FILTER_POS_LEVELS; i++) {
+        if (policy->pos_filters[i]) {
+            filter_bytes += vacuum_filter_memory_bytes(policy->pos_filters[i]);
+        }
+    }
+    return sizeof(cpl_policy_t) + filter_bytes + states_used + policy->children_count * sizeof(child_entry_t) + patterns_used;
 }
 
 size_t cpl_policy_state_count(const cpl_policy_t *policy)

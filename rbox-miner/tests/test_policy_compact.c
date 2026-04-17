@@ -558,6 +558,69 @@ static int test_large_policy(void)
 }
 
 /* ============================================================
+ * BLOOM FILTER
+ * ============================================================ */
+
+static int test_bloom_definite_no(void)
+{
+    cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
+    cpl_policy_t *policy = cpl_policy_new(ctx);
+
+    cpl_policy_add(policy, "git commit -m *");
+    cpl_policy_add(policy, "ls -la *");
+
+    /* "zzz" is a literal that appears in no pattern — bloom rejects */
+    const char *matched = NULL;
+    cpl_error_t err = cpl_policy_verify(policy, "zzz commit -m hello", &matched);
+    ASSERT(err == CPL_ERR_INVALID);
+    ASSERT(matched == NULL);
+
+    cpl_policy_free(policy);
+    cpl_policy_ctx_free(ctx);
+    return 1;
+}
+
+static int test_bloom_no_false_negatives(void)
+{
+    cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
+    cpl_policy_t *policy = cpl_policy_new(ctx);
+
+    cpl_policy_add(policy, "cat /etc/passwd");
+    cpl_policy_add(policy, "git status");
+    cpl_policy_add(policy, "ls -la *");
+
+    const char *matched = NULL;
+    cpl_error_t err = cpl_policy_verify(policy, "cat /etc/passwd", &matched);
+    ASSERT(err == CPL_OK);
+
+    matched = NULL;
+    err = cpl_policy_verify(policy, "git status", &matched);
+    ASSERT(err == CPL_OK);
+
+    matched = NULL;
+    err = cpl_policy_verify(policy, "ls -la /tmp", &matched);
+    ASSERT(err == CPL_OK);
+
+    cpl_policy_free(policy);
+    cpl_policy_ctx_free(ctx);
+    return 1;
+}
+
+static int test_bloom_empty_policy(void)
+{
+    cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
+    cpl_policy_t *policy = cpl_policy_new(ctx);
+
+    const char *matched = NULL;
+    cpl_error_t err = cpl_policy_verify(policy, "anything", &matched);
+    ASSERT(err == CPL_ERR_INVALID);
+
+    cpl_policy_free(policy);
+    cpl_policy_ctx_free(ctx);
+    return 1;
+}
+
+/* ============================================================
  * NFA RENDERING
  * ============================================================ */
 
@@ -710,6 +773,11 @@ int main(void)
     TEST(test_render_nfa_basic);
     TEST(test_render_nfa_wildcard);
     TEST(test_render_nfa_multiple_patterns);
+
+    printf("\nBloom filter:\n");
+    TEST(test_bloom_definite_no);
+    TEST(test_bloom_no_false_negatives);
+    TEST(test_bloom_empty_policy);
 
     printf("\n========================================\n");
     printf("Results: %d/%d passed, %d failed\n",

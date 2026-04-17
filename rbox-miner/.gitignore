@@ -9,6 +9,7 @@ tests/test_verify
 tests/test_token_types
 tests/test_cpl_integration
 tests/test_policy_compact
+tests/test_filters
 tests/*.tmp
 tests/test_*.nfa
 tests/test_output.txt

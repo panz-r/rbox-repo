@@ -128,32 +128,32 @@ int main(int argc, char *argv[])
 
     /* Policy verify mode */
     if (policy_file) {
-        rbox_policy_t *policy = rbox_policy_new();
+        cpl_policy_t *policy = cpl_policy_new(cpl_policy_ctx_new());
         if (!policy) {
             fprintf(stderr, "Error: failed to create policy\n");
             return 1;
         }
 
-        cpl_error_t err = rbox_policy_load(policy, policy_file);
+        cpl_error_t err = cpl_policy_load(policy, policy_file);
         if (err != CPL_OK) {
             fprintf(stderr, "Error: failed to load policy from '%s' (%d)\n",
                     policy_file, err);
-            rbox_policy_free(policy);
+            cpl_policy_free(policy);
             return 1;
         }
 
-        fprintf(stderr, "Loaded policy with %zu patterns\n", rbox_policy_count(policy));
+        fprintf(stderr, "Loaded policy with %zu patterns\n", cpl_policy_count(policy));
 
         /* Single command verify */
         if (verify_cmd) {
             const char *matched = NULL;
-            err = rbox_policy_verify(policy, verify_cmd, &matched);
+            err = cpl_policy_verify(policy, verify_cmd, &matched);
             if (err == CPL_OK) {
                 printf("ALLOW (matched: %s)\n", matched ? matched : "(unknown)");
             } else {
                 printf("DENY\n");
             }
-            rbox_policy_free(policy);
+            cpl_policy_free(policy);
             return 0;
         }
 
@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
             FILE *fp = fopen(verify_file, "r");
             if (!fp) {
                 fprintf(stderr, "Error: cannot open '%s'\n", verify_file);
-                rbox_policy_free(policy);
+                cpl_policy_free(policy);
                 return 1;
             }
 
@@ -177,7 +177,7 @@ int main(int argc, char *argv[])
                 if (line[0] == '#') continue;
 
                 const char *matched = NULL;
-                err = rbox_policy_verify(policy, line, &matched);
+                err = cpl_policy_verify(policy, line, &matched);
                 if (err == CPL_OK) {
                     printf("ALLOW: %-60s (matched: %s)\n", line, matched ? matched : "(unknown)");
                     allow_count++;
@@ -191,12 +191,12 @@ int main(int argc, char *argv[])
 
             fprintf(stderr, "\nSummary: %d commands, %d ALLOW, %d DENY\n",
                     line_count, allow_count, deny_count);
-            rbox_policy_free(policy);
+            cpl_policy_free(policy);
             return 0;
         }
 
         fprintf(stderr, "Error: --verify or --verify-file required with --policy\n");
-        rbox_policy_free(policy);
+        cpl_policy_free(policy);
         return 1;
     }
 
