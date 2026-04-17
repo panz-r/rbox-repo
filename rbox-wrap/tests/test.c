@@ -50,8 +50,8 @@ static int run_cmd(const char *cmd, char *output, size_t output_size) {
     if (!fp) return -1;
     if (output) {
         output[0] = '\0';
-        fread(output, 1, output_size - 1, fp);
-        output[output_size - 1] = '\0';
+        size_t n = fread(output, 1, output_size - 1, fp);
+        output[n] = '\0';
     }
     int status = pclose(fp);
     return WEXITSTATUS(status);
@@ -162,10 +162,11 @@ static int test_modes(void) {
 
 /* Test 6: Version constant consistency */
 static int test_version(void) {
-    TEST("version constant RBOX_VERSION == 9");
+    TEST("version constant RBOX_VERSION == (9 << 16) | 0");
     
-    if (RBOX_VERSION != 9) {
-        FAIL("RBOX_VERSION should be 9");
+    if (RBOX_VERSION != ((9 << 16) | 0)) {
+        printf("  RBOX_VERSION is %u, expected %u\n", RBOX_VERSION, ((9 << 16) | 0));
+        FAIL("RBOX_VERSION should be (9 << 16) | 0");
     }
     
     PASS();

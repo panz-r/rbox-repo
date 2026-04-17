@@ -105,17 +105,34 @@ func BuildDependencies() error {
 	if err := runMake(filepath.Join(wd, shellsplitDir), true); err != nil {
 		return fmt.Errorf("shellsplit build failed: %w", err)
 	}
-	if err := runMake(filepath.Join(wd, rboxProtocolDir), true); err != nil {
+	if err := buildCMake(filepath.Join(wd, rboxProtocolDir)); err != nil {
 		return fmt.Errorf("rbox-protocol build failed: %w", err)
 	}
 
-	// Create lib symlink for projects that link against librbox_protocol.so
-	// This symlink allows -L../lib to work both in the build tree and outside it
-	if err := os.Symlink(rboxProtocolDir, filepath.Join(wd, "lib")); err != nil {
-		if !os.IsExist(err) {
-			return fmt.Errorf("failed to create lib symlink: %w", err)
-		}
+	// Create lib directory for librbox_protocol.so (dev build)
+	libDir := filepath.Join(wd, "lib")
+	if err := os.MkdirAll(libDir, 0755); err != nil {
+		return fmt.Errorf("creating lib dir failed: %w", err)
 	}
+	// Create symlinks in ./lib for rbox-wrap dependency
+	// Point to the library in rbox-protocol/build/
+	protoLibActual := filepath.Join(wd, rboxProtocolDir, "build", "librbox_protocol.so.1.0.0")
+	protoSo1 := filepath.Join(wd, "lib", "librbox_protocol.so.1")
+	protoSo := filepath.Join(wd, "lib", "librbox_protocol.so")
+
+	// Remove existing symlinks
+	os.Remove(protoSo1)
+	os.Remove(protoSo)
+
+	// Create .so.1 symlink directly to actual file
+	if err := os.Symlink(protoLibActual, protoSo1); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("failed to create lib/librbox_protocol.so.1 symlink: %w", err)
+	}
+	// Create .so symlink to .so.1
+	if err := os.Symlink("librbox_protocol.so.1", protoSo); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("failed to create lib/librbox_protocol.so symlink: %w", err)
+	}
+
 	return nil
 }
 
@@ -434,12 +451,15 @@ func Clean() error {
 	wd, _ := os.Getwd()
 	var errs []error
 
-	// Clean subprojects
-	subprojects := []string{cDfaDir, shellsplitDir, rboxProtocolDir, rboxWrapDir, rboxPtraceDir, rboxServerDir}
-	for _, dir := range subprojects {
+	// Clean subprojects (use cmake clean for rbox-protocol, make clean for others)
+	for _, dir := range []string{cDfaDir, shellsplitDir, rboxWrapDir, rboxPtraceDir, rboxServerDir} {
 		if err := runMakeClean(filepath.Join(wd, dir)); err != nil {
 			errs = append(errs, fmt.Errorf("%s clean failed: %w", dir, err))
 		}
+	}
+	// rbox-protocol uses cmake
+	if err := cleanCMake(filepath.Join(wd, rboxProtocolDir)); err != nil {
+		errs = append(errs, fmt.Errorf("%s clean failed: %w", rboxProtocolDir, err))
 	}
 
 	// Remove bin directory
@@ -499,9 +519,9 @@ func Test() error {
 		return fmt.Errorf("shellsplit tests failed: %w", err)
 	}
 
-	// Run rbox-protocol tests
+	// Run rbox-protocol tests (uses cmake/ctest)
 	fmt.Println("=== Running rbox-protocol tests ===")
-	if err := runMakeTest(filepath.Join(rboxProtocolDir)); err != nil {
+	if err := runCMakeTest(filepath.Join(rboxProtocolDir)); err != nil {
 		return fmt.Errorf("rbox-protocol tests failed: %w", err)
 	}
 
@@ -568,14 +588,9 @@ func Install() error {
 
 	fmt.Printf("Installing to /usr/local (%sinstall)\n", sudo)
 
-	// Build shared library if it doesn't exist
-	fmt.Printf("  Building shared library...\n")
-	// rbox-protocol: use build-all to get shared library
-	cmd := exec.Command("make", "build-all")
-	cmd.Dir = filepath.Join(wd, rboxProtocolDir)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// Build rbox-protocol shared library via cmake
+	fmt.Printf("  Building rbox-protocol...\n")
+	if err := buildCMake(filepath.Join(wd, rboxProtocolDir)); err != nil {
 		return fmt.Errorf("rbox-protocol build failed: %w", err)
 	}
 
@@ -841,6 +856,82 @@ func runMake(dir string, parallel bool) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// buildCMake builds a cmake project in the given directory
+func buildCMake(dir string) error {
+	// Create build directory alongside source
+	buildDir := filepath.Join(dir, "build")
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		return fmt.Errorf("failed to create build dir: %w", err)
+	}
+
+	// Run cmake configure
+	cmd := exec.Command("cmake", "-B", "build", "-S", ".")
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cmake configure failed: %w", err)
+	}
+
+	// Run cmake build with parallel jobs
+	nproc := os.Getenv("NPROC")
+	if nproc == "" || nproc == "0" {
+		// Use all available cores (don't specify -j, let cmake decide)
+		cmd = exec.Command("cmake", "--build", "build")
+	} else {
+		cmd = exec.Command("cmake", "--build", "build", "--parallel", nproc)
+	}
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cmake build failed: %w", err)
+	}
+
+	return nil
+}
+
+// cleanCMake removes cmake build directory and generated artifacts
+func cleanCMake(dir string) error {
+	// Remove build directory
+	buildDir := filepath.Join(dir, "build")
+	if err := os.RemoveAll(buildDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove build dir: %w", err)
+	}
+
+	// Remove generated library symlinks in source directory
+	// These are created by cmake POST_BUILD commands
+	libs := []string{"librbox_protocol.so", "librbox_protocol.so.1"}
+	for _, lib := range libs {
+		p := filepath.Join(dir, lib)
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			// Log but don't fail - might be a real file not a symlink
+			fmt.Printf("Warning: could not remove %s: %v\n", p, err)
+		}
+	}
+	return nil
+}
+
+// runCMakeTest runs tests via ctest in a cmake build directory
+func runCMakeTest(dir string) error {
+	buildDir := filepath.Join(dir, "build")
+	if _, err := os.Stat(buildDir); os.IsNotExist(err) {
+		// Build first if build dir doesn't exist
+		if err := buildCMake(dir); err != nil {
+			return err
+		}
+	}
+
+	cmd := exec.Command("ctest", "--output-on-failure")
+	cmd.Dir = buildDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ctest failed in %s: %w", dir, err)
+	}
+	return nil
 }
 
 // runMakeTest runs make test in a directory

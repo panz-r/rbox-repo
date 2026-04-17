@@ -80,6 +80,11 @@ static void *server_worker_1request(void *arg) {
     rbox_server_handle_listen(ctx->srv);
     rbox_server_start(ctx->srv);
 
+    /* Signal that server handle is ready */
+    pthread_mutex_lock(&ctx->mutex);
+    ctx->server_ready = 1;
+    pthread_mutex_unlock(&ctx->mutex);
+
     rbox_server_request_t *req = rbox_server_get_request(ctx->srv, &err_info);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
@@ -95,19 +100,34 @@ static int test_single_request(void) {
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     pthread_t tid;
-    worker_ctx_t ctx = { .path = path, .max_requests = 1, .duration = 0, .srv = NULL };
+    worker_ctx_t ctx = { 
+        .path = path, 
+        .max_requests = 1, 
+        .duration = 0, 
+        .srv = NULL,
+        .mutex = PTHREAD_MUTEX_INITIALIZER,
+        .server_ready = 0
+    };
     if (checked_pthread_create(&tid, NULL, server_worker_1request, &ctx) != 0) return -1;
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
+        unlink(path);
         return -1;
     }
 
     rbox_response_t resp;
     rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0, &err_info);
     
-    if (ctx.srv) rbox_server_stop(ctx.srv);
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    if (ctx.srv) rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     return (err == RBOX_OK) ? 0 : -1;
@@ -127,26 +147,44 @@ static int test_three_requests(void) {
         .server_ready = 0
     };
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_worker_with_duration, &ctx) != 0) return -1;
+    if (checked_pthread_create(&tid, NULL, server_worker_with_duration, &ctx) != 0) {
+        unlink(path);
+        return -1;
+    }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
+        unlink(path);
         return -1;
     }
 
+    rbox_server_handle_t *srv = NULL;
     for (int i = 0; i < 3; i++) {
         rbox_response_t resp;
         rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0, &err_info);
         if (err != RBOX_OK) {
-            if (ctx.srv) rbox_server_stop(ctx.srv);
+            pthread_mutex_lock(&ctx.mutex);
+            srv = ctx.srv;
+            pthread_mutex_unlock(&ctx.mutex);
+            if (srv) rbox_server_stop(srv);
             pthread_join(tid, NULL);
-            if (ctx.srv) rbox_server_handle_free(ctx.srv);
+            pthread_mutex_lock(&ctx.mutex);
+            srv = ctx.srv;
+            pthread_mutex_unlock(&ctx.mutex);
+            if (srv) rbox_server_handle_free(srv);
+            unlink(path);
             return -1;
         }
     }
     
-    if (ctx.srv) rbox_server_stop(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    if (ctx.srv) rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     return 0;
@@ -185,9 +223,13 @@ static int test_duration_decision(void) {
         .server_ready = 0
     };
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_worker_with_duration, &ctx) != 0) return -1;
+    if (checked_pthread_create(&tid, NULL, server_worker_with_duration, &ctx) != 0) {
+        unlink(path);
+        return -1;
+    }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
+        unlink(path);
         return -1;
     }
 
@@ -206,6 +248,7 @@ static int test_duration_decision(void) {
         rbox_error_t err = rbox_blocking_request(path, "test", 0, NULL, NULL, NULL, 0, NULL, NULL, &resp, 0, 0, &err_info);
         if (err != RBOX_OK) {
             pthread_join(tid, NULL);
+            unlink(path);
             return -1;
         }
     }
@@ -214,10 +257,17 @@ static int test_duration_decision(void) {
     usleep(100000);
 
     /* Stop server - signals cond, worker wakes up from get_request() and exits */
-    rbox_server_stop(ctx.srv);
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
 
     pthread_join(tid, NULL);
-    if (ctx.srv) rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     return 0;
@@ -249,9 +299,13 @@ static int test_cache_hit(void) {
         .count_mutex = PTHREAD_MUTEX_INITIALIZER
     };
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, server_worker_with_duration, &ctx) != 0) return -1;
+    if (checked_pthread_create(&tid, NULL, server_worker_with_duration, &ctx) != 0) {
+        unlink(path);
+        return -1;
+    }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
+        unlink(path);
         return -1;
     }
 
@@ -274,9 +328,17 @@ static int test_cache_hit(void) {
                                               0, NULL, NULL, &resp1, 0, 0, &err_info);
     if (err1 != RBOX_OK) {
         TEST_ERROR("first request failed: %d", err1);
-        if (ctx.srv) rbox_server_stop(ctx.srv);
+        rbox_server_handle_t *srv = NULL;
+        pthread_mutex_lock(&ctx.mutex);
+        srv = ctx.srv;
+        pthread_mutex_unlock(&ctx.mutex);
+        if (srv) rbox_server_stop(srv);
         pthread_join(tid, NULL);
-        if (ctx.srv) rbox_server_handle_free(ctx.srv);
+        pthread_mutex_lock(&ctx.mutex);
+        srv = ctx.srv;
+        pthread_mutex_unlock(&ctx.mutex);
+        if (srv) rbox_server_handle_free(srv);
+        unlink(path);
         return -1;
     }
 
@@ -289,9 +351,17 @@ static int test_cache_hit(void) {
                                               0, NULL, NULL, &resp2, 0, 0, &err_info);
     if (err2 != RBOX_OK) {
         TEST_ERROR("second request failed: %d", err2);
-        if (ctx.srv) rbox_server_stop(ctx.srv);
+        rbox_server_handle_t *srv = NULL;
+        pthread_mutex_lock(&ctx.mutex);
+        srv = ctx.srv;
+        pthread_mutex_unlock(&ctx.mutex);
+        if (srv) rbox_server_stop(srv);
         pthread_join(tid, NULL);
-        if (ctx.srv) rbox_server_handle_free(ctx.srv);
+        pthread_mutex_lock(&ctx.mutex);
+        srv = ctx.srv;
+        pthread_mutex_unlock(&ctx.mutex);
+        if (srv) rbox_server_handle_free(srv);
+        unlink(path);
         return -1;
     }
 
@@ -299,9 +369,16 @@ static int test_cache_hit(void) {
     usleep(50000);
 
     /* Now stop server and check decision count */
-    rbox_server_stop(ctx.srv);
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    if (ctx.srv) rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     /* Verify decision_count is 1 (not 2) - second was from cache */

@@ -332,18 +332,144 @@ typedef struct {
     double byte_replace_prob;  /* Probability of replacing a byte (0.0 - 1.0) */
 } corruption_params_t;
 
+/* Forward declaration for proxy client handler */
+static void *handle_proxy_client(void *arg);
+
+/* Forward declaration for corruption init */
+static void corruption_init(corruption_params_t *cp, double bit_flip, double byte_replace);
+
 /* Proxy instance - Unix socket based */
 typedef struct proxy {
-    int listen_fd;              /* Listening socket for clients (Unix socket) */
-    char listen_socket[256];    /* Unix socket path we listen on */
+    _Atomic int active;        /* Is proxy accepting connections */
+    int listen_fd;             /* Listening socket - protected by mutex */
+    char listen_socket[256];   /* Unix socket path we listen on */
     char target_socket[256];   /* Target server Unix socket path */
     corruption_params_t client_to_server;  /* Corruption for client->server */
     corruption_params_t server_to_client;  /* Corruption for server->client */
-    _Atomic int running;       /* Is proxy active */
-    _Atomic int connections;   /* Total connections handled */
     pthread_t thread;          /* Proxy thread handle for join */
-    pthread_mutex_t lock;
+    pthread_mutex_t fd_mutex;  /* Protects listen_fd during close */
 } proxy_t;
+
+/* Cleanup handler for proxy thread */
+static void proxy_thread_cleanup(void *arg) {
+    proxy_t *proxy = (proxy_t *)arg;
+    pthread_mutex_lock(&proxy->fd_mutex);
+    if (proxy->listen_fd >= 0) {
+        close(proxy->listen_fd);
+        proxy->listen_fd = -1;
+    }
+    pthread_mutex_unlock(&proxy->fd_mutex);
+    unlink(proxy->listen_socket);
+}
+
+/* Proxy listener thread */
+static void *proxy_thread_func(void *arg) {
+    proxy_t *proxy = (proxy_t *)arg;
+    pthread_cleanup_push(proxy_thread_cleanup, proxy);
+
+    while (atomic_load(&proxy->active)) {
+        pthread_mutex_lock(&proxy->fd_mutex);
+        int fd = proxy->listen_fd;
+        pthread_mutex_unlock(&proxy->fd_mutex);
+
+        if (fd < 0) break;
+
+        struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
+        int ret = poll(&pfd, 1, 100);
+        if (ret <= 0) continue;
+        if (!(pfd.revents & POLLIN)) continue;
+
+        struct sockaddr_un client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        int client_fd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
+
+        if (client_fd >= 0) {
+            /* Allocate client info struct */
+            struct client_info {
+                int client_fd;
+                char target_socket[256];
+                corruption_params_t c2s;
+                corruption_params_t s2c;
+            } *info = malloc(sizeof(struct client_info));
+            if (!info) {
+                close(client_fd);
+            } else {
+                info->client_fd = client_fd;
+                snprintf(info->target_socket, sizeof(info->target_socket), "%s", proxy->target_socket);
+                memcpy(&info->c2s, &proxy->client_to_server, sizeof(corruption_params_t));
+                memcpy(&info->s2c, &proxy->server_to_client, sizeof(corruption_params_t));
+                pthread_t tid;
+                if (pthread_create(&tid, NULL, handle_proxy_client, info) != 0) {
+                    close(client_fd);
+                    free(info);
+                } else {
+                    pthread_detach(tid);
+                }
+            }
+        }
+    }
+
+    pthread_cleanup_pop(1);
+    return NULL;
+}
+
+/* Create proxy - listens on Unix socket, forwards to target Unix socket */
+static proxy_t *proxy_create(const char *listen_socket, const char *target_socket) {
+    proxy_t *proxy = calloc(1, sizeof(proxy_t));
+    if (!proxy) return NULL;
+
+    snprintf(proxy->listen_socket, sizeof(proxy->listen_socket), "%s", listen_socket);
+    snprintf(proxy->target_socket, sizeof(proxy->target_socket), "%s", target_socket);
+    atomic_store(&proxy->active, 1);
+    pthread_mutex_init(&proxy->fd_mutex, NULL);
+    corruption_init(&proxy->client_to_server, 0.0, 0.0);
+    corruption_init(&proxy->server_to_client, 0.0, 0.0);
+
+    /* Remove existing socket file */
+    unlink(listen_socket);
+
+    proxy->listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (proxy->listen_fd < 0) { free(proxy); return NULL; }
+
+    struct sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", listen_socket);
+
+    if (bind(proxy->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        close(proxy->listen_fd); free(proxy); return NULL;
+    }
+    if (listen(proxy->listen_fd, 10) < 0) {
+        close(proxy->listen_fd); free(proxy); return NULL;
+    }
+    return proxy;
+}
+
+/* Set corruption parameters */
+static void proxy_set_corruption(proxy_t *proxy, double c2s_bit, double c2s_byte, double s2c_bit, double s2c_byte) {
+    pthread_mutex_lock(&proxy->fd_mutex);
+    corruption_init(&proxy->client_to_server, c2s_bit, c2s_byte);
+    corruption_init(&proxy->server_to_client, s2c_bit, s2c_byte);
+    pthread_mutex_unlock(&proxy->fd_mutex);
+}
+
+static int proxy_start(proxy_t *proxy) {
+    return pthread_create(&proxy->thread, NULL, proxy_thread_func, proxy) == 0 ? 0 : -1;
+}
+static void proxy_stop(proxy_t *proxy) {
+    atomic_store(&proxy->active, 0);
+    /* Signal stop - cleanup handler will close fd and unlink */
+    if (proxy->thread) {
+        pthread_join(proxy->thread, NULL);
+        proxy->thread = 0;
+    }
+}
+static void proxy_destroy(proxy_t *proxy) {
+    if (proxy) {
+        proxy_stop(proxy);
+        pthread_mutex_destroy(&proxy->fd_mutex);
+        free(proxy);
+    }
+}
 
 /* Thread-local seed for rand_r() - each thread gets its own seed */
 static __thread unsigned int g_rand_seed = 0;
@@ -495,122 +621,14 @@ static void *handle_proxy_client(void *arg) {
     return NULL;
 }
 
-/* Proxy listener thread */
-static void *proxy_thread_func(void *arg) {
-    proxy_t *proxy = (proxy_t *)arg;
 
-
-
-
-    while (atomic_load(&proxy->running)) {
-        struct pollfd pfd = { .fd = proxy->listen_fd, .events = POLLIN, .revents = 0 };
-        int ret = poll(&pfd, 1, 100);
-        if (ret <= 0) continue;
-        if (!(pfd.revents & POLLIN)) continue;
-
-        struct sockaddr_un client_addr;
-        socklen_t client_len = sizeof(client_addr);
-        int client_fd = accept(proxy->listen_fd, (struct sockaddr *)&client_addr, &client_len);
-
-        if (client_fd >= 0) {
-            atomic_fetch_add(&proxy->connections, 1);  /* For potential diagnostics */
-            /* Allocate client info struct */
-            struct client_info {
-                int client_fd;
-                char target_socket[256];
-                corruption_params_t c2s;
-                corruption_params_t s2c;
-            } *info = malloc(sizeof(struct client_info));
-            if (!info) {
-                close(client_fd);
-                continue;
-            }
-            info->client_fd = client_fd;
-            snprintf(info->target_socket, sizeof(info->target_socket), "%s", proxy->target_socket);
-
-
-            memcpy(&info->c2s, &proxy->client_to_server, sizeof(corruption_params_t));
-            memcpy(&info->s2c, &proxy->server_to_client, sizeof(corruption_params_t));
-            pthread_t tid;
-            if (pthread_create(&tid, NULL, handle_proxy_client, info) != 0) {
-                /* Thread creation failed - close client and free info */
-                close(client_fd);
-                free(info);
-            } else {
-                pthread_detach(tid);
-            }
-        } else if (client_fd < 0 && errno != EAGAIN) {
-            /* Accept failed - small delay to avoid busy loop */
-            usleep(1000);
-        }
-    }
-    return NULL;
-}
-
-/* Create proxy - listens on Unix socket, forwards to target Unix socket */
-static proxy_t *proxy_create(const char *listen_socket, const char *target_socket) {
-    proxy_t *proxy = calloc(1, sizeof(proxy_t));
-    if (!proxy) return NULL;
-
-    snprintf(proxy->listen_socket, sizeof(proxy->listen_socket), "%s", listen_socket);
-    snprintf(proxy->target_socket, sizeof(proxy->target_socket), "%s", target_socket);
-    atomic_store(&proxy->running, 1);
-    atomic_store(&proxy->connections, 0);
-    pthread_mutex_init(&proxy->lock, NULL);
-    corruption_init(&proxy->client_to_server, 0.0, 0.0);
-    corruption_init(&proxy->server_to_client, 0.0, 0.0);
-
-    /* Remove existing socket file */
-    unlink(listen_socket);
-
-    proxy->listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (proxy->listen_fd < 0) { free(proxy); return NULL; }
-
-    struct sockaddr_un addr = {0};
-    addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", listen_socket);
-
-    if (bind(proxy->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(proxy->listen_fd); free(proxy); return NULL;
-    }
-    if (listen(proxy->listen_fd, 10) < 0) {
-        close(proxy->listen_fd); free(proxy); return NULL;
-    }
-    return proxy;
-}
-
-/* Set corruption parameters */
-static void proxy_set_corruption(proxy_t *proxy, double c2s_bit, double c2s_byte, double s2c_bit, double s2c_byte) {
-    pthread_mutex_lock(&proxy->lock);
-    corruption_init(&proxy->client_to_server, c2s_bit, c2s_byte);
-    corruption_init(&proxy->server_to_client, s2c_bit, s2c_byte);
-    pthread_mutex_unlock(&proxy->lock);
-}
-
-static int proxy_start(proxy_t *proxy) {
-    return pthread_create(&proxy->thread, NULL, proxy_thread_func, proxy) == 0 ? 0 : -1;
-}
-static void proxy_stop(proxy_t *proxy) {
-    atomic_store(&proxy->running, 0);
-    if (proxy->listen_fd >= 0) close(proxy->listen_fd);
-    unlink(proxy->listen_socket);
-}
-static void proxy_destroy(proxy_t *proxy) {
-    if (proxy) {
-        proxy_stop(proxy);
-        if (proxy->thread) {
-            pthread_join(proxy->thread, NULL);
-        }
-        pthread_mutex_destroy(&proxy->lock);
-        free(proxy);
-    }
-}
 
 /* Server thread: calls blocking get_request in a loop until stopped
  * Returns server handle via out_server pointer */
 typedef struct {
     const char *socket_path;
     rbox_server_handle_t *server;  /* Output: server handle for caller to use */
+    pthread_mutex_t server_mutex;   /* Protects server field */
 } server_thread_arg_t;
 
 static void *rbox_server_thread(void *arg) {
@@ -641,7 +659,9 @@ static void *rbox_server_thread(void *arg) {
     }
 
     /* Pass server handle back to caller */
+    pthread_mutex_lock(&thread_arg->server_mutex);
     thread_arg->server = server;
+    pthread_mutex_unlock(&thread_arg->server_mutex);
 
     /* Blocking request loop - exits when rbox_server_stop() is called */
     while (1) {
@@ -669,7 +689,7 @@ static int run_proxy_test(const char *server_socket, const char *proxy_socket,
                          int num_requests, uint8_t expected_decision) {
     pthread_t server_tid;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
-    server_thread_arg_t thread_arg = { .socket_path = server_socket, .server = NULL };
+    server_thread_arg_t thread_arg = { .socket_path = server_socket, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
     pthread_create(&server_tid, NULL, rbox_server_thread, &thread_arg);
     usleep(100000);
 
@@ -698,13 +718,16 @@ static int run_proxy_test(const char *server_socket, const char *proxy_socket,
 
     proxy_destroy(proxy);
     /* Stop the server - this will cause get_request to return NULL */
-    if (thread_arg.server) {
-        rbox_server_stop(thread_arg.server);
-    }
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&thread_arg.server_mutex);
+    srv = thread_arg.server;
+    pthread_mutex_unlock(&thread_arg.server_mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(server_tid, NULL);
-    if (thread_arg.server) {
-        rbox_server_handle_free(thread_arg.server);
-    }
+    pthread_mutex_lock(&thread_arg.server_mutex);
+    srv = thread_arg.server;
+    pthread_mutex_unlock(&thread_arg.server_mutex);
+    if (srv) rbox_server_handle_free(srv);
     return success;
 }
 
@@ -717,7 +740,7 @@ static int test_proxy_direct(void) {
     unlink(server_sock);
 
     pthread_t server_tid;
-    server_thread_arg_t thread_arg = { .socket_path = server_sock, .server = NULL };
+    server_thread_arg_t thread_arg = { .socket_path = server_sock, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
     pthread_create(&server_tid, NULL, rbox_server_thread, &thread_arg);
     usleep(100000);  /* Wait for server to start */
 
@@ -737,13 +760,16 @@ static int test_proxy_direct(void) {
     }
 
     /* Stop the server */
-    if (thread_arg.server) {
-        rbox_server_stop(thread_arg.server);
-    }
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&thread_arg.server_mutex);
+    srv = thread_arg.server;
+    pthread_mutex_unlock(&thread_arg.server_mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(server_tid, NULL);
-    if (thread_arg.server) {
-        rbox_server_handle_free(thread_arg.server);
-    }
+    pthread_mutex_lock(&thread_arg.server_mutex);
+    srv = thread_arg.server;
+    pthread_mutex_unlock(&thread_arg.server_mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(server_sock);
 
     printf("    %d/35 requests succeeded with correct ALLOW decision\n", success);

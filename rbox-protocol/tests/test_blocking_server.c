@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <time.h>
+#include <stdatomic.h>
 
 #include "rbox_protocol.h"
 #include "../src/error_internal.h"
@@ -72,8 +73,8 @@ typedef void *(*thread_func_t)(void*);
 /* Worker context struct to avoid nested functions as thread start routines */
 typedef struct {
     rbox_server_handle_t *srv;
-    volatile sig_atomic_t *done;
-    int *received;
+    _Atomic volatile sig_atomic_t *done;
+    _Atomic int *received;
 } worker_ctx_t;
 
 /* Request arguments for client threads */
@@ -113,7 +114,7 @@ static void *worker_static(void *arg) {
     while (!*(ctx->done)) {
         rbox_server_request_t *req = rbox_server_get_request(ctx->srv, &err_info);
         if (!req) break;
-        (*(ctx->received))++;
+        atomic_fetch_add_explicit(ctx->received, 1, memory_order_relaxed);
         if (rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL) != RBOX_OK) {
             errors++;
         }
@@ -849,8 +850,8 @@ static int test_misbehaving_clients(void) {
 
     usleep(TEST_LONG_DELAY_US);
 
-    int received = 0;
-    volatile sig_atomic_t done = 0;
+    _Atomic int received = 0;
+    _Atomic volatile sig_atomic_t done = 0;
     worker_ctx_t ctx = { .srv = srv, .done = &done, .received = &received };
     pthread_t worker_thread;
     if (checked_pthread_create(&worker_thread, NULL, worker_static, &ctx) != 0) return -1;
@@ -862,12 +863,12 @@ static int test_misbehaving_clients(void) {
     pthread_join(worker_thread, NULL);
     for (int i = 0; i < NUM_GOOD; i++) {
         pthread_join(good_clients[i], NULL);
-        if (good_args[i].result == 0) received++;
+        if (good_args[i].result == 0) atomic_fetch_add_explicit(&received, 1, memory_order_relaxed);
     }
 
     rbox_server_handle_free(srv);
     unlink(SOCKET_PATH);
-    return (received >= NUM_GOOD) ? 0 : -1;
+    return (atomic_load_explicit(&received, memory_order_relaxed) >= NUM_GOOD) ? 0 : -1;
 }
 
 /* Wait for server to be ready */
@@ -926,8 +927,8 @@ static int test_misbehaving_client_type(thread_func_t behavior, const char *name
         return -1;
     }
 
-    int received = 0;
-    volatile sig_atomic_t done = 0;
+    _Atomic int received = 0;
+    _Atomic volatile sig_atomic_t done = 0;
     worker_ctx_t ctx = { .srv = srv, .done = &done, .received = &received };
     pthread_t worker_thread;
     if (checked_pthread_create(&worker_thread, NULL, worker_static, &ctx) != 0) {
@@ -946,8 +947,8 @@ static int test_misbehaving_client_type(thread_func_t behavior, const char *name
 
     rbox_server_handle_free(srv);
     unlink(SOCKET_PATH);
-    printf("    %s: received %d\n", name, received);
-    return (received >= 1) ? 0 : -1;
+    printf("    %s: received %d\n", name, (int)atomic_load_explicit(&received, memory_order_relaxed));
+    return (atomic_load_explicit(&received, memory_order_relaxed) >= 1) ? 0 : -1;
 }
 
 static int test_misbehaving_each(void) {
@@ -982,8 +983,8 @@ static int test_server_restart(void) {
     unlink(SOCKET_PATH);
     int results[5] = {-1, -1, -1, -1, -1};
     pthread_t clients[5];
-    int received = 0;
-    volatile sig_atomic_t done = 0;
+    _Atomic int received = 0;
+    _Atomic volatile sig_atomic_t done = 0;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* First server session */
@@ -1014,7 +1015,7 @@ static int test_server_restart(void) {
 
     /* Second server session */
     done = 0;
-    received = 0;
+    atomic_store_explicit(&received, 0, memory_order_relaxed);
     memset(&err_info, 0, sizeof(err_info));
     srv = rbox_server_handle_new(SOCKET_PATH, &err_info);
     if (!srv) return -1;
@@ -1083,8 +1084,8 @@ static int test_too_large_command(void) {
         }
     }
 
-    int received = 0;
-    volatile sig_atomic_t done = 0;
+    _Atomic int received = 0;
+    _Atomic volatile sig_atomic_t done = 0;
     worker_ctx_t ctx = { .srv = srv, .done = &done, .received = &received };
     pthread_t worker_thread;
     if (checked_pthread_create(&worker_thread, NULL, worker_static, &ctx) != 0) return -1;
@@ -1100,13 +1101,13 @@ static int test_too_large_command(void) {
         pthread_join(cls[i], NULL);
     }
     for (int i = 0; i < 3; i++) {
-        if (good_args[i].result == 0) received++;
+        if (good_args[i].result == 0) atomic_fetch_add_explicit(&received, 1, memory_order_relaxed);
     }
 
     rbox_server_handle_free(srv);
     unlink(SOCKET_PATH);
-    printf("    Received %d valid requests despite oversized\n", received);
-    return (received >= 3) ? 0 : -1;
+    printf("    Received %d valid requests despite oversized\n", (int)atomic_load_explicit(&received, memory_order_relaxed));
+    return (atomic_load_explicit(&received, memory_order_relaxed) >= 3) ? 0 : -1;
 }
 
 /* ============================================================================

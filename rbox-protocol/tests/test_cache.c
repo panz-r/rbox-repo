@@ -1568,8 +1568,8 @@ static void test_t52_rebuild_repeatedly(void) {
     rbox_cache_t cache;
     rbox_cache_init(&cache, 8);
 
-    uint8_t ids[20][16];
-    for (int i = 0; i < 20; i++) {
+    uint8_t ids[30][16];
+    for (int i = 0; i < 30; i++) {
         fill_id(ids[i], i + 1);
     }
 

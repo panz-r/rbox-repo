@@ -123,9 +123,16 @@ static int test_env_1_var(void) {
                                              env_count, env_names, (float[]){0.5},
                                              &resp, 100, 1, &err_info);
 
-    rbox_server_stop(ctx.srv);
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     free(env_decisions);
@@ -197,9 +204,16 @@ static int test_env_3_vars(void) {
                                              env_count, env_names, scores,
                                              &resp, 100, 1, &err_info);
 
-    rbox_server_stop(ctx.srv);
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     free(env_decisions);
@@ -274,9 +288,16 @@ static int test_env_5_vars(void) {
                                              env_count, env_names, scores,
                                              &resp, 100, 1, &err_info);
 
-    rbox_server_stop(ctx.srv);
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     free(env_decisions);
@@ -336,12 +357,14 @@ static int test_env_95_vars(void) {
     if (pthread_create(&tid, NULL, server_worker_env_decisions, &ctx) != 0) {
         free(env_decisions);
         free_env_names(env_names, env_count);
+        unlink(path);
         return -1;
     }
     if (wait_for_server(path, 2000) != 0) {
         pthread_join(tid, NULL);
         free(env_decisions);
         free_env_names(env_names, env_count);
+        unlink(path);
         return -1;
     }
 
@@ -358,9 +381,16 @@ static int test_env_95_vars(void) {
                                              env_count, env_names, scores,
                                              &resp, 100, 1, &err_info);
 
-    rbox_server_stop(ctx.srv);
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     free(scores);
@@ -431,9 +461,16 @@ static int test_zero_env_decisions(void) {
                                              0, NULL, NULL,
                                              &resp, 100, 1, &err_info);
 
-    rbox_server_stop(ctx.srv);
+    rbox_server_handle_t *srv = NULL;
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    rbox_server_handle_free(ctx.srv);
+    pthread_mutex_lock(&ctx.mutex);
+    srv = ctx.srv;
+    pthread_mutex_unlock(&ctx.mutex);
+    if (srv) rbox_server_handle_free(srv);
     unlink(path);
 
     if (err != RBOX_OK) return -1;
