@@ -6,8 +6,8 @@
  * the fast path (caller's transitions[] array).
  */
 
-#ifndef MTA_H
-#define MTA_H
+#ifndef MULTI_TARGET_ARRAY_H
+#define MULTI_TARGET_ARRAY_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -69,8 +69,6 @@ int* mta_get_target_array(multi_target_array_t* arr, int symbol_id, int* out_cou
 int mta_get_target_count(multi_target_array_t* arr, int symbol_id);
 
 void mta_clear_symbol(multi_target_array_t* arr, int symbol_id);
-
-void mta_print(multi_target_array_t* arr, const char* label);
 
 int mta_get_entry_count(multi_target_array_t* arr);
 

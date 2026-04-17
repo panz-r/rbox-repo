@@ -261,30 +261,6 @@ int mta_get_entry_count(multi_target_array_t* arr) {
     return arr->entry_count;
 }
 
-void mta_print(multi_target_array_t* arr, const char* label) {
-    printf("=== Multi-Target Array: %s ===\n", label);
-    printf("Active entries: %d\n", arr->entry_count);
-    for (int i = 0; i < arr->entry_count; i++) {
-        mta_entry_t* entry = arr->active_entries[i];
-        printf("  Symbol %d: %d targets [", entry->symbol_id, entry->target_count);
-        for (int j = 0; j < entry->target_count; j++) {
-            printf("%d%s", entry->targets[j], (j < entry->target_count - 1) ? ", " : "");
-        }
-        printf("]\n");
-        if (entry->marker_count > 0) {
-            printf("    Markers: ");
-            for (int j = 0; j < entry->marker_count; j++) {
-                printf("[pat=%d uid=%u type=%d] ",
-                       entry->markers[j].pattern_id,
-                       entry->markers[j].uid,
-                       entry->markers[j].type);
-            }
-            printf("\n");
-        }
-    }
-    printf("==========================\n");
-}
-
 bool mta_add_marker(multi_target_array_t* arr, int symbol_id,
                    uint16_t pattern_id, uint32_t uid, uint8_t type) {
     if (symbol_id < 0 || symbol_id >= MAX_SYMBOLS) return false;

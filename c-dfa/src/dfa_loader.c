@@ -40,20 +40,7 @@ static bool validate_dfa_structure(const uint8_t* d, size_t file_size) {
     uint8_t idl = dfa_fmt_id_len(d);
     size_t hs = DFA_HEADER_SIZE(enc, idl);
 
-    if (file_size < hs + 8) {
-        ERROR("File too small for checksums (%zu < %zu)", file_size, hs + 8);
-        return false;
-    }
-
-    uint32_t stored_crc = dfa_fmt_checksum_crc32(d);
-    uint32_t stored_fnv = dfa_fmt_checksum_fnv32(d);
-    uint8_t hdr_copy[hs + 8];
-    memcpy(hdr_copy, d, hs);
-    memset(hdr_copy + hs, 0, 8);
-    uint32_t computed_crc = crc32c(hdr_copy, hs);
-    uint32_t computed_fnv = FNV_OFFSET_BASIS;
-    for (size_t i = 0; i < hs; i++) { computed_fnv ^= hdr_copy[i]; computed_fnv *= FNV_PRIME; }
-    if (stored_crc != computed_crc || stored_fnv != computed_fnv) {
+    if (!dfa_fmt_verify_checksums(d, file_size, hs)) {
         ERROR("DFA checksum mismatch (corrupted header)");
         return false;
     }
@@ -101,105 +88,37 @@ void* load_dfa_from_file(const char* filename, size_t* size) {
         return NULL;
     }
 
-    uint32_t magic;
-    if (fread(&magic, sizeof(magic), 1, file) == 1 && magic == DFA_MAGIC) {
-        uint16_t version;
-        if (fread(&version, sizeof(version), 1, file) != 1) version = 0;
-
-        uint16_t state_count;
-        if (fread(&state_count, sizeof(state_count), 1, file) != 1) state_count = 0;
-
-        uint32_t initial_state;
-        if (fread(&initial_state, sizeof(initial_state), 1, file) != 1) initial_state = 0;
-
-        uint32_t accepting_mask;
-        if (fread(&accepting_mask, sizeof(accepting_mask), 1, file) != 1) accepting_mask = 0;
-
-        uint16_t flags;
-        if (fread(&flags, sizeof(flags), 1, file) != 1) flags = 0;
-
-        uint8_t id_len = 0;
-        if (version >= 4) {
-            if (fread(&id_len, sizeof(id_len), 1, file) != 1) id_len = 0;
-        }
-
-        fseek(file, 0, SEEK_END);
-        long file_size = ftell(file);
-        if (file_size < 0) { fclose(file); return NULL; }
-
-        // Complete DFA size is the entire file
-        long dfa_size = file_size;
-
-        fseek(file, 0, SEEK_SET);
-
-        void* dfa_data = malloc(dfa_size);
-        if (dfa_data == NULL) {
-            fclose(file);
-            return NULL;
-        }
-
-        // Read entire file into buffer
-        fprintf(stderr, "LOADING DFA: %s (%ld bytes)\n", filename, dfa_size);
-        size_t bytes_read = fread(dfa_data, 1, dfa_size, file);
-        fclose(file);
-
-        if (bytes_read != (size_t)dfa_size) {
-            free(dfa_data);
-            return NULL;
-        }
-
-        // Validate DFA structure
-        if (!validate_dfa_structure((const uint8_t*)dfa_data, (size_t)dfa_size)) {
-            ERROR("DFA structure validation failed for %s", filename);
-            free(dfa_data);
-            return NULL;
-        }
-
-        if (size != NULL) {
-            *size = dfa_size;
-        }
-
-        return dfa_data;
-    }
-
-    // Fall back to text format
+    // Get file size
+    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }
+    long file_size = ftell(file);
+    if (file_size < 0) { fclose(file); return NULL; }
     if (fseek(file, 0, SEEK_SET) != 0) { fclose(file); return NULL; }
-    char line[MAX_LINE_LENGTH];
-    long binary_start = 0;
 
-    while (fgets(line, sizeof(line), file)) {
-        if (strncmp(line, "BinaryDataStart", 14) == 0) {
-            binary_start = ftell(file);
-            if (binary_start < 0) { fclose(file); return NULL; }
-            break;
-        }
-    }
-
-    if (binary_start == 0) {
+    void* dfa_data = malloc((size_t)file_size);
+    if (dfa_data == NULL) {
         fclose(file);
         return NULL;
     }
 
-    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }
-    long file_size = ftell(file);
-    if (file_size < 0) { fclose(file); return NULL; }
-    long binary_size = file_size - binary_start;
-
-    if (fseek(file, binary_start, SEEK_SET) != 0) { fclose(file); return NULL; }
-    void* data = malloc(binary_size);
-    if (!data) { fclose(file); return NULL; }
-    size_t bytes_read = fread(data, 1, binary_size, file);
+    size_t bytes_read = fread(dfa_data, 1, (size_t)file_size, file);
     fclose(file);
 
-    if (bytes_read != (size_t)binary_size) {
-        free(data);
+    if (bytes_read != (size_t)file_size) {
+        free(dfa_data);
+        return NULL;
+    }
+
+    // Validate DFA structure
+    if (!validate_dfa_structure((const uint8_t*)dfa_data, (size_t)file_size)) {
+        ERROR("DFA structure validation failed for %s", filename);
+        free(dfa_data);
         return NULL;
     }
 
     if (size != NULL) {
-        *size = binary_size;
+        *size = (size_t)file_size;
     }
 
-    return data;
+    return dfa_data;
 }
 

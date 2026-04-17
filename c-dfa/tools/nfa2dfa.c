@@ -2025,7 +2025,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (minimize) {
-        dfa_min_algo_t algo = config.minimize_algo;
+        dfa_minimize_algo_t algo = config.minimize_algo;
         if (verbosity > 0) {
             fprintf(stderr, "nfa2dfa: before minimize, state_count=%d, algo=%d\n",
                     pipeline_get_dfa_state_count(p), algo);

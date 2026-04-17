@@ -38,7 +38,7 @@ static void run_group(const char* group_name, const char* pattern, TestCase* cas
     fclose(f);
     
     pipeline_config_t config = {
-        .minimize_algo = PIPELINE_MIN_MOORE,
+        .minimize_algo = DFA_MIN_MOORE,
         .verbose = false,
         .preminimize = true,
         .compress = true,

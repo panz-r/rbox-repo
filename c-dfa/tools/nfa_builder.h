@@ -33,20 +33,15 @@ enum {
 #define MAX_FRAGMENT_VALUE 512
 
 // Capture constants
-#define MAX_CAPTURES     16
 #define MAX_CAPTURE_NAME 32
+// DFA_MAX_CAPTURES comes from dfa_types.h
 
 // Marker constants
 #define MAX_MARKER_LISTS 4096
-#define MARKER_TYPE_START 0
-#define MARKER_TYPE_END   1
 
 // Category mapping
 #define MAX_CATEGORY_MAPPINGS 64
 #define MAX_CATEGORY_NAME     64
-
-// Signature table for state minimization
-#define SIGNATURE_TABLE_SIZE 4096
 
 // ============================================================================
 // Type Definitions
@@ -76,11 +71,11 @@ typedef struct {
 } nfa_builder_state_t;
 
 // State signature for on-the-fly minimization
-typedef struct StateSignature {
+typedef struct state_signature {
     uint64_t signature;
     int state_index;
-    struct StateSignature* next;
-} StateSignature;
+    struct state_signature* next;
+} state_signature_t;
 
 // Command pattern with metadata
 typedef struct {
@@ -114,14 +109,14 @@ typedef struct {
     uint16_t pattern_id;
     uint32_t uid;
     uint8_t type;
-} MarkerEntry;
+} marker_entry_t;
 
 // Capture name to UID mapping (for metadata table)
 typedef struct {
     char name[MAX_CAPTURE_NAME];
     uint32_t uid;
     bool used;
-} CaptureUIDMapping;
+} capture_uid_mapping_t;
 
 // Category mapping table entry
 typedef struct {
@@ -143,7 +138,7 @@ typedef struct {
     char capture_name[MAX_CAPTURE_NAME];
     int fragment_entry_state;
     char loop_first_char;
-} FragmentResult;
+} fragment_result_t;
 
 // ============================================================================
 // Context Struct — all NFA builder state
@@ -170,9 +165,9 @@ typedef struct {
     bool has_fragment_error;
 
     // Capture system
-    capture_mapping_t capture_map[MAX_CAPTURES];
+    capture_mapping_t capture_map[DFA_MAX_CAPTURES];
     int capture_count;
-    int capture_stack[MAX_CAPTURES];
+    int capture_stack[DFA_MAX_CAPTURES];
     int capture_stack_depth;
 
     // Pending markers (for capture → transition attachment)
@@ -187,7 +182,7 @@ typedef struct {
     int prev_frag_exit;
 
     // Parse state
-    FragmentResult current_fragment;
+    fragment_result_t current_fragment;
     bool current_is_char_class;
     bool has_pending_quantifier;
     bool current_is_in_group;
@@ -203,7 +198,7 @@ typedef struct {
     int category_mapping_count;
 
     // State signature table (for minimization)
-    StateSignature* signature_table[SIGNATURE_TABLE_SIZE];
+    state_signature_t* signature_table[SIGNATURE_TABLE_SIZE];
 
     // Configuration
     char pattern_identifier[256];

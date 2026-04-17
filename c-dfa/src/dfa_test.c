@@ -148,14 +148,14 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
 
     // Map minimize algorithm
     if (minimize_algo && strcmp(minimize_algo, "--minimize-hopcroft") == 0) {
-        config.minimize_algo = PIPELINE_MIN_HOPCROFT;
+        config.minimize_algo = DFA_MIN_HOPCROFT;
     } else if (minimize_algo && strcmp(minimize_algo, "--minimize-sat") == 0) {
         // SAT minimization not supported via library (requires C++/CaDiCaL)
         // Fall back to Hopcroft for library-based tests
-        config.minimize_algo = PIPELINE_MIN_HOPCROFT;
+        config.minimize_algo = DFA_MIN_HOPCROFT;
         fprintf(stderr, "Note: SAT minimization not available in library mode, using Hopcroft\n");
     } else {
-        config.minimize_algo = PIPELINE_MIN_MOORE;
+        config.minimize_algo = DFA_MIN_MOORE;
     }
 
     config.compress = use_compress_sat;

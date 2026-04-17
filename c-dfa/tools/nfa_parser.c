@@ -72,7 +72,7 @@ static void reset_pattern_state(nfa_builder_context_t* ctx) {
 
 static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
 static int parse_rdp_class(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
-static FragmentResult parse_rdp_fragment(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
+static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
 static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
 static int parse_rdp_sequence(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
 static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
@@ -81,8 +81,8 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
 // RDP: Fragment reference parser
 // ============================================================================
 
-static FragmentResult parse_rdp_fragment(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state) {
-    FragmentResult result = {
+static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state) {
+    fragment_result_t result = {
         .anchor_state = -1,
         .loop_entry_state = -1,
         .exit_state = -1,
@@ -337,7 +337,7 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
                         frag_name[name_len] = '\0';
                         normalize_fragment_name(frag_name);
                         if (find_fragment(ctx, frag_name) != NULL) {
-                            FragmentResult frag_result = parse_rdp_fragment(ctx, pattern, pos, start_state);
+                            fragment_result_t frag_result = parse_rdp_fragment(ctx, pattern, pos, start_state);
                             ctx->current_fragment = frag_result;
 
                             if (ctx->prev_frag_exit >= 0) {

@@ -81,20 +81,7 @@ bool dfa_eval_with_limit(const void* vd, size_t sz, const char* in, size_t len, 
     uint8_t idl = dfa_fmt_id_len(d);
     size_t hs = DFA_HEADER_SIZE(enc, idl);
 
-    if (sz < hs + 8) return false;  // need at least header + 2 checksums
-
-    uint32_t stored_crc = dfa_fmt_checksum_crc32(d);
-    uint32_t stored_fnv = dfa_fmt_checksum_fnv32(d);
-    uint8_t hdr_copy[hs + 8];
-    memcpy(hdr_copy, d, hs);
-    memset(hdr_copy + hs, 0, 8);
-    uint32_t computed_crc = crc32c(hdr_copy, hs);
-    uint32_t computed_fnv = FNV_OFFSET_BASIS;
-    for (size_t i = 0; i < hs; i++) { computed_fnv ^= hdr_copy[i]; computed_fnv *= FNV_PRIME; }
-    if (stored_crc != computed_crc || stored_fnv != computed_fnv) {
-        ERROR("DFA checksum mismatch (corrupted header)");
-        return false;
-    }
+    if (!dfa_fmt_verify_checksums(d, sz, hs)) return false;
 
     uint32_t init = dfa_fmt_initial_state(d);
     if ((size_t)init + DFA_STATE_SIZE_TC(enc, 0) > sz) return false;  // min state size

@@ -21,8 +21,8 @@ int nfa_capture_get_id(nfa_builder_context_t* ctx, const char* name) {
         }
     }
 
-    if (ctx->capture_count >= MAX_CAPTURES) {
-        ERROR("Maximum captures (%d) reached", MAX_CAPTURES);
+    if (ctx->capture_count >= DFA_MAX_CAPTURES) {
+        ERROR("Maximum captures (%d) reached", DFA_MAX_CAPTURES);
         return -1;
     }
 

@@ -387,6 +387,24 @@ static inline uint32_t dfa_fmt_checksum_fnv32(const uint8_t* d) {
     return dfa_r32(d, DFA_HEADER_SIZE(enc, idl) + 4);
 }
 
+/**
+ * Verify DFA header checksums (CRC32-C and FNV-1a).
+ * Returns true if checksums match, false otherwise.
+ * Does not write anything - suitable for use in eval path.
+ */
+static inline bool dfa_fmt_verify_checksums(const uint8_t* d, size_t sz, size_t hs) {
+    if (sz < hs + 8) return false;
+    uint32_t stored_crc = dfa_fmt_checksum_crc32(d);
+    uint32_t stored_fnv = dfa_fmt_checksum_fnv32(d);
+    uint8_t hdr_copy[hs + 8];
+    memcpy(hdr_copy, d, hs);
+    memset(hdr_copy + hs, 0, 8);
+    uint32_t computed_crc = crc32c(hdr_copy, hs);
+    uint32_t computed_fnv = FNV_OFFSET_BASIS;
+    for (size_t i = 0; i < hs; i++) { computed_fnv ^= hdr_copy[i]; computed_fnv *= FNV_PRIME; }
+    return stored_crc == computed_crc && stored_fnv == computed_fnv;
+}
+
 /* ============================================================================
  * Header accessors (write)
  * ============================================================================ */

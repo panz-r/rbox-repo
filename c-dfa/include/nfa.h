@@ -15,7 +15,6 @@
 #define MAX_TAGS 16
 #define SIGNATURE_TABLE_SIZE 4096
 #define MAX_PENDING_MARKERS 8
-#define MAX_TRANSITION_MARKERS 65536
 
 #include "multi_target_array.h"
 
@@ -26,15 +25,6 @@ typedef struct {
     uint8_t type;  /* 0 = START, 1 = END */
     bool active;
 } pending_marker_t;
-
-/* Transition marker storage - attached to specific NFA transitions */
-typedef struct {
-    uint32_t markers[MAX_PENDING_MARKERS];
-    int marker_count;
-} transition_marker_entry_t;
-
-/* Accessor for transition markers - defined in nfa_builder.c */
-transition_marker_entry_t* get_transition_marker_entry(int from_state, int symbol_id);
 
 /* Shared NFA state structure for both nfa_builder and nfa2dfa */
 typedef struct {

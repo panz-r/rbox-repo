@@ -150,7 +150,7 @@ pipeline_t* pipeline_create(const pipeline_config_t* config) {
     if (config) {
         p->config = *config;
     } else {
-        p->config.minimize_algo = PIPELINE_MIN_HOPCROFT;
+        p->config.minimize_algo = DFA_MIN_HOPCROFT;
         p->config.compress = true;
         p->config.optimize_layout = true;
     }
@@ -418,7 +418,7 @@ pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
 
     p->nfa2dfa_ctx->dfa_state_count = dfa_minimize(
         p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, 
-        (dfa_min_algo_t)algo, p->config.verbose);
+        (dfa_minimize_algo_t)algo, p->config.verbose);
 
     // Capture minimize stats
     dfa_minimize_stats_t min_stats;
@@ -430,7 +430,7 @@ pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
     p->minimize_stats_valid = true;
 
     // Re-flatten after minimization (except Brzozowski)
-    if (algo != PIPELINE_MIN_BRZOZOWSKI) {
+    if (algo != DFA_MIN_BRZOZOWSKI) {
         flatten_dfa(p->nfa2dfa_ctx);
     }
 

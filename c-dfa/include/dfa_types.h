@@ -202,6 +202,16 @@ static inline void dfa_result_init(dfa_result_t* r) {
 }
 
 /**
+ * DFA Minimization Algorithm
+ */
+typedef enum {
+    DFA_MIN_MOORE = 0,
+    DFA_MIN_HOPCROFT = 1,
+    DFA_MIN_BRZOZOWSKI = 2,
+    DFA_MIN_SAT = 3
+} dfa_minimize_algo_t;
+
+/**
  * Marker Block Constants
  * NOTE: MARKER_SENTINEL is defined in dfa_format.h
  */

@@ -32,21 +32,15 @@ typedef struct {
 MarkerList* dfa_get_marker_lists(int* count);
 
 /**
- * Minimization algorithm selection
+ * Minimization algorithm selection (see dfa_types.h for dfa_minimize_algo_t)
  */
-typedef enum {
-    DFA_MIN_MOORE,
-    DFA_MIN_HOPCROFT,
-    DFA_MIN_BRZOZOWSKI,
-    DFA_MIN_SAT
-} dfa_min_algo_t;
 
 /**
  * Minimize a DFA in-place.
  * Note: Thread-safe when called with algo parameter; avoid dfa_minimize_set_algorithm().
  * @param verbose If true, print minimization progress to stderr
  */
-int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo, bool verbose);
+int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t algo, bool verbose);
 
 /**
  * Enable/disable debug output for minimization
@@ -73,12 +67,12 @@ void dfa_minimize_set_iterations(int iterations);
 /**
  * Select minimization algorithm (not thread-safe - use dfa_minimize with algo param)
  */
-void dfa_minimize_set_algorithm(dfa_min_algo_t algo);
+void dfa_minimize_set_algorithm(dfa_minimize_algo_t algo);
 
 /**
  * Get current minimization algorithm
  */
-dfa_min_algo_t dfa_minimize_get_algorithm(void);
+dfa_minimize_algo_t dfa_minimize_get_algorithm(void);
 
 /**
  * Hopcroft's Algorithm

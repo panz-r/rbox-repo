@@ -12,20 +12,21 @@ bool dfa_machine_init(dfa_machine_t* m, const void* dfa_data, size_t size) {
 }
 
 bool dfa_machine_init_with_id(dfa_machine_t* m, const void* dfa_data, size_t size, const char* expected_id) {
-    const dfa_t* dfa = (const dfa_t*)dfa_data;
-    if (dfa->magic != DFA_MAGIC) return false;
-    if (dfa->version < 9 || dfa->version > DFA_VERSION) return false;
-    if (dfa->state_count == 0 || dfa->initial_state >= size) return false;
+    const uint8_t* d = (const uint8_t*)dfa_data;
+    if (dfa_fmt_magic(d) != DFA_MAGIC) return false;
+    if (dfa_fmt_version(d) < 9 || dfa_fmt_version(d) > DFA_VERSION) return false;
+    if (dfa_fmt_state_count(d) == 0 || dfa_fmt_initial_state(d) >= size) return false;
 
     // Validate identifier match at load time (if requested)
     if (expected_id) {
-        if (dfa->identifier_length != strlen(expected_id) ||
-            memcmp(dfa->identifier, expected_id, dfa->identifier_length) != 0) {
+        uint8_t id_len = dfa_fmt_id_len(d);
+        const uint8_t* id_data = dfa_fmt_identifier(d);
+        if (id_len != strlen(expected_id) || memcmp(id_data, expected_id, id_len) != 0) {
             return false;
         }
     }
 
-    m->dfa = dfa;
+    m->dfa = (const dfa_t*)d;
     m->dfa_size = size;
 
     if (expected_id) {

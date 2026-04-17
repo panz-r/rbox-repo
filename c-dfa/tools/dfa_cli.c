@@ -1136,7 +1136,7 @@ int cli_validate(const cli_args_t* args) {
     get_cpu_time(&start);
 
     pipeline_config_t config = {
-        .minimize_algo = PIPELINE_MIN_HOPCROFT,
+        .minimize_algo = DFA_MIN_HOPCROFT,
         .verbose = false,
         .preminimize = true,
         .compress = true,
@@ -1226,9 +1226,9 @@ int cli_validate(const cli_args_t* args) {
 // ============================================================================
 
 static int get_minimize_algo(const char* name) {
-    if (strcmp(name, "moore") == 0) return PIPELINE_MIN_MOORE;
-    if (strcmp(name, "brzozowski") == 0) return PIPELINE_MIN_BRZOZOWSKI;
-    return PIPELINE_MIN_HOPCROFT;
+    if (strcmp(name, "moore") == 0) return DFA_MIN_MOORE;
+    if (strcmp(name, "brzozowski") == 0) return DFA_MIN_BRZOZOWSKI;
+    return DFA_MIN_HOPCROFT;
 }
 
 static bool check_output_exists(const char* output) {

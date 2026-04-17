@@ -65,9 +65,9 @@ static uint64_t compute_state_signature(nfa_builder_context_t* ctx, int state) {
 static void add_state_to_signature_table(nfa_builder_context_t* ctx, int state, uint64_t signature) {
     unsigned int hash = hash_signature(signature);
 
-    StateSignature* new_entry = malloc(sizeof(StateSignature));
+    state_signature_t* new_entry = malloc(sizeof(state_signature_t));
     if (new_entry == NULL) {
-        FATAL("Failed to allocate StateSignature for signature table");
+        FATAL("Failed to allocate state_signature_t for signature table");
         exit(EXIT_FAILURE);
     }
 
@@ -294,9 +294,9 @@ void nfa_construct_cleanup(nfa_builder_context_t* ctx) {
     }
 
     for (int i = 0; i < SIGNATURE_TABLE_SIZE; i++) {
-        StateSignature* entry = ctx->signature_table[i];
+        state_signature_t* entry = ctx->signature_table[i];
         while (entry != NULL) {
-            StateSignature* next = entry->next;
+            state_signature_t* next = entry->next;
             free(entry);
             entry = next;
         }

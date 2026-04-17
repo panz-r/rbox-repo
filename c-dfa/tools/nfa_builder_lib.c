@@ -52,9 +52,9 @@ void nfa_builder_context_destroy(nfa_builder_context_t* ctx) {
     if (!ctx) return;
     // Free signature table linked lists
     for (int i = 0; i < SIGNATURE_TABLE_SIZE; i++) {
-        StateSignature* entry = ctx->signature_table[i];
+        state_signature_t* entry = ctx->signature_table[i];
         while (entry) {
-            StateSignature* next = entry->next;
+            state_signature_t* next = entry->next;
             free(entry);
             entry = next;
         }

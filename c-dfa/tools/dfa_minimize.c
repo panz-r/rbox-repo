@@ -27,7 +27,7 @@
 
 // Debug and Configuration
 static bool minimize_verbose = false;  // Enable for debugging
-static dfa_min_algo_t current_algo = DFA_MIN_HOPCROFT;
+static dfa_minimize_algo_t current_algo = DFA_MIN_HOPCROFT;
 static dfa_minimize_stats_t last_stats = {
     .initial_states = 0,
     .final_states = 0,
@@ -676,8 +676,8 @@ int dfa_minimize_moore(build_dfa_state_t** dfa, int state_count) {
 // Public Entry Point
 // ============================================================================
 
-void dfa_minimize_set_algorithm(dfa_min_algo_t algo) { current_algo = algo; }
-dfa_min_algo_t dfa_minimize_get_algorithm(void) { return current_algo; }
+void dfa_minimize_set_algorithm(dfa_minimize_algo_t algo) { current_algo = algo; }
+dfa_minimize_algo_t dfa_minimize_get_algorithm(void) { return current_algo; }
 void dfa_minimize_set_moore(bool use_moore) { current_algo = use_moore ? DFA_MIN_MOORE : DFA_MIN_HOPCROFT; }
 void dfa_minimize_set_verbose(bool verbose) { minimize_verbose = verbose; }
 void dfa_minimize_get_stats(dfa_minimize_stats_t* stats) { if(stats) *stats = last_stats; }
@@ -695,7 +695,7 @@ static bool verify_minimized_dfa(build_dfa_state_t** dfa, int state_count) {
     return true;
 }
 
-int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_min_algo_t algo, bool verbose) {
+int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t algo, bool verbose) {
     if (state_count <= 0) return 0;
     int original = state_count;
 

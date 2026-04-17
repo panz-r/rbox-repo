@@ -48,19 +48,15 @@ typedef enum {
 
 // ============================================================================
 // Minimization Algorithm Constants
-// (Values match dfa_min_algo_t in tools/dfa_minimize.h)
+// Use dfa_minimize_algo_t from dfa_types.h (values: MOORE=0, HOPCROFT=1, BRZOZOWSKI=2, SAT=3)
 // ============================================================================
-
-#define PIPELINE_MIN_MOORE       0
-#define PIPELINE_MIN_HOPCROFT    1
-#define PIPELINE_MIN_BRZOZOWSKI  2
 
 // ============================================================================
 // Pipeline Configuration
 // ============================================================================
 
 typedef struct {
-    int minimize_algo;          // PIPELINE_MIN_* constant
+    dfa_minimize_algo_t minimize_algo;  // Minimization algorithm
     bool verbose;
     bool preminimize;
     bool compress;
