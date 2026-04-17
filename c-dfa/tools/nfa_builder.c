@@ -31,10 +31,6 @@ static const char* external_alphabet_file = NULL;
 // Usage and argument parsing
 // ============================================================================
 
-static void print_version(void) {
-    fprintf(stderr, "nfa_builder version %s\n", pipeline_get_version());
-}
-
 static void print_usage(const char* progname) {
     fprintf(stderr, "Usage: %s [options] <spec_file> [output.nfa]\n", progname);
     fprintf(stderr, "\n");
@@ -80,7 +76,7 @@ static void parse_arguments(int argc, char* argv[], nfa_builder_context_t* ctx,
             print_usage(progname);
             exit(0);
         } else if (strcmp(argv[0], "--version") == 0) {
-            print_version();
+            pipeline_print_version("nfa_builder");
             exit(0);
         } else if (strcmp(argv[0], "-v") == 0) {
             verbosity = 1;

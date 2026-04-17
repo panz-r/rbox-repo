@@ -226,6 +226,12 @@ const char* pipeline_get_last_error(pipeline_t* p) ATTR_NONNULL(1);
  */
 const char* pipeline_get_version(void);
 
+/**
+ * Print program version to stderr.
+ * Uses pipeline_get_version() for the version string.
+ */
+void pipeline_print_version(const char* program_name);
+
 // ============================================================================
 // Pipeline Stats (for verbose logging)
 // ============================================================================

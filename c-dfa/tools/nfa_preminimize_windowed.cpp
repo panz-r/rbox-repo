@@ -50,13 +50,6 @@ extern "C" {
 // Verbose output
 static bool windowed_verbose = false;
 
-#define VERBOSE_PRINT(...) do { \
-    if (windowed_verbose) fprintf(stderr, "[WINDOWED-SAT] " __VA_ARGS__); \
-} while(0)
-
-// Epsilon symbol
-#define VSYM_EPS 257
-
 /**
  * Get all successor states for a given state and symbol.
  */
@@ -208,12 +201,12 @@ static std::map<int, int> verify_local_bisimulation_sat(
     int k = states.size();
     if (k < 2) return result;
     
-    VERBOSE_PRINT("  SAT verification for %d states\n", k);
+    VERBOSE_PRINT(windowed, "  SAT verification for %d states\n", k);
     
     // Pre-check: all states must have matching accepting properties
     for (int i = 1; i < k; i++) {
         if (!states_accepting_match(nfa, states[0], states[i])) {
-            VERBOSE_PRINT("  Accepting properties mismatch, no merges possible\n");
+            VERBOSE_PRINT(windowed, "  Accepting properties mismatch, no merges possible\n");
             return result;
         }
     }
@@ -364,9 +357,9 @@ static std::map<int, int> verify_local_bisimulation_sat(
             }
         }
         
-        VERBOSE_PRINT("  Found %d equivalence classes from %d states\n", next_class, k);
+        VERBOSE_PRINT(windowed, "  Found %d equivalence classes from %d states\n", next_class, k);
     } else {
-        VERBOSE_PRINT("  No SAT solution\n");
+        VERBOSE_PRINT(windowed, "  No SAT solution\n");
     }
     
     return result;
@@ -510,7 +503,7 @@ extern "C" int nfa_preminimize_windowed_sat(
     
     int merged_total = 0;
     
-    VERBOSE_PRINT("Starting windowed SAT optimization: %d states, window_size=%d, overlap=%d\n",
+    VERBOSE_PRINT(windowed, "Starting windowed SAT optimization: %d states, window_size=%d, overlap=%d\n",
                   state_count, window_size, window_overlap);
     
 #ifdef USE_CADICAL
@@ -520,7 +513,7 @@ extern "C" int nfa_preminimize_windowed_sat(
         if (!dead_states[s]) live_count++;
     }
     
-    VERBOSE_PRINT("Live states: %d\n", live_count);
+    VERBOSE_PRINT(windowed, "Live states: %d\n", live_count);
     
     // Create a list of live states
     std::vector<int> live_states;
@@ -548,7 +541,7 @@ extern "C" int nfa_preminimize_windowed_sat(
         );
         
         if (subgraph.size() >= 2) {
-            VERBOSE_PRINT("Window %d: %zu states in subgraph\n", windows_processed, subgraph.size());
+            VERBOSE_PRINT(windowed, "Window %d: %zu states in subgraph\n", windows_processed, subgraph.size());
             
             // Run SAT verification
             std::map<int, int> merges = verify_local_bisimulation_sat(
@@ -560,7 +553,7 @@ extern "C" int nfa_preminimize_windowed_sat(
                 if (m.first != m.second && !dead_states[m.first]) {
                     apply_merge(nfa, state_count, dead_states, m.first, m.second);
                     merged_total++;
-                    VERBOSE_PRINT("  Merged state %d into %d\n", m.first, m.second);
+                    VERBOSE_PRINT(windowed, "  Merged state %d into %d\n", m.first, m.second);
                 }
             }
         }
@@ -569,9 +562,9 @@ extern "C" int nfa_preminimize_windowed_sat(
         windows_processed++;
     }
     
-    VERBOSE_PRINT("Processed %d windows, merged %d states\n", windows_processed, merged_total);
+    VERBOSE_PRINT(windowed, "Processed %d windows, merged %d states\n", windows_processed, merged_total);
 #else
-    VERBOSE_PRINT("CaDiCaL not available, SAT optimization disabled\n");
+    VERBOSE_PRINT(windowed, "CaDiCaL not available, SAT optimization disabled\n");
 #endif
     
     return merged_total;

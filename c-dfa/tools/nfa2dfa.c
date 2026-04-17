@@ -1891,10 +1891,6 @@ void load_nfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
 }
 
 #ifndef NFABUILDER_NO_MAIN
-static void print_version(void) {
-    fprintf(stderr, "nfa2dfa_advanced version %s\n", pipeline_get_version());
-}
-
 static void print_usage(const char* progname) {
     fprintf(stderr, "Usage: %s [options] <input.nfa> [output.dfa]\n", progname);
     fprintf(stderr, "\n");
@@ -1934,7 +1930,7 @@ int main(int argc, char* argv[]) {
             print_usage(argv[0]);
             return 0;
         } else if (strcmp(argv[i], "--version") == 0) {
-            print_version();
+            pipeline_print_version("nfa2dfa_advanced");
             return 0;
         } else if (strcmp(argv[i], "-v") == 0) {
             verbose = true;

@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include "../include/cdfa_defines.h"
 #include "pattern_order.h"
 
 // Statistics from last run
@@ -27,10 +28,6 @@ static pattern_order_stats_t last_stats = {
     .avg_prefix_len = 0.0
 };
 static bool order_verbose = false;
-
-#define VERBOSE_PRINT(...) do { \
-    if (order_verbose) fprintf(stderr, "[PATTERN_ORDER] " __VA_ARGS__); \
-} while(0)
 
 // Prefix tree node for duplicate detection (uses full line)
 typedef struct trie_node {
@@ -343,7 +340,7 @@ int pattern_order_optimize(pattern_entry_t* patterns, int count,
     
     if (count <= 1) return 0;
     
-    VERBOSE_PRINT("Ordering %d patterns\n", count);
+    VERBOSE_PRINT(order, "Ordering %d patterns\n", count);
     
     // === PHASE 1: Collect fragment definitions ===
     fragment_table.count = 0;  // Reset fragment table
@@ -351,7 +348,7 @@ int pattern_order_optimize(pattern_entry_t* patterns, int count,
         char frag_name[64];
         if (is_fragment_definition(patterns[i].line, frag_name, sizeof(frag_name))) {
             register_fragment(frag_name);
-            VERBOSE_PRINT("  Found fragment: %s\n", frag_name);
+            VERBOSE_PRINT(order, "  Found fragment: %s\n", frag_name);
         }
     }
     
@@ -438,7 +435,7 @@ int pattern_order_optimize(pattern_entry_t* patterns, int count,
         }
     }
     
-    VERBOSE_PRINT("Found %d categories\n", cat_count);
+    VERBOSE_PRINT(order, "Found %d categories\n", cat_count);
     
     // Process each category
     for (int cat = -1; cat < cat_count; cat++) {
@@ -541,7 +538,7 @@ int pattern_order_optimize(pattern_entry_t* patterns, int count,
     free(temp);
     free(new_order);
     
-    VERBOSE_PRINT("Reordered %d/%d patterns (%d duplicates removed)\n", 
+    VERBOSE_PRINT(order, "Reordered %d/%d patterns (%d duplicates removed)\n", 
                   reordered, new_count, duplicates);
     
     return reordered;

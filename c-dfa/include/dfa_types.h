@@ -155,16 +155,18 @@ typedef struct {
 } dfa_capture_t;
 
 /**
- * Category bitmask constants
+ * Category bitmask constants (8 categories, one bit each)
+ * Category names are defined by each pattern file, not hardcoded.
+ * These are generic positional identifiers for DFA state categories.
  */
-#define CAT_MASK_SAFE       0x01
-#define CAT_MASK_CAUTION    0x02
-#define CAT_MASK_MODIFYING  0x04
-#define CAT_MASK_DANGEROUS  0x08
-#define CAT_MASK_NETWORK    0x10
-#define CAT_MASK_ADMIN      0x20
-#define CAT_MASK_BUILD      0x40
-#define CAT_MASK_CONTAINER  0x80
+#define CAT_MASK_0          0x01
+#define CAT_MASK_1          0x02
+#define CAT_MASK_2          0x04
+#define CAT_MASK_3          0x08
+#define CAT_MASK_4          0x10
+#define CAT_MASK_5          0x20
+#define CAT_MASK_6          0x40
+#define CAT_MASK_7          0x80
 
 /**
  * Command categories

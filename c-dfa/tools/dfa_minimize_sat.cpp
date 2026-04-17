@@ -25,10 +25,6 @@ extern "C" {
 #include "dfa_minimize.h"
 }
 
-// Virtual symbol definitions
-#define VSYM_EPS 257
-#define VSYM_EOS 258
-
 /**
  * Sparse Pattern Set using sorted vectors
  */

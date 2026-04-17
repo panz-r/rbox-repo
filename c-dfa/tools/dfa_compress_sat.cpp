@@ -49,9 +49,6 @@ extern "C" {
 
 #ifdef USE_CADICAL
 static bool sat_verbose = true;
-#define VERBOSE_PRINT(...) do { \
-    if (sat_verbose) fprintf(stderr, "[COMPRESS-SAT] " __VA_ARGS__); \
-} while(0)
 #endif
 
 // ============================================================================
@@ -449,10 +446,10 @@ static int sat_compress_state(
     if (n == 0) return 0;
     if (m == 0) return n;
 
-    VERBOSE_PRINT("  SAT: %d chars, %d candidates, greedy bound = %d\n", n, m, greedy_bound);
+    VERBOSE_PRINT(sat, "  SAT: %d chars, %d candidates, greedy bound = %d\n", n, m, greedy_bound);
 
     if (m <= 1 || n <= 1) {
-        VERBOSE_PRINT("  SAT: too few candidates/chars, using greedy\n");
+        VERBOSE_PRINT(sat, "  SAT: too few candidates/chars, using greedy\n");
         return greedy_bound;
     }
 
@@ -543,7 +540,7 @@ static int sat_compress_state(
 
         int res = solver.solve();
         if (res != 10) {
-            VERBOSE_PRINT("  UNSAT at k=%d (optimal = %d rules)\n", k + 1, best_rules);
+            VERBOSE_PRINT(sat, "  UNSAT at k=%d (optimal = %d rules)\n", k + 1, best_rules);
             break;
         }
 
@@ -553,7 +550,7 @@ static int sat_compress_state(
             if (solver.val(cand_var(i)) > 0) count++;
         }
         best_rules = count;
-        VERBOSE_PRINT("  SAT at k=%d (found %d rules)\n", k + 1, best_rules);
+        VERBOSE_PRINT(sat, "  SAT at k=%d (found %d rules)\n", k + 1, best_rules);
     }
 
     return best_rules;

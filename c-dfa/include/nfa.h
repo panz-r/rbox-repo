@@ -17,16 +17,6 @@
 #define MAX_PENDING_MARKERS 8
 #define MAX_TRANSITION_MARKERS 65536
 
-/* Category bitmask constants (8 categories, one bit each) */
-#define CAT_MASK_SAFE       0x01
-#define CAT_MASK_CAUTION    0x02
-#define CAT_MASK_MODIFYING  0x04
-#define CAT_MASK_DANGEROUS  0x08
-#define CAT_MASK_NETWORK    0x10
-#define CAT_MASK_ADMIN      0x20
-#define CAT_MASK_BUILD      0x40
-#define CAT_MASK_CONTAINER  0x80
-
 #include "multi_target_array.h"
 
 /* Pending marker for tracking markers that need to be attached to transitions */

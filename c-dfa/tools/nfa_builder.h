@@ -14,23 +14,16 @@
 #include "../include/dfa_types.h"
 #include "../include/multi_target_array.h"
 
-// Virtual Symbol Mapping
-#define VSYM_BYTE_ANY 256  // Note: value matches BYTE_VALUE_MAX intentionally
-#define VSYM_EPS   257
-#define VSYM_EOS   258
-#define VSYM_SPACE 259
-#define VSYM_TAB   260
-
-// Category IDs
+// Category IDs (generic, pattern-defined)
 enum {
-    CAT_SAFE = 0,
-    CAT_CAUTION,
-    CAT_MODIFYING,
-    CAT_DANGEROUS,
-    CAT_NETWORK,
-    CAT_ADMIN,
-    CAT_BUILD,
-    CAT_CONTAINER,
+    CAT_0 = 0,
+    CAT_1,
+    CAT_2,
+    CAT_3,
+    CAT_4,
+    CAT_5,
+    CAT_6,
+    CAT_7,
     CAT_COUNT
 };
 

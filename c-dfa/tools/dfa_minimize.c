@@ -35,10 +35,6 @@ static dfa_minimize_stats_t last_stats = {
     .iterations = 0
 };
 
-#define VERBOSE_PRINT(...) do { \
-    if (minimize_verbose) fprintf(stderr, "[MINIMIZE] " __VA_ARGS__); \
-} while(0)
-
 /**
  * Check allocation result and abort on failure
  */
@@ -342,7 +338,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
         }
     }
 
-    VERBOSE_PRINT("Pruned %d dead states (useful=%d)\n",
+    VERBOSE_PRINT(minimize, "Pruned %d dead states (useful=%d)\n",
                   state_count - new_count, new_count);
     free(forward_reachable); free(backward_reachable); free(useful); free(map);
     return new_count;
@@ -538,7 +534,7 @@ static int build_minimized_dfa(build_dfa_state_t** dfa, const minimizer_state_t*
 int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
     minimizer_state_t* ms = calloc(1, sizeof(minimizer_state_t));
     initialize_partitions(ms, dfa, state_count);
-    VERBOSE_PRINT("Initial partitions: %d (from %d states)\n", ms->partition_count, state_count);
+    VERBOSE_PRINT(minimize, "Initial partitions: %d (from %d states)\n", ms->partition_count, state_count);
     inverse_graph_t inv;
     if (!build_inverse_graph(dfa, state_count, &inv)) { free(ms); return state_count; }
     int head = 0, tail = 0;
@@ -604,7 +600,7 @@ int dfa_minimize_hopcroft(build_dfa_state_t** dfa, int state_count) {
     }
 
     int new_count = build_minimized_dfa(dfa, ms, state_count);
-    VERBOSE_PRINT("Minimized to %d states (from %d)\n", new_count, state_count);
+    VERBOSE_PRINT(minimize, "Minimized to %d states (from %d)\n", new_count, state_count);
     last_stats.iterations = iterations;
     free_minimizer(ms); free(worklist); free(in_worklist); free(char_preds); free(char_pred_counts); free(char_pred_offsets); free(sort_buf); free_inverse_graph(&inv);
     

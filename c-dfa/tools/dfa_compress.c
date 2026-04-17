@@ -32,10 +32,6 @@ static bool compress_verbose = false;
 // Forward declaration
 static int merge_rules_with_options(build_dfa_state_t* state, int max_group_size, bool use_sat);
 
-#define VERBOSE_PRINT(...) do { \
-    if (compress_verbose) fprintf(stderr, "[COMPRESS] " __VA_ARGS__); \
-} while(0)
-
 /**
  * Get default compression options
  */
@@ -299,34 +295,34 @@ int dfa_compress(build_dfa_state_t** dfa, int state_count, const compress_option
     }
     last_stats.original_bytes = last_stats.original_rules * 12;  // 12 bytes per rule
     
-    VERBOSE_PRINT("Original: %d rules, %d bytes\n", 
+    VERBOSE_PRINT(compress, "Original: %d rules, %d bytes\n", 
                   last_stats.original_rules, last_stats.original_bytes);
     
     // Strategy 1: Rule Merging
     if (opts.enable_rule_merging) {
-        VERBOSE_PRINT("Applying rule merging (%s)...\n", opts.use_sat ? "SAT" : "greedy");
+        VERBOSE_PRINT(compress, "Applying rule merging (%s)...\n", opts.use_sat ? "SAT" : "greedy");
         for (int s = 0; s < state_count; s++) {
             last_stats.rules_merged += merge_rules_with_options(dfa[s], opts.max_group_size, opts.use_sat);
         }
-        VERBOSE_PRINT("  Saved %d rules by merging\n", last_stats.rules_merged);
+        VERBOSE_PRINT(compress, "  Saved %d rules by merging\n", last_stats.rules_merged);
     }
     
     // Strategy 2: Range Optimization
     if (opts.enable_range_optimization) {
-        VERBOSE_PRINT("Applying range optimization...\n");
+        VERBOSE_PRINT(compress, "Applying range optimization...\n");
         int range_savings = 0;
         for (int s = 0; s < state_count; s++) {
             range_savings += optimize_ranges_for_state(dfa[s]);
         }
         last_stats.ranges_created = range_savings;
-        VERBOSE_PRINT("  Created %d range rules\n", last_stats.ranges_created);
+        VERBOSE_PRINT(compress, "  Created %d range rules\n", last_stats.ranges_created);
     }
     
     // Strategy 3: Default State Sharing
     if (opts.enable_default_sharing) {
-        VERBOSE_PRINT("Applying default state sharing...\n");
+        VERBOSE_PRINT(compress, "Applying default state sharing...\n");
         last_stats.defaults_shared = find_default_sharing(dfa, state_count);
-        VERBOSE_PRINT("  Shared %d default states\n", last_stats.defaults_shared);
+        VERBOSE_PRINT(compress, "  Shared %d default states\n", last_stats.defaults_shared);
     }
     
     // Calculate final statistics
@@ -338,7 +334,7 @@ int dfa_compress(build_dfa_state_t** dfa, int state_count, const compress_option
         last_stats.compression_ratio = 1.0f;
     }
     
-    VERBOSE_PRINT("Compressed: %d rules, %d bytes (%.1f%% reduction)\n",
+    VERBOSE_PRINT(compress, "Compressed: %d rules, %d bytes (%.1f%% reduction)\n",
                   last_stats.compressed_rules, last_stats.compressed_bytes,
                   (1.0f - last_stats.compression_ratio) * 100.0f);
     

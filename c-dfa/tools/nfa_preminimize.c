@@ -60,10 +60,6 @@ static nfa_premin_stats_t last_stats = {
 };
 static bool premin_verbose = false;
 
-#define VERBOSE_PRINT(...) do { \
-    if (premin_verbose) fprintf(stderr, "[PREMIN] " __VA_ARGS__); \
-} while(0)
-
 // ============================================================================
 // SIGNATURE CACHE - Avoid recomputing signatures between passes
 // ============================================================================
@@ -182,9 +178,6 @@ nfa_premin_options_t nfa_premin_default_options(void) {
     return opts;
 }
 
-// Epsilon symbol used in NFA transitions
-#define VSYM_EPS 257
-
 /**
  * Structure for tracking incoming transitions during prefix analysis.
  * For each state, we track the (source, symbol) pairs that reach it.
@@ -288,7 +281,7 @@ static int bypass_epsilon_pass_through(nfa_state_t* nfa, int state_count, bool* 
         
         dead_states[s] = true;
         bypassed++;
-        VERBOSE_PRINT("  Bypassed epsilon pass-through state %d -> %d\n", s, epsilon_target);
+        VERBOSE_PRINT(premin, "  Bypassed epsilon pass-through state %d -> %d\n", s, epsilon_target);
     }
     
     return bypassed;
@@ -375,7 +368,7 @@ static int compress_epsilon_chains(nfa_state_t* nfa, int state_count, bool* dead
         if (chain_length > 0 && ultimate != epsilon_target && !dead_states[ultimate]) {
             state->transitions[VSYM_EPS] = ultimate;
             compressed += chain_length;
-            VERBOSE_PRINT("  Compressed epsilon chain from state %d: %d hops bypassed -> ultimate target %d\n", 
+            VERBOSE_PRINT(premin, "  Compressed epsilon chain from state %d: %d hops bypassed -> ultimate target %d\n", 
                          s, chain_length, ultimate);
         }
     }
@@ -777,7 +770,7 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
         candidate_count++;
     }
     
-    VERBOSE_PRINT("  Found %d prefix merge candidates\n", candidate_count);
+    VERBOSE_PRINT(premin, "  Found %d prefix merge candidates\n", candidate_count);
     
     // Sort by (source, symbol, sig) for grouping
     qsort(candidates, candidate_count, sizeof(prefix_candidate_t), compare_prefix_candidates);
@@ -949,7 +942,7 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                 sig_cache_invalidate(s);
                 sig_cache_invalidate(rep);
                 merged++;
-                VERBOSE_PRINT("  Merged prefix state %d into %d (source=%d, symbol=%d)\n", 
+                VERBOSE_PRINT(premin, "  Merged prefix state %d into %d (source=%d, symbol=%d)\n", 
                              s, rep, candidates[i].source, candidates[i].symbol);
             }
         }
@@ -1094,7 +1087,7 @@ static int deduplicate_final_states(nfa_state_t* nfa, int state_count, bool* dea
         }
     }
     
-    VERBOSE_PRINT("  Found %d accepting states for deduplication\n", accept_count);
+    VERBOSE_PRINT(premin, "  Found %d accepting states for deduplication\n", accept_count);
     
     // Sort by (accept_sig, outgoing_sig)
     qsort(candidates, accept_count, sizeof(final_state_candidate_t), compare_final_state_candidates);
@@ -1151,7 +1144,7 @@ static int deduplicate_final_states(nfa_state_t* nfa, int state_count, bool* dea
                 sig_cache_invalidate(s);
                 sig_cache_invalidate(rep);
                 merged++;
-                VERBOSE_PRINT("  Merged final state %d into %d\n", s, rep);
+                VERBOSE_PRINT(premin, "  Merged final state %d into %d\n", s, rep);
             }
         }
         
@@ -1400,10 +1393,10 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
         }
     }
     
-    VERBOSE_PRINT("  Found %d suffix merge candidates\n", candidate_count);
+    VERBOSE_PRINT(premin, "  Found %d suffix merge candidates\n", candidate_count);
     
     if (candidate_count < 2) {
-        VERBOSE_PRINT("  Not enough suffix candidates (found %d)\n", candidate_count);
+        VERBOSE_PRINT(premin, "  Not enough suffix candidates (found %d)\n", candidate_count);
         return 0;  // Need at least 2 candidates to merge
     }
     
@@ -1475,7 +1468,7 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
         }
     }
     
-    VERBOSE_PRINT("  Found %d suffix merge candidates\n", candidate_count);
+    VERBOSE_PRINT(premin, "  Found %d suffix merge candidates\n", candidate_count);
     
     // Sort by (target, symbol, accept_sig)
     qsort(candidates, candidate_count, sizeof(suffix_candidate_t), compare_suffix_candidates);
@@ -1495,7 +1488,7 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
         
         // If multiple candidates, merge them
         if (j - i > 1) {
-            VERBOSE_PRINT("  Found group of %d states with same (target=%d, sym=%d, accept_sig=%016lx)\n",
+            VERBOSE_PRINT(premin, "  Found group of %d states with same (target=%d, sym=%d, accept_sig=%016lx)\n",
                          j - i, candidates[i].target, candidates[i].symbol, 
                          (unsigned long)candidates[i].accept_sig);
             int rep = candidates[i].state;
@@ -1516,7 +1509,7 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
                     if (nfa[s].transitions[sym] == rep) has_mutual = true;
                 }
                 if (has_mutual) {
-                    VERBOSE_PRINT("  Skipping merge due to mutual transition between %d and %d\n", rep, s);
+                    VERBOSE_PRINT(premin, "  Skipping merge due to mutual transition between %d and %d\n", rep, s);
                     continue;
                 }
                 
@@ -1553,7 +1546,7 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
                 sig_cache_invalidate(s);
                 sig_cache_invalidate(rep);
                 merged++;
-                VERBOSE_PRINT("  Merged suffix state %d into %d (target=%d, symbol=%d)\n", 
+                VERBOSE_PRINT(premin, "  Merged suffix state %d into %d (target=%d, symbol=%d)\n", 
                              s, rep, candidates[i].target, candidates[i].symbol);
             }
         }
@@ -1577,16 +1570,16 @@ static int merge_common_suffixes_fast(nfa_state_t* nfa, int state_count, bool* d
     const int max_passes = 10;
     
     while (pass <= max_passes) {
-        VERBOSE_PRINT("  Suffix merge pass %d...\n", pass);
+        VERBOSE_PRINT(premin, "  Suffix merge pass %d...\n", pass);
         int merged = merge_common_suffixes_pass(nfa, state_count, dead_states);
         total_merged += merged;
         
         if (merged == 0) {
-            VERBOSE_PRINT("  No more suffix merges possible after pass %d\n", pass);
+            VERBOSE_PRINT(premin, "  No more suffix merges possible after pass %d\n", pass);
             break;
         }
         
-        VERBOSE_PRINT("  Pass %d merged %d suffix states (total: %d)\n", pass, merged, total_merged);
+        VERBOSE_PRINT(premin, "  Pass %d merged %d suffix states (total: %d)\n", pass, merged, total_merged);
         pass++;
     }
     
@@ -1610,16 +1603,16 @@ static int merge_common_prefixes(nfa_state_t* nfa, int state_count, bool* dead_s
     const int max_passes = 10;
     
     while (pass <= max_passes) {
-        VERBOSE_PRINT("  Prefix merge pass %d...\n", pass);
+        VERBOSE_PRINT(premin, "  Prefix merge pass %d...\n", pass);
         int merged = merge_common_prefixes_pass(nfa, state_count, dead_states);
         total_merged += merged;
         
         if (merged == 0) {
-            VERBOSE_PRINT("  No more merges possible after pass %d\n", pass);
+            VERBOSE_PRINT(premin, "  No more merges possible after pass %d\n", pass);
             break;
         }
         
-        VERBOSE_PRINT("  Pass %d merged %d states (total: %d)\n", pass, merged, total_merged);
+        VERBOSE_PRINT(premin, "  Pass %d merged %d states (total: %d)\n", pass, merged, total_merged);
         pass++;
     }
     
@@ -1670,7 +1663,7 @@ static int factorize_suffixes_pass(nfa_state_t* nfa, int state_count, bool** dea
     int trans_capacity = 1024;  // Start with reasonable initial capacity
     transition_t* transitions = malloc(trans_capacity * sizeof(transition_t));
     if (!transitions) {
-        VERBOSE_PRINT("  Failed to allocate transitions array\n");
+        VERBOSE_PRINT(premin, "  Failed to allocate transitions array\n");
         return 0;
     }
     int trans_count = 0;
@@ -1697,7 +1690,7 @@ static int factorize_suffixes_pass(nfa_state_t* nfa, int state_count, bool** dea
                             transition_t* new_transitions = realloc(transitions, new_capacity * sizeof(transition_t));
                             if (!new_transitions) {
                                 free(transitions);
-                                VERBOSE_PRINT("  Failed to grow transitions array\n");
+                                VERBOSE_PRINT(premin, "  Failed to grow transitions array\n");
                                 return 0;
                             }
                             transitions = new_transitions;
@@ -1762,7 +1755,7 @@ static int factorize_suffixes_pass(nfa_state_t* nfa, int state_count, bool** dea
         
         // If 2+ sources share the same (target, symbol), factorize
         if (source_count >= 2) {
-            VERBOSE_PRINT("  Found %d sources with common suffix (target=%d, symbol=%d)\n",
+            VERBOSE_PRINT(premin, "  Found %d sources with common suffix (target=%d, symbol=%d)\n",
                          source_count, target, symbol);
             
             // Grow dead_states array if needed to accommodate new state
@@ -1776,13 +1769,13 @@ static int factorize_suffixes_pass(nfa_state_t* nfa, int state_count, bool** dea
                     new_capacity = MAX_STATES;
                 }
                 if (*next_state >= new_capacity) {
-                    VERBOSE_PRINT("  Cannot create new state: would exceed MAX_STATES\n");
+                    VERBOSE_PRINT(premin, "  Cannot create new state: would exceed MAX_STATES\n");
                     if (sources != sources_buf) free(sources);
                     continue;
                 }
                 bool* new_dead_states = realloc(dead_states, new_capacity * sizeof(bool));
                 if (!new_dead_states) {
-                    VERBOSE_PRINT("  Failed to grow dead_states array\n");
+                    VERBOSE_PRINT(premin, "  Failed to grow dead_states array\n");
                     if (sources != sources_buf) free(sources);
                     continue;
                 }
@@ -1794,7 +1787,7 @@ static int factorize_suffixes_pass(nfa_state_t* nfa, int state_count, bool** dea
                 *dead_states_capacity_ptr = dead_states_capacity;
                 // Also grow signature cache
                 sig_cache_grow(new_capacity);
-                VERBOSE_PRINT("  Grew dead_states array to %d capacity\n", dead_states_capacity);
+                VERBOSE_PRINT(premin, "  Grew dead_states array to %d capacity\n", dead_states_capacity);
             }
             
             // Create a new intermediate state
@@ -1842,7 +1835,7 @@ static int factorize_suffixes_pass(nfa_state_t* nfa, int state_count, bool** dea
             }
             
             merged += source_count - 1;  // Net reduction
-            VERBOSE_PRINT("    Created new state %d, merged %d paths\n", new_state, source_count - 1);
+            VERBOSE_PRINT(premin, "    Created new state %d, merged %d paths\n", new_state, source_count - 1);
         }
         
         // Free dynamically allocated buffer if it was grown
@@ -1871,16 +1864,16 @@ static int factorize_suffixes(nfa_state_t* nfa, int state_count, bool** dead_sta
     const int max_passes = 1;  // Single pass is sufficient and prevents chains
     
     while (pass <= max_passes) {
-        VERBOSE_PRINT("  Suffix factorization pass %d...\n", pass);
+        VERBOSE_PRINT(premin, "  Suffix factorization pass %d...\n", pass);
         int merged = factorize_suffixes_pass(nfa, state_count, dead_states_ptr, dead_states_capacity_ptr, next_state_ptr);
         total_merged += merged;
         
         if (merged == 0) {
-            VERBOSE_PRINT("  No more suffix factorization possible after pass %d\n", pass);
+            VERBOSE_PRINT(premin, "  No more suffix factorization possible after pass %d\n", pass);
             break;
         }
         
-        VERBOSE_PRINT("  Pass %d factorized %d paths (total: %d)\n", pass, merged, total_merged);
+        VERBOSE_PRINT(premin, "  Pass %d factorized %d paths (total: %d)\n", pass, merged, total_merged);
         pass++;
     }
     
@@ -1916,11 +1909,11 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     // Early exit if no optimizations enabled - avoid allocating dead_states
     if (!opts.enable_prune && !opts.enable_epsilon_elim && !opts.enable_epsilon_chain &&
         !opts.enable_final_dedup && !opts.enable_bidirectional && !opts.enable_sat_optimal) {
-        VERBOSE_PRINT("Pre-minimization: No optimizations enabled, skipping\n");
+        VERBOSE_PRINT(premin, "Pre-minimization: No optimizations enabled, skipping\n");
         return 0;
     }
     
-    VERBOSE_PRINT("Pre-minimizing NFA with %d states\n", original_count);
+    VERBOSE_PRINT(premin, "Pre-minimizing NFA with %d states\n", original_count);
     
     // Initialize signature cache for the lifetime of this preminimization run
     sig_cache_init(original_count);
@@ -1933,31 +1926,31 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     
     // Pass 1: Remove unreachable states first (O(n))
     if (opts.enable_prune) {
-        VERBOSE_PRINT("Removing unreachable states...\n");
+        VERBOSE_PRINT(premin, "Removing unreachable states...\n");
         last_stats.unreachable_removed = remove_unreachable(nfa, original_count, dead_states);
-        VERBOSE_PRINT("Removed %d unreachable states\n", last_stats.unreachable_removed);
+        VERBOSE_PRINT(premin, "Removed %d unreachable states\n", last_stats.unreachable_removed);
     }
     
     // Pass 2: Bypass epsilon pass-through states (O(n))
     if (opts.enable_epsilon_elim) {
-        VERBOSE_PRINT("Bypassing epsilon pass-through states...\n");
+        VERBOSE_PRINT(premin, "Bypassing epsilon pass-through states...\n");
         last_stats.epsilon_bypassed = bypass_epsilon_pass_through(nfa, original_count, dead_states);
-        VERBOSE_PRINT("Bypassed %d epsilon pass-through states\n", last_stats.epsilon_bypassed);
+        VERBOSE_PRINT(premin, "Bypassed %d epsilon pass-through states\n", last_stats.epsilon_bypassed);
     }
     
     // Pass 3: Compress epsilon chains (O(n))
     if (opts.enable_epsilon_chain) {
-        VERBOSE_PRINT("Compressing epsilon chains...\n");
+        VERBOSE_PRINT(premin, "Compressing epsilon chains...\n");
         last_stats.epsilon_chains = compress_epsilon_chains(nfa, original_count, dead_states);
-        VERBOSE_PRINT("Compressed %d epsilon chain hops\n", last_stats.epsilon_chains);
+        VERBOSE_PRINT(premin, "Compressed %d epsilon chain hops\n", last_stats.epsilon_chains);
     }
     
     // Pass 4: Deduplicate equivalent final states (O(n log n))
     // This MUST run before bidirectional merging to create longer common suffixes
     if (opts.enable_final_dedup) {
-        VERBOSE_PRINT("Deduplicating final states...\n");
+        VERBOSE_PRINT(premin, "Deduplicating final states...\n");
         last_stats.final_deduped = deduplicate_final_states(nfa, original_count, dead_states);
-        VERBOSE_PRINT("Deduplicated %d final states\n", last_stats.final_deduped);
+        VERBOSE_PRINT(premin, "Deduplicated %d final states\n", last_stats.final_deduped);
     }
     
     // Pass 5: Bidirectional incremental merging (O(n log n))
@@ -1970,7 +1963,7 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     int effective_count = original_count;
     
     if (opts.enable_bidirectional) {
-        VERBOSE_PRINT("Running bidirectional incremental merging...\n");
+        VERBOSE_PRINT(premin, "Running bidirectional incremental merging...\n");
         int total_bidir_merged = 0;
         int pass = 1;
         const int max_passes = 20;  // Safety limit
@@ -1979,67 +1972,67 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
         int next_state = original_count;
         
         while (pass <= max_passes) {
-            VERBOSE_PRINT("  Bidirectional pass %d...\n", pass);
+            VERBOSE_PRINT(premin, "  Bidirectional pass %d...\n", pass);
             
             // Use next_state as the current state count - it includes any newly created states
             int current_count = next_state;
             
             // Try prefix merging
             int prefix_merged = merge_common_prefixes(nfa, current_count, dead_states);
-            VERBOSE_PRINT("    Prefix merging: %d states\n", prefix_merged);
+            VERBOSE_PRINT(premin, "    Prefix merging: %d states\n", prefix_merged);
             
             // Try suffix merging
             int suffix_merged = merge_common_suffixes_fast(nfa, current_count, dead_states);
-            VERBOSE_PRINT("    Suffix merging: %d states\n", suffix_merged);
+            VERBOSE_PRINT(premin, "    Suffix merging: %d states\n", suffix_merged);
             
             // Try suffix factorization (creates new intermediate states)
             int suffix_factored = factorize_suffixes(nfa, current_count, &dead_states, &dead_states_capacity, &next_state);
-            VERBOSE_PRINT("    Suffix factorization: %d paths\n", suffix_factored);
+            VERBOSE_PRINT(premin, "    Suffix factorization: %d paths\n", suffix_factored);
             
             int pass_merged = prefix_merged + suffix_merged + suffix_factored;
             total_bidir_merged += pass_merged;
             
             // If no merges happened, we've reached fixpoint
             if (pass_merged == 0) {
-                VERBOSE_PRINT("  Fixpoint reached after %d passes\n", pass);
+                VERBOSE_PRINT(premin, "  Fixpoint reached after %d passes\n", pass);
                 break;
             }
             
-            VERBOSE_PRINT("  Pass %d merged %d states (total: %d)\n", pass, pass_merged, total_bidir_merged);
+            VERBOSE_PRINT(premin, "  Pass %d merged %d states (total: %d)\n", pass, pass_merged, total_bidir_merged);
             pass++;
         }
         
         if (pass > max_passes) {
-            VERBOSE_PRINT("  Warning: Reached max passes limit (%d)\n", max_passes);
+            VERBOSE_PRINT(premin, "  Warning: Reached max passes limit (%d)\n", max_passes);
         }
         
         last_stats.prefix_merged = total_bidir_merged;
-        VERBOSE_PRINT("Bidirectional merging eliminated %d states\n", total_bidir_merged);
+        VERBOSE_PRINT(premin, "Bidirectional merging eliminated %d states\n", total_bidir_merged);
         
         // Update effective_count to include any new intermediate states created
         effective_count = next_state;
-        VERBOSE_PRINT("Effective state count after factorization: %d\n", effective_count);
+        VERBOSE_PRINT(premin, "Effective state count after factorization: %d\n", effective_count);
         
         // Pass 5b: SAT-based optimal merge selection (continuation of bidirectional)
         // After greedy fixpoint, try harder merges on remaining conflicting candidates.
         // This reuses the same NFA state and continues where bidirectional left off.
         if (opts.enable_sat_optimal && nfa_preminimize_optimal_available()) {
-            VERBOSE_PRINT("Continuing with SAT optimal merge selection...\n");
+            VERBOSE_PRINT(premin, "Continuing with SAT optimal merge selection...\n");
             int max_cand = opts.max_sat_candidates > 0 ? opts.max_sat_candidates : 200;
             last_stats.sat_optimal = nfa_preminimize_optimal_merges(nfa, effective_count, dead_states,
                                                                       max_cand, opts.verbose);
             if (last_stats.sat_optimal > 0) {
-                VERBOSE_PRINT("SAT optimal merged %d additional states\n", last_stats.sat_optimal);
+                VERBOSE_PRINT(premin, "SAT optimal merged %d additional states\n", last_stats.sat_optimal);
             }
         }
     }
     
     // Pass 6: Final unreachable cleanup
     if (opts.enable_prune) {
-        VERBOSE_PRINT("Final unreachable cleanup...\n");
+        VERBOSE_PRINT(premin, "Final unreachable cleanup...\n");
         int final_unreachable = remove_unreachable(nfa, effective_count, dead_states);
         last_stats.unreachable_removed += final_unreachable;
-        VERBOSE_PRINT("Removed %d more unreachable states\n", final_unreachable);
+        VERBOSE_PRINT(premin, "Removed %d more unreachable states\n", final_unreachable);
     }
     
     // Count how many states were marked dead
@@ -2067,11 +2060,11 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     
     int total_removed = original_count - new_count;
     if (total_removed > 0) {
-        VERBOSE_PRINT("Pre-minimized NFA: %d → %d states (%.1f%% reduction)\n",
+        VERBOSE_PRINT(premin, "Pre-minimized NFA: %d → %d states (%.1f%% reduction)\n",
                       original_count, new_count,
                       100.0 * total_removed / original_count);
     } else {
-        VERBOSE_PRINT("Pre-minimization: No states removed (NFA already optimal)\n");
+        VERBOSE_PRINT(premin, "Pre-minimization: No states removed (NFA already optimal)\n");
     }
     
     return total_removed;

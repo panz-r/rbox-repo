@@ -167,4 +167,31 @@ static inline uint32_t crc32c(const uint8_t* data, size_t len) {
 #define INITIAL_NFA_CAPACITY 64
 #define NFA_GROWTH_FACTOR 2
 
+/* ============================================================================
+ * Virtual Symbol IDs for NFA
+ *
+ * These are special symbol IDs that don't correspond to byte values.
+ * They are used for epsilon transitions, end-of-string markers, etc.
+ * VSYM_BYTE_ANY is intentionally equal to BYTE_VALUE_MAX (256).
+ * ============================================================================ */
+
+#define VSYM_BYTE_ANY 256  // Matches any byte (used in DFA transition compression)
+#define VSYM_EPS     257  // Epsilon transition (non-consuming)
+#define VSYM_EOS     258  // End-of-string marker
+#define VSYM_SPACE   259  // Whitespace character class
+#define VSYM_TAB     260  // Tab character
+
+/* ============================================================================
+ * Verbose Printing Macro
+ *
+ * Each module must declare: static bool {module}_verbose = false;
+ * Usage: VERBOSE_PRINT(module, "format string\n", args...);
+ * Example: VERBOSE_PRINT(minimize, "Reduced to %d states\n", count);
+ * ============================================================================ */
+
+#define VERBOSE_PRINT(module, ...) \
+    do { \
+        if (module ## _verbose) fprintf(stderr, "[" #module "] " __VA_ARGS__); \
+    } while (0)
+
 #endif // CDFA_DEFINES_H

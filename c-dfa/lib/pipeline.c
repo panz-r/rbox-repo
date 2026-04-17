@@ -115,6 +115,10 @@ const char* pipeline_get_version(void) {
     return "1.0.0";
 }
 
+void pipeline_print_version(const char* program_name) {
+    fprintf(stderr, "%s version %s\n", program_name, pipeline_get_version());
+}
+
 static void set_error(pipeline_t* p, pipeline_error_t code, const char* msg) {
     p->last_error_code = code;
     snprintf(p->last_error, sizeof(p->last_error), "%s", msg);
@@ -701,7 +705,7 @@ dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input) {
         .final_state = 0,
         .matched = false,
         .matched_length = 0,
-        .captures = {0},
+        .captures = {{0}},
         .capture_count = 0
     };
 

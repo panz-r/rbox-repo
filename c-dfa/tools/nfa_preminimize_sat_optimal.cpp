@@ -45,13 +45,6 @@ extern "C" {
 // Verbose output
 static bool sat_opt_verbose = false;
 
-#define VERBOSE_PRINT(...) do { \
-    if (sat_opt_verbose) fprintf(stderr, "[SAT-OPT] " __VA_ARGS__); \
-} while(0)
-
-// Epsilon symbol
-#define VSYM_EPS 257
-
 // ============================================================================
 // CANDIDATE STRUCTURE
 // ============================================================================
@@ -313,7 +306,7 @@ static std::set<int> solve_optimal_merges_greedy(
         }
     }
     
-    VERBOSE_PRINT("Greedy selection selected %zu merges\n", result.size());
+    VERBOSE_PRINT(sat_opt, "Greedy selection selected %zu merges\n", result.size());
     
     return result;
 }
@@ -522,7 +515,7 @@ static std::set<int> solve_optimal_merges_sat(
     }
     total_conflicts /= 2;
 
-    VERBOSE_PRINT("Bounded SAT MaxIS (totalizer): %d candidates, %d conflict edges, greedy lower bound = %d\n",
+    VERBOSE_PRINT(sat_opt, "Bounded SAT MaxIS (totalizer): %d candidates, %d conflict edges, greedy lower bound = %d\n",
                   n, total_conflicts, greedy_size);
 
     // --- Build ONE solver instance ---
@@ -577,7 +570,7 @@ static std::set<int> solve_optimal_merges_sat(
         int res = solver.solve();
 
         if (res != 10) {
-            VERBOSE_PRINT("  UNSAT at count >= %d (optimal size = %d)\n", t + 1, best_size);
+            VERBOSE_PRINT(sat_opt, "  UNSAT at count >= %d (optimal size = %d)\n", t + 1, best_size);
             break;
         }
 
@@ -591,16 +584,16 @@ static std::set<int> solve_optimal_merges_sat(
         best_result = selected;
         best_size = (int)selected.size();
 
-        VERBOSE_PRINT("  SAT at count >= %d (found %d merges)\n", t + 1, best_size);
+        VERBOSE_PRINT(sat_opt, "  SAT at count >= %d (found %d merges)\n", t + 1, best_size);
     }
 
     if (best_size > greedy_size) {
-        VERBOSE_PRINT("  SAT improved: %d → %d merges\n", greedy_size, best_size);
+        VERBOSE_PRINT(sat_opt, "  SAT improved: %d → %d merges\n", greedy_size, best_size);
     } else {
-        VERBOSE_PRINT("  Greedy was optimal (%d merges)\n", greedy_size);
+        VERBOSE_PRINT(sat_opt, "  Greedy was optimal (%d merges)\n", greedy_size);
     }
 
-    VERBOSE_PRINT("Bounded SAT result: %d merges (greedy was %d)\n", best_size, greedy_size);
+    VERBOSE_PRINT(sat_opt, "Bounded SAT result: %d merges (greedy was %d)\n", best_size, greedy_size);
 
     return best_result;
 }
@@ -618,7 +611,7 @@ static void apply_merge(nfa_state_t* nfa, int state_count, bool* dead_states, in
     if (dead_states[state1] || dead_states[state2]) return;
     if (state1 == state2) return;
     
-    VERBOSE_PRINT("  Merging state %d into %d\n", state2, state1);
+    VERBOSE_PRINT(sat_opt, "  Merging state %d into %d\n", state2, state1);
     
     // Redirect all transitions pointing to state2 to state1
     for (int s = 0; s < state_count; s++) {
@@ -702,7 +695,7 @@ static int apply_selected_merges(
         const merge_candidate_t& cand = candidates[idx];
         
         if (dead_states[cand.state1] || dead_states[cand.state2]) {
-            VERBOSE_PRINT("  Skipping merge %d: state already dead\n", idx);
+            VERBOSE_PRINT(sat_opt, "  Skipping merge %d: state already dead\n", idx);
             continue;
         }
         
@@ -997,8 +990,8 @@ extern "C" int nfa_preminimize_optimal_merges(
     
     if (max_candidates <= 0) max_candidates = MAX_CANDIDATES;
     
-    VERBOSE_PRINT("Starting iterative windowed optimal merge selection\n");
-    VERBOSE_PRINT("NFA has %d states, window size ~%d states\n", state_count, max_candidates / 4);
+    VERBOSE_PRINT(sat_opt, "Starting iterative windowed optimal merge selection\n");
+    VERBOSE_PRINT(sat_opt, "NFA has %d states, window size ~%d states\n", state_count, max_candidates / 4);
     
     int total_merged = 0;
     int window_size = max_candidates / 4;  // States per window
@@ -1015,12 +1008,12 @@ extern "C" int nfa_preminimize_optimal_merges(
         int end = start + window_size;
         if (end > state_count) end = state_count;
         
-        VERBOSE_PRINT("  Window %d: states [%d, %d)\n", iteration, start, end);
+        VERBOSE_PRINT(sat_opt, "  Window %d: states [%d, %d)\n", iteration, start, end);
         
         int merged = process_window(nfa, state_count, dead_states, start, end, max_candidates);
         
         if (merged > 0) {
-            VERBOSE_PRINT("    Merged %d states in window\n", merged);
+            VERBOSE_PRINT(sat_opt, "    Merged %d states in window\n", merged);
             total_merged += merged;
         }
         
@@ -1028,7 +1021,7 @@ extern "C" int nfa_preminimize_optimal_merges(
         iteration++;
     }
     
-    VERBOSE_PRINT("Iterative windowed merge complete: %d states merged in %d windows\n", total_merged, iteration);
+    VERBOSE_PRINT(sat_opt, "Iterative windowed merge complete: %d states merged in %d windows\n", total_merged, iteration);
     
     return total_merged;
 }

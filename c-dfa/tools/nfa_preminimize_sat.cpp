@@ -33,10 +33,6 @@ extern "C" {
 // Verbose output
 static bool sat_verbose = false;
 
-#define VERBOSE_PRINT(...) do { \
-    if (sat_verbose) fprintf(stderr, "[SAT-PREMIN] " __VA_ARGS__); \
-} while(0)
-
 /**
  * Get all successor states for a given state and symbol.
  * Returns a vector of target state indices.
@@ -179,7 +175,7 @@ static std::map<int, int> verify_bisimulation_sat_partition(
     };
     
     int num_vars = k * (k - 1) / 2;
-    VERBOSE_PRINT("  Partition has %d states, %d SAT variables\n", k, num_vars);
+    VERBOSE_PRINT(sat, "  Partition has %d states, %d SAT variables\n", k, num_vars);
     
     // Constraint 1: Reflexivity - each state is bisimilar to itself (implicit)
     
@@ -286,7 +282,7 @@ static std::map<int, int> verify_bisimulation_sat_partition(
     int res = solver.solve();
     
     if (res == 10) {  // SATISFIABLE
-        VERBOSE_PRINT("  SAT solution found\n");
+        VERBOSE_PRINT(sat, "  SAT solution found\n");
         
         // Extract equivalence classes from SAT solution
         std::vector<int> equiv_class(k, -1);
@@ -321,9 +317,9 @@ static std::map<int, int> verify_bisimulation_sat_partition(
             }
         }
         
-        VERBOSE_PRINT("  Found %d equivalence classes\n", next_class);
+        VERBOSE_PRINT(sat, "  Found %d equivalence classes\n", next_class);
     } else {
-        VERBOSE_PRINT("  No SAT solution (UNSAT)\n");
+        VERBOSE_PRINT(sat, "  No SAT solution (UNSAT)\n");
     }
     
     return result;
@@ -405,13 +401,13 @@ extern "C" int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead
     
     int merged_total = 0;
     
-    VERBOSE_PRINT("Starting SAT-based NFA pre-minimization with %d states\n", state_count);
+    VERBOSE_PRINT(sat, "Starting SAT-based NFA pre-minimization with %d states\n", state_count);
     
     // Pass 1: Compute initial partitions
     int num_partitions;
     int* partition = compute_initial_partitions(nfa, state_count, dead_states, &num_partitions);
     
-    VERBOSE_PRINT("Initial partitions: %d\n", num_partitions);
+    VERBOSE_PRINT(sat, "Initial partitions: %d\n", num_partitions);
     
     // Pass 2: Group states by partition
     std::map<int, std::vector<int>> partition_groups;
@@ -430,12 +426,12 @@ extern "C" int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead
         if (states.size() < 2) continue;  // Nothing to merge
         
         if (states.size() > MAX_SAT_PARTITION_SIZE) {
-            VERBOSE_PRINT("Partition %d has %zu states (too large for SAT, skipping)\n", 
+            VERBOSE_PRINT(sat, "Partition %d has %zu states (too large for SAT, skipping)\n", 
                          pg.first, states.size());
             continue;
         }
         
-        VERBOSE_PRINT("Processing partition %d with %zu states\n", pg.first, states.size());
+        VERBOSE_PRINT(sat, "Processing partition %d with %zu states\n", pg.first, states.size());
         
         // Run SAT verification
         std::map<int, int> merges = verify_bisimulation_sat_partition(nfa, states, partition);
@@ -449,7 +445,7 @@ extern "C" int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead
     }
     
     // Pass 4: Apply merges
-    VERBOSE_PRINT("Applying %zu merges\n", all_merges.size());
+    VERBOSE_PRINT(sat, "Applying %zu merges\n", all_merges.size());
     
     for (auto& m : all_merges) {
         int src = m.first;
@@ -488,12 +484,12 @@ extern "C" int nfa_preminimize_sat(nfa_state_t* nfa, int state_count, bool* dead
         dead_states[src] = true;
         merged_total++;
         
-        VERBOSE_PRINT("  Merged state %d into %d\n", src, rep);
+        VERBOSE_PRINT(sat, "  Merged state %d into %d\n", src, rep);
     }
     
     free(partition);
     
-    VERBOSE_PRINT("SAT pre-minimization complete: %d states merged\n", merged_total);
+    VERBOSE_PRINT(sat, "SAT pre-minimization complete: %d states merged\n", merged_total);
     
     return merged_total;
 }
