@@ -305,9 +305,40 @@ size_t cpl_policy_count(const cpl_policy_t *policy);
 
 /* --- Verification --- */
 
-cpl_error_t cpl_policy_verify(const cpl_policy_t *policy,
-                              const char *raw_cmd,
-                              const char **matching_pattern);
+/**
+ * A suggestion for expanding a policy to cover a new command.
+ * Fixed-size buffer — no allocation, no cleanup needed.
+ */
+typedef struct {
+    char pattern[CPL_MAX_PATTERN_LEN];
+    const char *based_on;       /* Existing pattern this extends, or NULL */
+    double confidence;          /* matched_prefix_tokens / total_cmd_tokens */
+} cpl_expand_suggestion_t;
+
+/**
+ * Result of cpl_policy_eval. Caller passes a pointer to this struct.
+ */
+typedef struct {
+    bool matches;
+    const char *matching_pattern;     /* NULL if no match */
+    size_t suggestion_count;          /* 0-2, only filled if !matches */
+    cpl_expand_suggestion_t suggestions[2];
+} cpl_eval_result_t;
+
+/**
+ * Unified evaluate + suggest.
+ *
+ * Walks the policy trie with the command. If it matches, sets
+ * result->matches=true and result->matching_pattern.
+ *
+ * If it doesn't match and result is non-NULL, generates up to 2
+ * expansion suggestions in result->suggestions[].
+ *
+ * Passing NULL for result disables suggestions (verify-only fast path).
+ */
+cpl_error_t cpl_policy_eval(const cpl_policy_t *policy,
+                             const char *raw_cmd,
+                             cpl_eval_result_t *result);
 
 cpl_error_t cpl_policy_verify_all(const cpl_policy_t *policy,
                                   const char *raw_cmd,
@@ -332,6 +363,22 @@ cpl_error_t cpl_policy_load(cpl_policy_t *policy, const char *path);
 size_t cpl_policy_memory_usage(const cpl_policy_t *policy);
 size_t cpl_policy_working_set(const cpl_policy_t *policy);
 size_t cpl_policy_state_count(const cpl_policy_t *policy);
+
+/* ============================================================
+ * POLICY EXPANSION SUGGESTIONS (Miner)
+ * ============================================================ */
+
+/**
+ * Step 2: Given a chosen pattern (as typed tokens), suggest up to 3
+ * generalizations by widening one non-literal token at a time.
+ * Also includes the exact-match-as-literal variant.
+ *
+ * Caller allocates out[3]. No cleanup needed.
+ */
+size_t cpl_policy_suggest_variants(const cpl_policy_t *policy,
+                                    const cpl_token_t *tokens,
+                                    size_t token_count,
+                                    cpl_expand_suggestion_t out[3]);
 
 #ifdef __cplusplus
 }

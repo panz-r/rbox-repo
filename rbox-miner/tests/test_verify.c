@@ -37,11 +37,12 @@ static int test_verify_exact_match(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "git commit -m *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit -m hello", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit -m hello", &r);
     ASSERT(err == CPL_OK);
-    ASSERT(matched != NULL);
-    ASSERT_STR_EQ(matched, "git commit -m *");
+    ASSERT(r.matches);
+    ASSERT(r.matching_pattern != NULL);
+    ASSERT_STR_EQ(r.matching_pattern, "git commit -m *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -54,10 +55,11 @@ static int test_verify_no_match(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "git commit -m *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git push origin main", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git push origin main", &r);
     ASSERT(err == CPL_ERR_INVALID);
-    ASSERT(matched == NULL);
+    ASSERT(!r.matches);
+    ASSERT(r.matching_pattern == NULL);
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -74,10 +76,10 @@ static int test_verify_wildcard_single_token(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "git commit -m *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit -m", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit -m", &r);
     ASSERT(err == CPL_ERR_INVALID);
-    ASSERT(matched == NULL);
+    ASSERT(!r.matches);
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -90,11 +92,12 @@ static int test_verify_wildcard_matches_path(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "cat *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "cat /etc/passwd", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "cat /etc/passwd", &r);
     ASSERT(err == CPL_OK);
-    ASSERT(matched != NULL);
-    ASSERT_STR_EQ(matched, "cat *");
+    ASSERT(r.matches);
+    ASSERT(r.matching_pattern != NULL);
+    ASSERT_STR_EQ(r.matching_pattern, "cat *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -107,10 +110,10 @@ static int test_verify_wildcard_matches_number(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "head -n *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "head -n 42", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "head -n 42", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "head -n *");
+    ASSERT_STR_EQ(r.matching_pattern, "head -n *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -127,8 +130,8 @@ static int test_verify_exact_length_shorter_command(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "git commit -m *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     cpl_policy_free(policy);
@@ -142,8 +145,8 @@ static int test_verify_exact_length_longer_command(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "git commit");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit -m hello", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit -m hello", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     cpl_policy_free(policy);
@@ -161,10 +164,10 @@ static int test_verify_pipeline(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "cat * | grep *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "cat /var/log/syslog | grep ERROR", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "cat /var/log/syslog | grep ERROR", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "cat * | grep *");
+    ASSERT_STR_EQ(r.matching_pattern, "cat * | grep *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -177,8 +180,8 @@ static int test_verify_pipeline_no_match_wrong_cmd(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "cat * | grep *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "cat file | wc -l", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "cat file | wc -l", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     cpl_policy_free(policy);
@@ -197,11 +200,11 @@ static int test_verify_multiple_patterns_first_match(void)
     cpl_policy_add(policy, "ls -la *");
     cpl_policy_add(policy, "git commit -m *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "ls -la /tmp", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "ls -la /tmp", &r);
     ASSERT(err == CPL_OK);
-    ASSERT(matched != NULL);
-    ASSERT_STR_EQ(matched, "ls -la *");
+    ASSERT(r.matches);
+    ASSERT_STR_EQ(r.matching_pattern, "ls -la *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -216,23 +219,20 @@ static int test_verify_multiple_patterns_different_prefixes(void)
     cpl_policy_add(policy, "docker run -it * *");
     cpl_policy_add(policy, "cat * | grep *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit -m fix", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit -m fix", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "git commit -m *");
+    ASSERT_STR_EQ(r.matching_pattern, "git commit -m *");
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "docker run -it ubuntu bash", &matched);
+    err = cpl_policy_eval(policy, "docker run -it ubuntu bash", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "docker run -it * *");
+    ASSERT_STR_EQ(r.matching_pattern, "docker run -it * *");
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "cat log.txt | grep error", &matched);
+    err = cpl_policy_eval(policy, "cat log.txt | grep error", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "cat * | grep *");
+    ASSERT_STR_EQ(r.matching_pattern, "cat * | grep *");
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "rm -rf /", &matched);
+    err = cpl_policy_eval(policy, "rm -rf /", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     cpl_policy_free(policy);
@@ -291,8 +291,8 @@ static int test_verify_empty_policy(void)
     cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
     cpl_policy_t *policy = cpl_policy_new(ctx);
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     cpl_policy_free(policy);
@@ -306,10 +306,10 @@ static int test_verify_redirection(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "ls > *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "ls > /tmp/out.txt", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "ls > /tmp/out.txt", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "ls > *");
+    ASSERT_STR_EQ(r.matching_pattern, "ls > *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -322,10 +322,10 @@ static int test_verify_flag_value(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "gcc -o myprog main.c");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "gcc -o myprog main.c", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "gcc -o myprog main.c", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "gcc -o myprog main.c");
+    ASSERT_STR_EQ(r.matching_pattern, "gcc -o myprog main.c");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -338,10 +338,10 @@ static int test_verify_command_with_quotes(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "echo *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "echo \"hello world\"", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "echo \"hello world\"", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "echo *");
+    ASSERT_STR_EQ(r.matching_pattern, "echo *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -354,10 +354,10 @@ static int test_verify_wildcard_matches_flag_value(void)
     cpl_policy_t *policy = cpl_policy_new(ctx);
     cpl_policy_add(policy, "gcc --output * main.c");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "gcc --output program main.c", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "gcc --output program main.c", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "gcc --output * main.c");
+    ASSERT_STR_EQ(r.matching_pattern, "gcc --output * main.c");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -371,20 +371,108 @@ static int test_verify_after_remove(void)
     cpl_policy_add(policy, "git commit -m *");
     cpl_policy_add(policy, "git status");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit -m fix", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit -m fix", &r);
     ASSERT(err == CPL_OK);
 
     cpl_policy_remove(policy, "git commit -m *");
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "git commit -m fix", &matched);
+    err = cpl_policy_eval(policy, "git commit -m fix", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "git status", &matched);
+    err = cpl_policy_eval(policy, "git status", &r);
     ASSERT(err == CPL_OK);
 
+    cpl_policy_free(policy);
+    cpl_policy_ctx_free(ctx);
+    return 1;
+}
+
+/* ============================================================
+ * FULL EVAL + SUGGEST + ACCEPT LOOP
+ * ============================================================ */
+
+static int test_eval_suggest_accept_loop(void)
+{
+    cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
+    cpl_policy_t *policy = cpl_policy_new(ctx);
+
+    cpl_policy_add(policy, "git status");
+    cpl_policy_add(policy, "ls -la *");
+
+    /* 1. Verify a matching command */
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git status", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+    ASSERT_STR_EQ(r.matching_pattern, "git status");
+
+    /* 2. Verify a non-matching command — should produce suggestions */
+    err = cpl_policy_eval(policy, "git commit -m hello", &r);
+    ASSERT(err == CPL_ERR_INVALID);
+    ASSERT(!r.matches);
+    ASSERT(r.suggestion_count == 2);
+    ASSERT(strstr(r.suggestions[0].pattern, "git") != NULL);
+    ASSERT(strstr(r.suggestions[1].pattern, "git") != NULL);
+
+    /* 3. Accept suggestion A (exact) and add to policy */
+    err = cpl_policy_add(policy, r.suggestions[0].pattern);
+    ASSERT(err == CPL_OK);
+    ASSERT(cpl_policy_count(policy) == 3);
+
+    /* 4. Now the same command should match */
+    err = cpl_policy_eval(policy, "git commit -m hello", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+
+    /* 5. A completely different command should still not match */
+    err = cpl_policy_eval(policy, "rm -rf /", &r);
+    ASSERT(err == CPL_ERR_INVALID);
+    ASSERT(!r.matches);
+    ASSERT(r.suggestion_count == 2);
+
+    cpl_policy_free(policy);
+    cpl_policy_ctx_free(ctx);
+    return 1;
+}
+
+static int test_eval_suggest_variants_loop(void)
+{
+    cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
+    cpl_policy_t *policy = cpl_policy_new(ctx);
+
+    cpl_policy_add(policy, "git status");
+    cpl_policy_add(policy, "ls -la *");
+
+    /* Get suggestions for a new command */
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "docker run -it ubuntu bash", &r);
+    ASSERT(err == CPL_ERR_INVALID);
+    ASSERT(!r.matches);
+    ASSERT(r.suggestion_count == 2);
+
+    /* Tokenize the chosen suggestion for Step 2 */
+    cpl_token_array_t chosen;
+    cpl_normalize_typed(r.suggestions[0].pattern, &chosen);
+
+    /* Get variants — variant 0 is always all-literals */
+    cpl_expand_suggestion_t variants[3];
+    size_t nv = cpl_policy_suggest_variants(policy, chosen.tokens, chosen.count, variants);
+    ASSERT(nv >= 1);
+
+    /* Variant 0 should be all-literals */
+    ASSERT(strstr(variants[0].pattern, "docker") != NULL);
+
+    /* Accept the literal variant and add to policy */
+    err = cpl_policy_add(policy, variants[0].pattern);
+    ASSERT(err == CPL_OK);
+
+    /* Now the command should match */
+    err = cpl_policy_eval(policy, "docker run -it ubuntu bash", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+
+    cpl_free_token_array(&chosen);
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
     return 1;
@@ -430,6 +518,10 @@ int main(void)
     TEST(test_verify_command_with_quotes);
     TEST(test_verify_wildcard_matches_flag_value);
     TEST(test_verify_after_remove);
+
+    printf("\nEval + suggest + accept loop:\n");
+    TEST(test_eval_suggest_accept_loop);
+    TEST(test_eval_suggest_variants_loop);
 
     printf("\n========================================\n");
     printf("Results: %d/%d passed, %d failed\n",

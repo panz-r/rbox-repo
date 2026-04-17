@@ -45,7 +45,7 @@ static int test_ctx_intern(void)
     const char *a = cpl_policy_ctx_intern(ctx, "hello");
     const char *b = cpl_policy_ctx_intern(ctx, "hello");
     const char *c = cpl_policy_ctx_intern(ctx, "world");
-    ASSERT(a == b);  /* same pointer for same string */
+    ASSERT(a == b);
     ASSERT(a != c);
     ASSERT(strcmp(a, "hello") == 0);
     ASSERT(strcmp(c, "world") == 0);
@@ -62,9 +62,7 @@ static int test_ctx_shared_between_policies(void)
     cpl_policy_add(p1, "git commit -m *");
     cpl_policy_add(p2, "git status");
 
-    /* Both policies share the same interned strings */
     const char *a = cpl_policy_ctx_intern(ctx, "git");
-    /* The string "git" should already be interned by both policies */
     ASSERT(a != NULL);
 
     cpl_policy_free(p1);
@@ -187,13 +185,11 @@ static int test_add_shared_prefix(void)
     cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
     cpl_policy_t *policy = cpl_policy_new(ctx);
 
-    /* These share "git commit" prefix */
     cpl_policy_add(policy, "git commit -m *");
     cpl_policy_add(policy, "git commit -a");
     cpl_policy_add(policy, "git status");
     ASSERT(cpl_policy_count(policy) == 3);
 
-    /* Memory should be less than 3x individual patterns */
     size_t usage = cpl_policy_memory_usage(policy);
     ASSERT(usage > 0);
 
@@ -248,11 +244,12 @@ static int test_verify_exact_match(void)
 
     cpl_policy_add(policy, "git commit -m *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit -m hello", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit -m hello", &r);
     ASSERT(err == CPL_OK);
-    ASSERT(matched != NULL);
-    ASSERT_STR_EQ(matched, "git commit -m *");
+    ASSERT(r.matches);
+    ASSERT(r.matching_pattern != NULL);
+    ASSERT_STR_EQ(r.matching_pattern, "git commit -m *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -266,10 +263,11 @@ static int test_verify_no_match(void)
 
     cpl_policy_add(policy, "git commit -m *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git push origin main", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git push origin main", &r);
     ASSERT(err == CPL_ERR_INVALID);
-    ASSERT(matched == NULL);
+    ASSERT(!r.matches);
+    ASSERT(r.matching_pattern == NULL);
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -283,10 +281,10 @@ static int test_verify_wildcard_path(void)
 
     cpl_policy_add(policy, "cat *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "cat /etc/passwd", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "cat /etc/passwd", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "cat *");
+    ASSERT_STR_EQ(r.matching_pattern, "cat *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -300,10 +298,10 @@ static int test_verify_wildcard_number(void)
 
     cpl_policy_add(policy, "head -n *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "head -n 42", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "head -n 42", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "head -n *");
+    ASSERT_STR_EQ(r.matching_pattern, "head -n *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -317,8 +315,8 @@ static int test_verify_exact_length(void)
 
     cpl_policy_add(policy, "git commit -m *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     cpl_policy_free(policy);
@@ -333,10 +331,10 @@ static int test_verify_pipeline(void)
 
     cpl_policy_add(policy, "cat * | grep *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "cat /var/log/syslog | grep ERROR", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "cat /var/log/syslog | grep ERROR", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "cat * | grep *");
+    ASSERT_STR_EQ(r.matching_pattern, "cat * | grep *");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -352,18 +350,16 @@ static int test_verify_multiple_patterns(void)
     cpl_policy_add(policy, "docker run -it * *");
     cpl_policy_add(policy, "cat * | grep *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "git commit -m fix", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "git commit -m fix", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "git commit -m *");
+    ASSERT_STR_EQ(r.matching_pattern, "git commit -m *");
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "docker run -it ubuntu bash", &matched);
+    err = cpl_policy_eval(policy, "docker run -it ubuntu bash", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "docker run -it * *");
+    ASSERT_STR_EQ(r.matching_pattern, "docker run -it * *");
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "rm -rf /", &matched);
+    err = cpl_policy_eval(policy, "rm -rf /", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     cpl_policy_free(policy);
@@ -378,10 +374,10 @@ static int test_verify_flag_value(void)
 
     cpl_policy_add(policy, "gcc -o myprog main.c");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "gcc -o myprog main.c", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "gcc -o myprog main.c", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "gcc -o myprog main.c");
+    ASSERT_STR_EQ(r.matching_pattern, "gcc -o myprog main.c");
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -452,11 +448,10 @@ static int test_save_load(void)
     ASSERT(err == CPL_OK);
     ASSERT(cpl_policy_count(p2) == 3);
 
-    /* Verify loaded patterns work */
-    const char *matched = NULL;
-    err = cpl_policy_verify(p2, "git commit -m fix", &matched);
+    cpl_eval_result_t r;
+    err = cpl_policy_eval(p2, "git commit -m fix", &r);
     ASSERT(err == CPL_OK);
-    ASSERT_STR_EQ(matched, "git commit -m *");
+    ASSERT_STR_EQ(r.matching_pattern, "git commit -m *");
 
     cpl_policy_free(p1);
     cpl_policy_free(p2);
@@ -476,7 +471,6 @@ static int test_memory_usage(void)
     size_t empty = cpl_policy_memory_usage(policy);
     ASSERT(empty > 0);
 
-    /* Add patterns with different literals at the end (100 distinct patterns) */
     for (int i = 0; i < 100; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "git commit -m msg%d", i);
@@ -484,13 +478,11 @@ static int test_memory_usage(void)
     }
     ASSERT(cpl_policy_count(policy) == 100);
 
-    /* Add patterns that share a wildcard tail — these collapse to 1 pattern */
     for (int i = 0; i < 50; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "ls -la /path/to/dir%d", i);
         cpl_policy_add(policy, cmd);
     }
-    /* All /path/to/dirN are #p, so they share the same wildcard node */
     ASSERT(cpl_policy_count(policy) == 101);
 
     size_t filled = cpl_policy_memory_usage(policy);
@@ -506,13 +498,13 @@ static int test_state_count(void)
     cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
     cpl_policy_t *policy = cpl_policy_new(ctx);
 
-    ASSERT(cpl_policy_state_count(policy) == 1); /* root only */
+    ASSERT(cpl_policy_state_count(policy) == 1);
 
     cpl_policy_add(policy, "git commit -m *");
-    ASSERT(cpl_policy_state_count(policy) == 5); /* git, commit, -m, * */
+    ASSERT(cpl_policy_state_count(policy) == 5);
 
     cpl_policy_add(policy, "git status");
-    ASSERT(cpl_policy_state_count(policy) == 6); /* + status */
+    ASSERT(cpl_policy_state_count(policy) == 6);
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
@@ -528,7 +520,6 @@ static int test_large_policy(void)
     cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
     cpl_policy_t *policy = cpl_policy_new(ctx);
 
-    /* Add 1000 distinct patterns */
     for (int i = 0; i < 1000; i++) {
         char cmd[128];
         snprintf(cmd, sizeof(cmd), "cmd%d --option * /path/to/file%d", i, i);
@@ -537,15 +528,14 @@ static int test_large_policy(void)
 
     ASSERT(cpl_policy_count(policy) == 1000);
 
-    /* Verify a few */
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "cmd42 --option something /path/to/file42", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "cmd42 --option something /path/to/file42", &r);
     ASSERT(err == CPL_OK);
 
-    err = cpl_policy_verify(policy, "cmd999 --option test /path/to/file999", &matched);
+    err = cpl_policy_eval(policy, "cmd999 --option test /path/to/file999", &r);
     ASSERT(err == CPL_OK);
 
-    err = cpl_policy_verify(policy, "cmd1000 --option x /path/to/file1000", &matched);
+    err = cpl_policy_eval(policy, "cmd1000 --option x /path/to/file1000", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     size_t alloc = cpl_policy_memory_usage(policy);
@@ -558,10 +548,10 @@ static int test_large_policy(void)
 }
 
 /* ============================================================
- * BLOOM FILTER
+ * PER-POSITION FILTER
  * ============================================================ */
 
-static int test_bloom_definite_no(void)
+static int test_filter_definite_no(void)
 {
     cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
     cpl_policy_t *policy = cpl_policy_new(ctx);
@@ -569,18 +559,18 @@ static int test_bloom_definite_no(void)
     cpl_policy_add(policy, "git commit -m *");
     cpl_policy_add(policy, "ls -la *");
 
-    /* "zzz" is a literal that appears in no pattern — bloom rejects */
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "zzz commit -m hello", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "zzz commit -m hello", &r);
     ASSERT(err == CPL_ERR_INVALID);
-    ASSERT(matched == NULL);
+    ASSERT(!r.matches);
+    ASSERT(r.matching_pattern == NULL);
 
     cpl_policy_free(policy);
     cpl_policy_ctx_free(ctx);
     return 1;
 }
 
-static int test_bloom_no_false_negatives(void)
+static int test_filter_no_false_negatives(void)
 {
     cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
     cpl_policy_t *policy = cpl_policy_new(ctx);
@@ -589,16 +579,14 @@ static int test_bloom_no_false_negatives(void)
     cpl_policy_add(policy, "git status");
     cpl_policy_add(policy, "ls -la *");
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "cat /etc/passwd", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "cat /etc/passwd", &r);
     ASSERT(err == CPL_OK);
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "git status", &matched);
+    err = cpl_policy_eval(policy, "git status", &r);
     ASSERT(err == CPL_OK);
 
-    matched = NULL;
-    err = cpl_policy_verify(policy, "ls -la /tmp", &matched);
+    err = cpl_policy_eval(policy, "ls -la /tmp", &r);
     ASSERT(err == CPL_OK);
 
     cpl_policy_free(policy);
@@ -606,13 +594,13 @@ static int test_bloom_no_false_negatives(void)
     return 1;
 }
 
-static int test_bloom_empty_policy(void)
+static int test_filter_empty_policy(void)
 {
     cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
     cpl_policy_t *policy = cpl_policy_new(ctx);
 
-    const char *matched = NULL;
-    cpl_error_t err = cpl_policy_verify(policy, "anything", &matched);
+    cpl_eval_result_t r;
+    cpl_error_t err = cpl_policy_eval(policy, "anything", &r);
     ASSERT(err == CPL_ERR_INVALID);
 
     cpl_policy_free(policy);
@@ -641,7 +629,6 @@ static int test_render_nfa_basic(void)
     cpl_error_t err = cpl_policy_render_nfa(policy, "tests/test_render.nfa", &opts);
     ASSERT(err == CPL_OK);
 
-    /* Check file exists and has expected header */
     FILE *fp = fopen("tests/test_render.nfa", "r");
     ASSERT(fp != NULL);
 
@@ -675,7 +662,6 @@ static int test_render_nfa_wildcard(void)
     cpl_error_t err = cpl_policy_render_nfa(policy, "tests/test_render_wc.nfa", &opts);
     ASSERT(err == CPL_OK);
 
-    /* Check that VSYM_BYTE_ANY (256) appears in the file */
     FILE *fp = fopen("tests/test_render_wc.nfa", "r");
     ASSERT(fp != NULL);
 
@@ -774,10 +760,10 @@ int main(void)
     TEST(test_render_nfa_wildcard);
     TEST(test_render_nfa_multiple_patterns);
 
-    printf("\nBloom filter:\n");
-    TEST(test_bloom_definite_no);
-    TEST(test_bloom_no_false_negatives);
-    TEST(test_bloom_empty_policy);
+    printf("\nPer-position filter:\n");
+    TEST(test_filter_definite_no);
+    TEST(test_filter_no_false_negatives);
+    TEST(test_filter_empty_policy);
 
     printf("\n========================================\n");
     printf("Results: %d/%d passed, %d failed\n",

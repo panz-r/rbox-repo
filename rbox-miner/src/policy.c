@@ -33,6 +33,7 @@
 #define MAX_CMD_TOKENS       128
 #define FILTER_POS_LEVELS    4
 #define FILTER_POS_CAPACITY  1024
+#define MINER_LITERAL_THRESHOLD 3
 
 /* ============================================================
  * CHILD ENTRY — 16 bytes, packed
@@ -558,15 +559,65 @@ size_t cpl_policy_count(const cpl_policy_t *policy)
 }
 
 /* ============================================================
- * VERIFICATION
+ * VERIFICATION + SUGGESTIONS (unified)
  * ============================================================ */
 
-cpl_error_t cpl_policy_verify(const cpl_policy_t *policy,
-                              const char *raw_cmd,
-                              const char **matching_pattern)
+/* Build a pattern string from typed tokens into a fixed-size buffer. */
+static bool miner_build_pattern(char *buf, size_t buf_size,
+                                 const cpl_token_t *tokens, size_t count)
 {
-    if (!policy || !raw_cmd || !matching_pattern) return CPL_ERR_INVALID;
-    *matching_pattern = NULL;
+    size_t total_len = 0;
+    for (size_t i = 0; i < count; i++) {
+        const char *part = tokens[i].type == CPL_TYPE_LITERAL
+            ? tokens[i].text
+            : cpl_type_symbol[tokens[i].type];
+        total_len += strlen(part) + (i > 0 ? 1 : 0);
+    }
+    if (total_len + 1 > buf_size) return false;
+
+    char *p = buf;
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) *p++ = ' ';
+        const char *part = tokens[i].type == CPL_TYPE_LITERAL
+            ? tokens[i].text
+            : cpl_type_symbol[tokens[i].type];
+        size_t len = strlen(part);
+        memcpy(p, part, len);
+        p += len;
+    }
+    *p = '\0';
+    return true;
+}
+
+/* Collect the pattern string at the deepest accepting state reachable
+ * from state_idx (checks state itself, then one BFS level). */
+static const char *miner_find_based_on(const cpl_policy_t *policy, uint32_t state_idx)
+{
+    policy_state_t *state = &policy->states.states[state_idx];
+    if (state->pattern_id != UINT16_MAX && state->pattern_id < policy->patterns.count)
+        return policy->patterns.strings[state->pattern_id];
+
+    uint16_t total = state->literal_count + state->wildcard_count;
+    for (uint16_t i = 0; i < total; i++) {
+        child_entry_t *c = &state->children[i];
+        policy_state_t *child = &policy->states.states[c->target];
+        if (child->pattern_id != UINT16_MAX && child->pattern_id < policy->patterns.count)
+            return policy->patterns.strings[child->pattern_id];
+    }
+    return NULL;
+}
+
+cpl_error_t cpl_policy_eval(const cpl_policy_t *policy,
+                             const char *raw_cmd,
+                             cpl_eval_result_t *result)
+{
+    if (!policy || !raw_cmd) return CPL_ERR_INVALID;
+
+    if (result) {
+        result->matches = false;
+        result->matching_pattern = NULL;
+        result->suggestion_count = 0;
+    }
 
     cpl_token_array_t cmd;
     cmd.tokens = NULL;
@@ -579,43 +630,22 @@ cpl_error_t cpl_policy_verify(const cpl_policy_t *policy,
         return CPL_ERR_INVALID;
     }
 
-    /* Per-position filter fast-path: reject definite no-matches before trie walk */
-    size_t check_len = cmd.count < FILTER_POS_LEVELS ? cmd.count : FILTER_POS_LEVELS;
-    for (size_t i = 0; i < check_len; i++) {
-        if (policy->pos_built_epoch[i] != policy->epoch) {
-            /* Lazy rebuild — need mutable policy pointer */
-            cpl_policy_t *mutable = (cpl_policy_t *)policy;
-            policy_rebuild_filters(mutable);
-            break;
-        }
-    }
-
-    for (size_t i = 0; i < check_len; i++) {
-        cpl_token_type_t ctype = cmd.tokens[i].type;
-
-        if (ctype == CPL_TYPE_LITERAL) {
-            /* Skip if any wildcard covers this position (including *) */
-            if (policy->pos_wildcard_mask[i] != 0) continue;
-            /* No filter = no literals indexed at this position, skip */
-            if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) continue;
-            uint64_t h = filter_hash_fnv1a(cmd.tokens[i].text, strlen(cmd.tokens[i].text));
-            if (!vacuum_filter_lookup(policy->pos_filters[i], h)) {
-                cpl_free_token_array(&cmd);
-                return CPL_ERR_INVALID;
-            }
-        } else {
-            /* Wildcard command token: check compatibility with policy wildcards */
-            if ((policy->pos_wildcard_mask[i] & compat_mask(ctype)) == 0) {
-                /* No compatible wildcard — check if there are any literals at this position */
-                if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) {
-                    cpl_free_token_array(&cmd);
-                    return CPL_ERR_INVALID;
-                }
+    /* Per-position filter fast-path (rebuild if needed) */
+    if (result) {
+        size_t check_len = cmd.count < FILTER_POS_LEVELS ? cmd.count : FILTER_POS_LEVELS;
+        for (size_t i = 0; i < check_len; i++) {
+            if (policy->pos_built_epoch[i] != policy->epoch) {
+                cpl_policy_t *mutable = (cpl_policy_t *)policy;
+                policy_rebuild_filters(mutable);
+                break;
             }
         }
     }
 
+    /* Walk the trie */
     uint32_t current = 0;
+    size_t match_depth = 0;
+    uint32_t match_state = 0;
 
     for (size_t i = 0; i < cmd.count; i++) {
         cpl_token_type_t ctype = cmd.tokens[i].type;
@@ -623,34 +653,233 @@ cpl_error_t cpl_policy_verify(const cpl_policy_t *policy,
         policy_state_t *node = &policy->states.states[current];
         child_entry_t *found = NULL;
 
-        if (ctype == CPL_TYPE_LITERAL) {
+        if (ctype == CPL_TYPE_LITERAL)
             found = find_literal_child(node, ctext);
-        }
 
         if (!found) {
             uint16_t compat = compat_mask(ctype) & node->wildcard_mask;
-            if (compat) {
+            if (compat)
                 found = find_wildcard_child(node, ctype);
-            }
         }
 
-        if (!found) {
-            cpl_free_token_array(&cmd);
-            return CPL_ERR_INVALID;
-        }
+        if (!found) break;
 
         current = found->target;
+        match_depth = i + 1;
+        match_state = current;
+    }
+
+    policy_state_t *end_node = &policy->states.states[current];
+    if (match_depth == cmd.count &&
+        end_node->pattern_id != UINT16_MAX &&
+        end_node->pattern_id < policy->patterns.count) {
+        cpl_free_token_array(&cmd);
+        if (result) {
+            result->matches = true;
+            result->matching_pattern = policy->patterns.strings[end_node->pattern_id];
+        }
+        return CPL_OK;
+    }
+
+    /* Per-position filter fast-path: reject definite no-matches */
+    if (result) {
+        size_t check_len = cmd.count < FILTER_POS_LEVELS ? cmd.count : FILTER_POS_LEVELS;
+        for (size_t i = 0; i < check_len; i++) {
+            cpl_token_type_t ctype = cmd.tokens[i].type;
+            if (ctype == CPL_TYPE_LITERAL) {
+                if (policy->pos_wildcard_mask[i] != 0) continue;
+                if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) continue;
+                uint64_t h = filter_hash_fnv1a(cmd.tokens[i].text, strlen(cmd.tokens[i].text));
+                if (!vacuum_filter_lookup(policy->pos_filters[i], h)) {
+                    cpl_free_token_array(&cmd);
+                    goto generate_suggestions;
+                }
+            } else {
+                if ((policy->pos_wildcard_mask[i] & compat_mask(ctype)) == 0) {
+                    if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) {
+                        cpl_free_token_array(&cmd);
+                        goto generate_suggestions;
+                    }
+                }
+            }
+        }
     }
 
     cpl_free_token_array(&cmd);
+    if (!result) return CPL_ERR_INVALID;
 
-    policy_state_t *node = &policy->states.states[current];
-    if (node->pattern_id == UINT16_MAX) return CPL_ERR_INVALID;
+generate_suggestions:
+    cpl_free_token_array(&cmd);
+    if (!result) return CPL_ERR_INVALID;
 
-    if (node->pattern_id < policy->patterns.count) {
-        *matching_pattern = policy->patterns.strings[node->pattern_id];
+    /* Re-normalize for suggestion generation */
+    err = cpl_normalize_typed(raw_cmd, &cmd);
+    if (err != CPL_OK) return err;
+
+    double confidence = (double)match_depth / (double)cmd.count;
+    const char *based_on = miner_find_based_on(policy, match_state);
+
+    /* Suggestion A: minimal extension */
+    {
+        cpl_token_t *pat_tokens = malloc(cmd.count * sizeof(cpl_token_t));
+        if (!pat_tokens) { cpl_free_token_array(&cmd); return CPL_ERR_MEMORY; }
+
+        current = 0;
+        for (size_t i = 0; i < match_depth; i++) {
+            cpl_token_type_t ctype = cmd.tokens[i].type;
+            const char *ctext = cmd.tokens[i].text;
+            policy_state_t *node = &policy->states.states[current];
+            child_entry_t *found = NULL;
+            if (ctype == CPL_TYPE_LITERAL)
+                found = find_literal_child(node, ctext);
+            if (!found) {
+                uint16_t compat = compat_mask(ctype) & node->wildcard_mask;
+                if (compat)
+                    found = find_wildcard_child(node, ctype);
+            }
+            if (found) {
+                pat_tokens[i].text = (char *)found->text;
+                pat_tokens[i].type = (cpl_token_type_t)found->type;
+                current = found->target;
+            } else {
+                pat_tokens[i].text = (char *)cmd.tokens[i].text;
+                pat_tokens[i].type = cmd.tokens[i].type;
+            }
+        }
+        for (size_t i = match_depth; i < cmd.count; i++) {
+            pat_tokens[i].text = (char *)cmd.tokens[i].text;
+            pat_tokens[i].type = CPL_TYPE_LITERAL;
+        }
+
+        miner_build_pattern(result->suggestions[0].pattern,
+                            sizeof(result->suggestions[0].pattern),
+                            pat_tokens, cmd.count);
+        result->suggestions[0].based_on = based_on;
+        result->suggestions[0].confidence = confidence;
+        free(pat_tokens);
     }
-    return CPL_OK;
+
+    /* Suggestion B: best generalization */
+    size_t n_suggestions = 1;
+
+    if (match_depth < cmd.count) {
+        cpl_token_type_t div_type = cmd.tokens[match_depth].type;
+        policy_state_t *div_node = &policy->states.states[match_state];
+
+        uint16_t wm = div_node->wildcard_mask;
+        if (wm != 0 && (compat_mask(div_type) & wm) != 0) {
+            cpl_token_type_t best_wild = CPL_TYPE_ANY;
+            uint16_t compat = compat_mask(div_type) & wm;
+            while (compat) {
+                int t = __builtin_ctz(compat);
+                compat &= ~(1u << t);
+                cpl_token_type_t wt = (cpl_token_type_t)t;
+                cpl_token_type_t joined = cpl_join(wt, div_type);
+                if (best_wild == CPL_TYPE_ANY || cpl_is_compatible(joined, best_wild))
+                    best_wild = joined;
+            }
+
+            if (best_wild != CPL_TYPE_ANY) {
+                size_t pat_len = match_depth + 1;
+                cpl_token_t *pat_tokens = malloc(pat_len * sizeof(cpl_token_t));
+                if (pat_tokens) {
+                    current = 0;
+                    for (size_t i = 0; i < match_depth; i++) {
+                        cpl_token_type_t ctype = cmd.tokens[i].type;
+                        const char *ctext = cmd.tokens[i].text;
+                        policy_state_t *node = &policy->states.states[current];
+                        child_entry_t *found = NULL;
+                        if (ctype == CPL_TYPE_LITERAL)
+                            found = find_literal_child(node, ctext);
+                        if (!found) {
+                            uint16_t compat2 = compat_mask(ctype) & node->wildcard_mask;
+                            if (compat2)
+                                found = find_wildcard_child(node, ctype);
+                        }
+                        if (found) {
+                            pat_tokens[i].text = (char *)found->text;
+                            pat_tokens[i].type = (cpl_token_type_t)found->type;
+                            current = found->target;
+                        }
+                    }
+                    pat_tokens[match_depth].text = (char *)cpl_type_symbol[best_wild];
+                    pat_tokens[match_depth].type = best_wild;
+
+                    miner_build_pattern(result->suggestions[1].pattern,
+                                        sizeof(result->suggestions[1].pattern),
+                                        pat_tokens, pat_len);
+                    result->suggestions[1].based_on = based_on;
+                    result->suggestions[1].confidence = confidence;
+                    free(pat_tokens);
+                    n_suggestions = 2;
+                }
+            }
+        } else if (wm == 0 && div_node->literal_count >= MINER_LITERAL_THRESHOLD) {
+            cpl_token_type_t joined = CPL_TYPE_LITERAL;
+            uint16_t total = div_node->literal_count;
+            for (uint16_t i = 0; i < total; i++) {
+                child_entry_t *c = &div_node->children[i];
+                if (c->type != CPL_TYPE_LITERAL) continue;
+                cpl_token_type_t ct = cpl_classify_token(c->text);
+                if (joined == CPL_TYPE_LITERAL) joined = ct;
+                else joined = cpl_join(joined, ct);
+            }
+            joined = cpl_join(joined, div_type);
+
+            if (joined != CPL_TYPE_LITERAL) {
+                size_t pat_len = cmd.count;
+                cpl_token_t *pat_tokens = malloc(pat_len * sizeof(cpl_token_t));
+                if (pat_tokens) {
+                    current = 0;
+                    for (size_t i = 0; i < match_depth; i++) {
+                        cpl_token_type_t ctype = cmd.tokens[i].type;
+                        const char *ctext = cmd.tokens[i].text;
+                        policy_state_t *node = &policy->states.states[current];
+                        child_entry_t *found = NULL;
+                        if (ctype == CPL_TYPE_LITERAL)
+                            found = find_literal_child(node, ctext);
+                        if (!found) {
+                            uint16_t compat2 = compat_mask(ctype) & node->wildcard_mask;
+                            if (compat2)
+                                found = find_wildcard_child(node, ctype);
+                        }
+                        if (found) {
+                            pat_tokens[i].text = (char *)found->text;
+                            pat_tokens[i].type = (cpl_token_type_t)found->type;
+                            current = found->target;
+                        }
+                    }
+                    pat_tokens[match_depth].text = (char *)cpl_type_symbol[joined];
+                    pat_tokens[match_depth].type = joined;
+                    for (size_t i = match_depth + 1; i < cmd.count; i++) {
+                        pat_tokens[i].text = (char *)cmd.tokens[i].text;
+                        pat_tokens[i].type = cmd.tokens[i].type;
+                    }
+
+                    miner_build_pattern(result->suggestions[1].pattern,
+                                        sizeof(result->suggestions[1].pattern),
+                                        pat_tokens, pat_len);
+                    result->suggestions[1].based_on = based_on;
+                    result->suggestions[1].confidence = confidence;
+                    free(pat_tokens);
+                    n_suggestions = 2;
+                }
+            }
+        }
+    }
+
+    if (n_suggestions < 2) {
+        miner_build_pattern(result->suggestions[1].pattern,
+                            sizeof(result->suggestions[1].pattern),
+                            cmd.tokens, cmd.count);
+        result->suggestions[1].based_on = NULL;
+        result->suggestions[1].confidence = confidence;
+        n_suggestions = 2;
+    }
+
+    result->suggestion_count = n_suggestions;
+    cpl_free_token_array(&cmd);
+    return CPL_ERR_INVALID;
 }
 
 /* ============================================================
@@ -1057,4 +1286,78 @@ size_t cpl_policy_state_count(const cpl_policy_t *policy)
 {
     if (!policy) return 0;
     return policy->states.count;
+}
+
+/* ============================================================
+ * POLICY EXPANSION SUGGESTIONS (Miner — Step 2 only)
+ * ============================================================ */
+
+/* Next-wider type in the lattice. */
+static cpl_token_type_t next_wider_type(cpl_token_type_t t)
+{
+    switch (t) {
+        case CPL_TYPE_HEXHASH:     return CPL_TYPE_NUMBER;
+        case CPL_TYPE_NUMBER:      return CPL_TYPE_VALUE;
+        case CPL_TYPE_IPV4:        return CPL_TYPE_VALUE;
+        case CPL_TYPE_WORD:        return CPL_TYPE_VALUE;
+        case CPL_TYPE_QUOTED:      return CPL_TYPE_QUOTED_SPACE;
+        case CPL_TYPE_QUOTED_SPACE:return CPL_TYPE_VALUE;
+        case CPL_TYPE_FILENAME:    return CPL_TYPE_REL_PATH;
+        case CPL_TYPE_REL_PATH:    return CPL_TYPE_PATH;
+        case CPL_TYPE_ABS_PATH:    return CPL_TYPE_PATH;
+        case CPL_TYPE_PATH:        return CPL_TYPE_ANY;
+        case CPL_TYPE_URL:         return CPL_TYPE_ANY;
+        case CPL_TYPE_VALUE:       return CPL_TYPE_ANY;
+        case CPL_TYPE_ANY:         return CPL_TYPE_ANY;
+        default:                   return t;
+    }
+}
+
+size_t cpl_policy_suggest_variants(const cpl_policy_t *policy,
+                                    const cpl_token_t *tokens,
+                                    size_t token_count,
+                                    cpl_expand_suggestion_t out[3])
+{
+    if (!policy || !tokens || !out || token_count == 0) return 0;
+
+    /* Variant 0: exact match as literal */
+    {
+        cpl_token_t *lit_tokens = malloc(token_count * sizeof(cpl_token_t));
+        if (!lit_tokens) return 0;
+        for (size_t i = 0; i < token_count; i++) {
+            lit_tokens[i].text = (char *)tokens[i].text;
+            lit_tokens[i].type = CPL_TYPE_LITERAL;
+        }
+        miner_build_pattern(out[0].pattern, sizeof(out[0].pattern),
+                            lit_tokens, token_count);
+        out[0].based_on = NULL;
+        out[0].confidence = 1.0;
+        free(lit_tokens);
+    }
+
+    /* Variants 1..N: widen one non-literal token at a time */
+    size_t n_variants = 1;
+    for (size_t i = 0; i < token_count && n_variants < 3; i++) {
+        if (tokens[i].type == CPL_TYPE_LITERAL) continue;
+
+        cpl_token_type_t wider = next_wider_type(tokens[i].type);
+        if (wider == tokens[i].type) continue;
+
+        cpl_token_t *pat_tokens = malloc(token_count * sizeof(cpl_token_t));
+        if (!pat_tokens) continue;
+        for (size_t j = 0; j < token_count; j++)
+            pat_tokens[j] = tokens[j];
+        pat_tokens[i].text = (char *)cpl_type_symbol[wider];
+        pat_tokens[i].type = wider;
+
+        miner_build_pattern(out[n_variants].pattern,
+                            sizeof(out[n_variants].pattern),
+                            pat_tokens, token_count);
+        out[n_variants].based_on = NULL;
+        out[n_variants].confidence = 1.0;
+        free(pat_tokens);
+        n_variants++;
+    }
+
+    return n_variants;
 }
