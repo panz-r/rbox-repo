@@ -456,6 +456,10 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     uint32_t base_delay_ms, uint32_t max_retries, uint32_t timeout_ms,
     rbox_error_info_t *err_info) {
 
+    rbox_error_t err = RBOX_OK;
+    char *packet = NULL;
+    rbox_session_t *session = NULL;
+
     if (!socket_path || !command || !out_packet || !out_packet_len) {
         rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
         return RBOX_ERR_INVALID;
@@ -469,33 +473,34 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
     uint64_t deadline = (timeout_ms > 0) ? start_time + timeout_ms : 0;
 
     while (1) {
-        /* Build request packet */
-        char *packet = malloc(8192);
+        err = RBOX_OK;
+
+        packet = malloc(8192);
         if (!packet) {
-            return RBOX_ERR_MEMORY;
+            err = RBOX_ERR_MEMORY;
+            goto cleanup;
         }
         size_t packet_len = 0;
 
-        rbox_error_t err = rbox_build_request(packet, 8192, &packet_len,
+        err = rbox_build_request(packet, 8192, &packet_len,
             command, caller, syscall, argc, argv,
             env_var_count, env_var_names, env_var_scores);
         if (err != RBOX_OK || packet_len == 0) {
-            free(packet);
-            return err ? err : RBOX_ERR_MEMORY;
+            err = err ? err : RBOX_ERR_MEMORY;
+            goto cleanup;
         }
 
         uint8_t request_id[16];
         memcpy(request_id, packet + RBOX_HEADER_OFFSET_REQUEST_ID, 16);
 
-        rbox_session_t *session = rbox_session_new(socket_path, base_delay_ms, max_retries, NULL);
+        session = rbox_session_new(socket_path, base_delay_ms, max_retries, NULL);
         if (!session) {
-            free(packet);
-            return RBOX_ERR_MEMORY;
+            err = RBOX_ERR_MEMORY;
+            goto cleanup;
         }
 
         memcpy(session->request_id, request_id, 16);
 
-        /* Session loop */
         while (1) {
             rbox_session_state_t state = rbox_session_state(session);
 
@@ -503,9 +508,7 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                 case RBOX_SESSION_DISCONNECTED: {
                     err = rbox_session_connect(session, NULL);
                     if (err != RBOX_OK && err != RBOX_ERR_IO) {
-                        free(packet);
-                        rbox_session_free(session);
-                        return err;
+                        goto cleanup;
                     }
                     break;
                 }
@@ -524,10 +527,6 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                             rbox_session_heartbeat(session, POLLERR, NULL);
                         }
                     } else {
-                        /* No client fd (retry wait period) – drive the
-                         * time-based retry logic by calling heartbeat
-                         * with no events, then sleep briefly to avoid
-                         * busy-looping. */
                         rbox_session_heartbeat(session, 0, NULL);
                         usleep(10000);
                     }
@@ -554,9 +553,8 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                 case RBOX_SESSION_WAITING:
                 case RBOX_SESSION_RESPONSE_READY: {
                     if (timeout_ms > 0 && get_time_ms() > deadline) {
-                        rbox_session_free(session);
-                        free(packet);
-                        return RBOX_ERR_IO;
+                        err = RBOX_ERR_IO;
+                        goto cleanup;
                     }
                     short events;
                     int fd = rbox_session_pollfd(session, &events);
@@ -577,8 +575,8 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                 }
 
                 case RBOX_SESSION_FAILED: {
-                    /* Session failed – break out to retry outer loop */
-                    goto session_failed;
+                    err = RBOX_ERR_IO;
+                    goto cleanup;
                 }
             }
 
@@ -588,24 +586,28 @@ rbox_error_t rbox_blocking_request_raw(const char *socket_path,
                 session->response_data = NULL;
                 session->response_len = 0;
                 rbox_session_free(session);
-                free(packet);
+                session = NULL;
+                RBOX_FREE(packet);
                 return RBOX_OK;
             }
         }
 
-session_failed:
+cleanup:
         rbox_session_free(session);
-        free(packet);
-        attempt++;
-        if (max_retries > 0 && attempt >= max_retries) {
+        session = NULL;
+        RBOX_FREE(packet);
+        packet = NULL;
+
+        if (err != RBOX_ERR_IO || (max_retries > 0 && attempt >= max_retries)) {
             break;
         }
+        attempt++;
         if (base_delay_ms > 0) {
             usleep(base_delay_ms * 1000 * attempt);
         }
     }
 
-    return RBOX_ERR_IO;
+    return err ? err : RBOX_ERR_IO;
 }
 
 

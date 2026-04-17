@@ -37,6 +37,29 @@ typedef enum {
     RBOX_ERR_VERSION_MISMATCH = -10,  /* Major version mismatch (incompatible) */
 } rbox_error_t;
 
+/* Error handling macros for consistent goto-cleanup pattern:
+ *
+ * Usage:
+ *   rbox_error_t err = RBOX_OK;
+ *   char *resource = NULL;
+ *
+ *   if ((err = init_resource(&resource)) != RBOX_OK) goto cleanup;
+ *   if ((err = use_resource(resource)) != RBOX_OK) goto cleanup;
+ *
+ * cleanup:
+ *   free(resource);
+ *   return err;
+ *
+ * The RBOX_ERR_GOTO macro wraps an rbox_error_t check and jumps to label.
+ * The RBOX_FREE and RBOX_CLOSE_FD macros provide NULL(fd)-safe cleanup. */
+#define RBOX_ERR_GOTO(err, label) \
+    do { rbox_error_t _err = (err); \
+         if (_err != RBOX_OK) goto label; \
+    } while(0)
+
+#define RBOX_FREE(p) do { if (p) { free(p); (p) = NULL; } } while(0)
+#define RBOX_CLOSE_FD(fd) do { if ((fd) >= 0) { close(fd); (fd) = -1; } } while(0)
+
 /* Detailed error information - caller-allocated, no memory allocation by library.
  * On error, the library fills this structure with error details.
  * The message field points to a static string literal (do not free). */
