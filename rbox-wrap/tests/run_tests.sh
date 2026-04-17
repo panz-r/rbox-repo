@@ -14,7 +14,7 @@ SERVER="$PROJECT_DIR/../bin/readonlybox-server"
 SOCKET="$(mktemp /tmp/rbox-wrap-test.XXXXXX.sock)"
 export SOCKET
 export READONLYBOX_SOCKET="$SOCKET"
-export LD_LIBRARY_PATH="$PROJECT_DIR/../rbox-protocol:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$PROJECT_DIR/../rbox-protocol/build:$PROJECT_DIR/../lib:$LD_LIBRARY_PATH"
 PASS=0
 FAIL=0
 SKIP=0
