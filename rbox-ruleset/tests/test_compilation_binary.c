@@ -264,8 +264,8 @@ static void test_binary_serialization_all_variants(void)
 
     for (i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
         soft_access_ctx_t c = {tests[i].op, tests[i].path, NULL, tests[i].subject};
-        int r1 = soft_ruleset_check_ctx(rs, &c, &__g, NULL);
-        int r2 = soft_ruleset_check_ctx(rs2, &c, &__g, NULL);
+        (void)soft_ruleset_check_ctx(rs, &c, &__g, NULL);
+        (void)soft_ruleset_check_ctx(rs2, &c, &__g, NULL);
         TEST_ASSERT_EQ(r1, r2, "bin_all_types: query matches after round-trip");
     }
 

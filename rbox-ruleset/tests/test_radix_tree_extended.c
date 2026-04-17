@@ -19,7 +19,8 @@ static void test_simplify_edge_cases(void)
     radix_tree_t *tree;
     landlock_rule_t *rules;
     size_t count;
-    int found, i;
+    int found;
+    size_t i;
 
     /* Case 1: Deep non-subset mask blocks pruning of intermediate nodes
      *
@@ -37,14 +38,14 @@ static void test_simplify_edge_cases(void)
     rules = NULL; count = 0;
     radix_tree_collect_rules(tree, &rules, &count);
     found = 0;
-    for (i = 0; i < (int)count; i++) {
+    for (i = 0; (size_t)i < count; i++) {
         if (strcmp(rules[i].path, "/a/b/c/d") == 0) {
             found = 1;
             TEST_ASSERT_EQ(rules[i].access, 0x80, "deep: /a/b/c/d mask correct");
         }
     }
     TEST_ASSERT(found, "deep: non-subset mask blocks pruning");
-    for (i = 0; i < (int)count; i++) free((void *)rules[i].path);
+    for (i = 0; (size_t)i < count; i++) free((void *)rules[i].path);
     free(rules);
     radix_tree_free(tree);
 
@@ -62,11 +63,11 @@ static void test_simplify_edge_cases(void)
     rules = NULL; count = 0;
     radix_tree_collect_rules(tree, &rules, &count);
     found = 0;
-    for (i = 0; i < (int)count; i++) {
+    for (i = 0; (size_t)i < count; i++) {
         if (strcmp(rules[i].path, "/home/shared") == 0) found = 1;
     }
     TEST_ASSERT(found, "deny: descendant blocks pruning");
-    for (i = 0; i < (int)count; i++) free((void *)rules[i].path);
+    for (i = 0; (size_t)i < count; i++) free((void *)rules[i].path);
     free(rules);
     radix_tree_free(tree);
 
@@ -84,13 +85,13 @@ static void test_simplify_edge_cases(void)
     rules = NULL; count = 0;
     radix_tree_collect_rules(tree, &rules, &count);
     int found_a = 0, found_b = 0;
-    for (size_t i = 0; i < count; i++) {
+    for (i = 0; (size_t)i < count; i++) {
         if (strcmp(rules[i].path, "/base/a") == 0) found_a = 1;
         if (strcmp(rules[i].path, "/base/b") == 0) found_b = 1;
     }
     TEST_ASSERT(found_a,  "sibling: non-subset kept");
     TEST_ASSERT(!found_b, "sibling: subset pruned");
-    for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
+    for (i = 0; (size_t)i < count; i++) free((void *)rules[i].path);
     free(rules);
     radix_tree_free(tree);
 }
@@ -126,6 +127,7 @@ static void test_deny_overlap_removal(void)
     landlock_rule_t *rules;
     size_t count;
     int found_public, found_private;
+    size_t i;
 
     /* Case 1: Deny at root clears all allow rules below it */
     tree = radix_tree_new();
@@ -149,13 +151,13 @@ static void test_deny_overlap_removal(void)
     rules = NULL; count = 0;
     radix_tree_collect_rules(tree, &rules, &count);
     found_public = 0; found_private = 0;
-    for (size_t i = 0; i < count; i++) {
+    for (i = 0; (size_t)i < count; i++) {
         if (strcmp(rules[i].path, "/home/user/public") == 0)  found_public = 1;
         if (strcmp(rules[i].path, "/home/user/private") == 0) found_private = 1;
     }
     TEST_ASSERT(found_public,  "overlap: public survives");
     TEST_ASSERT(!found_private, "overlap: private removed");
-    for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
+    for (i = 0; (size_t)i < count; i++) free((void *)rules[i].path);
     free(rules);
     radix_tree_free(tree);
 }
@@ -190,9 +192,11 @@ static void test_large_tree(void)
     /* Case 2: 200-segment deep path — single rule collected */
     tree = radix_tree_new();
     char path[2000];
-    int pos = 0;
-    for (int i = 0; i < 200; i++) {
-        pos += snprintf(path + pos, sizeof(path) - pos, "/seg%d", i);
+    size_t pos = 0;
+    for (unsigned int i = 0; i < 200; i++) {
+        int ret = snprintf(path + pos, sizeof(path) - pos, "/seg%u", i);
+        if (ret < 0) break;
+        pos += (size_t)ret;
     }
     TEST_ASSERT_EQ(radix_tree_allow(tree, path, 7), 0, "large: deep path inserted");
     rules = NULL; count = 0;

@@ -839,7 +839,7 @@ int soft_ruleset_parse_compact_rules(soft_ruleset_t *rs,
                                         NULL, NULL, flags);
         if (ret < 0) {
             snprintf(rs->last_error, sizeof(rs->last_error),
-                     "%s: rule %d: failed to add rule for '%s': %s",
+                     "%s: rule %d: failed to add rule for '%.100s': %.50s",
                      source_name ? source_name : "compact", rule_idx,
                      path, strerror(errno));
             return -1;
@@ -1062,13 +1062,13 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
         uint64_t src_hash = path_hash(ctx->src_path);
         uint32_t src_req = op_required_src_mode(rs, ctx->op);
         query_cache_entry_t *src_hit = query_cache_lookup(mutable, src_hash,
-                                                           subj_hash, src_req);
+                                                           (uint32_t)subj_hash, src_req);
 
         if (is_binary) {
             uint64_t dst_hash = path_hash(ctx->dst_path);
             uint32_t dst_req = op_required_dst_mode(rs, ctx->op);
             query_cache_entry_t *dst_hit = query_cache_lookup(mutable, dst_hash,
-                                                               subj_hash, dst_req);
+                                                               (uint32_t)subj_hash, dst_req);
 
             if (src_hit && dst_hit) {
                 /* Both subqueries cached and cover required modes */
@@ -1199,13 +1199,13 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             if (!out_log && determined) {
                 soft_ruleset_t *m = (soft_ruleset_t *)rs;
                 uint64_t sh = path_hash(ctx->src_path);
-                query_cache_store(m, sh, subj_hash,
+                query_cache_store(m, sh, (uint32_t)subj_hash,
                                   src_granted, eval_mask, src_deny,
                                   src_pattern != NULL);
                 if (src_deny < 0 &&
                     (src_granted & op_required_src_mode(rs, ctx->op)) == op_required_src_mode(rs, ctx->op)) {
                     uint64_t dh = path_hash(ctx->dst_path);
-                    query_cache_store(m, dh, subj_hash,
+                    query_cache_store(m, dh, (uint32_t)subj_hash,
                                       dst_granted, eval_mask, dst_deny,
                                       dst_pattern != NULL);
                 }
@@ -1247,7 +1247,7 @@ int soft_ruleset_check_ctx(const soft_ruleset_t *rs,
             if (!out_log && determined) {
                 soft_ruleset_t *m = (soft_ruleset_t *)rs;
                 uint64_t sh = path_hash(ctx->src_path);
-                query_cache_store(m, sh, subj_hash,
+                query_cache_store(m, sh, (uint32_t)subj_hash,
                                   granted, eval_mask, deny_layer,
                                   matched_pattern != NULL);
             }

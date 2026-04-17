@@ -427,7 +427,7 @@ landlock_builder_t *soft_ruleset_to_landlock(const soft_ruleset_t *rs,
                     if (deny_idx >= deny_cap) {
                         deny_cap = deny_cap == 0 ? 16 : deny_cap * 2;
                         deny_prefixes = realloc(deny_prefixes,
-                                                (deny_cap + 1) * sizeof(char *));
+                                                (size_t)(deny_cap + 1) * sizeof(char *));
                         if (!deny_prefixes) {
                             landlock_builder_free(b);
                             soft_landlock_deny_prefixes_free(deny_prefixes);
@@ -633,7 +633,7 @@ landlock_builder_t *soft_ruleset_to_landlock_with_report(
                     if (deny_idx >= deny_cap) {
                         deny_cap = deny_cap == 0 ? 16 : deny_cap * 2;
                         deny_prefixes = realloc(deny_prefixes,
-                                                (deny_cap + 1) * sizeof(char *));
+                                                (size_t)(deny_cap + 1) * sizeof(char *));
                         if (!deny_prefixes) {
                             landlock_builder_free(b);
                             soft_landlock_deny_prefixes_free(deny_prefixes);

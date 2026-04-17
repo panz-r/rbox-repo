@@ -1231,17 +1231,17 @@ static void test_compiled_serialization(void)
     TEST_ASSERT(buf_copy != NULL, "ser_bin: buffer copy allocated");
     memcpy(buf_copy, buf, len);
     /* Flip a byte in the payload -- both hashes should catch this */
-    ((char *)buf_copy)[10] ^= 0xFF;
+    ((char *)buf_copy)[10] ^= (char)0xFF;
     TEST_ASSERT(soft_ruleset_load_compiled(buf_copy, len) == NULL,
                 "ser_bin: corrupted payload rejected");
     /* Restore and corrupt CRC-32 only -- FNV-1a should catch this */
-    ((char *)buf_copy)[10] ^= 0xFF;
-    ((char *)buf_copy)[len - 7] ^= 0xFF;
+    ((char *)buf_copy)[10] ^= (char)0xFF;
+    ((char *)buf_copy)[len - 7] ^= (char)0xFF;
     TEST_ASSERT(soft_ruleset_load_compiled(buf_copy, len) == NULL,
                 "ser_bin: corrupted CRC-32 caught by FNV-1a");
     /* Restore and corrupt FNV-1a only -- CRC-32 should catch this */
-    ((char *)buf_copy)[len - 7] ^= 0xFF;
-    ((char *)buf_copy)[len - 3] ^= 0xFF;
+    ((char *)buf_copy)[len - 7] ^= (char)0xFF;
+    ((char *)buf_copy)[len - 3] ^= (char)0xFF;
     TEST_ASSERT(soft_ruleset_load_compiled(buf_copy, len) == NULL,
                 "ser_bin: corrupted FNV-1a caught by CRC-32");
     free(buf_copy);

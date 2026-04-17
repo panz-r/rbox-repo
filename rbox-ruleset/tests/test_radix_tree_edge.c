@@ -73,7 +73,7 @@ static void test_arena_usage(void)
         radix_tree_allow(tree, path, 7);
     }
     usage = radix_tree_arena_usage(tree);
-    printf("    large: 1000 paths arena usage: %.1f KB\n", usage / 1024.0);
+    printf("    large: 1000 paths arena usage: %.1f KB\n", (double)usage / 1024.0);
     TEST_ASSERT(usage < 1024 * 1024, "large: usage < 1 MB for 1000 paths");
     radix_tree_free(tree);
 }
@@ -161,9 +161,11 @@ static void test_path_max_boundary(void)
     /* Case 3: Many segments (256+) capped at 256 */
     tree = radix_tree_new();
     char path3[4000];
-    int pos = 0;
-    for (int i = 0; i < 300; i++) {
-        pos += snprintf(path3 + pos, sizeof(path3) - pos, "/s%d", i);
+    size_t pos = 0;
+    for (unsigned int i = 0; i < 300; i++) {
+        int ret = snprintf(path3 + pos, sizeof(path3) - pos, "/s%u", i);
+        if (ret < 0) break;
+        pos += (size_t)ret;
     }
     int ret3 = radix_tree_allow(tree, path3, 7);
     TEST_ASSERT_EQ(ret3, 0, "segments: long path accepted");

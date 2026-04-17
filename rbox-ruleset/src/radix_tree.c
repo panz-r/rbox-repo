@@ -213,7 +213,7 @@ int radix_tree_allow(radix_tree_t *tree, const char *path, uint64_t access)
     bool was = node_is_terminal(cur);
     node_set_terminal(cur);
     cur->access_mask |= access;
-    cur->flags &= ~RADIX_F_DENY;
+    cur->flags = (uint16_t)(cur->flags & ~RADIX_F_DENY);
     if (!was) tree->num_rules++;
     return 0;
 }
@@ -291,7 +291,7 @@ void radix_tree_overlap_removal(radix_tree_t *tree)
         int deny_depth = stack[sp].deny_depth;
         if (node_is_deny(cur)) deny_depth++;
         if (deny_depth > 0 && node_is_terminal(cur) && !node_is_deny(cur)) {
-            cur->flags &= ~RADIX_F_TERMINAL;
+            cur->flags = (uint16_t)(cur->flags & ~RADIX_F_TERMINAL);
             cur->access_mask = 0;
         }
         for (int i = cur->num_children - 1; i >= 0; i--) {

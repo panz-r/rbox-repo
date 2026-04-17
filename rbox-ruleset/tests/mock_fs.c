@@ -211,7 +211,7 @@ static void clean_path(const char *in, char *out, size_t out_size)
             out[pos++] = '/';
         }
         if (pos + clen[i] >= (int)out_size) break;
-        memcpy(out + pos, comps[i], clen[i]);
+        memcpy(out + pos, comps[i], (size_t)clen[i]);
         pos += clen[i];
     }
     out[pos] = '\0';
