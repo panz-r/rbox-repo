@@ -26,9 +26,14 @@
 #define TOTAL_SYMBOLS (MAX_SYMBOLS * 2 + 1)
 
 // Debug and Configuration
-static bool minimize_verbose = true;  // Enable for debugging
+static bool minimize_verbose = false;  // Enable for debugging
 static dfa_min_algo_t current_algo = DFA_MIN_HOPCROFT;
-static dfa_minimize_stats_t last_stats = {0};
+static dfa_minimize_stats_t last_stats = {
+    .initial_states = 0,
+    .final_states = 0,
+    .states_removed = 0,
+    .iterations = 0
+};
 
 #define VERBOSE_PRINT(...) do { \
     if (minimize_verbose) fprintf(stderr, "[MINIMIZE] " __VA_ARGS__); \

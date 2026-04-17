@@ -126,6 +126,10 @@ static void print_embedd_help(const char* progname) {
     fprintf(stderr, "\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -v                          Verbose output\n");
+    fprintf(stderr, "  -q, --quiet               Suppress stderr output\n");
+    fprintf(stderr, "  -j, --json                JSON output\n");
+    fprintf(stderr, "  -f, --force               Overwrite output file if it exists\n");
+    fprintf(stderr, "  --stats                   Show statistics\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Exit codes:\n");
     fprintf(stderr, "  0 = success\n");
@@ -276,18 +280,103 @@ static void json_key_value_str(FILE* out, const char* key, const char* value) {
     json_escape_string(out, value);
 }
 
+// ============================================================================
+// CSV Output Helpers (with proper escaping)
+// ============================================================================
+
+static void csv_escape(FILE* out, const char* str) {
+    if (!str) {
+        fputc('"', out);
+        fputc('"', out);
+        return;
+    }
+    bool needs_escape = false;
+    for (const char* p = str; *p; p++) {
+        if (*p == '"' || *p == ',' || *p == '\n' || *p == '\r') {
+            needs_escape = true;
+            break;
+        }
+    }
+    if (needs_escape) {
+        fputc('"', out);
+        for (const char* p = str; *p; p++) {
+            if (*p == '"') fputc('"', out);
+            fputc(*p, out);
+        }
+        fputc('"', out);
+    } else {
+        fputs(str, out);
+    }
+}
+
+// ============================================================================
+// Error Helpers
+// ============================================================================
+
+static void print_requires_arg_error(const char* opt) {
+    fprintf(stderr, "Error: %s requires an argument\n", opt);
+}
+
+static void print_file_error(const char* context, const char* filename) {
+    fprintf(stderr, "Error: cannot open %s '%s': %s\n", context, filename, strerror(errno));
+}
+
+static void print_no_dfa_file_error(void) {
+    fprintf(stderr, "Error: no DFA file specified\n");
+}
+
+static void print_no_output_file_error(void) {
+    fprintf(stderr, "Error: no output file specified\n");
+}
+
+static void print_unknown_option_error(const char* opt) {
+    fprintf(stderr, "Error: unknown option '%s' (use --help for available options)\n", opt);
+}
+
+static void print_pipeline_error(void) {
+    fprintf(stderr, "Error: failed to create pipeline\n");
+}
+
+static void print_memory_error(void) {
+    fprintf(stderr, "Error: failed to allocate memory for DFA\n");
+}
+
+static void print_read_dfa_error(void) {
+    fprintf(stderr, "Error: failed to read DFA file\n");
+}
+
+static void print_save_dfa_error(const char* msg) {
+    fprintf(stderr, "Error: failed to save DFA: %s\n", msg);
+}
+
+// ============================================================================
 // CSV stats output
 static void csv_stats_header(FILE* out) {
-    fprintf(out, "command,status,input,output,size,states,premin_removed,min_removed,min_iterations,time_ms\n");
+    fprintf(out, "command,status,input,output,size,states,premin_initial,premin_final,premin_removed,premin_identical,premin_prefix,premin_suffix,premin_sat,min_initial,min_final,min_removed,min_iterations,parse_ms,order_ms,nfa_build_ms,premin_ms,dfa_convert_ms,min_ms,compress_ms,total_ms\n");
 }
 
 static void csv_stats_row(FILE* out, const char* cmd, const char* status, 
                           const char* input, const char* output,
-                          size_t size, int states, int premin_removed, 
-                          int min_removed, int min_iterations, long time_ms) {
-    fprintf(out, "%s,%s,%s,%s,%zu,%d,%d,%d,%d,%ld\n", 
-            cmd, status, input, output, size, states, 
-            premin_removed, min_removed, min_iterations, time_ms);
+                          size_t size, int states,
+                          int premin_initial, int premin_final, int premin_removed,
+                          int premin_identical, int premin_prefix, int premin_suffix, int premin_sat,
+                          int min_initial, int min_final, int min_removed, int min_iterations,
+                          long parse_ms, long order_ms, long nfa_build_ms, long nfa_premin_ms,
+                          long dfa_convert_ms, long dfa_min_ms, long compress_ms, long total_ms) {
+    csv_escape(out, cmd);
+    fputc(',', out);
+    csv_escape(out, status);
+    fputc(',', out);
+    csv_escape(out, input);
+    fputc(',', out);
+    csv_escape(out, output);
+    fprintf(out, ",%zu,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld\n", 
+            size, states,
+            premin_initial, premin_final, premin_removed,
+            premin_identical, premin_prefix, premin_suffix, premin_sat,
+            min_initial, min_final, min_removed, min_iterations,
+            parse_ms, order_ms, nfa_build_ms, nfa_premin_ms,
+            dfa_convert_ms, dfa_min_ms, compress_ms, total_ms);
 }
 
 // CPU time tracking helper
@@ -327,7 +416,66 @@ static bool is_option(const char* arg) {
 static bool is_flag_with_value(const char* arg) {
     return strcmp(arg, "-t") == 0 || strcmp(arg, "--type") == 0 ||
            strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0 ||
-           strcmp(arg, "-i") == 0 || strcmp(arg, "--input") == 0;
+            strcmp(arg, "-i") == 0 || strcmp(arg, "--input") == 0;
+}
+
+// ============================================================================
+// Common Option Parsing Helpers
+// ============================================================================
+
+typedef enum {
+    OPT_OK = 0,        // Option was recognized and handled
+    OPT_UNKNOWN = 1,   // Option was not recognized
+    OPT_HELP = 2      // Help was requested
+} parse_opt_result_t;
+
+static parse_opt_result_t parse_single_option(const char* arg, cli_args_t* args) {
+    if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+        return OPT_HELP;
+    }
+    if (strcmp(arg, "-v") == 0) {
+        args->verbosity = 1;
+        return OPT_OK;
+    }
+    if (strcmp(arg, "-vv") == 0) {
+        args->verbosity = 2;
+        return OPT_OK;
+    }
+    if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
+        args->quiet = true;
+        return OPT_OK;
+    }
+    if (strcmp(arg, "-j") == 0 || strcmp(arg, "--json") == 0) {
+        args->json_output = true;
+        return OPT_OK;
+    }
+    if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
+        args->force = true;
+        return OPT_OK;
+    }
+    if (strcmp(arg, "--stats") == 0) {
+        args->stats = true;
+        return OPT_OK;
+    }
+    return OPT_UNKNOWN;
+}
+
+static int parse_common_options(int argc, char* argv[], int i, cli_args_t* args,
+                                void (*print_help)(const char*)) {
+    while (i < argc && argv[i][0] == '-') {
+        parse_opt_result_t result = parse_single_option(argv[i], args);
+        if (result == OPT_HELP) {
+            if (print_help) print_help(argv[0]);
+            return -1;
+        }
+        if (result == OPT_UNKNOWN) {
+            print_unknown_option_error(argv[i]);
+            if (print_help) print_help(argv[0]);
+            return -2;
+        }
+        i++;
+    }
+    return i;
 }
 
 // ============================================================================
@@ -346,13 +494,6 @@ static void init_args(cli_args_t* args) {
     args->json_output = false;
     args->force = false;
     args->stats = false;
-}
-
-static void init_compile_args(cli_args_t* args) {
-    args->minimize = true;
-    args->preminimize = true;
-    args->compress = true;
-    args->minimize_algo = "hopcroft";
 }
 
 bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
@@ -416,53 +557,9 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
         i++;
 
         // Parse options before pattern file
-        while (i < argc && argv[i][0] == '-') {
-            const char* arg = argv[i];
-
-            if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
-                print_validate_help(progname);
-                return false;
-            }
-
-            if (strcmp(arg, "-v") == 0) {
-                args->verbosity = 1;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-vv") == 0) {
-                args->verbosity = 2;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
-                args->quiet = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-j") == 0 || strcmp(arg, "--json") == 0) {
-                args->json_output = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
-                args->force = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "--stats") == 0) {
-                args->stats = true;
-                i++;
-                continue;
-            }
-
-            // If it's not a known option, it must be the pattern file
-            break;
-        }
+        int result = parse_common_options(argc, argv, i, args, print_validate_help);
+        if (result < 0) return false;
+        i = result;
 
         if (i >= argc) {
             fprintf(stderr, "Error: 'validate' requires a pattern file argument\n");
@@ -477,61 +574,15 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
         i++;
 
         // Parse options after pattern file
-        while (i < argc && argv[i][0] == '-') {
-            const char* arg = argv[i];
-
-            if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
-                print_validate_help(progname);
-                return false;
-            }
-
-            if (strcmp(arg, "-v") == 0) {
-                args->verbosity = 1;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-vv") == 0) {
-                args->verbosity = 2;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
-                args->quiet = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-j") == 0 || strcmp(arg, "--json") == 0) {
-                args->json_output = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
-                args->force = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "--stats") == 0) {
-                args->stats = true;
-                i++;
-                continue;
-            }
-
-            fprintf(stderr, "Error: unknown option '%s'\n", arg);
-            print_validate_help(progname);
-            return false;
-        }
+        result = parse_common_options(argc, argv, i, args, print_validate_help);
+        if (result < 0) return false;
+        i = result;
 
         return true;
     }
 
     if (strcmp(argv[i], "compile") == 0) {
         args->cmd = CMD_COMPILE;
-        init_compile_args(args);
         i++;
 
         // First pass: find the input file (first non-option positional)
@@ -583,7 +634,7 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
 
             if (strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0) {
                 if (k + 1 >= argc || is_option(argv[k + 1])) {
-                    fprintf(stderr, "Error: %s requires an argument\n", arg);
+                    print_requires_arg_error(arg);
                     return false;
                 }
                 args->compile_output = argv[k + 1];
@@ -688,11 +739,10 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
 
             if (strcmp(arg, "-t") == 0 || strcmp(arg, "--type") == 0) {
                 fprintf(stderr, "Error: -t/--type option is no longer supported\n");
-                k += 2;
-                continue;
+                return false;
             }
 
-            fprintf(stderr, "Error: unknown option '%s'\n", arg);
+            print_unknown_option_error(arg);
             print_compile_help(progname);
             return false;
         }
@@ -703,7 +753,7 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
 
             if (strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0) {
                 if (k + 1 >= argc || is_option(argv[k + 1])) {
-                    fprintf(stderr, "Error: %s requires an argument\n", arg);
+                    print_requires_arg_error(arg);
                     return false;
                 }
                 args->compile_output = argv[k + 1];
@@ -711,51 +761,21 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
                 continue;
             }
 
-            if (strcmp(arg, "-v") == 0) {
-                args->verbosity = 1;
-                k++;
-                continue;
+            parse_opt_result_t result = parse_single_option(arg, args);
+            if (result == OPT_HELP) {
+                print_compile_help(progname);
+                return false;
             }
-
-            if (strcmp(arg, "-vv") == 0) {
-                args->verbosity = 2;
-                k++;
-                continue;
+            if (result == OPT_UNKNOWN) {
+                if (strcmp(arg, "-t") == 0 || strcmp(arg, "--type") == 0) {
+                    fprintf(stderr, "Error: -t/--type option is no longer supported\n");
+                    return false;
+                }
+                print_unknown_option_error(arg);
+                print_compile_help(progname);
+                return false;
             }
-
-            if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
-                args->quiet = true;
-                k++;
-                continue;
-            }
-
-            if (strcmp(arg, "-j") == 0 || strcmp(arg, "--json") == 0) {
-                args->json_output = true;
-                k++;
-                continue;
-            }
-
-            if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
-                args->force = true;
-                k++;
-                continue;
-            }
-
-            if (strcmp(arg, "--stats") == 0) {
-                args->stats = true;
-                k++;
-                continue;
-            }
-
-            if (strcmp(arg, "-t") == 0 || strcmp(arg, "--type") == 0) {
-                fprintf(stderr, "Error: -t/--type option is no longer supported\n");
-                k += 2;
-                continue;
-            }
-
-            fprintf(stderr, "Error: unknown option '%s'\n", arg);
-            print_compile_help(progname);
-            return false;
+            k++;
         }
 
         if (!args->compile_output) {
@@ -777,7 +797,7 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
 
             if (strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0) {
                 if (i + 1 >= argc) {
-                    fprintf(stderr, "Error: %s requires an argument\n", arg);
+                    print_requires_arg_error(arg);
                     print_embedd_help(progname);
                     return false;
                 }
@@ -823,19 +843,21 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
                 continue;
             }
 
-            if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
-                print_eval_help(progname);
+            parse_opt_result_t result = parse_single_option(arg, args);
+            if (result == OPT_HELP) {
+                print_embedd_help(progname);
                 return false;
             }
-
-            if (strcmp(arg, "-i") == 0 || strcmp(arg, "--input") == 0) {
-                fprintf(stderr, "Error: embedd does not use -i for input file\n");
+            if (result == OPT_UNKNOWN) {
+                if (strcmp(arg, "-i") == 0 || strcmp(arg, "--input") == 0) {
+                    fprintf(stderr, "Error: embedd does not use -i for input file\n");
+                    return false;
+                }
+                print_unknown_option_error(arg);
+                print_embedd_help(progname);
                 return false;
             }
-
-            fprintf(stderr, "Error: unknown option '%s'\n", arg);
-            print_embedd_help(progname);
-            return false;
+            i++;
         }
 
         // Remaining positional is the DFA file
@@ -853,7 +875,7 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
 
             if (strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0) {
                 if (i + 1 >= argc) {
-                    fprintf(stderr, "Error: %s requires an argument\n", arg);
+                    print_requires_arg_error(arg);
                     return false;
                 }
                 i++;
@@ -862,50 +884,17 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
                 continue;
             }
 
-            if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            parse_opt_result_t result = parse_single_option(arg, args);
+            if (result == OPT_HELP) {
                 print_embedd_help(progname);
                 return false;
             }
-
-            if (strcmp(arg, "-v") == 0) {
-                args->verbosity = 1;
-                i++;
-                continue;
+            if (result == OPT_UNKNOWN) {
+                print_unknown_option_error(arg);
+                print_embedd_help(progname);
+                return false;
             }
-
-            if (strcmp(arg, "-vv") == 0) {
-                args->verbosity = 2;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
-                args->quiet = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-j") == 0 || strcmp(arg, "--json") == 0) {
-                args->json_output = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
-                args->force = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "--stats") == 0) {
-                args->stats = true;
-                i++;
-                continue;
-            }
-
-            fprintf(stderr, "Error: unknown option '%s'\n", arg);
-            print_embedd_help(progname);
-            return false;
+            i++;
         }
 
         if (!args->embedd_output) {
@@ -922,54 +911,9 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
         i++;
 
         // Parse options
-        while (i < argc && argv[i][0] == '-') {
-            const char* arg = argv[i];
-
-            if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
-                print_verify_help(progname);
-                return false;
-            }
-
-            if (strcmp(arg, "-v") == 0) {
-                args->verbosity = 1;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-vv") == 0) {
-                args->verbosity = 2;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
-                args->quiet = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-j") == 0 || strcmp(arg, "--json") == 0) {
-                args->json_output = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
-                args->force = true;
-                i++;
-                continue;
-            }
-
-            if (strcmp(arg, "--stats") == 0) {
-                args->stats = true;
-                i++;
-                continue;
-            }
-
-            fprintf(stderr, "Error: unknown option '%s'\n", arg);
-            print_verify_help(progname);
-            return false;
-        }
+        int result = parse_common_options(argc, argv, i, args, print_verify_help);
+        if (result < 0) return false;
+        i = result;
 
         // Remaining positional is the DFA file
         if (i >= argc) {
@@ -1022,7 +966,7 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
 
             if (strcmp(arg, "-i") == 0 || strcmp(arg, "--input") == 0) {
                 if (k + 1 >= argc || is_option(argv[k + 1])) {
-                    fprintf(stderr, "Error: %s requires an argument\n", arg);
+                    print_requires_arg_error(arg);
                     return false;
                 }
                 args->eval_input = argv[k + 1];
@@ -1042,45 +986,17 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
                 continue;
             }
 
-            if (strcmp(arg, "-v") == 0) {
-                args->verbosity = 1;
-                k++;
-                continue;
+            parse_opt_result_t result = parse_single_option(arg, args);
+            if (result == OPT_HELP) {
+                print_eval_help(progname);
+                return false;
             }
-
-            if (strcmp(arg, "-vv") == 0) {
-                args->verbosity = 2;
-                k++;
-                continue;
+            if (result == OPT_UNKNOWN) {
+                print_unknown_option_error(arg);
+                print_eval_help(progname);
+                return false;
             }
-
-            if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
-                args->quiet = true;
-                k++;
-                continue;
-            }
-
-            if (strcmp(arg, "-j") == 0 || strcmp(arg, "--json") == 0) {
-                args->json_output = true;
-                k++;
-                continue;
-            }
-
-            if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
-                args->force = true;
-                k++;
-                continue;
-            }
-
-            if (strcmp(arg, "--stats") == 0) {
-                args->stats = true;
-                k++;
-                continue;
-            }
-
-            fprintf(stderr, "Error: unknown option '%s'\n", arg);
-            print_eval_help(progname);
-            return false;
+            k++;
         }
 
         // Parse options after dfa file
@@ -1089,7 +1005,46 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
 
             if (strcmp(arg, "-i") == 0 || strcmp(arg, "--input") == 0) {
                 if (k + 1 >= argc || is_option(argv[k + 1])) {
-                    fprintf(stderr, "Error: %s requires an argument\n", arg);
+                    print_requires_arg_error(arg);
+                    return false;
+                }
+                args->eval_input = argv[k + 1];
+                k += 2;
+                continue;
+            }
+
+            if (strcmp(arg, "-c") == 0 || strcmp(arg, "--category") == 0) {
+                args->eval_category = true;
+                k++;
+                continue;
+            }
+
+            if (strcmp(arg, "--capture") == 0) {
+                args->eval_capture = true;
+                k++;
+                continue;
+            }
+
+            parse_opt_result_t result = parse_single_option(arg, args);
+            if (result == OPT_HELP) {
+                print_eval_help(progname);
+                return false;
+            }
+            if (result == OPT_UNKNOWN) {
+                print_unknown_option_error(arg);
+                print_eval_help(progname);
+                return false;
+            }
+            k++;
+        }
+
+        // Parse options after dfa file
+        for (int k = first_positional + 1; k < argc; ) {
+            const char* arg = argv[k];
+
+            if (strcmp(arg, "-i") == 0 || strcmp(arg, "--input") == 0) {
+                if (k + 1 >= argc || is_option(argv[k + 1])) {
+                    print_requires_arg_error(arg);
                     return false;
                 }
                 args->eval_input = argv[k + 1];
@@ -1150,7 +1105,7 @@ bool cli_parse_args(int argc, char* argv[], cli_args_t* args) {
                 return false;
             }
 
-            fprintf(stderr, "Error: unknown option '%s'\n", arg);
+            print_unknown_option_error(arg);
             print_eval_help(progname);
             return false;
         }
@@ -1181,7 +1136,15 @@ int cli_validate(const cli_args_t* args) {
     get_cpu_time(&start);
 
     pipeline_config_t config = {
+        .minimize_algo = PIPELINE_MIN_HOPCROFT,
         .verbose = false,
+        .preminimize = true,
+        .compress = true,
+        .optimize_layout = true,
+        .max_states = 0,
+        .max_symbols = 0,
+        .use_sat_compress = false,
+        .enable_sat_optimal_premin = false,
     };
 
     pipeline_t* p = pipeline_create(&config);
@@ -1202,7 +1165,7 @@ int cli_validate(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
-            fprintf(stderr, "Error: failed to create pipeline\n");
+            print_pipeline_error();
         }
         return 1;
     }
@@ -1285,7 +1248,7 @@ int cli_compile(const cli_args_t* args) {
     }
 
     if (!args->compile_output) {
-        fprintf(stderr, "Error: no output file specified\n");
+        print_no_output_file_error();
         return 2;
     }
 
@@ -1299,7 +1262,7 @@ int cli_compile(const cli_args_t* args) {
     }
 
     if (!args->force && check_output_exists(args->compile_output)) {
-        fprintf(stderr, "Error: output file '%s' already exists (will not overwrite)\n", 
+        fprintf(stderr, "Error: output file '%s' already exists (use --force to overwrite)\n", 
                 args->compile_output);
         return 1;
     }
@@ -1333,7 +1296,7 @@ int cli_compile(const cli_args_t* args) {
     if (!p) {
         get_cpu_time(&end);
         elapsed = time_diff_ms(&start, &end);
-        fprintf(stderr, "Error: failed to create pipeline\n");
+        print_pipeline_error();
         return 1;
     }
 
@@ -1412,8 +1375,7 @@ int cli_compile(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
-            fprintf(stderr, "Error: failed to save DFA: %s\n",
-                    err_msg ? err_msg : pipeline_error_string(err));
+            print_save_dfa_error(err_msg ? err_msg : pipeline_error_string(err));
         }
         pipeline_destroy(p);
         return 1;
@@ -1423,10 +1385,38 @@ int cli_compile(const cli_args_t* args) {
     int state_count = pipeline_get_dfa_state_count(p);
 
     // Get minimize and pre-minimize stats
-    pipeline_minimize_stats_t min_stats = {0};
-    pipeline_premin_stats_t premin_stats = {0};
+    pipeline_minimize_stats_t min_stats = {
+        .initial_states = 0,
+        .final_states = 0,
+        .states_removed = 0,
+        .iterations = 0
+    };
+    pipeline_premin_stats_t premin_stats = {
+        .initial_states = 0,
+        .final_states = 0,
+        .states_removed = 0,
+        .states_merged = 0,
+        .identical_merged = 0,
+        .prefix_merged = 0,
+        .final_deduped = 0,
+        .suffix_merged = 0,
+        .sat_merged = 0,
+        .sat_optimal = 0
+    };
+    pipeline_timing_t timing = {
+        .parse_ms = 0,
+        .order_ms = 0,
+        .nfa_build_ms = 0,
+        .nfa_premin_ms = 0,
+        .dfa_convert_ms = 0,
+        .dfa_min_ms = 0,
+        .compress_ms = 0,
+        .layout_ms = 0,
+        .total_ms = 0
+    };
     pipeline_get_minimize_stats(p, &min_stats);
     pipeline_get_premin_stats(p, &premin_stats);
+    pipeline_get_timing(p, &timing);
 
     get_cpu_time(&end);
     elapsed = time_diff_ms(&start, &end);
@@ -1446,21 +1436,54 @@ int cli_compile(const cli_args_t* args) {
             json_comma(stdout);
             json_key_value_int(stdout, "states", state_count);
             json_comma(stdout);
+            json_key_value_int(stdout, "premin_initial", premin_stats.initial_states);
+            json_comma(stdout);
+            json_key_value_int(stdout, "premin_final", premin_stats.final_states);
+            json_comma(stdout);
             json_key_value_int(stdout, "premin_removed", premin_stats.states_removed);
+            json_comma(stdout);
+            json_key_value_int(stdout, "premin_identical", premin_stats.identical_merged);
+            json_comma(stdout);
+            json_key_value_int(stdout, "premin_prefix", premin_stats.prefix_merged);
+            json_comma(stdout);
+            json_key_value_int(stdout, "premin_suffix", premin_stats.suffix_merged);
+            json_comma(stdout);
+            json_key_value_int(stdout, "premin_sat", premin_stats.sat_merged);
+            json_comma(stdout);
+            json_key_value_int(stdout, "min_initial", min_stats.initial_states);
+            json_comma(stdout);
+            json_key_value_int(stdout, "min_final", min_stats.final_states);
             json_comma(stdout);
             json_key_value_int(stdout, "min_removed", min_stats.states_removed);
             json_comma(stdout);
             json_key_value_int(stdout, "min_iterations", min_stats.iterations);
             json_comma(stdout);
-            json_key_value_int(stdout, "time_ms", elapsed);
+            json_key_value_int(stdout, "parse_ms", timing.parse_ms);
+            json_comma(stdout);
+            json_key_value_int(stdout, "order_ms", timing.order_ms);
+            json_comma(stdout);
+            json_key_value_int(stdout, "nfa_build_ms", timing.nfa_build_ms);
+            json_comma(stdout);
+            json_key_value_int(stdout, "premin_ms", timing.nfa_premin_ms);
+            json_comma(stdout);
+            json_key_value_int(stdout, "dfa_convert_ms", timing.dfa_convert_ms);
+            json_comma(stdout);
+            json_key_value_int(stdout, "min_ms", timing.dfa_min_ms);
+            json_comma(stdout);
+            json_key_value_int(stdout, "compress_ms", timing.compress_ms);
+            json_comma(stdout);
+            json_key_value_int(stdout, "total_ms", timing.total_ms);
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
             csv_stats_header(stdout);
             csv_stats_row(stdout, "compile", "success", args->compile_input, 
-                         args->compile_output, binary_size, state_count, 
-                         premin_stats.states_removed, min_stats.states_removed, 
-                         min_stats.iterations, elapsed);
+                         args->compile_output, binary_size, state_count,
+                         premin_stats.initial_states, premin_stats.final_states, premin_stats.states_removed,
+                         premin_stats.identical_merged, premin_stats.prefix_merged, premin_stats.suffix_merged, premin_stats.sat_merged,
+                         min_stats.initial_states, min_stats.final_states, min_stats.states_removed, min_stats.iterations,
+                         timing.parse_ms, timing.order_ms, timing.nfa_build_ms, timing.nfa_premin_ms,
+                         timing.dfa_convert_ms, timing.dfa_min_ms, timing.compress_ms, timing.total_ms);
         }
     } else if (!args->quiet && args->verbosity > 0) {
         fprintf(stderr, "  Wrote %zu bytes (%d states) to %s\n", 
@@ -1690,12 +1713,12 @@ int cli_embedd(const cli_args_t* args) {
     get_cpu_time(&start);
 
     if (!args->embedd_input) {
-        fprintf(stderr, "Error: no DFA file specified\n");
+        print_no_dfa_file_error();
         return 2;
     }
 
     if (!args->embedd_output) {
-        fprintf(stderr, "Error: no output file specified\n");
+        print_no_output_file_error();
         return 2;
     }
 
@@ -1722,7 +1745,7 @@ int cli_embedd(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
-            fprintf(stderr, "Error: output file '%s' already exists (will not overwrite)\n", 
+            fprintf(stderr, "Error: output file '%s' already exists (use --force to overwrite)\n", 
                     args->embedd_output);
         }
         return 1;
@@ -1743,8 +1766,7 @@ int cli_embedd(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
-            fprintf(stderr, "Error: cannot open DFA file '%s': %s\n",
-                    args->embedd_input, strerror(errno));
+            print_file_error("DFA file", args->embedd_input);
         }
         return 1;
     }
@@ -1767,7 +1789,7 @@ int cli_embedd(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
-            fprintf(stderr, "Error: failed to allocate memory for DFA\n");
+            print_memory_error();
         }
         fclose(dfaf);
         return 1;
@@ -1786,7 +1808,7 @@ int cli_embedd(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
-            fprintf(stderr, "Error: failed to read DFA file\n");
+            print_read_dfa_error();
         }
         free(dfa_data);
         fclose(dfaf);
@@ -1886,8 +1908,10 @@ int cli_embedd(const cli_args_t* args) {
         } else {
             csv_stats_header(stdout);
             csv_stats_row(stdout, "embedd", "success", args->embedd_input, 
-                         args->embedd_output, (size_t)dfa_size, state_count, 
-                         0, 0, 0, 0);
+                         args->embedd_output, (size_t)dfa_size, state_count,
+                         0, 0, 0, 0, 0, 0, 0,
+                         0, 0, 0, 0,
+                         0, 0, 0, 0, 0, 0, 0, 0);
         }
     } else if (!args->quiet && args->verbosity > 0) {
         fprintf(stderr, "  Wrote %zu bytes to %s\n", (size_t)dfa_size, args->embedd_output);
@@ -1903,7 +1927,7 @@ int cli_embedd(const cli_args_t* args) {
 
 int cli_verify(const cli_args_t* args) {
     if (!args->verify_dfa) {
-        fprintf(stderr, "Error: no DFA file specified\n");
+        print_no_dfa_file_error();
         return 2;
     }
 
@@ -1926,8 +1950,7 @@ int cli_verify(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
-            fprintf(stderr, "Error: cannot open DFA file '%s': %s\n",
-                    args->verify_dfa, strerror(errno));
+            print_file_error("DFA file", args->verify_dfa);
         }
         return 1;
     }
@@ -1950,7 +1973,7 @@ int cli_verify(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
-            fprintf(stderr, "Error: failed to allocate memory for DFA\n");
+            print_memory_error();
         }
         fclose(dfaf);
         return 1;
@@ -1969,7 +1992,7 @@ int cli_verify(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else if (!args->quiet) {
-            fprintf(stderr, "Error: failed to read DFA file\n");
+            print_read_dfa_error();
         }
         free(dfa_data);
         fclose(dfaf);
@@ -2105,7 +2128,10 @@ int cli_verify(const cli_args_t* args) {
             fputc('\n', stdout);
         } else if (args->stats) {
             csv_stats_header(stdout);
-            csv_stats_row(stdout, "verify", "valid", args->verify_dfa, "", (size_t)file_size, state_count, 0, 0, 0, 0);
+            csv_stats_row(stdout, "verify", "valid", args->verify_dfa, "", (size_t)file_size, state_count,
+                         0, 0, 0, 0, 0, 0, 0,
+                         0, 0, 0, 0,
+                         0, 0, 0, 0, 0, 0, 0, 0);
         } else if (!args->quiet) {
             if (args->verbosity > 0) {
                 fprintf(stderr, "PASS: DFA is valid (%u states, encoding %d, %zu bytes)\n",
@@ -2142,7 +2168,7 @@ int cli_verify(const cli_args_t* args) {
 
 int cli_eval(const cli_args_t* args) {
     if (!args->eval_dfa) {
-        fprintf(stderr, "Error: no DFA file specified\n");
+        print_no_dfa_file_error();
         return 2;
     }
 
@@ -2169,8 +2195,7 @@ int cli_eval(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
-            fprintf(stderr, "Error: cannot open DFA file '%s': %s\n",
-                    args->eval_dfa, strerror(errno));
+            print_file_error("DFA file", args->eval_dfa);
         }
         return 1;
     }
@@ -2191,7 +2216,7 @@ int cli_eval(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
-            fprintf(stderr, "Error: failed to allocate memory for DFA\n");
+            print_memory_error();
         }
         fclose(dfaf);
         return 1;
@@ -2208,7 +2233,7 @@ int cli_eval(const cli_args_t* args) {
             json_end_object(stdout);
             fputc('\n', stdout);
         } else {
-            fprintf(stderr, "Error: failed to read DFA file\n");
+            print_read_dfa_error();
         }
         free(dfa_data);
         fclose(dfaf);
@@ -2239,6 +2264,12 @@ int cli_eval(const cli_args_t* args) {
     }
 
     if (args->json_output) {
+        json_start_object(stdout);
+        json_key_value_str(stdout, "command", "eval");
+        json_comma(stdout);
+        json_key_value_bool(stdout, "success", true);
+        json_comma(stdout);
+        fprintf(stdout, "\"results\":");
         json_start_array(stdout);
         bool first = true;
         char line[4096];
@@ -2275,6 +2306,7 @@ int cli_eval(const cli_args_t* args) {
             json_end_object(stdout);
         }
         json_end_array(stdout);
+        json_end_object(stdout);
         fputc('\n', stdout);
     } else {
         char line[4096];

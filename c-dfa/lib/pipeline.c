@@ -65,6 +65,16 @@ struct pipeline {
     // Pre-minimize stats
     bool premin_stats_valid;
     pipeline_premin_stats_t premin_stats;
+    
+    // Timing stats (in milliseconds)
+    long timing_parse_ms;
+    long timing_order_ms;
+    long timing_nfa_build_ms;
+    long timing_nfa_premin_ms;
+    long timing_dfa_convert_ms;
+    long timing_dfa_min_ms;
+    long timing_compress_ms;
+    long timing_layout_ms;
 };
 
 // ============================================================================
@@ -108,6 +118,21 @@ const char* pipeline_get_version(void) {
 static void set_error(pipeline_t* p, pipeline_error_t code, const char* msg) {
     p->last_error_code = code;
     snprintf(p->last_error, sizeof(p->last_error), "%s", msg);
+}
+
+// ============================================================================
+// Timing Helpers (using getrusage for CPU time)
+// ============================================================================
+
+#include <sys/resource.h>
+
+static long get_time_ms(void) {
+    struct rusage u;
+    if (getrusage(RUSAGE_SELF, &u) == 0) {
+        return (u.ru_utime.tv_sec * 1000 + u.ru_utime.tv_usec / 1000) +
+               (u.ru_stime.tv_sec * 1000 + u.ru_stime.tv_usec / 1000);
+    }
+    return 0;
 }
 
 // ============================================================================
@@ -182,6 +207,8 @@ void pipeline_destroy(pipeline_t* p) {
 // ============================================================================
 
 pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename) {
+    long start = get_time_ms();
+    
     p->builder_ctx = nfa_builder_context_create();
     if (!p->builder_ctx) {
         set_error(p, PIPELINE_OOM, "Failed to create builder context");
@@ -199,11 +226,14 @@ pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename) {
         return PIPELINE_PARSE_ERROR;
     }
 
+    p->timing_parse_ms = get_time_ms() - start;
     return PIPELINE_OK;
 }
 
 pipeline_error_t pipeline_order_patterns(pipeline_t* p) {
     if (!p || !p->builder_ctx) return PIPELINE_ERROR;
+    
+    long start = get_time_ms();
 
     // Read patterns from file
     int count = pattern_order_read_file(p->builder_ctx->current_input_file,
@@ -237,11 +267,14 @@ pipeline_error_t pipeline_order_patterns(pipeline_t* p) {
     pattern_order_get_stats(&stats);
     p->pattern_count = stats.original_count - stats.duplicates_found;
 
+    p->timing_order_ms = get_time_ms() - start;
     return PIPELINE_OK;
 }
 
 pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
     if (!p || !p->builder_ctx) return PIPELINE_ERROR;
+    
+    long start = get_time_ms();
 
     // Build alphabet before constructing NFA
     if (!nfa_alphabet_construct_from_patterns(p->builder_ctx, p->builder_ctx->current_input_file)) {
@@ -270,6 +303,7 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
     nfa_construct_write_file(p->builder_ctx, p->temp_nfa_file);
 
     p->nfa_built = true;
+    p->timing_nfa_build_ms = get_time_ms() - start;
     return PIPELINE_OK;
 }
 
@@ -301,6 +335,8 @@ pipeline_error_t pipeline_load_nfa(pipeline_t* p, const char* nfa_file) {
 
 pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
     if (!p->nfa2dfa_ctx) return PIPELINE_INVALID_STATE;
+    
+    long start = get_time_ms();
 
     int initial_count = p->nfa2dfa_ctx->nfa_state_count;
 
@@ -324,6 +360,7 @@ pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
     p->premin_stats.sat_optimal = premin_stats.sat_optimal;
     p->premin_stats_valid = true;
 
+    p->timing_nfa_premin_ms = get_time_ms() - start;
     return PIPELINE_OK;
 }
 
@@ -357,13 +394,14 @@ pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
         load_nfa_file(p->nfa2dfa_ctx, p->temp_nfa_file);
     }
 
-    // Pre-minimize NFA
+    // Pre-minimize NFA (has its own timing)
     pipeline_preminimize_nfa(p);
 
-    // Convert to DFA
+    // Convert to DFA (timed separately)
+    long start = get_time_ms();
     nfa_to_dfa(p->nfa2dfa_ctx);
-
     flatten_dfa(p->nfa2dfa_ctx);
+    p->timing_dfa_convert_ms = get_time_ms() - start;
 
     p->dfa_built = true;
     return PIPELINE_OK;
@@ -371,6 +409,8 @@ pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
 
 pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
     if (!p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+    
+    long start = get_time_ms();
 
     p->nfa2dfa_ctx->dfa_state_count = dfa_minimize(
         p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, 
@@ -390,22 +430,28 @@ pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
         flatten_dfa(p->nfa2dfa_ctx);
     }
 
+    p->timing_dfa_min_ms = get_time_ms() - start;
     return PIPELINE_OK;
 }
 
 pipeline_error_t pipeline_compress(pipeline_t* p) {
     if (!p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+    
+    long start = get_time_ms();
 
     compress_options_t opts = get_default_compress_options();
     opts.verbose = p->config.verbose;
     opts.use_sat = p->config.use_sat_compress;
     dfa_compress(p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, &opts);
 
+    p->timing_compress_ms = get_time_ms() - start;
     return PIPELINE_OK;
 }
 
 pipeline_error_t pipeline_optimize_layout(pipeline_t* p) {
     if (!p->nfa2dfa_ctx || !p->dfa_built) return PIPELINE_INVALID_STATE;
+    
+    long start = get_time_ms();
 
     layout_options_t layout_opts = get_default_layout_options();
     int* order = optimize_dfa_layout(p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, &layout_opts);
@@ -414,6 +460,7 @@ pipeline_error_t pipeline_optimize_layout(pipeline_t* p) {
         return PIPELINE_ERROR;
     }
     
+    p->timing_layout_ms = get_time_ms() - start;
     free(order);
     return PIPELINE_OK;
 }
@@ -578,6 +625,30 @@ pipeline_error_t pipeline_build(const char* pattern_file,
     return err;
 }
 
+void pipeline_get_timing(pipeline_t* p, pipeline_timing_t* timing) {
+    if (!p || !timing) return;
+    
+    timing->parse_ms = p->timing_parse_ms;
+    timing->order_ms = p->timing_order_ms;
+    timing->nfa_build_ms = p->timing_nfa_build_ms;
+    timing->nfa_premin_ms = p->timing_nfa_premin_ms;
+    timing->dfa_convert_ms = p->timing_dfa_convert_ms;
+    timing->dfa_min_ms = p->timing_dfa_min_ms;
+    timing->compress_ms = p->timing_compress_ms;
+    timing->layout_ms = p->timing_layout_ms;
+    
+    // Calculate total from individual stages
+    timing->total_ms = 
+        timing->parse_ms + 
+        timing->order_ms + 
+        timing->nfa_build_ms + 
+        timing->nfa_premin_ms + 
+        timing->dfa_convert_ms + 
+        timing->dfa_min_ms + 
+        timing->compress_ms + 
+        timing->layout_ms;
+}
+
 // ============================================================================
 // DFA Evaluation API
 // ============================================================================
@@ -624,7 +695,15 @@ void dfa_eval_destroy(dfa_evaluator_t* e) {
 }
 
 dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input) {
-    dfa_result_t result = {0};
+    dfa_result_t result = {
+        .category = 0,
+        .category_mask = 0,
+        .final_state = 0,
+        .matched = false,
+        .matched_length = 0,
+        .captures = {0},
+        .capture_count = 0
+    };
 
     result.matched = dfa_eval(e->data, e->size, input, strlen(input), &result);
     return result;

@@ -323,6 +323,32 @@ void pipeline_get_minimize_stats(pipeline_t* p, pipeline_minimize_stats_t* stats
  */
 void pipeline_get_premin_stats(pipeline_t* p, pipeline_premin_stats_t* stats) ATTR_NONNULL_ALL;
 
+// ============================================================================
+// Pipeline Timing Statistics
+// ============================================================================
+
+/**
+ * Timing statistics for each pipeline stage (in milliseconds).
+ * All times are wall-clock time measured via getrusage().
+ */
+typedef struct {
+    long parse_ms;         // Pattern file parsing
+    long order_ms;         // Pattern ordering/validation
+    long nfa_build_ms;     // NFA construction from patterns
+    long nfa_premin_ms;    // NFA pre-minimization
+    long dfa_convert_ms;  // NFA to DFA conversion (subset construction)
+    long dfa_min_ms;      // DFA minimization
+    long compress_ms;      // DFA transition compression
+    long layout_ms;        // DFA layout optimization
+    long total_ms;         // Total pipeline time
+} pipeline_timing_t;
+
+/**
+ * Get timing statistics from pipeline.
+ * Call after pipeline_run() or individual stage functions.
+ */
+void pipeline_get_timing(pipeline_t* p, pipeline_timing_t* timing) ATTR_NONNULL_ALL;
+
 #ifdef __cplusplus
 }
 #endif

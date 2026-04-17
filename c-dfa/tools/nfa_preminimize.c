@@ -43,7 +43,21 @@
 #include "../include/multi_target_array.h"
 
 // Statistics from last run
-static nfa_premin_stats_t last_stats = {0};
+static nfa_premin_stats_t last_stats = {
+    .original_states = 0,
+    .minimized_states = 0,
+    .epsilon_bypassed = 0,
+    .epsilon_chains = 0,
+    .landing_pads_removed = 0,
+    .unreachable_removed = 0,
+    .states_merged = 0,
+    .identical_merged = 0,
+    .prefix_merged = 0,
+    .final_deduped = 0,
+    .suffix_merged = 0,
+    .sat_merged = 0,
+    .sat_optimal = 0
+};
 static bool premin_verbose = false;
 
 #define VERBOSE_PRINT(...) do { \
@@ -1881,8 +1895,21 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     premin_verbose = opts.verbose;
     
     int original_count = *state_count;
-    memset(&last_stats, 0, sizeof(last_stats));
-    last_stats.original_states = original_count;
+    last_stats = (nfa_premin_stats_t){
+        .original_states = original_count,
+        .minimized_states = 0,
+        .epsilon_bypassed = 0,
+        .epsilon_chains = 0,
+        .landing_pads_removed = 0,
+        .unreachable_removed = 0,
+        .states_merged = 0,
+        .identical_merged = 0,
+        .prefix_merged = 0,
+        .final_deduped = 0,
+        .suffix_merged = 0,
+        .sat_merged = 0,
+        .sat_optimal = 0
+    };
     
     if (original_count <= 1) return 0;
     

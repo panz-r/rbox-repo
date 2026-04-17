@@ -37,9 +37,17 @@ static void run_group(const char* group_name, const char* pattern, TestCase* cas
     fprintf(f, "%s", pattern);
     fclose(f);
     
-    pipeline_config_t config = {0};
-    config.minimize_algo = PIPELINE_MIN_MOORE;
-    config.optimize_layout = true;
+    pipeline_config_t config = {
+        .minimize_algo = PIPELINE_MIN_MOORE,
+        .verbose = false,
+        .preminimize = true,
+        .compress = true,
+        .optimize_layout = true,
+        .max_states = 0,
+        .max_symbols = 0,
+        .use_sat_compress = false,
+        .enable_sat_optimal_premin = false
+    };
     
     pipeline_t* p = pipeline_create(&config);
     if (!p) { printf("  [ERROR] Cannot create pipeline\n"); return; }

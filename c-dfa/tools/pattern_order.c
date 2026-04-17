@@ -18,7 +18,14 @@
 #include "pattern_order.h"
 
 // Statistics from last run
-static pattern_order_stats_t last_stats = {0};
+static pattern_order_stats_t last_stats = {
+    .original_count = 0,
+    .prefix_groups = 0,
+    .patterns_reordered = 0,
+    .duplicates_found = 0,
+    .fragment_errors = 0,
+    .avg_prefix_len = 0.0
+};
 static bool order_verbose = false;
 
 #define VERBOSE_PRINT(...) do { \
@@ -41,7 +48,10 @@ typedef struct {
     int count;
 } fragment_table_t;
 
-static fragment_table_t fragment_table = {0};
+static fragment_table_t fragment_table = {
+    .names = {NULL},
+    .count = 0
+};
 
 // Get default options
 pattern_order_options_t pattern_order_default_options(void) {
@@ -322,8 +332,14 @@ int pattern_order_optimize(pattern_entry_t* patterns, int count,
     pattern_order_options_t opts = options ? *options : pattern_order_default_options();
     order_verbose = opts.verbose;
     
-    memset(&last_stats, 0, sizeof(last_stats));
-    last_stats.original_count = count;
+    last_stats = (pattern_order_stats_t){
+        .original_count = count,
+        .prefix_groups = 0,
+        .patterns_reordered = 0,
+        .duplicates_found = 0,
+        .fragment_errors = 0,
+        .avg_prefix_len = 0.0
+    };
     
     if (count <= 1) return 0;
     

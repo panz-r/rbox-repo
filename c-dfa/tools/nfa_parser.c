@@ -82,15 +82,18 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
 // ============================================================================
 
 static FragmentResult parse_rdp_fragment(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state) {
-    FragmentResult result = {0};
-    result.anchor_state = -1;
-    result.loop_entry_state = -1;
-    result.exit_state = -1;
-    result.is_single_char = false;
-    result.loop_char = '\0';
-    result.capture_defer_id = -1;
-    result.has_capture = false;
-    result.capture_name[0] = '\0';
+    FragmentResult result = {
+        .anchor_state = -1,
+        .loop_entry_state = -1,
+        .exit_state = -1,
+        .is_single_char = false,
+        .loop_char = '\0',
+        .capture_defer_id = -1,
+        .has_capture = false,
+        .capture_name = {0},
+        .fragment_entry_state = 0,
+        .loop_first_char = '\0'
+    };
 
     if (pattern[*pos] != '(' || pattern[*pos + 1] != '(') {
         result.exit_state = start_state;

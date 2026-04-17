@@ -17,7 +17,16 @@
 // CaDiCaL is linked via sat_modules or directly via cadical.
 
 // Statistics from last compression
-static compression_stats_t last_stats = {0};
+static compression_stats_t last_stats = {
+    .original_rules = 0,
+    .compressed_rules = 0,
+    .original_bytes = 0,
+    .compressed_bytes = 0,
+    .compression_ratio = 0.0f,
+    .rules_merged = 0,
+    .ranges_created = 0,
+    .defaults_shared = 0
+};
 static bool compress_verbose = false;
 
 // Forward declaration
@@ -269,7 +278,16 @@ int dfa_compress(build_dfa_state_t** dfa, int state_count, const compress_option
     compress_verbose = opts.verbose;
     
     // Reset statistics
-    memset(&last_stats, 0, sizeof(last_stats));
+    last_stats = (compression_stats_t){
+        .original_rules = 0,
+        .compressed_rules = 0,
+        .original_bytes = 0,
+        .compressed_bytes = 0,
+        .compression_ratio = 0.0f,
+        .rules_merged = 0,
+        .ranges_created = 0,
+        .defaults_shared = 0
+    };
     
     // Count original rules
     for (int s = 0; s < state_count; s++) {
