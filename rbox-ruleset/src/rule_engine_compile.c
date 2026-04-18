@@ -818,7 +818,11 @@ void soft_ruleset_invalidate(soft_ruleset_t *rs)
         rs->is_compiled = false;
     }
     /* Also invalidate the query cache */
-    for (uint32_t i = 0; i < QUERY_CACHE_SIZE; i++) rs->query_cache[i].valid = 0;
+    for (uint32_t i = 0; i < QUERY_CACHE_SETS; i++) {
+        for (uint8_t j = 0; j < QUERY_CACHE_WAYS; j++) {
+            rs->query_cache[i].entries[j].valid = 0;
+        }
+    }
 }
 
 bool soft_ruleset_is_compiled(const soft_ruleset_t *rs)

@@ -25,6 +25,7 @@ set(TEST_SRCS
   test_compilation_layered.c
   test_fuzz_edge.c
   test_ruleset_management.c
+  test_cache_associativity.c
 )
 
 # Create test executable

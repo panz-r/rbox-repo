@@ -19,7 +19,9 @@
 #define MAX_LINKED_LEN  8
 #define MAX_LAYERS      64
 #define MAX_CUSTOM_OPS  16
-#define QUERY_CACHE_SIZE 256    /**< LRU query result cache entries */
+#define QUERY_CACHE_SETS 256    /**< Number of cache sets (was total entries) */
+#define QUERY_CACHE_WAYS 8      /**< 8-way set associative */
+#define QUERY_CACHE_SIZE (QUERY_CACHE_SETS * QUERY_CACHE_WAYS) /**< Total cache entries */
 #define SPECIFICITY_NO_MATCH  UINT32_MAX /**< Sentinel: no SPECIFICITY rule matched */
 
 /* ------------------------------------------------------------------ */
@@ -36,7 +38,7 @@
  */
 
 /* ------------------------------------------------------------------ */
-/*  Query result cache (LRU, round-robin eviction)                     */
+/*  Query result cache (8-way set associative with true LRU)            */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -63,6 +65,15 @@ typedef struct {
     uint8_t  valid;           /**< Non-zero = entry is valid */
     uint8_t  any_matched;     /**< Non-zero = at least one rule matched */
 } query_cache_entry_t;
+
+/**
+ * Cache set for 8-way set associative cache.
+ * Each set contains 8 cache entries and maintains LRU order.
+ */
+typedef struct {
+    query_cache_entry_t entries[QUERY_CACHE_WAYS]; /**< 8 cache entries */
+    uint8_t lru_order[QUERY_CACHE_WAYS];           /**< LRU tracking: 0=MRU, 7=LRU */
+} query_cache_set_t;
 
 /* ------------------------------------------------------------------ */
 /*  Internal rule structure                                            */
@@ -165,7 +176,7 @@ struct soft_ruleset {
     effective_ruleset_t effective;             /**< Simplified (read-only after compile) */
     bool                is_compiled;           /**< true if effective is valid */
     custom_op_entry_t   custom_ops[MAX_CUSTOM_OPS];
-    query_cache_entry_t query_cache[QUERY_CACHE_SIZE]; /**< Direct-mapped query result cache */
+    query_cache_set_t   query_cache[QUERY_CACHE_SETS]; /**< 8-way set associative cache */
     char                last_error[256];
     /* Evaluation statistics (not thread-safe) */
     uint64_t            stats_cache_hits;

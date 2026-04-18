@@ -322,6 +322,14 @@ soft_ruleset_t *soft_ruleset_new(void)
     rs->layer_count = 0;
     rs->is_compiled = false;
     rs->last_error[0] = '\0';
+    
+    // Initialize cache LRU tracking
+    for (uint32_t i = 0; i < QUERY_CACHE_SETS; i++) {
+        for (uint8_t j = 0; j < QUERY_CACHE_WAYS; j++) {
+            rs->query_cache[i].lru_order[j] = 0xFF; // Mark as invalid
+        }
+    }
+    
     return rs;
 }
 
@@ -373,23 +381,94 @@ static uint32_t eval_mode_for_op(soft_binary_op_t op)
     }
 }
 
-/** Look up cached result for a single path. Direct-mapped: one entry per path. */
+/**
+ * Update LRU order for a cache entry within a set.
+ * Moves the specified way to MRU position (0).
+ */
+static void cache_lru_update(query_cache_set_t *set, uint8_t way)
+{
+    // Move the accessed way to MRU position (0)
+    if (way == 0) return; // Already MRU
+    
+    // Shift all MRU entries down to make room
+    for (uint8_t i = 0; i < way; i++) {
+        if (set->lru_order[i] == way) {
+            // Found it, shift it to MRU
+            memmove(&set->lru_order[1], &set->lru_order[0], way);
+            set->lru_order[0] = way;
+            return;
+        }
+    }
+    
+    // If not found in LRU array, initialize it
+    set->lru_order[0] = way;
+    for (uint8_t i = 1; i < QUERY_CACHE_WAYS; i++) {
+        if (set->lru_order[i] == way) {
+            set->lru_order[i] = 0xFF; // Mark as invalid
+        }
+    }
+}
+
+/**
+ * Find the LRU entry in a cache set.
+ * Returns the way index of the LRU entry, or 0xFF if set is empty.
+ */
+static uint8_t cache_find_lru(const query_cache_set_t *set)
+{
+    // Find the first invalid entry (prefer reusing invalid over evicting valid)
+    for (uint8_t i = 0; i < QUERY_CACHE_WAYS; i++) {
+        if (!set->entries[i].valid) {
+            return i;
+        }
+    }
+    
+    // Find the LRU valid entry (position 7 in lru_order)
+    for (uint8_t i = 0; i < QUERY_CACHE_WAYS; i++) {
+        if (set->lru_order[i] != 0xFF) {
+            return set->lru_order[QUERY_CACHE_WAYS - 1]; // Last position = LRU
+        }
+    }
+    
+    // Fallback: return first entry if LRU tracking is corrupted
+    return 0;
+}
+
+/**
+ * Initialize LRU order for a cache set.
+ * Should be called when a new entry is added to an empty set.
+ */
+static void cache_lru_init(query_cache_set_t *set, uint8_t way)
+{
+    set->lru_order[0] = way;
+    for (uint8_t i = 1; i < QUERY_CACHE_WAYS; i++) {
+        set->lru_order[i] = 0xFF; // Invalid
+    }
+}
+
+/** Look up cached result for a single path. 8-way set associative with LRU. */
 static query_cache_entry_t *query_cache_lookup(soft_ruleset_t *rs,
                                                 uint64_t phash,
                                                 uint32_t subject_hash,
                                                 uint32_t required_mode)
 {
-    uint32_t idx = (uint32_t)(phash % QUERY_CACHE_SIZE);
-    query_cache_entry_t *e = &rs->query_cache[idx];
-    if (e->valid && e->path_hash == phash &&
-        e->subject_hash == subject_hash &&
-        (e->eval & required_mode) == required_mode) {
-        return e;
+    uint32_t set_idx = (uint32_t)(phash % QUERY_CACHE_SETS);
+    query_cache_set_t *set = &rs->query_cache[set_idx];
+    
+    // Search all ways in the set
+    for (uint8_t way = 0; way < QUERY_CACHE_WAYS; way++) {
+        query_cache_entry_t *e = &set->entries[way];
+        if (e->valid && e->path_hash == phash &&
+            e->subject_hash == subject_hash &&
+            (e->eval & required_mode) == required_mode) {
+            // Update LRU order
+            cache_lru_update(set, way);
+            return e;
+        }
     }
     return NULL;
 }
 
-/** Store a result in the cache (direct-mapped: latest write wins). */
+/** Store a result in the cache (8-way set associative with LRU eviction). */
 static void query_cache_store(soft_ruleset_t *rs,
                               uint64_t phash,
                               uint32_t subject_hash,
@@ -398,8 +477,14 @@ static void query_cache_store(soft_ruleset_t *rs,
                               int32_t deny_layer,
                               uint8_t any_matched)
 {
-    uint32_t idx = (uint32_t)(phash % QUERY_CACHE_SIZE);
-    query_cache_entry_t *e = &rs->query_cache[idx];
+    uint32_t set_idx = (uint32_t)(phash % QUERY_CACHE_SETS);
+    query_cache_set_t *set = &rs->query_cache[set_idx];
+    
+    // Find an empty slot or LRU entry to evict
+    uint8_t way = cache_find_lru(set);
+    
+    // Store the new entry
+    query_cache_entry_t *e = &set->entries[way];
     e->path_hash = phash;
     e->subject_hash = subject_hash;
     e->granted = granted;
@@ -407,6 +492,9 @@ static void query_cache_store(soft_ruleset_t *rs,
     e->deny_layer = deny_layer;
     e->any_matched = any_matched;
     e->valid = 1;
+    
+    // Update LRU order
+    cache_lru_update(set, way);
 }
 
 void soft_ruleset_free(soft_ruleset_t *rs)

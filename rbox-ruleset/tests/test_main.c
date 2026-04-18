@@ -35,6 +35,7 @@ extern void test_compilation_binary_run(void);
 extern void test_compilation_layered_run(void);
 extern void test_fuzz_edge_run(void);
 extern void test_ruleset_management_run(void);
+extern void test_cache_associativity_run(void);
 
 int main(void)
 {
@@ -107,6 +108,9 @@ int main(void)
     printf("\n");
 
     test_ruleset_management_run();
+    printf("\n");
+
+    test_cache_associativity_run();
     printf("\n");
 
     print_summary();
