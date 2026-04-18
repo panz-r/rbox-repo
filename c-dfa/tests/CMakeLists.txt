@@ -214,6 +214,20 @@ set_tests_properties(dfa_test_set_s PROPERTIES
     TIMEOUT 300
     LABELS "dfa_test;set_s")
 
+add_test(NAME dfa_test_set_t
+    COMMAND dfa_test --minimize-moore --compress-sat --test-set T)
+set_tests_properties(dfa_test_set_t PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 300
+    LABELS "dfa_test;set_t")
+
+add_test(NAME dfa_test_set_u
+    COMMAND dfa_test --minimize-moore --compress-sat --test-set U)
+set_tests_properties(dfa_test_set_u PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 300
+    LABELS "dfa_test;set_u")
+
 # -----------------------------------------------------------------------------
 # Other test suites
 # -----------------------------------------------------------------------------

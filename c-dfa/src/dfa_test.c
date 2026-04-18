@@ -39,6 +39,8 @@ static unsigned int test_set_mask = 0;
 #define TEST_SET_Q 0x10000
 #define TEST_SET_R 0x20000
 #define TEST_SET_S 0x40000
+#define TEST_SET_T 0x80000
+#define TEST_SET_U 0x100000
 
 #define MAX_CAPTURES_PER_TEST 8
 
@@ -95,13 +97,13 @@ static void print_usage(const char* progname) {
     printf("  --minimize-hopcroft    Use Hopcroft's algorithm for DFA minimization\n");
     printf("  --minimize-sat         Use SAT-based minimization (requires CaDiCaL)\n");
     printf("  --compress-sat         Use SAT-based compression for optimal rule merging\n");
-    printf("  --test-set A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S  Run only tests for specified test set(s)\n");
+    printf("  --test-set A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U  Run only tests for specified test set(s)\n");
     printf("                          A = Core tests (basic patterns)\n");
     printf("                          B = Expanded tests (quantifier expansions)\n");
     printf("                          C = Stress tests (structural, whitespace, captures)\n");
     printf("                          D = Complex tests (tripled patterns)\n");
     printf("                          E = Command Core (admin, caution, modifying, dangerous, network)\n");
-    printf("                          F = Category Isolation tests\n");
+    printf("                          F = Category Isolation (SAFE, CAUTION, NETWORK)\n");
     printf("                          G = Edge case tests (long chain, deep nested, etc.)\n");
     printf("                          H = Build Commands\n");
     printf("                          I = Container Commands\n");
@@ -115,13 +117,16 @@ static void print_usage(const char* progname) {
     printf("                          Q = Incremental Stage API\n");
     printf("                          R = Memory Failure Handling\n");
     printf("                          S = Pattern Ordering Verification\n");
+    printf("                          T = Category Isolation (MODIFYING, BUILD, CONTAINER)\n");
+    printf("                          U = Category Isolation (DANGEROUS, ADMIN)\n");
     printf("                          Can combine: ABC, ADG, AK, PQRS, etc.\n");
     printf("  --help                 Show this help message\n");
     printf("\nExamples:\n");
     printf("  %s --minimize-hopcroft --test-set A\n", progname);
     printf("  %s --minimize-sat --test-set C\n", progname);
     printf("  %s --minimize-moore --compress-sat --test-set ABCDEFG\n", progname);
-    printf("  %s --test-set PQRS  # Run all new test suites\n", progname);
+    printf("  %s --test-set T  # Run category isolation (MODIFYING, BUILD, CONTAINER)\n", progname);
+    printf("  %s --test-set U  # Run category isolation (DANGEROUS, ADMIN)\n", progname);
 }
 
 /**
@@ -248,6 +253,8 @@ static void run_limit_config_tests(void);
 static void run_incremental_stage_api_tests(void);
 static void run_memory_failure_tests(void);
 static void run_pattern_ordering_tests(void);
+static void run_category_isolation_t_tests(void);
+static void run_category_isolation_u_tests(void);
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
@@ -1265,9 +1272,11 @@ int main(int argc, char* argv[]) {
                 else if (*p == 'Q' || *p == 'q') test_set_mask |= TEST_SET_Q;
                 else if (*p == 'R' || *p == 'r') test_set_mask |= TEST_SET_R;
                 else if (*p == 'S' || *p == 's') test_set_mask |= TEST_SET_S;
+                else if (*p == 'T' || *p == 't') test_set_mask |= TEST_SET_T;
+                else if (*p == 'U' || *p == 'u') test_set_mask |= TEST_SET_U;
             }
             if (!test_set_mask) {
-                fprintf(stderr, "Error: --test-set requires A-S\n");
+                fprintf(stderr, "Error: --test-set requires A-U\n");
                 print_usage(argv[0]);
                 return 1;
             }
@@ -1278,7 +1287,7 @@ int main(int argc, char* argv[]) {
     printf("DFA TEST RUNNER\n");
     printf("=================================================\n");
     printf("Minimization: %s\n", minimize_algo + 12);
-    printf("Test sets: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n\n",
+    printf("Test sets: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n\n",
            (test_set_mask & TEST_SET_A) ? "A " : "",
            (test_set_mask & TEST_SET_B) ? "B " : "",
            (test_set_mask & TEST_SET_C) ? "C " : "",
@@ -1297,7 +1306,9 @@ int main(int argc, char* argv[]) {
            (test_set_mask & TEST_SET_P) ? "P " : "",
            (test_set_mask & TEST_SET_Q) ? "Q " : "",
            (test_set_mask & TEST_SET_R) ? "R " : "",
-           (test_set_mask & TEST_SET_S) ? "S" : "");
+           (test_set_mask & TEST_SET_S) ? "S " : "",
+           (test_set_mask & TEST_SET_T) ? "T " : "",
+           (test_set_mask & TEST_SET_U) ? "U" : "");
 
     total_tests_run = 0;
     total_tests_passed = 0;
@@ -1375,8 +1386,18 @@ int main(int argc, char* argv[]) {
     }
 
     if (test_set_mask & TEST_SET_F) {
-        printf("\n--- TEST SET F: Category Isolation ---\n");
+        printf("\n--- TEST SET F: Category Isolation (SAFE, CAUTION, NETWORK) ---\n");
         run_all_category_isolation_tests();
+    }
+
+    if (test_set_mask & TEST_SET_T) {
+        printf("\n--- TEST SET T: Category Isolation (MODIFYING, BUILD, CONTAINER) ---\n");
+        run_category_isolation_t_tests();
+    }
+
+    if (test_set_mask & TEST_SET_U) {
+        printf("\n--- TEST SET U: Category Isolation (DANGEROUS, ADMIN) ---\n");
+        run_category_isolation_u_tests();
     }
 
     if (test_set_mask & TEST_SET_J) {
@@ -2093,34 +2114,6 @@ static void run_all_category_isolation_tests(void) {
     run_test_group("CAUTION ISOLATION", "patterns_caution_commands.txt",
                    "build_test/caution_isolation.dfa", caution_cases, sizeof(caution_cases)/sizeof(caution_cases[0]));
 
-    // Category 2: modifying (0x04)
-    TestCase modifying_cases[] = {
-        {"rm file.txt", true, 0, CAT_MASK_2, "modifying gets bit 0x04"},
-        {"rm file.txt", false, 0, CAT_MASK_0, "modifying should NOT get 0x01"},
-        {"rm file.txt", false, 0, CAT_MASK_1, "modifying should NOT get 0x02"},
-        {"rm file.txt", false, 0, CAT_MASK_3, "modifying should NOT get 0x08"},
-        {"rm file.txt", false, 0, CAT_MASK_4, "modifying should NOT get 0x10"},
-        {"rm file.txt", false, 0, CAT_MASK_5, "modifying should NOT get 0x20"},
-        {"rm file.txt", false, 0, CAT_MASK_6, "modifying should NOT get 0x40"},
-        {"rm file.txt", false, 0, CAT_MASK_7, "modifying should NOT get 0x80"},
-    };
-    run_test_group("MODIFYING ISOLATION", "patterns_modifying_commands.txt",
-                   "build_test/modifying_isolation.dfa", modifying_cases, sizeof(modifying_cases)/sizeof(modifying_cases[0]));
-
-    // Category 3: dangerous (0x08)
-    TestCase dangerous_cases[] = {
-        {"reboot", true, 0, CAT_MASK_3, "dangerous gets bit 0x08"},
-        {"reboot", false, 0, CAT_MASK_0, "dangerous should NOT get 0x01"},
-        {"reboot", false, 0, CAT_MASK_1, "dangerous should NOT get 0x02"},
-        {"reboot", false, 0, CAT_MASK_2, "dangerous should NOT get 0x04"},
-        {"reboot", false, 0, CAT_MASK_4, "dangerous should NOT get 0x10"},
-        {"reboot", false, 0, CAT_MASK_5, "dangerous should NOT get 0x20"},
-        {"reboot", false, 0, CAT_MASK_6, "dangerous should NOT get 0x40"},
-        {"reboot", false, 0, CAT_MASK_7, "dangerous should NOT get 0x80"},
-    };
-    run_test_group("DANGEROUS ISOLATION", "patterns_dangerous_commands.txt",
-                   "build_test/dangerous_isolation.dfa", dangerous_cases, sizeof(dangerous_cases)/sizeof(dangerous_cases[0]));
-
     // Category 4: network (0x10)
     TestCase network_cases[] = {
         {"ping google.com", true, 0, CAT_MASK_4, "network gets bit 0x10"},
@@ -2134,20 +2127,22 @@ static void run_all_category_isolation_tests(void) {
     };
     run_test_group("NETWORK ISOLATION", "patterns_network_commands.txt",
                    "build_test/network_isolation.dfa", network_cases, sizeof(network_cases)/sizeof(network_cases[0]));
+}
 
-    // Category 5: admin (0x20)
-    TestCase admin_cases[] = {
-        {"sudo command", true, 0, CAT_MASK_5, "admin gets bit 0x20"},
-        {"sudo command", false, 0, CAT_MASK_0, "admin should NOT get 0x01"},
-        {"sudo command", false, 0, CAT_MASK_1, "admin should NOT get 0x02"},
-        {"sudo command", false, 0, CAT_MASK_2, "admin should NOT get 0x04"},
-        {"sudo command", false, 0, CAT_MASK_3, "admin should NOT get 0x08"},
-        {"sudo command", false, 0, CAT_MASK_4, "admin should NOT get 0x10"},
-        {"sudo command", false, 0, CAT_MASK_6, "admin should NOT get 0x40"},
-        {"sudo command", false, 0, CAT_MASK_7, "admin should NOT get 0x80"},
+static void run_category_isolation_t_tests(void) {
+    // Category 2: modifying (0x04)
+    TestCase modifying_cases[] = {
+        {"rm file.txt", true, 0, CAT_MASK_2, "modifying gets bit 0x04"},
+        {"rm file.txt", false, 0, CAT_MASK_0, "modifying should NOT get 0x01"},
+        {"rm file.txt", false, 0, CAT_MASK_1, "modifying should NOT get 0x02"},
+        {"rm file.txt", false, 0, CAT_MASK_3, "modifying should NOT get 0x08"},
+        {"rm file.txt", false, 0, CAT_MASK_4, "modifying should NOT get 0x10"},
+        {"rm file.txt", false, 0, CAT_MASK_5, "modifying should NOT get 0x20"},
+        {"rm file.txt", false, 0, CAT_MASK_6, "modifying should NOT get 0x40"},
+        {"rm file.txt", false, 0, CAT_MASK_7, "modifying should NOT get 0x80"},
     };
-    run_test_group("ADMIN ISOLATION", "patterns_admin_commands.txt",
-                   "build_test/admin_isolation.dfa", admin_cases, sizeof(admin_cases)/sizeof(admin_cases[0]));
+    run_test_group("MODIFYING ISOLATION", "patterns_modifying_commands.txt",
+                   "build_test/modifying_isolation.dfa", modifying_cases, sizeof(modifying_cases)/sizeof(modifying_cases[0]));
 
     // Category 6: build (0x40)
     TestCase build_cases[] = {
@@ -2176,6 +2171,36 @@ static void run_all_category_isolation_tests(void) {
     };
     run_test_group("CONTAINER ISOLATION", "patterns_container_commands.txt",
                    "build_test/container_isolation.dfa", container_cases, sizeof(container_cases)/sizeof(container_cases[0]));
+}
+
+static void run_category_isolation_u_tests(void) {
+    // Category 3: dangerous (0x08)
+    TestCase dangerous_cases[] = {
+        {"reboot", true, 0, CAT_MASK_3, "dangerous gets bit 0x08"},
+        {"reboot", false, 0, CAT_MASK_0, "dangerous should NOT get 0x01"},
+        {"reboot", false, 0, CAT_MASK_1, "dangerous should NOT get 0x02"},
+        {"reboot", false, 0, CAT_MASK_2, "dangerous should NOT get 0x04"},
+        {"reboot", false, 0, CAT_MASK_4, "dangerous should NOT get 0x10"},
+        {"reboot", false, 0, CAT_MASK_5, "dangerous should NOT get 0x20"},
+        {"reboot", false, 0, CAT_MASK_6, "dangerous should NOT get 0x40"},
+        {"reboot", false, 0, CAT_MASK_7, "dangerous should NOT get 0x80"},
+    };
+    run_test_group("DANGEROUS ISOLATION", "patterns_dangerous_commands.txt",
+                   "build_test/dangerous_isolation.dfa", dangerous_cases, sizeof(dangerous_cases)/sizeof(dangerous_cases[0]));
+
+    // Category 5: admin (0x20)
+    TestCase admin_cases[] = {
+        {"sudo command", true, 0, CAT_MASK_5, "admin gets bit 0x20"},
+        {"sudo command", false, 0, CAT_MASK_0, "admin should NOT get 0x01"},
+        {"sudo command", false, 0, CAT_MASK_1, "admin should NOT get 0x02"},
+        {"sudo command", false, 0, CAT_MASK_2, "admin should NOT get 0x04"},
+        {"sudo command", false, 0, CAT_MASK_3, "admin should NOT get 0x08"},
+        {"sudo command", false, 0, CAT_MASK_4, "admin should NOT get 0x10"},
+        {"sudo command", false, 0, CAT_MASK_6, "admin should NOT get 0x40"},
+        {"sudo command", false, 0, CAT_MASK_7, "admin should NOT get 0x80"},
+    };
+    run_test_group("ADMIN ISOLATION", "patterns_admin_commands.txt",
+                   "build_test/admin_isolation.dfa", admin_cases, sizeof(admin_cases)/sizeof(admin_cases[0]));
 }
 
 // ============================================================================
