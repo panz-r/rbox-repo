@@ -158,11 +158,11 @@ static void test_path_max_boundary(void)
     TEST_ASSERT_EQ(ret2, -1, "path exceeding PATH_MAX rejected");
     radix_tree_free(tree);
 
-    /* Case 3: Many segments (256+) capped at 256 */
+    /* Case 3: Many segments (512+) capped at 512 */
     tree = radix_tree_new();
     char path3[4000];
     size_t pos = 0;
-    for (unsigned int i = 0; i < 300; i++) {
+    for (unsigned int i = 0; i < 550; i++) {
         int ret = snprintf(path3 + pos, sizeof(path3) - pos, "/s%u", i);
         if (ret < 0) break;
         pos += (size_t)ret;
@@ -176,10 +176,10 @@ static void test_path_max_boundary(void)
                 "segments: starts with first segment");
     size_t path_len = strlen(rules[0].path);
     TEST_ASSERT(path_len > 5 &&
-                strcmp(rules[0].path + path_len - 5, "/s255") == 0,
-                "segments: ends with segment 255");
-    TEST_ASSERT(strstr(rules[0].path, "/s256") == NULL,
-                "segments: excludes segment 256");
+                strcmp(rules[0].path + path_len - 5, "/s511") == 0,
+                "segments: ends with segment 511");
+    TEST_ASSERT(strstr(rules[0].path, "/s512") == NULL,
+                "segments: excludes segment 512");
     for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
     free(rules);
     radix_tree_free(tree);

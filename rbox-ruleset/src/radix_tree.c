@@ -19,6 +19,9 @@
 #define PATH_MAX 4096
 #endif
 
+/** Maximum number of path segments supported (configurable at compile time) */
+#define MAX_PATH_SEGMENTS 512
+
 #include "radix_tree.h"
 
 /* ------------------------------------------------------------------ */
@@ -186,9 +189,9 @@ int radix_tree_allow(radix_tree_t *tree, const char *path, uint64_t access)
     if (path_len >= PATH_MAX) { errno = ENAMETOOLONG; return -1; }
     memcpy(path_buf, path, path_len + 1);
 
-    const char *segs[256];
-    int seg_lens[256];
-    int n_segs = split_path(path_buf, segs, seg_lens, 256);
+    const char *segs[MAX_PATH_SEGMENTS];
+    int seg_lens[MAX_PATH_SEGMENTS];
+    int n_segs = split_path(path_buf, segs, seg_lens, MAX_PATH_SEGMENTS);
     if (n_segs == 0) {
         bool was = node_is_terminal(tree->root);
         node_set_terminal(tree->root);
@@ -227,9 +230,9 @@ int radix_tree_deny(radix_tree_t *tree, const char *path)
     if (path_len >= PATH_MAX) { errno = ENAMETOOLONG; return -1; }
     memcpy(path_buf, path, path_len + 1);
 
-    const char *segs[256];
-    int seg_lens[256];
-    int n_segs = split_path(path_buf, segs, seg_lens, 256);
+    const char *segs[MAX_PATH_SEGMENTS];
+    int seg_lens[MAX_PATH_SEGMENTS];
+    int n_segs = split_path(path_buf, segs, seg_lens, MAX_PATH_SEGMENTS);
 
     radix_node_t *cur = tree->root;
     for (int i = 0; i < n_segs; i++) {
@@ -261,9 +264,9 @@ int radix_tree_is_denied(radix_tree_t *tree, const char *path)
     size_t path_len = strlen(path);
     if (path_len >= PATH_MAX) return 0;
     memcpy(path_buf, path, path_len + 1);
-    const char *segs[256];
-    int seg_lens[256];
-    int n_segs = split_path(path_buf, segs, seg_lens, 256);
+    const char *segs[MAX_PATH_SEGMENTS];
+    int seg_lens[MAX_PATH_SEGMENTS];
+    int n_segs = split_path(path_buf, segs, seg_lens, MAX_PATH_SEGMENTS);
     radix_node_t *cur = tree->root;
     for (int i = 0; i < n_segs; i++) {
         int idx = find_child(cur, segs[i], seg_lens[i]);
@@ -401,8 +404,8 @@ void radix_tree_collect_rules(radix_tree_t *tree,
     *out_count = 0;
 
     struct { radix_node_t *node; int depth; } stack[4096];
-    const char *seg_stack[256];
-    int seg_len_stack[256];
+    const char *seg_stack[MAX_PATH_SEGMENTS];
+    int seg_len_stack[MAX_PATH_SEGMENTS];
 
     int sp = 0;
     stack[sp].node = tree->root;
