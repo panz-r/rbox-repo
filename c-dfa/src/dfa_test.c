@@ -23,6 +23,10 @@ static char test_set_mask = 0;
 #define TEST_SET_A 0x01
 #define TEST_SET_B 0x02
 #define TEST_SET_C 0x04
+#define TEST_SET_D 0x08
+#define TEST_SET_E 0x10
+#define TEST_SET_F 0x20
+#define TEST_SET_G 0x40
 
 #define MAX_CAPTURES_PER_TEST 8
 
@@ -79,16 +83,20 @@ static void print_usage(const char* progname) {
     printf("  --minimize-hopcroft    Use Hopcroft's algorithm for DFA minimization\n");
     printf("  --minimize-sat         Use SAT-based minimization (requires CaDiCaL)\n");
     printf("  --compress-sat         Use SAT-based compression for optimal rule merging\n");
-    printf("  --test-set A|B|C       Run only tests for specified test set(s)\n");
-    printf("                          A = Core tests (quantifiers, fragments, etc.)\n");
+    printf("  --test-set A|B|C|D|E|F|G  Run only tests for specified test set(s)\n");
+    printf("                          A = Core tests (basic patterns)\n");
     printf("                          B = Expanded tests (quantifier expansions)\n");
-    printf("                          C = Command tests (admin, caution, modifying, dangerous, network commands)\n");
-    printf("                          Can combine: ABC, AB, AC, BC, etc.\n");
+    printf("                          C = Stress tests (structural, whitespace, captures)\n");
+    printf("                          D = Complex tests (tripled patterns)\n");
+    printf("                          E = Command tests (admin, caution, modifying, dangerous, network)\n");
+    printf("                          F = Combined tests (combined, minimal, simple patterns)\n");
+    printf("                          G = Edge case tests (long chain, deep nested, alternation, etc.)\n");
+    printf("                          Can combine: ABCDEFG, AD, DG, etc.\n");
     printf("  --help                 Show this help message\n");
     printf("\nExamples:\n");
     printf("  %s --minimize-hopcroft --test-set A\n", progname);
     printf("  %s --minimize-sat --test-set C\n", progname);
-    printf("  %s --minimize-moore --compress-sat --test-set ABC\n", progname);
+    printf("  %s --minimize-moore --compress-sat --test-set ABCDEFG\n", progname);
 }
 
 /**
@@ -1208,9 +1216,13 @@ int main(int argc, char* argv[]) {
                 if (*p == 'A' || *p == 'a') test_set_mask |= TEST_SET_A;
                 else if (*p == 'B' || *p == 'b') test_set_mask |= TEST_SET_B;
                 else if (*p == 'C' || *p == 'c') test_set_mask |= TEST_SET_C;
+                else if (*p == 'D' || *p == 'd') test_set_mask |= TEST_SET_D;
+                else if (*p == 'E' || *p == 'e') test_set_mask |= TEST_SET_E;
+                else if (*p == 'F' || *p == 'f') test_set_mask |= TEST_SET_F;
+                else if (*p == 'G' || *p == 'g') test_set_mask |= TEST_SET_G;
             }
             if (!test_set_mask) {
-                fprintf(stderr, "Error: --test-set requires A, B, or C\n");
+                fprintf(stderr, "Error: --test-set requires A-G\n");
                 print_usage(argv[0]);
                 return 1;
             }
@@ -1221,10 +1233,14 @@ int main(int argc, char* argv[]) {
     printf("DFA TEST RUNNER\n");
     printf("=================================================\n");
     printf("Minimization: %s\n", minimize_algo + 12);
-    printf("Test sets: %s%s%s\n\n",
+    printf("Test sets: %s%s%s%s%s%s%s\n\n",
            (test_set_mask & TEST_SET_A) ? "A " : "",
            (test_set_mask & TEST_SET_B) ? "B " : "",
-           (test_set_mask & TEST_SET_C) ? "C" : "");
+           (test_set_mask & TEST_SET_C) ? "C " : "",
+           (test_set_mask & TEST_SET_D) ? "D " : "",
+           (test_set_mask & TEST_SET_E) ? "E " : "",
+           (test_set_mask & TEST_SET_F) ? "F " : "",
+           (test_set_mask & TEST_SET_G) ? "G" : "");
 
     total_tests_run = 0;
     total_tests_passed = 0;
@@ -1232,46 +1248,13 @@ int main(int argc, char* argv[]) {
     total_groups_failed = 0;
 
     if (test_set_mask & TEST_SET_A) {
-        printf("--- TEST SET A: Core + Command Tests ---\n");
+        printf("--- TEST SET A: Core Tests ---\n");
         run_core_tests();
         run_quantifier_tests();
         run_fragment_tests();
         run_alternation_tests();
         run_boundary_tests();
         run_category_tests();
-        run_character_class_tests();
-        run_tripled_quantifier_depth();
-        run_tripled_fragment_interactions();
-        run_tripled_boundary();
-        run_tripled_hard_edges();
-        run_tripled_syntax();
-        run_tripled_category_isolation();
-        run_tripled_quantifier_interactions();
-        // Command tests
-        run_admin_command_tests();
-        run_caution_command_tests();
-        run_modifying_command_tests();
-        run_dangerous_command_tests();
-        run_network_command_tests();
-        run_build_command_tests();
-        run_container_command_tests();
-        run_all_category_isolation_tests();
-        run_combined_tests();
-        run_minimal_tests();
-        run_simple_quantifier_tests();
-        run_step_tests();
-        run_test_pattern_tests();
-        // New edge case tests
-        run_long_chain_tests();
-        run_deep_nested_tests();
-        run_complex_alternation_tests();
-        run_quantifier_combo_tests();
-        run_overlapping_prefix_tests();
-        run_quantifier_edge_tests();
-        run_fragment_interact_tests();
-        run_whitespace_tests();
-        run_empty_matching_tests();
-        run_negative_integrity_tests();
     }
 
     if (test_set_mask & TEST_SET_B) {
@@ -1286,11 +1269,9 @@ int main(int argc, char* argv[]) {
         run_expanded_hard_tests();
         run_expanded_perf_tests();
         run_edge_case_tests();
-        // Capture tests
         run_with_captures_tests();
         run_capture_simple_tests();
         run_capture_test_tests();
-        // New tests
         run_boundary_new_tests();
         run_category_mix_tests();
         run_partial_mapping_tests();
@@ -1303,6 +1284,53 @@ int main(int argc, char* argv[]) {
         run_stress_whitespace_tests();
         run_nested_capture_tests();
         run_factorization_tests();
+    }
+
+    if (test_set_mask & TEST_SET_D) {
+        printf("\n--- TEST SET D: Complex Patterns ---\n");
+        run_character_class_tests();
+        run_tripled_quantifier_depth();
+        run_tripled_fragment_interactions();
+        run_tripled_boundary();
+        run_tripled_hard_edges();
+        run_tripled_syntax();
+        run_tripled_category_isolation();
+        run_tripled_quantifier_interactions();
+    }
+
+    if (test_set_mask & TEST_SET_E) {
+        printf("\n--- TEST SET E: Command Tests ---\n");
+        run_admin_command_tests();
+        run_caution_command_tests();
+        run_modifying_command_tests();
+        run_dangerous_command_tests();
+        run_network_command_tests();
+        run_build_command_tests();
+        run_container_command_tests();
+    }
+
+    if (test_set_mask & TEST_SET_F) {
+        printf("\n--- TEST SET F: Combined Tests ---\n");
+        run_all_category_isolation_tests();
+        run_combined_tests();
+        run_minimal_tests();
+        run_simple_quantifier_tests();
+        run_step_tests();
+        run_test_pattern_tests();
+    }
+
+    if (test_set_mask & TEST_SET_G) {
+        printf("\n--- TEST SET G: Edge Case Tests ---\n");
+        run_long_chain_tests();
+        run_deep_nested_tests();
+        run_complex_alternation_tests();
+        run_quantifier_combo_tests();
+        run_overlapping_prefix_tests();
+        run_quantifier_edge_tests();
+        run_fragment_interact_tests();
+        run_whitespace_tests();
+        run_empty_matching_tests();
+        run_negative_integrity_tests();
     }
 
     print_separator();
