@@ -20,10 +20,40 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
+#include <errno.h>
+#include <limits.h>
 
 /* ============================================================
- * CONSTANTS
+ * CRC32 (for serialization integrity check)
+ * ============================================================ */
+
+static uint32_t crc32_table[256];
+static int crc32_table_init = 0;
+
+static void crc32_init_table(void)
+{
+    if (crc32_table_init) return;
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t c = i;
+        for (int j = 0; j < 8; j++)
+            c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+        crc32_table[i] = c;
+    }
+    crc32_table_init = 1;
+}
+
+static uint32_t crc32_compute(const void *data, size_t len, uint32_t prev)
+{
+    crc32_init_table();
+    uint32_t c = prev ^ 0xFFFFFFFFu;
+    const uint8_t *p = (const uint8_t *)data;
+    for (size_t i = 0; i < len; i++)
+        c = crc32_table[(c ^ p[i]) & 0xFF] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+
+/* ============================================================
+ * COMPATIBILITY MASK
  * ============================================================ */
 
 #define CHILDREN_ARENA_INIT  4096
@@ -630,19 +660,56 @@ cpl_error_t cpl_policy_eval(const cpl_policy_t *policy,
         return CPL_ERR_INVALID;
     }
 
-    /* Per-position filter fast-path (rebuild if needed) */
-    if (result) {
-        size_t check_len = cmd.count < FILTER_POS_LEVELS ? cmd.count : FILTER_POS_LEVELS;
-        for (size_t i = 0; i < check_len; i++) {
-            if (policy->pos_built_epoch[i] != policy->epoch) {
-                cpl_policy_t *mutable = (cpl_policy_t *)policy;
-                policy_rebuild_filters(mutable);
+    /* ============================================================
+     * PER-POSITION FILTER PRE-CHECK
+     *
+     * Runs before the trie walk. Rejects definite no-matches early.
+     * Runs in ALL modes (verify-only and suggest).
+     * ============================================================ */
+    bool filter_rejected = false;
+    size_t check_len = cmd.count < FILTER_POS_LEVELS ? cmd.count : FILTER_POS_LEVELS;
+
+    /* Rebuild filters if epoch stale */
+    for (size_t i = 0; i < check_len; i++) {
+        if (policy->pos_built_epoch[i] != policy->epoch) {
+            cpl_policy_t *mutable = (cpl_policy_t *)policy;
+            policy_rebuild_filters(mutable);
+            break;
+        }
+    }
+
+    for (size_t i = 0; i < check_len; i++) {
+        cpl_token_type_t ctype = cmd.tokens[i].type;
+        if (ctype == CPL_TYPE_LITERAL) {
+            if (policy->pos_wildcard_mask[i] != 0) continue;
+            if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) continue;
+            uint64_t h = filter_hash_fnv1a(cmd.tokens[i].text, strlen(cmd.tokens[i].text));
+            if (!vacuum_filter_lookup(policy->pos_filters[i], h)) {
+                filter_rejected = true;
                 break;
+            }
+        } else {
+            if ((policy->pos_wildcard_mask[i] & compat_mask(ctype)) == 0) {
+                if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) {
+                    filter_rejected = true;
+                    break;
+                }
             }
         }
     }
 
-    /* Walk the trie */
+    /* Verify-only fast path: filter rejected → skip trie walk entirely */
+    if (filter_rejected && !result) {
+        cpl_free_token_array(&cmd);
+        return CPL_ERR_INVALID;
+    }
+
+    /* ============================================================
+     * TRIE WALK
+     *
+     * Still needed even when filter rejected — we need match_depth
+     * and match_state to produce useful suggestions.
+     * ============================================================ */
     uint32_t current = 0;
     size_t match_depth = 0;
     uint32_t match_state = 0;
@@ -681,70 +748,28 @@ cpl_error_t cpl_policy_eval(const cpl_policy_t *policy,
         return CPL_OK;
     }
 
-    /* Per-position filter fast-path: reject definite no-matches */
-    if (result) {
-        size_t check_len = cmd.count < FILTER_POS_LEVELS ? cmd.count : FILTER_POS_LEVELS;
-        for (size_t i = 0; i < check_len; i++) {
-            cpl_token_type_t ctype = cmd.tokens[i].type;
-            if (ctype == CPL_TYPE_LITERAL) {
-                if (policy->pos_wildcard_mask[i] != 0) continue;
-                if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) continue;
-                uint64_t h = filter_hash_fnv1a(cmd.tokens[i].text, strlen(cmd.tokens[i].text));
-                if (!vacuum_filter_lookup(policy->pos_filters[i], h)) {
-                    cpl_free_token_array(&cmd);
-                    goto generate_suggestions;
-                }
-            } else {
-                if ((policy->pos_wildcard_mask[i] & compat_mask(ctype)) == 0) {
-                    if (!policy->pos_filters[i] || policy->pos_filters[i]->count == 0) {
-                        cpl_free_token_array(&cmd);
-                        goto generate_suggestions;
-                    }
-                }
-            }
-        }
+    /* Verify-only: no match, no suggestions needed */
+    if (!result) {
+        cpl_free_token_array(&cmd);
+        return CPL_ERR_INVALID;
     }
 
-    cpl_free_token_array(&cmd);
-    if (!result) return CPL_ERR_INVALID;
-
-generate_suggestions:
-    cpl_free_token_array(&cmd);
-    if (!result) return CPL_ERR_INVALID;
-
-    /* Re-normalize for suggestion generation */
-    err = cpl_normalize_typed(raw_cmd, &cmd);
-    if (err != CPL_OK) return err;
-
+    /* ============================================================
+     * SUGGESTION GENERATION
+     *
+     * Uses existing cmd.tokens — no re-normalize, no trie re-walk.
+     * ============================================================ */
     double confidence = (double)match_depth / (double)cmd.count;
     const char *based_on = miner_find_based_on(policy, match_state);
 
-    /* Suggestion A: minimal extension */
+    /* Suggestion A: minimal extension (matched prefix as-is + remaining as literals) */
     {
         cpl_token_t *pat_tokens = malloc(cmd.count * sizeof(cpl_token_t));
         if (!pat_tokens) { cpl_free_token_array(&cmd); return CPL_ERR_MEMORY; }
 
-        current = 0;
         for (size_t i = 0; i < match_depth; i++) {
-            cpl_token_type_t ctype = cmd.tokens[i].type;
-            const char *ctext = cmd.tokens[i].text;
-            policy_state_t *node = &policy->states.states[current];
-            child_entry_t *found = NULL;
-            if (ctype == CPL_TYPE_LITERAL)
-                found = find_literal_child(node, ctext);
-            if (!found) {
-                uint16_t compat = compat_mask(ctype) & node->wildcard_mask;
-                if (compat)
-                    found = find_wildcard_child(node, ctype);
-            }
-            if (found) {
-                pat_tokens[i].text = (char *)found->text;
-                pat_tokens[i].type = (cpl_token_type_t)found->type;
-                current = found->target;
-            } else {
-                pat_tokens[i].text = (char *)cmd.tokens[i].text;
-                pat_tokens[i].type = cmd.tokens[i].type;
-            }
+            pat_tokens[i].text = (char *)cmd.tokens[i].text;
+            pat_tokens[i].type = cmd.tokens[i].type;
         }
         for (size_t i = match_depth; i < cmd.count; i++) {
             pat_tokens[i].text = (char *)cmd.tokens[i].text;
@@ -768,6 +793,7 @@ generate_suggestions:
 
         uint16_t wm = div_node->wildcard_mask;
         if (wm != 0 && (compat_mask(div_type) & wm) != 0) {
+            /* Wildcard widening: find narrowest compatible wildcard */
             cpl_token_type_t best_wild = CPL_TYPE_ANY;
             uint16_t compat = compat_mask(div_type) & wm;
             while (compat) {
@@ -783,24 +809,9 @@ generate_suggestions:
                 size_t pat_len = match_depth + 1;
                 cpl_token_t *pat_tokens = malloc(pat_len * sizeof(cpl_token_t));
                 if (pat_tokens) {
-                    current = 0;
                     for (size_t i = 0; i < match_depth; i++) {
-                        cpl_token_type_t ctype = cmd.tokens[i].type;
-                        const char *ctext = cmd.tokens[i].text;
-                        policy_state_t *node = &policy->states.states[current];
-                        child_entry_t *found = NULL;
-                        if (ctype == CPL_TYPE_LITERAL)
-                            found = find_literal_child(node, ctext);
-                        if (!found) {
-                            uint16_t compat2 = compat_mask(ctype) & node->wildcard_mask;
-                            if (compat2)
-                                found = find_wildcard_child(node, ctype);
-                        }
-                        if (found) {
-                            pat_tokens[i].text = (char *)found->text;
-                            pat_tokens[i].type = (cpl_token_type_t)found->type;
-                            current = found->target;
-                        }
+                        pat_tokens[i].text = (char *)cmd.tokens[i].text;
+                        pat_tokens[i].type = cmd.tokens[i].type;
                     }
                     pat_tokens[match_depth].text = (char *)cpl_type_symbol[best_wild];
                     pat_tokens[match_depth].type = best_wild;
@@ -815,6 +826,7 @@ generate_suggestions:
                 }
             }
         } else if (wm == 0 && div_node->literal_count >= MINER_LITERAL_THRESHOLD) {
+            /* Literal-to-wildcard: classify all existing literals + input token */
             cpl_token_type_t joined = CPL_TYPE_LITERAL;
             uint16_t total = div_node->literal_count;
             for (uint16_t i = 0; i < total; i++) {
@@ -830,24 +842,9 @@ generate_suggestions:
                 size_t pat_len = cmd.count;
                 cpl_token_t *pat_tokens = malloc(pat_len * sizeof(cpl_token_t));
                 if (pat_tokens) {
-                    current = 0;
                     for (size_t i = 0; i < match_depth; i++) {
-                        cpl_token_type_t ctype = cmd.tokens[i].type;
-                        const char *ctext = cmd.tokens[i].text;
-                        policy_state_t *node = &policy->states.states[current];
-                        child_entry_t *found = NULL;
-                        if (ctype == CPL_TYPE_LITERAL)
-                            found = find_literal_child(node, ctext);
-                        if (!found) {
-                            uint16_t compat2 = compat_mask(ctype) & node->wildcard_mask;
-                            if (compat2)
-                                found = find_wildcard_child(node, ctype);
-                        }
-                        if (found) {
-                            pat_tokens[i].text = (char *)found->text;
-                            pat_tokens[i].type = (cpl_token_type_t)found->type;
-                            current = found->target;
-                        }
+                        pat_tokens[i].text = (char *)cmd.tokens[i].text;
+                        pat_tokens[i].type = cmd.tokens[i].type;
                     }
                     pat_tokens[match_depth].text = (char *)cpl_type_symbol[joined];
                     pat_tokens[match_depth].type = joined;
@@ -1183,11 +1180,26 @@ cpl_error_t cpl_policy_render_nfa(const cpl_policy_t *policy,
 
 /* ============================================================
  * SERIALIZATION
+ *
+ * Format:
+ *   # CPL v1
+ *   # patterns: <count>
+ *   <pattern line 1>
+ *   <pattern line 2>
+ *   ...
+ *   # CRC32: <hex>
+ *
+ * Version 1: one pattern per line, no wildcards in comments.
+ * Vacuum filter state is NOT persisted — rebuilt on load.
  * ============================================================ */
+
+#define CPL_SERIALIZATION_VERSION 1
 
 typedef struct {
     FILE *fp;
     cpl_error_t error;
+    uint32_t crc;
+    size_t pattern_count;
 } policy_save_ctx_t;
 
 static void dfs_save(cpl_policy_t *policy, uint32_t idx, policy_save_ctx_t *ctx)
@@ -1198,10 +1210,15 @@ static void dfs_save(cpl_policy_t *policy, uint32_t idx, policy_save_ctx_t *ctx)
     uint16_t total = node->literal_count + node->wildcard_count;
 
     if (node->pattern_id != UINT16_MAX && node->pattern_id < policy->patterns.count) {
-        if (fprintf(ctx->fp, "%s\n", policy->patterns.strings[node->pattern_id]) < 0) {
+        const char *pat = policy->patterns.strings[node->pattern_id];
+        size_t len = strlen(pat);
+        if (fprintf(ctx->fp, "%s\n", pat) < 0) {
             ctx->error = CPL_ERR_IO;
             return;
         }
+        ctx->crc = crc32_compute(pat, len, ctx->crc);
+        ctx->crc = crc32_compute("\n", 1, ctx->crc);
+        ctx->pattern_count++;
     }
 
     for (uint16_t i = 0; i < total; i++) {
@@ -1217,8 +1234,27 @@ cpl_error_t cpl_policy_save(const cpl_policy_t *policy, const char *path)
     FILE *fp = fopen(path, "w");
     if (!fp) return CPL_ERR_IO;
 
-    policy_save_ctx_t ctx = { .fp = fp, .error = CPL_OK };
+    /* Header */
+    if (fprintf(fp, "# CPL v%d\n", CPL_SERIALIZATION_VERSION) < 0) {
+        fclose(fp);
+        return CPL_ERR_IO;
+    }
+    if (fprintf(fp, "# patterns: %zu\n", policy->pattern_count) < 0) {
+        fclose(fp);
+        return CPL_ERR_IO;
+    }
+
+    /* Patterns with running CRC */
+    policy_save_ctx_t ctx = { .fp = fp, .error = CPL_OK, .crc = 0, .pattern_count = 0 };
     dfs_save((cpl_policy_t *)policy, 0, &ctx);
+
+    /* Footer: CRC32 */
+    if (ctx.error == CPL_OK) {
+        if (fprintf(fp, "# CRC32: %08x\n", ctx.crc) < 0) {
+            ctx.error = CPL_ERR_IO;
+        }
+    }
+
     fclose(fp);
     return ctx.error;
 }
@@ -1231,13 +1267,59 @@ cpl_error_t cpl_policy_load(cpl_policy_t *policy, const char *path)
     if (!fp) return CPL_ERR_IO;
 
     char line[4096];
+    uint32_t expected_crc = 0;
+    uint32_t computed_crc = 0;
+    bool got_header = false;
+    bool got_crc = false;
+    bool in_patterns = false;
+
     while (fgets(line, sizeof(line), fp)) {
         size_t len = strlen(line);
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
             line[--len] = '\0';
         }
         if (len == 0) continue;
+
+        /* Must start with version header */
+        if (!got_header) {
+            if (strncmp(line, "# CPL v", 7) != 0) {
+                fclose(fp);
+                return CPL_ERR_FORMAT;
+            }
+            int version = atoi(line + 7);
+            if (version != CPL_SERIALIZATION_VERSION) {
+                fclose(fp);
+                return CPL_ERR_FORMAT;
+            }
+            got_header = true;
+            continue;
+        }
+
+        /* After header: pattern count line (skip) or patterns */
+        if (!in_patterns) {
+            if (strncmp(line, "# patterns:", 11) == 0) continue;
+            in_patterns = true;
+        }
+
+        /* Footer: CRC32 — marks end of patterns */
+        if (strncmp(line, "# CRC32: ", 9) == 0) {
+            char *end;
+            expected_crc = (uint32_t)strtoul(line + 9, &end, 16);
+            if (end != line + 17) {
+                fclose(fp);
+                return CPL_ERR_FORMAT;
+            }
+            got_crc = true;
+            break;
+        }
+
+        /* Comment lines within pattern section (skip) */
         if (line[0] == '#') continue;
+
+        /* Pattern line */
+        size_t plen = strlen(line);
+        computed_crc = crc32_compute(line, plen, computed_crc);
+        computed_crc = crc32_compute("\n", 1, computed_crc);
 
         cpl_error_t err = cpl_policy_add(policy, line);
         if (err != CPL_OK) {
@@ -1247,6 +1329,10 @@ cpl_error_t cpl_policy_load(cpl_policy_t *policy, const char *path)
     }
 
     fclose(fp);
+
+    if (!got_header || !got_crc) return CPL_ERR_FORMAT;
+    if (computed_crc != expected_crc) return CPL_ERR_FORMAT;
+
     return CPL_OK;
 }
 

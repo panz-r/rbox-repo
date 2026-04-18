@@ -146,10 +146,10 @@ int main(int argc, char *argv[])
 
         /* Single command verify */
         if (verify_cmd) {
-            const char *matched = NULL;
-            err = cpl_policy_verify(policy, verify_cmd, &matched);
-            if (err == CPL_OK) {
-                printf("ALLOW (matched: %s)\n", matched ? matched : "(unknown)");
+            cpl_eval_result_t r;
+            err = cpl_policy_eval(policy, verify_cmd, &r);
+            if (r.matches) {
+                printf("ALLOW (matched: %s)\n", r.matching_pattern ? r.matching_pattern : "(unknown)");
             } else {
                 printf("DENY\n");
             }
@@ -176,10 +176,10 @@ int main(int argc, char *argv[])
                 if (len == 0) continue;
                 if (line[0] == '#') continue;
 
-                const char *matched = NULL;
-                err = cpl_policy_verify(policy, line, &matched);
-                if (err == CPL_OK) {
-                    printf("ALLOW: %-60s (matched: %s)\n", line, matched ? matched : "(unknown)");
+                cpl_eval_result_t r;
+                err = cpl_policy_eval(policy, line, &r);
+                if (r.matches) {
+                    printf("ALLOW: %-60s (matched: %s)\n", line, r.matching_pattern ? r.matching_pattern : "(unknown)");
                     allow_count++;
                 } else {
                     printf("DENY:  %s\n", line);

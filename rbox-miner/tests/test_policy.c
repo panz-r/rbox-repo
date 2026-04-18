@@ -220,6 +220,9 @@ static int test_policy_load_empty(void)
 {
     FILE *fp = fopen("tests/test_policy_empty.tmp", "w");
     ASSERT(fp != NULL);
+    fprintf(fp, "# CPL v1\n");
+    fprintf(fp, "# patterns: 0\n");
+    fprintf(fp, "# CRC32: 00000000\n");
     fclose(fp);
 
     cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();

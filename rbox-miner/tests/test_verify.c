@@ -479,6 +479,162 @@ static int test_eval_suggest_variants_loop(void)
 }
 
 /* ============================================================
+ * COMPLEX: FULL EVAL + FILTER + SUGGEST STRESS TEST
+ *
+ * Exercises:
+ *   - Filter pre-check rejects in verify-only mode (skip trie walk)
+ *   - Filter pre-check rejects but still walks trie for suggestions
+ *   - Wildcard widening suggestion path
+ *   - Literal-to-wildcard generalization path
+ *   - Multiple add/eval cycles with filter rebuild
+ *   - Divergence at various depths
+ *   - Commands longer than FILTER_POS_LEVELS
+ * ============================================================ */
+
+static int test_complex_eval_filter_suggest_stress(void)
+{
+    cpl_policy_ctx_t *ctx = cpl_policy_ctx_new();
+    cpl_policy_t *policy = cpl_policy_new(ctx);
+
+    /* Build a policy with:
+     *  - Shared prefix "git" with multiple children (status, log, push)
+     *  - A wildcard pattern "ls -la *"
+     *  - A deep pattern "docker run -it * *"
+     *  - Multiple paths at position 1 for literal-to-wildcard trigger
+     */
+    cpl_policy_add(policy, "git status");
+    cpl_policy_add(policy, "git log");
+    cpl_policy_add(policy, "git push");
+    cpl_policy_add(policy, "ls -la *");
+    cpl_policy_add(policy, "docker run -it * *");
+    cpl_policy_add(policy, "cat /etc/passwd");
+    cpl_policy_add(policy, "cat /etc/shadow");
+    cpl_policy_add(policy, "cat /etc/hosts");
+
+    cpl_eval_result_t r;
+    cpl_error_t err;
+
+    /* --- 1. Exact match --- */
+    err = cpl_policy_eval(policy, "git status", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+    ASSERT_STR_EQ(r.matching_pattern, "git status");
+
+    /* --- 2. Wildcard match --- */
+    err = cpl_policy_eval(policy, "ls -la /tmp/foo", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+    ASSERT_STR_EQ(r.matching_pattern, "ls -la *");
+
+    /* --- 3. Deep wildcard match --- */
+    err = cpl_policy_eval(policy, "docker run -it ubuntu bash", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+    ASSERT_STR_EQ(r.matching_pattern, "docker run -it * *");
+
+    /* --- 4. Filter reject in verify-only mode (completely unrelated) --- */
+    /* "zzz" is not in any position 0 filter → filter rejects, no trie walk */
+    err = cpl_policy_eval(policy, "zzz something", NULL);
+    ASSERT(err == CPL_ERR_INVALID);
+
+    /* --- 5. Filter reject with suggestions (divergence at position 0) --- */
+    err = cpl_policy_eval(policy, "zzz something", &r);
+    ASSERT(err == CPL_ERR_INVALID);
+    ASSERT(!r.matches);
+    ASSERT(r.suggestion_count == 2);
+    /* Both suggestions should contain "zzz" since divergence is at position 0 */
+    ASSERT(strstr(r.suggestions[0].pattern, "zzz") != NULL);
+    ASSERT(strstr(r.suggestions[1].pattern, "zzz") != NULL);
+
+    /* --- 6. Filter passes, trie diverges at position 1 --- */
+    /* "git" matches at position 0, but "commit" not in children */
+    err = cpl_policy_eval(policy, "git commit -m hello", &r);
+    ASSERT(err == CPL_ERR_INVALID);
+    ASSERT(!r.matches);
+    ASSERT(r.suggestion_count == 2);
+    /* Suggestion A should have "git commit -m hello" (exact) */
+    ASSERT(strstr(r.suggestions[0].pattern, "git") != NULL);
+    ASSERT(strstr(r.suggestions[0].pattern, "commit") != NULL);
+    /* Suggestion B should have wildcard at position 1 (3 literals: status,log,push → #w) */
+    ASSERT(strstr(r.suggestions[1].pattern, "git") != NULL);
+
+    /* --- 7. Accept suggestion B, re-evaluate --- */
+    err = cpl_policy_add(policy, r.suggestions[1].pattern);
+    ASSERT(err == CPL_OK);
+
+    /* The same command should now match */
+    err = cpl_policy_eval(policy, "git commit -m hello", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+
+    /* --- 8. Another variant: same prefix, different wildcard value --- */
+    /* Suggestion B has wildcard at position 1, so any word there should match.
+     * But positions 2+ are literals from the original command. */
+    err = cpl_policy_eval(policy, "git rebase -m hello", &r);
+    /* May or may not match depending on suggestion B content */
+    /* Just verify it produces valid output */
+    ASSERT(r.suggestion_count == 2 || r.matches);
+
+    /* --- 9. Literal-to-wildcard generalization --- */
+    /* Add 3 patterns with different literal tokens at position 1 */
+    cpl_policy_add(policy, "mycmd -a value");
+    cpl_policy_add(policy, "mycmd -b value");
+    cpl_policy_add(policy, "mycmd -c value");
+
+    /* "mycmd -d value" diverges at position 1 where we have
+     * 3 literal children: -a, -b, -c */
+    err = cpl_policy_eval(policy, "mycmd -d value", &r);
+    ASSERT(err == CPL_ERR_INVALID);
+    ASSERT(!r.matches);
+    ASSERT(r.suggestion_count == 2);
+    /* Suggestion B should have a wildcard at position 1 */
+    ASSERT(strstr(r.suggestions[1].pattern, "mycmd") != NULL);
+
+    /* --- 10. Accept the literal-to-wildcard suggestion --- */
+    err = cpl_policy_add(policy, r.suggestions[1].pattern);
+    ASSERT(err == CPL_OK);
+
+    /* Now it should match */
+    err = cpl_policy_eval(policy, "mycmd -d value", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+
+    /* --- 11. Long command (beyond FILTER_POS_LEVELS=4) --- */
+    err = cpl_policy_eval(policy, "docker run -it --rm ubuntu /bin/bash -c 'echo hello'", &r);
+    /* This may or may not match depending on pattern structure */
+    /* Just verify it doesn't crash and produces valid output */
+    if (r.matches) {
+        ASSERT(r.matching_pattern != NULL);
+    } else {
+        ASSERT(r.suggestion_count == 2);
+    }
+
+    /* --- 12. Filter rebuild after multiple additions --- */
+    /* After many adds, the epoch has changed many times.
+     * The next eval should trigger a filter rebuild. */
+    for (int i = 0; i < 10; i++) {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "custom-cmd-%d --flag value", i);
+        cpl_policy_add(policy, cmd);
+    }
+
+    /* This eval should trigger filter rebuild and still work correctly */
+    err = cpl_policy_eval(policy, "git status", &r);
+    ASSERT(err == CPL_OK);
+    ASSERT(r.matches);
+
+    /* A completely unrelated command should still be rejected */
+    err = cpl_policy_eval(policy, "totally-unrelated-command", &r);
+    ASSERT(err == CPL_ERR_INVALID);
+    ASSERT(!r.matches);
+    ASSERT(r.suggestion_count == 2);
+
+    cpl_policy_free(policy);
+    cpl_policy_ctx_free(ctx);
+    return 1;
+}
+
+/* ============================================================
  * MAIN
  * ============================================================ */
 
@@ -522,6 +678,7 @@ int main(void)
     printf("\nEval + suggest + accept loop:\n");
     TEST(test_eval_suggest_accept_loop);
     TEST(test_eval_suggest_variants_loop);
+    TEST(test_complex_eval_filter_suggest_stress);
 
     printf("\n========================================\n");
     printf("Results: %d/%d passed, %d failed\n",
