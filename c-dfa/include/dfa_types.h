@@ -212,6 +212,16 @@ typedef enum {
 } dfa_minimize_algo_t;
 
 /**
+ * Statistics from DFA minimization pass (Hopcroft/Moore/Brzozowski).
+ */
+typedef struct {
+    int initial_states;
+    int final_states;
+    int states_removed;
+    int iterations;
+} dfa_minimize_stats_t;
+
+/**
  * Marker Block Constants
  * NOTE: MARKER_SENTINEL is defined in dfa_format.h
  */

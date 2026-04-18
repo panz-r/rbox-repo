@@ -1385,7 +1385,7 @@ int cli_compile(const cli_args_t* args) {
     int state_count = pipeline_get_dfa_state_count(p);
 
     // Get minimize and pre-minimize stats
-    pipeline_minimize_stats_t min_stats = {
+    dfa_minimize_stats_t min_stats = {
         .initial_states = 0,
         .final_states = 0,
         .states_removed = 0,

@@ -48,15 +48,9 @@ int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t a
 void dfa_minimize_set_verbose(bool verbose);
 
 /**
- * Get statistics about the last minimization
+ * Get statistics about the last minimization.
+ * dfa_minimize_stats_t is defined in dfa_types.h.
  */
-typedef struct {
-    int initial_states;
-    int final_states;
-    int states_removed;
-    int iterations;
-} dfa_minimize_stats_t;
-
 void dfa_minimize_get_stats(dfa_minimize_stats_t* stats);
 
 /**

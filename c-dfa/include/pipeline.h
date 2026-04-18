@@ -197,11 +197,6 @@ void dfa_eval_destroy(dfa_evaluator_t* e) ATTR_NONNULL(1);
  */
 dfa_result_t dfa_eval_evaluate(dfa_evaluator_t* e, const char* input) ATTR_NONNULL_ALL;
 
-/**
- * Get human-readable category name.
- */
-const char* dfa_eval_category_name(uint16_t category);
-
 // ============================================================================
 // Error Handling
 // ============================================================================
@@ -288,16 +283,6 @@ void pipeline_get_ordering_stats(pipeline_t* p, pipeline_ordering_stats_t* stats
 // ============================================================================
 
 /**
- * Statistics from DFA minimization pass (Hopcroft/Moore/Brzozowski).
- */
-typedef struct {
-    int initial_states;      // States before minimization
-    int final_states;        // States after minimization
-    int states_removed;      // Difference (initial - final)
-    int iterations;           // Algorithm iterations
-} pipeline_minimize_stats_t;
-
-/**
  * Statistics from NFA pre-minimization pass.
  */
 typedef struct {
@@ -316,8 +301,9 @@ typedef struct {
 /**
  * Get statistics from DFA minimization pass.
  * Call after pipeline_minimize_dfa().
+ * Uses dfa_minimize_stats_t from dfa_minimize.h.
  */
-void pipeline_get_minimize_stats(pipeline_t* p, pipeline_minimize_stats_t* stats) ATTR_NONNULL_ALL;
+void pipeline_get_minimize_stats(pipeline_t* p, dfa_minimize_stats_t* stats) ATTR_NONNULL_ALL;
 
 /**
  * Get statistics from NFA pre-minimization pass.

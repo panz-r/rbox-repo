@@ -1,6 +1,5 @@
 #include "dfa_types.h"
 #include "dfa_format.h"
-#include "dfa_errors.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>

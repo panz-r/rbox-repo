@@ -30,14 +30,14 @@ extern "C" {
 #endif
 
 // Direct evaluation - pass binary DFA pointer and size
-bool dfa_eval(const void* dfa_data, size_t dfa_size, const char* input, size_t length, dfa_result_t* result) __attribute__((nonnull));
-bool dfa_eval_with_limit(const void* dfa_data, size_t dfa_size, const char* input, size_t length, dfa_result_t* result, int max_captures) __attribute__((nonnull));
+bool dfa_eval(const void* dfa_data, size_t dfa_size, const char* input, size_t length, dfa_result_t* result) ATTR_NONNULL(1, 3, 5);
+bool dfa_eval_with_limit(const void* dfa_data, size_t dfa_size, const char* input, size_t length, dfa_result_t* result, int max_captures) ATTR_NONNULL(1, 3, 5);
 
 // Result accessors (no machine state needed)
-int dfa_result_get_capture(const dfa_result_t* result, int index, const char** out_start, size_t* out_length) __attribute__((nonnull));
-const char* dfa_result_get_capture_name(const dfa_result_t* result, int index) __attribute__((nonnull));
-int dfa_result_get_capture_count(const dfa_result_t* result) __attribute__((nonnull));
-bool dfa_result_get_capture_by_index(const dfa_result_t* result, int index, size_t* out_start, size_t* out_length) ATTR_NONNULL(1);
+int dfa_result_get_capture(const dfa_result_t* result, int index, const char** out_start, size_t* out_len) ATTR_NONNULL(1);
+const char* dfa_result_get_capture_name(const dfa_result_t* result, int index) ATTR_NONNULL(1);
+int dfa_result_get_capture_count(const dfa_result_t* result) ATTR_NONNULL(1);
+bool dfa_result_get_capture_by_index(const dfa_result_t* result, int index, size_t* out_start, size_t* out_len) ATTR_NONNULL(1);
 
 // Post-eval capture resolution: needs dfa_data + input from eval call
 bool dfa_result_get_capture_string(const dfa_result_t* result, int index,
