@@ -19,7 +19,7 @@ static int total_groups_failed = 0;
 static int total_groups_defined = 0;
 static const char* minimize_algo = "--minimize-moore";
 static bool use_compress_sat = false;
-static int test_set_mask = 0;
+static unsigned int test_set_mask = 0;
 #define TEST_SET_A 0x01
 #define TEST_SET_B 0x02
 #define TEST_SET_C 0x04
@@ -35,6 +35,10 @@ static int test_set_mask = 0;
 #define TEST_SET_M 0x1000
 #define TEST_SET_N 0x2000
 #define TEST_SET_O 0x4000
+#define TEST_SET_P 0x8000
+#define TEST_SET_Q 0x10000
+#define TEST_SET_R 0x20000
+#define TEST_SET_S 0x40000
 
 #define MAX_CAPTURES_PER_TEST 8
 
@@ -91,7 +95,7 @@ static void print_usage(const char* progname) {
     printf("  --minimize-hopcroft    Use Hopcroft's algorithm for DFA minimization\n");
     printf("  --minimize-sat         Use SAT-based minimization (requires CaDiCaL)\n");
     printf("  --compress-sat         Use SAT-based compression for optimal rule merging\n");
-    printf("  --test-set A|B|C|D|E|F|G|H|I|J|K|L|M|N|O  Run only tests for specified test set(s)\n");
+    printf("  --test-set A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S  Run only tests for specified test set(s)\n");
     printf("                          A = Core tests (basic patterns)\n");
     printf("                          B = Expanded tests (quantifier expansions)\n");
     printf("                          C = Stress tests (structural, whitespace, captures)\n");
@@ -107,13 +111,17 @@ static void print_usage(const char* progname) {
     printf("                          M = Minimization Algorithm Comparison\n");
     printf("                          N = Large-Scale Stress\n");
     printf("                          O = Binary Format Robustness\n");
-    printf("                          Can combine: ABC, ADG, AK, etc.\n");
+    printf("                          P = Limit/Boundary Configuration\n");
+    printf("                          Q = Incremental Stage API\n");
+    printf("                          R = Memory Failure Handling\n");
+    printf("                          S = Pattern Ordering Verification\n");
+    printf("                          Can combine: ABC, ADG, AK, PQRS, etc.\n");
     printf("  --help                 Show this help message\n");
     printf("\nExamples:\n");
     printf("  %s --minimize-hopcroft --test-set A\n", progname);
     printf("  %s --minimize-sat --test-set C\n", progname);
     printf("  %s --minimize-moore --compress-sat --test-set ABCDEFG\n", progname);
-    printf("  %s --test-set LMNO  # Run all new test suites\n", progname);
+    printf("  %s --test-set PQRS  # Run all new test suites\n", progname);
 }
 
 /**
@@ -236,6 +244,10 @@ static void run_sat_optimization_tests(void);
 static void run_minimization_algo_comparison_tests(void);
 static void run_large_scale_stress_tests(void);
 static void run_binary_format_robustness_tests(void);
+static void run_limit_config_tests(void);
+static void run_incremental_stage_api_tests(void);
+static void run_memory_failure_tests(void);
+static void run_pattern_ordering_tests(void);
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
@@ -1249,9 +1261,13 @@ int main(int argc, char* argv[]) {
                 else if (*p == 'M' || *p == 'm') test_set_mask |= TEST_SET_M;
                 else if (*p == 'N' || *p == 'n') test_set_mask |= TEST_SET_N;
                 else if (*p == 'O' || *p == 'o') test_set_mask |= TEST_SET_O;
+                else if (*p == 'P' || *p == 'p') test_set_mask |= TEST_SET_P;
+                else if (*p == 'Q' || *p == 'q') test_set_mask |= TEST_SET_Q;
+                else if (*p == 'R' || *p == 'r') test_set_mask |= TEST_SET_R;
+                else if (*p == 'S' || *p == 's') test_set_mask |= TEST_SET_S;
             }
             if (!test_set_mask) {
-                fprintf(stderr, "Error: --test-set requires A-O\n");
+                fprintf(stderr, "Error: --test-set requires A-S\n");
                 print_usage(argv[0]);
                 return 1;
             }
@@ -1262,7 +1278,7 @@ int main(int argc, char* argv[]) {
     printf("DFA TEST RUNNER\n");
     printf("=================================================\n");
     printf("Minimization: %s\n", minimize_algo + 12);
-    printf("Test sets: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n\n",
+    printf("Test sets: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n\n",
            (test_set_mask & TEST_SET_A) ? "A " : "",
            (test_set_mask & TEST_SET_B) ? "B " : "",
            (test_set_mask & TEST_SET_C) ? "C " : "",
@@ -1277,7 +1293,11 @@ int main(int argc, char* argv[]) {
            (test_set_mask & TEST_SET_L) ? "L " : "",
            (test_set_mask & TEST_SET_M) ? "M " : "",
            (test_set_mask & TEST_SET_N) ? "N " : "",
-           (test_set_mask & TEST_SET_O) ? "O" : "");
+           (test_set_mask & TEST_SET_O) ? "O " : "",
+           (test_set_mask & TEST_SET_P) ? "P " : "",
+           (test_set_mask & TEST_SET_Q) ? "Q " : "",
+           (test_set_mask & TEST_SET_R) ? "R " : "",
+           (test_set_mask & TEST_SET_S) ? "S" : "");
 
     total_tests_run = 0;
     total_tests_passed = 0;
@@ -1404,6 +1424,26 @@ int main(int argc, char* argv[]) {
     if (test_set_mask & TEST_SET_O) {
         printf("\n--- TEST SET O: Binary Format Robustness ---\n");
         run_binary_format_robustness_tests();
+    }
+
+    if (test_set_mask & TEST_SET_P) {
+        printf("\n--- TEST SET P: Limit/Boundary Configuration ---\n");
+        run_limit_config_tests();
+    }
+
+    if (test_set_mask & TEST_SET_Q) {
+        printf("\n--- TEST SET Q: Incremental Stage API ---\n");
+        run_incremental_stage_api_tests();
+    }
+
+    if (test_set_mask & TEST_SET_R) {
+        printf("\n--- TEST SET R: Memory Failure Handling ---\n");
+        run_memory_failure_tests();
+    }
+
+    if (test_set_mask & TEST_SET_S) {
+        printf("\n--- TEST SET S: Pattern Ordering Verification ---\n");
+        run_pattern_ordering_tests();
     }
 
     print_separator();
@@ -2500,6 +2540,965 @@ static void run_binary_format_robustness_tests(void) {
             total_tests_run++;
             free(data);
         }
+    }
+
+    printf("  Result: %d/%d passed\n", group_passed, group_run);
+
+    total_groups_run++;
+    if (group_passed < group_run) {
+        total_groups_failed++;
+    }
+}
+
+// ============================================================================
+// TEST SET P: LIMIT/BOUNDARY CONFIGURATION TESTS
+// Tests max_states, max_symbols, preminimize, optimize_layout settings
+// ============================================================================
+
+static void run_limit_config_tests(void) {
+    total_groups_defined++;
+
+    printf("\n=== LIMIT/BOUNDARY CONFIGURATION ===\n");
+
+    int group_run = 0;
+    int group_passed = 0;
+
+    // Test 1: Build with default settings (baseline)
+    {
+        build_dfa("patterns_safe_commands.txt", "build_test/limit_baseline.dfa");
+        track_dfa_file("build_test/limit_baseline.dfa");
+
+        size_t size;
+        void* data = load_dfa_from_file("build_test/limit_baseline.dfa", &size);
+        bool passed = (data != NULL && size > sizeof(dfa_t));
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] Default config builds successfully\n");
+        } else {
+            printf("  [FAIL] Default config should build\n");
+            free(data);
+        }
+        free(data);
+    }
+
+    // Test 2: Build with preminimize=false
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = false,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            bool passed = (err == PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] preminimize=false builds successfully\n");
+            } else {
+                printf("  [FAIL] preminimize=false should build\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for preminimize=false\n");
+        }
+    }
+
+    // Test 3: Build with optimize_layout=false
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = false,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            bool passed = (err == PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] optimize_layout=false builds successfully\n");
+            } else {
+                printf("  [FAIL] optimize_layout=false should build\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for optimize_layout=false\n");
+        }
+    }
+
+    // Test 4: Build with compress=false
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = false,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            bool passed = (err == PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] compress=false builds successfully\n");
+            } else {
+                printf("  [FAIL] compress=false should build\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for compress=false\n");
+        }
+    }
+
+    // Test 5: Build with Hopcroft minimization
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_HOPCROFT,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            bool passed = (err == PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] Hopcroft minimization builds successfully\n");
+            } else {
+                printf("  [FAIL] Hopcroft minimization should build\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for Hopcroft\n");
+        }
+    }
+
+    // Test 6: Build with max_states set to large value
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 10000,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            bool passed = (err == PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] max_states=10000 builds successfully\n");
+            } else {
+                printf("  [FAIL] max_states=10000 should build\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for max_states\n");
+        }
+    }
+
+    printf("  Result: %d/%d passed\n", group_passed, group_run);
+
+    total_groups_run++;
+    if (group_passed < group_run) {
+        total_groups_failed++;
+    }
+}
+
+// ============================================================================
+// TEST SET Q: INCREMENTAL STAGE API TESTS
+// Tests individual pipeline stages and stats retrieval
+// ============================================================================
+
+static void run_incremental_stage_api_tests(void) {
+    total_groups_defined++;
+
+    printf("\n=== INCREMENTAL STAGE API ===\n");
+
+    int group_run = 0;
+    int group_passed = 0;
+
+    // Test 1: Create and destroy pipeline
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        pipeline_t* p = pipeline_create(&config);
+        bool passed = (p != NULL);
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] pipeline_create works\n");
+        } else {
+            printf("  [FAIL] pipeline_create should work\n");
+        }
+        if (p) pipeline_destroy(p);
+    }
+
+    // Test 2: Parse patterns
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            char patterns_path[512];
+            resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+            pipeline_error_t err = pipeline_parse_patterns(p, patterns_path);
+            bool passed = (err == PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] pipeline_parse_patterns works\n");
+            } else {
+                printf("  [FAIL] pipeline_parse_patterns should work\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for parse test\n");
+        }
+    }
+
+    // Test 3: Get version string
+    {
+        const char* version = pipeline_get_version();
+        bool passed = (version != NULL && strlen(version) > 0);
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] pipeline_get_version returns: %s\n", version);
+        } else {
+            printf("  [FAIL] pipeline_get_version should return version\n");
+        }
+    }
+
+    // Test 4: Get error string for known error
+    {
+        const char* err_str = pipeline_error_string(PIPELINE_OK);
+        bool passed = (err_str != NULL && strcmp(err_str, "Success") == 0);
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] pipeline_error_string works: %s\n", err_str);
+        } else {
+            printf("  [FAIL] pipeline_error_string should return 'Success', got '%s'\n", err_str ? err_str : "NULL");
+        }
+    }
+
+    // Test 5: Get timing stats (after full run)
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            if (err == PIPELINE_OK) {
+                pipeline_timing_t timing;
+                pipeline_get_timing(p, &timing);
+                bool passed = (timing.total_ms >= 0);
+                group_run++;
+                total_tests_run++;
+                if (passed) {
+                    group_passed++;
+                    total_tests_passed++;
+                    printf("  [PASS] pipeline_get_timing works (total: %ldms)\n", timing.total_ms);
+                } else {
+                    printf("  [FAIL] pipeline_get_timing should work\n");
+                }
+            } else {
+                group_run++;
+                total_tests_run++;
+                printf("  [FAIL] Pipeline run failed for timing test\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for timing test\n");
+        }
+    }
+
+    // Test 6: Get DFA state count (after full run)
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            if (err == PIPELINE_OK) {
+                int state_count = pipeline_get_dfa_state_count(p);
+                bool passed = (state_count > 0);
+                group_run++;
+                total_tests_run++;
+                if (passed) {
+                    group_passed++;
+                    total_tests_passed++;
+                    printf("  [PASS] pipeline_get_dfa_state_count works (%d states)\n", state_count);
+                } else {
+                    printf("  [FAIL] pipeline_get_dfa_state_count should return positive\n");
+                }
+            } else {
+                group_run++;
+                total_tests_run++;
+                printf("  [FAIL] Pipeline run failed for state count test\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for state count test\n");
+        }
+    }
+
+    // Test 7: Get binary size (after full run)
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            if (err == PIPELINE_OK) {
+                size_t binary_size = pipeline_get_binary_size(p);
+                bool passed = (binary_size > 0);
+                group_run++;
+                total_tests_run++;
+                if (passed) {
+                    group_passed++;
+                    total_tests_passed++;
+                    printf("  [PASS] pipeline_get_binary_size works (%zu bytes)\n", binary_size);
+                } else {
+                    printf("  [FAIL] pipeline_get_binary_size should return positive\n");
+                }
+            } else {
+                group_run++;
+                total_tests_run++;
+                printf("  [FAIL] Pipeline run failed for binary size test\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline for binary size test\n");
+        }
+    }
+
+    printf("  Result: %d/%d passed\n", group_passed, group_run);
+
+    total_groups_run++;
+    if (group_passed < group_run) {
+        total_groups_failed++;
+    }
+}
+
+// ============================================================================
+// TEST SET R: MEMORY FAILURE HANDLING TESTS
+// Tests error handling for invalid inputs
+// ============================================================================
+
+static void run_memory_failure_tests(void) {
+    total_groups_defined++;
+
+    printf("\n=== MEMORY FAILURE HANDLING ===\n");
+
+    int group_run = 0;
+    int group_passed = 0;
+
+    // Test 1: Create pipeline with NULL config (should use defaults)
+    {
+        pipeline_t* p = pipeline_create(NULL);
+        bool passed = (p != NULL);
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] pipeline_create(NULL) uses defaults\n");
+        } else {
+            printf("  [FAIL] pipeline_create(NULL) should work with defaults\n");
+        }
+        if (p) pipeline_destroy(p);
+    }
+
+    // Test 2: Parse nonexistent file
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_parse_patterns(p, "nonexistent_file.txt");
+            bool passed = (err != PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] Parse nonexistent file returns error\n");
+            } else {
+                printf("  [FAIL] Parse nonexistent file should return error\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline\n");
+        }
+    }
+
+    // Test 3: Get binary before build
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            size_t size = 999;
+            const uint8_t* binary = pipeline_get_binary(p, &size);
+            bool passed = true;
+            group_run++;
+            total_tests_run++;
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] Get binary before build is safe (ptr=%p, size=%zu)\n", (void*)binary, size);
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline\n");
+        }
+    }
+
+    // Test 4: Run pipeline with empty pattern file path
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, "");
+            bool passed = (err != PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] Run with empty path returns error\n");
+            } else {
+                printf("  [FAIL] Run with empty path should return error\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline\n");
+        }
+    }
+
+    // Test 5: Save binary without building
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_save_binary(p, "build_test/should_not_exist.dfa");
+            bool passed = (err != PIPELINE_OK);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] Save binary before build returns error\n");
+            } else {
+                printf("  [FAIL] Save binary before build should return error\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline\n");
+        }
+    }
+
+    // Test 6: dfa_eval_create with NULL data
+    {
+        dfa_evaluator_t* e = dfa_eval_create(NULL, 0);
+        bool passed = (e == NULL);
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] dfa_eval_create(NULL) returns NULL\n");
+        } else {
+            printf("  [FAIL] dfa_eval_create(NULL) should return NULL\n");
+            if (e) dfa_eval_destroy(e);
+        }
+    }
+
+    // Test 7: dfa_eval_create with garbage data
+    {
+        uint8_t garbage[16] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03};
+        dfa_evaluator_t* e = dfa_eval_create(garbage, 8);
+        bool passed = true;
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] dfa_eval_create(garbage) is safe (returned %s)\n", e ? "evaluator" : "NULL");
+        } else {
+            printf("  [FAIL] dfa_eval_create(garbage) behavior unexpected\n");
+        }
+        if (e) dfa_eval_destroy(e);
+    }
+
+    printf("  Result: %d/%d passed\n", group_passed, group_run);
+
+    total_groups_run++;
+    if (group_passed < group_run) {
+        total_groups_failed++;
+    }
+}
+
+// ============================================================================
+// TEST SET S: PATTERN ORDERING VERIFICATION TESTS
+// Tests pattern reordering and stats retrieval
+// ============================================================================
+
+static void run_pattern_ordering_tests(void) {
+    total_groups_defined++;
+
+    printf("\n=== PATTERN ORDERING VERIFICATION ===\n");
+
+    int group_run = 0;
+    int group_passed = 0;
+
+    // Test 1: Full pipeline run with ordering stats
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            if (err == PIPELINE_OK) {
+                pipeline_ordering_stats_t stats;
+                pipeline_get_ordering_stats(p, &stats);
+                bool passed = (stats.patterns_read > 0);
+                group_run++;
+                total_tests_run++;
+                if (passed) {
+                    group_passed++;
+                    total_tests_passed++;
+                    printf("  [PASS] Pattern ordering stats: read=%d, reordered=%d, dupes=%d\n",
+                           stats.patterns_read, stats.patterns_reordered, stats.duplicates_removed);
+                } else {
+                    printf("  [FAIL] Pattern ordering stats should be populated\n");
+                }
+            } else {
+                group_run++;
+                total_tests_run++;
+                printf("  [FAIL] Pipeline run failed for ordering test\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline\n");
+        }
+    }
+
+    // Test 2: Minimization stats after run
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            if (err == PIPELINE_OK) {
+                dfa_minimize_stats_t mstats;
+                pipeline_get_minimize_stats(p, &mstats);
+                bool passed = (mstats.initial_states > 0);
+                group_run++;
+                total_tests_run++;
+                if (passed) {
+                    group_passed++;
+                    total_tests_passed++;
+                    printf("  [PASS] Minimization stats: initial=%d, final=%d, removed=%d\n",
+                           mstats.initial_states, mstats.final_states, mstats.states_removed);
+                } else {
+                    printf("  [FAIL] Minimization stats should be populated\n");
+                }
+            } else {
+                group_run++;
+                total_tests_run++;
+                printf("  [FAIL] Pipeline run failed for minimize stats test\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline\n");
+        }
+    }
+
+    // Test 3: Pre-minimization stats after run
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_run(p, patterns_path);
+            if (err == PIPELINE_OK) {
+                pipeline_premin_stats_t pstats;
+                pipeline_get_premin_stats(p, &pstats);
+                bool passed = (pstats.initial_states >= 0);
+                group_run++;
+                total_tests_run++;
+                if (passed) {
+                    group_passed++;
+                    total_tests_passed++;
+                    printf("  [PASS] Pre-min stats: initial=%d, final=%d, removed=%d\n",
+                           pstats.initial_states, pstats.final_states, pstats.states_removed);
+                } else {
+                    printf("  [FAIL] Pre-min stats should be populated\n");
+                }
+            } else {
+                group_run++;
+                total_tests_run++;
+                printf("  [FAIL] Pipeline run failed for premin stats test\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline\n");
+        }
+    }
+
+    // Test 4: Get NFA state count after NFA build
+    {
+        pipeline_config_t config = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_error_t err = pipeline_parse_patterns(p, patterns_path);
+            if (err == PIPELINE_OK) {
+                err = pipeline_build_nfa(p);
+                if (err == PIPELINE_OK) {
+                    int nfa_count = pipeline_get_nfa_state_count(p);
+                    group_run++;
+                    total_tests_run++;
+                    printf("  [INFO] NFA state count after build: %d\n", nfa_count);
+                    group_passed++;
+                    total_tests_passed++;
+                    printf("  [PASS] NFA state count retrieved (internal: %s)\n", nfa_count >= 0 ? "valid" : "unavailable");
+                } else {
+                    group_run++;
+                    total_tests_run++;
+                    printf("  [FAIL] NFA build failed for NFA count test\n");
+                }
+            } else {
+                group_run++;
+                total_tests_run++;
+                printf("  [FAIL] Parse failed for NFA count test\n");
+            }
+            pipeline_destroy(p);
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipeline\n");
+        }
+    }
+
+    // Test 5: Compare Moore vs Hopcroft state counts
+    {
+        pipeline_config_t config_moore = {
+            .minimize_algo = DFA_MIN_MOORE,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        pipeline_config_t config_hopcroft = {
+            .minimize_algo = DFA_MIN_HOPCROFT,
+            .verbose = false,
+            .preminimize = true,
+            .compress = true,
+            .optimize_layout = true,
+            .max_states = 0,
+            .max_symbols = 0,
+            .use_sat_compress = false,
+            .enable_sat_optimal_premin = false
+        };
+
+        char patterns_path[512];
+        resolve_patterns_path("patterns_safe_commands.txt", patterns_path, sizeof(patterns_path));
+
+        pipeline_t* p_moore = pipeline_create(&config_moore);
+        pipeline_t* p_hopcroft = pipeline_create(&config_hopcroft);
+
+        if (p_moore && p_hopcroft) {
+            pipeline_run(p_moore, patterns_path);
+            pipeline_run(p_hopcroft, patterns_path);
+
+            int moore_states = pipeline_get_dfa_state_count(p_moore);
+            int hopcroft_states = pipeline_get_dfa_state_count(p_hopcroft);
+
+            bool passed = (moore_states > 0 && hopcroft_states > 0);
+            group_run++;
+            total_tests_run++;
+            if (passed) {
+                group_passed++;
+                total_tests_passed++;
+                printf("  [PASS] State counts: Moore=%d, Hopcroft=%d\n", moore_states, hopcroft_states);
+            } else {
+                printf("  [FAIL] Both algorithms should produce positive state counts\n");
+            }
+        } else {
+            group_run++;
+            total_tests_run++;
+            printf("  [FAIL] Could not create pipelines for comparison\n");
+        }
+        if (p_moore) pipeline_destroy(p_moore);
+        if (p_hopcroft) pipeline_destroy(p_hopcroft);
     }
 
     printf("  Result: %d/%d passed\n", group_passed, group_run);

@@ -30,7 +30,7 @@ ctest --test-dir build -R test_eval_only --output-on-failure
 
 ## Test Sets
 
-The `dfa_test` executable supports multiple test sets (A through O):
+The `dfa_test` executable supports multiple test sets (A through S):
 
 | Set | Name | Description |
 |-----|------|-------------|
@@ -49,6 +49,10 @@ The `dfa_test` executable supports multiple test sets (A through O):
 | M | Minimization Comparison | Moore vs Hopcroft vs Brzozowski equivalence |
 | N | Large-Scale Stress | Large pattern set stress testing |
 | O | Binary Format Robustness | Corruption and invalid format handling |
+| P | Limit/Boundary Config | max_states, max_symbols, preminimize settings |
+| Q | Incremental Stage API | Individual pipeline stage functions and stats |
+| R | Memory Failure Handling | Error handling for invalid inputs |
+| S | Pattern Ordering Verification | Reordering effects and stats retrieval |
 
 Run specific test sets:
 ```bash
