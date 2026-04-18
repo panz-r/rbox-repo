@@ -106,7 +106,7 @@ include(CTest)
 
 # Run all test suites using the Python aggregator script
 add_custom_target(test-full
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_test_suite.py ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_test_suite.py --build-dir ${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS
         dfa_test
         test_minimize_integrity
