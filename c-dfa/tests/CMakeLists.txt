@@ -158,6 +158,34 @@ set_tests_properties(dfa_test_set_k PROPERTIES
     TIMEOUT 300
     LABELS "dfa_test;set_k")
 
+add_test(NAME dfa_test_set_l
+    COMMAND dfa_test --minimize-moore --compress-sat --test-set L)
+set_tests_properties(dfa_test_set_l PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 300
+    LABELS "dfa_test;set_l")
+
+add_test(NAME dfa_test_set_m
+    COMMAND dfa_test --minimize-moore --compress-sat --test-set M)
+set_tests_properties(dfa_test_set_m PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 300
+    LABELS "dfa_test;set_m")
+
+add_test(NAME dfa_test_set_n
+    COMMAND dfa_test --minimize-moore --compress-sat --test-set N)
+set_tests_properties(dfa_test_set_n PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 300
+    LABELS "dfa_test;set_n")
+
+add_test(NAME dfa_test_set_o
+    COMMAND dfa_test --minimize-moore --compress-sat --test-set O)
+set_tests_properties(dfa_test_set_o PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 300
+    LABELS "dfa_test;set_o")
+
 # -----------------------------------------------------------------------------
 # Other test suites
 # -----------------------------------------------------------------------------

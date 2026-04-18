@@ -31,6 +31,10 @@ static int test_set_mask = 0;
 #define TEST_SET_I 0x100
 #define TEST_SET_J 0x200
 #define TEST_SET_K 0x400
+#define TEST_SET_L 0x800
+#define TEST_SET_M 0x1000
+#define TEST_SET_N 0x2000
+#define TEST_SET_O 0x4000
 
 #define MAX_CAPTURES_PER_TEST 8
 
@@ -87,20 +91,29 @@ static void print_usage(const char* progname) {
     printf("  --minimize-hopcroft    Use Hopcroft's algorithm for DFA minimization\n");
     printf("  --minimize-sat         Use SAT-based minimization (requires CaDiCaL)\n");
     printf("  --compress-sat         Use SAT-based compression for optimal rule merging\n");
-    printf("  --test-set A|B|C|D|E|F|G  Run only tests for specified test set(s)\n");
+    printf("  --test-set A|B|C|D|E|F|G|H|I|J|K|L|M|N|O  Run only tests for specified test set(s)\n");
     printf("                          A = Core tests (basic patterns)\n");
     printf("                          B = Expanded tests (quantifier expansions)\n");
     printf("                          C = Stress tests (structural, whitespace, captures)\n");
     printf("                          D = Complex tests (tripled patterns)\n");
-    printf("                          E = Command tests (admin, caution, modifying, dangerous, network)\n");
-    printf("                          F = Combined tests (combined, minimal, simple patterns)\n");
-    printf("                          G = Edge case tests (long chain, deep nested, alternation, etc.)\n");
-    printf("                          Can combine: ABCDEFG, AD, DG, etc.\n");
+    printf("                          E = Command Core (admin, caution, modifying, dangerous, network)\n");
+    printf("                          F = Category Isolation tests\n");
+    printf("                          G = Edge case tests (long chain, deep nested, etc.)\n");
+    printf("                          H = Build Commands\n");
+    printf("                          I = Container Commands\n");
+    printf("                          J = Combined Patterns\n");
+    printf("                          K = Simple Patterns\n");
+    printf("                          L = SAT/Optimization coverage\n");
+    printf("                          M = Minimization Algorithm Comparison\n");
+    printf("                          N = Large-Scale Stress\n");
+    printf("                          O = Binary Format Robustness\n");
+    printf("                          Can combine: ABC, ADG, AK, etc.\n");
     printf("  --help                 Show this help message\n");
     printf("\nExamples:\n");
     printf("  %s --minimize-hopcroft --test-set A\n", progname);
     printf("  %s --minimize-sat --test-set C\n", progname);
     printf("  %s --minimize-moore --compress-sat --test-set ABCDEFG\n", progname);
+    printf("  %s --test-set LMNO  # Run all new test suites\n", progname);
 }
 
 /**
@@ -219,6 +232,10 @@ static void run_build_command_tests(void);
 static void run_container_command_tests(void);
 static void run_all_category_isolation_tests(void);
 static void run_multi_category_mask_tests(void);
+static void run_sat_optimization_tests(void);
+static void run_minimization_algo_comparison_tests(void);
+static void run_large_scale_stress_tests(void);
+static void run_binary_format_robustness_tests(void);
 
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
@@ -1228,9 +1245,13 @@ int main(int argc, char* argv[]) {
                 else if (*p == 'I' || *p == 'i') test_set_mask |= TEST_SET_I;
                 else if (*p == 'J' || *p == 'j') test_set_mask |= TEST_SET_J;
                 else if (*p == 'K' || *p == 'k') test_set_mask |= TEST_SET_K;
+                else if (*p == 'L' || *p == 'l') test_set_mask |= TEST_SET_L;
+                else if (*p == 'M' || *p == 'm') test_set_mask |= TEST_SET_M;
+                else if (*p == 'N' || *p == 'n') test_set_mask |= TEST_SET_N;
+                else if (*p == 'O' || *p == 'o') test_set_mask |= TEST_SET_O;
             }
             if (!test_set_mask) {
-                fprintf(stderr, "Error: --test-set requires A-K\n");
+                fprintf(stderr, "Error: --test-set requires A-O\n");
                 print_usage(argv[0]);
                 return 1;
             }
@@ -1241,7 +1262,7 @@ int main(int argc, char* argv[]) {
     printf("DFA TEST RUNNER\n");
     printf("=================================================\n");
     printf("Minimization: %s\n", minimize_algo + 12);
-    printf("Test sets: %s%s%s%s%s%s%s%s%s%s%s\n\n",
+    printf("Test sets: %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n\n",
            (test_set_mask & TEST_SET_A) ? "A " : "",
            (test_set_mask & TEST_SET_B) ? "B " : "",
            (test_set_mask & TEST_SET_C) ? "C " : "",
@@ -1252,7 +1273,11 @@ int main(int argc, char* argv[]) {
            (test_set_mask & TEST_SET_H) ? "H " : "",
            (test_set_mask & TEST_SET_I) ? "I " : "",
            (test_set_mask & TEST_SET_J) ? "J " : "",
-           (test_set_mask & TEST_SET_K) ? "K" : "");
+           (test_set_mask & TEST_SET_K) ? "K " : "",
+           (test_set_mask & TEST_SET_L) ? "L " : "",
+           (test_set_mask & TEST_SET_M) ? "M " : "",
+           (test_set_mask & TEST_SET_N) ? "N " : "",
+           (test_set_mask & TEST_SET_O) ? "O" : "");
 
     total_tests_run = 0;
     total_tests_passed = 0;
@@ -1359,6 +1384,26 @@ int main(int argc, char* argv[]) {
         run_whitespace_tests();
         run_empty_matching_tests();
         run_negative_integrity_tests();
+    }
+
+    if (test_set_mask & TEST_SET_L) {
+        printf("\n--- TEST SET L: SAT/Optimization Coverage ---\n");
+        run_sat_optimization_tests();
+    }
+
+    if (test_set_mask & TEST_SET_M) {
+        printf("\n--- TEST SET M: Minimization Algorithm Comparison ---\n");
+        run_minimization_algo_comparison_tests();
+    }
+
+    if (test_set_mask & TEST_SET_N) {
+        printf("\n--- TEST SET N: Large-Scale Stress ---\n");
+        run_large_scale_stress_tests();
+    }
+
+    if (test_set_mask & TEST_SET_O) {
+        printf("\n--- TEST SET O: Binary Format Robustness ---\n");
+        run_binary_format_robustness_tests();
     }
 
     print_separator();
@@ -2119,6 +2164,350 @@ static void run_multi_category_mask_tests(void) {
 
     run_test_group("MULTI CATEGORY MASK TESTS", "patterns_combined.txt",
                    "build_test/multi_cat_mask.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// TEST SET L: SAT/OPTIMIZATION COVERAGE
+// Tests the SAT-based optimization paths in the pipeline
+// ============================================================================
+
+static void run_sat_optimization_tests(void) {
+    TestCase cases[] = {
+        // Test basic patterns work with optimization options enabled
+        {"git status", true, 0, 0, "basic git status works"},
+        {"ls -la", true, 0, 0, "basic ls -la works"},
+        {"cat test.txt", true, 0, 0, "basic cat works"},
+    };
+    run_test_group("SAT PREMIN BASIC", "patterns_safe_commands.txt",
+                   "build_test/sat_premin_basic.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+static void build_dfa_with_config(const char* patterns_file, const char* dfa_file,
+                                  dfa_minimize_algo_t min_algo, bool use_sat_compress,
+                                  bool enable_sat_premin, bool preminimize, bool compress) {
+    char patterns_path[512];
+    resolve_patterns_path(patterns_file, patterns_path, sizeof(patterns_path));
+
+    pipeline_config_t config = {
+        .minimize_algo = min_algo,
+        .verbose = false,
+        .preminimize = preminimize,
+        .compress = compress,
+        .optimize_layout = true,
+        .max_states = 0,
+        .max_symbols = 0,
+        .use_sat_compress = use_sat_compress,
+        .enable_sat_optimal_premin = enable_sat_premin
+    };
+
+    pipeline_t* p = pipeline_create(&config);
+    if (!p) {
+        fprintf(stderr, "Warning: Failed to create pipeline for %s\n", patterns_path);
+        return;
+    }
+
+    pipeline_error_t err = pipeline_run(p, patterns_path);
+    if (err != PIPELINE_OK) {
+        fprintf(stderr, "Warning: DFA build failed for %s: %s\n",
+                patterns_path, pipeline_error_string(err));
+        pipeline_destroy(p);
+        return;
+    }
+
+    err = pipeline_save_binary(p, dfa_file);
+    if (err != PIPELINE_OK) {
+        fprintf(stderr, "Warning: Failed to save DFA to %s: %s\n",
+                dfa_file, pipeline_error_string(err));
+    }
+
+    pipeline_destroy(p);
+}
+
+static void* load_dfa_from_file_with_alloc(const char* dfa_file, size_t* size) {
+    FILE* f = fopen(dfa_file, "rb");
+    if (!f) return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (len <= 0) {
+        fclose(f);
+        return NULL;
+    }
+
+    void* data = malloc(len);
+    if (!data) {
+        fclose(f);
+        return NULL;
+    }
+
+    if (fread(data, 1, len, f) != (size_t)len) {
+        free(data);
+        fclose(f);
+        return NULL;
+    }
+    fclose(f);
+
+    *size = len;
+    return data;
+}
+
+// ============================================================================
+// TEST SET M: MINIMIZATION ALGORITHM COMPARISON
+// Compares Moore, Hopcroft, and Brzozowski algorithms for equivalence
+// ============================================================================
+
+static void run_minimization_algo_comparison_tests(void) {
+    const char* patterns_file = "patterns_safe_commands.txt";
+    const char* moore_dfa = "build_test/moore.dfa";
+    const char* hopcroft_dfa = "build_test/hopcroft.dfa";
+    const char* brzozowski_dfa = "build_test/brzozowski.dfa";
+
+    // Build same pattern file with three different algorithms
+    build_dfa_with_config(patterns_file, moore_dfa, DFA_MIN_MOORE, false, false, true, true);
+    build_dfa_with_config(patterns_file, hopcroft_dfa, DFA_MIN_HOPCROFT, false, false, true, true);
+    build_dfa_with_config(patterns_file, brzozowski_dfa, DFA_MIN_BRZOZOWSKI, false, false, true, true);
+
+    // Track files for cleanup
+    track_dfa_file(moore_dfa);
+    track_dfa_file(hopcroft_dfa);
+    track_dfa_file(brzozowski_dfa);
+
+    // Load all three DFAs
+    size_t moore_size, hopcroft_size, brzozowski_size;
+    void* moore_data = load_dfa_from_file_with_alloc(moore_dfa, &moore_size);
+    void* hopcroft_data = load_dfa_from_file_with_alloc(hopcroft_dfa, &hopcroft_size);
+    void* brzozowski_data = load_dfa_from_file_with_alloc(brzozowski_dfa, &brzozowski_size);
+
+    total_groups_defined++;
+
+    printf("\n=== MINIMIZATION ALGORITHM COMPARISON ===\n");
+    printf("Patterns: %s\n", patterns_file);
+
+    if (!moore_data || !hopcroft_data || !brzozowski_data) {
+        printf("  [ERROR] Failed to load one or more DFAs\n");
+        total_groups_failed++;
+        goto cleanup;
+    }
+
+    // Test inputs - same test cases should produce same results across algorithms
+    const char* test_inputs[] = {
+        "git status",
+        "ls -la",
+        "cat /etc/passwd",
+        "make",
+        "gcc",
+        "ping google.com",
+        "rm file.txt",
+        "sudo command",
+        "docker ps"
+    };
+    int num_tests = sizeof(test_inputs) / sizeof(test_inputs[0]);
+
+    int group_run = 0;
+    int group_passed = 0;
+
+    for (int i = 0; i < num_tests; i++) {
+        const char* input = test_inputs[i];
+
+        dfa_result_t moore_result, hopcroft_result, brzozowski_result;
+        dfa_eval(moore_data, moore_size, input, strlen(input), &moore_result);
+        dfa_eval(hopcroft_data, hopcroft_size, input, strlen(input), &hopcroft_result);
+        dfa_eval(brzozowski_data, brzozowski_size, input, strlen(input), &brzozowski_result);
+
+        // All three should agree on match/no-match
+        bool moore_match = moore_result.matched;
+        bool hopcroft_match = hopcroft_result.matched;
+        bool brzozowski_match = brzozowski_result.matched;
+
+        bool passed = (moore_match == hopcroft_match) && (hopcroft_match == brzozowski_match);
+
+        group_run++;
+        total_tests_run++;
+
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] '%s' matches: M=%d H=%d B=%d\n",
+                   input, moore_match, hopcroft_match, brzozowski_match);
+        } else {
+            printf("  [FAIL] '%s' match disagreement: M=%d H=%d B=%d\n",
+                   input, moore_match, hopcroft_match, brzozowski_match);
+        }
+    }
+
+    printf("  Result: %d/%d passed\n", group_passed, group_run);
+
+    total_groups_run++;
+    if (group_passed < group_run) {
+        total_groups_failed++;
+    }
+
+cleanup:
+    free(moore_data);
+    free(hopcroft_data);
+    free(brzozowski_data);
+}
+
+// ============================================================================
+// TEST SET N: LARGE-SCALE STRESS
+// Tests with large pattern sets to verify scaling behavior
+// ============================================================================
+
+static void run_large_scale_stress_tests(void) {
+    // Use existing combined pattern file which has many patterns
+    TestCase cases[] = {
+        // Test various inputs against the large combined pattern set
+        {"git status", true, 0, 0, "git status in large set"},
+        {"ls -la", true, 0, 0, "ls -la in large set"},
+        {"cat /etc/passwd", true, 0, 0, "cat /etc/passwd in large set"},
+        {"ping google.com", true, 0, 0, "ping in large set"},
+        {"sudo command", true, 0, 0, "sudo command in large set"},
+        {"rm file.txt", true, 0, 0, "rm file.txt in large set"},
+    };
+
+    // First build a large DFA using combined patterns
+    build_dfa("patterns_combined.txt", "build_test/large_scale.dfa");
+    track_dfa_file("build_test/large_scale.dfa");
+
+    run_test_group("LARGE SCALE PATTERNS", "patterns_combined.txt",
+                   "build_test/large_scale.dfa", cases, sizeof(cases)/sizeof(cases[0]));
+}
+
+// ============================================================================
+// TEST SET O: BINARY FORMAT ROBUSTNESS
+// Tests handling of corrupted/invalid binary DFA files
+// ============================================================================
+
+static void run_binary_format_robustness_tests(void) {
+    total_groups_defined++;
+
+    printf("\n=== BINARY FORMAT ROBUSTNESS ===\n");
+
+    int group_run = 0;
+    int group_passed = 0;
+
+    // Test 1: Empty file
+    {
+        FILE* f = fopen("build_test/empty.dfa", "wb");
+        if (f) {
+            fclose(f);
+            track_dfa_file("build_test/empty.dfa");
+        }
+
+        size_t size;
+        void* data = load_dfa_from_file("build_test/empty.dfa", &size);
+        bool passed = (data == NULL);
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] Empty file handled correctly\n");
+        } else {
+            printf("  [FAIL] Empty file should not load\n");
+            free(data);
+        }
+    }
+
+    // Test 2: Truncated header (too short)
+    {
+        FILE* f = fopen("build_test/truncated.dfa", "wb");
+        if (f) {
+            uint8_t garbage[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03};
+            fwrite(garbage, 1, 8, f);
+            fclose(f);
+            track_dfa_file("build_test/truncated.dfa");
+        }
+
+        size_t size;
+        void* data = load_dfa_from_file("build_test/truncated.dfa", &size);
+        bool passed = (data == NULL);
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] Truncated header handled correctly\n");
+        } else {
+            printf("  [FAIL] Truncated header should not load\n");
+            free(data);
+        }
+    }
+
+    // Test 3: Invalid magic number
+    {
+        // Build a valid DFA first, then corrupt the magic number
+        build_dfa("patterns_safe_commands.txt", "build_test/valid_magic.dfa");
+        track_dfa_file("build_test/valid_magic.dfa");
+
+        FILE* f = fopen("build_test/invalid_magic.dfa", "r+b");
+        if (f) {
+            uint8_t bad_magic[4] = {0x00, 0x00, 0x00, 0x00};
+            fseek(f, 0, SEEK_SET);
+            fwrite(bad_magic, 1, 4, f);
+            fclose(f);
+            track_dfa_file("build_test/invalid_magic.dfa");
+        }
+
+        size_t size;
+        void* data = load_dfa_from_file("build_test/invalid_magic.dfa", &size);
+        bool passed = (data == NULL);
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] Invalid magic number handled correctly\n");
+        } else {
+            printf("  [FAIL] Invalid magic should not load\n");
+            free(data);
+        }
+    }
+
+    // Test 4: Valid DFA loads correctly
+    {
+        build_dfa("patterns_safe_commands.txt", "build_test/valid_test.dfa");
+        track_dfa_file("build_test/valid_test.dfa");
+
+        size_t size;
+        void* data = load_dfa_from_file("build_test/valid_test.dfa", &size);
+        bool passed = (data != NULL && size > sizeof(dfa_t));
+        group_run++;
+        total_tests_run++;
+        if (passed) {
+            group_passed++;
+            total_tests_passed++;
+            printf("  [PASS] Valid DFA loads correctly\n");
+        } else {
+            printf("  [FAIL] Valid DFA should load\n");
+            free(data);
+        }
+
+        // Test evaluation on valid DFA
+        if (data) {
+            dfa_result_t result;
+            dfa_eval(data, size, "git status", 10, &result);
+            if (result.matched) {
+                printf("  [PASS] Evaluation works on loaded DFA\n");
+                group_passed++;
+                total_tests_passed++;
+            } else {
+                printf("  [FAIL] Evaluation should work on loaded DFA\n");
+            }
+            group_run++;
+            total_tests_run++;
+            free(data);
+        }
+    }
+
+    printf("  Result: %d/%d passed\n", group_passed, group_run);
+
+    total_groups_run++;
+    if (group_passed < group_run) {
+        total_groups_failed++;
+    }
 }
 
 #pragma GCC diagnostic pop

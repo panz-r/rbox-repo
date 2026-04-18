@@ -30,7 +30,7 @@ ctest --test-dir build -R test_eval_only --output-on-failure
 
 ## Test Sets
 
-The `dfa_test` executable supports multiple test sets (A through K):
+The `dfa_test` executable supports multiple test sets (A through O):
 
 | Set | Name | Description |
 |-----|------|-------------|
@@ -45,6 +45,10 @@ The `dfa_test` executable supports multiple test sets (A through K):
 | I | Container Commands | Container/runtime commands |
 | J | Combined Patterns | Combined and minimal pattern tests |
 | K | Simple Patterns | Simple quantifiers, step patterns, test patterns |
+| L | SAT/Optimization | SAT-based optimization coverage |
+| M | Minimization Comparison | Moore vs Hopcroft vs Brzozowski equivalence |
+| N | Large-Scale Stress | Large pattern set stress testing |
+| O | Binary Format Robustness | Corruption and invalid format handling |
 
 Run specific test sets:
 ```bash
