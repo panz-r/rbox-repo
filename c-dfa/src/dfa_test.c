@@ -19,7 +19,7 @@ static int total_groups_failed = 0;
 static int total_groups_defined = 0;
 static const char* minimize_algo = "--minimize-moore";
 static bool use_compress_sat = false;
-static char test_set_mask = 0;
+static int test_set_mask = 0;
 #define TEST_SET_A 0x01
 #define TEST_SET_B 0x02
 #define TEST_SET_C 0x04
@@ -27,6 +27,10 @@ static char test_set_mask = 0;
 #define TEST_SET_E 0x10
 #define TEST_SET_F 0x20
 #define TEST_SET_G 0x40
+#define TEST_SET_H 0x80
+#define TEST_SET_I 0x100
+#define TEST_SET_J 0x200
+#define TEST_SET_K 0x400
 
 #define MAX_CAPTURES_PER_TEST 8
 
@@ -1220,9 +1224,13 @@ int main(int argc, char* argv[]) {
                 else if (*p == 'E' || *p == 'e') test_set_mask |= TEST_SET_E;
                 else if (*p == 'F' || *p == 'f') test_set_mask |= TEST_SET_F;
                 else if (*p == 'G' || *p == 'g') test_set_mask |= TEST_SET_G;
+                else if (*p == 'H' || *p == 'h') test_set_mask |= TEST_SET_H;
+                else if (*p == 'I' || *p == 'i') test_set_mask |= TEST_SET_I;
+                else if (*p == 'J' || *p == 'j') test_set_mask |= TEST_SET_J;
+                else if (*p == 'K' || *p == 'k') test_set_mask |= TEST_SET_K;
             }
             if (!test_set_mask) {
-                fprintf(stderr, "Error: --test-set requires A-G\n");
+                fprintf(stderr, "Error: --test-set requires A-K\n");
                 print_usage(argv[0]);
                 return 1;
             }
@@ -1233,14 +1241,18 @@ int main(int argc, char* argv[]) {
     printf("DFA TEST RUNNER\n");
     printf("=================================================\n");
     printf("Minimization: %s\n", minimize_algo + 12);
-    printf("Test sets: %s%s%s%s%s%s%s\n\n",
+    printf("Test sets: %s%s%s%s%s%s%s%s%s%s%s\n\n",
            (test_set_mask & TEST_SET_A) ? "A " : "",
            (test_set_mask & TEST_SET_B) ? "B " : "",
            (test_set_mask & TEST_SET_C) ? "C " : "",
            (test_set_mask & TEST_SET_D) ? "D " : "",
            (test_set_mask & TEST_SET_E) ? "E " : "",
            (test_set_mask & TEST_SET_F) ? "F " : "",
-           (test_set_mask & TEST_SET_G) ? "G" : "");
+           (test_set_mask & TEST_SET_G) ? "G " : "",
+           (test_set_mask & TEST_SET_H) ? "H " : "",
+           (test_set_mask & TEST_SET_I) ? "I " : "",
+           (test_set_mask & TEST_SET_J) ? "J " : "",
+           (test_set_mask & TEST_SET_K) ? "K" : "");
 
     total_tests_run = 0;
     total_tests_passed = 0;
@@ -1299,21 +1311,37 @@ int main(int argc, char* argv[]) {
     }
 
     if (test_set_mask & TEST_SET_E) {
-        printf("\n--- TEST SET E: Command Tests ---\n");
+        printf("\n--- TEST SET E: Command Core ---\n");
         run_admin_command_tests();
         run_caution_command_tests();
         run_modifying_command_tests();
         run_dangerous_command_tests();
         run_network_command_tests();
+    }
+
+    if (test_set_mask & TEST_SET_H) {
+        printf("\n--- TEST SET H: Build Commands ---\n");
         run_build_command_tests();
+    }
+
+    if (test_set_mask & TEST_SET_I) {
+        printf("\n--- TEST SET I: Container Commands ---\n");
         run_container_command_tests();
     }
 
     if (test_set_mask & TEST_SET_F) {
-        printf("\n--- TEST SET F: Combined Tests ---\n");
+        printf("\n--- TEST SET F: Category Isolation ---\n");
         run_all_category_isolation_tests();
+    }
+
+    if (test_set_mask & TEST_SET_J) {
+        printf("\n--- TEST SET J: Combined Patterns ---\n");
         run_combined_tests();
         run_minimal_tests();
+    }
+
+    if (test_set_mask & TEST_SET_K) {
+        printf("\n--- TEST SET K: Simple Patterns ---\n");
         run_simple_quantifier_tests();
         run_step_tests();
         run_test_pattern_tests();

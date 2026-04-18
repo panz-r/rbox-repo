@@ -30,9 +30,21 @@ ctest --test-dir build -R test_eval_only --output-on-failure
 
 ## Test Sets
 
-- **A**: Core tests (basic patterns, quantifiers, fragments, alternation)
-- **B**: Expanded tests (complex patterns with nested quantifiers)
-- **C**: Command tests (admin, caution, modifying, dangerous, network commands)
+The `dfa_test` executable supports multiple test sets (A through K):
+
+| Set | Name | Description |
+|-----|------|-------------|
+| A | Core Tests | Basic patterns, quantifiers, fragments, alternation |
+| B | Expanded Tests | Complex patterns with nested quantifiers |
+| C | Command Tests | Command categorization (admin, caution, modifying, dangerous, network) |
+| D | Complex Patterns | Character classes, tripled patterns, hard edges |
+| E | Command Core | Core command tests (admin, caution, modifying, dangerous, network) |
+| F | Category Isolation | Category isolation tests |
+| G | Edge Cases | Long chains, deep nesting, overlapping prefixes |
+| H | Build Commands | Build tool commands (IDEs, compilers) |
+| I | Container Commands | Container/runtime commands |
+| J | Combined Patterns | Combined and minimal pattern tests |
+| K | Simple Patterns | Simple quantifiers, step patterns, test patterns |
 
 Run specific test sets:
 ```bash
