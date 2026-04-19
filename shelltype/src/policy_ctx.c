@@ -8,7 +8,7 @@
  * policy sets and allocate all trie nodes from a contiguous arena.
  */
 
-#include "rbox_policy_learner.h"
+#include "shelltype.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,19 +101,19 @@ static bool str_pool_grow(str_pool_t *p)
  * CONTEXT LIFECYCLE
  * ============================================================ */
 
-struct cpl_policy_ctx {
+struct st_policy_ctx {
     arena_t    arena;
     str_pool_t str_pool;
 };
 
-cpl_policy_ctx_t *cpl_policy_ctx_new(void)
+st_policy_ctx_t *st_policy_ctx_new(void)
 {
-    return cpl_policy_ctx_new_with_arena(DEFAULT_ARENA_SIZE);
+    return st_policy_ctx_new_with_arena(DEFAULT_ARENA_SIZE);
 }
 
-cpl_policy_ctx_t *cpl_policy_ctx_new_with_arena(size_t arena_size)
+st_policy_ctx_t *st_policy_ctx_new_with_arena(size_t arena_size)
 {
-    cpl_policy_ctx_t *ctx = malloc(sizeof(cpl_policy_ctx_t));
+    st_policy_ctx_t *ctx = malloc(sizeof(st_policy_ctx_t));
     if (!ctx) return NULL;
 
     if (!arena_init(&ctx->arena, arena_size)) {
@@ -130,7 +130,7 @@ cpl_policy_ctx_t *cpl_policy_ctx_new_with_arena(size_t arena_size)
     return ctx;
 }
 
-void cpl_policy_ctx_free(cpl_policy_ctx_t *ctx)
+void st_policy_ctx_free(st_policy_ctx_t *ctx)
 {
     if (!ctx) return;
     str_pool_free(&ctx->str_pool);
@@ -138,7 +138,7 @@ void cpl_policy_ctx_free(cpl_policy_ctx_t *ctx)
     free(ctx);
 }
 
-const char *cpl_policy_ctx_intern(cpl_policy_ctx_t *ctx, const char *str)
+const char *st_policy_ctx_intern(st_policy_ctx_t *ctx, const char *str)
 {
     if (!ctx || !str) return NULL;
 
@@ -163,9 +163,9 @@ const char *cpl_policy_ctx_intern(cpl_policy_ctx_t *ctx, const char *str)
     return copy;
 }
 
-size_t cpl_policy_ctx_memory_usage(const cpl_policy_ctx_t *ctx)
+size_t st_policy_ctx_memory_usage(const st_policy_ctx_t *ctx)
 {
     if (!ctx) return 0;
-    return sizeof(cpl_policy_ctx_t) + ctx->arena.used
+    return sizeof(st_policy_ctx_t) + ctx->arena.used
            + ctx->str_pool.capacity * sizeof(const char *);
 }

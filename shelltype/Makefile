@@ -1,4 +1,4 @@
-# Makefile for rbox-miner (Command Policy Learner)
+# Makefile for shelltype (Command Policy Learner)
 
 CC      ?= gcc
 CFLAGS  := -Wall -Wextra -Werror -pedantic -std=c11 -O2 -g
@@ -17,16 +17,16 @@ LIB_SRCS_ALL := $(LIB_SRCS)
 LIB_OBJS := $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(LIB_SRCS_ALL))
 
 # Library
-LIB_NAME := librbox_miner.a
+LIB_NAME := libshelltype.a
 LIB      := $(OBJDIR)/$(LIB_NAME)
 
 # CLI tool
-TOOL_SRC := $(TOOLDIR)/rbox-cpl-tool.c
-TOOL_BIN := rbox-cpl-tool
+TOOL_SRC := $(TOOLDIR)/shelltype-tool.c
+TOOL_BIN := shelltype-tool
 
 # Tests
-TEST_SRC := $(TESTDIR)/test_cpl.c
-TEST_BIN := $(TESTDIR)/test_cpl
+TEST_SRC := $(TESTDIR)/test_shelltype.c
+TEST_BIN := $(TESTDIR)/test_shelltype
 
 TEST_POLICY_SRC := $(TESTDIR)/test_policy.c
 TEST_POLICY_BIN := $(TESTDIR)/test_policy
@@ -38,8 +38,8 @@ TEST_TOKEN_TYPES_SRC := $(TESTDIR)/test_token_types.c
 TEST_TOKEN_TYPES_BIN := $(TESTDIR)/test_token_types
 
 # Integration tests
-INTEGRATION_SRC := $(TESTDIR)/test_cpl_integration.c
-INTEGRATION_BIN := $(TESTDIR)/test_cpl_integration
+INTEGRATION_SRC := $(TESTDIR)/test_shelltype_integration.c
+INTEGRATION_BIN := $(TESTDIR)/test_shelltype_integration
 
 # Compact policy tests
 COMPACT_POLICY_SRC := $(TESTDIR)/test_policy_compact.c
@@ -72,27 +72,27 @@ $(LIB): $(LIB_OBJS)
 
 # CLI tool
 $(TOOL_BIN): $(TOOL_SRC) $(LIB)
-	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lrbox_miner -lm -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lshelltype -lm -o $@
 
 # Unit tests
 $(TEST_BIN): $(TEST_SRC) $(LIB)
-	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lrbox_miner -lm -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lshelltype -lm -o $@
 
 $(TEST_POLICY_BIN): $(TEST_POLICY_SRC) $(LIB)
-	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lrbox_miner -lm -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lshelltype -lm -o $@
 
 $(TEST_VERIFY_BIN): $(TEST_VERIFY_SRC) $(LIB)
-	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lrbox_miner -lm -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lshelltype -lm -o $@
 
 $(TEST_TOKEN_TYPES_BIN): $(TEST_TOKEN_TYPES_SRC) $(LIB)
-	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lrbox_miner -lm -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lshelltype -lm -o $@
 
 # Integration tests
 $(INTEGRATION_BIN): $(INTEGRATION_SRC) $(LIB)
-	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lrbox_miner -lm -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lshelltype -lm -o $@
 
 $(COMPACT_POLICY_BIN): $(COMPACT_POLICY_SRC) $(LIB)
-	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lrbox_miner -lm -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) $< -L$(OBJDIR) -lshelltype -lm -o $@
 
 # Filter tests need bloom and cuckoo objects in addition to the library
 FILTER_TEST_OBJS := $(OBJDIR)/bloom_filter.o $(OBJDIR)/cuckoo_filter.o
@@ -103,14 +103,14 @@ $(OBJDIR)/cuckoo_filter.o: $(SRCDIR)/cuckoo_filter.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -Wno-error $(INCLUDES) -c $< -o $@
 
 $(FILTER_TEST_BIN): $(FILTER_TEST_SRC) $(LIB) $(FILTER_TEST_OBJS)
-	$(CC) $(CFLAGS) $(INCLUDES) $< $(FILTER_TEST_OBJS) -L$(OBJDIR) -lrbox_miner -lm -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(FILTER_TEST_OBJS) -L$(OBJDIR) -lshelltype -lm -o $@
 
 # Run tests
 test: $(TEST_TOKEN_TYPES_BIN) $(TEST_BIN) $(TEST_POLICY_BIN) $(TEST_VERIFY_BIN) $(INTEGRATION_BIN) $(COMPACT_POLICY_BIN) $(FILTER_TEST_BIN)
 	@echo "=== Running token type tests ==="
 	@$(TEST_TOKEN_TYPES_BIN)
 	@echo ""
-	@echo "=== Running CPL unit tests ==="
+	@echo "=== Running shelltype unit tests ==="
 	@$(TEST_BIN)
 	@echo ""
 	@echo "=== Running policy unit tests ==="

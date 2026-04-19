@@ -8,7 +8,7 @@
  * the join of all observed types at each position for precise generalisation.
  */
 
-#include "rbox_policy_learner.h"
+#include "shelltype.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,9 +19,9 @@
  * NODE HELPERS
  * ============================================================ */
 
-static cpl_node_t *node_new(const char *token, cpl_token_type_t type)
+static st_node_t *node_new(const char *token, st_token_type_t type)
 {
-    cpl_node_t *node = calloc(1, sizeof(cpl_node_t));
+    st_node_t *node = calloc(1, sizeof(st_node_t));
     if (!node) return NULL;
 
     node->token = strdup(token);
@@ -39,7 +39,7 @@ static cpl_node_t *node_new(const char *token, cpl_token_type_t type)
     return node;
 }
 
-static void node_free(cpl_node_t *node)
+static void node_free(st_node_t *node)
 {
     if (!node) return;
     for (size_t i = 0; i < node->num_children; i++) {
@@ -54,15 +54,15 @@ static void node_free(cpl_node_t *node)
     free(node);
 }
 
-static bool node_ensure_capacity(cpl_node_t *node, size_t needed)
+static bool node_ensure_capacity(st_node_t *node, size_t needed)
 {
     if (node->children_capacity >= needed) return true;
     size_t new_cap = node->children_capacity == 0
-                         ? CPL_INITIAL_CHILDREN_CAP
+                         ? ST_INITIAL_CHILDREN_CAP
                          : node->children_capacity * 2;
     while (new_cap < needed) new_cap *= 2;
-    cpl_node_t **new_children = realloc(node->children,
-                                        new_cap * sizeof(cpl_node_t *));
+    st_node_t **new_children = realloc(node->children,
+                                        new_cap * sizeof(st_node_t *));
     if (!new_children) return false;
     node->children = new_children;
     node->children_capacity = new_cap;
@@ -70,13 +70,13 @@ static bool node_ensure_capacity(cpl_node_t *node, size_t needed)
 }
 
 /* Find child by token text (for literals) or by type (for wildcards) */
-static cpl_node_t *node_find_child(cpl_node_t *node,
+static st_node_t *node_find_child(st_node_t *node,
                                    const char *token,
-                                   cpl_token_type_t type)
+                                   st_token_type_t type)
 {
     for (size_t i = 0; i < node->num_children; i++) {
-        cpl_node_t *child = node->children[i];
-        if (child->type == CPL_TYPE_LITERAL && type == CPL_TYPE_LITERAL) {
+        st_node_t *child = node->children[i];
+        if (child->type == ST_TYPE_LITERAL && type == ST_TYPE_LITERAL) {
             if (strcmp(child->token, token) == 0) return child;
         } else if (child->type == type) {
             return child;
@@ -89,21 +89,21 @@ static cpl_node_t *node_find_child(cpl_node_t *node,
  * TRIE INSERTION
  * ============================================================ */
 
-static bool trie_insert_with_count(cpl_node_t *root,
-                                   cpl_token_t *tokens, size_t count,
+static bool trie_insert_with_count(st_node_t *root,
+                                   st_token_t *tokens, size_t count,
                                    uint32_t increment)
 {
-    cpl_node_t *current = root;
+    st_node_t *current = root;
     current->count += increment;
 
     for (size_t i = 0; i < count; i++) {
-        cpl_node_t *child = node_find_child(current, tokens[i].text, tokens[i].type);
+        st_node_t *child = node_find_child(current, tokens[i].text, tokens[i].type);
         if (!child) {
             if (!node_ensure_capacity(current, current->num_children + 1))
                 return false;
-            const char *tok_str = (tokens[i].type == CPL_TYPE_LITERAL)
+            const char *tok_str = (tokens[i].type == ST_TYPE_LITERAL)
                                       ? tokens[i].text
-                                      : cpl_type_symbol[tokens[i].type];
+                                      : st_type_symbol[tokens[i].type];
             child = node_new(tok_str, tokens[i].type);
             if (!child) return false;
             current->children[current->num_children++] = child;
@@ -111,7 +111,7 @@ static bool trie_insert_with_count(cpl_node_t *root,
 
         child->count += increment;
         /* Track observed types at this position */
-        if (tokens[i].type != CPL_TYPE_LITERAL) {
+        if (tokens[i].type != ST_TYPE_LITERAL) {
             child->observed_types |= (1u << tokens[i].type);
         }
         current = child;
@@ -119,7 +119,7 @@ static bool trie_insert_with_count(cpl_node_t *root,
     return true;
 }
 
-static bool trie_insert(cpl_node_t *root, cpl_token_t *tokens, size_t count)
+static bool trie_insert(st_node_t *root, st_token_t *tokens, size_t count)
 {
     return trie_insert_with_count(root, tokens, count, 1);
 }
@@ -128,18 +128,18 @@ static bool trie_insert(cpl_node_t *root, cpl_token_t *tokens, size_t count)
  * PUBLIC API – LIFECYCLE
  * ============================================================ */
 
-cpl_learner_t *cpl_learner_new(uint32_t min_support, double min_confidence)
+st_learner_t *st_learner_new(uint32_t min_support, double min_confidence)
 {
-    cpl_learner_t *learner = calloc(1, sizeof(cpl_learner_t));
+    st_learner_t *learner = calloc(1, sizeof(st_learner_t));
     if (!learner) return NULL;
 
-    learner->trie.root = node_new("", CPL_TYPE_LITERAL);
+    learner->trie.root = node_new("", ST_TYPE_LITERAL);
     if (!learner->trie.root) { free(learner); return NULL; }
 
     learner->trie.total_commands = 0;
-    learner->min_support = min_support > 0 ? min_support : CPL_DEFAULT_MIN_SUPPORT;
+    learner->min_support = min_support > 0 ? min_support : ST_DEFAULT_MIN_SUPPORT;
     learner->min_confidence = min_confidence;
-    learner->max_suggestions = CPL_DEFAULT_MAX_SUGGESTIONS;
+    learner->max_suggestions = ST_DEFAULT_MAX_SUGGESTIONS;
     learner->blacklist = NULL;
     learner->blacklist_count = 0;
     learner->blacklist_capacity = 0;
@@ -147,7 +147,7 @@ cpl_learner_t *cpl_learner_new(uint32_t min_support, double min_confidence)
     return learner;
 }
 
-void cpl_learner_free(cpl_learner_t *learner)
+void st_learner_free(st_learner_t *learner)
 {
     if (!learner) return;
     node_free(learner->trie.root);
@@ -162,39 +162,39 @@ void cpl_learner_free(cpl_learner_t *learner)
  * PUBLIC API – FEED
  * ============================================================ */
 
-cpl_error_t cpl_feed(cpl_learner_t *learner, const char *raw_cmd)
+st_error_t st_feed(st_learner_t *learner, const char *raw_cmd)
 {
-    if (!learner || !raw_cmd || !raw_cmd[0]) return CPL_ERR_INVALID;
+    if (!learner || !raw_cmd || !raw_cmd[0]) return ST_ERR_INVALID;
 
-    cpl_token_array_t typed;
+    st_token_array_t typed;
     typed.tokens = NULL;
     typed.count = 0;
-    cpl_error_t err = cpl_normalize_typed(raw_cmd, &typed);
-    if (err != CPL_OK) return err;
+    st_error_t err = st_normalize_typed(raw_cmd, &typed);
+    if (err != ST_OK) return err;
 
     if (!trie_insert(learner->trie.root, typed.tokens, typed.count)) {
-        cpl_free_token_array(&typed);
-        return CPL_ERR_MEMORY;
+        st_free_token_array(&typed);
+        return ST_ERR_MEMORY;
     }
 
     learner->trie.total_commands++;
-    cpl_free_token_array(&typed);
-    return CPL_OK;
+    st_free_token_array(&typed);
+    return ST_OK;
 }
 
-cpl_error_t cpl_feed_parsed(cpl_learner_t *learner, const char *raw_cmd,
+st_error_t st_feed_parsed(st_learner_t *learner, const char *raw_cmd,
                             const void *parse)
 {
-    if (!learner || !raw_cmd || !raw_cmd[0] || !parse) return CPL_ERR_INVALID;
+    if (!learner || !raw_cmd || !raw_cmd[0] || !parse) return ST_ERR_INVALID;
 
-    const cpl_token_array_t *typed = (const cpl_token_array_t *)parse;
-    if (!typed->tokens || typed->count == 0) return CPL_ERR_INVALID;
+    const st_token_array_t *typed = (const st_token_array_t *)parse;
+    if (!typed->tokens || typed->count == 0) return ST_ERR_INVALID;
 
     if (!trie_insert(learner->trie.root, typed->tokens, typed->count))
-        return CPL_ERR_MEMORY;
+        return ST_ERR_MEMORY;
 
     learner->trie.total_commands++;
-    return CPL_OK;
+    return ST_OK;
 }
 
 /* ============================================================
@@ -205,23 +205,23 @@ typedef struct {
     char *pattern;
     uint32_t count;
     double confidence;
-} cpl_candidate_t;
+} st_candidate_t;
 
 typedef struct {
-    cpl_candidate_t *candidates;
+    st_candidate_t *candidates;
     size_t count;
     size_t capacity;
     uint32_t min_support;
     double min_confidence;
-    const cpl_learner_t *learner;
+    const st_learner_t *learner;
 } dfs_ctx_t;
 
 static bool dfs_ctx_ensure(dfs_ctx_t *ctx)
 {
     if (ctx->capacity >= ctx->count + 1) return true;
     size_t new_cap = ctx->capacity == 0 ? 64 : ctx->capacity * 2;
-    cpl_candidate_t *new_arr = realloc(ctx->candidates,
-                                       new_cap * sizeof(cpl_candidate_t));
+    st_candidate_t *new_arr = realloc(ctx->candidates,
+                                       new_cap * sizeof(st_candidate_t));
     if (!new_arr) return false;
     ctx->candidates = new_arr;
     ctx->capacity = new_cap;
@@ -261,7 +261,7 @@ static char *join_tokens(const char **path, size_t depth)
     return result;
 }
 
-static void dfs_collect(cpl_node_t *node, const char **path, size_t depth,
+static void dfs_collect(st_node_t *node, const char **path, size_t depth,
                         uint32_t parent_count, dfs_ctx_t *ctx)
 {
     if (!node) return;
@@ -285,27 +285,27 @@ static void dfs_collect(cpl_node_t *node, const char **path, size_t depth,
             /* For the current node, if it's a wildcard with observed types,
              * use the join of all observed types */
             char effective_token[32];
-            if (node->type != CPL_TYPE_LITERAL && node->observed_types != 0) {
-                cpl_token_type_t joined = CPL_TYPE_ANY;
-                for (int t = 0; t < CPL_TYPE_COUNT; t++) {
+            if (node->type != ST_TYPE_LITERAL && node->observed_types != 0) {
+                st_token_type_t joined = ST_TYPE_ANY;
+                for (int t = 0; t < ST_TYPE_COUNT; t++) {
                     if (node->observed_types & (1u << t)) {
-                        if (joined == CPL_TYPE_ANY) {
-                            joined = (cpl_token_type_t)t;
+                        if (joined == ST_TYPE_ANY) {
+                            joined = (st_token_type_t)t;
                         } else {
-                            joined = cpl_join(joined, (cpl_token_type_t)t);
+                            joined = st_join(joined, (st_token_type_t)t);
                         }
                     }
                 }
-                if (joined != CPL_TYPE_ANY) {
+                if (joined != ST_TYPE_ANY) {
                     snprintf(effective_token, sizeof(effective_token), "%s",
-                             cpl_type_symbol[joined]);
+                             st_type_symbol[joined]);
                     pattern_tokens[depth - 1] = effective_token;
                 }
             }
 
             char *pattern = join_tokens(pattern_tokens, depth);
             if (pattern) {
-                if (!cpl_is_blacklisted(ctx->learner, pattern)) {
+                if (!st_is_blacklisted(ctx->learner, pattern)) {
                     if (dfs_ctx_ensure(ctx)) {
                         ctx->candidates[ctx->count].pattern = pattern;
                         ctx->candidates[ctx->count].count = node->count;
@@ -328,8 +328,8 @@ static void dfs_collect(cpl_node_t *node, const char **path, size_t depth,
 
 static int compare_candidates(const void *a, const void *b)
 {
-    const cpl_candidate_t *ca = (const cpl_candidate_t *)a;
-    const cpl_candidate_t *cb = (const cpl_candidate_t *)b;
+    const st_candidate_t *ca = (const st_candidate_t *)a;
+    const st_candidate_t *cb = (const st_candidate_t *)b;
     if (ca->confidence > cb->confidence) return -1;
     if (ca->confidence < cb->confidence) return 1;
     if (ca->count > cb->count) return -1;
@@ -337,7 +337,7 @@ static int compare_candidates(const void *a, const void *b)
     return 0;
 }
 
-static size_t deduplicate(cpl_candidate_t *candidates, size_t count)
+static size_t deduplicate(st_candidate_t *candidates, size_t count)
 {
     if (count <= 1) return count;
     size_t write = 1;
@@ -355,7 +355,7 @@ static size_t deduplicate(cpl_candidate_t *candidates, size_t count)
     return write;
 }
 
-cpl_suggestion_t *cpl_suggest(cpl_learner_t *learner, size_t *out_count)
+st_suggestion_t *st_suggest(st_learner_t *learner, size_t *out_count)
 {
     if (!learner || !out_count) return NULL;
 
@@ -376,7 +376,7 @@ cpl_suggestion_t *cpl_suggest(cpl_learner_t *learner, size_t *out_count)
         return NULL;
     }
 
-    qsort(ctx.candidates, ctx.count, sizeof(cpl_candidate_t), compare_candidates);
+    qsort(ctx.candidates, ctx.count, sizeof(st_candidate_t), compare_candidates);
     ctx.count = deduplicate(ctx.candidates, ctx.count);
 
     size_t result_count = ctx.count;
@@ -384,7 +384,7 @@ cpl_suggestion_t *cpl_suggest(cpl_learner_t *learner, size_t *out_count)
         result_count = learner->max_suggestions;
     }
 
-    cpl_suggestion_t *result = calloc(result_count, sizeof(cpl_suggestion_t));
+    st_suggestion_t *result = calloc(result_count, sizeof(st_suggestion_t));
     if (!result) {
         for (size_t i = 0; i < ctx.count; i++) free(ctx.candidates[i].pattern);
         free(ctx.candidates);
@@ -407,7 +407,7 @@ cpl_suggestion_t *cpl_suggest(cpl_learner_t *learner, size_t *out_count)
     return result;
 }
 
-void cpl_free_suggestions(cpl_suggestion_t *suggestions, size_t count)
+void st_free_suggestions(st_suggestion_t *suggestions, size_t count)
 {
     if (!suggestions) return;
     for (size_t i = 0; i < count; i++) free(suggestions[i].pattern);
@@ -418,7 +418,7 @@ void cpl_free_suggestions(cpl_suggestion_t *suggestions, size_t count)
  * PUBLIC API – BLACKLIST
  * ============================================================ */
 
-static bool blacklist_ensure(cpl_learner_t *learner)
+static bool blacklist_ensure(st_learner_t *learner)
 {
     if (learner->blacklist_capacity > learner->blacklist_count) return true;
     size_t new_cap = learner->blacklist_capacity == 0 ? 16 : learner->blacklist_capacity * 2;
@@ -429,18 +429,18 @@ static bool blacklist_ensure(cpl_learner_t *learner)
     return true;
 }
 
-cpl_error_t cpl_blacklist_add(cpl_learner_t *learner, const char *pattern)
+st_error_t st_blacklist_add(st_learner_t *learner, const char *pattern)
 {
-    if (!learner || !pattern) return CPL_ERR_INVALID;
-    if (cpl_is_blacklisted(learner, pattern)) return CPL_OK;
-    if (!blacklist_ensure(learner)) return CPL_ERR_MEMORY;
+    if (!learner || !pattern) return ST_ERR_INVALID;
+    if (st_is_blacklisted(learner, pattern)) return ST_OK;
+    if (!blacklist_ensure(learner)) return ST_ERR_MEMORY;
     char *copy = strdup(pattern);
-    if (!copy) return CPL_ERR_MEMORY;
+    if (!copy) return ST_ERR_MEMORY;
     learner->blacklist[learner->blacklist_count++] = copy;
-    return CPL_OK;
+    return ST_OK;
 }
 
-bool cpl_is_blacklisted(const cpl_learner_t *learner, const char *pattern)
+bool st_is_blacklisted(const st_learner_t *learner, const char *pattern)
 {
     if (!learner || !pattern) return false;
     for (size_t i = 0; i < learner->blacklist_count; i++) {
@@ -455,13 +455,13 @@ bool cpl_is_blacklisted(const cpl_learner_t *learner, const char *pattern)
 
 typedef struct {
     FILE *fp;
-    cpl_error_t error;
+    st_error_t error;
 } save_ctx_t;
 
-static void dfs_save(cpl_node_t *node, const char **path, size_t depth,
+static void dfs_save(st_node_t *node, const char **path, size_t depth,
                      save_ctx_t *ctx)
 {
-    if (!node || ctx->error != CPL_OK) return;
+    if (!node || ctx->error != ST_OK) return;
     if (node->token[0] != '\0') {
         if (depth >= 1024) return;
         path[depth] = node->token;
@@ -476,7 +476,7 @@ static void dfs_save(cpl_node_t *node, const char **path, size_t depth,
         char *pattern = join_tokens(path, depth);
         if (pattern) {
             if (fprintf(ctx->fp, "%u\t%s\n", node->count, pattern) < 0) {
-                ctx->error = CPL_ERR_IO;
+                ctx->error = ST_ERR_IO;
             }
             free(pattern);
         }
@@ -487,28 +487,28 @@ static void dfs_save(cpl_node_t *node, const char **path, size_t depth,
     }
 }
 
-cpl_error_t cpl_save(const cpl_learner_t *learner, const char *path)
+st_error_t st_save(const st_learner_t *learner, const char *path)
 {
-    if (!learner || !path) return CPL_ERR_INVALID;
+    if (!learner || !path) return ST_ERR_INVALID;
     FILE *fp = fopen(path, "w");
-    if (!fp) return CPL_ERR_IO;
-    if (fprintf(fp, "# CPL trie dump\n# total_commands=%u\n",
+    if (!fp) return ST_ERR_IO;
+    if (fprintf(fp, "# ST trie dump\n# total_commands=%u\n",
                 learner->trie.total_commands) < 0) {
         fclose(fp);
-        return CPL_ERR_IO;
+        return ST_ERR_IO;
     }
-    save_ctx_t ctx = { .fp = fp, .error = CPL_OK };
+    save_ctx_t ctx = { .fp = fp, .error = ST_OK };
     const char *save_path[1024];
     dfs_save(learner->trie.root, save_path, 0, &ctx);
     fclose(fp);
     return ctx.error;
 }
 
-cpl_error_t cpl_load(cpl_learner_t *learner, const char *path)
+st_error_t st_load(st_learner_t *learner, const char *path)
 {
-    if (!learner || !path) return CPL_ERR_INVALID;
+    if (!learner || !path) return ST_ERR_INVALID;
     FILE *fp = fopen(path, "r");
-    if (!fp) return CPL_ERR_IO;
+    if (!fp) return ST_ERR_IO;
 
     /* Read total_commands from header if present */
     char line[4096];
@@ -539,7 +539,7 @@ cpl_error_t cpl_load(cpl_learner_t *learner, const char *path)
 
         /* Parse typed tokens from pattern */
         char *pattern_copy = strdup(pattern);
-        if (!pattern_copy) { fclose(fp); return CPL_ERR_MEMORY; }
+        if (!pattern_copy) { fclose(fp); return ST_ERR_MEMORY; }
 
         /* Count tokens */
         size_t token_count = 1;
@@ -547,24 +547,24 @@ cpl_error_t cpl_load(cpl_learner_t *learner, const char *path)
             if (*p == ' ') token_count++;
         }
 
-        cpl_token_t *tokens = calloc(token_count, sizeof(cpl_token_t));
-        if (!tokens) { free(pattern_copy); fclose(fp); return CPL_ERR_MEMORY; }
+        st_token_t *tokens = calloc(token_count, sizeof(st_token_t));
+        if (!tokens) { free(pattern_copy); fclose(fp); return ST_ERR_MEMORY; }
 
         size_t ti = 0;
         char *tok = strtok(pattern_copy, " ");
         while (tok && ti < token_count) {
             /* Check if it's a type symbol */
-            cpl_token_type_t type = CPL_TYPE_LITERAL;
-            for (int t = 1; t < CPL_TYPE_COUNT; t++) {
-                if (strcmp(tok, cpl_type_symbol[t]) == 0) {
-                    type = (cpl_token_type_t)t;
+            st_token_type_t type = ST_TYPE_LITERAL;
+            for (int t = 1; t < ST_TYPE_COUNT; t++) {
+                if (strcmp(tok, st_type_symbol[t]) == 0) {
+                    type = (st_token_type_t)t;
                     break;
                 }
             }
             /* If not a recognised type symbol, classify the token
              * the same way the command normaliser does. */
-            if (type == CPL_TYPE_LITERAL) {
-                type = cpl_classify_token(tok);
+            if (type == ST_TYPE_LITERAL) {
+                type = st_classify_token(tok);
             }
             tokens[ti].text = strdup(tok);
             tokens[ti].type = type;
@@ -576,27 +576,27 @@ cpl_error_t cpl_load(cpl_learner_t *learner, const char *path)
         /* Walk/create the trie path and set count directly on the target node.
          * We do NOT increment intermediate nodes because every saved entry
          * already has its own count. */
-        cpl_node_t *current = learner->trie.root;
+        st_node_t *current = learner->trie.root;
         for (size_t i = 0; i < token_count; i++) {
-            cpl_node_t *child = node_find_child(current, tokens[i].text, tokens[i].type);
+            st_node_t *child = node_find_child(current, tokens[i].text, tokens[i].type);
             if (!child) {
                 if (!node_ensure_capacity(current, current->num_children + 1)) {
                     for (size_t j = 0; j < token_count; j++) free(tokens[j].text);
                     free(tokens);
                     free(pattern_copy);
                     fclose(fp);
-                    return CPL_ERR_MEMORY;
+                    return ST_ERR_MEMORY;
                 }
-                const char *tok_str = (tokens[i].type == CPL_TYPE_LITERAL)
+                const char *tok_str = (tokens[i].type == ST_TYPE_LITERAL)
                                           ? tokens[i].text
-                                          : cpl_type_symbol[tokens[i].type];
+                                          : st_type_symbol[tokens[i].type];
                 child = node_new(tok_str, tokens[i].type);
                 if (!child) {
                     for (size_t j = 0; j < token_count; j++) free(tokens[j].text);
                     free(tokens);
                     free(pattern_copy);
                     fclose(fp);
-                    return CPL_ERR_MEMORY;
+                    return ST_ERR_MEMORY;
                 }
                 current->children[current->num_children++] = child;
             }
@@ -615,5 +615,5 @@ cpl_error_t cpl_load(cpl_learner_t *learner, const char *path)
     learner->trie.root->count = saved_total;
 
     fclose(fp);
-    return CPL_OK;
+    return ST_OK;
 }

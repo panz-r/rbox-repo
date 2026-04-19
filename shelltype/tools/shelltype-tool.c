@@ -1,13 +1,13 @@
 /*
- * rbox-cpl-tool.c - Command Policy Learner CLI tool.
+ * shelltype-tool.c - Shelltype policy CLI tool.
  *
  * Reads allowed commands from a file (one per line), builds a trie,
  * and outputs suggested policy rules.
  *
  * Usage:
- *   rbox-cpl-tool --input <file> --suggest [--min-support N] [--output <file>]
- *   rbox-cpl-tool --policy <file> --verify "command"
- *   rbox-cpl-tool --policy <file> --verify-file <file>
+ *   shelltype-tool --input <file> --suggest [--min-support N] [--output <file>]
+ *   shelltype-tool --policy <file> --verify "command"
+ *   shelltype-tool --policy <file> --verify-file <file>
  */
 
 #define _GNU_SOURCE
@@ -19,7 +19,7 @@
 #include <getopt.h>
 #include <stdbool.h>
 
-#include "rbox_policy_learner.h"
+#include "shelltype.h"
 
 static void print_usage(const char *prog)
 {
@@ -32,11 +32,11 @@ static void print_usage(const char *prog)
     fprintf(stderr, "  --input <file>       Input file with one command per line\n");
     fprintf(stderr, "  --suggest            Generate and print suggestions\n");
     fprintf(stderr, "  --min-support <N>    Minimum occurrence count (default: %d)\n",
-            CPL_DEFAULT_MIN_SUPPORT);
+            ST_DEFAULT_MIN_SUPPORT);
     fprintf(stderr, "  --min-confidence <F> Minimum confidence 0.0-1.0 (default: %.2f)\n",
-            CPL_DEFAULT_MIN_CONFIDENCE);
+            ST_DEFAULT_MIN_CONFIDENCE);
     fprintf(stderr, "  --max-suggestions <N> Max suggestions to show (default: %d)\n",
-            CPL_DEFAULT_MAX_SUGGESTIONS);
+            ST_DEFAULT_MAX_SUGGESTIONS);
     fprintf(stderr, "  --output <file>      Write suggestions to file instead of stdout\n");
     fprintf(stderr, "  --save <file>        Save learner state to file\n");
     fprintf(stderr, "  --load <file>        Load learner state from file\n");
@@ -62,9 +62,9 @@ int main(int argc, char *argv[])
     const char *verify_cmd = NULL;
     const char *verify_file = NULL;
     bool do_suggest = false;
-    uint32_t min_support = CPL_DEFAULT_MIN_SUPPORT;
-    double min_confidence = CPL_DEFAULT_MIN_CONFIDENCE;
-    size_t max_suggestions = CPL_DEFAULT_MAX_SUGGESTIONS;
+    uint32_t min_support = ST_DEFAULT_MIN_SUPPORT;
+    double min_confidence = ST_DEFAULT_MIN_CONFIDENCE;
+    size_t max_suggestions = ST_DEFAULT_MAX_SUGGESTIONS;
 
     static struct option long_options[] = {
         { "input",          required_argument, 0, 'i' },
@@ -111,8 +111,8 @@ int main(int argc, char *argv[])
     if (normalize_cmd) {
         char **tokens = NULL;
         size_t count = 0;
-        cpl_error_t err = cpl_normalize(normalize_cmd, &tokens, &count);
-        if (err != CPL_OK) {
+        st_error_t err = st_normalize(normalize_cmd, &tokens, &count);
+        if (err != ST_OK) {
             fprintf(stderr, "Error: normalisation failed (%d)\n", err);
             return 1;
         }
@@ -122,38 +122,38 @@ int main(int argc, char *argv[])
             printf("%s", tokens[i]);
         }
         printf("\n");
-        cpl_free_tokens(tokens, count);
+        st_free_tokens(tokens, count);
         return 0;
     }
 
     /* Policy verify mode */
     if (policy_file) {
-        cpl_policy_t *policy = cpl_policy_new(cpl_policy_ctx_new());
+        st_policy_t *policy = st_policy_new(st_policy_ctx_new());
         if (!policy) {
             fprintf(stderr, "Error: failed to create policy\n");
             return 1;
         }
 
-        cpl_error_t err = cpl_policy_load(policy, policy_file);
-        if (err != CPL_OK) {
+        st_error_t err = st_policy_load(policy, policy_file);
+        if (err != ST_OK) {
             fprintf(stderr, "Error: failed to load policy from '%s' (%d)\n",
                     policy_file, err);
-            cpl_policy_free(policy);
+            st_policy_free(policy);
             return 1;
         }
 
-        fprintf(stderr, "Loaded policy with %zu patterns\n", cpl_policy_count(policy));
+        fprintf(stderr, "Loaded policy with %zu patterns\n", st_policy_count(policy));
 
         /* Single command verify */
         if (verify_cmd) {
-            cpl_eval_result_t r;
-            err = cpl_policy_eval(policy, verify_cmd, &r);
+            st_eval_result_t r;
+            err = st_policy_eval(policy, verify_cmd, &r);
             if (r.matches) {
                 printf("ALLOW (matched: %s)\n", r.matching_pattern ? r.matching_pattern : "(unknown)");
             } else {
                 printf("DENY\n");
             }
-            cpl_policy_free(policy);
+            st_policy_free(policy);
             return 0;
         }
 
@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
             FILE *fp = fopen(verify_file, "r");
             if (!fp) {
                 fprintf(stderr, "Error: cannot open '%s'\n", verify_file);
-                cpl_policy_free(policy);
+                st_policy_free(policy);
                 return 1;
             }
 
@@ -176,8 +176,8 @@ int main(int argc, char *argv[])
                 if (len == 0) continue;
                 if (line[0] == '#') continue;
 
-                cpl_eval_result_t r;
-                err = cpl_policy_eval(policy, line, &r);
+                st_eval_result_t r;
+                err = st_policy_eval(policy, line, &r);
                 if (r.matches) {
                     printf("ALLOW: %-60s (matched: %s)\n", line, r.matching_pattern ? r.matching_pattern : "(unknown)");
                     allow_count++;
@@ -191,12 +191,12 @@ int main(int argc, char *argv[])
 
             fprintf(stderr, "\nSummary: %d commands, %d ALLOW, %d DENY\n",
                     line_count, allow_count, deny_count);
-            cpl_policy_free(policy);
+            st_policy_free(policy);
             return 0;
         }
 
         fprintf(stderr, "Error: --verify or --verify-file required with --policy\n");
-        cpl_policy_free(policy);
+        st_policy_free(policy);
         return 1;
     }
 
@@ -208,7 +208,7 @@ int main(int argc, char *argv[])
     }
 
     /* Create learner */
-    cpl_learner_t *learner = cpl_learner_new(min_support, min_confidence);
+    st_learner_t *learner = st_learner_new(min_support, min_confidence);
     if (!learner) {
         fprintf(stderr, "Error: failed to create learner\n");
         return 1;
@@ -217,11 +217,11 @@ int main(int argc, char *argv[])
 
     /* Optionally load state */
     if (load_file) {
-        cpl_error_t err = cpl_load(learner, load_file);
-        if (err != CPL_OK) {
+        st_error_t err = st_load(learner, load_file);
+        if (err != ST_OK) {
             fprintf(stderr, "Error: failed to load state from '%s' (%d)\n",
                     load_file, err);
-            cpl_learner_free(learner);
+            st_learner_free(learner);
             return 1;
         }
     }
@@ -231,7 +231,7 @@ int main(int argc, char *argv[])
         FILE *fp = fopen(input_file, "r");
         if (!fp) {
             fprintf(stderr, "Error: cannot open '%s'\n", input_file);
-            cpl_learner_free(learner);
+            st_learner_free(learner);
             return 1;
         }
 
@@ -246,8 +246,8 @@ int main(int argc, char *argv[])
             if (len == 0) continue;
             if (line[0] == '#') continue;
 
-            cpl_error_t err = cpl_feed(learner, line);
-            if (err != CPL_OK) {
+            st_error_t err = st_feed(learner, line);
+            if (err != ST_OK) {
                 error_count++;
                 if (error_count <= 3) {
                     fprintf(stderr, "Warning: failed to feed line %d: %s\n",
@@ -265,14 +265,14 @@ int main(int argc, char *argv[])
     /* Generate suggestions */
     if (do_suggest) {
         size_t sug_count = 0;
-        cpl_suggestion_t *suggestions = cpl_suggest(learner, &sug_count);
+        st_suggestion_t *suggestions = st_suggest(learner, &sug_count);
 
         FILE *out = stdout;
         if (output_file) {
             out = fopen(output_file, "w");
             if (!out) {
                 fprintf(stderr, "Error: cannot open '%s' for writing\n", output_file);
-                cpl_learner_free(learner);
+                st_learner_free(learner);
                 return 1;
             }
         }
@@ -291,21 +291,21 @@ int main(int argc, char *argv[])
         }
 
         if (out != stdout) fclose(out);
-        cpl_free_suggestions(suggestions, sug_count);
+        st_free_suggestions(suggestions, sug_count);
     }
 
     /* Save state */
     if (save_file) {
-        cpl_error_t err = cpl_save(learner, save_file);
-        if (err != CPL_OK) {
+        st_error_t err = st_save(learner, save_file);
+        if (err != ST_OK) {
             fprintf(stderr, "Error: failed to save state to '%s' (%d)\n",
                     save_file, err);
-            cpl_learner_free(learner);
+            st_learner_free(learner);
             return 1;
         }
         fprintf(stderr, "State saved to '%s'\n", save_file);
     }
 
-    cpl_learner_free(learner);
+    st_learner_free(learner);
     return 0;
 }

@@ -8,7 +8,7 @@
  * Provides join and compatibility tables for policy generation and verification.
  */
 
-#include "rbox_policy_learner.h"
+#include "shelltype.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -21,27 +21,27 @@
  * TYPE SYMBOLS
  * ============================================================ */
 
-const char *cpl_type_symbol[CPL_TYPE_COUNT] = {
-    [CPL_TYPE_LITERAL]       = "",
-    [CPL_TYPE_HEXHASH]       = "#h",
-    [CPL_TYPE_NUMBER]        = "#n",
-    [CPL_TYPE_IPV4]          = "#i",
-    [CPL_TYPE_WORD]          = "#w",
-    [CPL_TYPE_QUOTED]        = "#q",
-    [CPL_TYPE_QUOTED_SPACE]  = "#qs",
-    [CPL_TYPE_FILENAME]      = "#f",
-    [CPL_TYPE_REL_PATH]      = "#r",
-    [CPL_TYPE_ABS_PATH]      = "#p",
-    [CPL_TYPE_PATH]          = "#path",
-    [CPL_TYPE_URL]           = "#u",
-    [CPL_TYPE_VALUE]         = "#val",
-    [CPL_TYPE_ANY]           = "*",
+const char *st_type_symbol[ST_TYPE_COUNT] = {
+    [ST_TYPE_LITERAL]       = "",
+    [ST_TYPE_HEXHASH]       = "#h",
+    [ST_TYPE_NUMBER]        = "#n",
+    [ST_TYPE_IPV4]          = "#i",
+    [ST_TYPE_WORD]          = "#w",
+    [ST_TYPE_QUOTED]        = "#q",
+    [ST_TYPE_QUOTED_SPACE]  = "#qs",
+    [ST_TYPE_FILENAME]      = "#f",
+    [ST_TYPE_REL_PATH]      = "#r",
+    [ST_TYPE_ABS_PATH]      = "#p",
+    [ST_TYPE_PATH]          = "#path",
+    [ST_TYPE_URL]           = "#u",
+    [ST_TYPE_VALUE]         = "#val",
+    [ST_TYPE_ANY]           = "*",
 };
 
 /* ============================================================
  * JOIN TABLE
  *
- * cpl_type_join[a][b] = narrowest type covering both a and b.
+ * st_type_join[a][b] = narrowest type covering both a and b.
  *
  * Lattice:
  *   #h ⊂ #n ⊂ #val ⊂ *
@@ -53,90 +53,90 @@ const char *cpl_type_symbol[CPL_TYPE_COUNT] = {
  *   #u ⊂ *
  * ============================================================ */
 
-const cpl_token_type_t cpl_type_join[CPL_TYPE_COUNT][CPL_TYPE_COUNT] = {
+const st_token_type_t st_type_join[ST_TYPE_COUNT][ST_TYPE_COUNT] = {
     /* LITERAL */
-    { CPL_TYPE_LITERAL, CPL_TYPE_HEXHASH, CPL_TYPE_NUMBER, CPL_TYPE_IPV4,
-      CPL_TYPE_WORD, CPL_TYPE_QUOTED, CPL_TYPE_QUOTED_SPACE, CPL_TYPE_FILENAME,
-      CPL_TYPE_REL_PATH, CPL_TYPE_ABS_PATH, CPL_TYPE_PATH, CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_LITERAL, ST_TYPE_HEXHASH, ST_TYPE_NUMBER, ST_TYPE_IPV4,
+      ST_TYPE_WORD, ST_TYPE_QUOTED, ST_TYPE_QUOTED_SPACE, ST_TYPE_FILENAME,
+      ST_TYPE_REL_PATH, ST_TYPE_ABS_PATH, ST_TYPE_PATH, ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* HEXHASH */
-    { CPL_TYPE_HEXHASH, CPL_TYPE_HEXHASH, CPL_TYPE_NUMBER, CPL_TYPE_VALUE,
-      CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_ANY,   CPL_TYPE_ANY,   CPL_TYPE_ANY,  CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_HEXHASH, ST_TYPE_HEXHASH, ST_TYPE_NUMBER, ST_TYPE_VALUE,
+      ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_ANY,   ST_TYPE_ANY,   ST_TYPE_ANY,  ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* NUMBER */
-    { CPL_TYPE_NUMBER, CPL_TYPE_NUMBER, CPL_TYPE_NUMBER, CPL_TYPE_VALUE,
-      CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_ANY,   CPL_TYPE_ANY,   CPL_TYPE_ANY,  CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_NUMBER, ST_TYPE_NUMBER, ST_TYPE_NUMBER, ST_TYPE_VALUE,
+      ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_ANY,   ST_TYPE_ANY,   ST_TYPE_ANY,  ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* IPV4 */
-    { CPL_TYPE_IPV4, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_IPV4,
-      CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_IPV4, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_IPV4,
+      ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* WORD */
-    { CPL_TYPE_WORD, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_WORD, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_WORD, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_WORD, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* QUOTED */
-    { CPL_TYPE_QUOTED, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_VALUE, CPL_TYPE_QUOTED, CPL_TYPE_QUOTED_SPACE, CPL_TYPE_VALUE,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_QUOTED, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_VALUE, ST_TYPE_QUOTED, ST_TYPE_QUOTED_SPACE, ST_TYPE_VALUE,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* QUOTED_SPACE */
-    { CPL_TYPE_QUOTED_SPACE, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_VALUE, CPL_TYPE_QUOTED_SPACE, CPL_TYPE_QUOTED_SPACE, CPL_TYPE_VALUE,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_QUOTED_SPACE, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_VALUE, ST_TYPE_QUOTED_SPACE, ST_TYPE_QUOTED_SPACE, ST_TYPE_VALUE,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* FILENAME */
-    { CPL_TYPE_FILENAME, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_FILENAME,
-      CPL_TYPE_REL_PATH, CPL_TYPE_PATH, CPL_TYPE_PATH, CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_FILENAME, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_FILENAME,
+      ST_TYPE_REL_PATH, ST_TYPE_PATH, ST_TYPE_PATH, ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* REL_PATH */
-    { CPL_TYPE_REL_PATH, CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_REL_PATH,
-      CPL_TYPE_REL_PATH, CPL_TYPE_PATH, CPL_TYPE_PATH, CPL_TYPE_ANY,
-      CPL_TYPE_ANY, CPL_TYPE_ANY },
+    { ST_TYPE_REL_PATH, ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_REL_PATH,
+      ST_TYPE_REL_PATH, ST_TYPE_PATH, ST_TYPE_PATH, ST_TYPE_ANY,
+      ST_TYPE_ANY, ST_TYPE_ANY },
     /* ABS_PATH */
-    { CPL_TYPE_ABS_PATH, CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_PATH,
-      CPL_TYPE_PATH, CPL_TYPE_ABS_PATH, CPL_TYPE_PATH, CPL_TYPE_ANY,
-      CPL_TYPE_ANY, CPL_TYPE_ANY },
+    { ST_TYPE_ABS_PATH, ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_PATH,
+      ST_TYPE_PATH, ST_TYPE_ABS_PATH, ST_TYPE_PATH, ST_TYPE_ANY,
+      ST_TYPE_ANY, ST_TYPE_ANY },
     /* PATH */
-    { CPL_TYPE_PATH, CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_PATH,
-      CPL_TYPE_PATH, CPL_TYPE_PATH, CPL_TYPE_PATH, CPL_TYPE_ANY,
-      CPL_TYPE_ANY, CPL_TYPE_ANY },
+    { ST_TYPE_PATH, ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_PATH,
+      ST_TYPE_PATH, ST_TYPE_PATH, ST_TYPE_PATH, ST_TYPE_ANY,
+      ST_TYPE_ANY, ST_TYPE_ANY },
     /* URL */
-    { CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY,
-      CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_URL,
-      CPL_TYPE_ANY, CPL_TYPE_ANY },
+    { ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY,
+      ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_URL,
+      ST_TYPE_ANY, ST_TYPE_ANY },
     /* VALUE */
-    { CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE, CPL_TYPE_VALUE,
-      CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,  CPL_TYPE_ANY,
-      CPL_TYPE_VALUE, CPL_TYPE_ANY },
+    { ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE, ST_TYPE_VALUE,
+      ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,  ST_TYPE_ANY,
+      ST_TYPE_VALUE, ST_TYPE_ANY },
     /* ANY */
-    { CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY,
-      CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY,
-      CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY, CPL_TYPE_ANY,
-      CPL_TYPE_ANY, CPL_TYPE_ANY },
+    { ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY,
+      ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY,
+      ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY, ST_TYPE_ANY,
+      ST_TYPE_ANY, ST_TYPE_ANY },
 };
 
 /* ============================================================
  * COMPATIBILITY TABLE
  *
- * cpl_type_compatible[cmd_type][policy_type] = true iff cmd_type ≤ policy_type.
+ * st_type_compatible[cmd_type][policy_type] = true iff cmd_type ≤ policy_type.
  * A command token of cmd_type matches a policy node of policy_type.
  * ============================================================ */
 
 #define C(a, b) ((a) <= (b)) ? false : false,  /* placeholder, filled below */
 
 /* We define it explicitly for clarity: */
-const bool cpl_type_compatible[CPL_TYPE_COUNT][CPL_TYPE_COUNT] = {
+const bool st_type_compatible[ST_TYPE_COUNT][ST_TYPE_COUNT] = {
     /* LITERAL matches only LITERAL and ANY */
     { true,  false, false, false, false, false, false, false, false, false, false, false, false, true  },
     /* #h matches #h, #n, #val, * */
@@ -265,33 +265,33 @@ static bool has_whitespace(const char *token)
  * PUBLIC: CLASSIFY
  * ============================================================ */
 
-cpl_token_type_t cpl_classify_token(const char *token)
+st_token_type_t st_classify_token(const char *token)
 {
-    if (!token || !token[0]) return CPL_TYPE_LITERAL;
+    if (!token || !token[0]) return ST_TYPE_LITERAL;
 
     /* Absolute path */
-    if (is_absolute_path(token)) return CPL_TYPE_ABS_PATH;
+    if (is_absolute_path(token)) return ST_TYPE_ABS_PATH;
 
     /* URL */
-    if (is_url(token)) return CPL_TYPE_URL;
+    if (is_url(token)) return ST_TYPE_URL;
 
     /* IPv4 */
-    if (is_ipv4(token)) return CPL_TYPE_IPV4;
+    if (is_ipv4(token)) return ST_TYPE_IPV4;
 
     /* Hex hash (8+ hex chars, no 0x prefix for git-style hashes) */
-    if (is_hex_hash(token)) return CPL_TYPE_HEXHASH;
+    if (is_hex_hash(token)) return ST_TYPE_HEXHASH;
 
     /* Hex number (0x...) */
-    if (is_hex_number(token)) return CPL_TYPE_NUMBER;
+    if (is_hex_number(token)) return ST_TYPE_NUMBER;
 
     /* Decimal number */
-    if (is_decimal_number(token)) return CPL_TYPE_NUMBER;
+    if (is_decimal_number(token)) return ST_TYPE_NUMBER;
 
     /* Relative path (has / or ..) */
-    if (is_relative_path(token)) return CPL_TYPE_REL_PATH;
+    if (is_relative_path(token)) return ST_TYPE_REL_PATH;
 
     /* Filename (has ., no /) */
-    if (is_filename(token)) return CPL_TYPE_FILENAME;
+    if (is_filename(token)) return ST_TYPE_FILENAME;
 
     /* Words are LITERAL by default - they could be command names,
      * subcommands, or fixed arguments. Only classify as #w when
@@ -299,10 +299,10 @@ cpl_token_type_t cpl_classify_token(const char *token)
      * redirections, etc.) - handled by the caller. */
 
     /* Quoted string with whitespace */
-    if (has_whitespace(token)) return CPL_TYPE_QUOTED_SPACE;
+    if (has_whitespace(token)) return ST_TYPE_QUOTED_SPACE;
 
     /* Default: literal */
-    return CPL_TYPE_LITERAL;
+    return ST_TYPE_LITERAL;
 }
 
 /* ============================================================
@@ -406,20 +406,20 @@ fail:
  * PUBLIC API: TYPED NORMALISATION
  * ============================================================ */
 
-cpl_error_t cpl_normalize_typed(const char *raw_cmd, cpl_token_array_t *out)
+st_error_t st_normalize_typed(const char *raw_cmd, st_token_array_t *out)
 {
-    if (!raw_cmd || !out) return CPL_ERR_INVALID;
+    if (!raw_cmd || !out) return ST_ERR_INVALID;
 
     size_t raw_count = 0;
     char **raw_tokens = tokenize_command(raw_cmd, &raw_count);
-    if (!raw_tokens) return CPL_ERR_MEMORY;
+    if (!raw_tokens) return ST_ERR_MEMORY;
 
     /* Worst case: every token splits into 2 (e.g., --flag=value → 2 tokens) */
-    out->tokens = calloc(raw_count * 2, sizeof(cpl_token_t));
+    out->tokens = calloc(raw_count * 2, sizeof(st_token_t));
     if (!out->tokens) {
         for (size_t i = 0; i < raw_count; i++) free(raw_tokens[i]);
         free(raw_tokens);
-        return CPL_ERR_MEMORY;
+        return ST_ERR_MEMORY;
     }
 
     const char *prev = NULL;
@@ -435,12 +435,12 @@ cpl_error_t cpl_normalize_typed(const char *raw_cmd, cpl_token_array_t *out)
                 size_t flag_len = (size_t)(eq - tok);
                 out->tokens[out->count].text = strndup(tok, flag_len);
                 if (!out->tokens[out->count].text) goto fail;
-                out->tokens[out->count].type = CPL_TYPE_LITERAL;
+                out->tokens[out->count].type = ST_TYPE_LITERAL;
                 out->count++;
 
                 out->tokens[out->count].text = strdup(eq + 1);
                 if (!out->tokens[out->count].text) goto fail;
-                out->tokens[out->count].type = cpl_classify_token(eq + 1);
+                out->tokens[out->count].type = st_classify_token(eq + 1);
                 out->count++;
 
                 prev = tok;
@@ -464,12 +464,12 @@ cpl_error_t cpl_normalize_typed(const char *raw_cmd, cpl_token_array_t *out)
             memcpy(out->tokens[out->count].text, tok, var_len);
             out->tokens[out->count].text[var_len] = '=';
             out->tokens[out->count].text[var_len + 1] = '\0';
-            out->tokens[out->count].type = CPL_TYPE_LITERAL;
+            out->tokens[out->count].type = ST_TYPE_LITERAL;
             out->count++;
 
             out->tokens[out->count].text = strdup(eq + 1);
             if (!out->tokens[out->count].text) goto fail;
-            out->tokens[out->count].type = cpl_classify_token(eq + 1);
+            out->tokens[out->count].type = st_classify_token(eq + 1);
             out->count++;
 
             prev = tok;
@@ -484,7 +484,7 @@ cpl_error_t cpl_normalize_typed(const char *raw_cmd, cpl_token_array_t *out)
             strcmp(tok, "&>>") == 0 || strcmp(tok, ">&") == 0) {
             out->tokens[out->count].text = strdup(tok);
             if (!out->tokens[out->count].text) goto fail;
-            out->tokens[out->count].type = CPL_TYPE_LITERAL;
+            out->tokens[out->count].type = ST_TYPE_LITERAL;
             out->count++;
             prev = tok;
             continue;
@@ -496,7 +496,7 @@ cpl_error_t cpl_normalize_typed(const char *raw_cmd, cpl_token_array_t *out)
             /* This token is a value after a long flag */
             out->tokens[out->count].text = strdup(tok);
             if (!out->tokens[out->count].text) goto fail;
-            out->tokens[out->count].type = cpl_classify_token(tok);
+            out->tokens[out->count].type = st_classify_token(tok);
             out->count++;
             prev = tok;
             continue;
@@ -509,7 +509,7 @@ cpl_error_t cpl_normalize_typed(const char *raw_cmd, cpl_token_array_t *out)
                      strcmp(prev, "&>>") == 0 || strcmp(prev, ">&") == 0)) {
             out->tokens[out->count].text = strdup(tok);
             if (!out->tokens[out->count].text) goto fail;
-            out->tokens[out->count].type = cpl_classify_token(tok);
+            out->tokens[out->count].type = st_classify_token(tok);
             out->count++;
             prev = tok;
             continue;
@@ -518,14 +518,14 @@ cpl_error_t cpl_normalize_typed(const char *raw_cmd, cpl_token_array_t *out)
         /* Default: classify the token */
         out->tokens[out->count].text = strdup(tok);
         if (!out->tokens[out->count].text) goto fail;
-        out->tokens[out->count].type = cpl_classify_token(tok);
+        out->tokens[out->count].type = st_classify_token(tok);
         out->count++;
         prev = tok;
     }
 
     for (size_t i = 0; i < raw_count; i++) free(raw_tokens[i]);
     free(raw_tokens);
-    return CPL_OK;
+    return ST_OK;
 
 fail:
     for (size_t i = 0; i < out->count; i++) free(out->tokens[i].text);
@@ -534,10 +534,10 @@ fail:
     out->count = 0;
     for (size_t i = 0; i < raw_count; i++) free(raw_tokens[i]);
     free(raw_tokens);
-    return CPL_ERR_MEMORY;
+    return ST_ERR_MEMORY;
 }
 
-void cpl_free_token_array(cpl_token_array_t *arr)
+void st_free_token_array(st_token_array_t *arr)
 {
     if (!arr) return;
     for (size_t i = 0; i < arr->count; i++) free(arr->tokens[i].text);
@@ -550,43 +550,43 @@ void cpl_free_token_array(cpl_token_array_t *arr)
  * PUBLIC API: LEGACY STRING NORMALISATION
  * ============================================================ */
 
-cpl_error_t cpl_normalize(const char *raw_cmd, char ***out_tokens, size_t *out_token_count)
+st_error_t st_normalize(const char *raw_cmd, char ***out_tokens, size_t *out_token_count)
 {
-    if (!raw_cmd || !out_tokens || !out_token_count) return CPL_ERR_INVALID;
+    if (!raw_cmd || !out_tokens || !out_token_count) return ST_ERR_INVALID;
 
-    cpl_token_array_t typed;
+    st_token_array_t typed;
     typed.tokens = NULL;
     typed.count = 0;
-    cpl_error_t err = cpl_normalize_typed(raw_cmd, &typed);
-    if (err != CPL_OK) return err;
+    st_error_t err = st_normalize_typed(raw_cmd, &typed);
+    if (err != ST_OK) return err;
 
     char **tokens = calloc(typed.count, sizeof(char *));
     if (!tokens) {
-        cpl_free_token_array(&typed);
-        return CPL_ERR_MEMORY;
+        st_free_token_array(&typed);
+        return ST_ERR_MEMORY;
     }
 
     for (size_t i = 0; i < typed.count; i++) {
-        if (typed.tokens[i].type == CPL_TYPE_LITERAL) {
+        if (typed.tokens[i].type == ST_TYPE_LITERAL) {
             tokens[i] = strdup(typed.tokens[i].text);
         } else {
-            tokens[i] = strdup(cpl_type_symbol[typed.tokens[i].type]);
+            tokens[i] = strdup(st_type_symbol[typed.tokens[i].type]);
         }
         if (!tokens[i]) {
             for (size_t j = 0; j < i; j++) free(tokens[j]);
             free(tokens);
-            cpl_free_token_array(&typed);
-            return CPL_ERR_MEMORY;
+            st_free_token_array(&typed);
+            return ST_ERR_MEMORY;
         }
     }
 
     *out_tokens = tokens;
     *out_token_count = typed.count;
-    cpl_free_token_array(&typed);
-    return CPL_OK;
+    st_free_token_array(&typed);
+    return ST_OK;
 }
 
-void cpl_free_tokens(char **tokens, size_t count)
+void st_free_tokens(char **tokens, size_t count)
 {
     if (!tokens) return;
     for (size_t i = 0; i < count; i++) free(tokens[i]);

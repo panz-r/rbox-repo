@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include "rbox_policy_learner.h"
+#include "shelltype.h"
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -35,13 +35,13 @@ static int test_normalize_simple(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("ls -la", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("ls -la", &tokens, &count);
+    ASSERT(err == ST_OK);
     /* -la is a stacked boolean flag, kept as literal */
     ASSERT(count == 2);
     ASSERT_STR_EQ(tokens[0], "ls");
     ASSERT_STR_EQ(tokens[1], "-la");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -49,12 +49,12 @@ static int test_normalize_path(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("cat /etc/passwd", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("cat /etc/passwd", &tokens, &count);
+    ASSERT(err == ST_OK);
     ASSERT(count == 2);
     ASSERT_STR_EQ(tokens[0], "cat");
     ASSERT_STR_EQ(tokens[1], "#p");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -62,8 +62,8 @@ static int test_normalize_flag_value_long(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("git commit --message \"hello world\"", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("git commit --message \"hello world\"", &tokens, &count);
+    ASSERT(err == ST_OK);
     /* git, commit, --message, * */
     ASSERT(count >= 3);
     ASSERT_STR_EQ(tokens[0], "git");
@@ -72,7 +72,7 @@ static int test_normalize_flag_value_long(void)
     /* Next token should be the wildcard */
     ASSERT(count >= 4);
     ASSERT_STR_EQ(tokens[3], "#qs");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -80,8 +80,8 @@ static int test_normalize_flag_value_short(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("git commit -m msg", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("git commit -m msg", &tokens, &count);
+    ASSERT(err == ST_OK);
     /* -m is a short flag; we cannot distinguish flag+value from flag+positional,
      * so the next token is kept as literal for exact matching */
     ASSERT(count == 4);
@@ -89,7 +89,7 @@ static int test_normalize_flag_value_short(void)
     ASSERT_STR_EQ(tokens[1], "commit");
     ASSERT_STR_EQ(tokens[2], "-m");
     ASSERT_STR_EQ(tokens[3], "msg");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -97,14 +97,14 @@ static int test_normalize_flag_value_attached(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("docker run -it ubuntu bash", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("docker run -it ubuntu bash", &tokens, &count);
+    ASSERT(err == ST_OK);
     /* -i, *, -t, *, ubuntu, bash */
     /* -it is treated as a multi-char short flag, so it stays as -it */
     /* Actually, -it has 3 chars after '-', so is_short_flag_with_attached_value returns true */
     /* -i, *, -t, * */
     /* Let's verify the actual behavior */
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -112,15 +112,15 @@ static int test_normalize_pipeline(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("cat /var/log/syslog | grep ERROR", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("cat /var/log/syslog | grep ERROR", &tokens, &count);
+    ASSERT(err == ST_OK);
     /* cat, #p, |, grep, #w */
     ASSERT(count >= 5);
     ASSERT_STR_EQ(tokens[0], "cat");
     ASSERT_STR_EQ(tokens[1], "#p");
     ASSERT_STR_EQ(tokens[2], "|");
     ASSERT_STR_EQ(tokens[3], "grep");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -128,13 +128,13 @@ static int test_normalize_redirection(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("ls > /tmp/out.txt", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("ls > /tmp/out.txt", &tokens, &count);
+    ASSERT(err == ST_OK);
     ASSERT(count >= 3);
     ASSERT_STR_EQ(tokens[0], "ls");
     ASSERT_STR_EQ(tokens[1], ">");
     ASSERT_STR_EQ(tokens[2], "#p");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -142,13 +142,13 @@ static int test_normalize_number(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("head -n 42 file.txt", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("head -n 42 file.txt", &tokens, &count);
+    ASSERT(err == ST_OK);
     ASSERT(count >= 4);
     ASSERT_STR_EQ(tokens[0], "head");
     ASSERT_STR_EQ(tokens[1], "-n");
     ASSERT_STR_EQ(tokens[2], "#n");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -156,13 +156,13 @@ static int test_normalize_hex(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("git show 0xdeadbeef", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("git show 0xdeadbeef", &tokens, &count);
+    ASSERT(err == ST_OK);
     ASSERT(count >= 3);
     ASSERT_STR_EQ(tokens[0], "git");
     ASSERT_STR_EQ(tokens[1], "show");
     ASSERT_STR_EQ(tokens[2], "#n");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -170,12 +170,12 @@ static int test_normalize_ip(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("ping 192.168.1.1", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("ping 192.168.1.1", &tokens, &count);
+    ASSERT(err == ST_OK);
     ASSERT(count >= 2);
     ASSERT_STR_EQ(tokens[0], "ping");
     ASSERT_STR_EQ(tokens[1], "#i");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -183,14 +183,14 @@ static int test_normalize_env_assignment(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("export PATH=/usr/bin", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("export PATH=/usr/bin", &tokens, &count);
+    ASSERT(err == ST_OK);
     /* export, PATH=, * */
     ASSERT(count >= 3);
     ASSERT_STR_EQ(tokens[0], "export");
     ASSERT_STR_EQ(tokens[1], "PATH=");
     ASSERT_STR_EQ(tokens[2], "#p");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -198,8 +198,8 @@ static int test_normalize_long_flag_equals(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("gcc -o myprog main.c", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("gcc -o myprog main.c", &tokens, &count);
+    ASSERT(err == ST_OK);
     /* -o is a short flag; we cannot distinguish flag+value from flag+positional,
      * so tokens are kept as literals for exact matching.
      * main.c is classified as #f (filename). */
@@ -208,7 +208,7 @@ static int test_normalize_long_flag_equals(void)
     ASSERT_STR_EQ(tokens[1], "-o");
     ASSERT_STR_EQ(tokens[2], "myprog");
     ASSERT_STR_EQ(tokens[3], "#f");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -218,49 +218,49 @@ static int test_normalize_long_flag_equals(void)
 
 static int test_trie_create_free(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(5, 0.05);
+    st_learner_t *learner = st_learner_new(5, 0.05);
     ASSERT(learner != NULL);
     ASSERT(learner->trie.root != NULL);
     ASSERT(learner->trie.total_commands == 0);
-    cpl_learner_free(learner);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_trie_insert_single(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(1, 0.0);
-    cpl_error_t err = cpl_feed(learner, "ls -la");
-    ASSERT(err == CPL_OK);
+    st_learner_t *learner = st_learner_new(1, 0.0);
+    st_error_t err = st_feed(learner, "ls -la");
+    ASSERT(err == ST_OK);
     ASSERT(learner->trie.total_commands == 1);
-    cpl_learner_free(learner);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_trie_insert_multiple(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(1, 0.0);
-    cpl_feed(learner, "ls -la /tmp");
-    cpl_feed(learner, "ls -la /var");
-    cpl_feed(learner, "ls -la /home");
+    st_learner_t *learner = st_learner_new(1, 0.0);
+    st_feed(learner, "ls -la /tmp");
+    st_feed(learner, "ls -la /var");
+    st_feed(learner, "ls -la /home");
     ASSERT(learner->trie.total_commands == 3);
-    cpl_learner_free(learner);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_trie_counts(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(1, 0.0);
-    cpl_feed(learner, "git commit -m msg1");
-    cpl_feed(learner, "git commit -m msg2");
-    cpl_feed(learner, "git commit -m msg3");
-    cpl_feed(learner, "git status");
-    cpl_feed(learner, "git status");
+    st_learner_t *learner = st_learner_new(1, 0.0);
+    st_feed(learner, "git commit -m msg1");
+    st_feed(learner, "git commit -m msg2");
+    st_feed(learner, "git commit -m msg3");
+    st_feed(learner, "git status");
+    st_feed(learner, "git status");
 
     /* Root count should be 5 */
     ASSERT(learner->trie.root->count == 5);
 
     /* Find "git" child */
-    cpl_node_t *git_node = NULL;
+    st_node_t *git_node = NULL;
     for (size_t i = 0; i < learner->trie.root->num_children; i++) {
         if (strcmp(learner->trie.root->children[i]->token, "git") == 0) {
             git_node = learner->trie.root->children[i];
@@ -270,7 +270,7 @@ static int test_trie_counts(void)
     ASSERT(git_node != NULL);
     ASSERT(git_node->count == 5);
 
-    cpl_learner_free(learner);
+    st_learner_free(learner);
     return 1;
 }
 
@@ -280,16 +280,16 @@ static int test_trie_counts(void)
 
 static int test_suggest_basic(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(3, 0.0);
+    st_learner_t *learner = st_learner_new(3, 0.0);
     /* Feed 5 identical commands */
     for (int i = 0; i < 5; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "ls -l /tmp/file%d", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
     ASSERT(count > 0);
 
@@ -306,22 +306,22 @@ static int test_suggest_basic(void)
     }
     ASSERT(found);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_suggest_pipeline(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(3, 0.0);
+    st_learner_t *learner = st_learner_new(3, 0.0);
     for (int i = 0; i < 4; i++) {
         char cmd[128];
         snprintf(cmd, sizeof(cmd), "cat /var/log/file%d.log | grep ERROR", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
     ASSERT(count > 0);
 
@@ -335,25 +335,25 @@ static int test_suggest_pipeline(void)
     }
     ASSERT(found_pipe);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_suggest_confidence_ranking(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(2, 0.0);
+    st_learner_t *learner = st_learner_new(2, 0.0);
     /* 10 git commands, 8 of which are "git commit -m *" */
     for (int i = 0; i < 8; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "git commit -m msg%d", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
-    cpl_feed(learner, "git status");
-    cpl_feed(learner, "git log");
+    st_feed(learner, "git status");
+    st_feed(learner, "git log");
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
     ASSERT(count > 0);
 
@@ -362,20 +362,20 @@ static int test_suggest_confidence_ranking(void)
         ASSERT(suggestions[0].confidence >= suggestions[1].confidence);
     }
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_suggest_no_duplicates(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(2, 0.0);
+    st_learner_t *learner = st_learner_new(2, 0.0);
     for (int i = 0; i < 5; i++) {
-        cpl_feed(learner, "ls -la");
+        st_feed(learner, "ls -la");
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
 
     /* Check no duplicate patterns */
@@ -385,49 +385,49 @@ static int test_suggest_no_duplicates(void)
         }
     }
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_suggest_min_support_filter(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(10, 0.0);
+    st_learner_t *learner = st_learner_new(10, 0.0);
     /* Feed only 5 commands – below min_support */
     for (int i = 0; i < 5; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "ls -l /tmp/file%d", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     /* No suggestions should meet min_support=10 */
     ASSERT(count == 0 || suggestions == NULL);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_suggest_max_suggestions(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(2, 0.0);
+    st_learner_t *learner = st_learner_new(2, 0.0);
     learner->max_suggestions = 3;
 
     /* Feed many different commands */
     for (int i = 0; i < 20; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "cmd%d arg%d val%d", i, i, i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(count <= 3);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
@@ -437,36 +437,36 @@ static int test_suggest_max_suggestions(void)
 
 static int test_blacklist_add_and_check(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(1, 0.0);
-    ASSERT(cpl_blacklist_add(learner, "git commit -m *") == CPL_OK);
-    ASSERT(cpl_is_blacklisted(learner, "git commit -m *"));
-    ASSERT(!cpl_is_blacklisted(learner, "git status"));
-    cpl_learner_free(learner);
+    st_learner_t *learner = st_learner_new(1, 0.0);
+    ASSERT(st_blacklist_add(learner, "git commit -m *") == ST_OK);
+    ASSERT(st_is_blacklisted(learner, "git commit -m *"));
+    ASSERT(!st_is_blacklisted(learner, "git status"));
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_blacklist_prevents_suggestion(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(2, 0.0);
+    st_learner_t *learner = st_learner_new(2, 0.0);
     for (int i = 0; i < 5; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "ls -l /tmp/file%d", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
 
     /* Blacklist the pattern */
-    cpl_blacklist_add(learner, "ls -l *");
+    st_blacklist_add(learner, "ls -l *");
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
 
     /* The blacklisted pattern should not appear */
     for (size_t i = 0; i < count; i++) {
         ASSERT(strcmp(suggestions[i].pattern, "ls -l *") != 0);
     }
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
@@ -476,23 +476,23 @@ static int test_blacklist_prevents_suggestion(void)
 
 static int test_save_and_load(void)
 {
-    cpl_learner_t *learner1 = cpl_learner_new(1, 0.0);
-    cpl_feed(learner1, "git commit -m msg1");
-    cpl_feed(learner1, "git commit -m msg2");
-    cpl_feed(learner1, "ls -la /tmp");
-    cpl_feed(learner1, "ls -la /var");
+    st_learner_t *learner1 = st_learner_new(1, 0.0);
+    st_feed(learner1, "git commit -m msg1");
+    st_feed(learner1, "git commit -m msg2");
+    st_feed(learner1, "ls -la /tmp");
+    st_feed(learner1, "ls -la /var");
 
-    cpl_error_t err = cpl_save(learner1, "tests/test_save_load.tmp");
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_save(learner1, "tests/test_save_load.tmp");
+    ASSERT(err == ST_OK);
 
-    cpl_learner_t *learner2 = cpl_learner_new(1, 0.0);
-    err = cpl_load(learner2, "tests/test_save_load.tmp");
-    ASSERT(err == CPL_OK);
+    st_learner_t *learner2 = st_learner_new(1, 0.0);
+    err = st_load(learner2, "tests/test_save_load.tmp");
+    ASSERT(err == ST_OK);
 
     /* Both should produce same suggestions */
     size_t count1 = 0, count2 = 0;
-    cpl_suggestion_t *s1 = cpl_suggest(learner1, &count1);
-    cpl_suggestion_t *s2 = cpl_suggest(learner2, &count2);
+    st_suggestion_t *s1 = st_suggest(learner1, &count1);
+    st_suggestion_t *s2 = st_suggest(learner2, &count2);
     ASSERT(count1 == count2);
 
     for (size_t i = 0; i < count1; i++) {
@@ -500,10 +500,10 @@ static int test_save_and_load(void)
         ASSERT(s1[i].count == s2[i].count);
     }
 
-    cpl_free_suggestions(s1, count1);
-    cpl_free_suggestions(s2, count2);
-    cpl_learner_free(learner1);
-    cpl_learner_free(learner2);
+    st_free_suggestions(s1, count1);
+    st_free_suggestions(s2, count2);
+    st_learner_free(learner1);
+    st_learner_free(learner2);
     return 1;
 }
 
@@ -513,30 +513,30 @@ static int test_save_and_load(void)
 
 static int test_empty_command(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(1, 0.0);
-    cpl_error_t err = cpl_feed(learner, "");
-    ASSERT(err == CPL_ERR_INVALID);
-    cpl_learner_free(learner);
+    st_learner_t *learner = st_learner_new(1, 0.0);
+    st_error_t err = st_feed(learner, "");
+    ASSERT(err == ST_ERR_INVALID);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_null_command(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(1, 0.0);
-    cpl_error_t err = cpl_feed(learner, NULL);
-    ASSERT(err == CPL_ERR_INVALID);
-    cpl_learner_free(learner);
+    st_learner_t *learner = st_learner_new(1, 0.0);
+    st_error_t err = st_feed(learner, NULL);
+    ASSERT(err == ST_ERR_INVALID);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_suggest_empty_trie(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(5, 0.05);
+    st_learner_t *learner = st_learner_new(5, 0.05);
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions == NULL);
     ASSERT(count == 0);
-    cpl_learner_free(learner);
+    st_learner_free(learner);
     return 1;
 }
 
@@ -544,13 +544,13 @@ static int test_normalize_quoted_string(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("echo \"hello world\"", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("echo \"hello world\"", &tokens, &count);
+    ASSERT(err == ST_OK);
     ASSERT(count >= 2);
     ASSERT_STR_EQ(tokens[0], "echo");
     /* Quoted string with space → #qs */
     ASSERT_STR_EQ(tokens[1], "#qs");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -558,13 +558,13 @@ static int test_normalize_hash(void)
 {
     char **tokens = NULL;
     size_t count = 0;
-    cpl_error_t err = cpl_normalize("git show a1b2c3d4e5f6a7b8", &tokens, &count);
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_normalize("git show a1b2c3d4e5f6a7b8", &tokens, &count);
+    ASSERT(err == ST_OK);
     ASSERT(count >= 3);
     ASSERT_STR_EQ(tokens[0], "git");
     ASSERT_STR_EQ(tokens[1], "show");
     ASSERT_STR_EQ(tokens[2], "#h");
-    cpl_free_tokens(tokens, count);
+    st_free_tokens(tokens, count);
     return 1;
 }
 
@@ -574,7 +574,7 @@ static int test_normalize_hash(void)
 
 int main(void)
 {
-    printf("Running CPL unit tests...\n\n");
+    printf("Running shelltype unit tests...\n\n");
 
     printf("Normalisation:\n");
     TEST(test_normalize_simple);

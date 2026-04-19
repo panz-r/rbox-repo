@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include "rbox_policy_learner.h"
+#include "shelltype.h"
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -34,7 +34,7 @@ static int tests_failed = 0;
 
 static int test_realistic_git_workflow(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(3, 0.0);
+    st_learner_t *learner = st_learner_new(3, 0.0);
 
     /* Simulate a git workflow */
     const char *commands[] = {
@@ -54,11 +54,11 @@ static int test_realistic_git_workflow(void)
     };
 
     for (size_t i = 0; i < sizeof(commands)/sizeof(commands[0]); i++) {
-        cpl_feed(learner, commands[i]);
+        st_feed(learner, commands[i]);
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
     ASSERT(count > 0);
 
@@ -75,14 +75,14 @@ static int test_realistic_git_workflow(void)
     }
     ASSERT(found_commit);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_realistic_file_operations(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(3, 0.0);
+    st_learner_t *learner = st_learner_new(3, 0.0);
 
     const char *commands[] = {
         "cat /var/log/syslog | grep ERROR",
@@ -100,11 +100,11 @@ static int test_realistic_file_operations(void)
     };
 
     for (size_t i = 0; i < sizeof(commands)/sizeof(commands[0]); i++) {
-        cpl_feed(learner, commands[i]);
+        st_feed(learner, commands[i]);
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
     ASSERT(count > 0);
 
@@ -121,14 +121,14 @@ static int test_realistic_file_operations(void)
     }
     ASSERT(found_pipeline);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_realistic_docker_commands(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(3, 0.0);
+    st_learner_t *learner = st_learner_new(3, 0.0);
 
     const char *commands[] = {
         "docker run -it ubuntu bash",
@@ -143,11 +143,11 @@ static int test_realistic_docker_commands(void)
     };
 
     for (size_t i = 0; i < sizeof(commands)/sizeof(commands[0]); i++) {
-        cpl_feed(learner, commands[i]);
+        st_feed(learner, commands[i]);
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
     ASSERT(count > 0);
 
@@ -162,8 +162,8 @@ static int test_realistic_docker_commands(void)
     }
     ASSERT(found_run);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
@@ -173,15 +173,15 @@ static int test_realistic_docker_commands(void)
 
 static int test_incremental_learning(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(3, 0.0);
+    st_learner_t *learner = st_learner_new(3, 0.0);
 
     /* Batch 1: 3 commands */
-    cpl_feed(learner, "ls -l /tmp/a");
-    cpl_feed(learner, "ls -l /tmp/b");
-    cpl_feed(learner, "ls -l /tmp/c");
+    st_feed(learner, "ls -l /tmp/a");
+    st_feed(learner, "ls -l /tmp/b");
+    st_feed(learner, "ls -l /tmp/c");
 
     size_t count1 = 0;
-    cpl_suggestion_t *s1 = cpl_suggest(learner, &count1);
+    st_suggestion_t *s1 = st_suggest(learner, &count1);
     /* With min_support=3, we should see "ls -l *" */
     bool found_batch1 = false;
     for (size_t i = 0; i < count1; i++) {
@@ -192,15 +192,15 @@ static int test_incremental_learning(void)
         }
     }
     ASSERT(found_batch1);
-    cpl_free_suggestions(s1, count1);
+    st_free_suggestions(s1, count1);
 
     /* Batch 2: 3 more commands */
-    cpl_feed(learner, "ls -l /tmp/d");
-    cpl_feed(learner, "ls -l /tmp/e");
-    cpl_feed(learner, "ls -l /tmp/f");
+    st_feed(learner, "ls -l /tmp/d");
+    st_feed(learner, "ls -l /tmp/e");
+    st_feed(learner, "ls -l /tmp/f");
 
     size_t count2 = 0;
-    cpl_suggestion_t *s2 = cpl_suggest(learner, &count2);
+    st_suggestion_t *s2 = st_suggest(learner, &count2);
 
     /* The pattern should now have count=6 */
     bool found_batch2 = false;
@@ -214,31 +214,31 @@ static int test_incremental_learning(void)
     }
     ASSERT(found_batch2);
 
-    cpl_free_suggestions(s2, count2);
-    cpl_learner_free(learner);
+    st_free_suggestions(s2, count2);
+    st_learner_free(learner);
     return 1;
 }
 
 static int test_incremental_new_pattern(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(3, 0.0);
+    st_learner_t *learner = st_learner_new(3, 0.0);
 
     /* Batch 1: only ls commands */
     for (int i = 0; i < 5; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "ls -l /tmp/f%d", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
 
     /* Batch 2: add git commands */
     for (int i = 0; i < 4; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "git commit -m msg%d", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
 
     /* Both "ls" and "git" patterns should appear */
@@ -251,8 +251,8 @@ static int test_incremental_new_pattern(void)
     ASSERT(found_ls);
     ASSERT(found_git);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
@@ -262,47 +262,47 @@ static int test_incremental_new_pattern(void)
 
 static int test_large_dataset(void)
 {
-    cpl_learner_t *learner = cpl_learner_new(5, 0.01);
+    st_learner_t *learner = st_learner_new(5, 0.01);
 
     /* Generate 100 commands across multiple patterns */
     for (int i = 0; i < 30; i++) {
         char cmd[128];
         snprintf(cmd, sizeof(cmd), "grep -r \"pattern%d\" /home/user/project", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
     for (int i = 0; i < 20; i++) {
         char cmd[128];
         snprintf(cmd, sizeof(cmd), "find /var/log -name \"*.log.%d\"", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
     for (int i = 0; i < 25; i++) {
         char cmd[128];
         snprintf(cmd, sizeof(cmd), "cat /tmp/output_%d.txt | wc -l", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
     for (int i = 0; i < 15; i++) {
         char cmd[128];
         snprintf(cmd, sizeof(cmd), "docker run -it image%d bash", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
     for (int i = 0; i < 10; i++) {
         char cmd[128];
         snprintf(cmd, sizeof(cmd), "systemctl restart service%d", i);
-        cpl_feed(learner, cmd);
+        st_feed(learner, cmd);
     }
 
     ASSERT(learner->trie.total_commands == 100);
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
     ASSERT(count > 0);
 
     /* Top suggestion should be grep (count=30) */
     ASSERT(suggestions[0].count == 30);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
@@ -312,36 +312,36 @@ static int test_large_dataset(void)
 
 static int test_save_load_large_dataset(void)
 {
-    cpl_learner_t *learner1 = cpl_learner_new(5, 0.01);
+    st_learner_t *learner1 = st_learner_new(5, 0.01);
 
     /* Feed 50 commands */
     for (int i = 0; i < 25; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "git commit -m commit%d", i);
-        cpl_feed(learner1, cmd);
+        st_feed(learner1, cmd);
     }
     for (int i = 0; i < 25; i++) {
         char cmd[64];
         snprintf(cmd, sizeof(cmd), "ls -la /path/to/dir%d", i);
-        cpl_feed(learner1, cmd);
+        st_feed(learner1, cmd);
     }
 
     /* Save */
-    cpl_error_t err = cpl_save(learner1, "tests/test_large_save.tmp");
-    ASSERT(err == CPL_OK);
+    st_error_t err = st_save(learner1, "tests/test_large_save.tmp");
+    ASSERT(err == ST_OK);
 
     /* Load into new learner */
-    cpl_learner_t *learner2 = cpl_learner_new(5, 0.01);
-    err = cpl_load(learner2, "tests/test_large_save.tmp");
-    ASSERT(err == CPL_OK);
+    st_learner_t *learner2 = st_learner_new(5, 0.01);
+    err = st_load(learner2, "tests/test_large_save.tmp");
+    ASSERT(err == ST_OK);
 
     /* Total commands should match */
     ASSERT(learner2->trie.total_commands == learner1->trie.total_commands);
 
     /* Suggestions should match */
     size_t count1 = 0, count2 = 0;
-    cpl_suggestion_t *s1 = cpl_suggest(learner1, &count1);
-    cpl_suggestion_t *s2 = cpl_suggest(learner2, &count2);
+    st_suggestion_t *s1 = st_suggest(learner1, &count1);
+    st_suggestion_t *s2 = st_suggest(learner2, &count2);
     ASSERT(count1 == count2);
 
     for (size_t i = 0; i < count1; i++) {
@@ -349,10 +349,10 @@ static int test_save_load_large_dataset(void)
         ASSERT(s1[i].count == s2[i].count);
     }
 
-    cpl_free_suggestions(s1, count1);
-    cpl_free_suggestions(s2, count2);
-    cpl_learner_free(learner1);
-    cpl_learner_free(learner2);
+    st_free_suggestions(s1, count1);
+    st_free_suggestions(s2, count2);
+    st_learner_free(learner1);
+    st_learner_free(learner2);
     return 1;
 }
 
@@ -375,7 +375,7 @@ static int test_feed_from_file(void)
     fprintf(fp, "cat /var/log/kern.log\n");
     fclose(fp);
 
-    cpl_learner_t *learner = cpl_learner_new(3, 0.0);
+    st_learner_t *learner = st_learner_new(3, 0.0);
 
     fp = fopen("tests/test_input.tmp", "r");
     ASSERT(fp != NULL);
@@ -384,19 +384,19 @@ static int test_feed_from_file(void)
         size_t len = strlen(line);
         while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
         if (len == 0) continue;
-        cpl_feed(learner, line);
+        st_feed(learner, line);
     }
     fclose(fp);
 
     ASSERT(learner->trie.total_commands == 8);
 
     size_t count = 0;
-    cpl_suggestion_t *suggestions = cpl_suggest(learner, &count);
+    st_suggestion_t *suggestions = st_suggest(learner, &count);
     ASSERT(suggestions != NULL);
     ASSERT(count > 0);
 
-    cpl_free_suggestions(suggestions, count);
-    cpl_learner_free(learner);
+    st_free_suggestions(suggestions, count);
+    st_learner_free(learner);
     return 1;
 }
 
@@ -406,7 +406,7 @@ static int test_feed_from_file(void)
 
 int main(void)
 {
-    printf("Running CPL integration tests...\n\n");
+    printf("Running shelltype integration tests...\n\n");
 
     printf("Realistic workloads:\n");
     TEST(test_realistic_git_workflow);
