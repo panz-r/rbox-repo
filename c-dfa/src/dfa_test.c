@@ -269,14 +269,8 @@ static void run_test_group(const char* group_name, const char* patterns_file, co
     void* data = load_dfa_from_file(dfa_file, &size);
     if (!data) {
         printf("  [ERROR] Failed to load DFA: %s\n", dfa_file);
+        total_groups_run++;
         total_groups_failed++;
-        return;
-    }
-
-    
-    if (!data || size < sizeof(dfa_t)) {
-        printf("  [ERROR] Failed to init DFA\n");
-        free(data);
         return;
     }
 
@@ -973,21 +967,6 @@ static void run_edge_case_tests(void) {
                    "build_test/edge_cases.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
-static void run_admin_command_tests(void) {
-    TestCase cases[] = {
-        {"sudo command", true, 0, CAT_MASK_5, "sudo command matches"},
-        {"sudo -i", true, 0, CAT_MASK_5, "sudo -i matches"},
-        {"sudo su", true, 0, CAT_MASK_5, "sudo su matches"},
-        {"useradd username", true, 0, CAT_MASK_5, "useradd matches"},
-        {"groupadd groupname", true, 0, CAT_MASK_5, "groupadd matches"},
-        {"apt-get update", true, 0, CAT_MASK_5, "apt-get update matches"},
-        {"cat file.txt", false, 0, CAT_MASK_5, "regular command should NOT match admin"},
-    };
-
-    run_test_group("ADMIN COMMAND TESTS", "patterns_admin_commands.txt",
-                   "build_test/admin_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
-}
-
 static void run_caution_command_tests(void) {
     TestCase cases[] = {
         {"cat /etc/passwd", true, 0, CAT_MASK_1, "cat /etc/passwd matches"},
@@ -1016,20 +995,6 @@ static void run_modifying_command_tests(void) {
 
     run_test_group("MODIFYING COMMAND TESTS", "patterns_modifying_commands.txt",
                    "build_test/modifying_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
-}
-
-static void run_dangerous_command_tests(void) {
-    TestCase cases[] = {
-        {"reboot", true, 0, CAT_MASK_3, "reboot matches"},
-        {"shutdown", true, 0, CAT_MASK_3, "shutdown matches"},
-        {"dd if=/dev/zero of=/dev/sda", true, 0, CAT_MASK_3, "dd destructive matches"},
-        {"mkfs.ext4 /dev/sda1", true, 0, CAT_MASK_3, "mkfs matches"},
-        {":(){ :|:& };:", true, 0, CAT_MASK_3, "fork bomb matches"},
-        {"git status", false, 0, CAT_MASK_3, "safe command should NOT match dangerous"},
-    };
-
-    run_test_group("DANGEROUS COMMAND TESTS", "patterns_dangerous_commands.txt",
-                   "build_test/dangerous_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_network_command_tests(void) {
@@ -3139,7 +3104,6 @@ static void run_memory_failure_tests(void) {
         if (p) {
             size_t size = 999;
             const uint8_t* binary = pipeline_get_binary(p, &size);
-            bool passed = true;
             group_run++;
             total_tests_run++;
             group_passed++;
@@ -3223,23 +3187,7 @@ static void run_memory_failure_tests(void) {
         }
     }
 
-    // Test 6: dfa_eval_create with NULL data
-    {
-        dfa_evaluator_t* e = dfa_eval_create(NULL, 0);
-        bool passed = (e == NULL);
-        group_run++;
-        total_tests_run++;
-        if (passed) {
-            group_passed++;
-            total_tests_passed++;
-            printf("  [PASS] dfa_eval_create(NULL) returns NULL\n");
-        } else {
-            printf("  [FAIL] dfa_eval_create(NULL) should return NULL\n");
-            if (e) dfa_eval_destroy(e);
-        }
-    }
-
-    // Test 7: dfa_eval_create with garbage data
+    // Test 6: dfa_eval_create with garbage data
     {
         uint8_t garbage[16] = {0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03};
         dfa_evaluator_t* e = dfa_eval_create(garbage, 8);

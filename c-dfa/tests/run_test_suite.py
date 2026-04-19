@@ -172,7 +172,7 @@ def main():
     print(f"Project directory: {project_dir}")
     print(f"Build directory: {build_dir}")
     print(f"Parallel jobs: {args.parallel or os.cpu_count() or 4}")
-    print(f"XML output: {'enabled' if args.xml else 'disabled'}")
+    print(f"XML output: always enabled (JUnit XML)")
     print()
 
     # Build first to ensure tests are up to date
