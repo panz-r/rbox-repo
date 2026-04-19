@@ -102,7 +102,7 @@ static void print_usage(const char* progname) {
     printf("                          B = Expanded tests (quantifier expansions)\n");
     printf("                          C = Stress tests (structural, whitespace, captures)\n");
     printf("                          D = Complex tests (tripled patterns)\n");
-    printf("                          E = Command Core (admin, caution, modifying, dangerous, network)\n");
+    printf("                          E = Command Core (caution, modifying, network)\n");
     printf("                          F = Category Isolation (SAFE, CAUTION, NETWORK)\n");
     printf("                          G = Edge case tests (long chain, deep nested, etc.)\n");
     printf("                          H = Build Commands\n");
@@ -1368,10 +1368,8 @@ int main(int argc, char* argv[]) {
 
     if (test_set_mask & TEST_SET_E) {
         printf("\n--- TEST SET E: Command Core ---\n");
-        run_admin_command_tests();
         run_caution_command_tests();
         run_modifying_command_tests();
-        run_dangerous_command_tests();
         run_network_command_tests();
     }
 

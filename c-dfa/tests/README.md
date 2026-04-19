@@ -38,7 +38,7 @@ The `dfa_test` executable supports multiple test sets (A through U):
 | B | Expanded Tests | Complex patterns with nested quantifiers |
 | C | Command Tests | Command categorization (admin, caution, modifying, dangerous, network) |
 | D | Complex Patterns | Character classes, tripled patterns, hard edges |
-| E | Command Core | Core command tests (admin, caution, modifying, dangerous, network) |
+| E | Command Core | caution, modifying, network command tests |
 | F | Category Isolation | SAFE, CAUTION, NETWORK isolation tests |
 | G | Edge Cases | Long chains, deep nesting, overlapping prefixes |
 | H | Build Commands | Build tool commands (IDEs, compilers) |
