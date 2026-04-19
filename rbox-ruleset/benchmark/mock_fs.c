@@ -4,7 +4,6 @@
  */
 
 #define _DEFAULT_SOURCE
-#define MOCK_FS_INTERNAL
 #include "../tests/mock_fs.h"
 #include <stdlib.h>
 #include <string.h>

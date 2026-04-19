@@ -9,7 +9,6 @@ function(setup_sanitizers target)
       target_compile_options(${target} PRIVATE
         -fsanitize=address
         -fsanitize=leak
-        -fsanitize=undefined
         -fno-omit-frame-pointer
         -O1  # Recommended optimization level for ASAN
       )
@@ -18,7 +17,6 @@ function(setup_sanitizers target)
       target_link_options(${target} PRIVATE
         -fsanitize=address
         -fsanitize=leak
-        -fsanitize=undefined
       )
       
       # ASAN requires debug symbols

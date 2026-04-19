@@ -16,7 +16,7 @@ static double now_ms(void)
 {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+    return (double)tv.tv_sec * 1000.0 + (double)tv.tv_usec / 1000.0;
 }
 
 #define NUM_PATHS 100000
@@ -57,7 +57,7 @@ int main(void)
     size_t count2 = 0;
     radix_tree_collect_rules(tree, &rules2, &count2);
     printf("    Rules after simplify: %zu\n", count2);
-    printf("    Arena usage: %.1f MB\n", radix_tree_arena_usage(tree) / 1048576.0);
+    printf("    Arena usage: %.1f MB\n", (double)radix_tree_arena_usage(tree) / 1048576.0);
 
     for (size_t i = 0; i < count; i++) free((void *)rules[i].path);
     free(rules);

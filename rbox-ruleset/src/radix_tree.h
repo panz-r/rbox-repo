@@ -65,6 +65,7 @@ void          radix_tree_simplify(radix_tree_t *tree);
 void          radix_tree_collect_rules(radix_tree_t *tree,
                                        landlock_rule_t **out_rules,
                                        size_t *out_count);
+void          radix_tree_free_rules(landlock_rule_t *rules, size_t count);
 /* Query memory usage */
 size_t        radix_tree_arena_usage(const radix_tree_t *tree);
 

@@ -394,7 +394,7 @@ static void cache_lru_update(query_cache_set_t *set, uint8_t way)
     for (uint8_t i = 0; i < way; i++) {
         if (set->lru_order[i] == way) {
             // Found it, shift it to MRU
-            memmove(&set->lru_order[1], &set->lru_order[0], way);
+            memmove(&set->lru_order[1], &set->lru_order[0], i);
             set->lru_order[0] = way;
             return;
         }
@@ -422,30 +422,25 @@ static uint8_t cache_find_lru(const query_cache_set_t *set)
         }
     }
     
-    // Find the LRU valid entry (position 7 in lru_order)
-    for (uint8_t i = 0; i < QUERY_CACHE_WAYS; i++) {
+    // Find the LRU valid entry by scanning from LRU position backwards
+    // The LRU array contains valid way indices in [MRU, ..., LRU] order
+    // 0xFF means empty slot, so we need to find the last valid entry
+    uint8_t lru_way = 0xFF;
+    for (int8_t i = QUERY_CACHE_WAYS - 1; i >= 0; i--) {
         if (set->lru_order[i] != 0xFF) {
-            return set->lru_order[QUERY_CACHE_WAYS - 1]; // Last position = LRU
+            lru_way = set->lru_order[i];
+            break;
         }
     }
-    
+
+    if (lru_way != 0xFF) {
+        return lru_way;
+    }
+
     // Fallback: return first entry if LRU tracking is corrupted
     return 0;
 }
-
-/**
- * Initialize LRU order for a cache set.
- * Should be called when a new entry is added to an empty set.
- */
-static void cache_lru_init(query_cache_set_t *set, uint8_t way)
-{
-    set->lru_order[0] = way;
-    for (uint8_t i = 1; i < QUERY_CACHE_WAYS; i++) {
-        set->lru_order[i] = 0xFF; // Invalid
-    }
-}
-
-/** Look up cached result for a single path. 8-way set associative with LRU. */
+// Look up cached result for a single path. 8-way set associative with LRU.
 static query_cache_entry_t *query_cache_lookup(soft_ruleset_t *rs,
                                                 uint64_t phash,
                                                 uint32_t subject_hash,
@@ -468,7 +463,7 @@ static query_cache_entry_t *query_cache_lookup(soft_ruleset_t *rs,
     return NULL;
 }
 
-/** Store a result in the cache (8-way set associative with LRU eviction). */
+// Store a result in the cache (8-way set associative with LRU eviction).
 static void query_cache_store(soft_ruleset_t *rs,
                               uint64_t phash,
                               uint32_t subject_hash,

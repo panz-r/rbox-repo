@@ -1006,7 +1006,13 @@ int soft_ruleset_compile_err(soft_ruleset_t *rs,
      * and pattern[j] starts with pattern[i].  Once pattern[j] diverges
      * past pattern[i] lexicographically, no further j can be subsumed. */
 
-    removed = calloc((size_t)pending_count, sizeof(bool));
+    // Safety check: prevent overflow in allocation size
+    if ((size_t)pending_count > SIZE_MAX / sizeof(bool)) {
+        COMPILE_ERR("Compile phase 3: rule count too large for subsumption bitmap");
+    }
+    // Allocate subsumption bitmap with safety-checked size
+    size_t alloc_size = (size_t)pending_count * sizeof(bool);
+    removed = calloc(alloc_size > 0 ? alloc_size : 1, 1);
 
     if (pending_count > 0 && !removed) COMPILE_ERR("Compile phase 3: OOM allocating subsumption bitmap");
 

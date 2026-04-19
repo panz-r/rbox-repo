@@ -145,7 +145,7 @@ static void test_cache_set_distribution(void)
     uint64_t total_misses = rs->stats_cache_misses;
     
     // With 8-way associativity, we should get excellent hit rates
-    double hit_rate = (double)total_hits / (total_hits + total_misses);
+    double hit_rate = (double)total_hits / ((double)total_hits + (double)total_misses);
     TEST_ASSERT(hit_rate > 0.95, "dist: should achieve >95% cache hit rate with 8-way associativity");
     
     soft_ruleset_free(rs);

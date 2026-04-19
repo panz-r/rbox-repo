@@ -164,7 +164,7 @@ static void test_deep_recursive_patterns(void)
     snprintf(deep_path, sizeof(deep_path), "/data");
     int i;
     for (i = 0; i < 20; i++) {
-        char segment[10];
+        char segment[16];  // Increased from 10 to 16 to safely handle "/d%d" format
         snprintf(segment, sizeof(segment), "/d%d", i);
         strncat(deep_path, segment, sizeof(deep_path) - strlen(deep_path) - 1);
     }

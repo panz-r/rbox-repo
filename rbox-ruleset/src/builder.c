@@ -377,7 +377,7 @@ static int expand_symlinks_impl(landlock_builder_t *b)
     radix_tree_collect_rules(b->tree, &rules, &rule_count);
 
     if (rule_count == 0) {
-        free(rules);
+        radix_tree_free_rules(rules, rule_count);
         return 0;
     }
 
@@ -412,7 +412,7 @@ static int expand_symlinks_impl(landlock_builder_t *b)
         }
     }
 
-    free(rules);
+    radix_tree_free_rules(rules, rule_count);
     return 0;
 }
 

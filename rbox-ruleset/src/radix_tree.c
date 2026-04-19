@@ -454,6 +454,15 @@ void radix_tree_collect_rules(radix_tree_t *tree,
     }
 }
 
+void radix_tree_free_rules(landlock_rule_t *rules, size_t count)
+{
+    if (!rules) return;
+    for (size_t i = 0; i < count; i++) {
+        free((char *)rules[i].path);
+    }
+    free(rules);
+}
+
 size_t radix_tree_arena_usage(const radix_tree_t *tree)
 {
     return tree ? arena_usage(&tree->arena) : 0;
