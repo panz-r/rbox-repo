@@ -195,37 +195,40 @@ def main():
     print()
 
     exit_code = run_ctest(
-        build_dir=build_dir, parallel=args.parallel, verbose=args.verbose, xml=args.xml
+        build_dir=build_dir, parallel=args.parallel, verbose=args.verbose, xml=True
     )
 
-    # Parse results from JUnit XML if generated
-    if args.xml:
-        junit_path = os.path.join(build_dir, "test_results.xml")
-        if os.path.exists(junit_path):
-            (
-                total_passed,
-                total_tests,
-                total_groups_run,
-                total_groups_total,
-                failed_test_sets,
-                failed_groups,
-            ) = parse_junit_xml(junit_path)
+    # Parse results from JUnit XML and print summary
+    junit_path = os.path.join(build_dir, "test_results.xml")
+    if os.path.exists(junit_path):
+        (
+            total_passed,
+            total_tests,
+            total_groups_run,
+            total_groups_total,
+            failed_test_sets,
+            failed_groups,
+        ) = parse_junit_xml(junit_path)
 
-            print()
-            print("=" * 80)
-            print("TEST SUMMARY")
-            print("=" * 80)
-            print(f"Tests:      {total_passed}/{total_tests} passed")
-            print(f"Groups:     {total_groups_run}/{total_groups_total} groups")
-            if failed_groups > 0 or failed_test_sets > 0:
-                print(
-                    f"Failures:   {failed_groups} test groups failed ({failed_test_sets} test sets)"
-                )
-            else:
-                print("Failures:   none")
-            print("=" * 80)
+        print()
+        print("=" * 80)
+        print("TEST SUMMARY")
+        print("=" * 80)
+        print(f"Tests:      {total_passed}/{total_tests} passed")
+        print(f"Groups:     {total_groups_run}/{total_groups_total} groups")
+        if failed_groups > 0 or failed_test_sets > 0:
+            print(
+                f"Failures:   {failed_groups} test groups failed ({failed_test_sets} test sets)"
+            )
         else:
-            print("Warning: JUnit XML not found at", junit_path)
+            print("Failures:   none")
+        print("=" * 80)
+
+        if args.xml:
+            print()
+            print(f"XML report: {junit_path}")
+    else:
+        print("Warning: JUnit XML not found at", junit_path)
 
     return exit_code
 
