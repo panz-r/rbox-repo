@@ -931,12 +931,20 @@ func runCMakeTest(dir string) error {
 		return err
 	}
 
-	// Now run tests via ctest
-	cmd := exec.Command("ctest", "--test-dir", filepath.Join(dir, "build"), "--output-on-failure")
+	buildDir := filepath.Join(dir, "build")
+
+	// Try test-full target first (provides aggregated summary with JUnit XML)
+	cmd := exec.Command("cmake", "--build", buildDir, "--target", "test-full")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("ctest failed for %s: %w", dir, err)
+		// Fall back to plain ctest if test-full doesn't exist
+		cmd = exec.Command("ctest", "--test-dir", buildDir, "--output-on-failure")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("ctest failed for %s: %w", dir, err)
+		}
 	}
 	return nil
 }
