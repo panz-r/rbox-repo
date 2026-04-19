@@ -10,6 +10,10 @@
 #include "../include/nfa.h"
 #include "../include/dfa_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // Arena allocator for DFA states - single allocation, bulk free
 // Enables scalable state counts beyond MAX_STATES
 typedef struct {
@@ -87,5 +91,9 @@ int dfa_minimize_brzozowski(build_dfa_state_t** dfa, int state_count);
  * SAT-based Algorithm - Provably optimal minimization using CaDiCaL solver
  */
 int dfa_minimize_sat(build_dfa_state_t** dfa, int state_count);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // DFA_MINIMIZE_H

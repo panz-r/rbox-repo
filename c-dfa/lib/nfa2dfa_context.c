@@ -6,7 +6,7 @@
 #include <string.h>
 #include "dfa_types.h"
 #include "nfa.h"
-#include "../tools/nfa2dfa_context.h"
+#include "nfa2dfa_context.h"
 
 nfa2dfa_context_t* nfa2dfa_context_create(void) {
     nfa2dfa_context_t* ctx = calloc(1, sizeof(nfa2dfa_context_t));

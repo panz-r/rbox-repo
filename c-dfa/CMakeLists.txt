@@ -81,15 +81,12 @@ target_include_directories(readonlybox_dfa_headers INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_include_directories(readonlybox_dfa_headers INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools
-)
 
 # ============================================================================
 # Build Libraries and Tools
 # ============================================================================
+add_subdirectory(lib)
+add_subdirectory(lib_eval)
 add_subdirectory(tools)
 add_subdirectory(tests)
 add_subdirectory(testgen)
@@ -123,7 +120,7 @@ find_program(NM_COMMAND nm REQUIRED)
 find_program(OBJDUMP_COMMAND objdump REQUIRED)
 
 add_custom_target(verify
-    DEPENDS readonlybox_dfa_shared sat_modules
+    DEPENDS readonlybox_dfa_shared
     COMMENT "Running build verification checks"
 )
 

@@ -17,9 +17,9 @@ LDFLAGS = -lpthread -lm
 
 # Libraries (use shared library - rbox-protocol includes shellsplit in .so)
 LDFLAGS += -L../rbox-protocol -lrbox_protocol
-LDFLAGS += -Wl,-rpath,'$$ORIGIN/../lib'
-LDFLAGS += ../c-dfa/libdfa_eval.a
 LDFLAGS += ../rbox-ruleset/build/lib/liblandlock-builder.a
+LDFLAGS += ../c-dfa/build/lib/libreadonlybox_dfa.a
+LDFLAGS += ../c-dfa/build/lib_eval/libreadonlybox_dfa_eval.a
 
 # Unified CLI tool
 CDFATOOL = ../c-dfa/build/tools/cdfatool

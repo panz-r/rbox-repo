@@ -9,7 +9,8 @@ CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../rbox-pr
 LDFLAGS = -lpthread -lm -Wl,-rpath,'$$ORIGIN/../../lib'
 
 # Pre-built libraries
-LIBS = ../../c-dfa/libdfa_eval.a \
+LIBS = ../../c-dfa/build/lib/libreadonlybox_dfa.a \
+       ../../c-dfa/build/lib_eval/libreadonlybox_dfa_eval.a \
        ../../rbox-protocol/librbox_protocol.so \
        ../../rbox-ruleset/build/lib/liblandlock-builder.a
 
@@ -59,7 +60,8 @@ all: check-prereqs check-dfa validate-test-runner $(TARGET)
 check-prereqs:
 	@test -f ../memory.c || (echo "ERROR: ../memory.c not found"; exit 1)
 	@test -f ../syscall_handler.c || (echo "ERROR: ../syscall_handler.c not found"; exit 1)
-	@test -f ../../c-dfa/build/tools/libreadonlybox_dfa.a || (echo "ERROR: libreadonlybox_dfa.a not found (run 'make' in ../../c-dfa first)"; exit 1)
+	@test -f ../../c-dfa/build/lib/libreadonlybox_dfa.a || (echo "ERROR: libreadonlybox_dfa.a not found (run 'make' in ../../c-dfa first)"; exit 1)
+	@test -f ../../c-dfa/build/lib_eval/libreadonlybox_dfa_eval.a || (echo "ERROR: libreadonlybox_dfa_eval.a not found (run 'make' in ../../c-dfa first)"; exit 1)
 	@which $(CC) > /dev/null 2>&1 || (echo "ERROR: $(CC) not found"; exit 1)
 	@which valgrind > /dev/null 2>&1 || echo "WARNING: valgrind not installed (valgrind target will be skipped)"
 	@which cppcheck > /dev/null 2>&1 || echo "WARNING: cppcheck not installed (cppcheck target will be skipped)"

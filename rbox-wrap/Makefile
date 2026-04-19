@@ -14,7 +14,8 @@ C_DFA_BUILD = $(C_DFA)/build
 
 # Libraries (protocol.so includes shellsplit statically)
 RBOX_LIB = $(RBOX_PROTOCOL)/librbox_protocol.so
-DFA_EVAL_LIB = $(C_DFA_BUILD)/tools/libreadonlybox_dfa.a
+DFA_LIB = $(C_DFA_BUILD)/lib/libreadonlybox_dfa.a
+DFA_EVAL_LIB = $(C_DFA_BUILD)/lib_eval/libreadonlybox_dfa_eval.a
 
 # Unified CLI tool
 CDFATOOL = $(C_DFA_BUILD)/tools/cdfatool
@@ -61,13 +62,13 @@ $(DFA_FILE): $(CDFATOOL) $(PATTERN_FILE)
 $(DFA_DATA_OBJ): $(DFA_DATA_C)
 	$(CC) $(CFLAGS) -c -o $@ $(DFA_DATA_C)
 
-$(TARGET): $(SRC) $(RBOX_LIB) $(DFA_EVAL_LIB) $(DFA_DATA_OBJ)
-	$(CC) $(CFLAGS) -Wl,-rpath,'$$ORIGIN/../lib' -o $@ $(SRC) -L../lib -lrbox_protocol $(DFA_EVAL_LIB) $(DFA_DATA_OBJ) $(LDFLAGS)
+$(TARGET): $(SRC) $(RBOX_LIB) $(DFA_LIB) $(DFA_EVAL_LIB) $(DFA_DATA_OBJ)
+	$(CC) $(CFLAGS) -Wl,-rpath,'$$ORIGIN/../lib' -o $@ $(SRC) -L../lib -lrbox_protocol $(DFA_LIB) $(DFA_EVAL_LIB) $(DFA_DATA_OBJ) $(LDFLAGS)
 
 $(RBOX_LIB):
 	$(MAKE) -C $(RBOX_PROTOCOL)
 
-$(DFA_EVAL_LIB): | $(C_DFA_BUILD)
+$(DFA_LIB) $(DFA_EVAL_LIB): | $(C_DFA_BUILD)
 
 # Test targets
 $(TEST_BIN): $(TEST_SRC) $(RBOX_LIB)

@@ -3,11 +3,11 @@
 
 # Test runner (dfa_test.c) - comprehensive test suite
 add_executable(dfa_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/dfa_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/dfa_test.c
 )
 target_link_libraries(dfa_test PRIVATE
     readonlybox_dfa
-    sat_modules
+    readonlybox_dfa_eval
     cadical
     readonlybox_dfa_headers
 )
@@ -18,7 +18,7 @@ add_executable(test_minimize_integrity
 )
 target_link_libraries(test_minimize_integrity PRIVATE
     readonlybox_dfa
-    sat_modules
+    readonlybox_dfa_eval
     cadical
     readonlybox_dfa_headers
 )
@@ -29,7 +29,7 @@ add_executable(test_library_api
 )
 target_link_libraries(test_library_api PRIVATE
     readonlybox_dfa
-    sat_modules
+    readonlybox_dfa_eval
     cadical
     readonlybox_dfa_headers
 )
@@ -39,7 +39,7 @@ add_executable(test_eval_only
     ${CMAKE_CURRENT_SOURCE_DIR}/test_eval_only.c
 )
 target_link_libraries(test_eval_only PRIVATE
-    readonlybox_dfa
+    readonlybox_dfa_eval
     readonlybox_dfa_headers
 )
 
@@ -49,7 +49,7 @@ add_executable(regression_test
 )
 target_link_libraries(regression_test PRIVATE
     readonlybox_dfa
-    sat_modules
+    readonlybox_dfa_eval
     cadical
     readonlybox_dfa_headers
 )

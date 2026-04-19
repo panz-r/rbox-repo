@@ -282,7 +282,7 @@ func BuildDFA() error {
 	if needsRebuild(outputFile, staticDataFile,
 		filepath.Join(clientDirPath, "client.c"),
 		filepath.Join(clientDirPath, "dfa.c"),
-		filepath.Join(wd, cDfaSrcDir, "dfa_eval.c"),
+		filepath.Join(wd, cDfaDir, "lib_eval/dfa_eval.c"),
 		filepath.Join(wd, shellsplitDir, "src/shell_tokenizer.c"),
 		filepath.Join(wd, shellsplitDir, "src/shell_tokenizer_full.c")) {
 
@@ -291,7 +291,7 @@ func BuildDFA() error {
 			filepath.Join(clientDirPath, "client.c"),
 			filepath.Join(clientDirPath, "dfa.c"),
 			staticDataFile,
-			filepath.Join(wd, cDfaSrcDir, "dfa_eval.c"),
+			filepath.Join(wd, cDfaDir, "lib_eval/dfa_eval.c"),
 			filepath.Join(wd, shellsplitDir, "src/shell_tokenizer.c"),
 			filepath.Join(wd, shellsplitDir, "src/shell_tokenizer_full.c"),
 			"-I"+filepath.Join(wd, cDfaIncludeDir),

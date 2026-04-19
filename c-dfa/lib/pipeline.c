@@ -18,13 +18,13 @@
 #include "nfa.h"
 #include "dfa_errors.h"
 
-#include "../tools/nfa_builder.h"
-#include "../tools/nfa2dfa_context.h"
-#include "../tools/dfa_minimize.h"
-#include "../tools/dfa_compress.h"
-#include "../tools/dfa_layout.h"
-#include "../tools/nfa_preminimize.h"
-#include "../tools/pattern_order.h"
+#include "nfa_builder.h"
+#include "nfa2dfa_context.h"
+#include "dfa_minimize.h"
+#include "dfa_compress.h"
+#include "dfa_layout.h"
+#include "nfa_preminimize.h"
+#include "pattern_order.h"
 
 #include <stdio.h>
 #include <stdlib.h>

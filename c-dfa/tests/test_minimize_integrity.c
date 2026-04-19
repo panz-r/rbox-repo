@@ -12,7 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../include/nfa.h"
-#include "../tools/dfa_minimize.h"
+#include "../lib/dfa_minimize.h"
 
 #define TEST_PASSED 0
 #define TEST_FAILED 1
