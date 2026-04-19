@@ -103,7 +103,7 @@ static void print_usage(const char* progname) {
     printf("                          C = Stress tests (structural, whitespace, captures)\n");
     printf("                          D = Complex tests (tripled patterns)\n");
     printf("                          E = Command Core (admin, caution, modifying, dangerous, network)\n");
-    printf("                          F = Category Isolation (SAFE, NETWORK)\n");
+    printf("                          F = Category Isolation (SAFE, CAUTION, NETWORK)\n");
     printf("                          G = Edge case tests (long chain, deep nested, etc.)\n");
     printf("                          H = Build Commands\n");
     printf("                          I = Container Commands\n");
@@ -117,8 +117,8 @@ static void print_usage(const char* progname) {
     printf("                          Q = Incremental Stage API\n");
     printf("                          R = Memory Failure Handling\n");
     printf("                          S = Pattern Ordering Verification\n");
-    printf("                          T = Category Isolation (CAUTION, BUILD, CONTAINER)\n");
-    printf("                          U = Category Isolation (MODIFYING, DANGEROUS, ADMIN)\n");
+    printf("                          T = Category Isolation (MODIFYING, BUILD, CONTAINER)\n");
+    printf("                          U = Category Isolation (DANGEROUS, ADMIN)\n");
     printf("                          Can combine: ABC, ADG, AK, PQRS, etc.\n");
     printf("  --help                 Show this help message\n");
     printf("\nExamples:\n");
@@ -2100,6 +2100,20 @@ static void run_all_category_isolation_tests(void) {
     run_test_group("SAFE ISOLATION", "patterns_acceptance_category_test.txt",
                    "build_test/safe_isolation.dfa", safe_cases, sizeof(safe_cases)/sizeof(safe_cases[0]));
 
+    // Category 1: caution (0x02)
+    TestCase caution_cases[] = {
+        {"cat /etc/passwd", true, 0, CAT_MASK_1, "caution gets bit 0x02"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_0, "caution should NOT get 0x01"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_2, "caution should NOT get 0x04"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_3, "caution should NOT get 0x08"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_4, "caution should NOT get 0x10"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_5, "caution should NOT get 0x20"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_6, "caution should NOT get 0x40"},
+        {"cat /etc/passwd", false, 0, CAT_MASK_7, "caution should NOT get 0x80"},
+    };
+    run_test_group("CAUTION ISOLATION", "patterns_caution_commands.txt",
+                   "build_test/caution_isolation.dfa", caution_cases, sizeof(caution_cases)/sizeof(caution_cases[0]));
+
     // Category 4: network (0x10)
     TestCase network_cases[] = {
         {"ping google.com", true, 0, CAT_MASK_4, "network gets bit 0x10"},
@@ -2116,19 +2130,19 @@ static void run_all_category_isolation_tests(void) {
 }
 
 static void run_category_isolation_t_tests(void) {
-    // Category 1: caution (0x02)
-    TestCase caution_cases[] = {
-        {"cat /etc/passwd", true, 0, CAT_MASK_1, "caution gets bit 0x02"},
-        {"cat /etc/passwd", false, 0, CAT_MASK_0, "caution should NOT get 0x01"},
-        {"cat /etc/passwd", false, 0, CAT_MASK_2, "caution should NOT get 0x04"},
-        {"cat /etc/passwd", false, 0, CAT_MASK_3, "caution should NOT get 0x08"},
-        {"cat /etc/passwd", false, 0, CAT_MASK_4, "caution should NOT get 0x10"},
-        {"cat /etc/passwd", false, 0, CAT_MASK_5, "caution should NOT get 0x20"},
-        {"cat /etc/passwd", false, 0, CAT_MASK_6, "caution should NOT get 0x40"},
-        {"cat /etc/passwd", false, 0, CAT_MASK_7, "caution should NOT get 0x80"},
+    // Category 2: modifying (0x04)
+    TestCase modifying_cases[] = {
+        {"rm file.txt", true, 0, CAT_MASK_2, "modifying gets bit 0x04"},
+        {"rm file.txt", false, 0, CAT_MASK_0, "modifying should NOT get 0x01"},
+        {"rm file.txt", false, 0, CAT_MASK_1, "modifying should NOT get 0x02"},
+        {"rm file.txt", false, 0, CAT_MASK_3, "modifying should NOT get 0x08"},
+        {"rm file.txt", false, 0, CAT_MASK_4, "modifying should NOT get 0x10"},
+        {"rm file.txt", false, 0, CAT_MASK_5, "modifying should NOT get 0x20"},
+        {"rm file.txt", false, 0, CAT_MASK_6, "modifying should NOT get 0x40"},
+        {"rm file.txt", false, 0, CAT_MASK_7, "modifying should NOT get 0x80"},
     };
-    run_test_group("CAUTION ISOLATION", "patterns_caution_commands.txt",
-                   "build_test/caution_isolation.dfa", caution_cases, sizeof(caution_cases)/sizeof(caution_cases[0]));
+    run_test_group("MODIFYING ISOLATION", "patterns_modifying_commands.txt",
+                   "build_test/modifying_isolation.dfa", modifying_cases, sizeof(modifying_cases)/sizeof(modifying_cases[0]));
 
     // Category 6: build (0x40)
     TestCase build_cases[] = {
@@ -2160,20 +2174,6 @@ static void run_category_isolation_t_tests(void) {
 }
 
 static void run_category_isolation_u_tests(void) {
-    // Category 2: modifying (0x04)
-    TestCase modifying_cases[] = {
-        {"rm file.txt", true, 0, CAT_MASK_2, "modifying gets bit 0x04"},
-        {"rm file.txt", false, 0, CAT_MASK_0, "modifying should NOT get 0x01"},
-        {"rm file.txt", false, 0, CAT_MASK_1, "modifying should NOT get 0x02"},
-        {"rm file.txt", false, 0, CAT_MASK_3, "modifying should NOT get 0x08"},
-        {"rm file.txt", false, 0, CAT_MASK_4, "modifying should NOT get 0x10"},
-        {"rm file.txt", false, 0, CAT_MASK_5, "modifying should NOT get 0x20"},
-        {"rm file.txt", false, 0, CAT_MASK_6, "modifying should NOT get 0x40"},
-        {"rm file.txt", false, 0, CAT_MASK_7, "modifying should NOT get 0x80"},
-    };
-    run_test_group("MODIFYING ISOLATION", "patterns_modifying_commands.txt",
-                   "build_test/modifying_isolation.dfa", modifying_cases, sizeof(modifying_cases)/sizeof(modifying_cases[0]));
-
     // Category 3: dangerous (0x08)
     TestCase dangerous_cases[] = {
         {"reboot", true, 0, CAT_MASK_3, "dangerous gets bit 0x08"},

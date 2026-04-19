@@ -39,7 +39,7 @@ The `dfa_test` executable supports multiple test sets (A through U):
 | C | Command Tests | Command categorization (admin, caution, modifying, dangerous, network) |
 | D | Complex Patterns | Character classes, tripled patterns, hard edges |
 | E | Command Core | Core command tests (admin, caution, modifying, dangerous, network) |
-| F | Category Isolation | SAFE, NETWORK isolation tests |
+| F | Category Isolation | SAFE, CAUTION, NETWORK isolation tests |
 | G | Edge Cases | Long chains, deep nesting, overlapping prefixes |
 | H | Build Commands | Build tool commands (IDEs, compilers) |
 | I | Container Commands | Container/runtime commands |
@@ -53,8 +53,8 @@ The `dfa_test` executable supports multiple test sets (A through U):
 | Q | Incremental Stage API | Individual pipeline stage functions and stats |
 | R | Memory Failure Handling | Error handling for invalid inputs |
 | S | Pattern Ordering Verification | Reordering effects and stats retrieval |
-| T | Category Isolation | CAUTION, BUILD, CONTAINER isolation tests |
-| U | Category Isolation | MODIFYING, DANGEROUS, ADMIN isolation tests |
+| T | Category Isolation | MODIFYING, BUILD, CONTAINER isolation tests |
+| U | Category Isolation | DANGEROUS, ADMIN isolation tests |
 
 Run specific test sets:
 ```bash
