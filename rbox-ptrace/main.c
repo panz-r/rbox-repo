@@ -45,6 +45,7 @@
 #include "rule_engine.h"
 
 #include "env_screener.h"
+#include "compat_strl.h"
 
 /* Debug file pointer - defined here, used by DEBUG_PRINT in all files */
 FILE *g_debug_file = NULL;
@@ -450,7 +451,7 @@ static int trace_process(pid_t initial_pid) {
             int sig = WSTOPSIG(status);
 
             if (sig == (SIGTRAP | 0x80)) {
-                if (ptrace(PTRACE_GETREGS, pid, 0, &regs) < 0) {
+                if (GET_REGS(pid, &regs) < 0) {
                     perror("ptrace(GETREGS)");
                     ptrace(PTRACE_SYSCALL, pid, 0, 0);
                     continue;

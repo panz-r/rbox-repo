@@ -26,9 +26,16 @@
 
 CC = gcc
 CXX = g++
-CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -O2 -mcmodel=medium -Wno-missing-field-initializers
-CXXFLAGS = -Wall -Wextra -Wpedantic -std=c++17 -Iinclude -O2 -mcmodel=medium
-LDFLAGS = -lm -mcmodel=medium
+
+# -mcmodel=medium is x86-64 only; skip on ARM/other architectures
+MCMODEL :=
+ifeq ($(shell uname -m),x86_64)
+MCMODEL := -mcmodel=medium
+endif
+
+CFLAGS = -Wall -Wextra -Wpedantic -std=c11 -Iinclude -O2 $(MCMODEL) -Wno-missing-field-initializers
+CXXFLAGS = -Wall -Wextra -Wpedantic -std=c++17 -Iinclude -O2 $(MCMODEL)
+LDFLAGS = -lm $(MCMODEL)
 
 BUILD_DIR = build
 SRC_DIR = src
@@ -57,7 +64,10 @@ NFA_BUILDER_MODULES = $(TOOLS_DIR)/nfa_construct.o \
 # ============================================================================
 
 # Default target: build everything (MUST be first rule)
-all: $(TOOLS) $(TEST) $(LIB) $(EVAL_LIB) fuzz-build
+all: $(TOOLS) $(TEST) $(LIB) $(EVAL_LIB)
+ifneq ($(shell /usr/bin/clang -dumpmachine 2>/dev/null | grep -q "$(shell uname -m)" && echo yes),)
+all: fuzz-build
+endif
 
 # Allow parallel builds with -j
 ifneq ($(MAKECMDGOALS),)

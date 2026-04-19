@@ -8,6 +8,7 @@
 #include "trampoline_allowance.h"
 #include "shell_tokenizer.h"
 #include "debug.h"
+#include "compat_strl.h"
 
 /*
  * Trampoline Allowance Implementation

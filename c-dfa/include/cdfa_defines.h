@@ -44,11 +44,19 @@
  * Example: if (CKD_MUL(&result, a, b)) { handle overflow; }
  * ============================================================================ */
 
+#if __STDC_VERSION__ >= 202311L
 #include <stdckdint.h>
+#endif
 
+#ifndef CKD_MUL
 #define CKD_MUL(result, a, b) __builtin_mul_overflow((a), (b), (result))
+#endif
+#ifndef CKD_ADD
 #define CKD_ADD(result, a, b) __builtin_add_overflow((a), (b), (result))
+#endif
+#ifndef CKD_SUB
 #define CKD_SUB(result, a, b) __builtin_sub_overflow((a), (b), (result))
+#endif
 
 /* ============================================================================
  * Size limits

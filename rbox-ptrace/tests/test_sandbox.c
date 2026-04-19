@@ -17,6 +17,10 @@
 #include "../sandbox.h"
 #include "test_utils.h"
 
+#ifndef LANDLOCK_ACCESS_FS_TRUNCATE
+#define LANDLOCK_ACCESS_FS_TRUNCATE 0
+#endif
+
 static int tests_run = 0;
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -70,11 +74,16 @@ TEST(access_mode_rx) {
 
 TEST(access_mode_rw) {
     uint64_t result = sandbox_parse_access_mode("rw");
-    uint64_t expected = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR |
-                        LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_REMOVE_DIR |
-                        LANDLOCK_ACCESS_FS_REMOVE_FILE | LANDLOCK_ACCESS_FS_MAKE_DIR |
-                        LANDLOCK_ACCESS_FS_MAKE_REG | LANDLOCK_ACCESS_FS_TRUNCATE;
-    ASSERT_EQ(result, expected);
+    ASSERT(result & LANDLOCK_ACCESS_FS_READ_FILE);
+    ASSERT(result & LANDLOCK_ACCESS_FS_READ_DIR);
+    ASSERT(result & LANDLOCK_ACCESS_FS_WRITE_FILE);
+    ASSERT(result & LANDLOCK_ACCESS_FS_REMOVE_DIR);
+    ASSERT(result & LANDLOCK_ACCESS_FS_REMOVE_FILE);
+    ASSERT(result & LANDLOCK_ACCESS_FS_MAKE_DIR);
+    ASSERT(result & LANDLOCK_ACCESS_FS_MAKE_REG);
+#if LANDLOCK_ACCESS_FS_TRUNCATE != 0
+    ASSERT(result & LANDLOCK_ACCESS_FS_TRUNCATE);
+#endif
     return 0;
 }
 

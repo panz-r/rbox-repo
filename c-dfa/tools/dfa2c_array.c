@@ -29,6 +29,7 @@
 #define DFA_ERROR_PROGRAM "dfa2c_array"
 #include "dfa_errors.h"
 #include "../include/cdfa_defines.h"
+#include "../include/compat_strl.h"
 
 static void usage(const char* prog) {
     fprintf(stderr, "Usage: %s [options] <input.dfa> <output.c> <array_name>\n", prog);

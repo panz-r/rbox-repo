@@ -16,6 +16,7 @@
 #include <sys/user.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/syscall.h>
 
 #include "../memory.h"
 #include "../syscall_handler.h"
@@ -257,31 +258,19 @@ TEST(syscall_detection_realistic) {
 
     /* Test execve detection */
     memset(&regs, 0, sizeof(regs));
-#ifdef __x86_64__
-    regs.orig_rax = 59;  /* execve on x86_64 */
-#else
-    regs.orig_eax = 11;  /* execve on i386 */
-#endif
+    REG_SYSCALL(&regs) = SYS_execve;
     ASSERT(syscall_is_execve(&regs));
     ASSERT(!syscall_is_fork(&regs));
 
     /* Test clone detection */
     memset(&regs, 0, sizeof(regs));
-#ifdef __x86_64__
-    regs.orig_rax = 56;  /* clone on x86_64 */
-#else
-    regs.orig_eax = 120; /* clone on i386 */
-#endif
+    REG_SYSCALL(&regs) = SYS_clone;
     ASSERT(!syscall_is_execve(&regs));
     ASSERT(syscall_is_fork(&regs));
 
     /* Test regular syscall (write) */
     memset(&regs, 0, sizeof(regs));
-#ifdef __x86_64__
-    regs.orig_rax = 1;   /* write on x86_64 */
-#else
-    regs.orig_eax = 4;   /* write on i386 */
-#endif
+    REG_SYSCALL(&regs) = SYS_write;
     ASSERT(!syscall_is_execve(&regs));
     ASSERT(!syscall_is_fork(&regs));
 }

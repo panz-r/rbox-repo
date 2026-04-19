@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include "../include/compat_strl.h"
 #include <sys/resource.h>
 #include <signal.h>
 #include <errno.h>

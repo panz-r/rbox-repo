@@ -1,8 +1,8 @@
 # LibFuzzer harness Makefile for c-dfa
 # Requires: libfuzzer-21-dev (clang with fuzzing support)
 
-CXX = clang++
-CC = clang
+CXX = /usr/bin/clang++
+CC = /usr/bin/clang
 
 CXXFLAGS = -fsanitize=fuzzer,address,undefined -I../include -g -O1 -fno-omit-frame-pointer
 CFLAGS = -fsanitize=fuzzer,address,undefined -I../include -g -O1 -fno-omit-frame-pointer

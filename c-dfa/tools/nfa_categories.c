@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../include/compat_strl.h"
 
 // Default category names
 static const char* default_category_names[CAT_COUNT] = {

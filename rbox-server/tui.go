@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/panz-r/rbox-repo/rbox-server/shell"
 )
 
 type PipelineStage struct {
@@ -266,6 +267,7 @@ type CommandLog struct {
 	EnvDecisions     []EnvVarDecision // User's decisions on env vars
 	IntendedDecision string           // "ALLOW" or "DENY" for retries
 	OriginalReason   string           // original reason (e.g., "once") for retries
+	EvalResult       *shell.EvalResult // shellgate analysis
 }
 
 type EnvVarInfo struct {
@@ -331,6 +333,8 @@ type Event struct {
 	RetryReason       string
 	RetryDuration     uint32
 	RetryEnvDecisions []EnvVarDecision
+	// Shellgate analysis
+	EvalResult *shell.EvalResult
 }
 
 var (
@@ -410,6 +414,7 @@ type Model struct {
 	envVarCursor  int                 // -1 = command selected, 0+ = index of selected env var
 	pendingRetry  map[int]*CommandLog // requests that failed and need retry
 	viewOnly      bool                // true when viewing details of a decided command (no decision allowed)
+	gate          *shell.Gate         // shellgate policy engine (may be nil)
 }
 
 func NewModel() *Model {
@@ -430,7 +435,7 @@ func (m *Model) AddConnection() {
 	m.connections++
 }
 
-func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientID, cwd string, requestID int, envVars []EnvVarInfo) {
+func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientID, cwd string, requestID int, envVars []EnvVarInfo, evalResult *shell.EvalResult) {
 	m.lastCmd = cmd + " " + args
 	m.lastDecision = decision
 	m.lastTime = time.Now()
@@ -449,6 +454,7 @@ func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientI
 		Cwd:          cwd,
 		EnvVars:      envVars,
 		EnvDecisions: make([]EnvVarDecision, len(envVars)),
+		EvalResult:   evalResult,
 	}
 	m.commands = append(m.commands, &log)
 
@@ -738,7 +744,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case EventConnect:
 			m.connections++
 		case EventRequest:
-			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars)
+			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
 		case EventCommand:
 			m.lastDecision = msg.Decision
 			m.lastTime = time.Now()
@@ -750,7 +756,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case EventNewRequest:
 			// Combined event: store request AND display - never drops
 			StoreRequest(msg.RequestID, msg.Req)
-			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars)
+			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
 		case EventAddPendingRetry:
 			// Find the command log for this request
 			var cmdLog *CommandLog
@@ -1662,6 +1668,69 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		sb.WriteString("\n")
 	}
 
+	// Shellgate analysis section
+	if cmd.EvalResult != nil {
+		ev := cmd.EvalResult
+
+		// Verdict
+		verdictStr := shell.VerdictName(ev.Verdict)
+		switch ev.Verdict {
+		case shell.VerdictAllow:
+			sb.WriteString(allowStyle.Render(fmt.Sprintf("  Policy: %s", verdictStr)))
+		case shell.VerdictDeny:
+			sb.WriteString(denyStyle.Render(fmt.Sprintf("  Policy: %s", verdictStr)))
+			if ev.DenyReason != "" {
+				sb.WriteString(denyStyle.Render(fmt.Sprintf(" (%s)", ev.DenyReason)))
+			}
+		case shell.VerdictReject:
+			sb.WriteString(denyStyle.Render(fmt.Sprintf("  Policy: %s", verdictStr)))
+		}
+		sb.WriteString("\n")
+
+		// Subcommand breakdown
+		if len(ev.Subcmds) > 0 {
+			for i, sc := range ev.Subcmds {
+				pfx := "  │"
+				if i == len(ev.Subcmds)-1 {
+					pfx = "  └"
+				}
+				scVerdict := shell.VerdictName(sc.Verdict)
+				sb.WriteString(dimStyle.Render(fmt.Sprintf("%s %s: %s", pfx, sc.Command, scVerdict)))
+				if sc.RejectReason != "" {
+					sb.WriteString(dimStyle.Render(fmt.Sprintf(" (%s)", sc.RejectReason)))
+				}
+				sb.WriteString("\n")
+			}
+		}
+
+		// Violations
+		if ev.HasViolation && len(ev.Violations) > 0 {
+			sb.WriteString("\n")
+			sb.WriteString(denyStyle.Render("  Violations:"))
+			sb.WriteString("\n")
+			for _, v := range ev.Violations {
+				cat := shell.ViolationCategoryName(v.Type)
+				severityBar := strings.Repeat("▓", int(v.Severity/10))
+				severityEmpty := strings.Repeat("░", 10-len(severityBar))
+				sb.WriteString(fmt.Sprintf("    %s [%s%s] %s: %s",
+					cat, severityBar, severityEmpty,
+					v.Description, dimStyle.Render(v.Detail)))
+				sb.WriteString("\n")
+			}
+		}
+
+		// Suggestions
+		if len(ev.Suggestions) > 0 {
+			sb.WriteString("\n")
+			sb.WriteString(infoStyle.Render("  Suggestions:"))
+			sb.WriteString("\n")
+			for _, s := range ev.Suggestions {
+				sb.WriteString(infoStyle.Render(fmt.Sprintf("    → %s", s)))
+				sb.WriteString("\n")
+			}
+		}
+	}
+
 	// ACTIONS PALETTE
 	if !m.viewOnly && cmd.Decision == "PENDING" {
 		sb.WriteString("\n")
@@ -1788,8 +1857,34 @@ func RunTUIMode() {
 	fmt.Printf("readonlybox-server v%s - TUI mode\n", ServerVersion)
 	fmt.Println("Listening on:", sock)
 
+	// Create shellgate for command analysis
+	gate, gateErr := shell.NewGate()
+	if gateErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: shellgate init failed (analysis disabled): %v\n", gateErr)
+	}
+	if gate != nil {
+		// Add basic default rules so eval produces meaningful verdicts
+		gate.AddRule("echo *")
+		gate.AddRule("ls")
+		gate.AddRule("cat #path")
+		gate.AddRule("git *")
+		gate.AddRule("grep *")
+		gate.AddRule("find *")
+		gate.AddRule("head")
+		gate.AddRule("tail")
+		gate.AddRule("wc")
+		gate.AddRule("sort")
+		gate.AddRule("uniq")
+		gate.AddRule("diff *")
+		gate.AddRule("make *")
+		gate.AddRule("gcc *")
+		gate.AddRule("python *")
+		gate.AddRule("node *")
+	}
+
 	// Create model
 	model := NewModel()
+	model.gate = gate
 
 	// Start TUI
 	p := tea.NewProgram(
@@ -1842,17 +1937,24 @@ func RunTUIMode() {
 				}
 			}
 
+			// Run shellgate evaluation
+			var evalResult *shell.EvalResult
+			if gate != nil {
+				evalResult, _ = gate.Eval(cmd)
+			}
+
 			// Store request AND send display event in one atomic blocking operation
 			// This ensures no requests are ever dropped - backpressure if TUI is busy
 			model.eventChan <- Event{
-				Type:      EventNewRequest,
-				RequestID: requestID,
-				Req:       req,
-				Command:   cmd,
-				Args:      argsStr,
-				Caller:    caller,
-				Syscall:   syscall,
-				EnvVars:   envVars,
+				Type:       EventNewRequest,
+				RequestID:  requestID,
+				Req:        req,
+				Command:    cmd,
+				Args:       argsStr,
+				Caller:     caller,
+				Syscall:    syscall,
+				EnvVars:    envVars,
+				EvalResult: evalResult,
 			}
 		}
 	}()
@@ -1865,6 +1967,9 @@ func RunTUIMode() {
 	close(model.eventChan)
 
 	fmt.Println("\nShutting down...")
+	if gate != nil {
+		gate.Close()
+	}
 	server.Stop()
 	server.Free()
 }

@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include "../include/compat_strl.h"
 
 // ============================================================================
 // Debug/Verbose helpers (use context flags instead of globals)

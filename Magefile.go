@@ -28,6 +28,7 @@ const (
 	rboxServerDir   = "rbox-server"
 	rboxRulesetDir  = "rbox-ruleset"
 	shelltypeDir    = "shelltype"
+	shellgateDir    = "shellgate"
 
 	socketDir  = "/run/readonlybox"
 	socketPath = socketDir + "/readonlybox.sock"
@@ -106,6 +107,12 @@ func BuildDependencies() error {
 
 	if err := runMake(filepath.Join(wd, shellsplitDir), true); err != nil {
 		return fmt.Errorf("shellsplit build failed: %w", err)
+	}
+	if err := runMake(filepath.Join(wd, shelltypeDir), true); err != nil {
+		return fmt.Errorf("shelltype build failed: %w", err)
+	}
+	if err := buildCMake(filepath.Join(wd, shellgateDir)); err != nil {
+		return fmt.Errorf("shellgate build failed: %w", err)
 	}
 	if err := buildCMake(filepath.Join(wd, rboxProtocolDir)); err != nil {
 		return fmt.Errorf("rbox-protocol build failed: %w", err)
@@ -411,14 +418,16 @@ func BuildBinaries() error {
 	fmt.Println("=== Building readonlybox-server ===")
 	rboxProto := filepath.Join(wd, rboxProtocolDir)
 	shellSplit := filepath.Join(wd, shellsplitDir)
+	shellGate := filepath.Join(wd, shellgateDir)
+	shellType := filepath.Join(wd, shelltypeDir)
 	cmd = exec.Command("go", "build", "-tags", "cgo",
 		"-o", filepath.Join(wd, binDir, "readonlybox-server"))
 	cmd.Dir = filepath.Join(wd, rboxServerDir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(),
-		"CGO_LDFLAGS=-L"+rboxProto+" -L"+shellSplit+" -lrbox_protocol -lshellsplit -lpthread -lm",
-		"CGO_CFLAGS=-I"+rboxProto+"/include -I"+shellSplit+"/include",
+		"CGO_LDFLAGS=-L"+rboxProto+" -L"+shellGate+"/build -lrbox_protocol -lshellgate -lshelltype_gate -lshellsplit_gate -lpthread -lm",
+		"CGO_CFLAGS=-I"+rboxProto+"/include -I"+shellSplit+"/include -I"+shellType+"/include -I"+shellGate+"/include",
 		"CC="+cc)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("readonlybox-server build failed: %w", err)
@@ -459,15 +468,17 @@ func Clean() error {
 	var errs []error
 
 	// Clean subprojects (use cmake clean for rbox-protocol, make clean for others)
-	subprojects := []string{cDfaDir, shellsplitDir, rboxProtocolDir, rboxWrapDir, rboxPtraceDir, rboxServerDir, shelltypeDir}
+	subprojects := []string{cDfaDir, shellsplitDir, rboxWrapDir, rboxPtraceDir, rboxServerDir, shelltypeDir}
 	for _, dir := range subprojects {
 		if err := runMakeClean(filepath.Join(wd, dir)); err != nil {
 			errs = append(errs, fmt.Errorf("%s clean failed: %w", dir, err))
 		}
 	}
-	// rbox-protocol uses cmake
-	if err := cleanCMake(filepath.Join(wd, rboxProtocolDir)); err != nil {
-		errs = append(errs, fmt.Errorf("%s clean failed: %w", rboxProtocolDir, err))
+	// rbox-protocol and shellgate use cmake
+	for _, dir := range []string{rboxProtocolDir, shellgateDir} {
+		if err := cleanCMake(filepath.Join(wd, dir)); err != nil {
+			errs = append(errs, fmt.Errorf("%s clean failed: %w", dir, err))
+		}
 	}
 
 	// rbox-ruleset uses cmake
@@ -552,7 +563,7 @@ func Test() error {
 
 	// Run rbox-ptrace tests
 	fmt.Println("=== Running rbox-ptrace tests ===")
-	if err := runMakeTest(filepath.Join(wd, rboxPtraceDir)); err != nil {
+	if err := runMakeTest(rboxPtraceDir); err != nil {
 		return fmt.Errorf("rbox-ptrace tests failed: %w", err)
 	}
 
@@ -560,6 +571,18 @@ func Test() error {
 	fmt.Println("=== Running shelltype tests ===")
 	if err := runMakeTest(shelltypeDir); err != nil {
 		return fmt.Errorf("shelltype tests failed: %w", err)
+	}
+
+	// Run shellgate tests
+	fmt.Println("=== Running shellgate tests ===")
+	if err := runCMakeTest(shellgateDir); err != nil {
+		return fmt.Errorf("shellgate tests failed: %w", err)
+	}
+
+	// Run rbox-server shell tests
+	fmt.Println("=== Running rbox-server shell tests ===")
+	if err := runGoTest(rboxServerDir, "shell"); err != nil {
+		return fmt.Errorf("rbox-server shell tests failed: %w", err)
 	}
 
 	fmt.Println("=== All tests passed ===")
@@ -1003,4 +1026,23 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.WriteFile(dst, data, 0755)
+}
+
+func runGoTest(dir string, pkg string) error {
+	wd, _ := os.Getwd()
+	shellSplit := filepath.Join(wd, shellsplitDir)
+	shellGate := filepath.Join(wd, shellgateDir)
+	shellType := filepath.Join(wd, shelltypeDir)
+	rboxProto := filepath.Join(wd, rboxProtocolDir)
+
+	cmd := exec.Command("go", "test", "-tags", "cgo", "-v", "./"+pkg)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(),
+		"CGO_ENABLED=1",
+		"CGO_LDFLAGS=-L"+shellGate+"/build -L"+rboxProto+" -lshellgate -lshelltype_gate -lshellsplit_gate -lrbox_protocol -lpthread -lm",
+		"CGO_CFLAGS=-I"+shellSplit+"/include -I"+shellType+"/include -I"+shellGate+"/include -I"+rboxProto+"/include",
+	)
+	return cmd.Run()
 }

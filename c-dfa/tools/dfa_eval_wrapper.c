@@ -17,6 +17,7 @@
 
 #include "../include/dfa_internal.h"
 #include "../include/dfa_types.h"
+#include "../include/compat_strl.h"
 
 // Resource limits (can be overridden via environment)
 #define DEFAULT_MEMORY_LIMIT (2ULL * 1024 * 1024 * 1024)  // 2GB

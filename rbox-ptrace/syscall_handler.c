@@ -30,6 +30,7 @@
 #include "rule_engine.h"
 #include <shell_tokenizer.h>
 #include "trampoline_allowance.h"
+#include "compat_strl.h"
 
 extern soft_ruleset_t *get_effective_fs_rules(void);
 
@@ -715,7 +716,7 @@ static int block_syscall(pid_t pid, USER_REGS *regs, ProcessState *state) {
     return -1;
 #endif
 
-    if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+    if (SET_REGS(pid, regs) == -1) {
         if (errno == ESRCH) {
             DEBUG_PRINT("HANDLER: pid %d already exited (race), skipping block_syscall\n", pid);
             return 0;
@@ -804,7 +805,7 @@ static int block_execve(pid_t pid, USER_REGS *regs) {
     }
 
     /* Apply changes */
-    if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+    if (SET_REGS(pid, regs) == -1) {
         if (errno == ESRCH) {
             DEBUG_PRINT("HANDLER: pid %d already exited (race), skipping block_execve\n", pid);
             return 0;
@@ -1635,7 +1636,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
             REG_ARG3(regs) = new_envp_addr;
         }
 
-        if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+        if (SET_REGS(pid, regs) == -1) {
             DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
             free(new_envp);
             free(new_env_addrs);
@@ -1698,7 +1699,7 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     }
 
     /* Apply changes to the child */
-    if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+    if (SET_REGS(pid, regs) == -1) {
         DEBUG_PRINT("FILTER: failed to set regs: %s\n", strerror(errno));
         free(new_envp);
         free(new_env_addrs);
@@ -1741,9 +1742,9 @@ int syscall_handle_exit(pid_t pid, USER_REGS *regs, ProcessState *state) {
         regs->regs[10] = -EACCES;
 #endif
         /* Write the modified registers back */
-        if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+        if (SET_REGS(pid, regs) == -1) {
             if (errno != ESRCH) {
-                perror("ptrace(SETREGS) for blocked syscall");
+                perror("ptrace(SET_REGS) for blocked syscall");
             }
         }
         state->blocked_syscall = 0;

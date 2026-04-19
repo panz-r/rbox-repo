@@ -15,6 +15,7 @@
 #include <stdbool.h>
 
 #include "debug.h"
+#include "compat_strl.h"
 
 /* Original user information */
 static uid_t g_original_uid = 0;

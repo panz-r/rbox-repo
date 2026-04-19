@@ -4,108 +4,157 @@
 package shell
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestParseCommand(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		wantErr  bool
-		minCount int // minimum number of subcommands expected
-	}{
-		{
-			name:     "Simple command",
-			input:    "ls -l",
-			wantErr:  false,
-			minCount: 1,
-		},
-		{
-			name:     "Empty string",
-			input:    "",
-			wantErr:  false, // returns nil, nil which is not an error per current impl
-			minCount: 0,
-		},
-		{
-			name:     "Command with multiple args",
-			input:    "git commit -m 'initial commit'",
-			wantErr:  false,
-			minCount: 1,
-		},
-		{
-			name:     "Find command",
-			input:    "find /home -name '*.txt' -type f",
-			wantErr:  false,
-			minCount: 1,
-		},
-		{
-			name:     "Grep with regex",
-			input:    "grep -E 'error|warning' /var/log/syslog",
-			wantErr:  false,
-			minCount: 1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := ParseCommand(tt.input)
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			assert.NoError(t, err)
-			if tt.minCount == 0 {
-				assert.Nil(t, result)
-			} else {
-				assert.NotNil(t, result)
-				assert.GreaterOrEqual(t, len(result), tt.minCount)
-			}
-		})
-	}
+func TestNewGate(t *testing.T) {
+	g, err := NewGate()
+	assert.NoError(t, err)
+	assert.NotNil(t, g)
+	g.Close()
 }
 
-func TestParseCommandToString(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "Simple command",
-			input:    "ls -l",
-			expected: "[word:command] | [word:argument]",
-		},
-		{
-			name:     "Empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "Git status",
-			input:    "git status",
-			expected: "[word:command] | [word:argument]",
-		},
-	}
+func TestEvalSimple(t *testing.T) {
+	g, err := NewGate()
+	assert.NoError(t, err)
+	defer g.Close()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ParseCommandToString(tt.input)
-			// Just verify it returns something - the exact format may vary
-			if tt.expected == "" {
-				assert.Equal(t, "", result)
-			} else {
-				assert.NotEmpty(t, result)
-				// Should contain type:feature format
-				assert.Contains(t, result, ":")
-			}
-		})
-	}
+	err = g.AddRule("echo *")
+	assert.NoError(t, err)
+
+	result, err := g.Eval("echo hello")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, VerdictAllow, result.Verdict)
+	assert.Len(t, result.Subcmds, 1)
+	assert.Equal(t, "echo hello", result.Subcmds[0].Command)
 }
 
-func TestParseCommandEmpty(t *testing.T) {
-	result, err := ParseCommand("")
+func TestEvalDeny(t *testing.T) {
+	g, err := NewGate()
+	assert.NoError(t, err)
+	defer g.Close()
+
+	err = g.AddRule("ls")
+	assert.NoError(t, err)
+
+	result, err := g.Eval("rm -rf /")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, VerdictDeny, result.Verdict)
+}
+
+func TestEvalEmpty(t *testing.T) {
+	g, err := NewGate()
+	assert.NoError(t, err)
+	defer g.Close()
+
+	result, err := g.Eval("")
 	assert.NoError(t, err)
 	assert.Nil(t, result)
+}
+
+func TestEvalPipe(t *testing.T) {
+	g, err := NewGate()
+	assert.NoError(t, err)
+	defer g.Close()
+
+	err = g.AddRule("echo *")
+	assert.NoError(t, err)
+	err = g.AddRule("grep")
+	assert.NoError(t, err)
+
+	result, err := g.Eval("echo hello | grep pattern")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Len(t, result.Subcmds, 2)
+}
+
+func TestAddRemoveRule(t *testing.T) {
+	g, err := NewGate()
+	assert.NoError(t, err)
+	defer g.Close()
+
+	err = g.AddRule("ls")
+	assert.NoError(t, err)
+	assert.Equal(t, uint32(1), g.RuleCount())
+
+	err = g.RemoveRule("ls")
+	assert.NoError(t, err)
+	assert.Equal(t, uint32(0), g.RuleCount())
+}
+
+func TestSaveLoadPolicy(t *testing.T) {
+	g, err := NewGate()
+	assert.NoError(t, err)
+	defer g.Close()
+
+	g.AddRule("echo *")
+	g.AddRule("ls")
+
+	tmpDir := t.TempDir()
+	policyPath := filepath.Join(tmpDir, "test.policy")
+
+	err = g.SavePolicy(policyPath)
+	assert.NoError(t, err)
+	_, statErr := os.Stat(policyPath)
+	assert.NoError(t, statErr)
+
+	g2, err := NewGate()
+	assert.NoError(t, err)
+	defer g2.Close()
+
+	err = g2.LoadPolicy(policyPath)
+	assert.NoError(t, err)
+	assert.Equal(t, uint32(2), g2.RuleCount())
+
+	result, err := g2.Eval("echo test")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, VerdictAllow, result.Verdict)
+}
+
+func TestViolationScan(t *testing.T) {
+	g, err := NewGate()
+	assert.NoError(t, err)
+	defer g.Close()
+
+	g.AddRule("cat #path")
+	g.AddRule("sudo *")
+	g.AddRule("curl *")
+	g.AddRule("sh")
+	g.AddRule("base64")
+	g.AddRule("bash")
+	g.AddRule("git *")
+
+	result, err := g.Eval("sudo bash")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	if result.HasViolation {
+		assert.True(t, len(result.Violations) > 0)
+		found := false
+		for _, v := range result.Violations {
+			if v.Severity >= 80 {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected high-severity violation for sudo bash")
+	}
+}
+
+func TestVerdictName(t *testing.T) {
+	assert.Equal(t, "ALLOW", VerdictName(VerdictAllow))
+	assert.Equal(t, "DENY", VerdictName(VerdictDeny))
+	assert.Equal(t, "REJECT", VerdictName(VerdictReject))
+}
+
+func TestViolationCategoryName(t *testing.T) {
+	assert.Equal(t, "filesystem", ViolationCategoryName(1<<16))
+	assert.Equal(t, "privilege", ViolationCategoryName(1<<17))
+	assert.Equal(t, "exfiltration", ViolationCategoryName(1<<18))
+	assert.Equal(t, "network", ViolationCategoryName(1<<19))
 }

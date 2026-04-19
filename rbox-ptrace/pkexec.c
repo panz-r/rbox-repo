@@ -6,6 +6,7 @@
  */
 
 #define _GNU_SOURCE
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,7 @@
 #include <fcntl.h>
 
 #include "debug.h"
+#include "compat_strl.h"
 
 #ifndef UNIX_PATH_MAX
 #define UNIX_PATH_MAX 108

@@ -159,7 +159,7 @@ func TestAddCommand(t *testing.T) {
 	model := NewModel()
 
 	// Add first command
-	model.AddCommand("ALLOW", "ls", "-l", "", "", "read-only command", "", "", 1, nil)
+	model.AddCommand("ALLOW", "ls", "-l", "", "", "read-only command", "", "", 1, nil, nil)
 	assert.Len(t, model.commands, 1)
 	assert.Equal(t, "ALLOW", model.commands[0].Decision)
 	assert.Equal(t, "ls", model.commands[0].Command)
@@ -167,12 +167,12 @@ func TestAddCommand(t *testing.T) {
 	assert.Equal(t, 0, model.selectedIdx)
 
 	// Add second command - should be selected
-	model.AddCommand("DENY", "rm", "-rf /", "", "", "dangerous command", "", "", 2, nil)
+	model.AddCommand("DENY", "rm", "-rf /", "", "", "dangerous command", "", "", 2, nil, nil)
 	assert.Len(t, model.commands, 2)
 	assert.Equal(t, 1, model.selectedIdx)
 
 	// Stats should count pending
-	model.AddCommand("PENDING", "git", "status", "", "", "waiting for decision", "", "", 3, nil)
+	model.AddCommand("PENDING", "git", "status", "", "", "waiting for decision", "", "", 3, nil, nil)
 	assert.Equal(t, 1, model.stats.totalUnknown)
 }
 

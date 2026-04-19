@@ -90,7 +90,7 @@ TEST(syscall_is_execve_execve) {
 #ifdef __x86_64__
     regs.orig_rax = SYSCALL_EXECVE;
 #else
-    regs.orig_eax = SYSCALL_EXECVE;
+    REG_SYSCALL(&regs) = SYSCALL_EXECVE;
 #endif
 
     int result = syscall_is_execve(&regs);
@@ -105,7 +105,7 @@ TEST(syscall_is_execve_non_execve) {
 #ifdef __x86_64__
     regs.orig_rax = 1;  /* write syscall */
 #else
-    regs.orig_eax = 4;  /* write syscall */
+    REG_SYSCALL(&regs) = 4;  /* write syscall */
 #endif
 
     int result = syscall_is_execve(&regs);
@@ -123,7 +123,7 @@ TEST(syscall_is_execve_execveat) {
 #ifdef __x86_64__
     regs.orig_rax = SYSCALL_EXECVEAT;
 #else
-    regs.orig_eax = SYSCALL_EXECVEAT;
+    REG_SYSCALL(&regs) = SYSCALL_EXECVEAT;
 #endif
 
     int result = syscall_is_execve(&regs);
@@ -139,7 +139,7 @@ TEST(syscall_is_fork_clone) {
 #ifdef __x86_64__
     regs.orig_rax = SYSCALL_CLONE;
 #else
-    regs.orig_eax = SYSCALL_CLONE;
+    REG_SYSCALL(&regs) = SYSCALL_CLONE;
 #endif
 
     int result = syscall_is_fork(&regs);
@@ -154,7 +154,7 @@ TEST(syscall_is_fork_fork) {
 #ifdef __x86_64__
     regs.orig_rax = SYSCALL_FORK;
 #else
-    regs.orig_eax = SYSCALL_FORK;
+    REG_SYSCALL(&regs) = SYSCALL_FORK;
 #endif
 
     int result = syscall_is_fork(&regs);
@@ -172,7 +172,7 @@ TEST(syscall_is_fork_vfork) {
 #ifdef __x86_64__
     regs.orig_rax = SYSCALL_VFORK;
 #else
-    regs.orig_eax = SYSCALL_VFORK;
+    REG_SYSCALL(&regs) = SYSCALL_VFORK;
 #endif
 
     int result = syscall_is_fork(&regs);
@@ -187,7 +187,7 @@ TEST(syscall_is_fork_non_fork) {
 #ifdef __x86_64__
     regs.orig_rax = 1;  /* write syscall */
 #else
-    regs.orig_eax = 4;  /* write syscall */
+    REG_SYSCALL(&regs) = 4;  /* write syscall */
 #endif
 
     int result = syscall_is_fork(&regs);
@@ -357,7 +357,7 @@ TEST(reg_syscall_macro) {
     regs.orig_rax = 123;
     ASSERT_EQ(REG_SYSCALL(&regs), 123);
 #elif __i386__
-    regs.orig_eax = 456;
+    REG_SYSCALL(&regs) = 456;
     ASSERT_EQ(REG_SYSCALL(&regs), 456);
 #else
     ASSERT(1);

@@ -20,6 +20,7 @@
 #include "validation.h"
 #include "protocol.h"
 #include "debug.h"
+#include "compat_strl.h"
 
 /* External DFA functions from the linked library */
 extern int dfa_init(void);

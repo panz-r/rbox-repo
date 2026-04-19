@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include "../include/compat_strl.h"
 
 int nfa_capture_get_id(nfa_builder_context_t* ctx, const char* name) {
     for (int i = 0; i < ctx->capture_count; i++) {
