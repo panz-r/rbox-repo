@@ -11,246 +11,6 @@ import (
 	"github.com/panz-r/rbox-repo/rbox-server/shell"
 )
 
-type PipelineStage struct {
-	Operator string
-	Command  string
-	Args     []string
-	Stdin    string
-	Stdout   string
-}
-
-type PipelineAnalysis struct {
-	Original string
-	Stages   []PipelineStage
-	FileOps  string
-	Flow     string
-	Syscall  string
-}
-
-type GrepCommand struct {
-	Pattern      string
-	InputFiles   []string
-	Options      map[string]interface{}
-	UseRecursive bool
-}
-
-type GrepParser struct{}
-
-type GitCommand struct {
-	Subcommand    string
-	Options       map[string]interface{}
-	Arguments     []string
-	IsReadOnly    bool
-	AffectsRemote bool
-	AffectsRepo   bool
-}
-
-type GitParser struct{}
-
-type ClaudeCommand struct {
-	Version    string
-	Subcommand string
-	Args       []string
-	Target     string
-	IsReadOnly bool
-}
-
-type ClaudeParser struct{}
-
-func (c *ClaudeParser) ParseArguments(args []string) (interface{}, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("no arguments provided for claude")
-	}
-
-	cmd := &ClaudeCommand{
-		Args:       args,
-		IsReadOnly: true,
-	}
-
-	/* Check if first arg looks like a version number (X.Y.Z) */
-	if len(args[0]) > 0 && strings.Contains(args[0], ".") {
-		parts := strings.Split(args[0], ".")
-		if len(parts) >= 2 {
-			/* Looks like a version number - this is claude syntax */
-			cmd.Version = args[0]
-
-			/* Next arg is subcommand */
-			if len(args) > 1 {
-				cmd.Subcommand = args[1]
-
-				/* Parse subcommand-specific args */
-				i := 2
-				for i < len(args) && strings.HasPrefix(args[i], "-") {
-					i++
-				}
-
-				/* Remaining args are targets */
-				if i < len(args) {
-					cmd.Target = args[i]
-				}
-			}
-
-			return cmd, nil
-		}
-	}
-
-	return nil, fmt.Errorf("not a claude command")
-}
-
-func (g *GitParser) ParseArguments(args []string) (interface{}, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("no arguments provided for git")
-	}
-
-	cmd := &GitCommand{
-		Options: make(map[string]interface{}),
-	}
-
-	cmd.Subcommand = args[0]
-	cmd.determineCommandCharacteristics()
-
-	i := 1
-	for i < len(args) && strings.HasPrefix(args[i], "-") {
-		opt := args[i]
-		switch opt {
-		case "--help", "-h":
-			cmd.Options["help"] = true
-		case "--version", "-v":
-			cmd.Options["version"] = true
-		case "--verbose":
-			cmd.Options["verbose"] = true
-		case "--dry-run":
-			cmd.Options["dry_run"] = true
-		case "--force", "-f":
-			cmd.Options["force"] = true
-			if cmd.IsReadOnly {
-				cmd.IsReadOnly = false
-			}
-		default:
-			if len(opt) > 1 {
-				cmd.Options[opt] = true
-			}
-		}
-		i++
-	}
-
-	if i < len(args) {
-		cmd.Arguments = args[i:]
-	}
-
-	return cmd, nil
-}
-
-func (g *GitCommand) determineCommandCharacteristics() {
-	readOnlyCommands := []string{
-		"log", "show", "diff", "status", "grep", "blame", "annotate",
-		"branch", "tag", "ls-files", "ls-tree", "cat-file",
-		"config", "remote", "ls-remote", "archive",
-	}
-
-	for _, safeCmd := range readOnlyCommands {
-		if g.Subcommand == safeCmd {
-			g.IsReadOnly = true
-			return
-		}
-	}
-
-	remoteCommands := []string{"push", "fetch", "pull", "clone", "ls-remote"}
-	for _, remoteCmd := range remoteCommands {
-		if g.Subcommand == remoteCmd {
-			g.AffectsRemote = true
-			g.AffectsRepo = true
-			return
-		}
-	}
-
-	repoCommands := []string{
-		"add", "commit", "reset", "rebase", "merge", "cherry-pick", "revert",
-		"am", "apply", "checkout", "clean", "stash", "submodule", "worktree",
-	}
-	for _, repoCmd := range repoCommands {
-		if g.Subcommand == repoCmd {
-			g.AffectsRepo = true
-			return
-		}
-	}
-
-	g.AffectsRepo = true
-}
-
-func (g *GrepParser) ParseArguments(args []string) (interface{}, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("no arguments provided for grep")
-	}
-
-	cmd := &GrepCommand{
-		Options: make(map[string]interface{}),
-	}
-
-	i := 0
-	for i < len(args) && strings.HasPrefix(args[i], "-") {
-		opt := args[i]
-
-		switch opt {
-		case "--":
-			i++
-			break
-		case "-r", "-R":
-			cmd.UseRecursive = true
-			cmd.Options["recursive"] = true
-		case "-E", "--extended-regexp":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("missing pattern after -E option")
-			}
-			cmd.Pattern = args[i+1]
-			cmd.Options["pattern"] = args[i+1]
-			i += 2
-			continue
-		case "-e":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("missing pattern after -e option")
-			}
-			cmd.Pattern = args[i+1]
-			cmd.Options["pattern"] = args[i+1]
-			i += 2
-			continue
-		case "-f":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("missing file after -f option")
-			}
-			cmd.Options["pattern_file"] = args[i+1]
-			i += 2
-			continue
-		default:
-			if len(opt) > 1 && !strings.HasPrefix(opt, "--") {
-				for _, ch := range opt[1:] {
-					switch ch {
-					case 'r', 'R':
-						cmd.UseRecursive = true
-					case 'E':
-						if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-							cmd.Pattern = args[i+1]
-							cmd.Options["pattern"] = args[i+1]
-						}
-					}
-				}
-			}
-		}
-		i++
-	}
-
-	if cmd.Pattern == "" && i < len(args) {
-		cmd.Pattern = args[i]
-		i++
-	}
-
-	if i < len(args) {
-		cmd.InputFiles = args[i:]
-	}
-
-	return cmd, nil
-}
-
 type CommandLog struct {
 	Timestamp        time.Time
 	Decision         string
@@ -292,11 +52,7 @@ type EventType int
 const (
 	EventConnect EventType = iota
 	EventDisconnect
-	EventCommand
-	EventLog
-	EventRequest
-	EventStoreRequest
-	EventNewRequest // Combined store + display event - never drops
+	EventNewRequest
 	EventAddPendingRetry
 )
 
@@ -325,17 +81,13 @@ type Event struct {
 	RequestID int
 	ClientID  string
 	Cwd       string
-	EnvVars   []EnvVarInfo // Flagged env vars from request
-	// Fields for EventStoreRequest
-	Req *RBoxRequest
-	// Fields for EventAddPendingRetry
+	EnvVars   []EnvVarInfo
+	Req       *RBoxRequest
 	RetryDecision     string
 	RetryReason       string
 	RetryDuration     uint32
 	RetryEnvDecisions []EnvVarDecision
-	// Shellgate analysis
 	EvalResult *shell.EvalResult
-	PolicyAuto bool // true = auto-allowed by policy, no user decision needed
 }
 
 var (
@@ -409,7 +161,6 @@ type Model struct {
 	allowChosen   bool                // true = Allow chosen in step 2, false = Deny chosen
 	selectedIdx   int                 // currently selected command in history (for expansion)
 	focus         string              // "history" or "actions"
-	detailsScroll int                 // scroll position in details view
 	expandedCmd   *CommandLog         // currently expanded command
 	decisionReqID int                 // request ID being decided - prevents switching to different request
 	logDecision   bool                // true = mark decision for logging to user_log.txt
@@ -566,9 +317,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.envVarCursor = -1
 					}
 				} else if m.viewOnly || m.focus == "details" {
-					if m.detailsScroll > 0 {
-						m.detailsScroll--
-					}
 				}
 			}
 		case "down":
@@ -589,7 +337,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.envVarCursor++
 					}
 				} else if m.viewOnly || m.focus == "details" {
-					m.detailsScroll++
 				}
 			}
 		case "home":
@@ -597,13 +344,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedIdx = 0
 				m.scrollY = 0
 				m.expandedCmd = m.commands[0]
-				m.detailsScroll = 0
 			}
 		case "end":
 			if m.step == 1 && len(m.commands) > 0 {
 				m.selectedIdx = len(m.commands) - 1
 				m.expandedCmd = m.commands[m.selectedIdx]
-				m.detailsScroll = 0
 			}
 		case "left":
 			if m.step == 2 && !m.viewOnly && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
@@ -832,16 +577,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case EventConnect:
 			m.connections++
-		case EventRequest:
-			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
-		case EventCommand:
-			m.lastDecision = msg.Decision
-			m.lastTime = time.Now()
-			m.flashTimer = 3
-		case EventLog:
-			m.AddLog(msg.Log)
-		case EventStoreRequest:
-			StoreRequest(msg.RequestID, msg.Req)
 		case EventNewRequest:
 			// Auto-allow / auto-deny logic (safe model access in event loop)
 			autoAllowed := false
@@ -1014,15 +749,6 @@ func durationToReason(allow bool, choice int) (decision, reason string, duration
 	case 3:
 		reason = "4h"
 		duration = Duration4Hours
-	case 5:
-		reason = "session"
-		duration = 0
-	case 6:
-		reason = "always"
-		duration = 0
-	case 7:
-		reason = "pattern"
-		duration = 0
 	default:
 		reason = "unknown"
 	}
@@ -1382,290 +1108,6 @@ func (m *Model) renderHistoryList(sb *strings.Builder, maxHeight int) {
 	}
 }
 
-func parsePipeline(cmd string) PipelineAnalysis {
-	/* Extract caller and syscall from [appname:syscall] prefix */
-	var caller, syscall string
-	cleanCmd := cmd
-
-	/* Parse [appname:syscall] prefix */
-	if strings.HasPrefix(cmd, "[") {
-		endBracket := strings.Index(cmd, "]")
-		if endBracket > 0 {
-			/* Extract content between [ and ] */
-			content := cmd[1:endBracket]
-			parts := strings.SplitN(content, ":", 2)
-			if len(parts) >= 1 {
-				caller = parts[0]
-			}
-			if len(parts) >= 2 {
-				syscall = parts[1]
-			}
-			/* Get the rest of the command after "] " */
-			rest := cmd[endBracket+1:]
-			if strings.HasPrefix(rest, " ") {
-				cleanCmd = rest[1:]
-			} else {
-				cleanCmd = rest
-			}
-		}
-	}
-
-	stages := []PipelineStage{}
-	segments := strings.Fields(cleanCmd)
-
-	for i := 0; i < len(segments); i++ {
-		segment := segments[i]
-		if segment == "|" {
-			if len(stages) > 0 {
-				stages[len(stages)-1].Stdout = "|"
-			}
-		} else if len(segment) > 0 {
-			cmdName := segment
-			var args []string
-
-			j := i + 1
-			for j < len(segments) && segments[j] != "|" {
-				args = append(args, segments[j])
-				j++
-			}
-
-			stage := PipelineStage{
-				Operator: getOperator(len(stages), segments),
-				Command:  cmdName,
-				Args:     args,
-				Stdin:    getInputSource(len(stages), segments),
-				Stdout:   getOutputDesc(cmdName),
-			}
-			stages = append(stages, stage)
-			i = j - 1
-		}
-	}
-
-	return PipelineAnalysis{
-		Original: cmd,
-		Stages:   stages,
-		FileOps:  inferFileOps(stages, caller),
-		Flow:     "Data pipeline",
-		Syscall:  syscall,
-	}
-}
-
-func getOperator(stageIndex int, segments []string) string {
-	if stageIndex == 0 {
-		return ""
-	}
-	for i := len(segments) - 1; i >= 0; i-- {
-		if segments[i] == "|" {
-			return "|"
-		}
-	}
-	return ""
-}
-
-func getInputSource(stageIndex int, segments []string) string {
-	if stageIndex == 0 {
-		return ""
-	}
-	return "|"
-}
-
-func getOutputDesc(command string) string {
-	switch {
-	case command == "find":
-		return "File paths to stdout"
-	case command == "grep":
-		return "Matching lines to stdout"
-	case command == "wc":
-		return "Line count to stdout"
-	case command == "sort":
-		return "Sorted lines to stdout"
-	case command == "cat":
-		return "File contents to stdout"
-	case command == "ls":
-		return "Directory listing to stdout"
-	case command == "head":
-		return "First lines to stdout"
-	case command == "tail":
-		return "Last lines to stdout"
-	case command == "xargs":
-		return "Arguments to command"
-	case command == "awk":
-		return "Processed output to stdout"
-	default:
-		return "Output to stdout"
-	}
-}
-
-func inferFileOps(stages []PipelineStage, appName string) string {
-	/* Check for claude/cursor app with version command (X.Y.Z) */
-	if appName == "claude" || appName == "cursor" {
-		for _, stage := range stages {
-			if strings.Contains(stage.Command, ".") {
-				parts := strings.Split(stage.Command, ".")
-				if len(parts) >= 2 {
-					parser := &ClaudeParser{}
-					parsed, err := parser.ParseArguments(stage.Args)
-					if err == nil {
-						cmd := parsed.(*ClaudeCommand)
-						switch cmd.Subcommand {
-						case "--ripgrep", "ripgrep":
-							if cmd.Target != "" {
-								return fmt.Sprintf("Searches: %s (claude ripgrep)", cmd.Target)
-							}
-							return "Searches: files (claude ripgrep)"
-						case "--grep", "grep":
-							if cmd.Target != "" {
-								return fmt.Sprintf("Searches: %s (claude grep)", cmd.Target)
-							}
-							return "Searches: files (claude grep)"
-						case "--files", "files":
-							if cmd.Target != "" {
-								return fmt.Sprintf("Lists: %s (claude files)", cmd.Target)
-							}
-							return "Lists: files (claude files)"
-						}
-					}
-				}
-			}
-		}
-	}
-
-	for _, stage := range stages {
-		switch stage.Command {
-		case "git":
-			parser := &GitParser{}
-			parsed, err := parser.ParseArguments(stage.Args)
-			if err != nil {
-				return ""
-			}
-
-			cmd := parsed.(*GitCommand)
-			if cmd.IsReadOnly {
-				return fmt.Sprintf("Reads: .git (%s)", cmd.Subcommand)
-			} else if cmd.AffectsRemote {
-				return fmt.Sprintf("Reads: .git, Writes: remote (%s)", cmd.Subcommand)
-			} else {
-				return fmt.Sprintf("Reads/Writes: .git (%s)", cmd.Subcommand)
-			}
-		case "find":
-			if len(stage.Args) > 0 {
-				return fmt.Sprintf("Searches: %s", stage.Args[0])
-			}
-			return "Searches: ./*"
-		case "ls":
-			if len(stage.Args) > 0 {
-				return fmt.Sprintf("Lists: %s", stage.Args[0])
-			}
-			return "Lists: current directory"
-		case "cat":
-			if len(stage.Args) > 0 {
-				return fmt.Sprintf("Reads: %s", strings.Join(stage.Args, ", "))
-			}
-			return ""
-		case "grep":
-			parser := &GrepParser{}
-			parsed, err := parser.ParseArguments(stage.Args)
-			if err != nil {
-				return ""
-			}
-
-			cmd := parsed.(*GrepCommand)
-			if cmd.UseRecursive {
-				return "Searches: ./*"
-			} else if len(cmd.InputFiles) > 0 {
-				return fmt.Sprintf("Searches: %s", strings.Join(cmd.InputFiles, ", "))
-			} else {
-				return ""
-			}
-		case "ps":
-			return "Reads: /proc/*"
-		case "ldd":
-			if len(stage.Args) > 0 {
-				return fmt.Sprintf("Checks libraries: %s", stage.Args[0])
-			}
-			return "Checks libraries for binary"
-		case "sh", "bash":
-			if len(stage.Args) > 1 {
-				return fmt.Sprintf("Executes: %s", stage.Args[1])
-			}
-			return ""
-		}
-	}
-	return ""
-}
-
-func detectCommandIntent(analysis PipelineAnalysis) string {
-	for _, stage := range analysis.Stages {
-		/* Check for claude version command */
-		if strings.Contains(stage.Command, ".") {
-			parts := strings.Split(stage.Command, ".")
-			if len(parts) >= 2 {
-				parser := &ClaudeParser{}
-				parsed, err := parser.ParseArguments(stage.Args)
-				if err == nil {
-					cmd := parsed.(*ClaudeCommand)
-					switch cmd.Subcommand {
-					case "--ripgrep", "ripgrep":
-						return fmt.Sprintf("Claude: ripgrep search in %s", cmd.Target)
-					case "--grep", "grep":
-						return fmt.Sprintf("Claude: grep search in %s", cmd.Target)
-					case "--files", "files":
-						return fmt.Sprintf("Claude: list files in %s", cmd.Target)
-					}
-					return "Claude command"
-				}
-			}
-		}
-
-		switch {
-		case strings.Contains(stage.Command, "find"):
-			return "Search for files"
-		case strings.Contains(stage.Command, "grep"):
-			return "Text search and pattern matching"
-		case strings.Contains(stage.Command, "ps"):
-			return "Process enumeration"
-		case strings.Contains(stage.Command, "wc"):
-			return "Counting and statistics"
-		case strings.Contains(stage.Command, "sort"):
-			return "Data sorting"
-		}
-	}
-	return "Command execution"
-}
-
-func generatePipelineOutput(analysis PipelineAnalysis) []string {
-	var lines []string
-
-	// Build the display command
-	lines = append(lines, fmt.Sprintf("$ %s", analysis.Original))
-
-	for i, stage := range analysis.Stages {
-		if i == len(analysis.Stages)-1 {
-			lines = append(lines, fmt.Sprintf("o ← %s %s", stage.Command, strings.Join(stage.Args, " ")))
-		} else {
-			lines = append(lines, fmt.Sprintf("| ← %s %s", stage.Command, strings.Join(stage.Args, " ")))
-		}
-	}
-
-	if analysis.FileOps != "" {
-		lines = append(lines, analysis.FileOps)
-	}
-
-	for _, stage := range analysis.Stages {
-		if stage.Stdout != "" && stage.Stdout != "|" && stage.Stdout != "Output to stdout" {
-			lines = append(lines, fmt.Sprintf("Out: %s", stage.Stdout))
-			break
-		}
-	}
-
-	lines = append(lines, "")
-
-	intent := detectCommandIntent(analysis)
-	lines = append(lines, fmt.Sprintf("💡 Intent: %s", intent))
-
-	return lines
-}
-
 func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 	if m.expandedCmd == nil {
 		return
@@ -1697,12 +1139,6 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 	sb.WriteString(cardStyle.Render(row))
 	sb.WriteString("\n")
 
-	// Calculate how much space is available for details
-	// Reserve: 3 lines for header, 8 lines for actions palette
-	detailsMaxLines := maxHeight - 12
-	if detailsMaxLines < 3 {
-		detailsMaxLines = 3
-	}
 
 	// Render details section with scrolling
 	detailsFocus := dimStyle

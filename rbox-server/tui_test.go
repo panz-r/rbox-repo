@@ -95,9 +95,6 @@ func TestDurationToReason(t *testing.T) {
 		{1, "ALLOW", "15m", 900},
 		{2, "ALLOW", "1h", 3600},
 		{3, "ALLOW", "4h", 14400},
-		{5, "ALLOW", "session", 0},
-		{6, "ALLOW", "always", 0},
-		{7, "ALLOW", "pattern", 0},
 	}
 
 	for _, tt := range testsAllow {
@@ -119,9 +116,6 @@ func TestDurationToReason(t *testing.T) {
 		{1, "DENY", "15m", 900},
 		{2, "DENY", "1h", 3600},
 		{3, "DENY", "4h", 14400},
-		{5, "DENY", "session", 0},
-		{6, "DENY", "always", 0},
-		{7, "DENY", "pattern", 0},
 	}
 
 	for _, tt := range testsDeny {
@@ -187,100 +181,6 @@ func TestAddLog(t *testing.T) {
 		model.AddLog("entry")
 	}
 	assert.Len(t, model.logs, 50) // Should be capped at MaxLogs
-}
-
-func TestParsePipeline(t *testing.T) {
-	tests := []struct {
-		name            string
-		input           string
-		expectedFileOps string
-		expectedSyscall string
-	}{
-		{
-			name:            "Simple ls",
-			input:           "ls -l",
-			expectedFileOps: "Lists: -l",
-			expectedSyscall: "",
-		},
-		{
-			name:            "Git status",
-			input:           "git status",
-			expectedFileOps: "Reads: .git (status)",
-			expectedSyscall: "",
-		},
-		{
-			name:            "Git commit (not read-only)",
-			input:           "git commit -m 'fix bug'",
-			expectedFileOps: "Reads/Writes: .git (commit)",
-			expectedSyscall: "",
-		},
-		{
-			name:            "Git push (affects remote)",
-			input:           "git push origin main",
-			expectedFileOps: "Reads: .git, Writes: remote (push)",
-			expectedSyscall: "",
-		},
-		{
-			name:            "Find command",
-			input:           "find /home -name *.txt",
-			expectedFileOps: "Searches: /home",
-			expectedSyscall: "",
-		},
-		{
-			name:            "Ls with path",
-			input:           "ls /tmp",
-			expectedFileOps: "Lists: /tmp",
-			expectedSyscall: "",
-		},
-		{
-			name:            "Cat file",
-			input:           "cat /etc/passwd",
-			expectedFileOps: "Reads: /etc/passwd",
-			expectedSyscall: "",
-		},
-		{
-			name:            "Grep recursive",
-			input:           "grep -r error /var/log",
-			expectedFileOps: "Searches: ./*",
-			expectedSyscall: "",
-		},
-		{
-			name:            "Ps command",
-			input:           "ps aux",
-			expectedFileOps: "Reads: /proc/*",
-			expectedSyscall: "",
-		},
-		{
-			name:            "With caller prefix",
-			input:           "[git:commit] git commit -m 'test'",
-			expectedFileOps: "Reads/Writes: .git (commit)",
-			expectedSyscall: "commit",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := parsePipeline(tt.input)
-			assert.Equal(t, tt.expectedFileOps, result.FileOps)
-			assert.Equal(t, tt.expectedSyscall, result.Syscall)
-			assert.NotEmpty(t, result.Stages)
-		})
-	}
-}
-
-func TestGeneratePipelineOutput(t *testing.T) {
-	analysis := PipelineAnalysis{
-		Original: "ls -l",
-		Stages: []PipelineStage{
-			{Command: "ls", Args: []string{"-l"}},
-		},
-		FileOps: "",
-	}
-
-	lines := generatePipelineOutput(analysis)
-	assert.NotEmpty(t, lines)
-	assert.Contains(t, lines[0], "$ ls -l")
-	assert.Contains(t, lines[len(lines)-1], "Intent:")
 }
 
 func TestMinInt(t *testing.T) {
