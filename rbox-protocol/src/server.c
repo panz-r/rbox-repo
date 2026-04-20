@@ -253,24 +253,24 @@ void send_pool_destroy(rbox_server_handle_t *server) {
  * Centralised timeout management via min-heap
  * ============================================================ */
 
-static void schedule_idle_timer(rbox_server_handle_t *server, int fd) {
+static void schedule_idle_timer(rbox_server_handle_t *server, rbox_client_fd_entry_t *entry) {
     if (server->client_idle_timeout > 0) {
-        uint64_t timeout_ms = (uint64_t)server->client_idle_timeout * 1000;
-        rbox_timer_add(server->timer_heap, fd, timeout_ms, RBOX_TIMEOUT_IDLE);
+        uint64_t timeout_ms = get_time_ms() + (uint64_t)server->client_idle_timeout * 1000;
+        rbox_timer_add(server->timer_heap, entry->fd, timeout_ms, RBOX_TIMEOUT_IDLE, entry);
     }
 }
 
-static void schedule_header_timer(rbox_server_handle_t *server, int fd) {
+static void schedule_header_timer(rbox_server_handle_t *server, rbox_client_fd_entry_t *entry) {
     if (server->request_timeout > 0) {
-        uint64_t timeout_ms = (uint64_t)server->request_timeout * 1000;
-        rbox_timer_add(server->timer_heap, fd, timeout_ms, RBOX_TIMEOUT_HEADER);
+        uint64_t timeout_ms = get_time_ms() + (uint64_t)server->request_timeout * 1000;
+        rbox_timer_add(server->timer_heap, entry->fd, timeout_ms, RBOX_TIMEOUT_HEADER, entry);
     }
 }
 
-static void schedule_body_timer(rbox_server_handle_t *server, int fd) {
+static void schedule_body_timer(rbox_server_handle_t *server, rbox_client_fd_entry_t *entry) {
     if (server->request_timeout > 0) {
-        uint64_t timeout_ms = (uint64_t)server->request_timeout * 1000;
-        rbox_timer_add(server->timer_heap, fd, timeout_ms, RBOX_TIMEOUT_BODY);
+        uint64_t timeout_ms = get_time_ms() + (uint64_t)server->request_timeout * 1000;
+        rbox_timer_add(server->timer_heap, entry->fd, timeout_ms, RBOX_TIMEOUT_BODY, entry);
     }
 }
 
@@ -301,7 +301,7 @@ static void pending_request_set(rbox_server_handle_t *server, int fd, rbox_serve
         entry->pending_request = req;
         if (req->reading_body) {
             cancel_timer(server, fd);
-            schedule_body_timer(server, fd);
+            schedule_body_timer(server, entry);
         }
     }
 }
@@ -459,6 +459,15 @@ static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_
 
 /* Process a completed request: check cache, parse env vars, queue request */
 static void process_completed_request(rbox_server_handle_t *server, int fd, rbox_server_request_t *req) {
+    /* GRACEFUL SHUTDOWN: Discard completed requests - user has been told no more
+     * requests via NULL sentinel. User is responsible for calling decide() on any
+     * requests they received. Requests completed during shutdown are dropped. */
+    if (!atomic_load(&server->running)) {
+        DBG("Discarding completed request during shutdown for fd %d", fd);
+        server_request_free(req);
+        return;
+    }
+
     uint32_t packet_checksum = (req->command_len > 0) ? rbox_runtime_crc32(0, req->command_data, req->command_len) : 0;
     uint64_t cmd_hash2 = (req->command_len > 0) ? rbox_hash64(req->command_data, req->command_len) : 0;
     uint8_t cached_decision;
@@ -503,21 +512,18 @@ static void process_completed_request(rbox_server_handle_t *server, int fd, rbox
         client_connection_close(server, fd);
         return;
     }
+    server->requests_queued++;
     if (server->request_wake_fd >= 0) {
         uint64_t val = 1;
-        ssize_t w = write(server->request_wake_fd, &val, sizeof(val));
-        if (w < 0) {
-            DBG("eventfd_write failed: %s", strerror(errno));
-        }
+        ssize_t r;
+        do { r = write(server->request_wake_fd, &val, sizeof(val)); } while (r < 0 && (errno == EINTR || errno == EAGAIN));
     }
 }
 
-/* Try to send as much data as possible from the queue for a given fd.
- * Uses peek-first approach to avoid losing entries on EAGAIN.
- * Entry is only dequeued after write completes or on permanent failure. */
-static void send_pending_locked(rbox_server_handle_t *server, int fd) {
-    rbox_client_fd_entry_t *client_entry = client_fd_find(server, fd);
-    if (!client_entry) return;
+/* Internal: send pending data for a client entry.
+ * Caller must hold client_fd_mutex. */
+static int send_pending_entry_locked(rbox_server_handle_t *server, rbox_client_fd_entry_t *client_entry) {
+    if (!client_entry) return 0;
 
     while (1) {
         rbox_server_send_entry_t *entry = send_queue_peek(client_entry);
@@ -527,14 +533,15 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
         ssize_t w = write(entry->fd, entry->data + entry->offset, remaining);
         if (w < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                DBG("send_pending_locked: write would block on fd %d", entry->fd);
-                return;
+                DBG("send_pending_entry_locked: write would block on fd %d", entry->fd);
+                return 0;
             }
             if (errno == EINTR) {
-                DBG("send_pending_locked: write interrupted, retrying");
+                DBG("send_pending_entry_locked: write interrupted, retrying");
+                sched_yield();
                 continue;
             }
-            DBG("send_pending_locked: write failed on fd %d: %s", entry->fd, strerror(errno));
+            DBG("send_pending_entry_locked: write failed on fd %d: %s", entry->fd, strerror(errno));
             send_queue_dequeue(client_entry);
             if (entry->request) {
                 entry->request->fd = -1;
@@ -542,9 +549,9 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
             }
             entry->request = NULL;
             send_pool_put(server, entry);
-            continue;
+            return -1;
         } else if (w == 0) {
-            DBG("send_pending_locked: write returned 0 on fd %d", entry->fd);
+            DBG("send_pending_entry_locked: write returned 0 on fd %d", entry->fd);
             send_queue_dequeue(client_entry);
             if (entry->request) {
                 entry->request->fd = -1;
@@ -552,13 +559,13 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
             }
             entry->request = NULL;
             send_pool_put(server, entry);
-            continue;
+            return -1;
         } else {
             entry->offset += w;
             client_entry->last_activity = get_time_ms();
-            DBG("send_pending_locked: wrote %zd bytes on fd %d, offset now %zu/%zu", w, entry->fd, entry->offset, entry->len);
+            DBG("send_pending_entry_locked: wrote %zd bytes on fd %d, offset now %zu/%zu", w, entry->fd, entry->offset, entry->len);
             if (entry->offset == entry->len) {
-                DBG("send_pending_locked: fully sent response for fd %d", entry->fd);
+                DBG("send_pending_entry_locked: fully sent response for fd %d", entry->fd);
                 uint8_t sent_decision = (uint8_t)entry->data[RBOX_HEADER_SIZE];
                 if (sent_decision == RBOX_DECISION_ALLOW) {
                     atomic_fetch_add(&server->telemetry_allow_sent, 1);
@@ -573,11 +580,25 @@ static void send_pending_locked(rbox_server_handle_t *server, int fd) {
                 entry->request = NULL;
                 send_pool_put(server, entry);
             } else {
-                DBG("send_pending_locked: partial write, waiting for EPOLLOUT");
-                return;
+                DBG("send_pending_entry_locked: partial write, waiting for EPOLLOUT");
+                return 0;
             }
         }
     }
+    return 0;
+}
+
+/* Try to send as much data as possible from the queue for a given fd.
+ * Uses peek-first approach to avoid losing entries on EAGAIN.
+ * Entry is only dequeued after write completes or on permanent failure.
+ * Note: This function acquires and releases client_fd_mutex internally. */
+static void send_pending_locked(rbox_server_handle_t *server, int fd) {
+    pthread_mutex_lock(&server->client_fd_mutex);
+    rbox_client_fd_entry_t *client_entry = client_fd_find_unlocked(server, fd);
+    if (send_pending_entry_locked(server, client_entry) < 0) {
+        client_connection_close_locked(server, client_entry);
+    }
+    pthread_mutex_unlock(&server->client_fd_mutex);
 }
 
 static void try_send_pending(rbox_server_handle_t *server, int fd) {
@@ -586,7 +607,8 @@ static void try_send_pending(rbox_server_handle_t *server, int fd) {
     send_pending_locked(server, fd);
 }
 
-/* Add a response to the send queue and try to send immediately. */
+/* Add a response to the send queue and try to send immediately.
+ * Called only from server thread - locks mutex once and holds for entire operation. */
 static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size_t len, rbox_server_request_t *req) {
     rbox_server_send_entry_t *entry = send_pool_get(server);
     if (!entry) {
@@ -609,8 +631,10 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
         entry->using_internal_buf = 0;
     }
 
-    rbox_client_fd_entry_t *client_entry = client_fd_find(server, fd);
+    pthread_mutex_lock(&server->client_fd_mutex);
+    rbox_client_fd_entry_t *client_entry = client_fd_find_unlocked(server, fd);
     if (!client_entry) {
+        pthread_mutex_unlock(&server->client_fd_mutex);
         entry->request = NULL;
         send_pool_put(server, entry);
         if (req) server_request_free(req);
@@ -618,6 +642,7 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
     }
 
     if (send_queue_enqueue(client_entry, entry) != 0) {
+        pthread_mutex_unlock(&server->client_fd_mutex);
         entry->request = NULL;
         send_pool_put(server, entry);
         if (req) server_request_free(req);
@@ -625,7 +650,10 @@ static int send_queue_add(rbox_server_handle_t *server, int fd, char *data, size
     }
 
     DBG("send_queue_add: added response for fd %d", fd);
-    try_send_pending(server, fd);
+    if (send_pending_entry_locked(server, client_entry) < 0) {
+        client_connection_close_locked(server, client_entry);
+    }
+    pthread_mutex_unlock(&server->client_fd_mutex);
     return 0;
 }
 
@@ -680,7 +708,7 @@ static int server_read_header(rbox_server_handle_t *server, int fd,
         if (n == -1) {
             if (*bytes_read == 0) {
                 cancel_timer(server, fd);
-                schedule_header_timer(server, fd);
+                schedule_header_timer(server, entry);
                 DBG("server_read_header: started header wait for fd %d", fd);
                 return 1;
             }
@@ -813,10 +841,6 @@ static rbox_server_decision_t *decision_queue_pop(rbox_server_handle_t *server) 
 
 /* Lock-free enqueue for request queue */
 static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_t *req) {
-    size_t depth = atomic_load_explicit(&server->request_queue_depth, memory_order_relaxed);
-    if (depth >= RBOX_MAX_REQUEST_QUEUE_DEPTH) {
-        return -1;
-    }
     rbox_request_queue_t *q = &server->request_queue;
     rbox_request_node_t *node = malloc(sizeof(*node));
     if (!node) return -1;
@@ -839,7 +863,10 @@ static int request_queue_push(rbox_server_handle_t *server, rbox_server_request_
                                                   memory_order_release, memory_order_relaxed);
         }
     }
-    atomic_store_explicit(&server->request_queue_depth, depth + 1, memory_order_relaxed);
+    size_t depth = atomic_fetch_add_explicit(&server->request_queue_depth, 1, memory_order_relaxed);
+    if (depth >= RBOX_MAX_REQUEST_QUEUE_DEPTH) {
+        DBG("request_queue_push: depth %zu exceeds max %d", depth, RBOX_MAX_REQUEST_QUEUE_DEPTH);
+    }
     return 0;
 }
 
@@ -867,7 +894,49 @@ static rbox_server_request_t *request_queue_pop(rbox_server_handle_t *server) {
 
 /* ============================================================
  * SERVER THREAD
- * ============================================================ */
+ * ============================================================
+ *
+ * SERVER OPERATIONAL MODES
+ *
+ * The server thread operates in three modes:
+ *
+ * 1. RUNNING (running = 1)
+ *    - Accepts new connections
+ *    - Processes incoming requests from clients
+ *    - Sends responses to clients
+    *    - Tracks requests_queued and decisions_received
+ *
+ * 2. GRACEFUL SHUTDOWN (running = 0, within grace period)
+ *    Triggered by: rbox_server_stop() sets running = 0
+ *    - NO new connections accepted (listen socket events ignored)
+ *    - Immediately queues NULL sentinel to request queue
+ *    - Wakes get_request() callers (they pop NULL and exit)
+ *    - Discards completed requests (frees memory, doesn't queue)
+ *    - Continues processing decisions and sending responses
+    *    - Checks: requests_queued == decisions_received?
+ *      - If YES: all ownership transferred, exits gracefully
+ *      - If NO: continues until timeout (max 2 seconds)
+ *    - Client sockets remain open for continued operation
+ *
+ * 3. FORCE SHUTDOWN (grace period expired)
+ *    Triggered by: 2 second timeout expires
+ *    - Drains decision queue and frees memory without sending
+ *    - Forces exit regardless of outstanding request count
+ *
+ * REQUEST MEMORY OWNERSHIP CONTRACT
+ *
+ * - Request in queue: owned by server, freed by server_handle_free()
+ * - Request popped via get_request(): owned by USER
+ *   - User MUST call decide() to transfer back to server
+ *   - If user fails to call decide(), memory leaks (user's fault)
+ * - Decision in queue: owned by server, freed by server_handle_free()
+ *
+ * server_handle_free() walk and frees:
+ * - Request queue (requests not yet given to users)
+ * - Decision queue (decisions not yet processed)
+ * - Client sockets
+ * - Timer heap, pools, cache
+ */
 
 static void *server_thread_func(void *arg) {
     rbox_server_handle_t *server = arg;
@@ -883,21 +952,27 @@ static void *server_thread_func(void *arg) {
      * if fcntl fails, cleanly shutting down the server. The listen socket is only used
      * for accept() in this thread, so setting O_NONBLOCK before entering the main loop
      * is the correct point for this operation. */
+    server->thread_error = RBOX_OK;
     int flags = fcntl(server->listen_fd, F_GETFL, 0);
     if (flags < 0) {
-        return NULL;
+        server->thread_error = RBOX_ERR_IO;
+        goto startup_failed;
     }
     if (fcntl(server->listen_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        return NULL;
+        server->thread_error = RBOX_ERR_IO;
+        goto startup_failed;
     }
 
     server->epoll_fd = epoll_create1(0);
-    if (server->epoll_fd < 0) return NULL;
+    if (server->epoll_fd < 0) {
+        server->thread_error = RBOX_ERR_IO;
+        goto startup_failed;
+    }
 
-    struct epoll_event lev = { .events = EPOLLIN, .data.fd = server->listen_fd };
+    struct epoll_event lev = { .events = EPOLLIN | EPOLLET, .data.fd = server->listen_fd };
     if (epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, server->listen_fd, &lev) < 0) {
-        close(server->epoll_fd);
-        return NULL;
+        server->thread_error = RBOX_ERR_IO;
+        goto startup_failed;
     }
     DBG("Listen fd %d added to epoll", server->listen_fd);
 
@@ -917,12 +992,13 @@ static void *server_thread_func(void *arg) {
         loop_count++;
         DBG("=== Top of loop (count=%d) ===", loop_count);
         DBG("server->running = %d", atomic_load(&server->running));
-        DBG("active clients = %d", server->active_client_count);
+        DBG("active clients = %d", atomic_load(&server->active_client_count));
 
         /* Process pending decisions (lock-free pop) */
         while (1) {
             rbox_server_decision_t *dec = decision_queue_pop(server);
             if (!dec) break;
+            server->decisions_received++;
             DBG("Processing decision for fd %d", dec->request ? dec->request->fd : -1);
 
             if (!dec->request) {
@@ -973,19 +1049,88 @@ static void *server_thread_func(void *arg) {
 
         /* If shutdown requested, check if we can exit */
         if (!atomic_load(&server->running)) {
-            if (server->active_client_count == 0) {
-                DBG("No active clients, exiting");
+            /* GRACEFUL SHUTDOWN: Push NULL sentinel immediately to tell get_request callers
+             * that no more requests will be queued. Then drain decisions and serve responses
+             * until all outstanding requests have been decided or timeout expires. */
+            request_queue_push(server, NULL);
+            if (server->request_wake_fd >= 0) {
+                uint64_t val = 1;
+                ssize_t r;
+                do { r = write(server->request_wake_fd, &val, sizeof(val)); } while (r < 0 && (errno == EINTR || errno == EAGAIN));
+            }
+
+            /* Drain decisions and serve responses until all outstanding requests decided */
+            while (1) {
+                rbox_server_decision_t *dec = decision_queue_pop(server);
+                if (!dec) break;
+                server->decisions_received++;
+                DBG("Processing decision on shutdown for fd %d", dec->request ? dec->request->fd : -1);
+                if (!dec->request) {
+                    free(dec);
+                    continue;
+                }
+                rbox_server_request_t *req = dec->request;
+                uint32_t cmd_hash = req->cmd_hash;
+                rbox_version_info_t negotiated_version = {
+                    .major = req->negotiated_major,
+                    .minor = req->negotiated_minor,
+                    .capabilities = req->negotiated_capabilities
+                };
+                uint8_t *resp_buf = malloc(1024);
+                if (!resp_buf) {
+                    DBG("Failed to allocate response buffer for fd %d", req->fd);
+                    server_request_free(req);
+                    free(dec->env_decisions);
+                    free(dec);
+                    continue;
+                }
+                size_t resp_len;
+                rbox_error_t err = rbox_encode_response(req->client_id, req->request_id, cmd_hash,
+                    dec->decision, dec->reason,
+                    dec->fenv_hash, dec->env_decision_count, dec->env_decisions,
+                    resp_buf, 1024, &resp_len, &negotiated_version);
+                if (err == RBOX_OK) {
+                    if (send_queue_add(server, req->fd, (char *)resp_buf, resp_len, req) != 0) {
+                        DBG("Failed to queue shutdown response for fd %d", req->fd);
+                        free(resp_buf);
+                        server_request_free(req);
+                    }
+                } else {
+                    DBG("Failed to encode shutdown response for fd %d", req->fd);
+                    free(resp_buf);
+                    server_request_free(req);
+                }
+                free(dec->env_decisions);
+                free(dec);
+            }
+
+            /* Check if all outstanding requests have been decided */
+            if (server->requests_queued == server->decisions_received) {
+                DBG("All outstanding requests processed, exiting");
                 break;
             }
+
+            /* Track grace period */
             if (shutdown_start == 0) shutdown_start = get_time_ms();
             uint64_t shutdown_elapsed = get_time_ms() - shutdown_start;
             if (shutdown_elapsed > 2000) {
-                DBG("Shutdown timeout reached, exiting with %d active clients",
-                    server->active_client_count);
+                DBG("Shutdown timeout reached, forcing exit with %u outstanding, %u decided",
+                    server->requests_queued, server->decisions_received);
+                /* Drain and free remaining decisions without sending responses */
+                while (1) {
+                    rbox_server_decision_t *dec = decision_queue_pop(server);
+                    if (!dec) break;
+                    server->decisions_received++;
+                    if (dec->request) {
+                        server_request_free(dec->request);
+                    }
+                    free(dec->env_decisions);
+                    free(dec);
+                }
                 break;
             }
-            DBG("Shutdown in progress, %d active clients",
-                server->active_client_count);
+            DBG("Shutdown in progress: %u outstanding, %u decided",
+                server->requests_queued, server->decisions_received);
         } else {
             shutdown_start = 0;
         }
@@ -993,13 +1138,27 @@ static void *server_thread_func(void *arg) {
         /* Epoll wait and event handling - use timer heap to determine timeout */
         uint64_t now = get_time_ms();
         uint64_t next_expiry = rbox_timer_next_expiry(server->timer_heap, now);
-        int timeout_ms = (next_expiry == UINT64_MAX) ? 100 :
+        int timeout_ms;
+        if (!atomic_load(&server->running)) {
+            timeout_ms = 100;
+        } else {
+            timeout_ms = (next_expiry == UINT64_MAX) ? 100 :
                          (next_expiry > (uint64_t)INT_MAX ? INT_MAX : (int)next_expiry);
+        }
 
         int n = epoll_wait(server->epoll_fd, events, 64, timeout_ms);
         if (n < 0) {
             if (errno == EINTR) {
                 continue;
+            }
+            atomic_store(&server->running, 0);
+            /* Queue NULL to signal get_request callers to exit */
+            request_queue_push(server, NULL);
+            /* Wake get_request callers */
+            if (server->request_wake_fd >= 0) {
+                uint64_t val = 1;
+                ssize_t r;
+                do { r = write(server->request_wake_fd, &val, sizeof(val)); } while (r < 0 && (errno == EINTR || errno == EAGAIN));
             }
             break;
         }
@@ -1024,7 +1183,7 @@ static void *server_thread_func(void *arg) {
                             DBG("accept failed: %s", strerror(errno));
                             break;
                         }
-                        if (server->max_clients > 0 && server->active_client_count >= server->max_clients) {
+                        if (server->max_clients > 0 && atomic_load(&server->active_client_count) >= server->max_clients) {
                             DBG("max clients (%d) reached, refusing connection on fd %d", server->max_clients, cl_fd);
                             close(cl_fd);
                             break;
@@ -1045,15 +1204,19 @@ static void *server_thread_func(void *arg) {
                         rbox_client_fd_entry_t *new_entry = server->client_fds;
                         struct epoll_event cev = { .events = EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, .data.ptr = new_entry };
                         epoll_ctl(server->epoll_fd, EPOLL_CTL_ADD, cl_fd, &cev);
-                        schedule_idle_timer(server, cl_fd);
+                        schedule_idle_timer(server, new_entry);
                     }
                     continue;
                 }
 
                 if (server->wake_fd >= 0 && ev->data.fd == server->wake_fd) {
-                    uint64_t val;
-                    ssize_t r;
-                    do { r = read(server->wake_fd, &val, sizeof(val)); } while (r < 0 && (errno == EINTR || errno == EAGAIN));
+                    while (1) {
+                        uint64_t val;
+                        ssize_t r = read(server->wake_fd, &val, sizeof(val));
+                        if (r < 0 && errno == EAGAIN) break;
+                        if (r < 0 && errno == EINTR) continue;
+                        if (r < 0) break;
+                    }
                     continue;
                 }
 
@@ -1321,7 +1484,16 @@ static void *server_thread_func(void *arg) {
                 if (!closed && (ev->events & EPOLLOUT)) {
                     DBG("EPOLLOUT for fd %d", cl_fd);
                     try_send_pending(server, cl_fd);
-                    /* After sending, check for EOF using MSG_PEEK */
+                    /* Check for socket errors first */
+                    int so_error = 0;
+                    socklen_t optlen = sizeof(so_error);
+                    if (getsockopt(cl_fd, SOL_SOCKET, SO_ERROR, &so_error, &optlen) == 0 && so_error != 0) {
+                        DBG("EPOLLOUT: SO_ERROR=%d on fd %d, closing", so_error, cl_fd);
+                        client_connection_close(server, cl_fd);
+                        closed = 1;
+                        goto next_event;
+                    }
+                    /* Then check for EOF using MSG_PEEK */
                     char buf;
                     ssize_t r = recv(cl_fd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
                     if (r == 0) {
@@ -1351,6 +1523,12 @@ static void *server_thread_func(void *arg) {
         while (rbox_timer_next_expiry(server->timer_heap, now) == 0) {
             rbox_timer_entry_t *timer = rbox_timer_get_expired(server->timer_heap);
             if (!timer) break;
+            rbox_client_fd_entry_t *entry = timer->data;
+            if (!entry || !entry->valid) {
+                DBG("Timer expired but entry already closed, skipping");
+                free(timer);
+                continue;
+            }
             DBG("Timer expired: fd %d type %d, closing", timer->fd, timer->type);
             client_connection_close(server, timer->fd);
             free(timer);
@@ -1362,6 +1540,23 @@ static void *server_thread_func(void *arg) {
     DBG("Exiting server thread (running=%d)", atomic_load(&server->running));
     close(server->epoll_fd);
     server->epoll_fd = -1;
+    return NULL;
+
+    /* Error handling for startup failures */
+    startup_failed:
+    atomic_store(&server->running, 0);
+    /* Queue NULL to signal get_request callers to exit */
+    request_queue_push(server, NULL);
+    /* Wake get_request callers */
+    if (server->request_wake_fd >= 0) {
+        uint64_t val = 1;
+        ssize_t r;
+        do { r = write(server->request_wake_fd, &val, sizeof(val)); } while (r < 0 && (errno == EINTR || errno == EAGAIN));
+    }
+    pthread_mutex_lock(&server->startup_mutex);
+    server->startup_complete = 1;
+    pthread_cond_broadcast(&server->startup_cond);
+    pthread_mutex_unlock(&server->startup_mutex);
     return NULL;
 }
 
@@ -1428,6 +1623,8 @@ rbox_server_handle_t *rbox_server_handle_new(const char *socket_path, rbox_error
     atomic_flag_clear(&srv->stop_flag);
     srv->client_fds = NULL;
     srv->active_client_count = 0;
+    srv->requests_queued = 0;
+    srv->decisions_received = 0;
     rbox_cache_init(&srv->cache, RBOX_RESPONSE_CACHE_SIZE);
     srv->timer_heap = rbox_timer_heap_new();
     if (request_pool_init(srv, RBOX_REQUEST_POOL_SIZE) < 0) {
@@ -1559,6 +1756,9 @@ void rbox_server_handle_free(rbox_server_handle_t *server) {
     while (node) {
         rbox_decision_node_t *next = atomic_load_explicit(&node->next, memory_order_acquire);
         if (node->decision) {
+            if (node->decision->request) {
+                server_request_free(node->decision->request);
+            }
             free(node->decision->env_decisions);
             free(node->decision);
         }
@@ -1683,30 +1883,40 @@ rbox_server_request_t *rbox_server_get_request(rbox_server_handle_t *server, rbo
         rbox_error_set(err_info, RBOX_ERR_INVALID, 0, RBOX_MSG_INVALID_PARAM);
         return NULL;
     }
-    while (atomic_load(&server->running)) {
+
+    while (1) {
         rbox_server_request_t *req = request_queue_pop(server);
         if (req) {
             extract_env_vars(req);
             return req;
         }
 
-        /* Wait for wakeup */
+        /* Queue empty - wait for wakeup */
         struct pollfd pfd = { .fd = server->request_wake_fd, .events = POLLIN };
         if (poll(&pfd, 1, -1) < 0) {
             if (errno == EINTR) continue;
             return NULL;
         }
-        /* Drain the eventfd */
-        uint64_t val;
-        ssize_t r = read(server->request_wake_fd, &val, sizeof(val));
-        (void)r;
+        /* Drain the eventfd until EAGAIN */
+        while (1) {
+            uint64_t val;
+            ssize_t r = read(server->request_wake_fd, &val, sizeof(val));
+            if (r < 0 && errno == EAGAIN) break;
+            if (r < 0 && errno == EINTR) continue;
+            if (r < 0) break;
+        }
+
+        /* Check if server was stopped while we were waiting */
+        if (!atomic_load(&server->running)) {
+            /* Drain queue one more time - server may have queued NULL */
+            req = request_queue_pop(server);
+            if (req) {
+                extract_env_vars(req);
+                return req;
+            }
+            return NULL;
+        }
     }
-    /* Server stopped - drain queue one more time */
-    rbox_server_request_t *req = request_queue_pop(server);
-    if (req) {
-        extract_env_vars(req);
-    }
-    return req;
 }
 
 int rbox_server_is_running(rbox_server_handle_t *server) {
@@ -1775,21 +1985,13 @@ void rbox_server_stop(rbox_server_handle_t *server) {
         return;
     }
 
-    atomic_store(&server->running, 0);
-    if (server->request_wake_fd >= 0) {
-        uint64_t val = 1;
-        ssize_t n = write(server->request_wake_fd, &val, sizeof(val));
-        if (n < 0) {
-            DBG("eventfd_write failed: %s", strerror(errno));
-        }
-    }
+    /* Wake internal thread FIRST, then set running=0 */
     if (server->wake_fd >= 0) {
         uint64_t val = 1;
-        ssize_t n = write(server->wake_fd, &val, sizeof(val));
-        if (n < 0) {
-            DBG("eventfd_write failed: %s", strerror(errno));
-        }
+        ssize_t r;
+        do { r = write(server->wake_fd, &val, sizeof(val)); } while (r < 0 && (errno == EINTR || errno == EAGAIN));
     }
+    atomic_store(&server->running, 0);
     if (server->thread) {
         pthread_join(server->thread, NULL);
         server->thread = 0;

@@ -2,6 +2,12 @@
 *.o
 *.a
 *.log
+
+# Build directories
+build/
+build-asan/
+build-tsan/
+
 # Test binaries
 test_protocol
 test_integration

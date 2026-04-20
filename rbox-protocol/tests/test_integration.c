@@ -62,6 +62,18 @@ static ssize_t write_all(int fd, const void *buf, size_t len) {
     return len;
 }
 
+/* Generate unique socket path using mkstemp */
+static int make_unique_socket_path(char *path, size_t path_size) {
+    const char *template = "/tmp/rbox_integration_XXXXXX";
+    if (strlen(template) >= path_size) return -1;
+    strcpy(path, template);
+    int fd = mkstemp(path);
+    if (fd < 0) return -1;
+    close(fd);
+    unlink(path);
+    return 0;
+}
+
 #define RUN_TEST(fn, name) do { \
     test_count++; \
     printf("  Testing: %s...\n", name); \
@@ -83,124 +95,56 @@ typedef struct {
     const char *socket_path;
     rbox_server_handle_t *server;
     pthread_mutex_t server_mutex;
+    rbox_server_request_t *orphaned_requests[10];
+    int orphaned_count;
 } server_thread_arg_t;
 
-/* Basic server that processes one request and sends ALLOW */
-static void *server_epoll_allow(void *arg) {
+/* Worker: processes one request and sends ALLOW (server owned by caller/test) */
+static void *server_worker_allow(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
-    const char *path = thread_arg->socket_path;
+    rbox_server_handle_t *srv = thread_arg->server;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
-    if (!srv) return NULL;
-
-    if (rbox_server_handle_listen(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-    if (rbox_server_start(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-
-    pthread_mutex_lock(&thread_arg->server_mutex);
-    thread_arg->server = srv;
-    pthread_mutex_unlock(&thread_arg->server_mutex);
-
     rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
-
-    /* Caller must call rbox_server_stop and rbox_server_handle_free */
     return NULL;
 }
 
-/* Server that sends DENY */
-static void *server_epoll_deny(void *arg) {
+/* Worker: processes one request and sends DENY (server owned by caller/test) */
+static void *server_worker_deny(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
-    const char *path = thread_arg->socket_path;
+    rbox_server_handle_t *srv = thread_arg->server;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
-    if (!srv) return NULL;
-
-    if (rbox_server_handle_listen(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-    if (rbox_server_start(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-
-    pthread_mutex_lock(&thread_arg->server_mutex);
-    thread_arg->server = srv;
-    pthread_mutex_unlock(&thread_arg->server_mutex);
-
     rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
         rbox_server_decide(req, RBOX_DECISION_DENY, "denied", 0, 0, NULL);
     }
-
     return NULL;
 }
 
-/* Server that delays response by 200ms */
-static void *server_epoll_delayed(void *arg) {
+/* Worker: processes one request with 200ms delay before responding */
+static void *server_worker_delayed(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
-    const char *path = thread_arg->socket_path;
+    rbox_server_handle_t *srv = thread_arg->server;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
-    if (!srv) return NULL;
-
-    if (rbox_server_handle_listen(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-    if (rbox_server_start(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-
-    pthread_mutex_lock(&thread_arg->server_mutex);
-    thread_arg->server = srv;
-    pthread_mutex_unlock(&thread_arg->server_mutex);
-
     rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
     if (req) {
-        usleep(200000);  /* 200ms delay before responding */
+        usleep(200000);
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
-
     return NULL;
 }
 
-/* Server that reads request but does not send a response */
-static void *server_epoll_drop(void *arg) {
+/* Worker: reads request but drops it (server owned by caller) */
+static void *server_worker_drop(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
-    const char *path = thread_arg->socket_path;
+    rbox_server_handle_t *srv = thread_arg->server;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
-    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
-    if (!srv) return NULL;
-
-    if (rbox_server_handle_listen(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-    if (rbox_server_start(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-
-    pthread_mutex_lock(&thread_arg->server_mutex);
-    thread_arg->server = srv;
-    pthread_mutex_unlock(&thread_arg->server_mutex);
-
     rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
-    if (req) {
-        /* Discard the request – server is stopping, cleanup will happen automatically */
+    if (req && thread_arg->orphaned_count < 10) {
+        thread_arg->orphaned_requests[thread_arg->orphaned_count++] = req;
     }
-
-    /* Caller must call rbox_server_stop and rbox_server_handle_free */
     return NULL;
 }
 
@@ -264,20 +208,56 @@ static int do_request_retry(const char *path, const char *cmd, int argc, const c
  * Test cases
  * ============================================================================ */
 
-/* Test 1: Simple round-trip */
-static int test_simple(void) {
-    const char *path = "/tmp/rbox_t1.sock";
-    unlink(path);
+/* Helper: start server and worker for single-request tests */
+static int start_server_and_worker(pthread_t *tid, server_thread_arg_t *arg,
+                                   void *(*worker_fn)(void *), const char *path) {
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
+    if (!srv) return -1;
 
-    pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) {
-        unlink(path);
+    if (rbox_server_handle_listen(srv) != RBOX_OK) {
+        rbox_server_handle_free(srv);
+        return -1;
+    }
+    if (rbox_server_start(srv) != RBOX_OK) {
+        rbox_server_handle_free(srv);
+        return -1;
+    }
+
+    *arg = (server_thread_arg_t){ .socket_path = path, .server = srv, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(tid, NULL, worker_fn, arg) != 0) {
+        rbox_server_handle_free(srv);
         return -1;
     }
 
     if (wait_for_server(path, 2000) != 0) {
-        pthread_join(tid, NULL);
+        pthread_join(*tid, NULL);
+        rbox_server_handle_free(srv);
+        return -1;
+    }
+    return 0;
+}
+
+/* Helper: stop server and join worker thread */
+static void stop_server(rbox_server_handle_t *srv, pthread_t tid) {
+    if (srv) rbox_server_stop(srv);
+    pthread_join(tid, NULL);
+}
+
+/* Helper: free server handle */
+static void cleanup_server(rbox_server_handle_t *srv) {
+    if (srv) rbox_server_handle_free(srv);
+}
+
+/* Test 1: Simple round-trip */
+static int test_simple(void) {
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
+    int result = -1;
+
+    pthread_t tid;
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
         unlink(path);
         return -1;
     }
@@ -285,63 +265,47 @@ static int test_simple(void) {
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    pthread_mutex_lock(&arg.server_mutex);
-    rbox_server_handle_t *arg_srv = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv) rbox_server_stop(arg_srv);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv) rbox_server_handle_free(arg_srv);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
+    result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
     unlink(path);
-    return (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
+    return result;
 }
-/* Thread function that runs a server until stopped */
-static void *rbox_server_thread(void *arg) {
+/* Worker: runs a server until stopped (server owned by caller/test) */
+static void *server_worker_continuous(void *arg) {
     server_thread_arg_t *thread_arg = (server_thread_arg_t *)arg;
-    const char *socket_path = thread_arg->socket_path;
+    rbox_server_handle_t *srv = thread_arg->server;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    rbox_server_handle_t *srv = rbox_server_handle_new(socket_path, &err_info);
-    if (!srv) return NULL;
-
-    if (rbox_server_handle_listen(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-    if (rbox_server_start(srv) != RBOX_OK) {
-        rbox_server_handle_free(srv);
-        return NULL;
-    }
-
-    pthread_mutex_lock(&thread_arg->server_mutex);
-    thread_arg->server = srv;
-    pthread_mutex_unlock(&thread_arg->server_mutex);
-
-    /* Run until server is stopped */
     while (1) {
         rbox_server_request_t *req = rbox_server_get_request(srv, &err_info);
         if (!req) break;
         rbox_server_decide(req, RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
     }
 
-    /* NOTE: Do NOT call rbox_server_handle_free here.
-     * Caller must call rbox_server_stop() first, then rbox_server_handle_free after pthread_join. */
     return NULL;
 }
 /* Test 2: HICKUP_BAD_PACKET - send garbage, then retry */
 static int test_hickup_bad_packet(void) {
-    const char *path = "/tmp/rbox_t2.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* First server */
-    server_thread_arg_t sa = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    rbox_server_handle_t *srv1 = rbox_server_handle_new(path, &err_info);
+    if (!srv1) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+    if (rbox_server_start(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg1 = { .socket_path = path, .server = srv1, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg1) != 0) {
+        rbox_server_handle_free(srv1);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv1); unlink(path); return -1; }
 
     /* Send garbage */
     rbox_client_t *cl = rbox_client_connect(path, &err_info);
@@ -351,54 +315,57 @@ static int test_hickup_bad_packet(void) {
     }
 
     /* Stop first server */
-    pthread_mutex_lock(&sa.server_mutex);
-    rbox_server_handle_t *sa_srv = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv) rbox_server_stop(sa_srv);
+    rbox_server_stop(srv1);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv) rbox_server_handle_free(sa_srv);
+    rbox_server_handle_free(srv1);
     unlink(path);
-    usleep(100000); /* Wait for socket to be fully cleaned up */
+    usleep(100000);
 
     /* Second server (valid) */
-    server_thread_arg_t sb = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sb) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    rbox_server_handle_t *srv2 = rbox_server_handle_new(path, &err_info);
+    if (!srv2) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+    if (rbox_server_start(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+
+    server_thread_arg_t arg2 = { .socket_path = path, .server = srv2, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg2) != 0) {
+        rbox_server_handle_free(srv2);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv2); unlink(path); return -1; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *sb_srv1 = NULL;
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv1 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv1) rbox_server_stop(sb_srv1);
+    rbox_server_stop(srv2);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv1 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv1) rbox_server_handle_free(sb_srv1);
+    rbox_server_handle_free(srv2);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 3: HICKUP_BAD_MAGIC - invalid magic bytes */
 static int test_hickup_bad_magic(void) {
-    const char *path = "/tmp/rbox_t3.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    server_thread_arg_t sa = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    rbox_server_handle_t *srv1 = rbox_server_handle_new(path, &err_info);
+    if (!srv1) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+    if (rbox_server_start(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg1 = { .socket_path = path, .server = srv1, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg1) != 0) {
+        rbox_server_handle_free(srv1);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv1); unlink(path); return -1; }
 
     rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
@@ -413,53 +380,55 @@ static int test_hickup_bad_magic(void) {
         rbox_client_close(cl);
     }
 
-    rbox_server_handle_t *sa_srv2 = NULL;
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv2 = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv2) rbox_server_stop(sa_srv2);
+    rbox_server_stop(srv1);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv2 = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv2) rbox_server_handle_free(sa_srv2);
+    rbox_server_handle_free(srv1);
     unlink(path);
 
-    server_thread_arg_t sb = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sb) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    rbox_server_handle_t *srv2 = rbox_server_handle_new(path, &err_info);
+    if (!srv2) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+    if (rbox_server_start(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+
+    server_thread_arg_t arg2 = { .socket_path = path, .server = srv2, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg2) != 0) {
+        rbox_server_handle_free(srv2);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv2); unlink(path); return -1; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *sb_srv2 = NULL;
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv2 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv2) rbox_server_stop(sb_srv2);
+    rbox_server_stop(srv2);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv2 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv2) rbox_server_handle_free(sb_srv2);
+    rbox_server_handle_free(srv2);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 4: HICKUP_BAD_VERSION - invalid protocol version */
 static int test_hickup_bad_version(void) {
-    const char *path = "/tmp/rbox_t4.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    server_thread_arg_t sa = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    rbox_server_handle_t *srv1 = rbox_server_handle_new(path, &err_info);
+    if (!srv1) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+    if (rbox_server_start(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg1 = { .socket_path = path, .server = srv1, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg1) != 0) {
+        rbox_server_handle_free(srv1);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv1); unlink(path); return -1; }
 
     rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
@@ -474,53 +443,55 @@ static int test_hickup_bad_version(void) {
         rbox_client_close(cl);
     }
 
-    rbox_server_handle_t *sa_srv3 = NULL;
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv3 = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv3) rbox_server_stop(sa_srv3);
+    rbox_server_stop(srv1);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv3 = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv3) rbox_server_handle_free(sa_srv3);
+    rbox_server_handle_free(srv1);
     unlink(path);
 
-    server_thread_arg_t sb = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sb) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    rbox_server_handle_t *srv2 = rbox_server_handle_new(path, &err_info);
+    if (!srv2) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+    if (rbox_server_start(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+
+    server_thread_arg_t arg2 = { .socket_path = path, .server = srv2, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg2) != 0) {
+        rbox_server_handle_free(srv2);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv2); unlink(path); return -1; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *sb_srv4 = NULL;
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv4 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv4) rbox_server_stop(sb_srv4);
+    rbox_server_stop(srv2);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv4 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv4) rbox_server_handle_free(sb_srv4);
+    rbox_server_handle_free(srv2);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 5: HICKUP_TRUNCATED_HEADER - partial header */
 static int test_hickup_truncated_header(void) {
-    const char *path = "/tmp/rbox_t5.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    server_thread_arg_t sa = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    rbox_server_handle_t *srv1 = rbox_server_handle_new(path, &err_info);
+    if (!srv1) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+    if (rbox_server_start(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg1 = { .socket_path = path, .server = srv1, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg1) != 0) {
+        rbox_server_handle_free(srv1);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv1); unlink(path); return -1; }
 
     rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
@@ -530,53 +501,55 @@ static int test_hickup_truncated_header(void) {
         rbox_client_close(cl);
     }
 
-    rbox_server_handle_t *sa_srv4 = NULL;
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv4 = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv4) rbox_server_stop(sa_srv4);
+    rbox_server_stop(srv1);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv4 = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv4) rbox_server_handle_free(sa_srv4);
+    rbox_server_handle_free(srv1);
     unlink(path);
 
-    server_thread_arg_t sb = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sb) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    rbox_server_handle_t *srv2 = rbox_server_handle_new(path, &err_info);
+    if (!srv2) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+    if (rbox_server_start(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+
+    server_thread_arg_t arg2 = { .socket_path = path, .server = srv2, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg2) != 0) {
+        rbox_server_handle_free(srv2);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv2); unlink(path); return -1; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *sb_srv5 = NULL;
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv5 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv5) rbox_server_stop(sb_srv5);
+    rbox_server_stop(srv2);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv5 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv5) rbox_server_handle_free(sb_srv5);
+    rbox_server_handle_free(srv2);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 6: HICKUP_TRUNCATED_BODY - partial body */
 static int test_hickup_truncated_body(void) {
-    const char *path = "/tmp/rbox_t6.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    server_thread_arg_t sa = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    rbox_server_handle_t *srv1 = rbox_server_handle_new(path, &err_info);
+    if (!srv1) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+    if (rbox_server_start(srv1) != RBOX_OK) { rbox_server_handle_free(srv1); unlink(path); return -1; }
+
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sa) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg1 = { .socket_path = path, .server = srv1, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg1) != 0) {
+        rbox_server_handle_free(srv1);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv1); unlink(path); return -1; }
 
     rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
@@ -588,85 +561,72 @@ static int test_hickup_truncated_body(void) {
         rbox_client_close(cl);
     }
 
-    rbox_server_handle_t *sa_srv5 = NULL;
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv5 = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv5) rbox_server_stop(sa_srv5);
+    rbox_server_stop(srv1);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sa.server_mutex);
-    sa_srv5 = sa.server;
-    pthread_mutex_unlock(&sa.server_mutex);
-    if (sa_srv5) rbox_server_handle_free(sa_srv5);
+    rbox_server_handle_free(srv1);
     unlink(path);
 
-    server_thread_arg_t sb = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &sb) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    rbox_server_handle_t *srv2 = rbox_server_handle_new(path, &err_info);
+    if (!srv2) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+    if (rbox_server_start(srv2) != RBOX_OK) { rbox_server_handle_free(srv2); unlink(path); return -1; }
+
+    server_thread_arg_t arg2 = { .socket_path = path, .server = srv2, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg2) != 0) {
+        rbox_server_handle_free(srv2);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv2); unlink(path); return -1; }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *sb_srv6 = NULL;
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv6 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv6) rbox_server_stop(sb_srv6);
+    rbox_server_stop(srv2);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&sb.server_mutex);
-    sb_srv6 = sb.server;
-    pthread_mutex_unlock(&sb.server_mutex);
-    if (sb_srv6) rbox_server_handle_free(sb_srv6);
+    rbox_server_handle_free(srv2);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 7: HICKUP_DELAYED_RESPONSE - server delays response */
 static int test_hickup_delayed_response(void) {
-    const char *path = "/tmp/rbox_t7.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
 
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_delayed, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_delayed, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *arg_srv2 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv2 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv2) rbox_server_stop(arg_srv2);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv2 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv2) rbox_server_handle_free(arg_srv2);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 8: HICKUP_DROPPED_RESPONSE - server reads but doesn't respond, retry succeeds */
 static int test_hickup_dropped_response(void) {
-    const char *path = "/tmp/rbox_t8.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     /* First: server drops response */
     pthread_t tid;
-    server_thread_arg_t arg1 = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_drop, &arg1) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg1 = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER, .orphaned_count = 0 };
+    if (start_server_and_worker(&tid, &arg1, server_worker_drop, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     rbox_client_t *cl = rbox_client_connect(path, &err_info);
     if (cl) {
@@ -677,46 +637,38 @@ static int test_hickup_dropped_response(void) {
         write_all(rbox_client_fd(cl), pkt, plen);
         rbox_client_close(cl);
     }
-    rbox_server_handle_t *arg1_srv = NULL;
-    pthread_mutex_lock(&arg1.server_mutex);
-    arg1_srv = arg1.server;
-    pthread_mutex_unlock(&arg1.server_mutex);
-    if (arg1_srv) rbox_server_stop(arg1_srv);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg1.server_mutex);
-    arg1_srv = arg1.server;
-    pthread_mutex_unlock(&arg1.server_mutex);
-    if (arg1_srv) rbox_server_handle_free(arg1_srv);
+    stop_server(arg1.server, tid);
 
-    /* Second: valid server */
-    server_thread_arg_t arg2 = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg2) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    /* Decide orphaned requests after server stopped (but before handle_free) */
+    for (int i = 0; i < arg1.orphaned_count; i++) {
+        rbox_server_decide(arg1.orphaned_requests[i], RBOX_DECISION_ALLOW, "ok", 0, 0, NULL);
+    }
+    cleanup_server(arg1.server);
+
+    /* Second: valid server - wait for socket cleanup */
+    usleep(100000);
+
+    pthread_t tid2;
+    server_thread_arg_t arg2 = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER, .orphaned_count = 0 };
+    if (start_server_and_worker(&tid2, &arg2, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *arg2_srv = NULL;
-    pthread_mutex_lock(&arg2.server_mutex);
-    arg2_srv = arg2.server;
-    pthread_mutex_unlock(&arg2.server_mutex);
-    if (arg2_srv) rbox_server_stop(arg2_srv);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg2.server_mutex);
-    arg2_srv = arg2.server;
-    pthread_mutex_unlock(&arg2.server_mutex);
-    if (arg2_srv) rbox_server_handle_free(arg2_srv);
+    stop_server(arg2.server, tid2);
+    cleanup_server(arg2.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 8b: RETRY_UNTIL_SUCCESS - client retries until server responds */
 static int test_retry_until_success(void) {
-    const char *path = "/tmp/rbox_t8b.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
@@ -730,140 +682,109 @@ static int test_retry_until_success(void) {
             retry_success = 1;
             break;
         }
-        usleep(10000); /* 10ms delay between attempts */
+        usleep(10000);
     }
     if (retry_success) {
         printf("    ERROR: succeeded when should have failed\n");
-        goto cleanup;
+        unlink(path);
+        return -1;
     }
     printf("    Round 1: correctly failed (no server)\n");
 
     /* Round 2: server responds correctly - should succeed */
     printf("    Round 2: server responds (retry with backoff)...\n");
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     uint8_t d = 0;
     int ret = do_request_retry(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0, 10, 3);
 
-    rbox_server_handle_t *arg_srv3 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv3 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv3) rbox_server_stop(arg_srv3);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv3 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv3) rbox_server_handle_free(arg_srv3);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     printf("    Result: ret=%d, decision=%d\n", ret, d);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 12: Multiple arguments */
 static int test_multiple_args(void) {
-    const char *path = "/tmp/rbox_t12.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
 
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     const char *args[] = {".", "-name", "*.c", "-type", "f"};
     uint8_t d = 0;
     int ret = do_request(path, "find", 5, args, &d, NULL, 0);
 
-    rbox_server_handle_t *arg_srv4 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv4 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv4) rbox_server_stop(arg_srv4);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv4 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv4) rbox_server_handle_free(arg_srv4);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 13: Empty arguments */
 static int test_empty_args(void) {
-    const char *path = "/tmp/rbox_t13.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
 
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *arg_srv5 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv5 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv5) rbox_server_stop(arg_srv5);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv5 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv5) rbox_server_handle_free(arg_srv5);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 14: DENY response */
 static int test_deny_response(void) {
-    const char *path = "/tmp/rbox_t14.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
 
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_deny, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_deny, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *arg_srv6 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv6 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv6) rbox_server_stop(arg_srv6);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv6 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv6) rbox_server_handle_free(arg_srv6);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_DENY) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 15: Retry on connect failure */
 static int test_retry_connect(void) {
-    const char *path = "/tmp/rbox_t15.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
@@ -873,73 +794,59 @@ static int test_retry_connect(void) {
 
     /* Second: connect to valid server */
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     uint8_t d = 0;
     int ret = do_request(path, "ls", 1, (const char*[]){"-la"}, &d, NULL, 0);
 
-    rbox_server_handle_t *arg_srv7 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv7 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv7) rbox_server_stop(arg_srv7);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv7 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv7) rbox_server_handle_free(arg_srv7);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 16: Long command with many arguments */
 static int test_long_args(void) {
-    const char *path = "/tmp/rbox_t16.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
 
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     const char *args[] = {".", "-name", "*.txt", "-type", "f", "-mtime", "+7", "-size", "+100k"};
     uint8_t d = 0;
     int ret = do_request(path, "find", 9, args, &d, NULL, 0);
 
-    rbox_server_handle_t *arg_srv8 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv8 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv8) rbox_server_stop(arg_srv8);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv8 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv8) rbox_server_handle_free(arg_srv8);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     result = (ret == 0 && d == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 17: Environment variables in request */
 static int test_env_vars(void) {
-    const char *path = "/tmp/rbox_t17.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     const char *env_names[] = {"PATH", "HOME", "LD_PRELOAD"};
     float env_scores[] = {0.5f, 0.8f, 1.0f};
@@ -950,34 +857,26 @@ static int test_env_vars(void) {
                                              3, env_names, env_scores,
                                              &response, 0, 0, &err_info);
 
-    rbox_server_handle_t *arg_srv9 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv9 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv9) rbox_server_stop(arg_srv9);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv9 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv9) rbox_server_handle_free(arg_srv9);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     result = (err == RBOX_OK && response.decision == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 18: Zero environment variables */
 static int test_zero_env_vars(void) {
-    const char *path = "/tmp/rbox_t18.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     rbox_response_t response;
     rbox_error_t err = rbox_blocking_request(path, "pwd", 0, NULL,
@@ -985,64 +884,42 @@ static int test_zero_env_vars(void) {
                                              0, NULL, NULL,
                                              &response, 0, 0, &err_info);
 
-    rbox_server_handle_t *arg_srv10 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv10 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv10) rbox_server_stop(arg_srv10);
-    pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv10 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv10) rbox_server_handle_free(arg_srv10);
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     result = (err == RBOX_OK && response.decision == RBOX_DECISION_ALLOW) ? 0 : -1;
-
-cleanup:
     unlink(path);
     return result;
 }
 
 /* Test 19: Non-blocking session API */
 static int test_session_api(void) {
-    const char *path = "/tmp/rbox_t19.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
     rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
     pthread_t tid;
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
-    if (checked_pthread_create(&tid, NULL, server_epoll_allow, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg;
+    if (start_server_and_worker(&tid, &arg, server_worker_allow, path) != 0) {
+        unlink(path);
+        return -1;
+    }
 
     rbox_session_t *session = rbox_session_new(path, 50, 3, &err_info);
     if (!session) {
-        rbox_server_handle_t *arg_srv11 = NULL;
-        pthread_mutex_lock(&arg.server_mutex);
-        arg_srv11 = arg.server;
-        pthread_mutex_unlock(&arg.server_mutex);
-        if (arg_srv11) rbox_server_stop(arg_srv11);
-        pthread_join(tid, NULL);
-        pthread_mutex_lock(&arg.server_mutex);
-        arg_srv11 = arg.server;
-        pthread_mutex_unlock(&arg.server_mutex);
-        if (arg_srv11) rbox_server_handle_free(arg_srv11);
-        goto cleanup;
+        stop_server(arg.server, tid);
+        cleanup_server(arg.server);
+        unlink(path);
+        return -1;
     }
 
     rbox_error_t err = rbox_session_connect(session, &err_info);
     if (err != RBOX_OK && rbox_session_state(session) != RBOX_SESSION_CONNECTING) {
         rbox_session_free(session);
-        rbox_server_handle_t *arg_srv11b = NULL;
-        pthread_mutex_lock(&arg.server_mutex);
-        arg_srv11b = arg.server;
-        pthread_mutex_unlock(&arg.server_mutex);
-        if (arg_srv11b) rbox_server_stop(arg_srv11b);
-        pthread_join(tid, NULL);
-        pthread_mutex_lock(&arg.server_mutex);
-        arg_srv11b = arg.server;
-        pthread_mutex_unlock(&arg.server_mutex);
-        if (arg_srv11b) rbox_server_handle_free(arg_srv11b);
-        goto cleanup;
+        stop_server(arg.server, tid);
+        cleanup_server(arg.server);
+        unlink(path);
+        return -1;
     }
 
     int timeout = 5000;
@@ -1066,15 +943,19 @@ static int test_session_api(void) {
 
     if (state != RBOX_SESSION_CONNECTED) {
         rbox_session_free(session);
-        pthread_join(tid, NULL);
-        goto cleanup;
+        stop_server(arg.server, tid);
+        cleanup_server(arg.server);
+        unlink(path);
+        return -1;
     }
 
     err = rbox_session_send_request(session, "ls", NULL, NULL, 1, (const char*[]){"-la"}, 0, NULL, NULL, &err_info);
     if (err != RBOX_OK) {
         rbox_session_free(session);
-        pthread_join(tid, NULL);
-        goto cleanup;
+        stop_server(arg.server, tid);
+        cleanup_server(arg.server);
+        unlink(path);
+        return -1;
     }
 
     timeout = 5000;
@@ -1095,23 +976,26 @@ static int test_session_api(void) {
 
     if (state != RBOX_SESSION_RESPONSE_READY) {
         rbox_session_free(session);
-        pthread_join(tid, NULL);
-        goto cleanup;
+        stop_server(arg.server, tid);
+        cleanup_server(arg.server);
+        unlink(path);
+        return -1;
     }
 
     const rbox_response_t *resp = rbox_session_response(session);
     if (!resp || resp->decision != RBOX_DECISION_ALLOW) {
         rbox_session_free(session);
-        pthread_join(tid, NULL);
-        goto cleanup;
+        stop_server(arg.server, tid);
+        cleanup_server(arg.server);
+        unlink(path);
+        return -1;
     }
 
     result = 0;
 
     rbox_session_free(session);
-    pthread_join(tid, NULL);
-
-cleanup:
+    stop_server(arg.server, tid);
+    cleanup_server(arg.server);
     unlink(path);
     return result;
 }
@@ -1123,24 +1007,37 @@ cleanup:
  * After the fix: drain loop reads until EAGAIN; server correctly reads the
  * complete header when the rest arrives. */
 static int test_partial_header_recovery(void) {
-    const char *path = "/tmp/rbox_test_partial_header.sock";
-    unlink(path);
+    char path[64];
+    if (make_unique_socket_path(path, sizeof(path)) != 0) return -1;
     int result = -1;
+    rbox_error_info_t err_info = RBOX_ERROR_INITIALIZER;
 
-    /* Start server that processes requests */
-    server_thread_arg_t arg = { .socket_path = path, .server = NULL, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    rbox_server_handle_t *srv = rbox_server_handle_new(path, &err_info);
+    if (!srv) { unlink(path); return -1; }
+    if (rbox_server_handle_listen(srv) != RBOX_OK) { rbox_server_handle_free(srv); unlink(path); return -1; }
+    if (rbox_server_start(srv) != RBOX_OK) { rbox_server_handle_free(srv); unlink(path); return -1; }
+
     pthread_t tid;
-    if (checked_pthread_create(&tid, NULL, rbox_server_thread, &arg) != 0) goto cleanup;
-    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); goto cleanup; }
+    server_thread_arg_t arg = { .socket_path = path, .server = srv, .server_mutex = PTHREAD_MUTEX_INITIALIZER };
+    if (checked_pthread_create(&tid, NULL, server_worker_continuous, &arg) != 0) {
+        rbox_server_handle_free(srv);
+        unlink(path);
+        return -1;
+    }
+    if (wait_for_server(path, 2000) != 0) { pthread_join(tid, NULL); rbox_server_handle_free(srv); unlink(path); return -1; }
 
     /* Connect raw socket */
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) goto stop_server;
+    if (fd < 0) { rbox_server_stop(srv); pthread_join(tid, NULL); rbox_server_handle_free(srv); unlink(path); return -1; }
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         close(fd);
-        goto stop_server;
+        rbox_server_stop(srv);
+        pthread_join(tid, NULL);
+        rbox_server_handle_free(srv);
+        unlink(path);
+        return -1;
     }
 
     /* Build a valid request packet */
@@ -1154,14 +1051,22 @@ static int test_partial_header_recovery(void) {
     size_t first_half = 64;
     if (write_all(fd, full_packet, first_half) < 0) {
         close(fd);
-        goto stop_server;
+        rbox_server_stop(srv);
+        pthread_join(tid, NULL);
+        rbox_server_handle_free(srv);
+        unlink(path);
+        return -1;
     }
     usleep(10000);  /* 10ms gap to force separate kernel buffer fills */
 
     /* Send remaining bytes (rest of header + body) */
     if (write_all(fd, full_packet + first_half, packet_len - first_half) < 0) {
         close(fd);
-        goto stop_server;
+        rbox_server_stop(srv);
+        pthread_join(tid, NULL);
+        rbox_server_handle_free(srv);
+        unlink(path);
+        return -1;
     }
 
     /* Read response (blocking – server thread processes and responds) */
@@ -1177,18 +1082,9 @@ static int test_partial_header_recovery(void) {
         }
     }
 
-stop_server:
-    rbox_server_handle_t *arg_srv12 = NULL;
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv12 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv12) rbox_server_stop(arg_srv12);
+    rbox_server_stop(srv);
     pthread_join(tid, NULL);
-    pthread_mutex_lock(&arg.server_mutex);
-    arg_srv12 = arg.server;
-    pthread_mutex_unlock(&arg.server_mutex);
-    if (arg_srv12) rbox_server_handle_free(arg_srv12);
-cleanup:
+    rbox_server_handle_free(srv);
     unlink(path);
     return result;
 }

@@ -157,7 +157,7 @@ void rbox_timer_heap_free(rbox_timer_heap_t *heap) {
     free(heap);
 }
 
-int rbox_timer_add(rbox_timer_heap_t *heap, int fd, uint64_t timeout_ms, rbox_timeout_type_t type) {
+int rbox_timer_add(rbox_timer_heap_t *heap, int fd, uint64_t timeout_ms, rbox_timeout_type_t type, void *data) {
     if (!heap || fd < 0 || fd >= MAX_FD) {
         return -1;
     }
@@ -175,6 +175,7 @@ int rbox_timer_add(rbox_timer_heap_t *heap, int fd, uint64_t timeout_ms, rbox_ti
     entry->fd = fd;
     entry->type = type;
     entry->heap_index = SIZE_MAX;
+    entry->data = data;
 
     heap_push(heap, entry);
     heap->fd_to_entry[fd] = entry;

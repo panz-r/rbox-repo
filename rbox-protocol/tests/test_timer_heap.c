@@ -19,15 +19,15 @@ static int test_timer_heap_basic(void) {
     uint64_t now = 1000;
 
     int fd1 = 5;
-    assert(rbox_timer_add(heap, fd1, now + 100, RBOX_TIMEOUT_IDLE) == 0);
+    assert(rbox_timer_add(heap, fd1, now + 100, RBOX_TIMEOUT_IDLE, NULL) == 0);
     assert(rbox_timer_count(heap) == 1);
 
     int fd2 = 10;
-    assert(rbox_timer_add(heap, fd2, now + 50, RBOX_TIMEOUT_HEADER) == 0);
+    assert(rbox_timer_add(heap, fd2, now + 50, RBOX_TIMEOUT_HEADER, NULL) == 0);
     assert(rbox_timer_count(heap) == 2);
 
     int fd3 = 15;
-    assert(rbox_timer_add(heap, fd3, now + 150, RBOX_TIMEOUT_BODY) == 0);
+    assert(rbox_timer_add(heap, fd3, now + 150, RBOX_TIMEOUT_BODY, NULL) == 0);
     assert(rbox_timer_count(heap) == 3);
 
     uint64_t next = rbox_timer_next_expiry(heap, now);
@@ -75,9 +75,9 @@ static int test_timer_heap_remove(void) {
     int fd2 = 10;
     int fd3 = 15;
 
-    assert(rbox_timer_add(heap, fd1, now + 100, RBOX_TIMEOUT_IDLE) == 0);
-    assert(rbox_timer_add(heap, fd2, now + 50, RBOX_TIMEOUT_HEADER) == 0);
-    assert(rbox_timer_add(heap, fd3, now + 150, RBOX_TIMEOUT_BODY) == 0);
+    assert(rbox_timer_add(heap, fd1, now + 100, RBOX_TIMEOUT_IDLE, NULL) == 0);
+    assert(rbox_timer_add(heap, fd2, now + 50, RBOX_TIMEOUT_HEADER, NULL) == 0);
+    assert(rbox_timer_add(heap, fd3, now + 150, RBOX_TIMEOUT_BODY, NULL) == 0);
     assert(rbox_timer_count(heap) == 3);
 
     assert(rbox_timer_remove(heap, fd2) == 0);
@@ -108,10 +108,10 @@ static int test_timer_heap_replace(void) {
     uint64_t now = 1000;
 
     int fd = 5;
-    assert(rbox_timer_add(heap, fd, now + 100, RBOX_TIMEOUT_IDLE) == 0);
+    assert(rbox_timer_add(heap, fd, now + 100, RBOX_TIMEOUT_IDLE, NULL) == 0);
     assert(rbox_timer_count(heap) == 1);
 
-    assert(rbox_timer_add(heap, fd, now + 200, RBOX_TIMEOUT_HEADER) == 0);
+    assert(rbox_timer_add(heap, fd, now + 200, RBOX_TIMEOUT_HEADER, NULL) == 0);
     assert(rbox_timer_count(heap) == 1);
 
     uint64_t next = rbox_timer_next_expiry(heap, now);
@@ -141,7 +141,7 @@ static int test_timer_heap_order(void) {
     int expected_order[] = {20, 10, 25, 15, 5};
 
     for (int i = 0; i < 5; i++) {
-        assert(rbox_timer_add(heap, fds[i], timeouts[i], RBOX_TIMEOUT_IDLE) == 0);
+        assert(rbox_timer_add(heap, fds[i], timeouts[i], RBOX_TIMEOUT_IDLE, NULL) == 0);
     }
 
     for (int i = 0; i < 5; i++) {
@@ -168,8 +168,8 @@ static int test_timer_heap_expired_at_now(void) {
     int fd1 = 5;
     int fd2 = 10;
 
-    assert(rbox_timer_add(heap, fd1, now - 10, RBOX_TIMEOUT_IDLE) == 0);
-    assert(rbox_timer_add(heap, fd2, now + 100, RBOX_TIMEOUT_HEADER) == 0);
+    assert(rbox_timer_add(heap, fd1, now - 10, RBOX_TIMEOUT_IDLE, NULL) == 0);
+    assert(rbox_timer_add(heap, fd2, now + 100, RBOX_TIMEOUT_HEADER, NULL) == 0);
 
     assert(rbox_timer_next_expiry(heap, now) == 0);
 
@@ -201,7 +201,7 @@ static int test_timer_heap_many_timers(void) {
     for (int i = 0; i < n; i++) {
         int fd = i + 100;
         uint64_t timeout = now + (i % 100) * 10 + 50;
-        assert(rbox_timer_add(heap, fd, timeout, RBOX_TIMEOUT_IDLE) == 0);
+        assert(rbox_timer_add(heap, fd, timeout, RBOX_TIMEOUT_IDLE, NULL) == 0);
     }
     assert(rbox_timer_count(heap) == (size_t)n);
 
@@ -233,9 +233,9 @@ static int test_timer_heap_process_expired_callback(void) {
     int fd2 = 10;
     int fd3 = 15;
 
-    assert(rbox_timer_add(heap, fd1, now - 10, RBOX_TIMEOUT_IDLE) == 0);
-    assert(rbox_timer_add(heap, fd2, now - 5, RBOX_TIMEOUT_HEADER) == 0);
-    assert(rbox_timer_add(heap, fd3, now + 100, RBOX_TIMEOUT_BODY) == 0);
+    assert(rbox_timer_add(heap, fd1, now - 10, RBOX_TIMEOUT_IDLE, NULL) == 0);
+    assert(rbox_timer_add(heap, fd2, now - 5, RBOX_TIMEOUT_HEADER, NULL) == 0);
+    assert(rbox_timer_add(heap, fd3, now + 100, RBOX_TIMEOUT_BODY, NULL) == 0);
     assert(rbox_timer_count(heap) == 3);
 
     int callback_count = 0;

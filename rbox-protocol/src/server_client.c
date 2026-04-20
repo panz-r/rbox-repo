@@ -37,7 +37,7 @@ int client_fd_add(rbox_server_handle_t *server, int fd) {
     }
     entry->fd = fd;
     entry->pending_request = NULL;
-    entry->active_timer = NULL;
+    entry->valid = 1;
     entry->last_activity = get_time_ms();
     entry->header_bytes_read = 0;
     entry->prev = NULL;
@@ -59,7 +59,7 @@ int client_fd_add(rbox_server_handle_t *server, int fd) {
         server->client_fds->prev = entry;
     }
     server->client_fds = entry;
-    server->active_client_count++;
+    atomic_fetch_add(&server->active_client_count, 1);
     pthread_mutex_unlock(&server->client_fd_mutex);
     return 0;
 }
@@ -83,7 +83,7 @@ void client_fd_remove(rbox_server_handle_t *server, int fd) {
             }
             free(entry->send_queue.head);
             free(entry);
-            server->active_client_count--;
+            atomic_fetch_sub(&server->active_client_count, 1);
             break;
         }
         entry = entry->next;
@@ -107,6 +107,7 @@ void client_fd_close_all(rbox_server_handle_t *server) {
             }
             send_pool_put(server, send_entry);
         }
+        epoll_ctl(server->epoll_fd, EPOLL_CTL_DEL, entry->fd, NULL);
         close(entry->fd);
         rbox_client_fd_entry_t *next = entry->next;
         free(entry->send_queue.head);
@@ -114,7 +115,7 @@ void client_fd_close_all(rbox_server_handle_t *server) {
         entry = next;
     }
     server->client_fds = NULL;
-    server->active_client_count = 0;
+    atomic_store(&server->active_client_count, 0);
     pthread_mutex_unlock(&server->client_fd_mutex);
 }
 
@@ -177,13 +178,10 @@ rbox_server_send_entry_t *send_queue_peek(rbox_client_fd_entry_t *client) {
     return next->entry;
 }
 
-/* Clean up any send queue entries for a closed fd - drain the lock-free queue */
-void cleanup_pending_sends(rbox_server_handle_t *server, int fd) {
-    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
-    if (!entry) return;
-
+/* Clean up any send queue entries - caller must hold client_fd_mutex */
+void cleanup_pending_sends_locked(rbox_server_handle_t *server, rbox_client_fd_entry_t *client) {
     rbox_server_send_entry_t *send_entry;
-    while ((send_entry = send_queue_dequeue(entry)) != NULL) {
+    while ((send_entry = send_queue_dequeue(client)) != NULL) {
         if (send_entry->request) {
             send_entry->request->fd = -1;
             server_request_free(send_entry->request);
@@ -192,23 +190,44 @@ void cleanup_pending_sends(rbox_server_handle_t *server, int fd) {
     }
 }
 
-/* Centralized function to close a client connection and free all associated resources */
+/* Centralized function to close a client connection and free all associated resources.
+ * Called from server thread only - no external callers, no locking needed. */
 void client_connection_close(rbox_server_handle_t *server, int fd) {
-    rbox_client_fd_entry_t *entry = client_fd_find(server, fd);
+    rbox_client_fd_entry_t *entry = client_fd_find_unlocked(server, fd);
     if (!entry) return;
+    client_connection_close_locked(server, entry);
+}
 
-    /* Mark as closed before freeing to prevent use-after-free on any dangling pointers */
+/* Close a client connection - takes entry directly to avoid redundant lookup.
+ * Called from server thread only - no external callers, no locking needed. */
+void client_connection_close_locked(rbox_server_handle_t *server, rbox_client_fd_entry_t *entry) {
+    if (!entry) return;
+    int fd = entry->fd;
+
+    /* Mark as closed/invalid before any other operations */
+    entry->valid = 0;
     entry->pending_request = NULL;
 
-    cleanup_pending_sends(server, fd);
+    cleanup_pending_sends_locked(server, entry);
 
     /* Cancel any active timer for this fd */
     rbox_timer_remove(server->timer_heap, fd);
-    entry->active_timer = NULL;
 
     epoll_del(server->epoll_fd, fd);
     close(fd);
-    client_fd_remove(server, fd);
+
+    /* Remove from client list - caller holds mutex, so use _unlocked variant */
+    if (entry->prev) {
+        entry->prev->next = entry->next;
+    } else {
+        server->client_fds = entry->next;
+    }
+    if (entry->next) {
+        entry->next->prev = entry->prev;
+    }
+    free(entry->send_queue.head);
+    free(entry);
+    atomic_fetch_sub(&server->active_client_count, 1);
 }
 
 /* ============================================================
@@ -226,6 +245,18 @@ rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd) {
         entry = entry->next;
     }
     pthread_mutex_unlock(&server->client_fd_mutex);
+    return NULL;
+}
+
+/* Find client entry by fd - caller must hold client_fd_mutex */
+rbox_client_fd_entry_t *client_fd_find_unlocked(rbox_server_handle_t *server, int fd) {
+    rbox_client_fd_entry_t *entry = server->client_fds;
+    while (entry) {
+        if (entry->fd == fd) {
+            return entry;
+        }
+        entry = entry->next;
+    }
     return NULL;
 }
 
@@ -248,7 +279,7 @@ void rbox_server_client_close_all(rbox_server_handle_t *server) {
 int rbox_server_client_count(const rbox_server_handle_t *server) {
     if (!server) return 0;
     pthread_mutex_lock((pthread_mutex_t *)&server->client_fd_mutex);
-    int count = server->active_client_count;
+    int count = atomic_load(&server->active_client_count);
     pthread_mutex_unlock((pthread_mutex_t *)&server->client_fd_mutex);
     return count;
 }

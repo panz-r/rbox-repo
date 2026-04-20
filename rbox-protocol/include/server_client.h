@@ -33,8 +33,11 @@ rbox_client_fd_entry_t *client_fd_find(rbox_server_handle_t *server, int fd);
 /* Close a client connection and free all associated resources */
 void client_connection_close(rbox_server_handle_t *server, int fd);
 
+/* Close a client connection - caller must hold client_fd_mutex */
+void client_connection_close_locked(rbox_server_handle_t *server, rbox_client_fd_entry_t *entry);
+
 /* Clean up any send queue entries for a closed fd */
-void cleanup_pending_sends(rbox_server_handle_t *server, int fd);
+void cleanup_pending_sends_locked(rbox_server_handle_t *server, rbox_client_fd_entry_t *client);
 
 /* Lock-free send queue functions */
 int send_queue_enqueue(rbox_client_fd_entry_t *client, rbox_server_send_entry_t *entry);

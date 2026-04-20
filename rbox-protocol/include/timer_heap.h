@@ -22,6 +22,7 @@ typedef struct rbox_timer_entry {
     int fd;
     rbox_timeout_type_t type;
     size_t heap_index;
+    void *data;
 } rbox_timer_entry_t;
 
 typedef struct rbox_timer_heap rbox_timer_heap_t;
@@ -30,7 +31,7 @@ rbox_timer_heap_t *rbox_timer_heap_new(void);
 
 void rbox_timer_heap_free(rbox_timer_heap_t *heap);
 
-int rbox_timer_add(rbox_timer_heap_t *heap, int fd, uint64_t timeout_ms, rbox_timeout_type_t type);
+int rbox_timer_add(rbox_timer_heap_t *heap, int fd, uint64_t timeout_ms, rbox_timeout_type_t type, void *data);
 
 int rbox_timer_remove(rbox_timer_heap_t *heap, int fd);
 

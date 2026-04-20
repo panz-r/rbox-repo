@@ -22,6 +22,13 @@
  */
 #define MEMORY_STRING_MAX PATH_MAX
 
+/*
+ * Memory string read limit.
+ * PATH_MAX is the maximum length of a full pathname on Linux (typically 4096).
+ * We use this as the limit to prevent truncation of path arguments.
+ */
+#define MEMORY_STRING_MAX PATH_MAX
+
 /* Initialize memory context for a traced process */
 int memory_init(MemoryContext *ctx, pid_t pid, unsigned long stack_pointer) {
     if (!ctx) return -1;
