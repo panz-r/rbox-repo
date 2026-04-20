@@ -307,3 +307,12 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 [autoallow:misc] od -c
 [autoallow:misc] od -x
 [autoallow:misc] strings
+
+# ============================================================================
+# DANGEROUS COMMAND PATTERNS — always deny, no safe use
+# ============================================================================
+
+# rm -rf / variants (system destruction)
+[autodeny:dangerous:filesystem] rm (-rf|-fr)( --no-preserve-root)? /
+[autodeny:dangerous:filesystem] rm --no-preserve-root (-rf|-fr) /
+[autodeny:dangerous:filesystem] rm (--recursive --force|--force --recursive) /
