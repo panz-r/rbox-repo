@@ -15,9 +15,10 @@ import (
 type Verdict int
 
 const (
-	VerdictAllow   Verdict = 0
-	VerdictDeny    Verdict = 1
-	VerdictReject  Verdict = 2
+	VerdictAllow        Verdict = 0
+	VerdictDeny         Verdict = 1
+	VerdictReject       Verdict = 2
+	VerdictUndetermined Verdict = 3
 )
 
 type SubcmdResult struct {
@@ -39,14 +40,15 @@ type Violation struct {
 }
 
 type EvalResult struct {
-	Verdict      Verdict
-	DenyReason   string
-	Subcmds      []SubcmdResult
-	Suggestions  []string
-	Violations   []Violation
-	HasViolation bool
-	ViolFlags    uint32
-	Truncated    bool
+	Verdict         Verdict
+	DenyReason      string
+	Subcmds         []SubcmdResult
+	Suggestions     []string
+	DenySuggestions []string
+	Violations      []Violation
+	HasViolation    bool
+	ViolFlags       uint32
+	Truncated       bool
 }
 
 type Gate struct {
@@ -128,9 +130,18 @@ func (g *Gate) Eval(cmd string) (*EvalResult, error) {
 		})
 	}
 
+	seenAllow := make(map[string]bool, 2)
 	for i := uint32(0); i < uint32(out.suggestion_count); i++ {
-		if s := cStr(out.suggestions[i]); s != "" {
+		if s := cStr(out.suggestions[i]); s != "" && !seenAllow[s] {
+			seenAllow[s] = true
 			result.Suggestions = append(result.Suggestions, s)
+		}
+	}
+	seenDeny := make(map[string]bool, 2)
+	for i := uint32(0); i < uint32(out.deny_suggestion_count); i++ {
+		if s := cStr(out.deny_suggestions[i]); s != "" && !seenDeny[s] {
+			seenDeny[s] = true
+			result.DenySuggestions = append(result.DenySuggestions, s)
 		}
 	}
 
@@ -175,6 +186,26 @@ func (g *Gate) RuleCount() uint32 {
 		return 0
 	}
 	return uint32(C.sg_gate_rule_count(g.gate))
+}
+
+func (g *Gate) AddDenyRule(pattern string) error {
+	if g.gate == nil {
+		return fmt.Errorf("gate is nil")
+	}
+	cPat := C.CString(pattern)
+	defer C.free(unsafe.Pointer(cPat))
+	rc := C.sg_gate_add_deny_rule(g.gate, cPat)
+	if rc != C.SG_OK {
+		return fmt.Errorf("add deny rule failed: %d", int(rc))
+	}
+	return nil
+}
+
+func (g *Gate) DenyRuleCount() uint32 {
+	if g.gate == nil {
+		return 0
+	}
+	return uint32(C.sg_gate_deny_rule_count(g.gate))
 }
 
 func (g *Gate) SavePolicy(path string) error {
@@ -224,31 +255,50 @@ func VerdictName(v Verdict) string {
 		return "DENY"
 	case VerdictReject:
 		return "REJECT"
+	case VerdictUndetermined:
+		return "UNDETERMINED"
 	default:
 		return "UNKNOWN"
 	}
 }
 
-func ViolationCategoryName(flags uint32) string {
-	const (
-		catFilesystem = uint32(C.SG_VIOL_CAT_FILESYSTEM)
-		catPrivilege  = uint32(C.SG_VIOL_CAT_PRIVILEGE)
-		catExfil      = uint32(C.SG_VIOL_CAT_EXFIL)
-		catNetwork    = uint32(C.SG_VIOL_CAT_NETWORK)
-	)
-	if flags&catFilesystem != 0 {
-		return "filesystem"
+func ViolationTypeName(violType uint32) string {
+	switch violType {
+	case uint32(C.SG_VIOL_WRITE_SENSITIVE):
+		return "write-sensitive"
+	case uint32(C.SG_VIOL_REMOVE_SYSTEM):
+		return "remove-system"
+	case uint32(C.SG_VIOL_PERM_SYSTEM):
+		return "perm-system"
+	case uint32(C.SG_VIOL_GIT_DESTRUCTIVE):
+		return "git-destructive"
+	case uint32(C.SG_VIOL_ENV_PRIVILEGED):
+		return "env-privileged"
+	case uint32(C.SG_VIOL_SHELL_ESCALATION):
+		return "shell-escalation"
+	case uint32(C.SG_VIOL_SUDO_REDIRECT):
+		return "sudo-redirect"
+	case uint32(C.SG_VIOL_PERSISTENCE):
+		return "persistence"
+	case uint32(C.SG_VIOL_WRITE_THEN_READ):
+		return "write-then-read"
+	case uint32(C.SG_VIOL_SUBST_SENSITIVE):
+		return "subst-sensitive"
+	case uint32(C.SG_VIOL_REDIRECT_FANOUT):
+		return "redirect-fanout"
+	case uint32(C.SG_VIOL_READ_SECRETS):
+		return "read-secrets"
+	case uint32(C.SG_VIOL_SHELL_OBFUSCATION):
+		return "shell-obfuscation"
+	case uint32(C.SG_VIOL_NET_DOWNLOAD_EXEC):
+		return "net-download-exec"
+	case uint32(C.SG_VIOL_NET_UPLOAD):
+		return "net-upload"
+	case uint32(C.SG_VIOL_NET_LISTENER):
+		return "net-listener"
+	default:
+		return "unknown"
 	}
-	if flags&catPrivilege != 0 {
-		return "privilege"
-	}
-	if flags&catExfil != 0 {
-		return "exfiltration"
-	}
-	if flags&catNetwork != 0 {
-		return "network"
-	}
-	return "unknown"
 }
 
 func verdictFromC(v C.sg_verdict_t) Verdict {
@@ -259,8 +309,10 @@ func verdictFromC(v C.sg_verdict_t) Verdict {
 		return VerdictDeny
 	case C.SG_VERDICT_REJECT:
 		return VerdictReject
+	case C.SG_VERDICT_UNDETERMINED:
+		return VerdictUndetermined
 	default:
-		return VerdictAllow
+		return VerdictUndetermined
 	}
 }
 

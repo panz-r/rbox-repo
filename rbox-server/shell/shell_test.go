@@ -34,7 +34,7 @@ func TestEvalSimple(t *testing.T) {
 	assert.Equal(t, "echo hello", result.Subcmds[0].Command)
 }
 
-func TestEvalDeny(t *testing.T) {
+func TestEvalUndetermined(t *testing.T) {
 	g, err := NewGate()
 	assert.NoError(t, err)
 	defer g.Close()
@@ -45,7 +45,7 @@ func TestEvalDeny(t *testing.T) {
 	result, err := g.Eval("rm -rf /")
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, VerdictDeny, result.Verdict)
+	assert.Equal(t, VerdictUndetermined, result.Verdict)
 }
 
 func TestEvalEmpty(t *testing.T) {
@@ -150,11 +150,25 @@ func TestVerdictName(t *testing.T) {
 	assert.Equal(t, "ALLOW", VerdictName(VerdictAllow))
 	assert.Equal(t, "DENY", VerdictName(VerdictDeny))
 	assert.Equal(t, "REJECT", VerdictName(VerdictReject))
+	assert.Equal(t, "UNDETERMINED", VerdictName(VerdictUndetermined))
 }
 
-func TestViolationCategoryName(t *testing.T) {
-	assert.Equal(t, "filesystem", ViolationCategoryName(1<<16))
-	assert.Equal(t, "privilege", ViolationCategoryName(1<<17))
-	assert.Equal(t, "exfiltration", ViolationCategoryName(1<<18))
-	assert.Equal(t, "network", ViolationCategoryName(1<<19))
+func TestViolationTypeName(t *testing.T) {
+	assert.Equal(t, "write-sensitive", ViolationTypeName(1<<16|1<<0))
+	assert.Equal(t, "remove-system", ViolationTypeName(1<<16|1<<1))
+	assert.Equal(t, "perm-system", ViolationTypeName(1<<16|1<<2))
+	assert.Equal(t, "git-destructive", ViolationTypeName(1<<16|1<<3))
+	assert.Equal(t, "env-privileged", ViolationTypeName(1<<17|1<<0))
+	assert.Equal(t, "shell-escalation", ViolationTypeName(1<<17|1<<1))
+	assert.Equal(t, "sudo-redirect", ViolationTypeName(1<<17|1<<2))
+	assert.Equal(t, "persistence", ViolationTypeName(1<<17|1<<3))
+	assert.Equal(t, "write-then-read", ViolationTypeName(1<<18|1<<0))
+	assert.Equal(t, "subst-sensitive", ViolationTypeName(1<<18|1<<1))
+	assert.Equal(t, "redirect-fanout", ViolationTypeName(1<<18|1<<2))
+	assert.Equal(t, "read-secrets", ViolationTypeName(1<<18|1<<3))
+	assert.Equal(t, "shell-obfuscation", ViolationTypeName(1<<18|1<<4))
+	assert.Equal(t, "net-download-exec", ViolationTypeName(1<<19|1<<0))
+	assert.Equal(t, "net-upload", ViolationTypeName(1<<19|1<<1))
+	assert.Equal(t, "net-listener", ViolationTypeName(1<<19|1<<2))
+	assert.Equal(t, "unknown", ViolationTypeName(0))
 }

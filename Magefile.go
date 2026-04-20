@@ -610,23 +610,12 @@ func ValidatePatterns() error {
 	return nil
 }
 
-// Install installs binaries to system
+// Install builds everything then installs binaries to system
 func Install() error {
+	mg.Deps(Build)
+
 	wd, _ := os.Getwd()
 	binDirPath := filepath.Join(wd, binDir)
-
-	// Check if binaries exist
-	// Note: libreadonlybox_client.so is NOT installed - it's experimental
-	binaries := []string{
-		filepath.Join(binDirPath, "readonlybox-server"),
-		filepath.Join(binDirPath, "readonlybox-ptrace"),
-		filepath.Join(binDirPath, "rbox-wrap"),
-	}
-	for _, bin := range binaries {
-		if _, err := os.Stat(bin); os.IsNotExist(err) {
-			return fmt.Errorf("binary not found: %s (run 'mage build' first)", bin)
-		}
-	}
 
 	// Use sudo if not running as root
 	sudo := ""

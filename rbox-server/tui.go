@@ -335,6 +335,7 @@ type Event struct {
 	RetryEnvDecisions []EnvVarDecision
 	// Shellgate analysis
 	EvalResult *shell.EvalResult
+	PolicyAuto bool // true = auto-allowed by policy, no user decision needed
 }
 
 var (
@@ -401,6 +402,7 @@ type Model struct {
 	lastDecision  string
 	lastTime      time.Time
 	flashTimer    int
+	flashMessage  string
 	eventChan     chan Event
 	step          int                 // 1 = history list, 2 = duration selection
 	cursor        int                 // position in history list or duration selection
@@ -415,6 +417,9 @@ type Model struct {
 	pendingRetry  map[int]*CommandLog // requests that failed and need retry
 	viewOnly      bool                // true when viewing details of a decided command (no decision allowed)
 	gate          *shell.Gate         // shellgate policy engine (may be nil)
+	suggAccepted  []bool              // per-suggestion accept state (true = accepted/green)
+	suggDuration  int                 // last selected duration (0-3) for suggestion accept
+	violOverrides map[uint32]bool     // violation types user has explicitly allowed this session
 }
 
 func NewModel() *Model {
@@ -428,7 +433,42 @@ func NewModel() *Model {
 		focus:        "history",
 		pendingRetry: make(map[int]*CommandLog),
 		viewOnly:     false,
+		violOverrides: make(map[uint32]bool),
 	}
+}
+
+func (m *Model) initSuggestions() {
+	if m.expandedCmd != nil && m.expandedCmd.EvalResult != nil {
+		ev := m.expandedCmd.EvalResult
+		suggs := ev.Suggestions
+		if !m.allowChosen && len(ev.DenySuggestions) > 0 {
+			suggs = ev.DenySuggestions
+		}
+		if len(suggs) > 0 {
+			m.suggAccepted = make([]bool, len(suggs))
+			return
+		}
+	}
+	m.suggAccepted = nil
+}
+
+func (m *Model) activeSuggestions() []string {
+	if m.expandedCmd == nil || m.expandedCmd.EvalResult == nil {
+		return nil
+	}
+	ev := m.expandedCmd.EvalResult
+	if !m.allowChosen && len(ev.DenySuggestions) > 0 {
+		return ev.DenySuggestions
+	}
+	return ev.Suggestions
+}
+
+func (m *Model) suggCount() int {
+	return len(m.suggAccepted)
+}
+
+func (m *Model) maxCursor() int {
+	return 3 + m.suggCount()
 }
 
 func (m *Model) AddConnection() {
@@ -474,8 +514,13 @@ func (m *Model) AddCommand(decision, cmd, args, caller, syscall, reason, clientI
 	}
 
 	// Count pending commands in unknown
-	if decision == "PENDING" {
+	switch decision {
+	case "PENDING":
 		m.stats.totalUnknown++
+	case "POLICY ALLOW":
+		m.stats.totalAllowed++
+	case "POLICY DENY":
+		m.stats.totalDenied++
 	}
 }
 
@@ -507,7 +552,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == 1 && m.selectedIdx > 0 {
 				m.selectedIdx--
 			} else if m.step == 2 {
-				if m.focus == "details" && !m.viewOnly && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
+				if m.focus == "actions" && !m.viewOnly {
+					m.cursor--
+					if m.cursor < 0 {
+						m.cursor = m.maxCursor()
+					}
+					if m.cursor <= 3 {
+						m.suggDuration = m.cursor
+					}
+				} else if m.focus == "details" && !m.viewOnly && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
 					m.envVarCursor--
 					if m.envVarCursor < -1 {
 						m.envVarCursor = -1
@@ -522,7 +575,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.step == 1 && m.selectedIdx < len(m.commands)-1 {
 				m.selectedIdx++
 			} else if m.step == 2 {
-				if m.focus == "details" && !m.viewOnly && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
+				if m.focus == "actions" && !m.viewOnly {
+					m.cursor++
+					if m.cursor > m.maxCursor() {
+						m.cursor = 0
+					}
+					if m.cursor <= 3 {
+						m.suggDuration = m.cursor
+					}
+				} else if m.focus == "details" && !m.viewOnly && m.expandedCmd != nil && len(m.expandedCmd.EnvVars) > 0 {
 					maxEnv := len(m.expandedCmd.EnvVars) - 1
 					if m.envVarCursor < maxEnv {
 						m.envVarCursor++
@@ -545,29 +606,43 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailsScroll = 0
 			}
 		case "left":
-			if m.step == 2 && !m.viewOnly && m.focus == "actions" {
+			if m.step == 2 && !m.viewOnly && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
+				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
+					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 1
+				}
+			} else if m.step == 2 && !m.viewOnly && m.focus == "actions" {
 				if m.cursor <= 3 {
 					m.cursor--
 					if m.cursor < 0 {
-						m.cursor = 3
+						m.cursor = m.maxCursor()
 					}
-				} else if m.cursor == 4 {
-					m.cursor = 3
-				} else if m.cursor == 5 {
-					m.cursor = 4
+					m.suggDuration = m.cursor
+				} else {
+					si := m.cursor - 4
+					if si >= 0 && si < m.suggCount() {
+						m.suggAccepted[si] = false
+					}
 				}
 			}
 		case "right":
-			if m.step == 2 && !m.viewOnly && m.focus == "actions" {
+			if m.step == 2 && !m.viewOnly && m.focus == "details" && m.envVarCursor >= 0 && m.expandedCmd != nil {
+				if m.envVarCursor < len(m.expandedCmd.EnvDecisions) {
+					m.expandedCmd.EnvDecisions[m.envVarCursor].Decision = 0
+				}
+			} else if m.step == 2 && !m.viewOnly && m.focus == "actions" {
 				if m.cursor <= 3 {
 					m.cursor++
-					if m.cursor > 3 {
+					if m.cursor > 3 && m.suggCount() > 0 {
 						m.cursor = 4
+					} else if m.cursor > 3 {
+						m.cursor = 0
 					}
-				} else if m.cursor == 4 {
-					m.cursor = 5
-				} else if m.cursor == 5 {
-					m.cursor = 0
+					m.suggDuration = m.cursor
+				} else {
+					si := m.cursor - 4
+					if si >= 0 && si < m.suggCount() {
+						m.suggAccepted[si] = true
+					}
 				}
 			}
 		case "tab":
@@ -591,6 +666,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.expandedCmd = selectedCmd
 						m.decisionReqID = selectedCmd.RequestID
 						m.envVarCursor = -1
+						m.initSuggestions()
 					} else {
 						m.step = 2
 						m.viewOnly = true
@@ -615,6 +691,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.expandedCmd = selectedCmd
 					m.decisionReqID = selectedCmd.RequestID
 					m.envVarCursor = -1
+					m.initSuggestions()
 				} else {
 					m.step = 2
 					m.viewOnly = true
@@ -631,6 +708,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.allowChosen = true
 				m.cursor = 0
 				m.focus = "actions"
+				m.initSuggestions()
 			}
 		case "d", "D":
 			if m.step == 1 && len(m.commands) > 0 && m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
@@ -644,6 +722,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.expandedCmd = selectedCmd
 					m.decisionReqID = selectedCmd.RequestID
 					m.envVarCursor = -1
+					m.initSuggestions()
 				} else {
 					m.step = 2
 					m.viewOnly = true
@@ -660,10 +739,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.allowChosen = false
 				m.cursor = 0
 				m.focus = "actions"
+				m.initSuggestions()
 			}
 		case "l", "L":
 			if m.step == 2 && !m.viewOnly {
 				m.logDecision = !m.logDecision
+			}
+		case "c", "C":
+			if m.step == 1 && m.gate != nil {
+				m.gate.Close()
+				m.gate, _ = shell.NewGate()
+				gateAddDefaults(m.gate)
+				m.violOverrides = make(map[uint32]bool)
+				m.flashMessage = "Policy cleared"
+				m.flashTimer = 3
 			}
 		case "1":
 			if m.step == 2 && !m.viewOnly && m.focus == "actions" && m.cursor >= 0 && m.cursor <= 3 {
@@ -754,9 +843,42 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case EventStoreRequest:
 			StoreRequest(msg.RequestID, msg.Req)
 		case EventNewRequest:
-			// Combined event: store request AND display - never drops
-			StoreRequest(msg.RequestID, msg.Req)
-			m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
+			// Auto-allow / auto-deny logic (safe model access in event loop)
+			autoAllowed := false
+			autoDenied := false
+			if msg.EvalResult != nil && len(msg.EnvVars) == 0 {
+				ev := msg.EvalResult
+				if ev.Verdict == shell.VerdictAllow && len(ev.Suggestions) == 0 {
+					// Literal allow match — check violations
+					if !ev.HasViolation || len(ev.Violations) == 0 {
+						autoAllowed = true
+					} else {
+						allOverridden := true
+						for _, v := range ev.Violations {
+							if !m.violOverrides[v.Type] {
+								allOverridden = false
+								break
+							}
+						}
+						if allOverridden {
+							autoAllowed = true
+						}
+					}
+					if autoAllowed {
+						msg.Req.Decide(DecisionAllow, "once", 0, nil)
+						m.AddCommand("POLICY ALLOW", msg.Command, msg.Args, msg.Caller, msg.Syscall, "policy-allow", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
+					}
+				} else if ev.Verdict == shell.VerdictDeny && len(ev.DenySuggestions) == 0 {
+					// Literal deny match — auto-deny
+					autoDenied = true
+					msg.Req.Decide(DecisionDeny, "once", 0, nil)
+					m.AddCommand("POLICY DENY", msg.Command, msg.Args, msg.Caller, msg.Syscall, "policy-deny", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
+				}
+			}
+			if !autoAllowed && !autoDenied {
+				StoreRequest(msg.RequestID, msg.Req)
+				m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
+			}
 		case EventAddPendingRetry:
 			// Find the command log for this request
 			var cmdLog *CommandLog
@@ -960,7 +1082,39 @@ func (m *Model) executeDecision() {
 	m.retryPendingDecisions()
 
 	allow := m.allowChosen
-	decision, reason, duration := durationToReason(allow, m.cursor)
+	durationCursor := m.cursor
+	if durationCursor > 3 {
+		durationCursor = m.suggDuration
+		if durationCursor < 0 || durationCursor > 3 {
+			durationCursor = 0
+		}
+	}
+	decision, reason, duration := durationToReason(allow, durationCursor)
+
+	// Add accepted suggestion rules to the gate
+	if m.gate != nil {
+		active := m.activeSuggestions()
+		for si, accepted := range m.suggAccepted {
+			if accepted && si < len(active) {
+				pattern := active[si]
+				if pattern != "" {
+					if allow {
+						m.gate.AddRule(pattern)
+					} else {
+						m.gate.AddDenyRule(pattern)
+					}
+				}
+			}
+		}
+	}
+
+	// Record violation overrides when user allows a command with violations
+	if allow && m.expandedCmd.EvalResult != nil && m.expandedCmd.EvalResult.HasViolation {
+		for _, v := range m.expandedCmd.EvalResult.Violations {
+			m.violOverrides[v.Type] = true
+		}
+	}
+
 	baseCmd := extractBaseName(m.expandedCmd.Command)
 	fmt.Printf("Executing: %s %s for %s %s (duration=%d)\n", decision, reason, baseCmd, m.expandedCmd.Args, duration)
 
@@ -1098,6 +1252,11 @@ func (m *Model) View() string {
 	sb.WriteString(titleStyle.Render(headerLine))
 	sb.WriteString("\n")
 
+	if m.flashTimer > 0 && m.flashMessage != "" {
+		sb.WriteString(infoStyle.Render("  " + m.flashMessage))
+		sb.WriteString("\n")
+	}
+
 	if m.step == 1 {
 		// Each item takes 3 lines (top border + content + bottom border), total lines = 3*N + 5 = height, so N = (height - 5) / 3
 		historyAvailable := (m.height - 5) / 3
@@ -1117,7 +1276,7 @@ func (m *Model) View() string {
 	// Footer
 	var controls string
 	if m.step == 1 {
-		controls = "↑↓ navigate  Enter/A/D expand  q/ctrl+c quit"
+		controls = "↑↓ navigate  Enter/A/D expand  C clear policy  q/ctrl+c quit"
 	} else if m.viewOnly {
 		controls = "↑↓ scroll  Esc back"
 	} else {
@@ -1164,7 +1323,11 @@ func (m *Model) renderHistoryList(sb *strings.Builder, maxHeight int) {
 		switch cmd.Decision {
 		case "ALLOW":
 			decisionStr = allowStyle.Render("✓")
+		case "POLICY ALLOW":
+			decisionStr = allowStyle.Render("✓")
 		case "DENY":
+			decisionStr = denyStyle.Render("✗")
+		case "POLICY DENY":
 			decisionStr = denyStyle.Render("✗")
 		default:
 			decisionStr = dimStyle.Render("?")
@@ -1515,8 +1678,12 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 	switch cmd.Decision {
 	case "ALLOW":
 		decisionStr = allowStyle.Render("✓ ALLOW")
+	case "POLICY ALLOW":
+		decisionStr = allowStyle.Render("✓ POLICY ALLOW")
 	case "DENY":
 		decisionStr = denyStyle.Render("✗ DENY")
+	case "POLICY DENY":
+		decisionStr = denyStyle.Render("✗ POLICY DENY")
 	default:
 		decisionStr = dimStyle.Render("◌ PENDING")
 	}
@@ -1542,8 +1709,6 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 	if m.focus == "details" {
 		detailsFocus = infoStyle
 	}
-	sb.WriteString(detailsFocus.Render("  Details:"))
-	sb.WriteString("\n")
 
 	// Show Command line
 	sb.WriteString(detailsFocus.Render(fmt.Sprintf("  Command: %s", cmd.Command)))
@@ -1559,27 +1724,26 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 
 	// Show Flagged Env Vars (from v8 protocol)
 	if len(cmd.EnvVars) > 0 {
-		// If envVarCursor is -1, command is selected, else env var is selected
-		if m.envVarCursor == -1 {
-			sb.WriteString(detailsFocus.Render("> Flagged Env Vars:"))
-		} else {
-			sb.WriteString(detailsFocus.Render("  Flagged Env Vars:"))
-		}
-		sb.WriteString("\n")
 		for i, env := range cmd.EnvVars {
-			decision := "allow"
-			if i < len(cmd.EnvDecisions) {
-				if cmd.EnvDecisions[i].Decision == 1 {
-					decision = "deny"
+			var decisionStr string
+			if i < len(cmd.EnvDecisions) && cmd.EnvDecisions[i].Decision == 0 {
+				decisionStr = allowStyle.Render(fmt.Sprintf("  [✓] %s (%.2f)", env.Name, env.Score))
+			} else {
+				decisionStr = denyStyle.Render(fmt.Sprintf("→  %s (%.2f)", env.Name, env.Score))
+			}
+			if i == 0 {
+				if i == m.envVarCursor {
+					sb.WriteString(fmt.Sprintf("  Env: > %s\n", decisionStr))
+				} else {
+					sb.WriteString(fmt.Sprintf("  Env:   %s\n", decisionStr))
+				}
+			} else {
+				if i == m.envVarCursor {
+					sb.WriteString(fmt.Sprintf("       > %s\n", decisionStr))
+				} else {
+					sb.WriteString(fmt.Sprintf("         %s\n", decisionStr))
 				}
 			}
-			// Highlight selected env var
-			if i == m.envVarCursor {
-				sb.WriteString(allowSelectedStyle.Render(fmt.Sprintf("  ● %s (%.2f) [%s]", env.Name, env.Score, decision)))
-			} else {
-				sb.WriteString(detailsFocus.Render(fmt.Sprintf("    %s (%.2f) [%s]", env.Name, env.Score, decision)))
-			}
-			sb.WriteString("\n")
 		}
 	} else {
 		// No env vars - reset cursor
@@ -1612,7 +1776,7 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		sb.WriteString("\n")
 	}
 
-	// Build full command text for pipeline parsing (strip caller prefix for analysis)
+	// Build full command text (strip caller prefix)
 	fullText := cmd.Command
 	if strings.HasPrefix(fullText, "[") {
 		endBracket := strings.Index(fullText, "]")
@@ -1623,56 +1787,53 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 	}
 	fullText = strings.TrimSpace(fullText)
 
-	// Parse and analyze pipeline
-	analysis := parsePipeline(fullText)
-
-	// Generate formatted pipeline output
-	wrappedLines := generatePipelineOutput(analysis)
-	visibleLines := wrappedLines
-	if len(wrappedLines) > detailsMaxLines {
-		start := m.detailsScroll
-		end := start + detailsMaxLines
-		if end > len(wrappedLines) {
-			end = len(wrappedLines)
-		}
-		if start < 0 || start >= len(wrappedLines) {
-			start = 0
-		}
-		if start < end {
-			visibleLines = wrappedLines[start:end]
-		}
-	}
-
-	for i, line := range visibleLines {
-		lineNum := m.detailsScroll + i + 1
-		totalLines := len(wrappedLines)
-		scrollIndicator := "  "
-		if len(wrappedLines) > detailsMaxLines {
-			if lineNum == 1 {
-				scrollIndicator = "▲"
-			} else if lineNum == totalLines {
-				scrollIndicator = "▼"
-			} else {
-				scrollIndicator = "│"
-			}
-		}
-		cmdLine := fmt.Sprintf(" %s  %s", scrollIndicator, titleStyle.Render(line))
-		sb.WriteString(detailsFocus.Render(cmdLine))
-		sb.WriteString("\n")
-	}
-
-	// Show scroll indicator if needed
-	if len(wrappedLines) > detailsMaxLines {
-		scrollInfo := fmt.Sprintf("   (%d/%d lines, ↑↓ to scroll, Tab to actions)", m.detailsScroll+1, len(wrappedLines))
-		sb.WriteString(dimStyle.Render(scrollInfo))
-		sb.WriteString("\n")
-	}
-
-	// Shellgate analysis section
+	// Shellgate depgraph display
 	if cmd.EvalResult != nil {
 		ev := cmd.EvalResult
 
-		// Verdict
+		sb.WriteString(detailsFocus.Render(fmt.Sprintf("  $ %s", fullText)))
+		sb.WriteString("\n")
+
+		// Subcommand breakdown with depgraph info
+		if len(ev.Subcmds) > 0 {
+			for i, sc := range ev.Subcmds {
+				pfx := "  │"
+				if i == len(ev.Subcmds)-1 {
+					pfx = "  └"
+				}
+				scVerdict := shell.VerdictName(sc.Verdict)
+				var annotations []string
+				if sc.WriteCount > 0 {
+					annotations = append(annotations, fmt.Sprintf("W%d", sc.WriteCount))
+				}
+				if sc.ReadCount > 0 {
+					annotations = append(annotations, fmt.Sprintf("R%d", sc.ReadCount))
+				}
+				if sc.EnvCount > 0 {
+					annotations = append(annotations, fmt.Sprintf("E%d", sc.EnvCount))
+				}
+				var annStr string
+				if len(annotations) > 0 {
+					annStr = dimStyle.Render(fmt.Sprintf(" [%s]", strings.Join(annotations, ",")))
+				}
+				var verdictStyle lipgloss.Style
+				switch sc.Verdict {
+				case shell.VerdictAllow:
+					verdictStyle = allowStyle
+				case shell.VerdictDeny, shell.VerdictReject:
+					verdictStyle = denyStyle
+				default:
+					verdictStyle = dimStyle
+				}
+				sb.WriteString(fmt.Sprintf("%s %s %s%s", pfx, sc.Command, verdictStyle.Render(scVerdict), annStr))
+				if sc.RejectReason != "" {
+					sb.WriteString(dimStyle.Render(fmt.Sprintf(" (%s)", sc.RejectReason)))
+				}
+				sb.WriteString("\n")
+			}
+		}
+
+		// Overall verdict
 		verdictStr := shell.VerdictName(ev.Verdict)
 		switch ev.Verdict {
 		case shell.VerdictAllow:
@@ -1684,24 +1845,10 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 			}
 		case shell.VerdictReject:
 			sb.WriteString(denyStyle.Render(fmt.Sprintf("  Policy: %s", verdictStr)))
+		case shell.VerdictUndetermined:
+			sb.WriteString(dimStyle.Render(fmt.Sprintf("  Policy: %s", verdictStr)))
 		}
 		sb.WriteString("\n")
-
-		// Subcommand breakdown
-		if len(ev.Subcmds) > 0 {
-			for i, sc := range ev.Subcmds {
-				pfx := "  │"
-				if i == len(ev.Subcmds)-1 {
-					pfx = "  └"
-				}
-				scVerdict := shell.VerdictName(sc.Verdict)
-				sb.WriteString(dimStyle.Render(fmt.Sprintf("%s %s: %s", pfx, sc.Command, scVerdict)))
-				if sc.RejectReason != "" {
-					sb.WriteString(dimStyle.Render(fmt.Sprintf(" (%s)", sc.RejectReason)))
-				}
-				sb.WriteString("\n")
-			}
-		}
 
 		// Violations
 		if ev.HasViolation && len(ev.Violations) > 0 {
@@ -1709,7 +1856,7 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 			sb.WriteString(denyStyle.Render("  Violations:"))
 			sb.WriteString("\n")
 			for _, v := range ev.Violations {
-				cat := shell.ViolationCategoryName(v.Type)
+				cat := shell.ViolationTypeName(v.Type)
 				severityBar := strings.Repeat("▓", int(v.Severity/10))
 				severityEmpty := strings.Repeat("░", 10-len(severityBar))
 				sb.WriteString(fmt.Sprintf("    %s [%s%s] %s: %s",
@@ -1718,17 +1865,10 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 				sb.WriteString("\n")
 			}
 		}
-
-		// Suggestions
-		if len(ev.Suggestions) > 0 {
-			sb.WriteString("\n")
-			sb.WriteString(infoStyle.Render("  Suggestions:"))
-			sb.WriteString("\n")
-			for _, s := range ev.Suggestions {
-				sb.WriteString(infoStyle.Render(fmt.Sprintf("    → %s", s)))
-				sb.WriteString("\n")
-			}
-		}
+	} else {
+		// Fallback: no eval result, show raw command
+		sb.WriteString(detailsFocus.Render(fmt.Sprintf("  $ %s", fullText)))
+		sb.WriteString("\n")
 	}
 
 	// ACTIONS PALETTE
@@ -1791,44 +1931,41 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		}
 		sb.WriteString("\n")
 
-		// Policy rows (= and +)
-		equalsPrefix := "  "
-		plusPrefix := "  "
-		if m.focus == "actions" {
-			if m.cursor == 4 {
-				equalsPrefix = "> "
-			} else if m.cursor == 5 {
-				plusPrefix = "> "
+		// Policy suggestion rows
+		if m.suggCount() > 0 {
+			active := m.activeSuggestions()
+			for si, sugg := range active {
+				rowIdx := 4 + si
+				prefix := "  "
+				if m.focus == "actions" && m.cursor == rowIdx {
+					prefix = "> "
+				}
+				accepted := m.suggAccepted[si]
+				var text string
+				if accepted {
+					text = allowStyle.Render("[✓] " + sugg)
+				} else {
+					text = infoStyle.Render("→ " + sugg)
+				}
+				sb.WriteString("           " + prefix + text + "\n")
 			}
 		}
-		cmdSuggestion := cmd.Command
-		equalsContent := "[=] " + truncateString(cmdSuggestion, TruncateWidth)
-		plusContent := "[+] session"
 
-		if m.focus == "actions" {
-			sb.WriteString("           " + equalsPrefix + durationStyle.Render(equalsContent) + "\n")
-			sb.WriteString("           " + plusPrefix + durationStyle.Render(plusContent) + "\n")
-		} else {
-			sb.WriteString("           " + equalsPrefix + dimStyle.Render(equalsContent) + "\n")
-			sb.WriteString("           " + plusPrefix + dimStyle.Render(plusContent) + "\n")
-		}
-
-		// Log toggle indicator
+		// Log toggle + focus indicator
 		if m.step == 2 {
-			if m.logDecision {
-				logStr := infoStyle.Render("[L] Log to user_log.xml")
-				sb.WriteString(fmt.Sprintf("           %s\n", logStr))
+			var tabLabel string
+			if m.focus == "details" {
+				tabLabel = "[Tab] Actions"
 			} else {
-				logStr := dimStyle.Render("[L] Log to user_log.xml")
-				sb.WriteString(fmt.Sprintf("           %s\n", logStr))
+				tabLabel = "[Tab] Details"
 			}
-		}
-
-		// Focus indicator
-		if m.focus == "details" {
-			sb.WriteString(dimStyle.Render("  (Tab to Actions)"))
-		} else {
-			sb.WriteString(dimStyle.Render("  (Tab to Details)"))
+			var logLabel string
+			if m.logDecision {
+				logLabel = infoStyle.Render("[L] Log")
+			} else {
+				logLabel = dimStyle.Render("[L] Log")
+			}
+			sb.WriteString(fmt.Sprintf("  %s    %s\n", dimStyle.Render(tabLabel), logLabel))
 		}
 		sb.WriteString("\n")
 	} else {
@@ -1841,6 +1978,23 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 		}
 		sb.WriteString("\n")
 	}
+}
+
+func gateAddDefaults(gate *shell.Gate) {
+	if gate == nil {
+		return
+	}
+	gate.AddRule("echo *")
+	gate.AddRule("ls")
+	gate.AddRule("cat #path")
+	gate.AddRule("grep *")
+	gate.AddRule("find *")
+	gate.AddRule("head")
+	gate.AddRule("tail")
+	gate.AddRule("wc")
+	gate.AddRule("sort")
+	gate.AddRule("uniq")
+	gate.AddRule("diff *")
 }
 
 func RunTUIMode() {
@@ -1863,23 +2017,7 @@ func RunTUIMode() {
 		fmt.Fprintf(os.Stderr, "Warning: shellgate init failed (analysis disabled): %v\n", gateErr)
 	}
 	if gate != nil {
-		// Add basic default rules so eval produces meaningful verdicts
-		gate.AddRule("echo *")
-		gate.AddRule("ls")
-		gate.AddRule("cat #path")
-		gate.AddRule("git *")
-		gate.AddRule("grep *")
-		gate.AddRule("find *")
-		gate.AddRule("head")
-		gate.AddRule("tail")
-		gate.AddRule("wc")
-		gate.AddRule("sort")
-		gate.AddRule("uniq")
-		gate.AddRule("diff *")
-		gate.AddRule("make *")
-		gate.AddRule("gcc *")
-		gate.AddRule("python *")
-		gate.AddRule("node *")
+		gateAddDefaults(gate)
 	}
 
 	// Create model
@@ -1943,8 +2081,7 @@ func RunTUIMode() {
 				evalResult, _ = gate.Eval(cmd)
 			}
 
-			// Store request AND send display event in one atomic blocking operation
-			// This ensures no requests are ever dropped - backpressure if TUI is busy
+			// Auto-allow check happens in the event handler (safe model access)
 			model.eventChan <- Event{
 				Type:       EventNewRequest,
 				RequestID:  requestID,
