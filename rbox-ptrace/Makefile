@@ -17,6 +17,7 @@ LDFLAGS = -lpthread -lm
 
 # Libraries (use shared library - rbox-protocol includes shellsplit in .so)
 LDFLAGS += -L../rbox-protocol -lrbox_protocol
+LDFLAGS += -Wl,-rpath,'$$ORIGIN/../lib'
 LDFLAGS += ../c-dfa/libdfa_eval.a
 
 # DFA Tools

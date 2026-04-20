@@ -6,7 +6,7 @@
 # Compiler and Flags
 CC = gcc
 CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../rbox-preload -I../../shellsplit/include -I../../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
-LDFLAGS = -lpthread -lm
+LDFLAGS = -lpthread -lm -Wl,-rpath,'$$ORIGIN/../../lib'
 
 # Pre-built libraries
 LIBS = ../../c-dfa/libdfa_eval.a \

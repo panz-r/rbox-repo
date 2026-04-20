@@ -26,6 +26,7 @@ const (
 	rboxWrapDir     = "rbox-wrap"
 	rboxPtraceDir   = "rbox-ptrace"
 	rboxServerDir   = "rbox-server"
+	rboxRulesetDir  = "rbox-ruleset"
 
 	socketDir  = "/run/readonlybox"
 	socketPath = socketDir + "/readonlybox.sock"
@@ -107,6 +108,11 @@ func BuildDependencies() error {
 	}
 	if err := buildCMake(filepath.Join(wd, rboxProtocolDir)); err != nil {
 		return fmt.Errorf("rbox-protocol build failed: %w", err)
+	}
+
+	// Build rbox-ruleset (landlock policy builder library)
+	if err := buildCMake(filepath.Join(wd, rboxRulesetDir)); err != nil {
+		return fmt.Errorf("rbox-ruleset build failed: %w", err)
 	}
 
 	// Create lib directory for librbox_protocol.so (dev build)
@@ -462,6 +468,11 @@ func Clean() error {
 		errs = append(errs, fmt.Errorf("%s clean failed: %w", rboxProtocolDir, err))
 	}
 
+	// rbox-ruleset uses cmake
+	if err := cleanCMake(filepath.Join(wd, rboxRulesetDir)); err != nil {
+		errs = append(errs, fmt.Errorf("%s clean failed: %w", rboxRulesetDir, err))
+	}
+
 	// Remove bin directory
 	binPath := filepath.Join(wd, binDir)
 	if err := os.RemoveAll(binPath); err != nil && !os.IsNotExist(err) {
@@ -523,6 +534,12 @@ func Test() error {
 	fmt.Println("=== Running rbox-protocol tests ===")
 	if err := runCMakeTest(filepath.Join(rboxProtocolDir)); err != nil {
 		return fmt.Errorf("rbox-protocol tests failed: %w", err)
+	}
+
+	// Run rbox-ruleset tests (CMake-built test_runner)
+	fmt.Println("=== Running rbox-ruleset tests ===")
+	if err := runTestBinary(filepath.Join(rboxRulesetDir, "build", "bin", "test_runner")); err != nil {
+		return fmt.Errorf("rbox-ruleset tests failed: %w", err)
 	}
 
 	// Run rbox-wrap tests
@@ -942,6 +959,17 @@ func runMakeTest(dir string) error {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("tests failed in %s: %w\n  See output above for details", dir, err)
+	}
+	return nil
+}
+
+// runTestBinary runs a test executable directly
+func runTestBinary(binPath string) error {
+	cmd := exec.Command(binPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("test binary failed: %w", err)
 	}
 	return nil
 }
