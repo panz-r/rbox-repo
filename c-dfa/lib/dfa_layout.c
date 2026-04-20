@@ -746,6 +746,7 @@ static int* build_scc_affinity_groups(
     int scc_count = 0;
     int* scc_id = find_sccs_tarjan(dfa, state_count, scc_info, &scc_count);
     if (!scc_id || scc_count == 0) {
+        free(scc_info);
         free(scc_id);
         return NULL;
     }
@@ -754,6 +755,7 @@ static int* build_scc_affinity_groups(
     for (int s = 0; s < state_count; s++) {
         if (scc_id[s] < 0 || scc_id[s] >= scc_count) {
             for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+            free(scc_info);
             free(scc_id);
             return NULL;
         }
@@ -763,6 +765,7 @@ static int* build_scc_affinity_groups(
     int** cond = build_condensation_graph(dfa, state_count, scc_id, scc_count);
     if (!cond) {
         for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+        free(scc_info);
         free(scc_id);
         return NULL;
     }
@@ -772,6 +775,7 @@ static int* build_scc_affinity_groups(
     if (!topo_order) {
         free_condensation_graph(cond, scc_count);
         for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+        free(scc_info);
         free(scc_id);
         return NULL;
     }
@@ -848,6 +852,7 @@ static int* build_scc_affinity_groups(
         free(scc_layer); free(is_entry);
         free_condensation_graph(cond, scc_count);
         for (int i = 0; i < scc_count; i++) free(scc_info[i].states);
+        free(scc_info);
         free(scc_id); free(topo_order);
         return NULL;
     }

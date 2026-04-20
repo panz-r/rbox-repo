@@ -136,7 +136,7 @@ Runs: `test_library_api`, `test_eval_only`, `testgen_test` (~3 seconds)
 ```bash
 cmake --build build --target test-full
 ```
-Runs the complete test suite via `tests/run_test_suite.py` (~5-10 minutes):
+Runs the complete test suite via ctest (~5-10 minutes):
 - Moore algorithm on test-set A with SAT compression
 - Hopcroft algorithm on test-set B with SAT compression
 - Stress tests on test-set C with SAT compression

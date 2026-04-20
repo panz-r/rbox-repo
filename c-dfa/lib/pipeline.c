@@ -38,6 +38,9 @@ void nfa_to_dfa(nfa2dfa_context_t* ctx);
 void flatten_dfa(nfa2dfa_context_t* ctx);
 void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename);
 
+// Forward declaration for NFA transfer
+int nfa2dfa_context_set_nfa(nfa2dfa_context_t* ctx, nfa_builder_context_t* builder_ctx);
+
 // ============================================================================
 // Pipeline struct
 // ============================================================================
@@ -50,7 +53,6 @@ struct pipeline {
     size_t binary_size;
     char last_error[256];
     pipeline_error_t last_error_code;
-    char temp_nfa_file[256];
     char temp_dfa_file[256];
     bool nfa_built;
     bool dfa_built;
@@ -155,31 +157,15 @@ pipeline_t* pipeline_create(const pipeline_config_t* config) {
         p->config.optimize_layout = true;
     }
 
-    // Create process-private temp directory using mkdtemp
-    char temp_dir_template[] = "/tmp/readonlybox.XXXXXX";
-    if (mkdtemp(temp_dir_template) == NULL) {
+    // Create temp file for DFA output (used to retrieve binary data in pipeline_run)
+    char temp_dfa_template[] = "/tmp/readonlybox_dfa_XXXXXX";
+    int dfa_fd = mkstemp(temp_dfa_template);
+    if (dfa_fd < 0) {
         free(p);
         return NULL;
     }
-    
-    // Create temp files inside the private directory
-    snprintf(p->temp_nfa_file, sizeof(p->temp_nfa_file), "%s/nfa_XXXXXX", temp_dir_template);
-    snprintf(p->temp_dfa_file, sizeof(p->temp_dfa_file), "%s/dfa_XXXXXX", temp_dir_template);
-    int nfa_fd = mkstemp(p->temp_nfa_file);
-    int dfa_fd = mkstemp(p->temp_dfa_file);
-    if (nfa_fd < 0 || dfa_fd < 0) {
-        // Close any successfully opened fd
-        if (nfa_fd >= 0) close(nfa_fd);
-        if (dfa_fd >= 0) close(dfa_fd);
-        // Unlink any files that were successfully created
-        if (nfa_fd >= 0) unlink(p->temp_nfa_file);
-        if (dfa_fd >= 0) unlink(p->temp_dfa_file);
-        unlink(temp_dir_template);
-        free(p);
-        return NULL;
-    }
-    close(nfa_fd);  // Close fd, path remains valid for later use
-    close(dfa_fd);
+    snprintf(p->temp_dfa_file, sizeof(p->temp_dfa_file), "%s", temp_dfa_template);
+    close(dfa_fd);  // Close fd, path remains valid for later use
 
     p->last_error_code = PIPELINE_OK;
     return p;
@@ -192,17 +178,8 @@ void pipeline_destroy(pipeline_t* p) {
     if (p->ordered_patterns) {
         pattern_order_free(p->ordered_patterns, p->pattern_count);
     }
-    // Clean up temp files and directory
-    unlink(p->temp_nfa_file);
+    // Clean up temp DFA file
     unlink(p->temp_dfa_file);
-    // Remove parent temp directory (extract dir from temp_nfa_file path)
-    char temp_dir[256];
-    snprintf(temp_dir, sizeof(temp_dir), "%s", p->temp_nfa_file);
-    char* last_slash = strrchr(temp_dir, '/');
-    if (last_slash) {
-        *last_slash = '\0';
-        rmdir(temp_dir);
-    }
     free(p);
 }
 
@@ -212,6 +189,11 @@ void pipeline_destroy(pipeline_t* p) {
 
 pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename) {
     long start = get_time_ms();
+    
+    // Destroy existing builder context if reusing pipeline
+    if (p->builder_ctx) {
+        nfa_builder_context_destroy(p->builder_ctx);
+    }
     
     p->builder_ctx = nfa_builder_context_create();
     if (!p->builder_ctx) {
@@ -285,15 +267,16 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
         return PIPELINE_PARSE_ERROR;
     }
 
-    // Initialize nfa2dfa context for later conversion
-    if (!p->nfa2dfa_ctx) {
-        p->nfa2dfa_ctx = nfa2dfa_context_create();
-        if (!p->nfa2dfa_ctx) {
-            set_error(p, PIPELINE_OOM, "Failed to create nfa2dfa context");
-            return PIPELINE_OOM;
-        }
-        p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
+    // Create fresh nfa2dfa context (destroy existing if reusing pipeline)
+    if (p->nfa2dfa_ctx) {
+        nfa2dfa_context_destroy(p->nfa2dfa_ctx);
     }
+    p->nfa2dfa_ctx = nfa2dfa_context_create();
+    if (!p->nfa2dfa_ctx) {
+        set_error(p, PIPELINE_OOM, "Failed to create nfa2dfa context");
+        return PIPELINE_OOM;
+    }
+    p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
 
     nfa_construct_init(p->builder_ctx);
     // Build NFA from reordered patterns
@@ -304,7 +287,9 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
             patterns_added++;
         }
     }
-    nfa_construct_write_file(p->builder_ctx, p->temp_nfa_file);
+    
+    // Transfer NFA directly from builder to nfa2dfa context (no temp file)
+    nfa2dfa_context_set_nfa(p->nfa2dfa_ctx, p->builder_ctx);
 
     p->nfa_built = true;
     p->timing_nfa_build_ms = get_time_ms() - start;
@@ -314,15 +299,16 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
 pipeline_error_t pipeline_load_nfa(pipeline_t* p, const char* nfa_file) {
     if (!p || !nfa_file) return PIPELINE_ERROR;
 
-    // Initialize nfa2dfa context
-    if (!p->nfa2dfa_ctx) {
-        p->nfa2dfa_ctx = nfa2dfa_context_create();
-        if (!p->nfa2dfa_ctx) {
-            set_error(p, PIPELINE_OOM, "Failed to create nfa2dfa context");
-            return PIPELINE_OOM;
-        }
-        p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
+    // Create fresh nfa2dfa context (destroy existing if reusing pipeline)
+    if (p->nfa2dfa_ctx) {
+        nfa2dfa_context_destroy(p->nfa2dfa_ctx);
     }
+    p->nfa2dfa_ctx = nfa2dfa_context_create();
+    if (!p->nfa2dfa_ctx) {
+        set_error(p, PIPELINE_OOM, "Failed to create nfa2dfa context");
+        return PIPELINE_OOM;
+    }
+    p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
 
     // Initialize hash table for DFA construction
     init_hash_table(p->nfa2dfa_ctx);
@@ -368,15 +354,6 @@ pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
     return PIPELINE_OK;
 }
 
-// Initialize NFA transitions to -1 (load_nfa_file skips nfa_init in library builds)
-static void init_nfa_array(nfa2dfa_context_t* ctx) {
-    for (int i = 0; i < ctx->nfa_state_count; i++) {
-        for (int j = 0; j < BYTE_VALUE_MAX; j++) {  // BYTE_VALUE_MAX = 256 (byte values 0-255)
-            ctx->nfa[i].transitions[j] = -1;
-        }
-    }
-}
-
 pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
     // Initialize nfa2dfa context if needed
     if (!p->nfa2dfa_ctx) {
@@ -388,15 +365,8 @@ pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
         p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
     }
 
-    // Only load from temp file if NFA was not pre-loaded via pipeline_load_nfa()
-    if (!p->nfa_loaded_from_file) {
-        // Initialize NFA transitions to -1 (load_nfa_file skips nfa_init in library builds)
-        init_nfa_array(p->nfa2dfa_ctx);
-
-        // Load NFA from temp file
-        init_hash_table(p->nfa2dfa_ctx);
-        load_nfa_file(p->nfa2dfa_ctx, p->temp_nfa_file);
-    }
+    // Initialize hash table for DFA construction
+    init_hash_table(p->nfa2dfa_ctx);
 
     // Pre-minimize NFA (has its own timing)
     pipeline_preminimize_nfa(p);
@@ -418,7 +388,8 @@ pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
 
     p->nfa2dfa_ctx->dfa_state_count = dfa_minimize(
         p->nfa2dfa_ctx->dfa, p->nfa2dfa_ctx->dfa_state_count, 
-        (dfa_minimize_algo_t)algo, p->config.verbose);
+        (dfa_minimize_algo_t)algo, p->config.verbose,
+        p->nfa2dfa_ctx->dfa_marker_lists, p->nfa2dfa_ctx->marker_list_count);
 
     // Capture minimize stats
     dfa_minimize_stats_t min_stats;

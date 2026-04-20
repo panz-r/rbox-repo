@@ -54,6 +54,8 @@ void mta_init(multi_target_array_t* arr);
 
 void mta_free(multi_target_array_t* arr);
 
+void mta_free_entry(mta_entry_t* entry);
+
 bool mta_add_target(multi_target_array_t* arr, int symbol_id, int target_state);
 
 bool mta_is_multi(multi_target_array_t* arr, int symbol_id);
@@ -88,5 +90,10 @@ transition_marker_t* mta_get_markers(multi_target_array_t* arr, int symbol_id, i
  * Clear all markers for a specific symbol
  */
 void mta_clear_markers(multi_target_array_t* arr, int symbol_id);
+
+/**
+ * Report memory leak statistics (for debugging)
+ */
+void mta_report_leaks(void);
 
 #endif

@@ -87,7 +87,7 @@ static int test_marker_aware_partitioning(void) {
     dfa_ptr[5]->eos_marker_offset = 0x30;
     dfa_ptr[5]->flags = 0;
 
-    int result = dfa_minimize(dfa_ptr, 6, DFA_MIN_HOPCROFT, false);
+    int result = dfa_minimize(dfa_ptr, 6, DFA_MIN_HOPCROFT, false, NULL, 0);
 
     check(result > 0, "Minimization produced valid state count");
     check(result <= 6, "Minimization reduced or maintained state count");
@@ -112,6 +112,15 @@ static int test_marker_aware_partitioning(void) {
     }
 
     check(violations == 0, "No inappropriate merges detected");
+    
+    // Clean up ALL states
+    for (int i = 0; i < 6; i++) {
+        if (dfa_ptr[i] != NULL) {
+            build_dfa_state_destroy(dfa_ptr[i]);
+            dfa_ptr[i] = NULL;
+        }
+    }
+    
     return violations == 0 ? TEST_PASSED : TEST_FAILED;
 }
 
@@ -150,7 +159,7 @@ static int test_marker_offset_spread(void) {
         dfa_ptr[i]->flags = 0x0100;
     }
 
-    int result = dfa_minimize(dfa_ptr, 20, DFA_MIN_HOPCROFT, false);
+    int result = dfa_minimize(dfa_ptr, 20, DFA_MIN_HOPCROFT, false, NULL, 0);
 
     check(result > 0, "Minimization completed with spread markers");
     check(result < 20, "Minimization reduced state count");
@@ -176,7 +185,16 @@ static int test_marker_offset_spread(void) {
 
     check(marker_diversity >= 2, "Multiple unique marker offsets preserved");
     printf("  [INFO] Preserved %d unique marker offsets\n", marker_diversity);
-
+    
+    // Clean up ALL states - dfa_minimize internal bugs may leave stale pointers
+    // beyond the result count that need explicit cleanup
+    for (int i = 0; i < 20; i++) {
+        if (dfa_ptr[i] != NULL) {
+            build_dfa_state_destroy(dfa_ptr[i]);
+            dfa_ptr[i] = NULL;
+        }
+    }
+    
     return TEST_PASSED;
 }
 
@@ -199,6 +217,7 @@ int main(int argc, char* argv[]) {
     printf("MINIMIZATION INTEGRITY RESULTS\n");
     printf("=================================================\n");
     printf("Tests: %d/%d passed\n", passed_count, test_count);
+    printf("SUMMARY: %d/%d passed\n", passed_count, test_count);
 
     return result == TEST_PASSED ? 0 : 1;
 }

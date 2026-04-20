@@ -44,6 +44,7 @@ target_include_directories(readonlybox_dfa PUBLIC
 )
 target_link_libraries(readonlybox_dfa PUBLIC
     readonlybox_dfa_headers
+    readonlybox_dfa_eval
     cadical
 )
 

@@ -5,6 +5,7 @@
 #include "dfa_internal.h"
 #include "dfa_types.h"
 #include "pipeline.h"
+#include "multi_target_array.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1442,6 +1443,9 @@ int main(int argc, char* argv[]) {
 
     // Clean up only the files we tracked during this test run
     cleanup_tracked_files();
+    
+    // Report MTA leaks
+    mta_report_leaks();
 
     return (total_tests_passed < total_tests_run) ? 1 : 0;
 }

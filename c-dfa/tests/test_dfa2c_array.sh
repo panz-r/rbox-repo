@@ -1,8 +1,8 @@
 #!/bin/bash
-# test_dfa2c_array.sh - Tests for cdfatool embedd command
-set -e
+# test_dfa2c_array.sh - DFA to C array conversion tests
+# Tests C array generation from compiled DFA
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/.."
 
 # BUILD_DIR can be passed from Python runner, otherwise auto-detect
@@ -74,6 +74,7 @@ run_test "error_nonexistent_input" bash -c "
 
 echo ""
 echo "Summary: $TESTS_PASSED/$TESTS_RUN tests passed"
+echo "SUMMARY: $TESTS_PASSED/$TESTS_RUN passed"
 
 if [ "$TESTS_PASSED" -eq "$TESTS_RUN" ]; then
     exit 0

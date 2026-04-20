@@ -27,15 +27,7 @@
 #include <stdint.h>
 #include "cdfa_defines.h"
 #include "dfa_types.h"
-
-/* Alphabet entry - used by DFA serialization functions.
- * Must match the definition in tools/nfa2dfa_context.h. */
-typedef struct alphabet_entry {
-    int symbol_id;
-    int start_char;
-    int end_char;
-    bool is_special;
-} alphabet_entry_t;
+#include "nfa.h"
 
 #ifdef __cplusplus
 extern "C" {

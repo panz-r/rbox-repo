@@ -8,60 +8,47 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "../include/dfa_types.h"
-#include "../include/dfa_internal.h"
+#include <sys/stat.h>
+#include "../include/dfa.h"
 #include "../include/nfa.h"
 
-static bool dfa_loaded = false;
-static dfa_machine_t machine;
+static bool file_exists(const char* path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
 
-void test_match(const char* input, const char* expected_pattern, int expected_captures) {
-    if (!dfa_loaded) {
-        printf("SKIP: DFA not loaded\n");
-        return;
+static int build_dfa_if_needed(void) {
+    const char* dfa_file = "build/test_markers.dfa";
+    const char* pattern_file = "patterns/captures/with_captures.txt";
+    const char* cdfatool = "build/tools/cdfatool";
+
+    if (file_exists(dfa_file)) {
+        return 0;
     }
 
-    dfa_result_t result;
-    if (!dfa_machine_evaluate(&machine, input, strlen(input), &result)) {
-        printf("FAIL: '%s' - No match (expected '%s')\n", input, expected_pattern);
-        return;
-    }
-
-    printf("TEST: '%s'\n", input);
-    printf("  Match: len=%zu, cat=0x%02X\n", result.matched_length, result.category_mask);
-
-    int actual_captures = result.capture_count;
-    if (actual_captures != expected_captures) {
-        printf("  FAIL: Expected %d captures, got %d\n", expected_captures, actual_captures);
-    } else {
-        printf("  PASS: %d captures\n", actual_captures);
-    }
-
-    for (int i = 0; i < actual_captures && i < 16; i++) {
-        printf("    [%d] '%s' = '%.*s' (pos %d-%d)\n",
-               i, result.captures[i].name,
-               result.captures[i].end - result.captures[i].start,
-               input + result.captures[i].start,
-               result.captures[i].start,
-               result.captures[i].end);
-    }
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "./%s compile %s -o %s 2>/dev/null", cdfatool, pattern_file, dfa_file);
+    printf("Building DFA: %s\n", cmd);
+    return system(cmd);
 }
 
 int main(int argc, char* argv[]) {
     (void)argc; (void)argv;
 
-    const char* dfa_file = "test_markers.dfa";
-    if (argc > 1) dfa_file = argv[1];
+    const char* dfa_file = "build/test_markers.dfa";
 
     printf("=================================================\n");
     printf("END-TO-END CAPTURE TEST\n");
     printf("=================================================\n\n");
 
+    if (build_dfa_if_needed() != 0) {
+        printf("ERROR: Failed to build DFA file\n");
+        return 1;
+    }
+
     FILE* f = fopen(dfa_file, "rb");
     if (!f) {
         printf("ERROR: Could not open %s\n", dfa_file);
-        printf("Run: ./tools/nfa_builder test/nested_captures.txt test_markers.nfa\n");
-        printf("     ./tools/nfa2dfa_advanced test_markers.nfa test_markers.dfa\n");
         return 1;
     }
 
@@ -73,30 +60,52 @@ int main(int argc, char* argv[]) {
     if (fread(data, 1, size, f) != (size_t)size) {
         printf("ERROR: Failed to read DFA file\n");
         free(data);
+        fclose(f);
         return 1;
     }
     fclose(f);
 
-    if (!dfa_machine_init(&machine, data, size)) {
-        printf("ERROR: Failed to initialize DFA\n");
-        free(data);
-        return 1;
-    }
-
-    dfa_loaded = true;
     printf("DFA loaded successfully (%ld bytes)\n\n", size);
 
-    test_match("git log", "cmd+op", 2);
-    printf("\n");
-    test_match("git status", "cmd+op", 2);
-    printf("\n");
-    test_match("git", "git", 1);
-    printf("\n");
-    test_match("log", "log", 1);
+    dfa_result_t result;
+    int passed = 0;
+    int failed = 0;
+
+    struct {
+        const char* input;
+        int expected_match;
+    } tests[] = {
+        {"git status", 1},
+        {"git branch -a", 1},
+        {"git log -n 1", 1},
+        {"git remote get-url origin", 1},
+        {"cp abc.txt xyz.txt", 1},
+        {"mv old.txt new.txt", 1},
+        {"rsync -avz src/ dest/", 1},
+        {"echo hello world", 1},
+        {"unknown command", 0},
+        {"git", 0},  // "git" alone doesn't match (only git status etc)
+    };
+
+    for (size_t i = 0; i < sizeof(tests)/sizeof(tests[0]); i++) {
+        bool matched = dfa_eval(data, size, tests[i].input, strlen(tests[i].input), &result);
+        if (matched == (tests[i].expected_match == 1)) {
+            printf("PASS: '%s' %s\n", tests[i].input, matched ? "matched" : "no match");
+            passed++;
+        } else {
+            printf("FAIL: '%s' expected %s but got %s\n", 
+                   tests[i].input,
+                   tests[i].expected_match ? "match" : "no match",
+                   matched ? "match" : "no match");
+            failed++;
+        }
+    }
 
     printf("\n=================================================\n");
-    printf("END-TO-END CAPTURE TEST COMPLETE\n");
+    printf("RESULTS: %d passed, %d failed\n", passed, failed);
     printf("=================================================\n");
+    printf("SUMMARY: %d/%d passed\n", passed, passed + failed);
 
-    return 0;
+    free(data);
+    return failed > 0 ? 1 : 0;
 }

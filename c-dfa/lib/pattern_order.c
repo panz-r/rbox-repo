@@ -50,6 +50,14 @@ static fragment_table_t fragment_table = {
     .count = 0
 };
 
+static void clear_fragment_table(void) {
+    for (int i = 0; i < fragment_table.count; i++) {
+        free(fragment_table.names[i]);
+        fragment_table.names[i] = NULL;
+    }
+    fragment_table.count = 0;
+}
+
 // Get default options
 pattern_order_options_t pattern_order_default_options(void) {
     pattern_order_options_t opts = {
@@ -343,7 +351,7 @@ int pattern_order_optimize(pattern_entry_t* patterns, int count,
     VERBOSE_PRINT(order, "Ordering %d patterns\n", count);
     
     // === PHASE 1: Collect fragment definitions ===
-    fragment_table.count = 0;  // Reset fragment table
+    clear_fragment_table();  // Reset and free fragment table
     for (int i = 0; i < count; i++) {
         char frag_name[64];
         if (is_fragment_definition(patterns[i].line, frag_name, sizeof(frag_name))) {
@@ -381,6 +389,7 @@ int pattern_order_optimize(pattern_entry_t* patterns, int count,
     
     // If there are fragment errors, return -1
     if (last_stats.fragment_errors > 0) {
+        clear_fragment_table();
         return -1;
     }
     

@@ -306,7 +306,7 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
     free(queue);
 
     // Pass 3: Keep states that are BOTH forward and backward reachable
-    bool* useful = alloc_or_abort(malloc(state_count * sizeof(bool)), "Alloc useful");
+    bool* useful = alloc_or_abort(calloc(state_count, sizeof(bool)), "Alloc useful");
     int useful_count = 0;
     for (int s = 0; s < state_count; s++) {
         if (forward_reachable[s] && backward_reachable[s]) {
@@ -316,15 +316,34 @@ static int prune_dead_states(build_dfa_state_t** dfa, int state_count) {
     }
     useful[0] = true;  // Always keep start state
 
-    // Pass 4: Compact the DFA
+// Pass 4: Compact the DFA
     int* map = alloc_or_abort(malloc(state_count * sizeof(int)), "Alloc map");
     int new_count = 0;
     for (int s = 0; s < state_count; s++) {
         if (useful[s]) {
             map[s] = new_count;
-            if (s != new_count) dfa[new_count] = dfa[s];
+            if (s != new_count) {
+                build_dfa_state_t* src = dfa[s];
+                build_dfa_state_t* dst = dfa[new_count];
+                if (dst != NULL && dst != src) {
+                    build_dfa_state_destroy(dst);
+                }
+                dfa[new_count] = src;
+                dfa[s] = NULL;
+            }
             new_count++;
-        } else map[s] = -1;
+        } else {
+            map[s] = -1;
+            build_dfa_state_destroy(dfa[s]);
+            dfa[s] = NULL;
+        }
+    }
+    
+    for (int s = new_count; s < state_count; s++) {
+        if (dfa[s] != NULL) {
+            build_dfa_state_destroy(dfa[s]);
+            dfa[s] = NULL;
+        }
     }
 
     // Pass 5: Update transitions using the compact map
@@ -468,7 +487,7 @@ static void initialize_partitions(minimizer_state_t* ms, build_dfa_state_t** dfa
 }
 
 static int build_minimized_dfa(build_dfa_state_t** dfa, const minimizer_state_t* ms, int old_state_count) {
-    build_dfa_state_t** new_dfa = malloc(ms->partition_count * sizeof(build_dfa_state_t*));
+    build_dfa_state_t** new_dfa = calloc(ms->partition_count, sizeof(build_dfa_state_t*));
     alloc_or_abort(new_dfa, "Alloc New DFA Buffer");
     int* state_remap = alloc_or_abort(malloc(MAX_STATES * sizeof(int)), "Alloc state_remap");
     for (int i = 0; i < MAX_STATES; i++) state_remap[i] = -1;  // Initialize to -1
@@ -523,7 +542,20 @@ static int build_minimized_dfa(build_dfa_state_t** dfa, const minimizer_state_t*
         new_dfa[s]->nfa_state_count = 0;
     }
 
+    // CRITICAL: Free ALL original states before memcpy overwrites them
+    // The originals at [0, new_count-1] will be replaced by clones from new_dfa
+    // We must free them BEFORE memcpy, not after
+    for (int i = 0; i < old_state_count; i++) {
+        if (dfa[i] != NULL) {
+            build_dfa_state_destroy(dfa[i]);
+            dfa[i] = NULL;
+        }
+    }
+
     memcpy(dfa, new_dfa, new_count * sizeof(build_dfa_state_t*));
+    for (int i = new_count; i < ms->partition_count; i++) {
+        build_dfa_state_destroy(new_dfa[i]);
+    }
     free(new_dfa); free(state_remap); return new_count;
 }
 
@@ -695,7 +727,8 @@ static bool verify_minimized_dfa(build_dfa_state_t** dfa, int state_count) {
     return true;
 }
 
-int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t algo, bool verbose) {
+int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t algo, bool verbose,
+                 MarkerList* marker_lists, int marker_list_count) {
     if (state_count <= 0) return 0;
     int original = state_count;
 
@@ -713,7 +746,7 @@ int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t a
     } else if (algo == DFA_MIN_BRZOZOWSKI) {
         new_count = dfa_minimize_brzozowski(dfa, state_count);
     } else if (algo == DFA_MIN_SAT) {
-        new_count = dfa_minimize_sat(dfa, state_count);
+        new_count = dfa_minimize_sat(dfa, state_count, marker_lists, marker_list_count);
     } else {
         new_count = dfa_minimize_hopcroft(dfa, state_count);
     }
@@ -724,6 +757,17 @@ int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t a
     last_stats.initial_states = original;
     last_stats.final_states = new_count;
     last_stats.states_removed = original - new_count;
+    
+    // CRITICAL: Clean up stale state pointers that remain in the array
+    // beyond new_count. The minimize algorithms create new states via cloning
+    // and replace pointers in dfa[], but don't clean up the old states
+    // that remain beyond the new_count range.
+    for (int i = new_count; i < original; i++) {
+        if (dfa[i] != NULL) {
+            build_dfa_state_destroy(dfa[i]);
+            dfa[i] = NULL;
+        }
+    }
     
     if (!verify_minimized_dfa(dfa, new_count)) {
         FATAL("Minimized DFA failed verification");

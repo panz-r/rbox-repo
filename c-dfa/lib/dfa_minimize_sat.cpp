@@ -143,6 +143,26 @@ private:
         }
     }
 
+public:
+    ScalableSATMinimizer(const build_dfa_state_t* dfa, int states, 
+                         MarkerList* markers, int marker_count) 
+        : n_states(states), original_dfa(dfa), marker_lists(markers), 
+          marker_list_count(marker_count), total_iterations(0) {
+        solver = new CaDiCaL::Solver();
+        
+        long long num_vars = (long long)n_states * (n_states - 1) / 2;
+        if (num_vars > 0) {
+            solver->resize((int)num_vars);
+        }
+
+        smap.compute(dfa, states);
+        compute_reachability();
+    }
+
+    ~ScalableSATMinimizer() { delete solver; }
+
+    int getTotalIterations() const { return total_iterations; }
+
     bool are_markers_equivalent(int s1, int s2, int c) {
         uint32_t m1_idx = original_dfa[s1].marker_offsets[c];
         uint32_t m2_idx = original_dfa[s2].marker_offsets[c];
@@ -202,25 +222,6 @@ private:
 
         return get_filtered(m1_idx) == get_filtered(m2_idx);
     }
-
-public:
-    ScalableSATMinimizer(const build_dfa_state_t* dfa, int states) 
-        : n_states(states), original_dfa(dfa), total_iterations(0) {
-        solver = new CaDiCaL::Solver();
-        
-        long long num_vars = (long long)n_states * (n_states - 1) / 2;
-        if (num_vars > 0) {
-            solver->resize((int)num_vars);
-        }
-
-        marker_lists = dfa_get_marker_lists(&marker_list_count);
-        smap.compute(dfa, states);
-        compute_reachability();
-    }
-
-    ~ScalableSATMinimizer() { delete solver; }
-
-    int getTotalIterations() const { return total_iterations; }
 
     int run() {
         fprintf(stderr, "[SAT] Initializing base constraints...\n");
@@ -364,7 +365,8 @@ public:
 };
 
 extern "C" {
-int dfa_minimize_sat(build_dfa_state_t** dfa, int state_count) {
+int dfa_minimize_sat(build_dfa_state_t** dfa, int state_count, 
+                     MarkerList* marker_lists, int marker_list_count) {
     if (state_count <= 1) return state_count;
 
     // Trap State Synthesis
@@ -410,7 +412,7 @@ int dfa_minimize_sat(build_dfa_state_t** dfa, int state_count) {
 
     if (hop_count <= 1) return hop_count;
 
-    ScalableSATMinimizer minimizer(*dfa, hop_count);
+    ScalableSATMinimizer minimizer(*dfa, hop_count, marker_lists, marker_list_count);
     int result = minimizer.run();
     dfa_minimize_set_iterations(minimizer.getTotalIterations());
     return result;

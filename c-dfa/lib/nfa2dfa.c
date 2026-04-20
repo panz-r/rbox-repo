@@ -54,8 +54,20 @@ MarkerList* dfa_get_marker_lists(int* count) {
 }
 
 void dfa_set_marker_lists(MarkerList* lists, int count) {
+    if (g_marker_lists && lists != g_marker_lists) {
+        // Don't free - the lists are owned by the caller (typically ctx->dfa_marker_lists)
+        // and will be freed when that context is destroyed
+    }
     g_marker_lists = lists;
     g_marker_list_count = count;
+}
+
+void dfa_clear_marker_lists(void) {
+    if (g_marker_lists) {
+        free(g_marker_lists);
+        g_marker_lists = NULL;
+        g_marker_list_count = 0;
+    }
 }
 
 // Pointer-to-array fields
@@ -1778,9 +1790,11 @@ size_t packed_data_used = 0;
                 state_size, rule_size, header_size, ac, dfa_count, hc);
     }
     
-    fclose(file); free(raw); free(all_rules);
+    fclose(file);
+    free(raw); free(all_rules);
     free(rule_counts); free(state_offset); free(rule_offset);
     free(rule_encoding); free(n_entries); free(packed_sizes); free(tmp_entries);
+    free(packed_data); free(packed_data_offset);
 }
 
 void load_nfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {

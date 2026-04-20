@@ -54,6 +54,15 @@ target_link_libraries(regression_test PRIVATE
     readonlybox_dfa_headers
 )
 
+# End-to-end capture tests
+add_executable(test_capture_e2e
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_capture_e2e.c
+)
+target_link_libraries(test_capture_e2e PRIVATE
+    readonlybox_dfa_eval
+    readonlybox_dfa_headers
+)
+
 # ============================================================================
 # Test Targets
 # ============================================================================
@@ -63,6 +72,7 @@ add_custom_target(tests DEPENDS
     test_library_api
     test_eval_only
     regression_test
+    test_capture_e2e
     testgen_test
 )
 
@@ -259,6 +269,49 @@ set_tests_properties(regression_test PROPERTIES
     WORKING_DIRECTORY "${TEST_WORKING_DIR}"
     TIMEOUT 60
     LABELS "other")
+
+add_test(NAME test_capture_e2e
+    COMMAND test_capture_e2e)
+set_tests_properties(test_capture_e2e PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 60
+    LABELS "other")
+
+# Shell-based tests
+add_test(NAME test_binary_format
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_binary_format.sh)
+set_tests_properties(test_binary_format PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 120
+    LABELS "shell")
+
+add_test(NAME test_captures
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_captures.sh)
+set_tests_properties(test_captures PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 120
+    LABELS "shell")
+
+add_test(NAME test_dfa2c_array
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_dfa2c_array.sh)
+set_tests_properties(test_dfa2c_array PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 60
+    LABELS "shell")
+
+add_test(NAME regression_eq_fragment
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/regression_eq_fragment.sh)
+set_tests_properties(regression_eq_fragment PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 60
+    LABELS "shell")
+
+add_test(NAME regression_nfa2dfa_segfault
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/regression_nfa2dfa_segfault.sh)
+set_tests_properties(regression_nfa2dfa_segfault PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 60
+    LABELS "shell")
 
 # ============================================================================
 # CTest Output Configuration

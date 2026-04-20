@@ -33,8 +33,6 @@ typedef struct {
     int count;
 } MarkerList;
 
-MarkerList* dfa_get_marker_lists(int* count);
-
 /**
  * Minimization algorithm selection (see dfa_types.h for dfa_minimize_algo_t)
  */
@@ -42,9 +40,15 @@ MarkerList* dfa_get_marker_lists(int* count);
 /**
  * Minimize a DFA in-place.
  * Note: Thread-safe when called with algo parameter; avoid dfa_minimize_set_algorithm().
+ * @param dfa Pointer to DFA state array
+ * @param state_count Number of states
+ * @param algo Minimization algorithm (MOORE, HOPCROFT, BRZOZOWSKI, SAT)
  * @param verbose If true, print minimization progress to stderr
+ * @param marker_lists Array of marker lists for SAT minimizer (can be NULL if algo != SAT)
+ * @param marker_list_count Number of marker lists
  */
-int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t algo, bool verbose);
+int dfa_minimize(build_dfa_state_t** dfa, int state_count, dfa_minimize_algo_t algo, bool verbose,
+                 MarkerList* marker_lists, int marker_list_count);
 
 /**
  * Enable/disable debug output for minimization
@@ -89,8 +93,10 @@ int dfa_minimize_brzozowski(build_dfa_state_t** dfa, int state_count);
 
 /**
  * SAT-based Algorithm - Provably optimal minimization using CaDiCaL solver
+ * @param marker_lists Array of marker lists for transition markers (can be NULL)
+ * @param marker_list_count Number of marker lists
  */
-int dfa_minimize_sat(build_dfa_state_t** dfa, int state_count);
+int dfa_minimize_sat(build_dfa_state_t** dfa, int state_count, MarkerList* marker_lists, int marker_list_count);
 
 #ifdef __cplusplus
 }

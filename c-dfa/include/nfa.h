@@ -38,4 +38,33 @@ typedef struct {
     int pending_marker_count;
 } nfa_state_t;
 
+/* Alphabet entry for character class mapping */
+typedef struct {
+    int symbol_id;
+    int start_char;
+    int end_char;
+    bool is_special;
+} alphabet_entry_t;
+
+/* Finalized NFA graph - read-only representation for conversion to DFA */
+typedef struct {
+    nfa_state_t* states;       // NFA state array (owned by this struct)
+    int state_count;            // Number of states
+    alphabet_entry_t* alphabet; // Alphabet (or NULL if not needed)
+    int alphabet_size;          // Alphabet size
+} nfa_graph_t;
+
+/**
+ * Create an nfa_graph_t from a state array.
+ * Takes ownership of the provided states buffer - caller must NOT free it.
+ * Returns newly allocated nfa_graph_t that caller owns.
+ */
+nfa_graph_t* nfa_graph_create(nfa_state_t* states, int state_count,
+                               alphabet_entry_t* alphabet, int alphabet_size);
+
+/**
+ * Free an nfa_graph_t and all its owned memory.
+ */
+void nfa_graph_free(nfa_graph_t* graph);
+
 #endif // NFA_H

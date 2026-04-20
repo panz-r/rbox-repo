@@ -10,9 +10,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "nfa_builder.h"
 #include "../include/multi_target_array.h"
+#include "../include/nfa.h"
 
 // ============================================================================
 // Context Lifecycle
@@ -67,6 +69,145 @@ void nfa_builder_context_destroy(nfa_builder_context_t* ctx) {
         mta_free(&ctx->nfa[i].multi_targets);
     }
     free(ctx);
+}
+
+// ============================================================================
+// nfa_graph lifecycle - finalizing NFA for conversion to DFA
+// ============================================================================
+
+nfa_graph_t* nfa_graph_create(nfa_state_t* states, int state_count,
+                               alphabet_entry_t* alphabet, int alphabet_size) {
+    if (!states || state_count <= 0) return NULL;
+    
+    nfa_graph_t* graph = calloc(1, sizeof(nfa_graph_t));
+    if (!graph) return NULL;
+    
+    graph->states = states;
+    graph->state_count = state_count;
+    graph->alphabet_size = alphabet_size;
+    
+    if (alphabet && alphabet_size > 0) {
+        graph->alphabet = calloc((size_t)alphabet_size, sizeof(alphabet_entry_t));
+        if (!graph->alphabet) {
+            free(graph);
+            return NULL;
+        }
+        memcpy(graph->alphabet, alphabet, (size_t)alphabet_size * sizeof(alphabet_entry_t));
+    } else {
+        graph->alphabet = NULL;
+    }
+    
+    return graph;
+}
+
+void nfa_graph_free(nfa_graph_t* graph) {
+    if (!graph) return;
+    free(graph->states);
+    free(graph->alphabet);
+    free(graph);
+}
+
+nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx, bool preminimize) {
+    if (!ctx || ctx->nfa_state_count <= 0) return NULL;
+    
+    (void)preminimize;
+    
+    nfa_state_t* states = calloc(MAX_STATES, sizeof(nfa_state_t));
+    if (!states) return NULL;
+    
+    for (int i = 0; i < ctx->nfa_state_count && i < MAX_STATES; i++) {
+        nfa_builder_state_t* src = &ctx->nfa[i];
+        nfa_state_t* dst = &states[i];
+        
+        dst->category_mask = src->category_mask;
+        dst->pattern_id = (uint16_t)src->pattern_id;
+        dst->is_eos_target = src->is_eos_target;
+        dst->pending_marker_count = 0;
+        
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            dst->transitions[j] = src->transitions[j];
+        }
+        
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            if (src->multi_targets.has_first_target[j]) {
+                dst->multi_targets.first_targets[j] = src->multi_targets.first_targets[j];
+                dst->multi_targets.has_first_target[j] = true;
+            }
+        }
+        
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            mta_entry_t* src_entry = src->multi_targets.symbol_map[j];
+            if (src_entry != NULL) {
+                mta_entry_t* new_entry = malloc(sizeof(mta_entry_t));
+                if (!new_entry) continue;
+                    
+                new_entry->symbol_id = src_entry->symbol_id;
+                new_entry->target_count = src_entry->target_count;
+                new_entry->target_capacity = src_entry->target_capacity;
+                new_entry->dirty = src_entry->dirty;
+                new_entry->cached_csv = NULL;
+                new_entry->marker_count = src_entry->marker_count;
+                
+                size_t targets_size = (size_t)src_entry->target_capacity * sizeof(int);
+                new_entry->targets = malloc(targets_size);
+                if (!new_entry->targets) {
+                    free(new_entry);
+                    continue;
+                }
+                memcpy(new_entry->targets, src_entry->targets, 
+                       (size_t)src_entry->target_count * sizeof(int));
+                
+                for (int k = 0; k < src_entry->marker_count; k++) {
+                    new_entry->markers[k] = src_entry->markers[k];
+                }
+                
+                dst->multi_targets.symbol_map[j] = new_entry;
+            }
+        }
+        
+        dst->multi_targets.entry_count = 0;
+        dst->multi_targets.entry_capacity = 0;
+        dst->multi_targets.active_entries = NULL;
+        
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            if (dst->multi_targets.symbol_map[j] != NULL) {
+                if (dst->multi_targets.entry_count >= dst->multi_targets.entry_capacity) {
+                    int new_cap = dst->multi_targets.entry_capacity == 0 ? 8 : dst->multi_targets.entry_capacity * 2;
+                    mta_entry_t** new_active = realloc(dst->multi_targets.active_entries, 
+                                                      (size_t)new_cap * sizeof(mta_entry_t*));
+                    if (!new_active) {
+                        free(dst->multi_targets.active_entries);
+                        continue;
+                    }
+                    dst->multi_targets.active_entries = new_active;
+                    dst->multi_targets.entry_capacity = new_cap;
+                }
+                if (dst->multi_targets.entry_count < dst->multi_targets.entry_capacity) {
+                    dst->multi_targets.active_entries[dst->multi_targets.entry_count++] = 
+                        dst->multi_targets.symbol_map[j];
+                }
+            }
+        }
+    }
+    
+    alphabet_entry_t* alphabet = NULL;
+    int alphabet_size = 0;
+    if (ctx->alphabet_size > 0) {
+        alphabet = calloc((size_t)ctx->alphabet_size, sizeof(alphabet_entry_t));
+        if (!alphabet) {
+            free(states);
+            return NULL;
+        }
+        for (int i = 0; i < ctx->alphabet_size; i++) {
+            alphabet[i].symbol_id = ctx->alphabet[i].symbol_id;
+            alphabet[i].start_char = ctx->alphabet[i].start_char;
+            alphabet[i].end_char = ctx->alphabet[i].end_char;
+            alphabet[i].is_special = ctx->alphabet[i].is_special;
+        }
+        alphabet_size = ctx->alphabet_size;
+    }
+    
+    return nfa_graph_create(states, ctx->nfa_state_count, alphabet, alphabet_size);
 }
 
 // ============================================================================

@@ -43,7 +43,9 @@ set(DEBUG_COMPILE_FLAGS "-g -O0 -mcmodel=medium")
 
 # Apply sanitizer flags in debug builds
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    string(APPEND RELEASE_COMPILE_FLAGS " -fsanitize=address,undefined")
+    string(APPEND CMAKE_C_FLAGS_DEBUG " -fsanitize=address,undefined -fno-omit-frame-pointer")
+    string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fsanitize=address,undefined -fno-omit-frame-pointer")
+    string(APPEND CMAKE_EXE_LINKER_FLAGS_DEBUG " -fsanitize=address,undefined")
 endif()
 
 # Coverage
@@ -101,15 +103,16 @@ include(CTest)
 # Full Test Suite (equivalent to old `make test`)
 # ============================================================================
 
-# Run all test suites using the Python aggregator script
+# Run all test suites using ctest
 add_custom_target(test-full
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_test_suite.py --build-dir ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ctest --parallel
     DEPENDS
         dfa_test
         test_minimize_integrity
         test_library_api
         test_eval_only
         regression_test
+        test_capture_e2e
 )
 
 # ============================================================================

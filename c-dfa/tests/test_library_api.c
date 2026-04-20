@@ -9,6 +9,7 @@
 
 #include "../include/pipeline.h"
 #include "../include/dfa_internal.h"
+#include "../include/multi_target_array.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -177,6 +178,8 @@ int main(void) {
 
     printf("\n=================\n");
     printf("SUMMARY: %d/%d passed\n", tests_passed, tests_run);
+
+    mta_report_leaks();
 
     return (tests_passed == tests_run) ? 0 : 1;
 }

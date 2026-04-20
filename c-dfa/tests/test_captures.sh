@@ -1,48 +1,44 @@
 #!/bin/bash
-# test_captures.sh - Extensive capture system tests
-# Tests: nested captures, overlapping captures, multi-pattern captures, edge cases
-set -e
+# test_captures.sh - Capture group tests
+# Tests various capture scenarios using the dfa_eval API
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/.."
 
-# BUILD_DIR can be passed from Python runner, otherwise auto-detect
-if [ -n "$BUILD_DIR" ]; then
-    BUILD="$BUILD_DIR"
-    TOOLS_DIR="$BUILD/tools"
-    LIB_DIR="$BUILD/tools"
-elif [ -d "$SRC_DIR/build/tools" ] && [ -f "$SRC_DIR/build/tools/libreadonlybox_dfa.a" ]; then
-    BUILD="$SRC_DIR/build"
-    TOOLS_DIR="$SRC_DIR/build/tools"
-    LIB_DIR="$SRC_DIR/build/tools"
-else
-    BUILD="$SRC_DIR/build_test"
-    TOOLS_DIR="$SRC_DIR/tools"
-    LIB_DIR="$SRC_DIR/build_test"
-fi
+# Use temp directory for this test run - ensures parallel safety
+TEST_DIR=$(mktemp -d)
+trap "rm -rf $TEST_DIR" EXIT
+
+BUILD="$TEST_DIR"
 mkdir -p "$BUILD"
 
-# Create build_test symlink for backward compatibility with hardcoded paths in C test code
-if [ ! -e "$SRC_DIR/build_test" ]; then
-    ln -s "$BUILD" "$SRC_DIR/build_test"
-fi
-
-# Libraries needed for linking
-readonlybox_lib="$LIB_DIR/libreadonlybox_dfa.a"
-sat_lib="$LIB_DIR/libsat_modules.a"
+# Libraries - use absolute paths from source tree
+readonlybox_lib="$SRC_DIR/build/lib/libreadonlybox_dfa.a"
+readonlybox_eval_lib="$SRC_DIR/build/lib_eval/libreadonlybox_dfa_eval.a"
 cadical_lib="$SRC_DIR/vendor/cadical/build/libcadical.a"
-STATIC_LIBS="$readonlybox_lib $sat_lib $cadical_lib -lm -lstdc++"
+STATIC_LIBS="$readonlybox_lib $readonlybox_eval_lib $cadical_lib -lm -lstdc++"
+
+# Tools - use absolute paths
+CDFATOOL="$SRC_DIR/build/tools/cdfatool"
 
 TESTS_RUN=0
 TESTS_PASSED=0
+TESTS_FAILED=0
 
-pass() { TESTS_PASSED=$((TESTS_PASSED + 1)); echo "  [PASS] $1"; }
-fail() { echo "  [FAIL] $1"; }
+pass() {
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+    echo "  <PASS>$1</PASS>"
+}
+
+fail() {
+    TESTS_FAILED=$((TESTS_FAILED + 1))
+    echo "  <FAIL>$1</FAIL>"
+}
 
 # Helper: build DFA from pattern file
 build_dfa() {
     local patterns_file="$1" dfa_file="$2"
-    "$TOOLS_DIR/cdfatool" compile "$patterns_file" -o "$dfa_file" 2>/dev/null || return 1
+    "$CDFATOOL" compile "$patterns_file" -o "$dfa_file" 2>/dev/null || return 1
 }
 
 # Helper: test eval with DFA file
@@ -57,11 +53,11 @@ test_eval_file() {
 int main(void) {
     size_t sz;
     void* d = load_dfa_from_file("$dfa_file", &sz);
-    if (!d) { printf("LOAD_FAIL\n"); return 1; }
+    if (!d) { printf("LOAD_FAIL\\n"); return 1; }
     dfa_result_t r;
     memset(&r, 0, sizeof(r));
     dfa_eval(d, sz, "$input", strlen("$input"), &r);
-    printf("%d\n", r.matched);
+    printf("%d\\n", r.matched);
     free(d);
     return 0;
 }
@@ -70,10 +66,6 @@ CEEOF
     local result=$("$BUILD/test_cap_bin" 2>/dev/null)
     [ "$result" = "$expect_match" ]
 }
-
-echo "Capture System Tests"
-echo "===================="
-echo ""
 
 # ========== Test 1: Basic single capture ==========
 TESTS_RUN=$((TESTS_RUN + 1))
@@ -213,9 +205,13 @@ else
     fail "capture_overlap_patterns"
 fi
 
+# Output JUnit XML format for aggregator
 echo ""
-echo "========================"
+echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+echo "<testsuite name=\"test_captures\" tests=\"$TESTS_RUN\" failures=\"$TESTS_FAILED\" pending=\"0\">"
+echo "<testcase name=\"capture_tests\" passed=\"$TESTS_PASSED\" failed=\"$TESTS_FAILED\" tests=\"$TESTS_RUN\"/>"
+echo "</testsuite>"
+echo ""
 echo "SUMMARY: $TESTS_PASSED/$TESTS_RUN passed"
-echo "========================"
 
 [ "$TESTS_PASSED" -eq "$TESTS_RUN" ] && exit 0 || exit 1

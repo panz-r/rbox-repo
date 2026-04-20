@@ -224,6 +224,13 @@ nfa_builder_context_t* nfa_builder_context_create(void);
  */
 void nfa_builder_context_destroy(nfa_builder_context_t* ctx);
 
+/**
+ * Finalize the NFA builder, converting internal format to nfa_graph_t.
+ * Returns a newly allocated nfa_graph_t that caller owns.
+ * The builder context can be destroyed after finalize.
+ */
+nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx, bool preminimize);
+
 // ============================================================================
 // Module Function Declarations
 // ============================================================================

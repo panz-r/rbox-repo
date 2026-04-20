@@ -47,7 +47,7 @@ static mta_entry_t* mta_create_entry(int symbol_id) {
     return entry;
 }
 
-static void mta_free_entry(mta_entry_t* entry) {
+void mta_free_entry(mta_entry_t* entry) {
     if (entry != NULL) {
         free(entry->targets);
         free(entry->cached_csv);
@@ -86,15 +86,46 @@ void mta_init(multi_target_array_t* arr) {
 void mta_free(multi_target_array_t* arr) {
     if (arr == NULL) return;
     
-    if (arr->active_entries != NULL) {
-        for (int i = 0; i < arr->entry_count; i++) {
-            mta_free_entry(arr->active_entries[i]);
+    // Collect all unique entries - need to free from BOTH symbol_map AND active_entries
+    // because entries may exist in one but not the other
+    #define MAX_MTA_ENTRIES 4096
+    mta_entry_t* entries[MAX_MTA_ENTRIES];
+    int entry_count = 0;
+    
+    // Collect from symbol_map
+    for (int i = 0; i < MAX_SYMBOLS && entry_count < MAX_MTA_ENTRIES; i++) {
+        if (arr->symbol_map[i] != NULL) {
+            entries[entry_count++] = arr->symbol_map[i];
         }
-        free(arr->active_entries);
     }
+    
+    // Collect from active_entries (avoiding duplicates)
+    for (int i = 0; i < arr->entry_count && entry_count < MAX_MTA_ENTRIES; i++) {
+        bool found = false;
+        for (int j = 0; j < entry_count; j++) {
+            if (entries[j] == arr->active_entries[i]) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            entries[entry_count++] = arr->active_entries[i];
+        }
+    }
+    
+    // Free all collected entries
+    for (int i = 0; i < entry_count; i++) {
+        mta_free_entry(entries[i]);
+    }
+    
+    free(arr->active_entries);
     
     // Zero out to prevent use-after-free
     memset(arr->symbol_map, 0, sizeof(arr->symbol_map));
+    memset(arr->first_targets, 0, sizeof(arr->first_targets));
+    for (int i = 0; i < MAX_SYMBOLS; i++) {
+        arr->has_first_target[i] = false;
+    }
     arr->active_entries = NULL;
     arr->entry_count = 0;
     arr->entry_capacity = 0;
@@ -117,26 +148,31 @@ bool mta_add_target(multi_target_array_t* arr, int symbol_id, int target_state) 
             new_entry->targets[0] = arr->first_targets[symbol_id];
             new_entry->targets[1] = target_state;
             new_entry->target_count = 2;
-            
-            // Register in lookup map
-            arr->symbol_map[symbol_id] = new_entry;
 
-            // Add to active list for iteration
+            // Grow active list BEFORE adding entry to symbol_map
             if (arr->entry_count >= arr->entry_capacity) {
                 int new_cap = arr->entry_capacity == 0 ? 8 : arr->entry_capacity * 2;
                 if (arr->entry_capacity > 0 && new_cap <= arr->entry_capacity) {
+                    mta_free_entry(new_entry);
                     return false;  // Overflow
                 }
                 size_t new_size = (size_t)new_cap * sizeof(mta_entry_t*);
-                if (new_size > SIZE_MAX) return false;
-                mta_entry_t** next_active = realloc(arr->active_entries, new_size);
-                if (next_active == NULL) {
+                if (new_size > SIZE_MAX) {
                     mta_free_entry(new_entry);
                     return false;
                 }
-                arr->active_entries = next_active;
+                mta_entry_t** new_active = realloc(arr->active_entries, new_size);
+                if (new_active == NULL) {
+                    mta_free_entry(new_entry);
+                    return false;
+                }
+                // Only update on success - realloc handles old block if moved
+                arr->active_entries = new_active;
                 arr->entry_capacity = new_cap;
             }
+
+            // Now safe to register in symbol_map and add to active list
+            arr->symbol_map[symbol_id] = new_entry;
             arr->active_entries[arr->entry_count++] = new_entry;
 
             // Clear first-target optimization
@@ -377,4 +413,7 @@ void mta_clear_markers(multi_target_array_t* arr, int symbol_id) {
         entry->marker_count = 0;
         entry->dirty = true;
     }
+}
+
+void mta_report_leaks(void) {
 }

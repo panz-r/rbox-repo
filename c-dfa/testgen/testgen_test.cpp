@@ -289,6 +289,8 @@ int main() {
     std::cout << "\n==================\n";
     std::cout << "Results: " << tests_passed << "/" << tests_run << " tests passed\n";
     
+    std::cout << "\nSUMMARY: " << tests_passed << "/" << tests_run << " passed\n";
+    
     std::cout << "\n";
     int pf_result = run_factorization_tests();
     

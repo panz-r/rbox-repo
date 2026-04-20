@@ -13,6 +13,7 @@
 #include "../include/nfa.h"
 #include "../include/nfa_dsl.h"
 #include "dfa_minimize.h"
+#include "nfa_builder.h"
 
 /* alphabet_entry_t is defined in include/nfa_dsl.h */
 
@@ -54,5 +55,12 @@ nfa2dfa_context_t* nfa2dfa_context_create(void);
  * Free all memory associated with the context.
  */
 void nfa2dfa_context_destroy(nfa2dfa_context_t* ctx);
+
+/**
+ * Transfer NFA from builder context directly to nfa2dfa context.
+ * This eliminates the need for temp file serialization.
+ * Returns number of states transferred, or -1 on error.
+ */
+int nfa2dfa_context_set_nfa(nfa2dfa_context_t* ctx, nfa_builder_context_t* builder_ctx);
 
 #endif // NFA2DFA_CONTEXT_H
