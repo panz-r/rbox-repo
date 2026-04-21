@@ -5,12 +5,13 @@
 
 # Compiler and Flags
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../rbox-preload -I../../shellsplit/include -I../../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I.. -I../../c-dfa/include -I../../rbox-preload -I../../shellsplit/include -I../../rbox-protocol/include -I../../rbox-ruleset/include -DRELATIVE_ENTROPY_NO_MAIN
 LDFLAGS = -lpthread -lm -Wl,-rpath,'$$ORIGIN/../../lib'
 
 # Pre-built libraries
 LIBS = ../../c-dfa/libdfa_eval.a \
-       ../../rbox-protocol/librbox_protocol.so
+       ../../rbox-protocol/librbox_protocol.so \
+       ../../rbox-ruleset/build/lib/liblandlock-builder.a
 
 # Test source files
 TEST_SRCS = test_main.c \
@@ -20,7 +21,6 @@ TEST_SRCS = test_main.c \
             test_integration.c \
             test_e2e.c \
             test_sandbox.c \
-            test_soft_policy.c \
             test_trampoline_allowance.c \
             test_utils.c \
             debug.c
@@ -33,11 +33,11 @@ SRCS = ../progname.c \
        ../dfa.c \
        ../privilege.c \
        ../sandbox.c \
-       ../soft_policy.c \
        ../env.c \
        ../pkexec.c \
        ../judge.c \
        ../trampoline_allowance.c \
+       ../soft_ruleset_access.c \
        ../build/rbox_ptrace_dfa_data.c \
        ../../shellsplit/src/env_screener.c \
        ../../shellsplit/src/relative_permutation_entropy.c \

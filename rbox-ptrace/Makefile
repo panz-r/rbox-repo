@@ -12,13 +12,14 @@
 
 # Compiler
 CC = gcc
-CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../c-dfa/include -I../rbox-preload -I../shellsplit/include -I../rbox-protocol/include -DRELATIVE_ENTROPY_NO_MAIN
+CFLAGS = -Wall -Wextra -std=gnu11 -O2 -I. -I../c-dfa/include -I../rbox-preload -I../shellsplit/include -I../rbox-protocol/include -I../rbox-ruleset/include -DRELATIVE_ENTROPY_NO_MAIN
 LDFLAGS = -lpthread -lm
 
 # Libraries (use shared library - rbox-protocol includes shellsplit in .so)
 LDFLAGS += -L../rbox-protocol -lrbox_protocol
 LDFLAGS += -Wl,-rpath,'$$ORIGIN/../lib'
 LDFLAGS += ../c-dfa/libdfa_eval.a
+LDFLAGS += ../rbox-ruleset/build/lib/liblandlock-builder.a
 
 # DFA Tools
 NFA_BUILDER = ../c-dfa/tools/nfa_builder
@@ -46,8 +47,8 @@ SRCS = main.c \
        env.c \
        pkexec.c \
        judge.c \
-       soft_policy.c \
        trampoline_allowance.c \
+       soft_ruleset_access.c \
        $(DFA_DATA_C) \
        ../shellsplit/src/env_screener.c \
        ../shellsplit/src/relative_permutation_entropy.c

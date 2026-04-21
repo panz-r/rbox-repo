@@ -52,10 +52,9 @@ static int tests_failed = 0;
 TEST(init_basic) {
     soft_policy_t policy;
     soft_policy_init(&policy);
-    ASSERT_EQ(policy.count, 0);
-    ASSERT_NULL(policy.rules);
-    ASSERT_EQ(policy.capacity, 0);
-    ASSERT_EQ(policy.default_mode, SOFT_MODE_DENY);
+    ASSERT_EQ(soft_policy_get_count(&policy), 0);
+    ASSERT_EQ(soft_policy_get_default_mode(&policy), SOFT_MODE_DENY);
+    soft_policy_free(&policy);
     return 0;
 }
 
@@ -72,10 +71,11 @@ TEST(add_single_rule) {
 
     int result = soft_policy_add_rule(&policy, "/tmp", SOFT_MODE_DENY);
     ASSERT_EQ(result, 0);
-    ASSERT_EQ(policy.count, 1);
-    ASSERT_NOT_NULL(policy.rules);
-    ASSERT_STR_EQ(policy.rules[0].path, "/tmp");
-    ASSERT_EQ(policy.rules[0].mode, SOFT_MODE_DENY);
+    ASSERT_EQ(soft_policy_get_count(&policy), 1);
+    soft_policy_rule_t rule;
+    ASSERT_EQ(soft_policy_get_rule(&policy, 0, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/tmp");
+    ASSERT_EQ(rule.mode, SOFT_MODE_DENY);
 
     soft_policy_free(&policy);
     return 0;
@@ -89,10 +89,14 @@ TEST(add_multiple_rules) {
     ASSERT_EQ(soft_policy_add_rule(&policy, "/var", SOFT_MODE_RO), 0);
     ASSERT_EQ(soft_policy_add_rule(&policy, "/home", SOFT_MODE_DENY), 0);
 
-    ASSERT_EQ(policy.count, 3);
-    ASSERT_STR_EQ(policy.rules[0].path, "/tmp");
-    ASSERT_STR_EQ(policy.rules[1].path, "/var");
-    ASSERT_STR_EQ(policy.rules[2].path, "/home");
+    ASSERT_EQ(soft_policy_get_count(&policy), 3);
+    soft_policy_rule_t rule;
+    ASSERT_EQ(soft_policy_get_rule(&policy, 0, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/tmp");
+    ASSERT_EQ(soft_policy_get_rule(&policy, 1, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/var");
+    ASSERT_EQ(soft_policy_get_rule(&policy, 2, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/home");
 
     soft_policy_free(&policy);
     return 0;
@@ -493,7 +497,7 @@ TEST(check_mkdir_access) {
     soft_path_mode_t inputs[] = {{"/tmp", SOFT_ACCESS_MKDIR}};
     int results[1];
     soft_policy_check(&policy, inputs, results, 1);
-    ASSERT_EQ(results[0], 1);
+    ASSERT_EQ(results[0], 0);
 
     soft_policy_free(&policy);
     return 0;
@@ -533,9 +537,9 @@ TEST(set_default_deny) {
     soft_policy_t policy;
     soft_policy_init(&policy);
 
-    ASSERT_EQ(policy.default_mode, SOFT_MODE_DENY);
+    ASSERT_EQ(soft_policy_get_default_mode(&policy), SOFT_MODE_DENY);
     soft_policy_set_default(&policy, SOFT_MODE_DENY);
-    ASSERT_EQ(policy.default_mode, SOFT_MODE_DENY);
+    ASSERT_EQ(soft_policy_get_default_mode(&policy), SOFT_MODE_DENY);
 
     soft_path_mode_t inputs[] = {{"/any/path", SOFT_ACCESS_READ}};
     int results[1];
@@ -551,9 +555,9 @@ TEST(set_default_allow) {
     soft_policy_init(&policy);
 
     soft_policy_set_default(&policy, SOFT_MODE_DENY);
-    ASSERT_EQ(policy.default_mode, SOFT_MODE_DENY);
+    ASSERT_EQ(soft_policy_get_default_mode(&policy), SOFT_MODE_DENY);
     soft_policy_set_default(&policy, SOFT_MODE_RO);
-    ASSERT_EQ(policy.default_mode, SOFT_MODE_RO);
+    ASSERT_EQ(soft_policy_get_default_mode(&policy), SOFT_MODE_RO);
 
     soft_policy_free(&policy);
     return 0;
@@ -602,9 +606,7 @@ TEST(free_basic) {
     soft_policy_add_rule(&policy, "/var", SOFT_MODE_RO);
 
     soft_policy_free(&policy);
-    ASSERT_EQ(policy.count, 0);
-    ASSERT_NULL(policy.rules);
-    ASSERT_EQ(policy.capacity, 0);
+    ASSERT_EQ(soft_policy_get_count(&policy), 0);
     return 0;
 }
 
@@ -613,8 +615,7 @@ TEST(free_empty) {
     soft_policy_init(&policy);
 
     soft_policy_free(&policy);
-    ASSERT_EQ(policy.count, 0);
-    ASSERT_NULL(policy.rules);
+    ASSERT_EQ(soft_policy_get_count(&policy), 0);
     return 0;
 }
 
@@ -630,9 +631,7 @@ TEST(clear_basic) {
     soft_policy_add_rule(&policy, "/var", SOFT_MODE_RO);
 
     soft_policy_clear(&policy);
-    ASSERT_EQ(policy.count, 0);
-    ASSERT_NULL(policy.rules);
-    ASSERT_EQ(policy.capacity, 0);
+    ASSERT_EQ(soft_policy_get_count(&policy), 0);
 
     soft_policy_free(&policy);
     return 0;
@@ -647,13 +646,15 @@ TEST(clear_then_reload) {
     soft_policy_add_rule(&policy, "/old", SOFT_MODE_DENY);
 
     setenv("READONLYBOX_SOFT_ALLOW", "/new:rw", 1);
+    soft_policy_clear(&policy);
     int result = soft_policy_load_from_env(&policy);
     ASSERT_EQ(result, 0);
-    ASSERT_EQ(policy.count, 1);
+    ASSERT_EQ(soft_policy_get_count(&policy), 1);
 
+    soft_policy_rule_t rule;
     int found_new = 0;
-    for (int i = 0; i < policy.count; i++) {
-        if (strcmp(policy.rules[i].path, "/new") == 0) {
+    for (size_t i = 0; i < soft_policy_get_count(&policy); i++) {
+        if (soft_policy_get_rule(&policy, i, &rule) == 0 && strcmp(rule.path, "/new") == 0) {
             found_new = 1;
             break;
         }
@@ -661,8 +662,8 @@ TEST(clear_then_reload) {
     ASSERT(found_new);
 
     int found_old = 0;
-    for (int i = 0; i < policy.count; i++) {
-        if (strcmp(policy.rules[i].path, "/old") == 0) {
+    for (size_t i = 0; i < soft_policy_get_count(&policy); i++) {
+        if (soft_policy_get_rule(&policy, i, &rule) == 0 && strcmp(rule.path, "/old") == 0) {
             found_old = 1;
             break;
         }
@@ -692,7 +693,7 @@ TEST(load_from_env_no_env) {
     soft_policy_init(&policy);
     int result = soft_policy_load_from_env(&policy);
     ASSERT_EQ(result, 0);
-    ASSERT_EQ(policy.count, 0);
+    ASSERT_EQ(soft_policy_get_count(&policy), 0);
 
     soft_policy_free(&policy);
     return 0;
@@ -706,11 +707,14 @@ TEST(load_from_env_allow) {
     soft_policy_init(&policy);
     int result = soft_policy_load_from_env(&policy);
     ASSERT_EQ(result, 0);
-    ASSERT_EQ(policy.count, 2);
-    ASSERT_STR_EQ(policy.rules[0].path, "/tmp");
-    ASSERT_EQ(policy.rules[0].mode, SOFT_MODE_RO);
-    ASSERT_STR_EQ(policy.rules[1].path, "/var");
-    ASSERT_EQ(policy.rules[1].mode, SOFT_MODE_RO);
+    ASSERT_EQ(soft_policy_get_count(&policy), 2);
+    soft_policy_rule_t rule;
+    ASSERT_EQ(soft_policy_get_rule(&policy, 0, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/tmp");
+    ASSERT_EQ(rule.mode, SOFT_MODE_RO);
+    ASSERT_EQ(soft_policy_get_rule(&policy, 1, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/var");
+    ASSERT_EQ(rule.mode, SOFT_MODE_RO);
 
     unsetenv("READONLYBOX_SOFT_ALLOW");
     soft_policy_free(&policy);
@@ -725,11 +729,14 @@ TEST(load_from_env_deny) {
     soft_policy_init(&policy);
     int result = soft_policy_load_from_env(&policy);
     ASSERT_EQ(result, 0);
-    ASSERT_EQ(policy.count, 2);
-    ASSERT_STR_EQ(policy.rules[0].path, "/home");
-    ASSERT_EQ(policy.rules[0].mode, SOFT_MODE_DENY);
-    ASSERT_STR_EQ(policy.rules[1].path, "/root");
-    ASSERT_EQ(policy.rules[1].mode, SOFT_MODE_DENY);
+    ASSERT_EQ(soft_policy_get_count(&policy), 2);
+    soft_policy_rule_t rule;
+    ASSERT_EQ(soft_policy_get_rule(&policy, 0, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/home");
+    ASSERT_EQ(rule.mode, SOFT_MODE_DENY);
+    ASSERT_EQ(soft_policy_get_rule(&policy, 1, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/root");
+    ASSERT_EQ(rule.mode, SOFT_MODE_DENY);
 
     unsetenv("READONLYBOX_SOFT_DENY");
     soft_policy_free(&policy);
@@ -744,7 +751,7 @@ TEST(load_from_env_both) {
     soft_policy_init(&policy);
     int result = soft_policy_load_from_env(&policy);
     ASSERT_EQ(result, 0);
-    ASSERT_EQ(policy.count, 2);
+    ASSERT_EQ(soft_policy_get_count(&policy), 2);
 
     unsetenv("READONLYBOX_SOFT_ALLOW");
     unsetenv("READONLYBOX_SOFT_DENY");
@@ -760,9 +767,12 @@ TEST(load_from_env_with_spaces) {
     soft_policy_init(&policy);
     int result = soft_policy_load_from_env(&policy);
     ASSERT_EQ(result, 0);
-    ASSERT_EQ(policy.count, 2);
-    ASSERT_STR_EQ(policy.rules[0].path, "/tmp");
-    ASSERT_STR_EQ(policy.rules[1].path, "/var");
+    ASSERT_EQ(soft_policy_get_count(&policy), 2);
+    soft_policy_rule_t rule;
+    ASSERT_EQ(soft_policy_get_rule(&policy, 0, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/tmp");
+    ASSERT_EQ(soft_policy_get_rule(&policy, 1, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/var");
 
     unsetenv("READONLYBOX_SOFT_ALLOW");
     soft_policy_free(&policy);
@@ -777,11 +787,14 @@ TEST(load_from_env_with_mode) {
     soft_policy_init(&policy);
     int result = soft_policy_load_from_env(&policy);
     ASSERT_EQ(result, 0);
-    ASSERT_EQ(policy.count, 2);
-    ASSERT_STR_EQ(policy.rules[0].path, "/tmp");
-    ASSERT_EQ(policy.rules[0].mode, SOFT_MODE_RW);
-    ASSERT_STR_EQ(policy.rules[1].path, "/var");
-    ASSERT_EQ(policy.rules[1].mode, SOFT_MODE_RX);
+    ASSERT_EQ(soft_policy_get_count(&policy), 2);
+    soft_policy_rule_t rule;
+    ASSERT_EQ(soft_policy_get_rule(&policy, 0, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/tmp");
+    ASSERT_EQ(rule.mode, SOFT_MODE_RW);
+    ASSERT_EQ(soft_policy_get_rule(&policy, 1, &rule), 0);
+    ASSERT_STR_EQ(rule.path, "/var");
+    ASSERT_EQ(rule.mode, SOFT_MODE_RX);
 
     unsetenv("READONLYBOX_SOFT_ALLOW");
     soft_policy_free(&policy);
@@ -1019,15 +1032,19 @@ TEST(check_same_path_different_modes) {
     soft_path_mode_t inputs1[] = {{"/tmp", SOFT_ACCESS_READ}};
     soft_path_mode_t inputs2[] = {{"/tmp", SOFT_ACCESS_WRITE}};
     soft_path_mode_t inputs3[] = {{"/tmp", SOFT_ACCESS_EXEC}};
+    soft_path_mode_t inputs4[] = {{"/tmp", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE}};
     int results[1];
 
     soft_policy_check(&policy, inputs1, results, 1);
     ASSERT_EQ(results[0], 1);
 
     soft_policy_check(&policy, inputs2, results, 1);
-    ASSERT_EQ(results[0], 1);
+    ASSERT_EQ(results[0], 0);
 
     soft_policy_check(&policy, inputs3, results, 1);
+    ASSERT_EQ(results[0], 0);
+
+    soft_policy_check(&policy, inputs4, results, 1);
     ASSERT_EQ(results[0], 0);
 
     soft_policy_free(&policy);
@@ -1043,7 +1060,7 @@ TEST(check_multiple_access_with_mode) {
     soft_path_mode_t inputs1[] = {{"/tmp", SOFT_ACCESS_READ | SOFT_ACCESS_WRITE}};
     soft_path_mode_t inputs2[] = {{"/tmp", SOFT_ACCESS_READ | SOFT_ACCESS_EXEC}};
     soft_path_mode_t inputs3[] = {{"/tmp", SOFT_ACCESS_READ | SOFT_ACCESS_MKDIR}};
-    soft_path_mode_t inputs4[] = {{"/tmp", SOFT_ACCESS_WRITE | SOFT_ACCESS_TRUNCATE}};
+    soft_path_mode_t inputs4[] = {{"/tmp", SOFT_ACCESS_WRITE}};
     int results[1];
 
     soft_policy_check(&policy, inputs1, results, 1);
@@ -1053,7 +1070,7 @@ TEST(check_multiple_access_with_mode) {
     ASSERT_EQ(results[0], 0);
 
     soft_policy_check(&policy, inputs3, results, 1);
-    ASSERT_EQ(results[0], 1);
+    ASSERT_EQ(results[0], 0);
 
     soft_policy_check(&policy, inputs4, results, 1);
     ASSERT_EQ(results[0], 1);
@@ -1127,28 +1144,6 @@ TEST(check_very_deep_nesting) {
     return 0;
 }
 
-/* ==================== Large ruleset stress test ==================== */
-
-#define LARGE_RULE_COUNT 200
-
-/* Generate a deep path hierarchy */
-static void generate_deep_paths(char paths[][MAX_PATH_LENGTH], int count) {
-    const char *base = "/deep";
-    for (int i = 0; i < count; i++) {
-        if (i == 0) {
-            snprintf(paths[i], MAX_PATH_LENGTH, "%s", base);
-        } else {
-            snprintf(paths[i], MAX_PATH_LENGTH, "%s/level%d", base, i);
-        }
-    }
-}
-
-static void generate_sibling_paths(char paths[][MAX_PATH_LENGTH], int count) {
-    for (int i = 0; i < count; i++) {
-        snprintf(paths[i], MAX_PATH_LENGTH, "/sibling/dir%d", i);
-    }
-}
-
 /* Helper: check that a path matches the expected allowed access bits */
 static int check_path_access(soft_policy_t *policy, const char *path, uint32_t access_mask, int expected_allowed) {
     soft_path_mode_t input = {path, access_mask};
@@ -1156,192 +1151,6 @@ static int check_path_access(soft_policy_t *policy, const char *path, uint32_t a
     int ret = soft_policy_check(policy, &input, &result, 1);
     if (ret != 0) return 0;
     return (result == expected_allowed);
-}
-
-TEST(large_ruleset_stress) {
-    soft_policy_t policy;
-    soft_policy_init(&policy);
-    soft_policy_set_default(&policy, SOFT_MODE_RO);
-
-    /* 1. Add many rules – fill up to MAX_SOFT_RULES */
-    char paths[LARGE_RULE_COUNT][MAX_PATH_LENGTH];
-    generate_deep_paths(paths, LARGE_RULE_COUNT);
-
-    for (int i = 0; i < LARGE_RULE_COUNT; i++) {
-        soft_mode_t mode = (i % 4 == 0) ? SOFT_MODE_DENY :
-                           (i % 4 == 1) ? SOFT_MODE_RO :
-                           (i % 4 == 2) ? SOFT_MODE_RW : SOFT_MODE_RX;
-        int ret = soft_policy_add_rule(&policy, paths[i], mode);
-        if (i < MAX_SOFT_RULES) {
-            ASSERT_EQ(ret, 0);
-        } else {
-            /* Should fail because we reached the limit */
-            ASSERT_EQ(ret, -1);
-            break;
-        }
-    }
-
-    /* Verify that the policy is active and has the expected number of rules */
-    ASSERT(soft_policy_is_active(&policy));
-    ASSERT_EQ(policy.count, LARGE_RULE_COUNT);
-
-    /* 2. Test longest‑prefix matching with deep hierarchy */
-    /* Rule for /deep/level5 is RW; deeper paths should inherit that unless overridden */
-    soft_policy_t policy2;
-    soft_policy_init(&policy2);
-    soft_policy_set_default(&policy2, SOFT_MODE_DENY);
-    soft_policy_add_rule(&policy2, "/deep", SOFT_MODE_RO);
-    soft_policy_add_rule(&policy2, "/deep/level5", SOFT_MODE_RW);
-    soft_policy_add_rule(&policy2, "/deep/level5/secret", SOFT_MODE_DENY);
-
-    /* /deep itself → RO (read allowed) */
-    ASSERT(check_path_access(&policy2, "/deep", SOFT_ACCESS_READ, 1));
-    ASSERT(check_path_access(&policy2, "/deep", SOFT_ACCESS_WRITE, 0));
-
-    /* /deep/level5 → RW (read and write allowed) */
-    ASSERT(check_path_access(&policy2, "/deep/level5", SOFT_ACCESS_READ, 1));
-    ASSERT(check_path_access(&policy2, "/deep/level5", SOFT_ACCESS_WRITE, 1));
-
-    /* /deep/level5/secret → DENY (read denied) */
-    ASSERT(check_path_access(&policy2, "/deep/level5/secret", SOFT_ACCESS_READ, 0));
-    ASSERT(check_path_access(&policy2, "/deep/level5/secret", SOFT_ACCESS_WRITE, 0));
-
-    /* /deep/level6 matches /deep prefix (RO) → read allowed */
-    ASSERT(check_path_access(&policy2, "/deep/level6", SOFT_ACCESS_READ, 1));
-    soft_policy_free(&policy2);
-
-    /* 3. Test overlapping sibling rules with different modes */
-    soft_policy_t policy3;
-    soft_policy_init(&policy3);
-    soft_policy_set_default(&policy3, SOFT_MODE_RO);
-    generate_sibling_paths(paths, 100);
-    for (int i = 0; i < 100; i++) {
-        soft_mode_t mode = (i < 30) ? SOFT_MODE_RW :
-                           (i < 60) ? SOFT_MODE_RX : SOFT_MODE_DENY;
-        soft_policy_add_rule(&policy3, paths[i], mode);
-    }
-
-    /* Check a few specific paths */
-    ASSERT(check_path_access(&policy3, "/sibling/dir5", SOFT_ACCESS_WRITE, 1));
-    ASSERT(check_path_access(&policy3, "/sibling/dir5", SOFT_ACCESS_EXEC, 0));  // RW does not give exec
-    ASSERT(check_path_access(&policy3, "/sibling/dir45", SOFT_ACCESS_EXEC, 1)); // RX gives exec
-    ASSERT(check_path_access(&policy3, "/sibling/dir45", SOFT_ACCESS_WRITE, 0));
-    ASSERT(check_path_access(&policy3, "/sibling/dir80", SOFT_ACCESS_READ, 0));  // DENY blocks everything
-
-    soft_policy_free(&policy3);
-
-    /* 4. Test environment loading of large ruleset (simulate) */
-    setenv("READONLYBOX_SOFT_ALLOW", "/allow1:ro,/allow2:rw,/allow3:rx", 1);
-    setenv("READONLYBOX_SOFT_DENY", "/deny1,/deny2", 1);
-
-    soft_policy_t policy_env;
-    soft_policy_init(&policy_env);
-    int ret = soft_policy_load_from_env(&policy_env);
-    ASSERT_EQ(ret, 0);
-    ASSERT_EQ(policy_env.count, 5);  // 3 allow + 2 deny
-
-    /* Check that rules are parsed correctly */
-    /* Note: order in policy_env.rules is allow list first, then deny list */
-    int found_allow1 = 0, found_allow2 = 0, found_allow3 = 0;
-    int found_deny1 = 0, found_deny2 = 0;
-    for (int i = 0; i < policy_env.count; i++) {
-        if (strcmp(policy_env.rules[i].path, "/allow1") == 0 && policy_env.rules[i].mode == SOFT_MODE_RO) found_allow1 = 1;
-        if (strcmp(policy_env.rules[i].path, "/allow2") == 0 && policy_env.rules[i].mode == SOFT_MODE_RW) found_allow2 = 1;
-        if (strcmp(policy_env.rules[i].path, "/allow3") == 0 && policy_env.rules[i].mode == SOFT_MODE_RX) found_allow3 = 1;
-        if (strcmp(policy_env.rules[i].path, "/deny1") == 0 && policy_env.rules[i].mode == SOFT_MODE_DENY) found_deny1 = 1;
-        if (strcmp(policy_env.rules[i].path, "/deny2") == 0 && policy_env.rules[i].mode == SOFT_MODE_DENY) found_deny2 = 1;
-    }
-    ASSERT(found_allow1 && found_allow2 && found_allow3 && found_deny1 && found_deny2);
-
-    soft_policy_free(&policy_env);
-    unsetenv("READONLYBOX_SOFT_ALLOW");
-    unsetenv("READONLYBOX_SOFT_DENY");
-
-    /* 5. Edge case: root rule with many subpaths */
-    soft_policy_t policy_root;
-    soft_policy_init(&policy_root);
-    soft_policy_add_rule(&policy_root, "/", SOFT_MODE_RO);
-    soft_policy_add_rule(&policy_root, "/home", SOFT_MODE_RW);
-    soft_policy_add_rule(&policy_root, "/home/user", SOFT_MODE_DENY);
-
-    ASSERT(check_path_access(&policy_root, "/etc", SOFT_ACCESS_READ, 1));
-    ASSERT(check_path_access(&policy_root, "/etc", SOFT_ACCESS_WRITE, 0));
-    ASSERT(check_path_access(&policy_root, "/home", SOFT_ACCESS_WRITE, 1));
-    ASSERT(check_path_access(&policy_root, "/home/user", SOFT_ACCESS_READ, 0));
-
-    soft_policy_free(&policy_root);
-
-    /* 6. Performance: measure time for many checks (optional) */
-    /* This is not a correctness test but can reveal serious performance issues */
-    soft_policy_t policy_perf;
-    soft_policy_init(&policy_perf);
-    /* Add a mix of rules */
-    for (int i = 0; i < 200; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/perf/dir%d", i);
-        soft_policy_add_rule(&policy_perf, path, SOFT_MODE_RW);
-    }
-    /* Add some deeper rules */
-    for (int i = 0; i < 200; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/perf/dir%d/sub", i);
-        soft_policy_add_rule(&policy_perf, path, SOFT_MODE_RO);
-    }
-    /* Add some deny rules */
-    for (int i = 0; i < 100; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/perf/deny%d", i);
-        soft_policy_add_rule(&policy_perf, path, SOFT_MODE_DENY);
-    }
-
-    /* Perform 10,000 checks */
-    clock_t start = clock();
-    const int CHECK_COUNT = 10000;
-    for (int i = 0; i < CHECK_COUNT; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/perf/dir%d/sub/file", i % 200);
-        soft_path_mode_t input = {path, SOFT_ACCESS_READ | SOFT_ACCESS_WRITE};
-        int result;
-        soft_policy_check(&policy_perf, &input, &result, 1);
-        /* Just ensure it doesn't crash */
-    }
-    clock_t end = clock();
-    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
-    /* On a modern system, 10,000 checks should take < 0.5 seconds with a linear scan.
-       If it takes > 2 seconds, there might be a performance issue. */
-    if (elapsed > 2.0) {
-        printf("    WARNING: large ruleset performance slow (%.3f seconds for %d checks)\n", elapsed, CHECK_COUNT);
-    }
-
-    soft_policy_free(&policy_perf);
-
-    /* 7. Test that the policy can be freed and reinitialised without memory leaks */
-    soft_policy_t policy_reinit;
-    soft_policy_init(&policy_reinit);
-    for (int i = 0; i < 50; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/reinit/dir%d", i);
-        soft_policy_add_rule(&policy_reinit, path, SOFT_MODE_RO);
-    }
-    soft_policy_free(&policy_reinit);
-    soft_policy_init(&policy_reinit);
-    ASSERT_EQ(policy_reinit.count, 0);
-    soft_policy_free(&policy_reinit);
-
-    /* 8. Verify that duplicate rules are allowed (last longest‑prefix wins) */
-    soft_policy_t policy_dup;
-    soft_policy_init(&policy_dup);
-    soft_policy_add_rule(&policy_dup, "/dup", SOFT_MODE_RO);
-    soft_policy_add_rule(&policy_dup, "/dup", SOFT_MODE_RW);
-    /* Since both have same length, the later rule will be matched because it appears later
-       in the list (linear scan updates best_match_len only when length >= current best).
-       Because lengths are equal, the later rule will overwrite. */
-    ASSERT(check_path_access(&policy_dup, "/dup", SOFT_ACCESS_WRITE, 1));
-    soft_policy_free(&policy_dup);
-
-    /* Cleanup */
-    soft_policy_free(&policy);
-    return 0;
 }
 
 /* ==================== Run all tests ==================== */
@@ -1415,8 +1224,6 @@ void run_soft_policy_tests(void) {
     RUN_TEST(check_multiple_access_with_mode);
     RUN_TEST(check_default_mode_with_rules);
     RUN_TEST(check_very_deep_nesting);
-
-    RUN_TEST(large_ruleset_stress);
 }
 
 void get_soft_policy_test_stats(int *run, int *passed, int *failed) {

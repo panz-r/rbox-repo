@@ -27,14 +27,113 @@
 #include "protocol.h"
 #include "debug.h"
 #include "judge.h"
-#include "soft_policy.h"
+#include "rule_engine.h"
 #include <shell_tokenizer.h>
 #include "trampoline_allowance.h"
 
-/* Forward declarations */
+extern soft_ruleset_t *get_effective_fs_rules(void);
+
+/* Soft mode enum - maps to ruleset access flags */
+typedef enum {
+    SOFT_MODE_DENY = 0,
+    SOFT_MODE_RO,
+    SOFT_MODE_RX,
+    SOFT_MODE_RW,
+    SOFT_MODE_RWX
+} soft_mode_t;
+
+/*
+ * Get the access mask for an open-like syscall based on flags.
+ * Returns SOFT_ACCESS_* flags.
+ */
+static uint32_t open_flags_to_access(int flags) {
+    uint32_t access = 0;
+
+    if ((flags & O_ACCMODE) == O_RDONLY) {
+        access = SOFT_ACCESS_READ;
+    } else if ((flags & O_ACCMODE) == O_WRONLY) {
+        access = SOFT_ACCESS_WRITE;
+    } else if ((flags & O_ACCMODE) == O_RDWR) {
+        access = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
+    }
+
+    if (flags & O_TRUNC) {
+        access |= SYSCALL_ACCESS_TRUNCATE;
+    }
+    if (flags & O_CREAT) {
+        access |= SOFT_ACCESS_CREATE;
+    }
+
+    return access;
+}
+
+/*
+ * Syscall to operation mapping.
+ * Returns the appropriate SOFT_OP_* for a given syscall.
+ * Also sets internal tracking flags via out_syscall_flags.
+ */
+static soft_binary_op_t syscall_to_operation(long sysnum, uint32_t *out_syscall_flags) {
+    *out_syscall_flags = 0;
+    switch (sysnum) {
+        /* Read operations */
+        case SYSCALL_STAT:
+        case SYSCALL_LSTAT:
+        case SYSCALL_NEWFSTATAT:
+        case SYSCALL_ACCESS:
+        case SYSCALL_FACCESSAT:
+        case SYSCALL_FACCESSAT2:
+            return SOFT_OP_READ;
+
+        /* Execute operations */
+        case SYSCALL_EXECVE:
+        case SYSCALL_EXECVEAT:
+            return SOFT_OP_EXEC;
+
+        /* Create directory */
+        case SYSCALL_MKDIR:
+        case SYSCALL_MKDIRAT:
+            return SOFT_OP_WRITE;  /* CREATE on dst */
+
+        /* Remove directory */
+        case SYSCALL_RMDIR:
+            return SOFT_OP_WRITE;  /* UNLINK access */
+
+        /* Unlink file */
+        case SYSCALL_UNLINK:
+        case SYSCALL_UNLINKAT:
+            return SOFT_OP_WRITE;  /* UNLINK access */
+
+        /* Rename/move - binary operation */
+        case SYSCALL_RENAME:
+        case SYSCALL_RENAMEAT:
+            return SOFT_OP_MOVE;
+
+        /* Link operations - binary */
+        case SYSCALL_LINK:
+        case SYSCALL_LINKAT:
+        case SYSCALL_SYMLINK:
+        case SYSCALL_SYMLINKAT:
+            return SOFT_OP_LINK;
+
+        /* chmod/chown - binary with target */
+        case SYSCALL_CHMOD:
+        case SYSCALL_CHOWN:
+            return SOFT_OP_CHMOD_CHOWN;
+
+        /* Open - handled dynamically based on flags */
+        case SYSCALL_OPEN:
+        case SYSCALL_OPENAT:
+        case SYSCALL_CREAT:
+            return SOFT_OP_READ;  /* Initial check; flags determine actual access */
+
+        default:
+            return SOFT_OP_READ;  /* safe default for read-like ops */
+    }
+}
 
 /* Forward declarations */
 static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs);
+static soft_binary_op_t syscall_to_operation(long sysnum, uint32_t *out_syscall_flags);
 
 /* Check if a process has a valid allowance for a specific subcommand.
  * Uses the hierarchical allowance chain. */
@@ -564,18 +663,54 @@ static const char *get_basename(const char *path) {
     return base ? base + 1 : path;
 }
 
-/* Block a filesystem syscall by returning an error and skipping the syscall instruction.
+/* Check if a path is a critical device that must be allowed for interactive shells.
+ * Returns 1 if the path is critical, 0 otherwise. */
+static int is_critical_device(const char *path) {
+    if (!path) return 0;
+
+    /* Exact device matches */
+    if (strcmp(path, "/dev/null") == 0 ||
+        strcmp(path, "/dev/tty") == 0 ||
+        strcmp(path, "/dev/zero") == 0 ||
+        strcmp(path, "/dev/random") == 0 ||
+        strcmp(path, "/dev/urandom") == 0 ||
+        strcmp(path, "/dev/full") == 0) {
+        return 1;
+    }
+
+    /* /dev/pts device files */
+    if (strncmp(path, "/dev/pts/", 9) == 0) {
+        return 1;
+    }
+
+    /* /dev/tty device files */
+    if (strncmp(path, "/dev/tty", 8) == 0) {
+        return 1;
+    }
+
+    return 0;
+}
+
+/* Block a filesystem syscall by replacing it with a noop syscall (getpid).
+ * The actual syscall result will be overridden on exit via ProcessState->blocked_syscall.
  * Returns 1 if blocked, -1 on error. */
-static int block_syscall(pid_t pid, USER_REGS *regs) {
+static int block_syscall(pid_t pid, USER_REGS *regs, ProcessState *state) {
+    if (!state) {
+        return -1;
+    }
+
+    /* Store which syscall we're blocking so we can fix the return value on exit */
+    state->blocked_syscall = REG_SYSCALL(regs);
+
+    /* Replace the syscall with getpid (a harmless noop) to prevent the actual syscall from running.
+     * On x86_64: orig_rax holds the syscall number.
+     * We replace it with __NR_getpid (20). */
 #ifdef __x86_64__
-    regs->rax = -EACCES;
-    regs->rip += 2;
+    regs->orig_rax = 20;  /* __NR_getpid */
 #elif defined(__aarch64__)
-    regs->regs[0] = -EACCES;
-    regs->pc += 4;
+    regs->regs[8] = 20;   /* __NR_getpid on aarch64 */
 #elif defined(__riscv)
-    regs->regs[0] = -EACCES;
-    regs->epc += 4;
+    regs->regs[7] = 20;   /* __NR_getpid on riscv */
 #else
     return -1;
 #endif
@@ -592,7 +727,7 @@ static int block_syscall(pid_t pid, USER_REGS *regs) {
         return -1;
     }
 
-    DEBUG_PRINT("HANDLER: blocked filesystem syscall\n");
+    DEBUG_PRINT("HANDLER: blocked syscall %ld, replaced with getpid\n", state->blocked_syscall);
     return 1;
 }
 
@@ -979,12 +1114,13 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
 
     /* Check for filesystem syscalls (soft policy) */
     if (syscall_is_filesystem(regs)) {
-        soft_policy_t *policy = soft_policy_get_global();
-        if (soft_policy_is_active(policy)) {
-            soft_path_mode_t inputs[16];
-            int results[16];
-            int count = 0;
+        soft_ruleset_t *rs = get_effective_fs_rules();
+        if (rs && soft_ruleset_rule_count(rs) > 0) {
+            soft_access_ctx_t ctxs[16];
+            int ctx_count = 0;
             long sysnum = REG_SYSCALL(regs);
+            uint32_t syscall_flags = 0;
+            soft_binary_op_t operation = syscall_to_operation(sysnum, &syscall_flags);
             uint32_t access_mask = 0;
             char *path1 = NULL;
             char *path2 = NULL;
@@ -994,155 +1130,123 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             int dirfd2 = AT_FDCWD;
             int ret = 0;
             int is_creat = 0;
-            int modifies_dir_entry = 0;
 
             switch (sysnum) {
                 case SYSCALL_OPEN: {
-                    access_mask = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     if (path1) {
                         int flags = (int)REG_ARG2(regs);
-                        if ((flags & O_ACCMODE) == O_RDONLY) {
-                            access_mask = SOFT_ACCESS_READ;
-                        } else if ((flags & O_ACCMODE) == O_WRONLY) {
-                            access_mask = SOFT_ACCESS_WRITE;
-                        } else if ((flags & O_ACCMODE) == O_RDWR) {
-                            access_mask = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
-                        }
-                        if (flags & O_TRUNC) {
-                            access_mask |= SOFT_ACCESS_TRUNCATE;
-                        }
+                        access_mask = open_flags_to_access(flags);
                         if (flags & O_CREAT) {
-                            access_mask |= SOFT_ACCESS_WRITE;
                             is_creat = 1;
+                            access_mask |= SOFT_ACCESS_CREATE;
                         }
                     }
                     dirfd1 = AT_FDCWD;
                     break;
                 }
                 case SYSCALL_OPENAT: {
-                    access_mask = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     if (path1) {
                         int flags = (int)REG_ARG3(regs);
-                        if ((flags & O_ACCMODE) == O_RDONLY) {
-                            access_mask = SOFT_ACCESS_READ;
-                        } else if ((flags & O_ACCMODE) == O_WRONLY) {
-                            access_mask = SOFT_ACCESS_WRITE;
-                        } else if ((flags & O_ACCMODE) == O_RDWR) {
-                            access_mask = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE;
-                        }
-                        if (flags & O_TRUNC) {
-                            access_mask |= SOFT_ACCESS_TRUNCATE;
-                        }
+                        access_mask = open_flags_to_access(flags);
                         if (flags & O_CREAT) {
-                            access_mask |= SOFT_ACCESS_WRITE;
                             is_creat = 1;
+                            access_mask |= SOFT_ACCESS_CREATE;
                         }
                     }
                     break;
                 }
                 case SYSCALL_CREAT:
-                    access_mask = SOFT_ACCESS_WRITE | SOFT_ACCESS_TRUNCATE;
+                    access_mask = SOFT_ACCESS_WRITE | SYSCALL_ACCESS_TRUNCATE;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
                     is_creat = 1;
                     break;
                 case SYSCALL_MKDIR:
-                    access_mask = SOFT_ACCESS_MKDIR;
+                    access_mask = SOFT_ACCESS_CREATE | SOFT_ACCESS_MKDIR;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
                     break;
                 case SYSCALL_MKDIRAT:
-                    access_mask = SOFT_ACCESS_MKDIR;
+                    access_mask = SOFT_ACCESS_CREATE | SOFT_ACCESS_MKDIR;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     break;
                 case SYSCALL_RMDIR:
-                    access_mask = SOFT_ACCESS_RMDIR;
+                    access_mask = SOFT_ACCESS_UNLINK;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
                     break;
                 case SYSCALL_UNLINK:
                     access_mask = SOFT_ACCESS_UNLINK;
-                    modifies_dir_entry = 1;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
                     break;
                 case SYSCALL_UNLINKAT:
                     access_mask = SOFT_ACCESS_UNLINK;
-                    modifies_dir_entry = 1;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     break;
                 case SYSCALL_RENAME:
-                    access_mask = SOFT_ACCESS_RENAME;
-                    modifies_dir_entry = 1;
+                    access_mask = SOFT_ACCESS_WRITE | SOFT_ACCESS_UNLINK;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     path2 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd1 = AT_FDCWD;
                     dirfd2 = AT_FDCWD;
                     break;
                 case SYSCALL_RENAMEAT:
-                    access_mask = SOFT_ACCESS_RENAME;
-                    modifies_dir_entry = 1;
+                    access_mask = SOFT_ACCESS_WRITE | SOFT_ACCESS_UNLINK;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd2 = (int)REG_ARG3(regs);
                     path2 = memory_read_string(pid, REG_ARG4(regs));
                     break;
                 case SYSCALL_SYMLINK:
-                    access_mask = SOFT_ACCESS_SYMLINK;
-                    modifies_dir_entry = 1;
-                    path1 = memory_read_string(pid, REG_ARG1(regs));
-                    path2 = memory_read_string(pid, REG_ARG2(regs));
+                    access_mask = SOFT_ACCESS_LINK | SOFT_ACCESS_CREATE;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));  /* target */
+                    path2 = memory_read_string(pid, REG_ARG2(regs));   /* linkpath */
                     dirfd1 = AT_FDCWD;
                     dirfd2 = AT_FDCWD;
                     break;
                 case SYSCALL_SYMLINKAT:
-                    access_mask = SOFT_ACCESS_SYMLINK;
-                    modifies_dir_entry = 1;
+                    access_mask = SOFT_ACCESS_LINK | SOFT_ACCESS_CREATE;
                     dirfd1 = (int)REG_ARG1(regs);
-                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    path1 = memory_read_string(pid, REG_ARG2(regs));  /* target */
                     dirfd2 = AT_FDCWD;
-                    path2 = memory_read_string(pid, REG_ARG3(regs));
+                    path2 = memory_read_string(pid, REG_ARG3(regs)); /* linkpath */
                     break;
                 case SYSCALL_LINK:
-                    access_mask = SOFT_ACCESS_LINK;
-                    modifies_dir_entry = 1;
-                    path1 = memory_read_string(pid, REG_ARG1(regs));
-                    path2 = memory_read_string(pid, REG_ARG2(regs));
+                    access_mask = SOFT_ACCESS_LINK | SOFT_ACCESS_CREATE;
+                    path1 = memory_read_string(pid, REG_ARG1(regs));  /* target */
+                    path2 = memory_read_string(pid, REG_ARG2(regs)); /* linkpath */
                     dirfd1 = AT_FDCWD;
                     dirfd2 = AT_FDCWD;
                     break;
                 case SYSCALL_LINKAT:
-                    access_mask = SOFT_ACCESS_LINK;
-                    modifies_dir_entry = 1;
+                    access_mask = SOFT_ACCESS_LINK | SOFT_ACCESS_CREATE;
                     dirfd1 = (int)REG_ARG1(regs);
                     path1 = memory_read_string(pid, REG_ARG2(regs));
                     dirfd2 = (int)REG_ARG3(regs);
                     path2 = memory_read_string(pid, REG_ARG4(regs));
                     break;
                 case SYSCALL_CHMOD:
-                    access_mask = SOFT_ACCESS_CHMOD;
+                    access_mask = SOFT_ACCESS_WRITE;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
                     break;
                 case SYSCALL_CHOWN:
-                    access_mask = SOFT_ACCESS_CHOWN;
+                    access_mask = SOFT_ACCESS_WRITE;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
                     break;
                 case SYSCALL_TRUNCATE:
-                    access_mask = SOFT_ACCESS_WRITE | SOFT_ACCESS_TRUNCATE;
+                    access_mask = SOFT_ACCESS_WRITE | SYSCALL_ACCESS_TRUNCATE;
                     path1 = memory_read_string(pid, REG_ARG1(regs));
                     dirfd1 = AT_FDCWD;
                     break;
                 case SYSCALL_FTRUNCATE:
-                    /* ftruncate operates on a file descriptor, not a path.
-                     * We cannot apply soft policy without tracking open file descriptors.
-                     * The file descriptor was already checked at open() time. */
                     DEBUG_PRINT("HANDLER: pid=%d ftruncate (fd-based), allowing\n", pid);
                     return 0;
                 case SYSCALL_UTIME:
@@ -1151,166 +1255,165 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     dirfd1 = AT_FDCWD;
                     break;
                 case SYSCALL_STAT:
-                    access_mask = SOFT_ACCESS_READ;
-                    path1 = memory_read_string(pid, REG_ARG1(regs));
-                    dirfd1 = AT_FDCWD;
-                    break;
                 case SYSCALL_LSTAT:
-                    access_mask = SOFT_ACCESS_READ;
-                    path1 = memory_read_string(pid, REG_ARG1(regs));
-                    dirfd1 = AT_FDCWD;
-                    break;
                 case SYSCALL_NEWFSTATAT:
-                    access_mask = SOFT_ACCESS_READ;
-                    dirfd1 = (int)REG_ARG1(regs);
-                    path1 = memory_read_string(pid, REG_ARG2(regs));
-                    break;
-                case SYSCALL_FSTAT:
-                    /* fstat operates on a file descriptor, not a path.
-                     * We cannot apply soft policy without tracking open file descriptors.
-                     * The file descriptor was already checked at open() time. */
-                    DEBUG_PRINT("HANDLER: pid=%d fstat (fd-based), allowing\n", pid);
-                    return 0;
                 case SYSCALL_ACCESS:
-                    access_mask = SOFT_ACCESS_READ;
-                    path1 = memory_read_string(pid, REG_ARG1(regs));
-                    dirfd1 = AT_FDCWD;
-                    break;
                 case SYSCALL_FACCESSAT:
-                    access_mask = SOFT_ACCESS_READ;
-                    dirfd1 = (int)REG_ARG1(regs);
-                    path1 = memory_read_string(pid, REG_ARG2(regs));
-                    break;
                 case SYSCALL_FACCESSAT2:
                     access_mask = SOFT_ACCESS_READ;
-                    dirfd1 = (int)REG_ARG1(regs);
-                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    if (sysnum == SYSCALL_STAT || sysnum == SYSCALL_LSTAT) {
+                        path1 = memory_read_string(pid, REG_ARG1(regs));
+                        dirfd1 = AT_FDCWD;
+                    } else if (sysnum == SYSCALL_NEWFSTATAT) {
+                        dirfd1 = (int)REG_ARG1(regs);
+                        path1 = memory_read_string(pid, REG_ARG2(regs));
+                    } else if (sysnum == SYSCALL_ACCESS) {
+                        path1 = memory_read_string(pid, REG_ARG1(regs));
+                        dirfd1 = AT_FDCWD;
+                    } else {
+                        dirfd1 = (int)REG_ARG1(regs);
+                        path1 = memory_read_string(pid, REG_ARG2(regs));
+                    }
                     break;
+                case SYSCALL_FSTAT:
+                    DEBUG_PRINT("HANDLER: pid=%d fstat (fd-based), allowing\n", pid);
+                    return 0;
                 default:
                     DEBUG_PRINT("HANDLER: pid=%d unknown filesystem syscall %ld\n", pid, sysnum);
                     return 0;
             }
 
+            /* Resolve path1 if present */
             if (path1) {
                 int file_exists = -1;
                 char *resolved = resolve_path_at(pid, dirfd1, path1, path_buf1, sizeof(path_buf1), &file_exists);
+                free(path1);
+                path1 = NULL;
                 if (!resolved) {
-                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for '%s', allowing kernel to handle\n", pid, path1);
-                    free(path1);
-                    path1 = NULL;
-                } else if (is_creat && !file_exists) {
-                    char parent_buf[PATH_MAX];
-                    get_parent_path(path_buf1, parent_buf, sizeof(parent_buf));
-                    char *parent_resolved = resolve_path_at(pid, dirfd1, parent_buf, parent_buf, sizeof(parent_buf), &file_exists);
-                    (void)file_exists;
-                    DEBUG_PRINT("HANDLER: pid=%d O_CREAT on non-existent '%s', checking parent '%s'\n", pid, path1, parent_buf);
-                    free(path1);
-                    path1 = NULL;
-                    if (parent_resolved) {
-                        inputs[count].path = strdup(parent_buf);
-                        inputs[count].access_mask = SOFT_ACCESS_WRITE;
-                        count++;
-                    }
+                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for path1, allowing kernel\n", pid);
                 } else {
-                    /* For dir entry modifications (rename/symlink/link/unlink), check parent with WRITE.
-                     * For symlink/link, also check target with READ if it exists. */
-                    if (modifies_dir_entry) {
-                        char parent_buf[PATH_MAX];
-                        get_parent_path(path_buf1, parent_buf, sizeof(parent_buf));
-                        inputs[count].path = strdup(parent_buf);
-                        inputs[count].access_mask = SOFT_ACCESS_WRITE;
-                        count++;
-                        /* For symlink/link: check target (path1) with READ if it exists */
-                        if ((sysnum == SYSCALL_SYMLINK || sysnum == SYSCALL_SYMLINKAT ||
-                             sysnum == SYSCALL_LINK || sysnum == SYSCALL_LINKAT) && file_exists) {
-                            inputs[count].path = strdup(path_buf1);
-                            inputs[count].access_mask = SOFT_ACCESS_READ;
-                            count++;
+                    /* Fast-path: allow critical devices that interactive shells need */
+                    if (is_critical_device(path_buf1)) {
+                        DEBUG_PRINT("HANDLER: pid=%d critical device %s, allowing syscall\n", pid, path_buf1);
+                        return 0;
+                    }
+
+                    /* For binary operations, build context with both paths */
+                    if (operation == SOFT_OP_MOVE || operation == SOFT_OP_LINK || operation == SOFT_OP_CHMOD_CHOWN) {
+                        if (path2) {
+                            int file_exists2 = -1;
+                            char *resolved2 = resolve_path_at(pid, dirfd2, path2, path_buf2, sizeof(path_buf2), &file_exists2);
+                            free(path2);
+                            path2 = NULL;
+                            if (resolved2) {
+                                /* Fast-path: allow if either path is a critical device */
+                                if (is_critical_device(path_buf1) || is_critical_device(path_buf2)) {
+                                    DEBUG_PRINT("HANDLER: pid=%d critical device in binary op, allowing syscall\n", pid);
+                                    return 0;
+                                }
+                                ctxs[ctx_count++] = (soft_access_ctx_t){
+                                    .op = operation,
+                                    .src_path = strdup(path_buf1),
+                                    .dst_path = strdup(path_buf2),
+                                    .subject = NULL,
+                                };
+                            }
+                        }
+                    } else {
+                        /* Single path operation - for create, also check parent dir */
+                        if (ctx_count < 16) {
+                            /* For create operations, check parent directory has write permission */
+                            if (is_creat && !file_exists) {
+                                char parent_dir[PATH_MAX];
+                                get_parent_path(path_buf1, parent_dir, sizeof(parent_dir));
+                                if (ctx_count < 16) {
+                                    ctxs[ctx_count++] = (soft_access_ctx_t){
+                                        .op = SOFT_OP_WRITE,
+                                        .src_path = strdup(parent_dir),
+                                        .dst_path = NULL,
+                                        .subject = NULL,
+                                    };
+                                }
+                            }
+
+                            /* Check file itself */
+                            if (ctx_count < 16) {
+                                ctxs[ctx_count++] = (soft_access_ctx_t){
+                                    .op = operation,
+                                    .src_path = strdup(path_buf1),
+                                    .dst_path = NULL,
+                                    .subject = NULL,
+                                };
+                            }
                         }
                     }
-                    free(path1);
-                    path1 = NULL;
-                    inputs[count].path = strdup(path_buf1);
-                    inputs[count].access_mask = access_mask;
-                    count++;
                 }
             }
 
+            /* Handle path2 separately for resolution if not handled above */
             if (path2) {
-                int file_exists = -1;
-                char *resolved = resolve_path_at(pid, dirfd2, path2, path_buf2, sizeof(path_buf2), &file_exists);
-                if (!resolved) {
-                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for '%s', allowing kernel to handle\n", pid, path2);
-                    free(path2);
-                    path2 = NULL;
-                } else if (is_creat && !file_exists) {
-                    char parent_buf[PATH_MAX];
-                    get_parent_path(path_buf2, parent_buf, sizeof(parent_buf));
-                    char *parent_resolved = resolve_path_at(pid, dirfd2, parent_buf, parent_buf, sizeof(parent_buf), &file_exists);
-                    (void)file_exists;
-                    DEBUG_PRINT("HANDLER: pid=%d O_CREAT on non-existent '%s', checking parent '%s'\n", pid, path2, parent_buf);
-                    free(path2);
-                    path2 = NULL;
-                    if (parent_resolved) {
-                        inputs[count].path = strdup(parent_buf);
-                        inputs[count].access_mask = SOFT_ACCESS_WRITE;
-                        count++;
-                    }
-                } else {
-                    /* For dir entry modifications, check parent with WRITE */
-                    if (modifies_dir_entry) {
-                        char parent_buf[PATH_MAX];
-                        get_parent_path(path_buf2, parent_buf, sizeof(parent_buf));
-                        inputs[count].path = strdup(parent_buf);
-                        inputs[count].access_mask = SOFT_ACCESS_WRITE;
-                        count++;
-                    }
-                    free(path2);
-                    path2 = NULL;
-                    inputs[count].path = strdup(path_buf2);
-                    inputs[count].access_mask = access_mask;
-                    count++;
-                }
+                free(path2);
+                path2 = NULL;
             }
 
-            if (count > 0) {
-                DEBUG_PRINT("HANDLER: pid=%d filesystem syscall %ld, checking %d paths\n",
-                           pid, sysnum, count);
-                int check_result = soft_policy_check(policy, inputs, results, count);
-                if (check_result != 0) {
-                    DEBUG_PRINT("HANDLER: soft_policy_check failed (error), blocking syscall\n");
-                    if (block_syscall(pid, regs) < 0) {
+            if (ctx_count > 0) {
+                DEBUG_PRINT("HANDLER: pid=%d filesystem syscall %ld, checking %d contexts\n",
+                           pid, sysnum, ctx_count);
+
+                int should_block = 0;
+
+                for (int i = 0; i < ctx_count; i++) {
+                    uint32_t granted = 0;
+                    int check_result = soft_ruleset_check_ctx(rs, &ctxs[i], &granted, NULL);
+
+                    /* Soft policy semantics:
+                     * - check_result == 0 (undetermined): no rule matched this path
+                     *   → Allow syscall immediately (soft policy has no opinion)
+                     * - check_result == 1: rule matched
+                     *   → granted == 0 means explicit DENY → block
+                     *   → granted has any bits set → allow
+                     */
+                    if (check_result == 0) {
+                        /* Soft policy has no opinion - allow syscall to proceed */
+                        DEBUG_PRINT("HANDLER: pid=%d context %d undetermined, allowing syscall\n", pid, i);
+                        goto allow_syscall;
+                    }
+
+                    /* check_result == 1: rule matched, check if it's a DENY */
+                    if (granted == 0) {
+                        /* Explicit DENY rule matched - block the syscall */
+                        DEBUG_PRINT("HANDLER: pid=%d context %d explicit DENY, blocking syscall\n", pid, i);
+                        should_block = 1;
+                        break;
+                    }
+
+                    /* Rule matched and granted has some access bits - allow for this context.
+                     * Note: If granted doesn't have all needed bits, soft policy still allows
+                     * (it only blocks on explicit DENY). The kernel will handle insufficient
+                     * permissions if the rule doesn't cover all requested access. */
+                    DEBUG_PRINT("HANDLER: pid=%d context %d allowed (granted=0x%x, needed=0x%x)\n",
+                               pid, i, granted, access_mask);
+                }
+
+                if (should_block) {
+                    int block_result = block_syscall(pid, regs, state);
+                    if (block_result < 0) {
+                        DEBUG_PRINT("HANDLER: failed to block syscall, killing child\n");
                         kill(pid, SIGKILL);
                     }
                     ret = -1;
-                    goto cleanup;
                 } else {
-                    for (int i = 0; i < count; i++) {
-                        if (g_soft_debug) {
-                            fprintf(stderr, "SOFT: syscall=%ld path=%s access=0x%x -> %s\n",
-                                    sysnum, inputs[i].path, inputs[i].access_mask,
-                                    results[i] ? "ALLOW" : "DENY");
-                        }
-                        if (!results[i]) {
-                            DEBUG_PRINT("HANDLER: pid=%d SOFT POLICY DENY path '%s'\n", pid, inputs[i].path);
-                            int block_result = block_syscall(pid, regs);
-                            if (block_result < 0) {
-                                DEBUG_PRINT("HANDLER: failed to block syscall, killing child\n");
-                                kill(pid, SIGKILL);
-                                ret = -1;
-                                goto cleanup;
-                            }
-                            ret = block_result;
-                            goto cleanup;
-                        }
-                    }
+allow_syscall:
+                    DEBUG_PRINT("HANDLER: pid=%d syscall %ld ALLOWED\n", pid, sysnum);
+                }
+
+                /* Cleanup allocated strings from ctxs */
+                for (int i = 0; i < ctx_count; i++) {
+                    free((void *)ctxs[i].src_path);
+                    free((void *)ctxs[i].dst_path);
                 }
             }
 
-cleanup:
-            for (int i = 0; i < count; i++) {
-                free((void *)inputs[i].path);
-            }
             free(path1);
             free(path2);
             return ret;
@@ -1623,6 +1726,28 @@ int syscall_handle_exit(pid_t pid, USER_REGS *regs, ProcessState *state) {
     (void)pid;  /* Currently unused but may be needed for future logging */
 
     if (!state) return 0;
+
+    /* Check if this syscall was blocked on entry - if so, override the return value */
+    if (state->blocked_syscall != 0) {
+        /* We blocked this syscall by replacing it with getpid.
+         * Now we need to return -EACCES instead of getpid's result. */
+        DEBUG_PRINT("HANDLER: overriding blocked syscall %ld return value to -EACCES\n",
+                   state->blocked_syscall);
+#ifdef __x86_64__
+        regs->rax = -EACCES;
+#elif defined(__aarch64__)
+        regs->regs[0] = -EACCES;
+#elif defined(__riscv)
+        regs->regs[10] = -EACCES;
+#endif
+        /* Write the modified registers back */
+        if (ptrace(PTRACE_SETREGS, pid, 0, regs) == -1) {
+            if (errno != ESRCH) {
+                perror("ptrace(SETREGS) for blocked syscall");
+            }
+        }
+        state->blocked_syscall = 0;
+    }
 
     if (state->in_execve && syscall_is_execve(regs)) {
         state->in_execve = 0;

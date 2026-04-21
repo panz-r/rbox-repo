@@ -95,10 +95,9 @@ static int start_all_servers(void) {
      * Set TEST_DIR so that test commands like 'noop' can be found in PATH.
      */
     {
-        char test_dir[512];
+        char test_dir[PATH_MAX];
         snprintf(test_dir, sizeof(test_dir), "%s", getcwd(NULL, 0));
         setenv("TEST_DIR", test_dir, 1);
-        fprintf(stderr, "DEBUG: TEST_DIR=%s\n", test_dir);
     }
 
     /* Generate socket paths */
@@ -107,14 +106,30 @@ static int start_all_servers(void) {
     snprintf(g_autoallow_socket_path, sizeof(g_autoallow_socket_path),
              "/tmp/robox-test-autoallow-%d.sock", (int)getpid());
 
+    /* Create server log file */
+    char server_log_path[256];
+    snprintf(server_log_path, sizeof(server_log_path),
+             "/tmp/rbox-test-servers-%d.log", (int)getpid());
+    int server_log_fd = open(server_log_path, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+    if (server_log_fd < 0) {
+        server_log_fd = open("/dev/null", O_WRONLY);
+    }
+
     /* Fork autodeny server */
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
+        if (server_log_fd >= 0) close(server_log_fd);
         return -1;
     }
 
     if (pid == 0) {
+        /* Child - redirect stdout/stderr to server log file */
+        if (server_log_fd >= 0) {
+            dup2(server_log_fd, STDOUT_FILENO);
+            dup2(server_log_fd, STDERR_FILENO);
+            if (server_log_fd > STDERR_FILENO) close(server_log_fd);
+        }
         /* Child - start autodeny server */
         const char *server_path = "../../bin/readonlybox-server";
         if (access(server_path, X_OK) != 0) {
@@ -136,10 +151,17 @@ static int start_all_servers(void) {
     if (pid < 0) {
         kill(g_autodeny_server_pid, SIGTERM);
         waitpid(g_autodeny_server_pid, NULL, 0);
+        if (server_log_fd >= 0) close(server_log_fd);
         return -1;
     }
 
     if (pid == 0) {
+        /* Child - redirect stdout/stderr to server log file */
+        if (server_log_fd >= 0) {
+            dup2(server_log_fd, STDOUT_FILENO);
+            dup2(server_log_fd, STDERR_FILENO);
+            if (server_log_fd > STDERR_FILENO) close(server_log_fd);
+        }
         /* Child - start autoallow server */
         const char *server_path = "../../bin/readonlybox-server";
         if (access(server_path, X_OK) != 0) {
@@ -156,6 +178,9 @@ static int start_all_servers(void) {
 
     g_autoallow_server_pid = pid;
 
+    /* Close server log fd in parent - children have their own copies via dup2 */
+    if (server_log_fd >= 0) close(server_log_fd);
+
     /* Wait for both sockets to be created */
     for (int i = 0; i < 50; i++) {
         if (access(g_autodeny_socket_path, F_OK) == 0 &&
@@ -163,10 +188,12 @@ static int start_all_servers(void) {
         usleep(100000);
     }
 
-    fprintf(stderr, "DEBUG: autodeny socket: %s (%s)\n",
+    /* Print server log path to stdout so users know where to find server output */
+    printf("Server logs: %s\n", server_log_path);
+    printf("Autodeny socket: %s (%s)\n",
             g_autodeny_socket_path,
             (access(g_autodeny_socket_path, F_OK) == 0) ? "OK" : "FAILED");
-    fprintf(stderr, "DEBUG: autoallow socket: %s (%s)\n",
+    printf("Autoallow socket: %s (%s)\n",
             g_autoallow_socket_path,
             (access(g_autoallow_socket_path, F_OK) == 0) ? "OK" : "FAILED");
 
@@ -256,6 +283,15 @@ static int run_ptrace_impl(char *const argv[], int *exit_code, ServerType server
 
         char log_path[256];
         snprintf(log_path, sizeof(log_path), "/tmp/test-ptrace-%d.log", (int)getpid());
+
+        /* Redirect child's stdout and stderr to log file so verbose output
+         * from ptrace client and rbox-wrap doesn't pollute test results */
+        if (freopen(log_path, "a", stdout) == NULL) {
+            /* Fallback: silently ignore if redirect fails */
+        }
+        if (freopen(log_path, "a", stderr) == NULL) {
+            /* Fallback: silently ignore if redirect fails */
+        }
 
         char **new_argv = malloc((arg_count + 8) * sizeof(char *));
         new_argv[0] = (char *)ptrace_path;
@@ -720,7 +756,7 @@ static int create_symlink_testdir(char *base, const char *dir_name,
     snprintf(base, 512, "/tmp/robox-symlink-test.XXXXXX");
     if (!mkdtemp(base)) return -1;
 
-    char dir_path[512], link_path[512], target_path[512];
+    char dir_path[PATH_MAX], link_path[PATH_MAX], target_path[PATH_MAX];
     snprintf(dir_path, sizeof(dir_path), "%s/%s", base, dir_name);
     snprintf(link_path, sizeof(link_path), "%s/%s", base, link_name);
     snprintf(target_path, sizeof(target_path), "%s/%s", base, link_target);
@@ -744,15 +780,15 @@ TEST(landlock_symlink_allowed) {
         return 1;
     }
 
-    char target_path[1024], link_path[1024], parent_path[1024];
+    char target_path[PATH_MAX], link_path[PATH_MAX], parent_path[PATH_MAX];
     snprintf(target_path, sizeof(target_path), "%s/outside", base);
     snprintf(link_path, sizeof(link_path), "%s/allowed/link", base);
     snprintf(parent_path, sizeof(parent_path), "%s/allowed", base);
 
-    char hard_allow[2048];
+    char hard_allow[PATH_MAX * 2 + 16];
     snprintf(hard_allow, sizeof(hard_allow), "%s:rw,%s:rx", target_path, parent_path);
 
-    char cmd[512];
+    char cmd[PATH_MAX];
     snprintf(cmd, sizeof(cmd), "ls %s", link_path);
     char *args[] = {"sh", "-c", cmd, NULL};
     int exit_code;
@@ -771,17 +807,17 @@ TEST(landlock_symlink_denied) {
         return 1;
     }
 
-    char allowed_path[1024], denied_path[1024], link_path[1024];
+    char allowed_path[PATH_MAX], denied_path[PATH_MAX], link_path[PATH_MAX];
     snprintf(allowed_path, sizeof(allowed_path), "%s/allowed", base);
     snprintf(denied_path, sizeof(denied_path), "%s/denied", base);
     snprintf(link_path, sizeof(link_path), "%s/allowed/link", base);
 
-    char hard_allow[2048];
+    char hard_allow[PATH_MAX];
     snprintf(hard_allow, sizeof(hard_allow), "%s:rw", allowed_path);
-    char hard_deny[1024];
+    char hard_deny[PATH_MAX];
     snprintf(hard_deny, sizeof(hard_deny), "%s", denied_path);
 
-    char cmd[512];
+    char cmd[PATH_MAX];
     snprintf(cmd, sizeof(cmd), "ls %s", link_path);
     char *args[] = {"sh", "-c", cmd, NULL};
     int exit_code;
@@ -801,19 +837,21 @@ TEST(landlock_symlink_chain) {
         return 1;
     }
 
-    char dir[1024], link1[1024], link2[1024];
+    char dir[PATH_MAX], link1[PATH_MAX], link2[PATH_MAX];
     snprintf(dir, sizeof(dir), "%s/dir", base);
     snprintf(link1, sizeof(link1), "%s/link1", base);
     snprintf(link2, sizeof(link2), "%s/link2", base);
 
     mkdir(dir, 0755);
-    (void)symlink("dir", link1);
-    (void)symlink("link1", link2);
+    if (symlink("dir", link1) != 0 || symlink("link1", link2) != 0) {
+        rmtree(base);
+        return 1;
+    }
 
-    char hard_allow[2048];
+    char hard_allow[PATH_MAX * 2 + 16];
     snprintf(hard_allow, sizeof(hard_allow), "%s:rw,%s:rx", dir, base);
 
-    char ls_cmd[512];
+    char ls_cmd[PATH_MAX];
     snprintf(ls_cmd, sizeof(ls_cmd), "ls %s", link2);
     char *args[] = {"sh", "-c", ls_cmd, NULL};
     int exit_code;
@@ -833,7 +871,7 @@ TEST(landlock_multiple_symlinks_same_target) {
         return 1;
     }
 
-    char target[1024], dir1[1024], dir2[1024], link1[1024], link2[1024];
+    char target[PATH_MAX], dir1[PATH_MAX], dir2[PATH_MAX], link1[PATH_MAX], link2[PATH_MAX];
     snprintf(target, sizeof(target), "%s/target", base);
     snprintf(dir1, sizeof(dir1), "%s/dir1", base);
     snprintf(dir2, sizeof(dir2), "%s/dir2", base);
@@ -843,13 +881,15 @@ TEST(landlock_multiple_symlinks_same_target) {
     mkdir(target, 0755);
     mkdir(dir1, 0755);
     mkdir(dir2, 0755);
-    (void)symlink(target, link1);
-    (void)symlink(target, link2);
+    if (symlink(target, link1) != 0 || symlink(target, link2) != 0) {
+        rmtree(base);
+        return 1;
+    }
 
-    char hard_allow[2048];
+    char hard_allow[PATH_MAX * 3 + 16];
     snprintf(hard_allow, sizeof(hard_allow), "%s:rw,%s:rx,%s:rx", target, base, dir1);
 
-    char ls_cmd[512];
+    char ls_cmd[PATH_MAX];
     snprintf(ls_cmd, sizeof(ls_cmd), "ls %s", link1);
     char *args[] = {"sh", "-c", ls_cmd, NULL};
     int exit_code;

@@ -42,7 +42,7 @@
 #include "privilege.h"
 #include "progname.h"
 #include "sandbox.h"
-#include "soft_policy.h"
+#include "rule_engine.h"
 
 #include "env_screener.h"
 
@@ -74,13 +74,27 @@ void debug_init(void) {
 
 static bool g_keep_env = true;  /* Keep environment by default */
 static bool g_skip_pkexec = false;  /* Skip pkexec even if no ptrace capability */
-extern bool g_soft_debug;  /* Enable soft policy debug logging */
+static bool user_soft_policy_requested = false;  /* User requested soft policy via --soft-allow/--soft-deny */
+bool g_soft_debug = false;  /* Enable soft policy debug logging */
 static char **g_extra_env = NULL;
 static int g_extra_env_count = 0;
 static char *g_env_socket = NULL;  /* Abstract socket name for environment passing */
 
 /* Forward declarations */
 static char *resolve_command_path(const char *cmd);
+
+/* External rulesets - defined in soft_ruleset_access.c */
+extern soft_ruleset_t *user_fs_rules;
+extern soft_ruleset_t *get_effective_fs_rules(void);
+
+/* Soft mode enum - maps to ruleset access flags */
+typedef enum {
+    SOFT_MODE_DENY = 0,
+    SOFT_MODE_RO,
+    SOFT_MODE_RX,
+    SOFT_MODE_RW,
+    SOFT_MODE_RWX
+} soft_mode_t;
 
 /* Restore environment from an abstract Unix socket.
  * Returns 0 on success, -1 on error (caller may then proceed with a clean env). */
@@ -416,6 +430,18 @@ static int trace_process(pid_t initial_pid) {
         }
 
         if (status >> 8 == (SIGTRAP | (PTRACE_EVENT_EXEC << 8))) {
+            ProcessState *state = syscall_get_process_state(pid);
+            if (state) {
+                char exe_path[PATH_MAX];
+                char proc_link[64];
+                snprintf(proc_link, sizeof(proc_link), "/proc/%d/exe", pid);
+                ssize_t len = readlink(proc_link, exe_path, sizeof(exe_path) - 1);
+                if (len > 0) {
+                    exe_path[len] = '\0';
+                    free(state->execve_pathname);
+                    state->execve_pathname = strdup(exe_path);
+                }
+            }
             ptrace(PTRACE_SYSCALL, pid, 0, 0);
             continue;
         }
@@ -432,9 +458,10 @@ static int trace_process(pid_t initial_pid) {
 
                 ProcessState *state = syscall_get_process_state(pid);
                 if (!state) {
-                    /* Process table full - detach and block to prevent untracked execves */
-                    LOG_ERROR("Process table full, detaching from pid %d - execve will not be validated!", pid);
-                    syslog(LOG_CRIT, "readonlybox-ptrace: CRITICAL: Process table full, detaching from pid %d - execve will not be validated!", pid);
+                    /* Process table full - detaching to avoid tracer deadlock.
+                     * WARNING: This is a fail-open scenario; the process will continue untraced. */
+                    LOG_ERROR("Process table full, detaching from pid %d (process will run untraced)", pid);
+                    syslog(LOG_CRIT, "readonlybox-ptrace: CRITICAL: Process table full, detaching from pid %d (process will run untraced)", pid);
                     ptrace(PTRACE_DETACH, pid, 0, 0);
                     continue;
                 }
@@ -453,9 +480,13 @@ static int trace_process(pid_t initial_pid) {
                 continue;
             }
 
+            /* CRITICAL: Swallow SIGSTOP to prevent infinite stop-deliver loop.
+             * Forwarding SIGSTOP causes the tracee to stop immediately again,
+             * trapping the tracer in a loop and preventing execv. */
             if (sig == SIGSTOP) {
                 ptrace(PTRACE_SYSCALL, pid, 0, 0);
             } else {
+                /* Forward all other signals (e.g., SIGINT, SIGTERM, SIGTSTP) */
                 ptrace(PTRACE_SYSCALL, pid, 0, sig);
             }
             continue;
@@ -537,11 +568,6 @@ int main(int argc, char *argv[]) {
                 return 0;
             case 'v':
                 g_verbose_level++;
-                if (optarg) {
-                    for (const char *p = optarg; *p == 'v'; p++) {
-                        g_verbose_level++;
-                    }
-                }
                 break;
             case 'V':
                 printf("%s version 1.0.0\n", g_progname);
@@ -562,30 +588,65 @@ int main(int argc, char *argv[]) {
             case 'm':
                 provided_cmd_path = optarg;
                 break;
-            case 'p':
-                attach_pid = atoi(optarg);
-                if (attach_pid <= 0) {
+            case 'p': {
+                char *endptr;
+                errno = 0;
+                long pid_val = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || errno == ERANGE || pid_val <= 0 || pid_val > INT_MAX) {
                     LOG_ERROR("Invalid PID: %s", optarg);
                     return 1;
                 }
+                attach_pid = (pid_t)pid_val;
                 break;
+            }
             case 'k':
                 g_keep_env = true;
                 break;
             case 'e': {
-                char **new_env = realloc(g_extra_env, (g_extra_env_count + 1) * sizeof(char *));
-                if (!new_env) {
-                    LOG_ERROR("Failed to allocate memory for --env");
-                    cleanup_global_resources();
-                    return 1;
-                }
-                g_extra_env = new_env;
                 char *env_val = strdup(optarg);
                 if (!env_val) {
                     LOG_ERROR("Failed to allocate memory for --env value");
-                    cleanup_global_resources();
                     return 1;
                 }
+
+                char *eq = strchr(env_val, '=');
+                if (!eq) {
+                    LOG_ERROR("Invalid --env format: %s (must be KEY=VALUE)", optarg);
+                    free(env_val);
+                    return 1;
+                }
+
+                size_t key_len = eq - env_val;
+                char key[key_len + 1];
+                memcpy(key, env_val, key_len);
+                key[key_len] = '\0';
+
+                const char *blocked[] = {
+                    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "LD_DEBUG",
+                    "LD_ORIGIN_PATH", "LD_PRELOAD_SEC", "LD_DYNAMIC_WEAK",
+                    NULL
+                };
+                bool is_blocked = false;
+                for (int i = 0; blocked[i]; i++) {
+                    if (strcmp(key, blocked[i]) == 0) {
+                        is_blocked = true;
+                        break;
+                    }
+                }
+
+                if (is_blocked) {
+                    LOG_ERROR("Refusing to set dangerous environment variable: %s", key);
+                    free(env_val);
+                    return 1;
+                }
+
+                char **new_env = realloc(g_extra_env, (g_extra_env_count + 1) * sizeof(char *));
+                if (!new_env) {
+                    LOG_ERROR("Failed to allocate memory for --env");
+                    free(env_val);
+                    return 1;
+                }
+                g_extra_env = new_env;
                 g_extra_env[g_extra_env_count++] = env_val;
                 break;
             }
@@ -612,26 +673,22 @@ int main(int argc, char *argv[]) {
                 while ((line_len = getline(&line, &line_cap, f)) != -1) {
                     if (line_len > 0 && line[line_len-1] == '\n') line[line_len-1] = '\0';
                     if (line[0] == '\0') continue;
-                    /* putenv expects the string to remain valid; strdup copies it */
-                    char *env_entry = strdup(line);
-                    if (!env_entry) {
-                        LOG_ERROR("out of memory restoring environment");
-                        free(line);
-                        fclose(f);
-                        unlink(optarg);
-                        return 1;
+                    char *eq = strchr(line, '=');
+                    if (!eq) {
+                        LOG_WARN("Malformed env line in file: %s", line);
+                        continue;
                     }
-                    if (putenv(env_entry) != 0) {
-                        LOG_WARN("putenv failed for '%s'", env_entry);
-                        free(env_entry);
+                    *eq = '\0';
+                    const char *key = line;
+                    const char *val = eq + 1;
+                    if (setenv(key, val, 1) != 0) {
+                        LOG_WARN("setenv failed for '%s'", key);
                     }
-                    /* Note: putenv does not copy the string on success,
-                     * so we must not free env_entry. The string remains in environment. */
+                    *eq = '=';
                 }
                 free(line);
                 fclose(f);
                 unlink(optarg);  /* Clean up the temp file */
-                validation_init();  /* Re-initialize socket and wrap paths after env restore */
                 break;
             }
             case 259:
@@ -667,7 +724,8 @@ int main(int argc, char *argv[]) {
             case 263:
                 /* Block network access via environment variable */
                 if (setenv("READONLYBOX_NO_NETWORK", "1", 1) != 0) {
-                    LOG_WARN("failed to set READONLYBOX_NO_NETWORK");
+                    LOG_FATAL("Failed to set READONLYBOX_NO_NETWORK, cannot enforce network restriction");
+                    return 1;
                 }
                 break;
             case 264:
@@ -681,6 +739,7 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case 266:
+                user_soft_policy_requested = true;
                 {
                     const char *existing = getenv("READONLYBOX_SOFT_ALLOW");
                     if (existing && existing[0]) {
@@ -697,6 +756,7 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case 267:
+                user_soft_policy_requested = true;
                 {
                     const char *existing = getenv("READONLYBOX_SOFT_DENY");
                     if (existing && existing[0]) {
@@ -757,13 +817,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "logging to %s\n", g_custom_log_file ? g_custom_log_file : "/tmp/readonlybox-ptrace.log");
     }
 
-    /* Validate soft policy rules before requesting auth via pkexec.
-     * This catches invalid paths or too many rules before any privilege escalation. */
-    if (soft_policy_validate_from_env() != 0) {
-        LOG_ERROR("Invalid soft policy rules");
-        return 1;
-    }
-
     /* If attaching to a process, no command should be provided */
     int cmd_start = optind;
     /* Skip "--" separator if present (handles case where --env-socket was removed) */
@@ -806,12 +859,6 @@ int main(int argc, char *argv[]) {
             LOG_ERROR("Command not found: %s", argv[cmd_start]);
             return 1;
         }
-    }
-
-    /* Validate Landlock paths before requesting auth.
-     * This ensures paths are valid directories before pkexec prompt. */
-    if (validate_landlock_paths() != 0) {
-        return 1;
     }
 
     /* Screen environment for potential secrets before launching.
@@ -864,23 +911,218 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    soft_policy_t *soft = soft_policy_get_global();
-    if (soft_policy_load_from_env(soft) != 0) {
-        LOG_ERROR("Failed to initialize soft policy");
-        soft_policy_free(soft);
-    } else if (soft_policy_is_active(soft)) {
-        soft_policy_load_builtin(soft);
-        DEBUG_PRINT("MAIN: Soft policy active with %d rules\n", soft->count);
+    /* Initialize global soft ruleset only if soft policy was requested */
+    if (user_soft_policy_requested) {
+        user_fs_rules = soft_ruleset_new();
+        if (!user_fs_rules) {
+            LOG_ERROR("Failed to create soft ruleset");
+            syscall_handler_cleanup();
+            validation_shutdown();
+            free(cmd_path);
+            return 1;
+        }
+
+        /* Note: Layers 0-1 are reserved for hard policy fallback (deny/allow).
+         * Hard rules use PRECEDENCE mode to shadow soft rules.
+         * Soft rules start at layer 2. */
+
+        /* Layer 2: User rules - SPECIFICITY mode (longest match wins) */
+        soft_ruleset_set_layer_type(user_fs_rules, 2, LAYER_SPECIFICITY, 0);
+
+        /* Layer 3: Builtin ALLOW rules - SPECIFICITY mode (fallback) */
+        soft_ruleset_set_layer_type(user_fs_rules, 3, LAYER_SPECIFICITY, 0);
+
+        /* Layer 4: Builtin DENY rules - PRECEDENCE mode (shadows lower layers) */
+        soft_ruleset_set_layer_type(user_fs_rules, 4, LAYER_PRECEDENCE, 0);
+
+        /* Parse and load user rules from environment */
+        const char *allow_env = getenv("READONLYBOX_SOFT_ALLOW");
+        const char *deny_env = getenv("READONLYBOX_SOFT_DENY");
+
+        if (allow_env && *allow_env) {
+            char *env_copy = strdup(allow_env);
+            if (env_copy) {
+                char *saveptr = NULL;
+                char *token = strtok_r(env_copy, ",", &saveptr);
+                while (token) {
+                    while (*token == ' ' || *token == '\t') token++;
+                    size_t len = strlen(token);
+                    while (len > 0 && (token[len - 1] == ' ' || token[len - 1] == '\t')) {
+                        len--;
+                        token[len] = '\0';
+                    }
+                    if (len > 0) {
+                        soft_mode_t mode = SOFT_MODE_RO;
+                        char *path = token;
+                        char *colon = strchr(token, ':');
+                        if (colon) {
+                            *colon = '\0';
+                            if (strcmp(colon + 1, "ro") == 0 || strcmp(colon + 1, "r") == 0) mode = SOFT_MODE_RO;
+                            else if (strcmp(colon + 1, "rx") == 0) mode = SOFT_MODE_RX;
+                            else if (strcmp(colon + 1, "rw") == 0 || strcmp(colon + 1, "rwx") == 0) mode = SOFT_MODE_RW;
+                        }
+                        size_t path_len = strlen(path);
+                        while (path_len > 1 && path[path_len - 1] == '/') {
+                            path_len--;
+                        }
+                        path[path_len] = '\0';
+
+                        char recursive_path[PATH_MAX];
+                        if (path_len == 1 && path[0] == '/') {
+                            snprintf(recursive_path, sizeof(recursive_path), "/...");
+                        } else {
+                            snprintf(recursive_path, sizeof(recursive_path), "%.*s/...", (int)path_len, path);
+                        }
+
+                        uint32_t access = 0;
+                        switch (mode) {
+                            case SOFT_MODE_RO: access = SOFT_ACCESS_READ; break;
+                            case SOFT_MODE_RX: access = SOFT_ACCESS_READ | SOFT_ACCESS_EXEC; break;
+                            case SOFT_MODE_RW: access = SOFT_ACCESS_READ | SOFT_ACCESS_WRITE; break;
+                            case SOFT_MODE_RWX: access = SOFT_ACCESS_ALL; break;
+                            default: access = 0; break;
+                        }
+                        soft_ruleset_add_rule_at_layer(user_fs_rules, 2, recursive_path, access,
+                                SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+                    }
+                    token = strtok_r(NULL, ",", &saveptr);
+                }
+                free(env_copy);
+            }
+        }
+
+        if (deny_env && *deny_env) {
+            char *env_copy = strdup(deny_env);
+            if (env_copy) {
+                char *saveptr = NULL;
+                char *token = strtok_r(env_copy, ",", &saveptr);
+                while (token) {
+                    while (*token == ' ' || *token == '\t') token++;
+                    size_t len = strlen(token);
+                    while (len > 0 && (token[len - 1] == ' ' || token[len - 1] == '\t')) {
+                        len--;
+                        token[len] = '\0';
+                    }
+                    if (len > 0) {
+                        char *path = token;
+                        size_t path_len = strlen(path);
+                        while (path_len > 1 && path[path_len - 1] == '/') {
+                            path_len--;
+                        }
+                        path[path_len] = '\0';
+
+                        char recursive_path[PATH_MAX];
+                        if (path_len == 1 && path[0] == '/') {
+                            snprintf(recursive_path, sizeof(recursive_path), "/...");
+                        } else {
+                            snprintf(recursive_path, sizeof(recursive_path), "%.*s/...", (int)path_len, path);
+                        }
+
+                        soft_ruleset_add_rule_at_layer(user_fs_rules, 2, recursive_path, SOFT_ACCESS_DENY,
+                                SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+                    }
+                    token = strtok_r(NULL, ",", &saveptr);
+                }
+                free(env_copy);
+            }
+        }
+
+        /* Add current user home directory rules at layer 0 */
+        if (getuid() != 0) {
+            const char *user = getenv("USER");
+            if (!user) {
+                struct passwd *pw = getpwuid(getuid());
+                user = pw ? pw->pw_name : NULL;
+            }
+            if (user) {
+                char path[PATH_MAX];
+                snprintf(path, sizeof(path), "/home/%s", user);
+                soft_ruleset_add_rule_at_layer(user_fs_rules, 2, path,
+                        SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC,
+                        SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+
+                snprintf(path, sizeof(path), "/run/user/%d", getuid());
+                soft_ruleset_add_rule_at_layer(user_fs_rules, 2, path,
+                        SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
+                        SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+            }
+        }
+
+        /* Add builtin ALLOW rules at layer 1 */
+        static const struct {
+            const char *path;
+            uint32_t access;
+        } builtin_allow[] = {
+            { "/",                 SOFT_ACCESS_READ },
+            { "/usr",              SOFT_ACCESS_READ | SOFT_ACCESS_EXEC },
+            { "/lib",              SOFT_ACCESS_READ | SOFT_ACCESS_EXEC },
+            { "/lib64",            SOFT_ACCESS_READ | SOFT_ACCESS_EXEC },
+            { "/usr/lib",          SOFT_ACCESS_READ | SOFT_ACCESS_EXEC },
+            { "/usr/local/lib",    SOFT_ACCESS_READ | SOFT_ACCESS_EXEC },
+            { "/etc",              SOFT_ACCESS_READ },
+            { "/proc",             SOFT_ACCESS_READ },
+            { "/sys",              SOFT_ACCESS_READ },
+            { "/dev",              SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
+            { "/dev/pts",          SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
+            { "/dev/tty",          SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
+            { "/dev/null",         SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
+            { "/dev/shm",          SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
+            { "/tmp",              SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
+            { "/var/tmp",          SOFT_ACCESS_READ | SOFT_ACCESS_WRITE },
+            { "/var",              SOFT_ACCESS_READ },
+            { "/run",              SOFT_ACCESS_READ },
+        };
+        for (size_t i = 0; i < sizeof(builtin_allow) / sizeof(builtin_allow[0]); i++) {
+            char recursive_path[PATH_MAX];
+            snprintf(recursive_path, sizeof(recursive_path), "%s/...", builtin_allow[i].path);
+            soft_ruleset_add_rule_at_layer(user_fs_rules, 3, recursive_path, builtin_allow[i].access,
+                    SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+        }
+
+        /* Add builtin DENY rules at layer 2 */
+        static const char *builtin_deny[] = {
+            "/home",
+            "/root",
+            "/var/log",
+            "/var/spool",
+            "/etc/shadow",
+            "/etc/gshadow",
+            "/etc/securetty",
+            "/etc/sudoers",
+            "/etc/ssh/ssh_host_rsa_key",
+            "/etc/ssh/ssh_host_ecdsa_key",
+            "/etc/ssh/ssh_host_ed25519_key",
+            "/run/user",
+        };
+        for (size_t i = 0; i < sizeof(builtin_deny) / sizeof(builtin_deny[0]); i++) {
+            char recursive_path[PATH_MAX];
+            snprintf(recursive_path, sizeof(recursive_path), "%s/...", builtin_deny[i]);
+            soft_ruleset_add_rule_at_layer(user_fs_rules, 4, recursive_path, SOFT_ACCESS_DENY,
+                    SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+        }
     }
 
     unsetenv("READONLYBOX_SOFT_ALLOW");
     unsetenv("READONLYBOX_SOFT_DENY");
     unsetenv("READONLYBOX_SOFT_DEBUG");
 
+    soft_ruleset_t *effective_fs_rules = get_effective_fs_rules();
+    if (effective_fs_rules) {
+        if (soft_ruleset_compile(effective_fs_rules) != 0) {
+            LOG_ERROR("Failed to compile effective filesystem ruleset");
+        }
+        DEBUG_PRINT("MAIN: Effective filesystem policy active with %zu rules\n",
+                soft_ruleset_rule_count(effective_fs_rules));
+    }
+
     /* Check if we're attaching to a running process or spawning new */
     if (attach_pid > 0) {
         /* Attach to existing process */
         fprintf(stderr, "%s: Attaching to process %d\n", g_progname, attach_pid);
+
+        if (getenv("READONLYBOX_HARD_ALLOW") || getenv("READONLYBOX_HARD_DENY") || getenv("READONLYBOX_NO_NETWORK")) {
+            LOG_WARN("Sandboxing options (--hard-allow, --hard-deny, --no-network) are ignored in attach mode (-p). Only syscall interception is active.");
+        }
 
         /* Send PTRACE_ATTACH to the target process */
         if (ptrace(PTRACE_ATTACH, attach_pid, NULL, NULL) < 0) {
@@ -973,19 +1215,21 @@ int main(int argc, char *argv[]) {
             _exit(1);
         }
         raise(SIGSTOP);
-        /* Prevent gaining new privileges before applying sandbox restrictions.
-         * This must be set before apply_sandboxing() which includes Landlock. */
-        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-            LOG_WARN("failed to set PR_SET_NO_NEW_PRIVS before sandbox");
+
+        /* CRITICAL: Resolve command path BEFORE applying sandbox restrictions.
+         * Landlock's default-deny policy will block realpath() if the path
+         * isn't explicitly allowed, causing immediate child exit. */
+        char cmd_path_copy[PATH_MAX];
+        if (realpath(cmd_path, cmd_path_copy) == NULL) {
+            LOG_ERROR("realpath failed for %s: %s", cmd_path, strerror(errno));
+            _exit(1);
         }
+
         /* Apply sandbox restrictions before dropping privileges.
-         * This must be done while we still have CAP_SYS_ADMIN.
-         * Landlock and seccomp restrictions will be inherited by the execved process.
-         * Configuration is read from environment variables set by CLI options. */
+         * Landlock and seccomp restrictions will be inherited by the execved process. */
         apply_sandboxing();
         drop_privileges_and_apply_env();
-        char cmd_path_copy[PATH_MAX];
-        strlcpy(cmd_path_copy, cmd_path, sizeof(cmd_path_copy));
+
         unsetenv("READONLYBOX_SOFT_ALLOW");
         unsetenv("READONLYBOX_SOFT_DENY");
         unsetenv("READONLYBOX_SOFT_DEBUG");
@@ -1015,7 +1259,7 @@ int main(int argc, char *argv[]) {
 /* Resolve command to full path using PATH */
 static char *resolve_command_path(const char *cmd) {
     if (strchr(cmd, '/')) {
-        char *resolved = malloc(PATH_MAX);
+        char *resolved = calloc(1, PATH_MAX);
         if (!resolved) return NULL;
         if (realpath(cmd, resolved)) {
             return resolved;
@@ -1042,9 +1286,14 @@ static char *resolve_command_path(const char *cmd) {
             return NULL;
         }
         snprintf(full_path, PATH_MAX, "%s/%s", dir, cmd);
-        if (access(full_path, X_OK) == 0) {
-            free(path_copy);
-            return full_path;
+        struct stat st;
+        if (stat(full_path, &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
+            char *resolved = realpath(full_path, NULL);
+            free(full_path);
+            if (resolved) {
+                free(path_copy);
+                return resolved;
+            }
         }
         free(full_path);
         dir = strtok_r(NULL, ":", &saveptr);

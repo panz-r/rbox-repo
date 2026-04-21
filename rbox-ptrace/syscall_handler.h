@@ -17,6 +17,27 @@
 
 #define ALLOWANCE_TIMEOUT_SECONDS 600  /* 10 minutes */
 
+/*
+ * Internal syscall-specific access flags.
+ * These are NOT ruleset SOFT_ACCESS_* flags - they are internal tracking
+ * flags used by the syscall handler to track syscall properties for
+ * policy decisions.
+ *
+ * These flags map to SOFT_ACCESS_* as follows:
+ *   SYSCALL_ACCESS_TRUNCATE → SOFT_ACCESS_WRITE (truncate = write)
+ *   SYSCALL_ACCESS_RMDIR    → SOFT_ACCESS_UNLINK
+ *   SYSCALL_ACCESS_RENAME   → SOFT_ACCESS_WRITE | SOFT_ACCESS_UNLINK (move)
+ *   SYSCALL_ACCESS_SYMLINK  → SOFT_ACCESS_LINK | SOFT_ACCESS_CREATE
+ *   SYSCALL_ACCESS_CHMOD    → SOFT_ACCESS_WRITE
+ *   SYSCALL_ACCESS_CHOWN    → SOFT_ACCESS_WRITE
+ */
+#define SYSCALL_ACCESS_TRUNCATE  (1U << 15)
+#define SYSCALL_ACCESS_RMDIR     (1U << 10)
+#define SYSCALL_ACCESS_RENAME    (1U << 11)
+#define SYSCALL_ACCESS_SYMLINK   (1U << 12)
+#define SYSCALL_ACCESS_CHMOD     (1U << 13)
+#define SYSCALL_ACCESS_CHOWN     (1U << 14)
+
 
 /* Architecture-specific syscall numbers and register access
  * Use system headers for syscall numbers (<sys/syscall.h> provides SYS_execve)
@@ -163,6 +184,7 @@ typedef struct {
     char **execve_envp;     /* Saved envp for execve */
     unsigned long *execve_envp_addrs; /* Original addresses of envp strings in child memory */
     char *last_validated_cmd; /* Last command that was validated for this process */
+    long blocked_syscall;   /* Syscall number that was blocked (0 = not blocked) */
 
     /* Hierarchical allowance chain for validated commands */
     AllowSet chains;

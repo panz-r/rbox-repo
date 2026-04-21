@@ -44,44 +44,17 @@ struct allowed_entry *sandbox_parse_allow_list(const char *env_value, int *out_c
 struct denied_entry *sandbox_parse_deny_list(const char *env_value, int *out_count,
                                              sandbox_path_validator_t validator, void *ctx);
 
-void sandbox_simplify_allow_list(struct allowed_entry **entries, int *count);
-
-void sandbox_simplify_deny_list(struct denied_entry **entries, int *count);
-
-int sandbox_remove_overlaps(struct allowed_entry *allow, int allow_count,
-                           struct denied_entry *deny, int deny_count);
-
-uint64_t sandbox_calc_handled_access(const struct allowed_entry *allow, int allow_count);
-
 void sandbox_free_allow_entries(struct allowed_entry *entries, int count);
 
 void sandbox_free_deny_entries(struct denied_entry *entries, int count);
-
-bool sandbox_is_path_prefix(const char *parent, const char *child);
-
-bool sandbox_is_under_deny(const char *path, size_t path_len,
-                           struct denied_entry *deny, int deny_count);
-
-bool sandbox_has_deny_under(const char *path, size_t path_len,
-                           struct denied_entry *deny, int deny_count);
 
 /* Apply all sandbox restrictions as defined by environment variables.
  * Must be called after the child has been traced (PTRACE_TRACEME)
  * but before dropping privileges. */
 void apply_sandboxing(void);
 
-/* Validate Landlock paths early (before pkexec auth prompt).
- * Returns 0 on success.
- * Prints error message and exits on invalid paths. */
+/* Validate Landlock path expansion results.
+ * Returns 0 on success, -1 on validation failure. */
 int validate_landlock_paths(void);
-
-/* Test interface for expansion logic */
-int sandbox_expand_paths(struct allowed_entry *allow, int allow_count,
-                          struct denied_entry *deny, int deny_count);
-
-int sandbox_get_expanded_count(void);
-const char *sandbox_get_expanded_path(int index);
-uint64_t sandbox_get_expanded_access(int index);
-void sandbox_expansion_cleanup(void);
 
 #endif /* SANDBOX_H */
