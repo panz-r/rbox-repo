@@ -578,11 +578,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case EventConnect:
 			m.connections++
 		case EventNewRequest:
-			// Auto-allow / auto-deny logic (safe model access in event loop)
+			// Evaluate command through shellgate (single-threaded gate access)
+			var evalResult *shell.EvalResult
+			if m.gate != nil {
+				evalResult, _ = m.gate.Eval(msg.Command)
+				if evalResult != nil && evalResult.Truncated {
+					fmt.Fprintf(os.Stderr, "Warning: shellgate buffer truncated for command: %s\n", msg.Command)
+				}
+			}
+
+			// Auto-allow / auto-deny logic
 			autoAllowed := false
 			autoDenied := false
-			if msg.EvalResult != nil && len(msg.EnvVars) == 0 {
-				ev := msg.EvalResult
+			if evalResult != nil && len(msg.EnvVars) == 0 {
+				ev := evalResult
 				if ev.Verdict == shell.VerdictAllow && len(ev.Suggestions) == 0 {
 					// Literal allow match — check violations
 					if !ev.HasViolation || len(ev.Violations) == 0 {
@@ -601,18 +610,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					if autoAllowed {
 						msg.Req.Decide(DecisionAllow, "once", 0, nil)
-						m.AddCommand("POLICY ALLOW", msg.Command, msg.Args, msg.Caller, msg.Syscall, "policy-allow", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
+						m.AddCommand("POLICY ALLOW", msg.Command, msg.Args, msg.Caller, msg.Syscall, "policy-allow", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, evalResult)
 					}
 				} else if ev.Verdict == shell.VerdictDeny && len(ev.DenySuggestions) == 0 {
 					// Literal deny match — auto-deny
 					autoDenied = true
 					msg.Req.Decide(DecisionDeny, "once", 0, nil)
-					m.AddCommand("POLICY DENY", msg.Command, msg.Args, msg.Caller, msg.Syscall, "policy-deny", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
+					m.AddCommand("POLICY DENY", msg.Command, msg.Args, msg.Caller, msg.Syscall, "policy-deny", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, evalResult)
 				}
 			}
 			if !autoAllowed && !autoDenied {
 				StoreRequest(msg.RequestID, msg.Req)
-				m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, msg.EvalResult)
+				m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, evalResult)
 			}
 		case EventAddPendingRetry:
 			// Find the command log for this request
@@ -824,10 +833,15 @@ func (m *Model) executeDecision() {
 			if accepted && si < len(active) {
 				pattern := active[si]
 				if pattern != "" {
+					var err error
 					if allow {
-						m.gate.AddRule(pattern)
+						err = m.gate.AddRule(pattern)
 					} else {
-						m.gate.AddDenyRule(pattern)
+						err = m.gate.AddDenyRule(pattern)
+					}
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to add %s rule %q: %v\n",
+							map[bool]string{true: "allow", false: "deny"}[allow], pattern, err)
 					}
 				}
 			}
@@ -1420,17 +1434,16 @@ func gateAddDefaults(gate *shell.Gate) {
 	if gate == nil {
 		return
 	}
-	gate.AddRule("echo *")
-	gate.AddRule("ls")
-	gate.AddRule("cat #path")
-	gate.AddRule("grep *")
-	gate.AddRule("find *")
-	gate.AddRule("head")
-	gate.AddRule("tail")
-	gate.AddRule("wc")
-	gate.AddRule("sort")
-	gate.AddRule("uniq")
-	gate.AddRule("diff *")
+	rules := []string{
+		"echo *", "ls", "cat #path", "grep *", "find *",
+		"head", "tail", "wc", "sort", "uniq", "diff *",
+	}
+	for _, r := range rules {
+		if err := gate.AddRule(r); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add default rule %q: %v\n", r, err)
+			return
+		}
+	}
 }
 
 func RunTUIMode() {
@@ -1511,13 +1524,7 @@ func RunTUIMode() {
 				}
 			}
 
-			// Run shellgate evaluation
-			var evalResult *shell.EvalResult
-			if gate != nil {
-				evalResult, _ = gate.Eval(cmd)
-			}
-
-			// Auto-allow check happens in the event handler (safe model access)
+			// Shellgate evaluation happens in the event handler (safe single-threaded gate access)
 			model.eventChan <- Event{
 				Type:       EventNewRequest,
 				RequestID:  requestID,
@@ -1527,7 +1534,6 @@ func RunTUIMode() {
 				Caller:     caller,
 				Syscall:    syscall,
 				EnvVars:    envVars,
-				EvalResult: evalResult,
 			}
 		}
 	}()
@@ -1540,8 +1546,8 @@ func RunTUIMode() {
 	close(model.eventChan)
 
 	fmt.Println("\nShutting down...")
-	if gate != nil {
-		gate.Close()
+	if model.gate != nil {
+		model.gate.Close()
 	}
 	server.Stop()
 	server.Free()

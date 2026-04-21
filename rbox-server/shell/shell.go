@@ -8,6 +8,7 @@ package shell
 import "C"
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"unsafe"
 )
@@ -67,6 +68,8 @@ func NewGate() (*Gate, error) {
 		C.sg_violation_config_default(cfg)
 		C.sg_gate_set_violation_config(g, cfg)
 		C.free(unsafe.Pointer(cfg))
+	} else {
+		fmt.Fprintf(os.Stderr, "Warning: shellgate violation config allocation failed\n")
 	}
 
 	C.sg_gate_set_suggestions(g, C.bool(true))
@@ -106,6 +109,9 @@ func (g *Gate) Eval(cmd string) (*EvalResult, error) {
 
 	if rc == C.SG_ERR_INVALID {
 		return nil, fmt.Errorf("invalid arguments")
+	}
+	if rc == C.SG_ERR_PARSE {
+		return nil, fmt.Errorf("command parse failed")
 	}
 
 	result := &EvalResult{
@@ -177,7 +183,23 @@ func (g *Gate) RemoveRule(pattern string) error {
 	}
 	cPat := C.CString(pattern)
 	defer C.free(unsafe.Pointer(cPat))
-	C.sg_gate_remove_rule(g.gate, cPat)
+	rc := C.sg_gate_remove_rule(g.gate, cPat)
+	if rc != C.SG_OK {
+		return fmt.Errorf("remove rule failed: %d", int(rc))
+	}
+	return nil
+}
+
+func (g *Gate) RemoveDenyRule(pattern string) error {
+	if g.gate == nil {
+		return fmt.Errorf("gate is nil")
+	}
+	cPat := C.CString(pattern)
+	defer C.free(unsafe.Pointer(cPat))
+	rc := C.sg_gate_remove_deny_rule(g.gate, cPat)
+	if rc != C.SG_OK {
+		return fmt.Errorf("remove deny rule failed: %d", int(rc))
+	}
 	return nil
 }
 
