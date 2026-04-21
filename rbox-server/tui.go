@@ -493,7 +493,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c", "C":
 			if m.step == 1 && m.gate != nil {
 				m.gate.Close()
-				m.gate, _ = shell.NewGate()
+				var err error
+				m.gate, err = shell.NewGate()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Fatal: failed to recreate gate: %v\n", err)
+					m.gate = nil
+					return m, tea.Quit
+				}
 				gateAddDefaults(m.gate)
 				m.violOverrides = make(map[uint32]bool)
 				m.flashMessage = "Policy cleared"
@@ -581,8 +587,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Evaluate command through shellgate (single-threaded gate access)
 			var evalResult *shell.EvalResult
 			if m.gate != nil {
-				evalResult, _ = m.gate.Eval(msg.Command)
-				if evalResult != nil && evalResult.Truncated {
+				var err error
+				evalResult, err = m.gate.Eval(msg.Command)
+				if err != nil {
+					evalResult = &shell.EvalResult{
+						Verdict:    shell.VerdictUndetermined,
+						DenyReason: "eval error: " + err.Error(),
+					}
+				} else if evalResult != nil && evalResult.Truncated {
 					fmt.Fprintf(os.Stderr, "Warning: shellgate buffer truncated for command: %s\n", msg.Command)
 				}
 			}
@@ -1297,6 +1309,9 @@ func (m *Model) renderDetailsAndActions(sb *strings.Builder, maxHeight int) {
 			sb.WriteString(denyStyle.Render(fmt.Sprintf("  Policy: %s", verdictStr)))
 		case shell.VerdictUndetermined:
 			sb.WriteString(dimStyle.Render(fmt.Sprintf("  Policy: %s", verdictStr)))
+			if ev.DenyReason != "" {
+				sb.WriteString(denyStyle.Render(fmt.Sprintf(" (%s)", ev.DenyReason)))
+			}
 		}
 		sb.WriteString("\n")
 
