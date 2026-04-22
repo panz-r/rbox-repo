@@ -22,8 +22,6 @@ set(LIB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/dfa_minimize_sat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dfa_layout_sat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dfa_compress_sat.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/nfa_preminimize_sat.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/nfa_preminimize_windowed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nfa_preminimize_sat_optimal.cpp
 )
 

@@ -2,36 +2,29 @@
  * NFA Pre-Minimization Implementation
  * 
  * Reduces NFA states before subset construction using:
- * 1. Epsilon chain compression - bypass pass-through states
+ * 1. Epsilon pass-through elimination - bypass simple epsilon-only states
  * 2. Common prefix merging - share states for identical prefixes (O(n log n))
  * 3. Unreachable state pruning
  * 
  * Key advantage: We have global knowledge of the full NFA, unlike the
  * per-pattern RDP parser which has no look-ahead.
  * 
- * PREFIX MERGING LIMITATIONS:
- * ==========================
- * Prefix merging is DISABLED by default because it requires tracking the full
- * path from the start state, not just the immediate source.
+ * PREFIX MERGING SAFETY:
+ * ======================
+ * Prefix merging is now SAFE because we use compute_full_signature() which
+ * combines prefix properties AND outgoing transitions AND markers. Two states
+ * with the same full signature have:
+ *   - Same prefix properties (category, pattern_id, eos_target, pending_markers)
+ *   - Same outgoing transitions (where they can go next)
+ *   - Same markers on transitions
  * 
- * The issue: Two states might have the same immediate incoming transition
- * (same source, same symbol) but different full paths from start. Consider:
- *   Pattern "cat": 0 --c--> 1 --a--> 2 --t--> [accept]
- *   Pattern "car": 0 --c--> 3 --a--> 4 --r--> [accept]
+ * When states are reached via the same (source, symbol) pair AND have
+ * identical full signatures, they are truly equivalent - merging them cannot
+ * change the language because they have identical behavior both before and
+ * after the current state. The merge operation only redirects incoming edges;
+ * no outgoing transitions are combined.
  * 
- * States 2 and 4 both have incoming 'a' transitions, but from different
- * predecessor states (1 vs 3). Merging them would be wrong because states
- * 1 and 3 have different futures (t vs r).
- * 
- * Correct prefix merging would require:
- * 1. Building a trie of all paths from start
- * 2. Only merging states at the same trie position
- * 3. Combining all outgoing transitions (union of futures)
- * 
- * This is better done during NFA construction (building a trie directly)
- * rather than as a post-processing step.
- * 
- * The DFA minimization phase handles state reduction safely and correctly.
+ * The DFA minimization phase handles additional state reduction safely.
  */
 
 #include <stdio.h>
@@ -41,6 +34,14 @@
 #include <stdint.h>
 #include "nfa_preminimize.h"
 #include "../include/multi_target_array.h"
+
+// Maximum epsilon closure depth - caps complexity of epsilon-aware signatures
+// A value of 16 handles typical chained epsilon transitions while limiting computation
+#define MAX_EPSILON_CLOSURE 16
+
+// Sentinel value indicating epsilon closure was truncated (unbounded)
+// States with TRUNCATED signature cannot be merged with any other state
+#define TRUNCATED UINT64_MAX
 
 // Statistics from last run
 static nfa_premin_stats_t last_stats = {
@@ -76,9 +77,11 @@ typedef struct {
     uint64_t accepting_sig;   // Hash of accepting properties (category, markers)
     uint64_t outgoing_sig;    // Hash of outgoing transitions
     uint64_t prefix_sig;      // Hash of prefix properties (same as accepting for now)
+    uint64_t full_sig;        // Hash of full signature (prefix + outgoing)
     bool accepting_valid;     // Is accepting_sig valid?
     bool outgoing_valid;      // Is outgoing_sig valid?
     bool prefix_valid;        // Is prefix_sig valid?
+    bool full_valid;          // Is full_sig valid?
 } signature_cache_entry_t;
 
 /**
@@ -98,6 +101,7 @@ static void sig_cache_init(int capacity) {
             sig_cache[i].accepting_valid = false;
             sig_cache[i].outgoing_valid = false;
             sig_cache[i].prefix_valid = false;
+            sig_cache[i].full_valid = false;
         }
         return;
     }
@@ -131,6 +135,7 @@ static void sig_cache_invalidate(int state_idx) {
         sig_cache[state_idx].accepting_valid = false;
         sig_cache[state_idx].outgoing_valid = false;
         sig_cache[state_idx].prefix_valid = false;
+        sig_cache[state_idx].full_valid = false;
     }
 }
 
@@ -148,10 +153,216 @@ static void sig_cache_grow(int new_capacity) {
         new_cache[i].accepting_valid = false;
         new_cache[i].outgoing_valid = false;
         new_cache[i].prefix_valid = false;
+        new_cache[i].full_valid = false;
     }
     
     sig_cache = new_cache;
     sig_cache_capacity = new_capacity;
+}
+
+/**
+ * Check if a state has a transition to a specific target on a symbol.
+ * Examines all transition representations:
+ * 1. transitions[] array (legacy format)
+ * 2. has_first_target/first_targets fast-path
+ * 3. symbol_map multi-target entries
+ */
+static bool nfa_has_transition_to(const nfa_state_t* state, int sym, int target) {
+    if (!state || sym < 0 || sym >= MAX_SYMBOLS || target < 0) {
+        return false;
+    }
+
+    if (state->transitions[sym] == target) {
+        return true;
+    }
+
+    if (state->multi_targets.has_first_target[sym] &&
+        state->multi_targets.first_targets[sym] == target) {
+        return true;
+    }
+
+    mta_entry_t* entry = state->multi_targets.symbol_map[sym];
+    if (entry) {
+        for (int i = 0; i < entry->target_count; i++) {
+            if (entry->targets[i] == target) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+/**
+ * Compute epsilon closure of a state set with a maximum depth cap.
+ * Uses BFS to find all states reachable via epsilon transitions.
+ * Results are sorted for deterministic hashing.
+ * 
+ * @param nfa NFA state array
+ * @param initial_states Array of initial state indices
+ * @param initial_count Number of initial states
+ * @param out_states Output buffer for closure (must have capacity MAX_EPSILON_CLOSURE)
+ * @param out_truncated Output: true if actual closure was larger than MAX_EPSILON_CLOSURE
+ * @return Number of states in closure (capped at MAX_EPSILON_CLOSURE)
+ */
+static int compute_epsilon_closure(const nfa_state_t* nfa, int* initial_states, int initial_count, 
+                                   int* out_states, bool* out_truncated) {
+    bool visited[MAX_STATES] = {false};
+    int stack[MAX_STATES];
+    int stack_top = 0;
+    int result_count = 0;
+    bool truncated = false;
+    
+    for (int i = 0; i < initial_count && result_count < MAX_EPSILON_CLOSURE; i++) {
+        int state = initial_states[i];
+        if (state < 0 || state >= MAX_STATES || visited[state]) continue;
+        visited[state] = true;
+        stack[stack_top++] = state;
+    }
+    
+    while (stack_top > 0 && result_count < MAX_EPSILON_CLOSURE) {
+        int current = stack[--stack_top];
+        out_states[result_count++] = current;
+        
+        int eps_count;
+        int* eps_targets = mta_get_target_array((multi_target_array_t*)&nfa[current].multi_targets, VSYM_EPS, &eps_count);
+        if (eps_targets && eps_count > 0) {
+            for (int i = 0; i < eps_count; i++) {
+                int t = eps_targets[i];
+                if (t >= 0 && t < MAX_STATES && !visited[t]) {
+                    if (result_count >= MAX_EPSILON_CLOSURE) {
+                        truncated = true;
+                        break;
+                    }
+                    visited[t] = true;
+                    stack[stack_top++] = t;
+                }
+            }
+        }
+    }
+    
+    if (stack_top > 0 && result_count >= MAX_EPSILON_CLOSURE) {
+        truncated = true;
+    }
+    
+    for (int i = 0; i < result_count - 1; i++) {
+        for (int j = i + 1; j < result_count; j++) {
+            if (out_states[i] > out_states[j]) {
+                int tmp = out_states[i];
+                out_states[i] = out_states[j];
+                out_states[j] = tmp;
+            }
+        }
+    }
+    
+    *out_truncated = truncated;
+    return result_count;
+}
+
+/**
+ * Get epsilon-closed targets for a symbol.
+ * Returns the union of epsilon closures of all immediate targets.
+ * 
+ * @param nfa NFA state array
+ * @param state_idx State to query
+ * @param sym Symbol to check
+ * @param out_targets Output buffer (capacity MAX_EPSILON_CLOSURE)
+ * @param out_truncated Output: true if ANY component closure was truncated
+ * @return Number of targets in epsilon-closed set
+ */
+static int get_epsilon_closed_targets(const nfa_state_t* nfa, int state_idx, int sym, int* out_targets, bool* out_truncated) {
+    int immediate_targets[MAX_STATES];
+    int immediate_count = 0;
+    
+    const nfa_state_t* state = &nfa[state_idx];
+    
+    if (state->transitions[sym] >= 0) {
+        immediate_targets[immediate_count++] = state->transitions[sym];
+    }
+    
+    if (state->multi_targets.has_first_target[sym]) {
+        immediate_targets[immediate_count++] = state->multi_targets.first_targets[sym];
+    }
+    
+    int mta_count = mta_get_entry_count((multi_target_array_t*)&state->multi_targets);
+    for (int s = 0; s < MAX_SYMBOLS; s++) {
+        int count;
+        int* targets = mta_get_target_array((multi_target_array_t*)&state->multi_targets, s, &count);
+        if (targets && count > 0 && s == sym) {
+            for (int i = 0; i < count && immediate_count < MAX_STATES; i++) {
+                immediate_targets[immediate_count++] = targets[i];
+            }
+        }
+    }
+    
+    bool truncated = false;
+    int closure[MAX_EPSILON_CLOSURE];
+    int result_count = 0;
+    
+    for (int i = 0; i < immediate_count && result_count < MAX_EPSILON_CLOSURE; i++) {
+        int closed[MAX_EPSILON_CLOSURE];
+        bool closed_truncated;
+        int closed_count = compute_epsilon_closure(nfa, &immediate_targets[i], 1, closed, &closed_truncated);
+        if (closed_truncated) {
+            truncated = true;
+        }
+        for (int j = 0; j < closed_count && result_count < MAX_EPSILON_CLOSURE; j++) {
+            bool exists = false;
+            for (int k = 0; k < result_count; k++) {
+                if (out_targets[k] == closed[j]) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                out_targets[result_count++] = closed[j];
+            }
+        }
+    }
+    
+    for (int i = 0; i < result_count - 1; i++) {
+        for (int j = i + 1; j < result_count; j++) {
+            if (out_targets[i] > out_targets[j]) {
+                int tmp = out_targets[i];
+                out_targets[i] = out_targets[j];
+                out_targets[j] = tmp;
+            }
+        }
+    }
+    
+    *out_truncated = truncated;
+    return result_count;
+}
+
+/**
+ * Compute epsilon-aware outgoing signature.
+ * Instead of hashing immediate targets, hashes epsilon-closed target sets.
+ * Returns TRUNCATED if ANY symbol's closure was truncated.
+ */
+static uint64_t compute_epsilon_aware_outgoing_signature(const nfa_state_t* nfa, int state_idx) {
+    uint64_t hash = 14695981039346656037ULL;
+    
+    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+        int targets[MAX_EPSILON_CLOSURE];
+        bool sym_truncated;
+        int count = get_epsilon_closed_targets(nfa, state_idx, sym, targets, &sym_truncated);
+        
+        if (sym_truncated) {
+            return TRUNCATED;
+        }
+        
+        hash ^= (uint64_t)sym;
+        hash *= 1099511628211ULL;
+        hash ^= (uint64_t)count;
+        hash *= 1099511628211ULL;
+        
+        for (int i = 0; i < count; i++) {
+            hash ^= (uint64_t)targets[i];
+            hash *= 1099511628211ULL;
+        }
+    }
+    
+    return hash;
 }
 
 /**
@@ -166,12 +377,11 @@ nfa_premin_options_t nfa_premin_default_options(void) {
     nfa_premin_options_t opts = {
         // All optimizations enabled by default
         .enable_epsilon_elim = true,    // Bypass single epsilon pass-through states (O(n))
-        .enable_epsilon_chain = true,   // Compress multi-hop epsilon chains (O(n))
         .enable_prune = true,           // Remove unreachable states (O(n))
         .enable_final_dedup = true,     // Deduplicate equivalent final states
         .enable_bidirectional = true,   // Bidirectional incremental merging (O(n log n))
         .enable_sat_optimal = true,     // SAT-based optimal merge selection (continuation of bidirectional)
-        .max_sat_candidates = 200,      // Maximum candidates for SAT (bounds complexity)
+        .max_sat_candidates = 200,     // Maximum candidates for SAT (bounds complexity)
         
         .verbose = false
     };
@@ -199,11 +409,12 @@ typedef struct {
  * - State has no accepting properties (not an accepting state)
  * - State has only ONE outgoing transition (epsilon to next state)
  * - Bypassing just shortens the path without changing the language
+ * 
+ * Now uses multi_targets to detect epsilon transitions correctly.
  */
 static int bypass_epsilon_pass_through(nfa_state_t* nfa, int state_count, bool* dead_states) {
     int bypassed = 0;
     
-    // Find pass-through states: single epsilon transition, no accepting properties
     for (int s = 1; s < state_count; s++) {  // Skip state 0 (start state)
         if (dead_states[s]) continue;
         
@@ -214,36 +425,54 @@ static int bypass_epsilon_pass_through(nfa_state_t* nfa, int state_count, bool* 
         if (state->pending_marker_count != 0) continue;
         if (state->is_eos_target) continue;
         
-        // Count outgoing transitions
-        int transition_count = 0;
+        // Count outgoing transitions (including epsilon)
+        int out_count = 0;
         int epsilon_target = -1;
         bool has_other_transitions = false;
         
-        // Check single transitions
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            if (state->transitions[sym] >= 0) {
-                if (sym == VSYM_EPS && transition_count == 0) {
-                    // First transition is epsilon
-                    epsilon_target = state->transitions[sym];
-                    transition_count++;
+        // Check multi_targets for all symbols
+        for (int sym = 0; sym < MAX_SYMBOLS && !has_other_transitions; sym++) {
+            int cnt;
+            int* targets = mta_get_target_array(&state->multi_targets, sym, &cnt);
+            if (targets && cnt > 0) {
+                for (int i = 0; i < cnt; i++) {
+                    if (sym == VSYM_EPS) {
+                        if (out_count == 0) {
+                            epsilon_target = targets[i];
+                            out_count++;
+                        } else {
+                            has_other_transitions = true; // multiple epsilon targets
+                            break;
+                        }
+                    } else {
+                        has_other_transitions = true; // non-epsilon transition
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Also check legacy transitions[] for completeness (but should be empty)
+        for (int sym = 0; sym < MAX_SYMBOLS && !has_other_transitions; sym++) {
+            int target = state->transitions[sym];
+            if (target >= 0) {
+                if (sym == VSYM_EPS) {
+                    if (out_count == 0) {
+                        epsilon_target = target;
+                        out_count++;
+                    } else {
+                        has_other_transitions = true;
+                        break;
+                    }
                 } else {
-                    // Has non-epsilon transition or multiple transitions
                     has_other_transitions = true;
                     break;
                 }
             }
         }
         
-        // Check multi-targets
-        if (!has_other_transitions) {
-            int mta_count = mta_get_entry_count(&state->multi_targets);
-            if (mta_count > 0) {
-                has_other_transitions = true;  // Multi-targets means not a simple pass-through
-            }
-        }
-        
         // Skip if not a simple epsilon pass-through
-        if (has_other_transitions || epsilon_target < 0) continue;
+        if (has_other_transitions || out_count != 1 || epsilon_target < 0) continue;
         
         // Don't bypass if target is dead
         if (dead_states[epsilon_target]) continue;
@@ -258,7 +487,7 @@ static int bypass_epsilon_pass_through(nfa_state_t* nfa, int state_count, bool* 
             
             nfa_state_t* src_state = &nfa[src];
             
-            // Redirect single transitions
+            // Redirect single transitions (legacy)
             for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
                 if (src_state->transitions[sym] == s) {
                     src_state->transitions[sym] = epsilon_target;
@@ -285,95 +514,6 @@ static int bypass_epsilon_pass_through(nfa_state_t* nfa, int state_count, bool* 
     }
     
     return bypassed;
-}
-
-/**
- * Compress epsilon chains: A --EPS--> B --EPS--> C becomes A --EPS--> C
- * 
- * This is a generalization of bypass_epsilon_pass_through for multi-hop chains.
- * Safe because:
- * - Intermediate states have no accepting properties
- * - Intermediate states have only epsilon transitions
- * - Language is preserved (same reachability)
- * 
- * Complexity: O(n) - single pass through states
- */
-static int compress_epsilon_chains(nfa_state_t* nfa, int state_count, bool* dead_states) {
-    int compressed = 0;
-    
-    // For each state, follow epsilon chains and find the ultimate target
-    for (int s = 1; s < state_count; s++) {  // Skip state 0 (start state)
-        if (dead_states[s]) continue;
-        
-        nfa_state_t* state = &nfa[s];
-        
-        // Only process states with a single epsilon outgoing transition
-        int epsilon_target = state->transitions[VSYM_EPS];
-        if (epsilon_target < 0) continue;
-        
-        // Must have no other single transitions
-        bool has_other = false;
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            if (sym != VSYM_EPS && state->transitions[sym] >= 0) {
-                has_other = true;
-                break;
-            }
-        }
-        if (has_other) continue;
-        
-        // Must have no multi-targets
-        int mta_count = mta_get_entry_count(&state->multi_targets);
-        if (mta_count > 0) continue;
-        
-        // Follow the epsilon chain to find ultimate target
-        int ultimate = epsilon_target;
-        int chain_length = 0;
-        const int max_chain = 100;  // Prevent infinite loops
-        
-        while (chain_length < max_chain) {
-            if (dead_states[ultimate]) break;
-            if (ultimate == s) break;  // Self-loop
-            
-            nfa_state_t* next_state = &nfa[ultimate];
-            
-            // Check if this state can be bypassed
-            // Must have no accepting properties
-            if (next_state->category_mask != 0) break;
-            if (next_state->pending_marker_count != 0) break;
-            if (next_state->is_eos_target) break;
-            
-            // Must have only epsilon outgoing
-            int next_epsilon = next_state->transitions[VSYM_EPS];
-            if (next_epsilon < 0) break;  // No epsilon transition, stop here
-            
-            // Check for other transitions
-            bool next_has_other = false;
-            for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                if (sym != VSYM_EPS && next_state->transitions[sym] >= 0) {
-                    next_has_other = true;
-                    break;
-                }
-            }
-            if (next_has_other) break;
-            
-            int next_mta = mta_get_entry_count(&next_state->multi_targets);
-            if (next_mta > 0) break;
-            
-            // Can bypass this state
-            ultimate = next_epsilon;
-            chain_length++;
-        }
-        
-        // If we found a shorter path, update the transition
-        if (chain_length > 0 && ultimate != epsilon_target && !dead_states[ultimate]) {
-            state->transitions[VSYM_EPS] = ultimate;
-            compressed += chain_length;
-            VERBOSE_PRINT(premin, "  Compressed epsilon chain from state %d: %d hops bypassed -> ultimate target %d\n", 
-                         s, chain_length, ultimate);
-        }
-    }
-    
-    return compressed;
 }
 
 /**
@@ -604,6 +744,48 @@ typedef struct {
     uint64_t sig;
 } prefix_candidate_t;
 
+/**
+ * Context for prefix merge passes - reusable buffers to avoid repeated allocations.
+ */
+typedef struct {
+    int* incoming_count;
+    int* single_source;
+    int* single_symbol;
+    prefix_candidate_t* candidates;
+    int candidates_capacity;
+} prefix_merge_ctx_t;
+
+static prefix_merge_ctx_t* prefix_merge_ctx_create(int state_count) {
+    prefix_merge_ctx_t* ctx = malloc(sizeof(prefix_merge_ctx_t));
+    if (!ctx) return NULL;
+    
+    ctx->incoming_count = calloc(state_count, sizeof(int));
+    ctx->single_source = malloc(state_count * sizeof(int));
+    ctx->single_symbol = malloc(state_count * sizeof(int));
+    ctx->candidates_capacity = state_count;
+    ctx->candidates = malloc((size_t)state_count * sizeof(prefix_candidate_t));
+    
+    if (!ctx->incoming_count || !ctx->single_source || !ctx->single_symbol || !ctx->candidates) {
+        free(ctx->incoming_count);
+        free(ctx->single_source);
+        free(ctx->single_symbol);
+        free(ctx->candidates);
+        free(ctx);
+        return NULL;
+    }
+    
+return ctx;
+}
+
+static void prefix_merge_ctx_free(prefix_merge_ctx_t* ctx) {
+    if (!ctx) return;
+    free(ctx->incoming_count);
+    free(ctx->single_source);
+    free(ctx->single_symbol);
+    free(ctx->candidates);
+    free(ctx);
+}
+
 // Comparison function for prefix candidates
 static int compare_prefix_candidates(const void* a, const void* b) {
     const prefix_candidate_t* ca = (const prefix_candidate_t*)a;
@@ -615,42 +797,37 @@ static int compare_prefix_candidates(const void* a, const void* b) {
     return 0;
 }
 
+// Forward declaration
+static uint64_t compute_full_signature(const nfa_state_t* nfa, int state_idx);
+
 /**
  * Merge common prefix states - single pass.
  * 
  * This is SAFE because we only merge states that:
  * 1. Have exactly one incoming transition
  * 2. That incoming transition is from the same (source, symbol) pair
- * 3. Have identical outgoing behavior (transitions, markers, etc.)
- * 
- * When two states are reached via the same (source, symbol) pair and have
- * identical outgoing behavior, they are truly equivalent - merging them
- * cannot create new paths because they were already reachable via the same path.
+ * 3. Have identical prefix signatures (computed via nfa_compute_state_signature)
+ * 4. Are checked for mutual transitions before merging
  * 
  * Algorithm (O(n log n)):
  * 1. Build incoming transition map for each state
  * 2. Find states with single incoming transition
- * 3. Group by (source, symbol, outgoing_signature)
- * 4. Merge states in same group
+ * 3. Group by (source, symbol, prefix_signature)
+ * 4. Merge states in same group - only redirect incoming edges
  */
-static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* dead_states) {
-    // Build incoming transition map
-    // For each state, track (source, symbol) pairs that reach it
+static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* dead_states, prefix_merge_ctx_t* ctx) {
     typedef struct {
         int source;
         int symbol;
         int target;
     } incoming_edge_t;
     
-    // First pass: count total edges to allocate correctly
-    // Multi-targets can have many targets per (source, symbol) pair
     int total_edges = 0;
     for (int s = 0; s < state_count; s++) {
         if (dead_states[s]) continue;
         
         nfa_state_t* state = &nfa[s];
         
-        // Count single transitions (legacy format)
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int target = state->transitions[sym];
             if (target >= 0 && !dead_states[target]) {
@@ -658,7 +835,6 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
             }
         }
         
-        // Count multi-targets (NFA builder stores ALL transitions here)
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int count;
             int* targets = mta_get_target_array(&state->multi_targets, sym, &count);
@@ -673,19 +849,18 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
     }
     
     if (total_edges == 0) {
-        return 0;  // No edges, nothing to merge
+        return 0;
     }
     
-    incoming_edge_t* edges = malloc(total_edges * sizeof(incoming_edge_t));
-    int edge_count = 0;
+    incoming_edge_t* edges = malloc((size_t)total_edges * sizeof(incoming_edge_t));
+    if (!edges) return 0;
     
-    // Collect all edges (check both transitions[] and multi_targets)
+    int edge_count = 0;
     for (int s = 0; s < state_count; s++) {
         if (dead_states[s]) continue;
         
         nfa_state_t* state = &nfa[s];
         
-        // Single transitions (legacy format)
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int target = state->transitions[sym];
             if (target >= 0 && !dead_states[target]) {
@@ -696,7 +871,6 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
             }
         }
         
-        // Multi-targets
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int count;
             int* targets = mta_get_target_array(&state->multi_targets, sym, &count);
@@ -713,190 +887,101 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
         }
     }
     
-    // Count incoming transitions per state
-    int* incoming_count = calloc(state_count, sizeof(int));
-    for (int e = 0; e < edge_count; e++) {
-        incoming_count[edges[e].target]++;
+    if (edge_count == 0) {
+        free(edges);
+        return 0;
     }
     
-    // For states with single incoming, record the (source, symbol)
-    int* single_source = malloc(state_count * sizeof(int));
-    int* single_symbol = malloc(state_count * sizeof(int));
+    memset(ctx->incoming_count, 0, (size_t)state_count * sizeof(int));
+    for (int e = 0; e < edge_count; e++) {
+        ctx->incoming_count[edges[e].target]++;
+    }
     
     for (int s = 0; s < state_count; s++) {
-        single_source[s] = -1;
-        single_symbol[s] = -1;
+        ctx->single_source[s] = -1;
+        ctx->single_symbol[s] = -1;
     }
     
     for (int e = 0; e < edge_count; e++) {
         int target = edges[e].target;
-        if (incoming_count[target] == 1) {
-            single_source[target] = edges[e].source;
-            single_symbol[target] = edges[e].symbol;
+        if (ctx->incoming_count[target] == 1) {
+            ctx->single_source[target] = edges[e].source;
+            ctx->single_symbol[target] = edges[e].symbol;
         }
     }
     
-    // Build merge candidates: states with single incoming and same (source, symbol)
-    // BUT: Skip states whose source uses multi-targets with DIFFERENT targets
-    // (merging would lose transitions). If all targets are the same state, merging is safe.
-    // ALSO: Skip states with accepting properties (category_mask) - these are semantically important
-    prefix_candidate_t* candidates = malloc(state_count * sizeof(prefix_candidate_t));
     int candidate_count = 0;
     
     for (int s = 0; s < state_count; s++) {
         if (dead_states[s]) continue;
-        if (incoming_count[s] != 1) continue;
-        if (single_source[s] < 0) continue;
-        
-        // Skip start state
+        if (ctx->incoming_count[s] != 1) continue;
+        if (ctx->single_source[s] < 0) continue;
         if (s == 0) continue;
         
-        // Skip if source is dead (can happen after multiple passes)
-        int src = single_source[s];
+        int src = ctx->single_source[s];
         if (src < 0 || src >= state_count || dead_states[src]) continue;
         
-        // Skip states with accepting properties - these have semantic meaning
-        if (nfa[s].category_mask != 0) continue;
-        
-        // Note: We do NOT skip states from multi-target sources anymore.
-        // The NFA builder stores ALL transitions in multi_targets, so skipping
-        // multi-target sources would disable prefix merging entirely.
-        // Instead, we handle multi-target merging correctly in the merge loop.
-        
-        candidates[candidate_count].state = s;
-        candidates[candidate_count].source = single_source[s];
-        candidates[candidate_count].symbol = single_symbol[s];
-        candidates[candidate_count].sig = nfa_compute_state_signature(nfa, s);
+        ctx->candidates[candidate_count].state = s;
+        ctx->candidates[candidate_count].source = ctx->single_source[s];
+        ctx->candidates[candidate_count].symbol = ctx->single_symbol[s];
+        ctx->candidates[candidate_count].sig = compute_full_signature(nfa, s);
         candidate_count++;
     }
     
+    free(edges);
+    
     VERBOSE_PRINT(premin, "  Found %d prefix merge candidates\n", candidate_count);
     
-    // Sort by (source, symbol, sig) for grouping
-    qsort(candidates, candidate_count, sizeof(prefix_candidate_t), compare_prefix_candidates);
+    if (candidate_count == 0) {
+        return 0;
+    }
     
-    // Find groups and merge
+    qsort(ctx->candidates, (size_t)candidate_count, sizeof(prefix_candidate_t), compare_prefix_candidates);
+    
     int merged = 0;
     int i = 0;
     while (i < candidate_count) {
         int j = i + 1;
-        // Find all candidates with same (source, symbol, sig)
         while (j < candidate_count &&
-               candidates[j].source == candidates[i].source &&
-               candidates[j].symbol == candidates[i].symbol &&
-                candidates[j].sig == candidates[i].sig) {
+               ctx->candidates[j].source == ctx->candidates[i].source &&
+               ctx->candidates[j].symbol == ctx->candidates[i].symbol &&
+               ctx->candidates[j].sig == ctx->candidates[i].sig) {
             j++;
         }
         
-        // If multiple candidates, merge them by combining transitions
         if (j - i > 1) {
-            int rep = candidates[i].state;
+            int rep = ctx->candidates[i].state;
             
-            // Skip if rep is dead (was merged in a previous iteration)
             if (dead_states[rep]) {
                 i = j;
                 continue;
             }
             
             for (int k = i + 1; k < j; k++) {
-                int s = candidates[k].state;
+                int s = ctx->candidates[k].state;
                 if (dead_states[s]) continue;
-                if (s == rep) continue;  // Skip if same state
+                if (s == rep) continue;
+                if (dead_states[rep]) break;
+                if (s >= state_count || rep >= state_count) continue;
                 
-                // Check if rep was merged in a previous iteration
-                if (dead_states[rep]) {
-                    break;
-                }
-                
-                // Skip if either state is out of bounds
-                if (s >= state_count || rep >= state_count) {
+                if (ctx->candidates[k].sig == TRUNCATED || ctx->candidates[i].sig == TRUNCATED) {
                     continue;
                 }
                 
-                // Check for mutual transitions (would create self-loop)
                 bool has_mutual = false;
                 for (int sym = 0; sym < MAX_SYMBOLS && !has_mutual; sym++) {
-                    int rep_target = nfa[rep].transitions[sym];
-                    int s_target = nfa[s].transitions[sym];
-                    if (rep_target >= 0 && rep_target == s) has_mutual = true;
-                    if (s_target >= 0 && s_target == rep) has_mutual = true;
+                    if (nfa_has_transition_to(&nfa[rep], sym, s)) has_mutual = true;
+                    if (nfa_has_transition_to(&nfa[s], sym, rep)) has_mutual = true;
                 }
-                if (has_mutual) {
-                    continue;
-                }
+                if (has_mutual) continue;
                 
-                // Merge state s into rep by COMBINING transitions
-                // This ensures the merged state can reach ALL futures
                 nfa_state_t* rep_state = &nfa[rep];
                 nfa_state_t* s_state = &nfa[s];
                 
-                // Combine single transitions
-                for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                    int s_trans = s_state->transitions[sym];
-                    int rep_trans = rep_state->transitions[sym];
-                    if (s_trans >= 0) {
-                        if (rep_trans < 0) {
-                            // rep doesn't have this transition, add it
-                            rep_state->transitions[sym] = s_trans;
-                        } else if (rep_trans != s_trans) {
-                            // Both have transitions on this symbol to different targets
-                            // Add to multi-targets
-                            mta_add_target(&rep_state->multi_targets, sym, rep_trans);
-                            mta_add_target(&rep_state->multi_targets, sym, s_trans);
-                            rep_state->transitions[sym] = -1;  // Clear single transition
-                        }
-                        // If same target, nothing to do
-                    }
-                }
-                
-                // Combine multi-targets from s_state into rep_state
-                for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                    // First, check if rep has a single transition that needs to be merged with s's multi-targets
-                    int rep_trans_val = rep_state->transitions[sym];
-                    
-                    if (rep_trans_val >= 0) {
-                        int s_count;
-                        int* s_targets = mta_get_target_array(&s_state->multi_targets, sym, &s_count);
-                        if (s_targets && s_count > 0) {
-                            // rep has single, s has multi - convert rep to multi and add all
-                            int rep_target = rep_state->transitions[sym];
-                            mta_add_target(&rep_state->multi_targets, sym, rep_target);
-                            for (int t = 0; t < s_count; t++) {
-                                mta_add_target(&rep_state->multi_targets, sym, s_targets[t]);
-                            }
-                            rep_state->transitions[sym] = -1;  // Clear single transition
-                        }
-                    }
-                    
-                    // Now add any remaining multi-targets from s
-                    int count;
-                    int* targets = mta_get_target_array(&s_state->multi_targets, sym, &count);
-                    if (targets && count > 0) {
-                        // Always add s's multi-targets to rep (union of all futures)
-                        for (int t = 0; t < count; t++) {
-                            mta_add_target(&rep_state->multi_targets, sym, targets[t]);
-                        }
-                    }
-                    
-                    // Also combine transition markers
-                    int marker_count;
-                    transition_marker_t* markers = mta_get_markers(&s_state->multi_targets, sym, &marker_count);
-                    // Sanity check: marker_count should be reasonable
-                    if (markers && marker_count > 0 && marker_count < 1000) {
-                        for (int m = 0; m < marker_count; m++) {
-                            mta_add_marker(&rep_state->multi_targets, sym, 
-                                          markers[m].pattern_id, markers[m].uid, markers[m].type);
-                        }
-                    }
-                }
-                
-                // Combine accepting properties (OR the category masks)
                 rep_state->category_mask |= s_state->category_mask;
                 
-                // Combine pending markers (if any)
                 if (s_state->pending_marker_count > 0) {
                     for (int m = 0; m < s_state->pending_marker_count && rep_state->pending_marker_count < MAX_PENDING_MARKERS; m++) {
-                        // Check if this marker already exists
                         bool exists = false;
                         for (int r = 0; r < rep_state->pending_marker_count && !exists; r++) {
                             if (rep_state->pending_markers[r].uid == s_state->pending_markers[m].uid &&
@@ -910,20 +995,17 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                     }
                 }
                 
-                // Redirect all transitions pointing to s to rep
                 for (int src = 0; src < state_count; src++) {
                     if (dead_states[src]) continue;
                     
                     nfa_state_t* src_state = &nfa[src];
                     
-                    // Single transitions
                     for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
                         if (src_state->transitions[sym] == s) {
                             src_state->transitions[sym] = rep;
                         }
                     }
                     
-                    // Multi-targets
                     for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
                         int count;
                         int* targets = mta_get_target_array(&src_state->multi_targets, sym, &count);
@@ -938,23 +1020,16 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                 }
                 
                 dead_states[s] = true;
-                // Invalidate cache for merged state and representative
                 sig_cache_invalidate(s);
                 sig_cache_invalidate(rep);
                 merged++;
                 VERBOSE_PRINT(premin, "  Merged prefix state %d into %d (source=%d, symbol=%d)\n", 
-                             s, rep, candidates[i].source, candidates[i].symbol);
+                             s, rep, ctx->candidates[i].source, ctx->candidates[i].symbol);
             }
         }
         
         i = j;
     }
-    
-    free(edges);
-    free(incoming_count);
-    free(single_source);
-    free(single_symbol);
-    free(candidates);
     
     return merged;
 }
@@ -1001,14 +1076,52 @@ static int compare_final_state_candidates(const void* a, const void* b) {
 }
 
 /**
- * Compute hash of outgoing transitions for a state.
- * This captures the "future" of the state - where it can transition to.
+ * Hash markers for a specific symbol.
+ * Markers are sorted by (pattern_id, uid, type) for deterministic hashing.
+ * Uses insertion sort - efficient for small arrays (max 16 markers).
  */
-static uint64_t compute_outgoing_signature(const nfa_state_t* state) {
-    // FNV-1a hash
+static uint64_t hash_markers(const transition_marker_t* markers, int count) {
     uint64_t hash = 14695981039346656037ULL;
     
-    // Hash single transitions
+    if (count <= 0) return hash;
+    
+    transition_marker_t* sorted = malloc((size_t)count * sizeof(transition_marker_t));
+    if (!sorted) return hash;
+    
+    memcpy(sorted, markers, (size_t)count * sizeof(transition_marker_t));
+    
+    for (int i = 1; i < count; i++) {
+        transition_marker_t tmp = sorted[i];
+        int j = i - 1;
+        while (j >= 0 && (sorted[j].pattern_id > tmp.pattern_id ||
+                          (sorted[j].pattern_id == tmp.pattern_id && sorted[j].uid > tmp.uid) ||
+                          (sorted[j].pattern_id == tmp.pattern_id && sorted[j].uid == tmp.uid && sorted[j].type > tmp.type))) {
+            sorted[j + 1] = sorted[j];
+            j--;
+        }
+        sorted[j + 1] = tmp;
+    }
+    
+    for (int i = 0; i < count; i++) {
+        hash ^= (uint64_t)sorted[i].pattern_id;
+        hash *= 1099511628211ULL;
+        hash ^= (uint64_t)sorted[i].uid;
+        hash *= 1099511628211ULL;
+        hash ^= (uint64_t)sorted[i].type;
+        hash *= 1099511628211ULL;
+    }
+    
+    free(sorted);
+    return hash;
+}
+
+/**
+ * Compute hash of outgoing transitions for a state.
+ * Does NOT include markers - markers are handled separately in compute_full_signature.
+ */
+static uint64_t compute_outgoing_signature(const nfa_state_t* state) {
+    uint64_t hash = 14695981039346656037ULL;
+    
     for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
         if (state->transitions[sym] >= 0) {
             hash ^= (uint64_t)sym;
@@ -1018,10 +1131,9 @@ static uint64_t compute_outgoing_signature(const nfa_state_t* state) {
         }
     }
     
-    // Hash multi-targets
     int mta_count = mta_get_entry_count((multi_target_array_t*)&state->multi_targets);
     if (mta_count > 0) {
-        hash ^= mta_count;
+        hash ^= (uint64_t)mta_count;
         hash *= 1099511628211ULL;
         
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
@@ -1033,9 +1145,9 @@ static uint64_t compute_outgoing_signature(const nfa_state_t* state) {
                 hash ^= (uint64_t)count;
                 hash *= 1099511628211ULL;
                 
-                // Sort targets for consistent hashing
-                int* sorted = malloc(count * sizeof(int));
-                memcpy(sorted, targets, count * sizeof(int));
+                int* sorted = malloc((size_t)count * sizeof(int));
+                if (!sorted) continue;
+                memcpy(sorted, targets, (size_t)count * sizeof(int));
                 for (int i = 0; i < count - 1; i++) {
                     for (int j = i + 1; j < count; j++) {
                         if (sorted[i] > sorted[j]) {
@@ -1052,6 +1164,52 @@ static uint64_t compute_outgoing_signature(const nfa_state_t* state) {
         }
     }
     
+    return hash;
+}
+
+/**
+ * Compute full signature combining prefix properties + outgoing transitions + markers.
+ * This is used for language-preserving prefix merging. Two states with the
+ * same full signature have:
+ * 1. Same prefix properties (category, pattern_id, eos_target, pending_markers)
+ * 2. Same outgoing transitions (where they can go next)
+ * 3. Same markers on transitions
+ * 
+ * Since full signatures match, the states are truly equivalent - merging them
+ * cannot change the language because they have identical behavior both before
+ * and after the current state.
+ */
+static uint64_t compute_full_signature(const nfa_state_t* nfa, int state_idx) {
+    if (sig_cache && state_idx < sig_cache_capacity && sig_cache[state_idx].full_valid) {
+        return sig_cache[state_idx].full_sig;
+    }
+
+    uint64_t prefix_sig = nfa_compute_state_signature(nfa, state_idx);
+    uint64_t outgoing_sig = compute_epsilon_aware_outgoing_signature(nfa, state_idx);
+    
+    if (outgoing_sig == TRUNCATED) {
+        return TRUNCATED;
+    }
+    
+    uint64_t hash = prefix_sig;
+    hash ^= outgoing_sig;
+    hash *= 1099511628211ULL;
+    
+    const nfa_state_t* state = &nfa[state_idx];
+    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+        int marker_count;
+        transition_marker_t* markers = mta_get_markers((multi_target_array_t*)&state->multi_targets, sym, &marker_count);
+        if (markers && marker_count > 0) {
+            hash ^= hash_markers(markers, marker_count);
+            hash *= 1099511628211ULL;
+        }
+    }
+    
+    if (sig_cache && state_idx < sig_cache_capacity) {
+        sig_cache[state_idx].full_sig = hash;
+        sig_cache[state_idx].full_valid = true;
+    }
+
     return hash;
 }
 
@@ -1505,8 +1663,8 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
                 // Check for mutual transitions (would create self-loop)
                 bool has_mutual = false;
                 for (int sym = 0; sym < MAX_SYMBOLS && !has_mutual; sym++) {
-                    if (nfa[rep].transitions[sym] == s) has_mutual = true;
-                    if (nfa[s].transitions[sym] == rep) has_mutual = true;
+                    if (nfa_has_transition_to(&nfa[rep], sym, s)) has_mutual = true;
+                    if (nfa_has_transition_to(&nfa[s], sym, rep)) has_mutual = true;
                 }
                 if (has_mutual) {
                     VERBOSE_PRINT(premin, "  Skipping merge due to mutual transition between %d and %d\n", rep, s);
@@ -1598,13 +1756,18 @@ static int merge_common_suffixes_fast(nfa_state_t* nfa, int state_count, bool* d
  * Maximum iterations limited to prevent infinite loops.
  */
 static int merge_common_prefixes(nfa_state_t* nfa, int state_count, bool* dead_states) {
+    prefix_merge_ctx_t* ctx = prefix_merge_ctx_create(state_count);
+    if (!ctx) {
+        return 0;
+    }
+    
     int total_merged = 0;
     int pass = 1;
     const int max_passes = 10;
     
     while (pass <= max_passes) {
         VERBOSE_PRINT(premin, "  Prefix merge pass %d...\n", pass);
-        int merged = merge_common_prefixes_pass(nfa, state_count, dead_states);
+        int merged = merge_common_prefixes_pass(nfa, state_count, dead_states, ctx);
         total_merged += merged;
         
         if (merged == 0) {
@@ -1616,6 +1779,7 @@ static int merge_common_prefixes(nfa_state_t* nfa, int state_count, bool* dead_s
         pass++;
     }
     
+    prefix_merge_ctx_free(ctx);
     return total_merged;
 }
 
@@ -1907,7 +2071,7 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
     if (original_count <= 1) return 0;
     
     // Early exit if no optimizations enabled - avoid allocating dead_states
-    if (!opts.enable_prune && !opts.enable_epsilon_elim && !opts.enable_epsilon_chain &&
+    if (!opts.enable_prune && !opts.enable_epsilon_elim &&
         !opts.enable_final_dedup && !opts.enable_bidirectional && !opts.enable_sat_optimal) {
         VERBOSE_PRINT(premin, "Pre-minimization: No optimizations enabled, skipping\n");
         return 0;
@@ -1936,13 +2100,6 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
         VERBOSE_PRINT(premin, "Bypassing epsilon pass-through states...\n");
         last_stats.epsilon_bypassed = bypass_epsilon_pass_through(nfa, original_count, dead_states);
         VERBOSE_PRINT(premin, "Bypassed %d epsilon pass-through states\n", last_stats.epsilon_bypassed);
-    }
-    
-    // Pass 3: Compress epsilon chains (O(n))
-    if (opts.enable_epsilon_chain) {
-        VERBOSE_PRINT(premin, "Compressing epsilon chains...\n");
-        last_stats.epsilon_chains = compress_epsilon_chains(nfa, original_count, dead_states);
-        VERBOSE_PRINT(premin, "Compressed %d epsilon chain hops\n", last_stats.epsilon_chains);
     }
     
     // Pass 4: Deduplicate equivalent final states (O(n log n))

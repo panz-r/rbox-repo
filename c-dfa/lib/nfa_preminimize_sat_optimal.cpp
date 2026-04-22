@@ -110,7 +110,53 @@ static std::vector<int> get_successors(const nfa_state_t* nfa, int state_idx, in
 }
 
 /**
- * Check if two states have identical outgoing transitions.
+ * Get markers for a specific symbol from a state.
+ */
+static const transition_marker_t* get_markers_for_symbol(const nfa_state_t* state, int sym, int* out_count) {
+    mta_entry_t* entry = state->multi_targets.symbol_map[sym];
+    if (entry && entry->marker_count > 0) {
+        *out_count = entry->marker_count;
+        return entry->markers;
+    }
+    *out_count = 0;
+    return NULL;
+}
+
+/**
+ * Check if two states have identical markers for a specific symbol.
+ * Markers are sorted for deterministic comparison.
+ */
+static bool markers_match(const nfa_state_t* state1, const nfa_state_t* state2, int sym) {
+    int cnt1, cnt2;
+    const transition_marker_t* m1 = get_markers_for_symbol(state1, sym, &cnt1);
+    const transition_marker_t* m2 = get_markers_for_symbol(state2, sym, &cnt2);
+    
+    if (cnt1 != cnt2) return false;
+    if (cnt1 == 0) return true;
+    
+    std::vector<transition_marker_t> v1(m1, m1 + cnt1);
+    std::vector<transition_marker_t> v2(m2, m2 + cnt2);
+    
+    auto marker_less = [](const transition_marker_t& a, const transition_marker_t& b) {
+        if (a.pattern_id != b.pattern_id) return a.pattern_id < b.pattern_id;
+        if (a.uid != b.uid) return a.uid < b.uid;
+        return a.type < b.type;
+    };
+    
+    std::sort(v1.begin(), v1.end(), marker_less);
+    std::sort(v2.begin(), v2.end(), marker_less);
+    
+    if (v1.size() != v2.size()) return false;
+    for (size_t i = 0; i < v1.size(); i++) {
+        if (v1[i].pattern_id != v2[i].pattern_id) return false;
+        if (v1[i].uid != v2[i].uid) return false;
+        if (v1[i].type != v2[i].type) return false;
+    }
+    return true;
+}
+
+/**
+ * Check if two states have identical outgoing transitions and markers.
  */
 static bool states_outgoing_match(const nfa_state_t* nfa, int s1, int s2) {
     const nfa_state_t* state1 = &nfa[s1];
@@ -139,6 +185,11 @@ static bool states_outgoing_match(const nfa_state_t* nfa, int s1, int s2) {
     // Check legacy transitions
     for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
         if (state1->transitions[sym] != state2->transitions[sym]) return false;
+    }
+    
+    // Check markers (affect capture semantics)
+    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+        if (!markers_match(state1, state2, sym)) return false;
     }
     
     return true;
