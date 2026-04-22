@@ -36,7 +36,7 @@ target_link_libraries(test_runner PRIVATE landlock-builder)
 
 # Use --wrap to intercept filesystem calls and redirect to mock versions
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_link_libraries(test_runner PRIVATE -Wl,--wrap=realpath -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=readlink)
+    target_link_libraries(test_runner PRIVATE -Wl,--wrap=realpath -Wl,--wrap=stat -Wl,--wrap=lstat -Wl,--wrap=readlink -Wl,--wrap=opendir -Wl,--wrap=closedir -Wl,--wrap=readdir)
 endif()
 
 # Include directories

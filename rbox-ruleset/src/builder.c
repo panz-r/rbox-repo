@@ -22,10 +22,6 @@
 #include <inttypes.h>
 #include <dirent.h>
 
-#ifdef MOCK_FS
-#include "mock_fs.h"
-#endif
-
 #include "landlock_builder.h"
 #include "radix_tree.h"
 
@@ -280,25 +276,14 @@ static int builder_add_symlink(landlock_builder_t *b,
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Symlink expansion                                                   */
-/* ------------------------------------------------------------------ */
-
-#ifdef MOCK_FS
-#endif
-
 /**
  * List children of a directory.  Returns number of children found.
  * Caller must NOT free the returned strings — they point into `names_buf`.
  */
 static int list_dir_children(const char *dir, const char **names, int max_names)
 {
-#ifdef MOCK_FS
-    return mock_fs_list_children(dir, names, max_names);
-#else
-    /* Real filesystem — use opendir/readdir */
     DIR *d = opendir(dir);
-    if (!d) return 0;
+    if (!d) return -1;
 
     int count = 0;
     struct dirent *ent;
@@ -316,7 +301,6 @@ static int list_dir_children(const char *dir, const char **names, int max_names)
     }
     closedir(d);
     return count;
-#endif
 }
 
 /**
@@ -330,13 +314,14 @@ static int expand_target_recursive(landlock_builder_t *b,
     if (depth > 20) return 0;  /* prevent infinite recursion */
 
     /* Add the directory itself */
-    radix_tree_allow(b->tree, dir, access);
+    if (radix_tree_allow(b->tree, dir, access) != 0) return -1;
 
     /* Scan children */
     const char *child_names[256];
     int n_children = list_dir_children(dir, child_names, 256);
 
-    if (n_children <= 0) return 0;
+    if (n_children < 0) return -1;  /* error case */
+    if (n_children == 0) return 0;  /* empty directory */
 
     for (int i = 0; i < n_children; i++) {
         /* Build full child path */
@@ -353,10 +338,10 @@ static int expand_target_recursive(landlock_builder_t *b,
         /* Check if it's a directory (or symlink to one) */
         struct stat st;
         if (stat(child_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            expand_target_recursive(b, child_path, access, depth + 1);
+            if (expand_target_recursive(b, child_path, access, depth + 1) < 0) return -1;
         } else {
             /* Regular file — add as allow rule */
-            radix_tree_allow(b->tree, child_path, access);
+            if (radix_tree_allow(b->tree, child_path, access) != 0) return -1;
         }
     }
     return 0;
@@ -407,7 +392,10 @@ static int expand_symlinks_impl(landlock_builder_t *b)
                 /* Symlink is inside this allowed path.
                  * Recursively expand the target (adds dir + children).
                  * `dst` is already canonical (it came from realpath). */
-                expand_target_recursive(b, dst, rules[j].access, 0);
+                if (expand_target_recursive(b, dst, rules[j].access, 0) < 0) {
+                    radix_tree_free_rules(rules, rule_count);
+                    return -1;
+                }
             }
         }
     }

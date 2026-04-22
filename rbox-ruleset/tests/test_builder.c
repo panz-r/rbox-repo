@@ -6,9 +6,13 @@
 #include "test_framework.h"
 #include "mock_fs.h"
 #include "landlock_builder.h"
+#include "rule_engine.h"
+#include "landlock_bridge.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <dirent.h>
 
 /* ------------------------------------------------------------------ */
 /*  Basic allow / deny / multi / simplification                         */
@@ -47,17 +51,16 @@ static void test_builder_basic_operations(void)
     const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
     TEST_ASSERT(!rules || count == 0, "no rules before prepare");
 
-    TEST_ASSERT_EQ(landlock_builder_prepare(b, 2, false), 0, "prepare");
+    /* Prepare: should merge/resolve to 3 rules: /home, /usr, /etc */
+    int ret = landlock_builder_prepare(b, 2, false);
+    TEST_ASSERT_EQ(ret, 0, "prepare succeeded");
 
+    count = 0;
     rules = landlock_builder_get_rules(b, &count);
+    TEST_ASSERT_NOT_NULL(rules, "rules returned");
+    TEST_ASSERT_EQ(count, 3, "three rules after prepare");
 
-    /* --- Assertions: different properties of the same result --- */
-
-    /* Combined count check: replaces the scattered count==1 and count==2 assertions
-     * from the original separate tests */
-    TEST_ASSERT_EQ(count, 3, "three rules: /home, /usr, /etc after simplify and multi-path");
-
-    /* From test_builder_allow_single_path: /home allowed */
+    /* Check /home is present with full access */
     int found_home = 0;
     for (size_t i = 0; i < count; i++) {
         if (strcmp(rules[i].path, "/home") == 0) {
@@ -315,6 +318,146 @@ static void test_save_load(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Symlink expansion error propagation                               */
+/* ------------------------------------------------------------------ */
+
+static void test_expand_error_propagation(void)
+{
+    landlock_builder_t *b;
+
+    /* Test 1: Verify mock opendir returns -1 for nonexistent directory */
+    mock_fs_reset();
+    mock_fs_create_dir("/dir");
+
+    DIR *d = opendir("/nonexistent");
+    TEST_ASSERT(d == NULL, "err_prop: opendir /nonexistent returns NULL");
+
+    /* Test 2: Verify mock opendir works for existing directory */
+    d = opendir("/dir");
+    TEST_ASSERT(d != NULL, "err_prop: opendir /dir returns non-NULL");
+
+    /* Test 3: Verify mock opendir works for root */
+    d = opendir("/");
+    TEST_ASSERT(d != NULL, "err_prop: opendir / returns non-NULL");
+    if (d) closedir(d);
+
+    /* Case 3: prepare fails when symlink target directory doesn't exist.
+     * When expand_target_recursive tries to list children of the non-existent
+     * target, __wrap_opendir returns NULL, list_dir_children returns -1,
+     * and the error propagates up through expand_symlinks_impl to prepare. */
+    mock_fs_reset();
+    mock_fs_create_dir("/valid");
+    mock_fs_create_symlink("/link", "/nonexistent");
+
+    b = landlock_builder_new();
+    TEST_ASSERT_NOT_NULL(b, "err_prop: builder created");
+
+    landlock_builder_allow(b, "/link", 7);
+
+    int ret = landlock_builder_prepare(b, 2, true);
+    TEST_ASSERT_EQ(ret, -1, "err_prop: prepare fails when symlink target dir doesn't exist");
+
+    landlock_builder_free(b);
+
+    /* Case 4: prepare succeeds when all symlink targets exist */
+    mock_fs_reset();
+    mock_fs_create_dir("/dir");
+    mock_fs_create_dir("/dir/target");
+    mock_fs_create_symlink("/link", "/dir/target");
+
+    b = landlock_builder_new();
+    landlock_builder_allow(b, "/link", 7);
+
+    ret = landlock_builder_prepare(b, 2, true);
+    TEST_ASSERT_EQ(ret, 0, "err_prop: prepare succeeds with valid symlink");
+
+    landlock_builder_free(b);
+}
+
+/* ------------------------------------------------------------------ */
+/*  --hard-allow compact rule string conversion                         */
+/* ------------------------------------------------------------------ */
+
+static void test_hard_allow_conversion(void)
+{
+    mock_fs_reset();
+
+    mock_fs_create_dir("/w");
+    mock_fs_create_dir("/usr");
+    mock_fs_create_dir("/usr/bin");
+    mock_fs_create_dir("/lib64");
+    mock_fs_create_dir("/usr/lib");
+    mock_fs_create_dir("/etc");
+    mock_fs_create_dir("/tmp");
+
+    soft_ruleset_t *rs = soft_ruleset_new();
+    TEST_ASSERT_NOT_NULL(rs, "ruleset creation");
+
+    int ret = soft_ruleset_parse_compact_rules(rs,
+        "/w:rwx,/usr/bin:rx,/lib64:rx,/usr/lib:ro,/etc:ro,/tmp:rw",
+        "--hard-allow");
+    TEST_ASSERT_EQ(ret, 0, "parse --hard-allow compact rules");
+
+    ret = soft_ruleset_compile(rs);
+    TEST_ASSERT_EQ(ret, 0, "compile ruleset");
+
+    landlock_compat_error_t err = soft_ruleset_validate_for_landlock_ex(rs, NULL);
+    TEST_ASSERT_EQ(err, LANDLOCK_COMPAT_OK, "ruleset is landlock compatible");
+
+    landlock_builder_t *b = soft_ruleset_to_landlock(rs, NULL);
+    TEST_ASSERT_NOT_NULL(b, "soft_ruleset_to_landlock succeeded");
+
+    ret = landlock_builder_prepare(b, 2, true);
+    TEST_ASSERT_EQ(ret, 0, "landlock_builder_prepare succeeded");
+
+    size_t count = 0;
+    const landlock_rule_t *rules = landlock_builder_get_rules(b, &count);
+    TEST_ASSERT_NOT_NULL(rules, "get rules returned non-NULL");
+    TEST_ASSERT_EQ(count, 6, "expected 6 rules from --hard-allow");
+
+    int found_w = 0, found_usr_bin = 0, found_lib64 = 0;
+    int found_usr_lib = 0, found_etc = 0, found_tmp = 0;
+
+    for (size_t i = 0; i < count; i++) {
+        if (strcmp(rules[i].path, "/w") == 0) {
+            found_w = 1;
+            uint64_t expected = LL_FS_READ_FILE | LL_FS_WRITE_FILE | LL_FS_READ_DIR | LL_FS_EXECUTE;
+            TEST_ASSERT_EQ(rules[i].access, expected, "/w: rwx access");
+        } else if (strcmp(rules[i].path, "/usr/bin") == 0) {
+            found_usr_bin = 1;
+            uint64_t expected = LL_FS_READ_FILE | LL_FS_READ_DIR | LL_FS_EXECUTE;
+            TEST_ASSERT_EQ(rules[i].access, expected, "/usr/bin: rx access");
+        } else if (strcmp(rules[i].path, "/lib64") == 0) {
+            found_lib64 = 1;
+            uint64_t expected = LL_FS_READ_FILE | LL_FS_READ_DIR | LL_FS_EXECUTE;
+            TEST_ASSERT_EQ(rules[i].access, expected, "/lib64: rx access");
+        } else if (strcmp(rules[i].path, "/usr/lib") == 0) {
+            found_usr_lib = 1;
+            uint64_t expected = LL_FS_READ_FILE | LL_FS_READ_DIR;
+            TEST_ASSERT_EQ(rules[i].access, expected, "/usr/lib: ro access");
+        } else if (strcmp(rules[i].path, "/etc") == 0) {
+            found_etc = 1;
+            uint64_t expected = LL_FS_READ_FILE | LL_FS_READ_DIR;
+            TEST_ASSERT_EQ(rules[i].access, expected, "/etc: ro access");
+        } else if (strcmp(rules[i].path, "/tmp") == 0) {
+            found_tmp = 1;
+            uint64_t expected = LL_FS_READ_FILE | LL_FS_READ_DIR | LL_FS_WRITE_FILE;
+            TEST_ASSERT_EQ(rules[i].access, expected, "/tmp: rw access");
+        }
+    }
+
+    TEST_ASSERT(found_w, "/w rule present");
+    TEST_ASSERT(found_usr_bin, "/usr/bin rule present");
+    TEST_ASSERT(found_lib64, "/lib64 rule present");
+    TEST_ASSERT(found_usr_lib, "/usr/lib rule present");
+    TEST_ASSERT(found_etc, "/etc rule present");
+    TEST_ASSERT(found_tmp, "/tmp rule present");
+
+    soft_ruleset_free(rs);
+    landlock_builder_free(b);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Runner                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -325,4 +468,6 @@ void test_builder_run(void)
     RUN_TEST(test_abi_masking);
     RUN_TEST(test_symlink_handling);
     RUN_TEST(test_save_load);
+    RUN_TEST(test_expand_error_propagation);
+    RUN_TEST(test_hard_allow_conversion);
 }

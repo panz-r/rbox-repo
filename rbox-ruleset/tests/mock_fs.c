@@ -13,6 +13,8 @@
 #include <limits.h>
 #include <sys/param.h>
 #include <time.h>
+#include <sys/types.h>
+#include <dirent.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -370,19 +372,9 @@ char *__wrap_realpath(const char *path, char *resolved)
     int rp_ret = resolve_path(cleaned, resolved_path, 40);
 
     if (rp_ret != 0) {
-        /* Path doesn't exist — return cleaned version anyway */
-        if (resolved) {
-            strncpy(resolved, cleaned, PATH_MAX - 1);
-            resolved[PATH_MAX - 1] = '\0';
-            return resolved;
-        } else {
-            char *r = malloc(PATH_MAX);
-            if (r) {
-                strncpy(r, cleaned, PATH_MAX - 1);
-                r[PATH_MAX - 1] = '\0';
-            }
-            return r;
-        }
+        /* Path doesn't exist — fail as real realpath would */
+        errno = ENOENT;
+        return NULL;
     }
 
     if (resolved) {
@@ -478,4 +470,68 @@ ssize_t __wrap_readlink(const char *path, char *buf, size_t bufsiz)
     memcpy(buf, entry->symlink_target, copy_len);
     buf[copy_len] = '\0';
     return (ssize_t)copy_len;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Wrapped directory functions for mock filesystem                   */
+/* ------------------------------------------------------------------ */
+
+static char mock_dir_path[PATH_MAX];
+static char mock_dir_entries[256][NAME_MAX];
+static int mock_dir_count = 0;
+static int mock_dir_index = 0;
+static int mock_dir_is_open = 0;
+
+static struct dirent mock_dirent;
+
+static DIR *mock_dir_ptr = (DIR *)mock_dir_path;  /* Dummy non-NULL pointer */
+
+DIR *__wrap_opendir(const char *path)
+{
+    char clean[MAX_PATH_LEN];
+    clean_path(path, clean, sizeof(clean));
+
+    /* Special case: root "/" always succeeds if mock fs is active */
+    if (strcmp(clean, "/") == 0) {
+        mock_dir_count = 0;
+        mock_dir_index = 0;
+        mock_dir_is_open = 1;
+        strcpy(mock_dir_path, "/");
+        return mock_dir_ptr;
+    }
+
+    mock_dir_count = mock_fs_list_children(clean, (const char **)mock_dir_entries, 256);
+    if (mock_dir_count < 0) {
+        errno = ENOENT;
+        return NULL;
+    }
+
+    strncpy(mock_dir_path, clean, PATH_MAX - 1);
+    mock_dir_path[PATH_MAX - 1] = '\0';
+    mock_dir_index = 0;
+    mock_dir_is_open = 1;
+
+    return mock_dir_ptr;
+}
+
+struct dirent *__wrap_readdir(DIR *dir)
+{
+    if (!mock_dir_is_open) return readdir(dir);
+    if (mock_dir_index >= mock_dir_count) return NULL;
+
+    memset(&mock_dirent, 0, sizeof(mock_dirent));
+    strncpy(mock_dirent.d_name, mock_dir_entries[mock_dir_index], NAME_MAX - 1);
+    mock_dirent.d_name[NAME_MAX - 1] = '\0';
+    mock_dir_index++;
+
+    return &mock_dirent;
+}
+
+int __wrap_closedir(DIR *dir)
+{
+    if (!mock_dir_is_open) return closedir(dir);
+    mock_dir_count = 0;
+    mock_dir_index = 0;
+    mock_dir_is_open = 0;
+    return 0;
 }
