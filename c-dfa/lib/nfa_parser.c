@@ -167,9 +167,9 @@ static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const ch
 
     const char* frag_value = find_fragment(ctx, frag_name);
     if (frag_value == NULL) {
-        WARNING("Fragment '%s' not found, skipping", frag_name);
+        nfa_parser_set_error(ctx, PARSE_ERROR_UNDEFINED_FRAGMENT, *pos, "Fragment '%s' not found", frag_name);
         *pos = j + 2;
-        result.exit_state = start_state;
+        result.exit_state = -1;
         return result;
     }
 
@@ -375,11 +375,12 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
                 if (pattern[j] == ')' && pattern[j + 1] == ')') {
                     char frag_name[MAX_FRAGMENT_NAME];
                     size_t name_len = j - (*pos + 2);
-                    if (name_len < sizeof(frag_name)) {
+                    if (name_len > 0 && name_len < sizeof(frag_name)) {
                         strncpy(frag_name, &pattern[*pos + 2], name_len);
                         frag_name[name_len] = '\0';
                         normalize_fragment_name(frag_name);
-                        if (find_fragment(ctx, frag_name) != NULL) {
+                        const char* frag_value = find_fragment(ctx, frag_name);
+                        if (frag_value != NULL) {
                             fragment_result_t frag_result = parse_rdp_fragment(ctx, pattern, pos, start_state);
                             ctx->current_fragment = frag_result;
 
@@ -392,6 +393,16 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
 
                             ctx->prev_frag_exit = frag_result.exit_state;
                             return frag_result.exit_state;
+                        }
+                        int word_chars = 0;
+                        for (int ci = 0; frag_name[ci] != '\0'; ci++) {
+                            if (isalnum((unsigned char)frag_name[ci]) || frag_name[ci] == '_') {
+                                word_chars++;
+                            }
+                        }
+                        if (word_chars > (int)name_len / 3) {
+                            nfa_parser_set_error(ctx, PARSE_ERROR_UNDEFINED_FRAGMENT, *pos, "Fragment '%s' not found", frag_name);
+                            return -1;
                         }
                     }
                 }
@@ -502,7 +513,7 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
 // ============================================================================
 
 // Check if a quantifier at the given position is valid.
-// Quantifiers (*, +, ?) must follow a closing parenthesis ')'.
+// Quantifiers (*, +, ?) must follow a closing parenthesis ')' or '] ]' (fragment reference).
 // This prevents the common misunderstanding that * is a wildcard.
 static bool quantifier_is_valid(const char* pattern, int quant_pos, ATTR_UNUSED nfa_builder_context_t* ctx) {
     int quotes = 0;
@@ -539,6 +550,7 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
         current = ctx->current_fragment.exit_state;
     } else {
         current = parse_rdp_element(ctx, pattern, pos, start_state);
+        if (current < 0) return -1;
     }
 
     while (pattern[*pos] != '\0') {
@@ -643,6 +655,7 @@ static int parse_rdp_sequence(nfa_builder_context_t* ctx, const char* pattern, i
             break;
         }
         current = parse_rdp_element(ctx, pattern, pos, current);
+        if (current < 0) return -1;
 
         if (pattern[*pos] == '+' || pattern[*pos] == '*' || pattern[*pos] == '?') {
             ctx->has_pending_quantifier = true;

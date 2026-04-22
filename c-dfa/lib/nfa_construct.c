@@ -393,3 +393,58 @@ int nfa_count_transitions(const nfa_graph_t* graph) {
     }
     return count;
 }
+
+int nfa_get_single_target(const nfa_graph_t* graph, int from_state, int symbol) {
+    if (!graph || from_state < 0 || from_state >= graph->state_count) {
+        return -1;
+    }
+    
+    nfa_state_t* state = &graph->states[from_state];
+    
+    if (state->multi_targets.has_first_target[symbol]) {
+        return state->multi_targets.first_targets[symbol];
+    }
+    
+    mta_entry_t* entry = state->multi_targets.symbol_map[symbol];
+    if (entry && entry->target_count == 1) {
+        return entry->targets[0];
+    }
+    
+    return -1;
+}
+
+bool nfa_has_epsilon(const nfa_graph_t* graph, int from_state, int to_state) {
+    return nfa_has_transition(graph, from_state, VSYM_EPS, to_state);
+}
+
+int nfa_get_targets(const nfa_graph_t* graph, int from_state, int symbol, int* targets_out, int max_targets) {
+    if (!graph || from_state < 0 || from_state >= graph->state_count || !targets_out) {
+        return 0;
+    }
+    
+    int count = 0;
+    nfa_state_t* state = &graph->states[from_state];
+    
+    if (state->multi_targets.has_first_target[symbol]) {
+        if (count < max_targets) {
+            targets_out[count++] = state->multi_targets.first_targets[symbol];
+        }
+    }
+    
+    mta_entry_t* entry = state->multi_targets.symbol_map[symbol];
+    if (entry) {
+        for (int i = 0; i < entry->target_count && count < max_targets; i++) {
+            targets_out[count++] = entry->targets[i];
+        }
+    }
+    
+    return count;
+}
+
+bool nfa_accepting_with_mask(const nfa_graph_t* graph, int state_idx, uint8_t expected_mask) {
+    if (!graph || state_idx < 0 || state_idx >= graph->state_count) {
+        return false;
+    }
+    return graph->states[state_idx].is_eos_target && 
+           graph->states[state_idx].category_mask == expected_mask;
+}

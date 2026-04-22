@@ -275,6 +275,10 @@ bool nfa_state_is_accepting(const nfa_graph_t* graph, int state_idx);
 int nfa_get_outgoing_symbols(const nfa_graph_t* graph, int state_idx, int* symbols_out, int max_symbols);
 bool nfa_has_transition(const nfa_graph_t* graph, int from_state, int symbol, int to_state);
 int nfa_count_transitions(const nfa_graph_t* graph);
+int nfa_get_single_target(const nfa_graph_t* graph, int from_state, int symbol);
+bool nfa_has_epsilon(const nfa_graph_t* graph, int from_state, int to_state);
+int nfa_get_targets(const nfa_graph_t* graph, int from_state, int symbol, int* targets_out, int max_targets);
+bool nfa_accepting_with_mask(const nfa_graph_t* graph, int state_idx, uint8_t expected_mask);
 
 // --- nfa_capture.c ---
 int nfa_capture_get_id(nfa_builder_context_t* ctx, const char* name);
