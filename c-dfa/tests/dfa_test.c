@@ -2223,7 +2223,7 @@ static void build_dfa_with_config(const char* patterns_file, const char* dfa_fil
     pipeline_config_t config = {
         .minimize_algo = min_algo,
         .verbose = false,
-        .preminimize = preminimize,
+
         .compress = compress,
         .optimize_layout = true,
         .max_states = 0,
@@ -2581,7 +2581,7 @@ static void run_limit_config_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = false,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -2619,7 +2619,7 @@ static void run_limit_config_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = false,
             .max_states = 0,
@@ -2657,7 +2657,7 @@ static void run_limit_config_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = false,
             .optimize_layout = true,
             .max_states = 0,
@@ -2695,7 +2695,7 @@ static void run_limit_config_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_HOPCROFT,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -2733,7 +2733,7 @@ static void run_limit_config_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 10000,
@@ -2792,7 +2792,7 @@ static void run_incremental_stage_api_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -2820,7 +2820,7 @@ static void run_incremental_stage_api_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -2887,7 +2887,7 @@ static void run_incremental_stage_api_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -2933,7 +2933,7 @@ static void run_incremental_stage_api_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -2978,7 +2978,7 @@ static void run_incremental_stage_api_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3060,7 +3060,7 @@ static void run_memory_failure_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3095,7 +3095,7 @@ static void run_memory_failure_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3126,7 +3126,7 @@ static void run_memory_failure_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3161,7 +3161,7 @@ static void run_memory_failure_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3234,7 +3234,7 @@ static void run_pattern_ordering_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3281,7 +3281,7 @@ static void run_pattern_ordering_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3328,7 +3328,7 @@ static void run_pattern_ordering_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3375,7 +3375,7 @@ static void run_pattern_ordering_tests(void) {
         pipeline_config_t config = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3423,7 +3423,7 @@ static void run_pattern_ordering_tests(void) {
         pipeline_config_t config_moore = {
             .minimize_algo = DFA_MIN_MOORE,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,
@@ -3435,7 +3435,7 @@ static void run_pattern_ordering_tests(void) {
         pipeline_config_t config_hopcroft = {
             .minimize_algo = DFA_MIN_HOPCROFT,
             .verbose = false,
-            .preminimize = true,
+    
             .compress = true,
             .optimize_layout = true,
             .max_states = 0,

@@ -40,7 +40,6 @@ static void run_group(const char* group_name, const char* pattern, TestCase* cas
     pipeline_config_t config = {
         .minimize_algo = DFA_MIN_MOORE,
         .verbose = false,
-        .preminimize = true,
         .compress = true,
         .optimize_layout = true,
         .max_states = 0,

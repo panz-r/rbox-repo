@@ -101,7 +101,6 @@ int main(int argc, char* argv[]) {
 
     pipeline_config_t config = {
         .minimize_algo = dfa_minimize_get_algorithm(),
-        .preminimize = true,
         .compress = compress,
         .optimize_layout = minimize,
         .verbose = verbose,

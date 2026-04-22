@@ -48,10 +48,11 @@ typedef struct {
 
 /* Finalized NFA graph - read-only representation for conversion to DFA */
 typedef struct {
-    nfa_state_t* states;       // NFA state array (owned by this struct)
+    nfa_state_t* states;       // NFA state array
     int state_count;            // Number of states
     alphabet_entry_t* alphabet; // Alphabet (or NULL if not needed)
     int alphabet_size;          // Alphabet size
+    bool owns_data;             // If true, owns and will free states/alphabet
 } nfa_graph_t;
 
 /**

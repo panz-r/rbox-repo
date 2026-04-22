@@ -34,12 +34,9 @@
 // Forward declarations from nfa2dfa.c (compiled with NFA2DFA_BUILDING_LIB)
 void init_hash_table(nfa2dfa_context_t* ctx);
 void load_nfa_file(nfa2dfa_context_t* ctx, const char* filename);
-void nfa_to_dfa(nfa2dfa_context_t* ctx);
-void flatten_dfa(nfa2dfa_context_t* ctx);
+void nfa_to_dfa(nfa2dfa_context_t* ctx, const nfa_graph_t* nfa_graph);
+void flatten_dfa(nfa2dfa_context_t* ctx, const nfa_graph_t* nfa_graph);
 void write_dfa_file(nfa2dfa_context_t* ctx, const char* filename);
-
-// Forward declaration for NFA transfer
-int nfa2dfa_context_set_nfa(nfa2dfa_context_t* ctx, nfa_builder_context_t* builder_ctx);
 
 // ============================================================================
 // Pipeline struct
@@ -49,6 +46,7 @@ struct pipeline {
     pipeline_config_t config;
     nfa_builder_context_t* builder_ctx;
     nfa2dfa_context_t* nfa2dfa_ctx;
+    nfa_graph_t* nfa_graph;
     uint8_t* binary_data;
     size_t binary_size;
     char last_error[256];
@@ -173,6 +171,7 @@ pipeline_t* pipeline_create(const pipeline_config_t* config) {
 
 void pipeline_destroy(pipeline_t* p) {
     nfa_builder_context_destroy(p->builder_ctx);
+    nfa_graph_free(p->nfa_graph);
     nfa2dfa_context_destroy(p->nfa2dfa_ctx);
     free(p->binary_data);
     if (p->ordered_patterns) {
@@ -288,8 +287,44 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
         }
     }
     
-    // Transfer NFA directly from builder to nfa2dfa context (no temp file)
-    nfa2dfa_context_set_nfa(p->nfa2dfa_ctx, p->builder_ctx);
+    // Create nfa_graph from builder's NFA via finalize
+    nfa_premin_options_t premin_opts = nfa_premin_default_options();
+    premin_opts.enable_sat_optimal = p->config.enable_sat_optimal_premin;
+    premin_opts.verbose = p->config.verbose;
+    
+    // Finalize - creates preminimized copy in graph->states
+    nfa_premin_stats_t premin_stats;
+    nfa_graph_t* graph = nfa_builder_finalize(p->builder_ctx, &premin_opts, &premin_stats);
+    if (!graph) {
+        set_error(p, PIPELINE_ERROR, "Failed to finalize NFA");
+        return PIPELINE_ERROR;
+    }
+    
+    // Transfer graph's NFA to nfa2dfa context for DFA conversion
+    p->nfa2dfa_ctx->nfa = graph->states;
+    p->nfa2dfa_ctx->nfa_state_count = graph->state_count;
+    p->nfa2dfa_ctx->alphabet = graph->alphabet;
+    p->nfa2dfa_ctx->alphabet_size = graph->alphabet_size;
+    
+    // Zero graph's pointers so nfa_graph_free doesn't double-free
+    graph->states = NULL;
+    graph->alphabet = NULL;
+    
+    // Store graph for stats tracking
+    p->nfa_graph = graph;
+    
+    // Store premin stats
+    p->premin_stats.initial_states = premin_stats.original_states;
+    p->premin_stats.final_states = premin_stats.minimized_states;
+    p->premin_stats.states_removed = premin_stats.original_states - premin_stats.minimized_states;
+    p->premin_stats.states_merged = premin_stats.states_merged;
+    p->premin_stats.identical_merged = premin_stats.identical_merged;
+    p->premin_stats.prefix_merged = premin_stats.prefix_merged;
+    p->premin_stats.final_deduped = premin_stats.final_deduped;
+    p->premin_stats.suffix_merged = premin_stats.suffix_merged;
+    p->premin_stats.sat_merged = premin_stats.sat_merged;
+    p->premin_stats.sat_optimal = premin_stats.sat_optimal;
+    p->premin_stats_valid = true;
 
     p->nfa_built = true;
     p->timing_nfa_build_ms = get_time_ms() - start;
@@ -313,8 +348,23 @@ pipeline_error_t pipeline_load_nfa(pipeline_t* p, const char* nfa_file) {
     // Initialize hash table for DFA construction
     init_hash_table(p->nfa2dfa_ctx);
 
-    // Load NFA file
+    // Load NFA file (populates ctx->nfa and ctx->alphabet)
     load_nfa_file(p->nfa2dfa_ctx, nfa_file);
+
+    // Create nfa_graph for file-loaded NFA
+    // The graph just wraps ctx data - it doesn't own the NFA
+    nfa_graph_t* graph = calloc(1, sizeof(nfa_graph_t));
+    if (!graph) {
+        set_error(p, PIPELINE_OOM, "Failed to allocate NFA graph");
+        return PIPELINE_OOM;
+    }
+    graph->states = p->nfa2dfa_ctx->nfa;
+    graph->state_count = p->nfa2dfa_ctx->nfa_state_count;
+    graph->alphabet = p->nfa2dfa_ctx->alphabet;
+    graph->alphabet_size = p->nfa2dfa_ctx->alphabet_size;
+    graph->owns_data = false;  // NFA is owned by ctx, not by graph
+    
+    p->nfa_graph = graph;
 
     p->nfa_built = true;
     p->nfa_loaded_from_file = true;
@@ -323,58 +373,18 @@ pipeline_error_t pipeline_load_nfa(pipeline_t* p, const char* nfa_file) {
     return PIPELINE_OK;
 }
 
-pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) {
-    if (!p->nfa2dfa_ctx) return PIPELINE_INVALID_STATE;
-    
-    long start = get_time_ms();
-
-    int initial_count = p->nfa2dfa_ctx->nfa_state_count;
-
-    nfa_premin_options_t opts = nfa_premin_default_options();
-    opts.verbose = p->config.verbose;
-    opts.enable_sat_optimal = p->config.enable_sat_optimal_premin;
-    nfa_preminimize(p->nfa2dfa_ctx->nfa, &p->nfa2dfa_ctx->nfa_state_count, &opts);
-
-    // Capture pre-min stats
-    nfa_premin_stats_t premin_stats;
-    nfa_premin_get_stats(&premin_stats);
-    p->premin_stats.initial_states = initial_count;
-    p->premin_stats.final_states = p->nfa2dfa_ctx->nfa_state_count;
-    p->premin_stats.states_removed = initial_count - p->nfa2dfa_ctx->nfa_state_count;
-    p->premin_stats.states_merged = premin_stats.states_merged;
-    p->premin_stats.identical_merged = premin_stats.identical_merged;
-    p->premin_stats.prefix_merged = premin_stats.prefix_merged;
-    p->premin_stats.final_deduped = premin_stats.final_deduped;
-    p->premin_stats.suffix_merged = premin_stats.suffix_merged;
-    p->premin_stats.sat_merged = premin_stats.sat_merged;
-    p->premin_stats.sat_optimal = premin_stats.sat_optimal;
-    p->premin_stats_valid = true;
-
-    p->timing_nfa_premin_ms = get_time_ms() - start;
-    return PIPELINE_OK;
-}
-
 pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
-    // Initialize nfa2dfa context if needed
-    if (!p->nfa2dfa_ctx) {
-        p->nfa2dfa_ctx = nfa2dfa_context_create();
-        if (!p->nfa2dfa_ctx) {
-            set_error(p, PIPELINE_OOM, "Failed to create nfa2dfa context");
-            return PIPELINE_OOM;
-        }
-        p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
+    if (!p->nfa2dfa_ctx || !p->nfa_graph) {
+        return PIPELINE_INVALID_STATE;
     }
 
     // Initialize hash table for DFA construction
     init_hash_table(p->nfa2dfa_ctx);
 
-    // Pre-minimize NFA (has its own timing)
-    pipeline_preminimize_nfa(p);
-
-    // Convert to DFA (timed separately)
+    // Convert to DFA using the preminimized NFA from nfa_graph
     long start = get_time_ms();
-    nfa_to_dfa(p->nfa2dfa_ctx);
-    flatten_dfa(p->nfa2dfa_ctx);
+    nfa_to_dfa(p->nfa2dfa_ctx, p->nfa_graph);
+    flatten_dfa(p->nfa2dfa_ctx, p->nfa_graph);
     p->timing_dfa_convert_ms = get_time_ms() - start;
 
     p->dfa_built = true;
@@ -402,7 +412,7 @@ pipeline_error_t pipeline_minimize_dfa(pipeline_t* p, int algo) {
 
     // Re-flatten after minimization (except Brzozowski)
     if (algo != DFA_MIN_BRZOZOWSKI) {
-        flatten_dfa(p->nfa2dfa_ctx);
+        flatten_dfa(p->nfa2dfa_ctx, p->nfa_graph);
     }
 
     p->timing_dfa_min_ms = get_time_ms() - start;

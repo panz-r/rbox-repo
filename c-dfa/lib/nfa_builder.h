@@ -13,6 +13,7 @@
 #include "../include/nfa.h"
 #include "../include/dfa_types.h"
 #include "../include/multi_target_array.h"
+#include "nfa_preminimize.h"
 
 // Category IDs (generic, pattern-defined)
 enum {
@@ -226,10 +227,15 @@ void nfa_builder_context_destroy(nfa_builder_context_t* ctx);
 
 /**
  * Finalize the NFA builder, converting internal format to nfa_graph_t.
- * Returns a newly allocated nfa_graph_t that caller owns.
- * The builder context can be destroyed after finalize.
+ * Optionally runs pre-minimization if premin_opts is non-NULL.
+ * @param ctx Builder context to finalize
+ * @param premin_opts Pre-minimization options (NULL to skip preminimize)
+ * @param out_premin_stats Out param for premin stats (NULL if not wanted)
+ * @return Newly allocated nfa_graph_t that caller owns, or NULL on error
  */
-nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx, bool preminimize);
+nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx, 
+                                   const nfa_premin_options_t* premin_opts,
+                                   nfa_premin_stats_t* out_premin_stats);
 
 // ============================================================================
 // Module Function Declarations

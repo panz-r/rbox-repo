@@ -31,6 +31,7 @@ extern "C" {
 #endif
 
 #include "dfa_types.h"
+#include "nfa.h"
 
 // ============================================================================
 // Error Codes
@@ -58,7 +59,6 @@ typedef enum {
 typedef struct {
     dfa_minimize_algo_t minimize_algo;  // Minimization algorithm
     bool verbose;
-    bool preminimize;
     bool compress;
     bool optimize_layout;
     int max_states;      // 0 = use default
@@ -102,11 +102,6 @@ pipeline_error_t pipeline_parse_patterns(pipeline_t* p, const char* filename) AT
  * Build NFA from parsed patterns.
  */
 pipeline_error_t pipeline_build_nfa(pipeline_t* p) ATTR_NONNULL(1);
-
-/**
- * Pre-minimize NFA (optional optimization).
- */
-pipeline_error_t pipeline_preminimize_nfa(pipeline_t* p) ATTR_NONNULL(1);
 
 /**
  * Convert NFA to DFA via subset construction.
@@ -307,7 +302,7 @@ void pipeline_get_minimize_stats(pipeline_t* p, dfa_minimize_stats_t* stats) ATT
 
 /**
  * Get statistics from NFA pre-minimization pass.
- * Call after pipeline_preminimize_nfa().
+ * Call after pipeline_convert_to_dfa().
  */
 void pipeline_get_premin_stats(pipeline_t* p, pipeline_premin_stats_t* stats) ATTR_NONNULL_ALL;
 

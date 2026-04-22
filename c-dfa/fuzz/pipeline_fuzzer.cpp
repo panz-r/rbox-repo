@@ -108,7 +108,6 @@ static bool run_pipeline(const uint8_t* data, size_t size, bool verbose) {
     pipeline_config_t cfg = {
         .minimize_algo = minimize_algo,
         .verbose = verbose,
-        .preminimize = preminimize,
         .compress = compress,
         .optimize_layout = optimize_layout,
         .max_states = 0,
@@ -133,15 +132,6 @@ static bool run_pipeline(const uint8_t* data, size_t size, bool verbose) {
         pipeline_destroy(p);
         unlink(temp_pattern_file);
         return true;
-    }
-    
-    if (preminimize) {
-        err = pipeline_preminimize_nfa(p);
-        if (err != PIPELINE_OK) {
-            pipeline_destroy(p);
-            unlink(temp_pattern_file);
-            return true;
-        }
     }
     
     err = pipeline_convert_to_dfa(p);

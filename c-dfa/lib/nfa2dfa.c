@@ -588,7 +588,7 @@ static void collect_transition_markers(ATTR_UNUSED nfa2dfa_context_t* ctx, int s
     *out_count = count;
 }
 
-void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
+void nfa_to_dfa(nfa2dfa_context_t* ctx, const nfa_graph_t* nfa_graph) {
     build_dfa_state_t** dfa_arr = CTX_DFA(ctx);
     nfa_state_t* nfa_arr = CTX_NFA(ctx);
     alphabet_entry_t* alphabet_arr = CTX_ALPHABET(ctx);
@@ -596,6 +596,7 @@ void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     int nfa_count = CTX_NFA_COUNT(ctx);
     int max_st = CTX_MAX_STATES(ctx);
     int* dfa_count_ptr = CTX_DFA_COUNT_PTR(ctx, dfa_state_count);
+    (void)nfa_graph;
     DEBUG_PRINT(ctx, "nfa_to_dfa: nfa_state_count=%d, alphabet_size=%d\n", nfa_count, alphabet_sz);
     dfa_init(ctx);
     init_marker_lists(ctx);
@@ -923,11 +924,12 @@ void nfa_to_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
     free(temp);
 }
 
-void flatten_dfa(ATTR_UNUSED nfa2dfa_context_t* ctx) {
+void flatten_dfa(nfa2dfa_context_t* ctx, const nfa_graph_t* nfa_graph) {
     build_dfa_state_t** dfa_arr = CTX_DFA(ctx);
     alphabet_entry_t* alphabet_arr = CTX_ALPHABET(ctx);
     int alphabet_sz = CTX_ALPHABET_SIZE(ctx);
     int* dfa_count_ptr = CTX_DFA_COUNT_PTR(ctx, dfa_state_count);
+    (void)nfa_graph;
     (void)dfa_arr; (void)alphabet_arr; (void)alphabet_sz; (void)dfa_count_ptr;
     int any_sid = -1;
     int space_sid = -1;
@@ -1998,7 +2000,6 @@ int main(int argc, char* argv[]) {
 
     pipeline_config_t config = {
         .minimize_algo = dfa_minimize_get_algorithm(),
-        .preminimize = true,
         .compress = compress,
         .optimize_layout = minimize,
         .verbose = verbose,

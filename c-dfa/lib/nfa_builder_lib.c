@@ -85,6 +85,7 @@ nfa_graph_t* nfa_graph_create(nfa_state_t* states, int state_count,
     graph->states = states;
     graph->state_count = state_count;
     graph->alphabet_size = alphabet_size;
+    graph->owns_data = true;
     
     if (alphabet && alphabet_size > 0) {
         graph->alphabet = calloc((size_t)alphabet_size, sizeof(alphabet_entry_t));
@@ -102,18 +103,22 @@ nfa_graph_t* nfa_graph_create(nfa_state_t* states, int state_count,
 
 void nfa_graph_free(nfa_graph_t* graph) {
     if (!graph) return;
-    free(graph->states);
-    free(graph->alphabet);
+    if (graph->owns_data) {
+        free(graph->states);
+        free(graph->alphabet);
+    }
     free(graph);
 }
 
-nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx, bool preminimize) {
+nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx, 
+                                   const nfa_premin_options_t* premin_opts,
+                                   nfa_premin_stats_t* out_premin_stats) {
     if (!ctx || ctx->nfa_state_count <= 0) return NULL;
-    
-    (void)preminimize;
     
     nfa_state_t* states = calloc(MAX_STATES, sizeof(nfa_state_t));
     if (!states) return NULL;
+    
+    int final_state_count = ctx->nfa_state_count;
     
     for (int i = 0; i < ctx->nfa_state_count && i < MAX_STATES; i++) {
         nfa_builder_state_t* src = &ctx->nfa[i];
@@ -190,11 +195,18 @@ nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx, bool preminimize) 
         }
     }
     
+    if (premin_opts) {
+        nfa_preminimize(states, &final_state_count, premin_opts);
+    }
+    
     alphabet_entry_t* alphabet = NULL;
     int alphabet_size = 0;
     if (ctx->alphabet_size > 0) {
         alphabet = calloc((size_t)ctx->alphabet_size, sizeof(alphabet_entry_t));
         if (!alphabet) {
+            for (int i = 0; i < final_state_count; i++) {
+                mta_free(&states[i].multi_targets);
+            }
             free(states);
             return NULL;
         }
@@ -207,7 +219,35 @@ nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx, bool preminimize) 
         alphabet_size = ctx->alphabet_size;
     }
     
-    return nfa_graph_create(states, ctx->nfa_state_count, alphabet, alphabet_size);
+    nfa_graph_t* result = nfa_graph_create(states, final_state_count, alphabet, alphabet_size);
+    if (!result) {
+        for (int i = 0; i < final_state_count; i++) {
+            mta_free(&states[i].multi_targets);
+        }
+        free(states);
+        free(alphabet);
+        return NULL;
+    }
+    
+    if (out_premin_stats) {
+        nfa_premin_stats_t premin_stats;
+        nfa_premin_get_stats(&premin_stats);
+        out_premin_stats->original_states = ctx->nfa_state_count;
+        out_premin_stats->minimized_states = final_state_count;
+        out_premin_stats->epsilon_bypassed = premin_stats.epsilon_bypassed;
+        out_premin_stats->epsilon_chains = premin_stats.epsilon_chains;
+        out_premin_stats->landing_pads_removed = premin_stats.landing_pads_removed;
+        out_premin_stats->unreachable_removed = premin_stats.unreachable_removed;
+        out_premin_stats->states_merged = premin_stats.states_merged;
+        out_premin_stats->identical_merged = premin_stats.identical_merged;
+        out_premin_stats->prefix_merged = premin_stats.prefix_merged;
+        out_premin_stats->final_deduped = premin_stats.final_deduped;
+        out_premin_stats->suffix_merged = premin_stats.suffix_merged;
+        out_premin_stats->sat_merged = premin_stats.sat_merged;
+        out_premin_stats->sat_optimal = premin_stats.sat_optimal;
+    }
+    
+    return result;
 }
 
 // ============================================================================

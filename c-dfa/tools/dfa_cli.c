@@ -1138,7 +1138,6 @@ int cli_validate(const cli_args_t* args) {
     pipeline_config_t config = {
         .minimize_algo = DFA_MIN_HOPCROFT,
         .verbose = false,
-        .preminimize = true,
         .compress = true,
         .optimize_layout = true,
         .max_states = 0,
@@ -1273,7 +1272,6 @@ int cli_compile(const cli_args_t* args) {
 
     pipeline_config_t config = {
         .verbose = !args->quiet && args->verbosity > 0,
-        .preminimize = args->preminimize && !args->no_preminimize,
         .use_sat_compress = args->compress_sat,
         .enable_sat_optimal_premin = args->sat_optimal,
     };
