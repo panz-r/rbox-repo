@@ -1834,10 +1834,7 @@ void load_nfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
         }
         else if (strncmp(line, "State ", 6) == 0) {
             int s_idx; sscanf(line + 6, "%d:", &s_idx);
-            // Initialize the state's transitions array to -1 (nfa_init may not have been called)
-            for (int j = 0; j < MAX_SYMBOLS; j++) {
-                nfa_arr[s_idx].transitions[j] = -1;
-            }
+            // Initialize multi_targets
             mta_init(&nfa_arr[s_idx].multi_targets);
             while (fgets(line, sizeof(line), file) && line[0] != '\n' && line[0] != '\r') {
                 if (strstr(line, "CategoryMask:")) { unsigned int m; sscanf(strstr(line, "0x"), "%x", &m); nfa_arr[s_idx].category_mask = (uint8_t)m; }
@@ -1863,7 +1860,7 @@ void load_nfa_file(ATTR_UNUSED nfa2dfa_context_t* ctx, const char* filename) {
                         // CaptureStart: add START marker to all character transitions
                         // This ensures the marker fires on the first character after the capture start tag
                         for (int sym = 0; sym < 256; sym++) {
-                            if (nfa_arr[s_idx].transitions[sym] >= 0) {
+                            if (mta_get_target_count(&nfa_arr[s_idx].multi_targets, sym) > 0) {
                                 mta_add_marker(&nfa_arr[s_idx].multi_targets, sym, 0, cap_id, MARKER_TYPE_START);
                             }
                         }

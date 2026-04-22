@@ -172,10 +172,6 @@ static bool nfa_has_transition_to(const nfa_state_t* state, int sym, int target)
         return false;
     }
 
-    if (state->transitions[sym] == target) {
-        return true;
-    }
-
     if (state->multi_targets.has_first_target[sym] &&
         state->multi_targets.first_targets[sym] == target) {
         return true;
@@ -276,22 +272,11 @@ static int get_epsilon_closed_targets(const nfa_state_t* nfa, int state_idx, int
 
     const nfa_state_t* state = &nfa[state_idx];
 
-    if (state->transitions[sym] >= 0) {
-        immediate_targets[immediate_count++] = state->transitions[sym];
-    }
-
-    if (state->multi_targets.has_first_target[sym]) {
-        immediate_targets[immediate_count++] = state->multi_targets.first_targets[sym];
-    }
-
-    int mta_count = mta_get_entry_count((multi_target_array_t*)&state->multi_targets);
-    for (int s = 0; s < MAX_SYMBOLS; s++) {
-        int count;
-        int* targets = mta_get_target_array((multi_target_array_t*)&state->multi_targets, s, &count);
-        if (targets && count > 0 && s == sym) {
-            for (int i = 0; i < count && immediate_count < MAX_STATES; i++) {
-                immediate_targets[immediate_count++] = targets[i];
-            }
+    int count;
+    int* targets = mta_get_target_array((multi_target_array_t*)&state->multi_targets, sym, &count);
+    if (targets && count > 0) {
+        for (int i = 0; i < count && immediate_count < MAX_STATES; i++) {
+            immediate_targets[immediate_count++] = targets[i];
         }
     }
 
@@ -435,35 +420,12 @@ static int bypass_epsilon_pass_through(nfa_state_t* nfa, int state_count, bool* 
             }
         }
 
-        if (state->transitions[VSYM_EPS] >= 0) {
-            int t = state->transitions[VSYM_EPS];
-            if (t != s) {
-                bool dup = false;
-                for (int j = 0; j < eps_count; j++) {
-                    if (eps_targets[j] == t) { dup = true; break; }
-                }
-                if (!dup && eps_count < 64) eps_targets[eps_count++] = t;
-            }
-        }
-
-        bool needs_update = (eps_count != cnt) ||
-            (state->transitions[VSYM_EPS] >= 0 && state->transitions[VSYM_EPS] == s);
-
-        if (needs_update) {
-            mta_clear_symbol(&state->multi_targets, VSYM_EPS);
-            state->transitions[VSYM_EPS] = -1;
-            for (int i = 0; i < eps_count; i++) {
-                mta_add_target(&state->multi_targets, VSYM_EPS, eps_targets[i]);
-            }
-        }
-
         if (eps_count != 1) continue;
 
         bool has_other = false;
         for (int sym = 0; sym < MAX_SYMBOLS && !has_other; sym++) {
             if (sym == VSYM_EPS) continue;
             if (mta_get_target_count(&state->multi_targets, sym) > 0) has_other = true;
-            if (state->transitions[sym] >= 0) has_other = true;
         }
         if (has_other) continue;
 
@@ -478,8 +440,16 @@ static int bypass_epsilon_pass_through(nfa_state_t* nfa, int state_count, bool* 
             nfa_state_t* src_state = &nfa[src];
 
             for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                if (src_state->transitions[sym] == s) {
-                    src_state->transitions[sym] = epsilon_target;
+                if (src_state->multi_targets.has_first_target[sym] && src_state->multi_targets.first_targets[sym] == s) {
+                    src_state->multi_targets.first_targets[sym] = epsilon_target;
+                }
+                mta_entry_t* entry = src_state->multi_targets.symbol_map[sym];
+                if (entry) {
+                    for (int i = 0; i < entry->target_count; i++) {
+                        if (entry->targets[i] == s) {
+                            entry->targets[i] = epsilon_target;
+                        }
+                    }
                 }
             }
 
@@ -601,15 +571,6 @@ static int remove_unreachable(nfa_state_t* nfa, int state_count, bool* dead_stat
         int s = queue[queue_head++];
         nfa_state_t* state = &nfa[s];
 
-        // Check all transitions (including epsilon = 257)
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            int target = state->transitions[sym];
-            if (target >= 0 && !reachable[target] && !dead_states[target]) {
-                reachable[target] = true;
-                queue[queue_tail++] = target;
-            }
-        }
-
         // Check multi-targets using API (including epsilon)
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int count;
@@ -664,20 +625,6 @@ static int compact_nfa(nfa_state_t* nfa, int state_count, const bool* dead_state
         if (dead_states[s]) continue;
 
         nfa_state_t* state = &nfa[s];
-
-        // Redirect symbol transitions
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            int target = state->transitions[sym];
-            if (target >= 0) {
-                if (dead_states[target]) {
-                    // Transition to dead state - remove it
-                    state->transitions[sym] = -1;
-                } else {
-                    // Remap to new index
-                    state->transitions[sym] = remap[target];
-                }
-            }
-        }
 
         // Redirect multi-targets
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
@@ -817,13 +764,6 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
         nfa_state_t* state = &nfa[s];
 
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            int target = state->transitions[sym];
-            if (target >= 0 && !dead_states[target]) {
-                total_edges++;
-            }
-        }
-
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int count;
             int* targets = mta_get_target_array(&state->multi_targets, sym, &count);
             if (targets && count > 0) {
@@ -848,16 +788,6 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
         if (dead_states[s]) continue;
 
         nfa_state_t* state = &nfa[s];
-
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            int target = state->transitions[sym];
-            if (target >= 0 && !dead_states[target]) {
-                edges[edge_count].source = s;
-                edges[edge_count].symbol = sym;
-                edges[edge_count].target = target;
-                edge_count++;
-            }
-        }
 
         for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
             int count;
@@ -989,12 +919,6 @@ static int merge_common_prefixes_pass(nfa_state_t* nfa, int state_count, bool* d
                     nfa_state_t* src_state = &nfa[src];
 
                     for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                        if (src_state->transitions[sym] == s) {
-                            src_state->transitions[sym] = rep;
-                        }
-                    }
-
-                    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
                         int count;
                         int* targets = mta_get_target_array(&src_state->multi_targets, sym, &count);
                         if (targets && count > 0) {
@@ -1109,15 +1033,6 @@ static uint64_t hash_markers(const transition_marker_t* markers, int count) {
  */
 static uint64_t compute_outgoing_signature(const nfa_state_t* state) {
     uint64_t hash = 14695981039346656037ULL;
-
-    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-        if (state->transitions[sym] >= 0) {
-            hash ^= (uint64_t)sym;
-            hash *= 1099511628211ULL;
-            hash ^= (uint64_t)state->transitions[sym];
-            hash *= 1099511628211ULL;
-        }
-    }
 
     int mta_count = mta_get_entry_count((multi_target_array_t*)&state->multi_targets);
     if (mta_count > 0) {
@@ -1263,13 +1178,6 @@ static int deduplicate_final_states(nfa_state_t* nfa, int state_count, bool* dea
                     if (dead_states[src]) continue;
 
                     nfa_state_t* src_state = &nfa[src];
-
-                    // Redirect single transitions
-                    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                        if (src_state->transitions[sym] == s) {
-                            src_state->transitions[sym] = rep;
-                        }
-                    }
 
                     // Redirect multi-targets
                     for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
@@ -1487,28 +1395,15 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
         int single_trans_count = 0;  // Count from transitions[] array
         int mta_trans_count = 0;     // Count from multi_targets
 
-        // Check single transitions (legacy format)
+        // Check multi-targets (new format - used for ALL transitions in NFA builder)
+        // First check the fast-path single targets (has_first_target)
         for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
-            if (state->transitions[sym] >= 0) {
+            if (state->multi_targets.has_first_target[sym]) {
                 if (out_count == 0) {
-                    out_target = state->transitions[sym];
+                    out_target = state->multi_targets.first_targets[sym];
                 }
                 out_count++;
-                single_trans_count++;
-            }
-        }
-
-        // Check multi-targets (new format - used for ALL transitions in NFA builder)
-        if (out_count <= 1) {
-            // First check the fast-path single targets (has_first_target)
-            for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
-                if (state->multi_targets.has_first_target[sym]) {
-                    if (out_count == 0) {
-                        out_target = state->multi_targets.first_targets[sym];
-                    }
-                    out_count++;
-                    mta_trans_count++;
-                }
+                mta_trans_count++;
             }
         }
 
@@ -1561,27 +1456,14 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
         int out_symbol = -1;
         int out_count = 0;
 
-        // Check single transitions (legacy format)
+        // Check fast-path single targets (has_first_target)
         for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
-            if (state->transitions[sym] >= 0) {
+            if (state->multi_targets.has_first_target[sym]) {
                 if (out_count == 0) {
-                    out_target = state->transitions[sym];
+                    out_target = state->multi_targets.first_targets[sym];
                     out_symbol = sym;
                 }
                 out_count++;
-            }
-        }
-
-        // Check fast-path single targets (has_first_target)
-        if (out_count <= 1) {
-            for (int sym = 0; sym < MAX_SYMBOLS && out_count <= 1; sym++) {
-                if (state->multi_targets.has_first_target[sym]) {
-                    if (out_count == 0) {
-                        out_target = state->multi_targets.first_targets[sym];
-                        out_symbol = sym;
-                    }
-                    out_count++;
-                }
             }
         }
 
@@ -1665,13 +1547,6 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
                     if (dead_states[src]) continue;
 
                     nfa_state_t* src_state = &nfa[src];
-
-                    // Redirect single transitions
-                    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-                        if (src_state->transitions[sym] == s) {
-                            src_state->transitions[sym] = rep;
-                        }
-                    }
 
                     // Redirect multi-targets
                     for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
@@ -1945,11 +1820,6 @@ static int factorize_suffixes_pass(nfa_state_t* nfa, int state_count, bool** dea
             // Create a new intermediate state
             int new_state = (*next_state)++;
             memset(&nfa[new_state], 0, sizeof(nfa_state_t));
-
-            // Initialize all transitions to -1 (no transition)
-            for (int t = 0; t < MAX_SYMBOLS; t++) {
-                nfa[new_state].transitions[t] = -1;
-            }
 
             // The new state is a PURE INTERMEDIATE - it does NOT inherit accepting properties
             // It simply passes through to the target via EPSILON

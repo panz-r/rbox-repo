@@ -63,7 +63,6 @@ typedef struct {
     bool is_eos_target;
     char* tags[MAX_TAGS];
     int tag_count;
-    int transitions[MAX_SYMBOLS];
     int transition_count;
     multi_target_array_t multi_targets;
     int8_t capture_start_id;

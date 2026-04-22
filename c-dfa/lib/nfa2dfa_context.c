@@ -102,16 +102,13 @@ nfa2dfa_context_t* nfa2dfa_context_create(void) {
 int nfa2dfa_context_set_nfa(nfa2dfa_context_t* ctx, nfa_builder_context_t* builder_ctx) {
     if (!ctx || !builder_ctx) return -1;
 
-    // Initialize all NFA states to -1 and init multi_targets
+    // Initialize all NFA states - init multi_targets
     for (int i = 0; i < MAX_STATES; i++) {
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
-            ctx->nfa[i].transitions[j] = -1;
-        }
         mta_init(&ctx->nfa[i].multi_targets);
     }
     
     // Copy NFA states from builder to nfa2dfa context
-    for (int i = 0; i < builder_ctx->nfa_state_count && i < MAX_STATES; i++) {
+    for ( int i = 0; i < builder_ctx->nfa_state_count && i < MAX_STATES; i++) {
         nfa_builder_state_t* src = &builder_ctx->nfa[i];
         nfa_state_t* dst = &ctx->nfa[i];
         
@@ -120,11 +117,6 @@ int nfa2dfa_context_set_nfa(nfa2dfa_context_t* ctx, nfa_builder_context_t* build
         dst->pattern_id = (uint16_t)src->pattern_id;
         dst->is_eos_target = src->is_eos_target;
         dst->pending_marker_count = 0;
-        
-        // Copy transitions array
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
-            dst->transitions[j] = src->transitions[j];
-        }
         
         // Deep copy multi_targets - first free any existing
         mta_free(&dst->multi_targets);

@@ -53,9 +53,16 @@ static uint64_t compute_state_signature(nfa_builder_context_t* ctx, int state) {
     }
 
     for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-        if (s->transitions[sym] != -1) {
+        if (s->multi_targets.has_first_target[sym]) {
             signature = signature * 31 + sym;
-            signature = signature * 31 + s->transitions[sym];
+            signature = signature * 31 + s->multi_targets.first_targets[sym];
+        }
+        mta_entry_t* entry = s->multi_targets.symbol_map[sym];
+        if (entry) {
+            for (int i = 0; i < entry->target_count; i++) {
+                signature = signature * 31 + sym;
+                signature = signature * 31 + entry->targets[i];
+            }
         }
     }
 
@@ -89,9 +96,6 @@ void nfa_construct_init(nfa_builder_context_t* ctx) {
         for (int j = 0; j < MAX_TAGS; j++) {
             ctx->nfa[i].tags[j] = NULL;
         }
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
-            ctx->nfa[i].transitions[j] = -1;
-        }
         mta_free(&ctx->nfa[i].multi_targets);
         mta_init(&ctx->nfa[i].multi_targets);
         ctx->nfa[i].transition_count = 0;
@@ -118,9 +122,6 @@ int nfa_construct_add_state_with_category(nfa_builder_context_t* ctx, uint8_t ca
     ctx->nfa[new_state].tag_count = 0;
     for (int j = 0; j < MAX_TAGS; j++) {
         ctx->nfa[new_state].tags[j] = NULL;
-    }
-    for (int j = 0; j < MAX_SYMBOLS; j++) {
-        ctx->nfa[new_state].transitions[j] = -1;
     }
     ctx->nfa[new_state].transition_count = 0;
     mta_init(&ctx->nfa[new_state].multi_targets);

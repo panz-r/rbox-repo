@@ -96,15 +96,6 @@ static std::vector<int> get_successors(const nfa_state_t* nfa, int state_idx, in
         }
     }
     
-    // Also check legacy transitions[] array
-    if (state->transitions[symbol] >= 0) {
-        bool found = false;
-        for (int s : successors) {
-            if (s == state->transitions[symbol]) { found = true; break; }
-        }
-        if (!found) successors.push_back(state->transitions[symbol]);
-    }
-    
     std::sort(successors.begin(), successors.end());
     return successors;
 }
@@ -180,11 +171,6 @@ static bool states_outgoing_match(const nfa_state_t* nfa, int s1, int s2) {
         for (size_t i = 0; i < succ1.size(); i++) {
             if (succ1[i] != succ2[i]) return false;
         }
-    }
-    
-    // Check legacy transitions
-    for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-        if (state1->transitions[sym] != state2->transitions[sym]) return false;
     }
     
     // Check markers (affect capture semantics)
@@ -688,13 +674,6 @@ static void apply_merge(nfa_state_t* nfa, int state_count, bool* dead_states, in
                         targets[i] = state1;
                     }
                 }
-            }
-        }
-        
-        // Redirect legacy transitions
-        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
-            if (state->transitions[sym] == state2) {
-                state->transitions[sym] = state1;
             }
         }
     }

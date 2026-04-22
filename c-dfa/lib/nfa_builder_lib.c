@@ -130,10 +130,6 @@ nfa_graph_t* nfa_builder_finalize(nfa_builder_context_t* ctx,
         dst->pending_marker_count = 0;
         
         for (int j = 0; j < MAX_SYMBOLS; j++) {
-            dst->transitions[j] = src->transitions[j];
-        }
-        
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
             if (src->multi_targets.has_first_target[j]) {
                 dst->multi_targets.first_targets[j] = src->multi_targets.first_targets[j];
                 dst->multi_targets.has_first_target[j] = true;

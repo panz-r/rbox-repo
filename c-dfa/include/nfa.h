@@ -30,7 +30,6 @@ typedef struct {
 typedef struct {
     uint8_t category_mask;
     uint16_t pattern_id;    // Pattern ID for this state (0 = none)
-    int transitions[MAX_SYMBOLS];
     multi_target_array_t multi_targets;
     bool is_eos_target;
     /* Pending markers to attach to outgoing transitions */

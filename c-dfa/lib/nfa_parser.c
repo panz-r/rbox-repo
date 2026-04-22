@@ -682,7 +682,8 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
             ctx->current_fragment.exit_state = merge_state;
             ctx->current_fragment.fragment_entry_state = start_state;
             for (int s = 0; s < MAX_SYMBOLS && s < ctx->alphabet_size; s++) {
-                if (ctx->nfa[start_state].transitions[s] != -1) {
+                if (ctx->nfa[start_state].multi_targets.has_first_target[s] ||
+                    ctx->nfa[start_state].multi_targets.symbol_map[s] != NULL) {
                     ctx->current_fragment.loop_first_char = ctx->alphabet[s].start_char;
                     break;
                 }
@@ -715,7 +716,8 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
         ctx->current_fragment.fragment_entry_state = start_state;
         if (!preserved_is_single_char) {
             for (int s = 0; s < MAX_SYMBOLS && s < ctx->alphabet_size; s++) {
-                if (ctx->nfa[start_state].transitions[s] != -1) {
+                if (ctx->nfa[start_state].multi_targets.has_first_target[s] ||
+                    ctx->nfa[start_state].multi_targets.symbol_map[s] != NULL) {
                     ctx->current_fragment.loop_first_char = ctx->alphabet[s].start_char;
                     break;
                 }
@@ -844,78 +846,13 @@ static void parse_pattern_full(nfa_builder_context_t* ctx, const char* pattern,
         bool is_safe_first = (strchr("()[]*+?|\\'\"<>", pattern[0]) == NULL) &&
                               (pattern[1] != '*' && pattern[1] != '+' && pattern[1] != '?');
 
-        if (first_char_sid != -1 && ctx->nfa[0].transitions[first_char_sid] != -1 &&
-            is_single_char_symbol && is_safe_first) {
-            int targets[MAX_STATES];
-            int target_count = 0;
-            targets[target_count++] = ctx->nfa[0].transitions[first_char_sid];
-            if (mta_is_multi(&ctx->nfa[0].multi_targets, first_char_sid)) {
-                int mta_count = 0;
-                int* mta_targets = mta_get_target_array(&ctx->nfa[0].multi_targets, first_char_sid, &mta_count);
-                if (mta_targets) {
-                    for (int i = 0; i < mta_count; i++) {
-                        if (target_count < MAX_STATES) {
-                            targets[target_count++] = mta_targets[i];
-                        }
-                    }
-                }
-            }
-
-            int best_shared_state = -1;
-            int best_shared_pos = 0;
-
-            for (int t = 0; t < target_count; t++) {
-                int curr_state = targets[t];
-                int curr_pos = 1;
-
-                while (curr_pos < (int)strlen(pattern)) {
-                    int c = pattern[curr_pos];
-
-                    if (strchr("()[]*+?|\\'\"<>", c) != NULL) {
-                        break;
-                    }
-                    if (pattern[curr_pos+1] == '*' || pattern[curr_pos+1] == '+' || pattern[curr_pos+1] == '?') {
-                        break;
-                    }
-
-                    int sid = nfa_alphabet_find_symbol_id((unsigned char)c);
-                    int next_state = -1;
-                    if (sid != -1 && ctx->nfa[curr_state].transitions[sid] != -1) {
-                        next_state = ctx->nfa[curr_state].transitions[sid];
-                    }
-
-                    if (next_state == -1) {
-                        break;
-                    }
-
-                    curr_state = next_state;
-                    curr_pos++;
-                }
-
-                if (curr_pos > best_shared_pos) {
-                    best_shared_pos = curr_pos;
-                    best_shared_state = curr_state;
-                }
-            }
-
-            if (best_shared_pos > 1) {
-                shared_state = best_shared_state;
-                start_state = shared_state;
-                pattern_start_pos = best_shared_pos;
-            } else {
-                start_state = nfa_construct_add_state_with_minimization(ctx, false);
-                nfa_construct_add_transition(ctx, 0, start_state, first_char_sid);
-                pattern_start_pos = 1;
-            }
+        if (is_safe_first && first_char_sid != -1) {
+            start_state = nfa_construct_add_state_with_minimization(ctx, false);
+            nfa_construct_add_transition(ctx, 0, start_state, first_char_sid);
+            pattern_start_pos = 1;
         } else {
-            if (is_safe_first && first_char_sid != -1) {
-                start_state = nfa_construct_add_state_with_minimization(ctx, false);
-                nfa_construct_add_transition(ctx, 0, start_state, first_char_sid);
-                pattern_start_pos = 1;
-            } else {
-                start_state = 0;
-                pattern_start_pos = 0;
-            }
+            start_state = 0;
+            pattern_start_pos = 0;
         }
     } else {
         start_state = 0;
@@ -985,13 +922,10 @@ static void parse_pattern_full(nfa_builder_context_t* ctx, const char* pattern,
         }
 
         // Check if end_state has outgoing transitions (excluding self-loops)
+        // Note: has_first_target is NOT checked here because transitions[] was never set
+        // in the original code - only mta_is_multi was effectively checked
         bool has_outgoing = false;
         for (int s = 0; s < MAX_SYMBOLS; s++) {
-            int t = ctx->nfa[end_state].transitions[s];
-            if (t != -1 && t != end_state) {
-                has_outgoing = true;
-                break;
-            }
             if (mta_is_multi(&ctx->nfa[end_state].multi_targets, s)) {
                 int cnt = 0;
                 int* targets = mta_get_target_array(&ctx->nfa[end_state].multi_targets, s, &cnt);
@@ -1036,7 +970,6 @@ static void parse_pattern_full(nfa_builder_context_t* ctx, const char* pattern,
             ctx->nfa[accepting].is_eos_target = true;
             ctx->nfa[accepting].tag_count = 0;
             for (int j = 0; j < MAX_TAGS; j++) ctx->nfa[accepting].tags[j] = NULL;
-            for (int j = 0; j < MAX_SYMBOLS; j++) ctx->nfa[accepting].transitions[j] = -1;
             mta_init(&ctx->nfa[accepting].multi_targets);
             nfa_construct_add_transition(ctx, eos_target_state, accepting, eos_sid);
         }
