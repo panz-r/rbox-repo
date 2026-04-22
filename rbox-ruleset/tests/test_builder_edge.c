@@ -42,8 +42,8 @@ static void test_builder_lifecycle_and_deny(void)
                    "prepare ABI 0 fails");
     TEST_ASSERT_EQ(landlock_builder_prepare(b, -1, false), -1,
                    "prepare ABI -1 fails");
-    TEST_ASSERT_EQ(landlock_builder_prepare(b, 99, false), -1,
-                   "prepare ABI 99 fails");
+    TEST_ASSERT_EQ(landlock_builder_prepare(b, 99, false), 0,
+                   "prepare ABI 99 succeeds (clamped to LANDLOCK_ABI_MAX)");
     landlock_builder_free(b);
 
     /* Allow with LL_FS_ALL gets masked to ABI v4 */

@@ -529,10 +529,11 @@ int landlock_builder_prepare_with_report(
         landlock_abi_report_t *report)
 {
     if (!b) { errno = EINVAL; return -1; }
-    if (abi_version < 1 || abi_version > LANDLOCK_ABI_MAX) {
+    if (abi_version < 1) {
         errno = EINVAL;
         return -1;
     }
+    if (abi_version > LANDLOCK_ABI_MAX) abi_version = LANDLOCK_ABI_MAX;
 
     b->abi_version = abi_version;
 
