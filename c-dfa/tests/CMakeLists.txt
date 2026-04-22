@@ -63,6 +63,15 @@ target_link_libraries(test_capture_e2e PRIVATE
     readonlybox_dfa_headers
 )
 
+# Parser unit tests
+add_executable(test_parser
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_parser.c
+)
+target_link_libraries(test_parser PRIVATE
+    readonlybox_dfa
+    readonlybox_dfa_headers
+)
+
 # ============================================================================
 # Test Targets
 # ============================================================================
@@ -73,6 +82,7 @@ add_custom_target(tests DEPENDS
     test_eval_only
     regression_test
     test_capture_e2e
+    test_parser
     testgen_test
 )
 
@@ -276,6 +286,13 @@ set_tests_properties(test_capture_e2e PROPERTIES
     WORKING_DIRECTORY "${TEST_WORKING_DIR}"
     TIMEOUT 60
     LABELS "other")
+
+add_test(NAME test_parser
+    COMMAND test_parser)
+set_tests_properties(test_parser PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 30
+    LABELS "parser")
 
 # Shell-based tests
 add_test(NAME test_binary_format

@@ -104,8 +104,10 @@ void nfa_construct_init(nfa_builder_context_t* ctx) {
     }
     ctx->nfa_state_count = 1; // State 0 is initial state
     ctx->fragment_count = 0;
+    ctx->fragment_depth = 0;
     ctx->capture_count = 0;
     ctx->capture_stack_depth = 0;
+    nfa_parser_clear_error(ctx);
 }
 
 int nfa_construct_add_state_with_category(nfa_builder_context_t* ctx, uint8_t category_mask) {
@@ -303,4 +305,91 @@ void nfa_construct_cleanup(nfa_builder_context_t* ctx) {
         }
         ctx->signature_table[i] = NULL;
     }
+}
+
+// ============================================================================
+// NFA inspection helpers
+// ============================================================================
+
+int nfa_get_state_count(const nfa_graph_t* graph) {
+    return graph ? graph->state_count : 0;
+}
+
+int nfa_get_accepting_state_count(const nfa_graph_t* graph) {
+    if (!graph) return 0;
+    int count = 0;
+    for (int i = 0; i < graph->state_count; i++) {
+        if (graph->states[i].is_eos_target || graph->states[i].category_mask != 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+bool nfa_state_is_accepting(const nfa_graph_t* graph, int state_idx) {
+    if (!graph || state_idx < 0 || state_idx >= graph->state_count) {
+        return false;
+    }
+    return graph->states[state_idx].is_eos_target || graph->states[state_idx].category_mask != 0;
+}
+
+int nfa_get_outgoing_symbols(const nfa_graph_t* graph, int state_idx, int* symbols_out, int max_symbols) {
+    if (!graph || state_idx < 0 || state_idx >= graph->state_count || !symbols_out) {
+        return 0;
+    }
+    
+    int count = 0;
+    nfa_state_t* state = &graph->states[state_idx];
+    
+    for (int sym = 0; sym < MAX_SYMBOLS && count < max_symbols; sym++) {
+        if (state->multi_targets.has_first_target[sym]) {
+            symbols_out[count++] = sym;
+        } else if (state->multi_targets.symbol_map[sym] != NULL) {
+            symbols_out[count++] = sym;
+        }
+    }
+    
+    return count;
+}
+
+bool nfa_has_transition(const nfa_graph_t* graph, int from_state, int symbol, int to_state) {
+    if (!graph || from_state < 0 || from_state >= graph->state_count) {
+        return false;
+    }
+    
+    nfa_state_t* state = &graph->states[from_state];
+    
+    if (state->multi_targets.has_first_target[symbol]) {
+        return state->multi_targets.first_targets[symbol] == to_state;
+    }
+    
+    mta_entry_t* entry = state->multi_targets.symbol_map[symbol];
+    if (entry) {
+        for (int i = 0; i < entry->target_count; i++) {
+            if (entry->targets[i] == to_state) {
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+int nfa_count_transitions(const nfa_graph_t* graph) {
+    if (!graph) return 0;
+    
+    int count = 0;
+    for (int s = 0; s < graph->state_count; s++) {
+        for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
+            if (graph->states[s].multi_targets.has_first_target[sym]) {
+                count++;
+            } else {
+                mta_entry_t* entry = graph->states[s].multi_targets.symbol_map[sym];
+                if (entry) {
+                    count += entry->target_count;
+                }
+            }
+        }
+    }
+    return count;
 }

@@ -14,6 +14,7 @@
 #include <string.h>
 #include <ctype.h>
 #include "../include/compat_strl.h"
+#include <stdarg.h>
 
 // ============================================================================
 // Debug/Verbose helpers (use context flags instead of globals)
@@ -64,6 +65,40 @@ static void reset_pattern_state(nfa_builder_context_t* ctx) {
     ctx->pending_capture_defer_id = -1;
     ctx->last_element_sid = -1;
     ctx->prev_frag_exit = -1;
+    nfa_parser_clear_error(ctx);
+}
+
+// ============================================================================
+// Error handling
+// ============================================================================
+
+void nfa_parser_set_error(nfa_builder_context_t* ctx, parse_error_type_t type,
+                          int position, const char* fmt, ...) {
+    ctx->last_error.has_error = true;
+    ctx->last_error.type = type;
+    ctx->last_error.position = position;
+    
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(ctx->last_error.message, sizeof(ctx->last_error.message), fmt, args);
+    va_end(args);
+    
+    ERROR("%s", ctx->last_error.message);
+}
+
+void nfa_parser_clear_error(nfa_builder_context_t* ctx) {
+    ctx->last_error.has_error = false;
+    ctx->last_error.type = PARSE_ERROR_NONE;
+    ctx->last_error.position = -1;
+    ctx->last_error.message[0] = '\0';
+}
+
+bool nfa_parser_has_error(const nfa_builder_context_t* ctx) {
+    return ctx->last_error.has_error;
+}
+
+const parse_error_info_t* nfa_parser_get_error(const nfa_builder_context_t* ctx) {
+    return &ctx->last_error;
 }
 
 // ============================================================================
@@ -96,6 +131,12 @@ static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const ch
     };
 
     if (pattern[*pos] != '(' || pattern[*pos + 1] != '(') {
+        result.exit_state = start_state;
+        return result;
+    }
+
+    if (ctx->fragment_depth >= MAX_FRAGMENT_DEPTH) {
+        WARNING("Maximum fragment nesting depth (%d) exceeded", MAX_FRAGMENT_DEPTH);
         result.exit_state = start_state;
         return result;
     }
@@ -138,7 +179,9 @@ static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const ch
     bool saved_parsing_fragment = ctx->parsing_fragment_value;
     ctx->parsing_fragment_value = true;
 
+    ctx->fragment_depth++;
     int frag_end = parse_rdp_alternation_internal(ctx, frag_value, &frag_pos, start_state);
+    ctx->fragment_depth--;
 
     ctx->parsing_fragment_value = saved_parsing_fragment;
 
@@ -177,7 +220,7 @@ static int parse_rdp_class(ATTR_UNUSED nfa_builder_context_t* ctx, ATTR_UNUSED c
 
 static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state) {
     if (pattern == NULL || *pos < 0 || (size_t)*pos >= strlen(pattern)) {
-        ERROR("Unexpected end of pattern at position %d", *pos);
+        nfa_parser_set_error(ctx, PARSE_ERROR_SYNTAX, *pos, "Unexpected end of pattern at position %d", *pos);
         return -1;
     }
 
@@ -472,7 +515,17 @@ static bool quantifier_is_valid(const char* pattern, int quant_pos, ATTR_UNUSED 
     if (quotes % 2 == 1) return false;  // Inside quotes - treat as literal, reject as quantifier
 
     int p = quant_pos - 1;
-    while (p >= 0 && (pattern[p] == ' ' || pattern[p] == '\t')) p--;
+    while (p >= 0) {
+        if (pattern[p] == '\\' && p > 0) {
+            p -= 2;  // Skip backslash and escaped character
+            continue;
+        }
+        if (pattern[p] == ' ' || pattern[p] == '\t') {
+            p--;
+            continue;
+        }
+        break;
+    }
     if (p < 0) return false;
     return pattern[p] == ')';
 }
@@ -498,8 +551,8 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
                 break;
             }
             if (!quantifier_is_valid(pattern, *pos, ctx)) {
-                ERROR("'*' quantifier must follow ')' - use (expr)* for zero-or-more");
-                ERROR("  Example: echo (files)* NOT echo * (use \\* for literal asterisk)");
+                nfa_parser_set_error(ctx, PARSE_ERROR_QUANTIFIER_POSITION, *pos,
+                    "'*' quantifier must follow ')' - use (expr)* for zero-or-more");
                 return -1;
             }
             (*pos)++;
@@ -524,7 +577,8 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
 
         } else if (op == '+') {
             if (!quantifier_is_valid(pattern, *pos, ctx)) {
-                ERROR("'+' quantifier must follow ')' - use (expr)+ for one-or-more");
+                nfa_parser_set_error(ctx, PARSE_ERROR_QUANTIFIER_POSITION, *pos,
+                    "'+' quantifier must follow ')' - use (expr)+ for one-or-more");
                 return -1;
             }
             (*pos)++;
@@ -544,7 +598,8 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
 
         } else if (op == '?') {
             if (!quantifier_is_valid(pattern, *pos, ctx)) {
-                ERROR("'?' quantifier must follow ')' - use (expr)? for optional");
+                nfa_parser_set_error(ctx, PARSE_ERROR_QUANTIFIER_POSITION, *pos,
+                    "'?' quantifier must follow ')' - use (expr)? for optional");
                 return -1;
             }
             (*pos)++;
@@ -580,8 +635,9 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
 
 static int parse_rdp_sequence(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state) {
     int current = start_state;
+    int pattern_len = strlen(pattern);
 
-    while (*pos < (int)strlen(pattern) && pattern[*pos] != ')' && pattern[*pos] != '|') {
+    while (*pos < pattern_len && pattern[*pos] != ')' && pattern[*pos] != '|') {
         char next_char = pattern[*pos];
         if (next_char == '+' || next_char == '*' || next_char == '?') {
             break;
@@ -698,6 +754,7 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
         }
 
         int postfix_result = parse_rdp_postfix(ctx, pattern, pos, merge_state);
+        if (postfix_result < 0) return -1;
         nfa_construct_finalize_state(ctx, merge_state);
         return postfix_result;
     }
@@ -743,14 +800,15 @@ int nfa_parser_rdp_alternation(nfa_builder_context_t* ctx, const char* pattern, 
 // Pattern input validation
 // ============================================================================
 
-static bool validate_pattern_input_local(const char* line, size_t len) {
+static bool validate_pattern_input_local(nfa_builder_context_t* ctx, const char* line, size_t len) {
     if (line == NULL || len == 0) {
+        nfa_parser_set_error(ctx, PARSE_ERROR_SYNTAX, 0, "Pattern is empty or null");
         return false;
     }
 
     for (size_t i = 0; i < len; i++) {
         if (line[i] == '\0') {
-            ERROR("Pattern contains null byte at position %zu", i);
+            nfa_parser_set_error(ctx, PARSE_ERROR_SYNTAX, (int)i, "Pattern contains null byte at position %zu", i);
             return false;
         }
     }
@@ -758,7 +816,7 @@ static bool validate_pattern_input_local(const char* line, size_t len) {
     for (size_t i = 0; i < len; i++) {
         unsigned char c = (unsigned char)line[i];
         if (c == 0xFF) {
-            ERROR("Pattern contains invalid byte 0xFF at position %zu", i);
+            nfa_parser_set_error(ctx, PARSE_ERROR_SYNTAX, (int)i, "Pattern contains invalid byte 0xFF at position %zu", i);
             return false;
         }
     }
@@ -766,7 +824,7 @@ static bool validate_pattern_input_local(const char* line, size_t len) {
     if (len == 1) {
         char c = line[0];
         if (c == '$' || c == '*' || c == '[' || c == ']' || c == '+' || c == '?') {
-            ERROR("Invalid single-character pattern: '%c' (0x%02x) - requires proper context", c, (unsigned char)c);
+            nfa_parser_set_error(ctx, PARSE_ERROR_SYNTAX, 0, "Invalid single-character pattern: '%c' (0x%02x) - requires proper context", c, (unsigned char)c);
             return false;
         }
     }
@@ -784,19 +842,19 @@ static bool validate_pattern_input_local(const char* line, size_t len) {
     }
 
     if (bracket_depth > 0) {
-        ERROR("Unclosed '[' in pattern - not supported");
+        nfa_parser_set_error(ctx, PARSE_ERROR_UNCLOSED_BRACKET, 0, "Unclosed '[' in pattern - not supported");
         return false;
     }
     if (bracket_depth < 0) {
-        ERROR("Unmatched ']' in pattern");
+        nfa_parser_set_error(ctx, PARSE_ERROR_UNMATCHED_BRACKET, 0, "Unmatched ']' in pattern");
         return false;
     }
     if (paren_depth > 0) {
-        ERROR("Unclosed '(' in pattern");
+        nfa_parser_set_error(ctx, PARSE_ERROR_UNCLOSED_PAREN, 0, "Unclosed '(' in pattern");
         return false;
     }
     if (paren_depth < 0) {
-        ERROR("Unmatched ')' in pattern");
+        nfa_parser_set_error(ctx, PARSE_ERROR_UNMATCHED_PAREN, 0, "Unmatched ')' in pattern");
         return false;
     }
 
@@ -833,15 +891,9 @@ static void parse_pattern_full(nfa_builder_context_t* ctx, const char* pattern,
     }
 
     if (ctx->nfa_state_count > 1 && pattern[0] != '\0') {
-        int shared_state = 0;
-
         if (first_char_sid < 0 || first_char_sid >= MAX_SYMBOLS) {
             first_char_sid = -1;
         }
-
-        bool is_single_char_symbol = (first_char_sid != -1 &&
-                                      first_char_sid < ctx->alphabet_size &&
-                                      ctx->alphabet[first_char_sid].start_char == ctx->alphabet[first_char_sid].end_char);
 
         bool is_safe_first = (strchr("()[]*+?|\\'\"<>", pattern[0]) == NULL) &&
                               (pattern[1] != '*' && pattern[1] != '+' && pattern[1] != '?');
@@ -859,6 +911,11 @@ static void parse_pattern_full(nfa_builder_context_t* ctx, const char* pattern,
     }
 
     // Parse the remaining pattern
+    size_t remaining_len = strlen(pattern + pattern_start_pos);
+    if (remaining_len >= 512) {
+        nfa_parser_set_error(ctx, PARSE_ERROR_LENGTH, 0, "Pattern too long (max 511 chars)");
+        return;
+    }
     char remaining[512];
     strncpy(remaining, pattern + pattern_start_pos, sizeof(remaining) - 1);
     remaining[sizeof(remaining) - 1] = '\0';
@@ -874,7 +931,7 @@ static void parse_pattern_full(nfa_builder_context_t* ctx, const char* pattern,
     // Determine acceptance category
     int acceptance_cat = nfa_category_lookup(ctx, category, subcategory, operations);
     if (acceptance_cat < 0) {
-        ERROR("Category '%s' used in pattern but not defined in ACCEPTANCE_MAPPING", category);
+        nfa_parser_set_error(ctx, PARSE_ERROR_CATEGORY, 0, "Category '%s' used in pattern but not defined in ACCEPTANCE_MAPPING", category);
     }
     uint8_t cat_mask = (1 << acceptance_cat);
     ctx->current_pattern_cat_mask = cat_mask;
@@ -922,8 +979,8 @@ static void parse_pattern_full(nfa_builder_context_t* ctx, const char* pattern,
         }
 
         // Check if end_state has outgoing transitions (excluding self-loops)
-        // Note: has_first_target is NOT checked here because transitions[] was never set
-        // in the original code - only mta_is_multi was effectively checked
+        // Note: Only mta_is_multi is checked because transitions[] was never set in NFA builder.
+        // The has_first_target fast-path is not checked to maintain original behavior.
         bool has_outgoing = false;
         for (int s = 0; s < MAX_SYMBOLS; s++) {
             if (mta_is_multi(&ctx->nfa[end_state].multi_targets, s)) {
@@ -1013,8 +1070,7 @@ static void parse_advanced_pattern(nfa_builder_context_t* ctx, const char* line)
 
     // Validate input
     size_t line_len = strlen(line);
-    if (!validate_pattern_input_local(line, line_len)) {
-        ERROR("Invalid pattern input: %s", line);
+    if (!validate_pattern_input_local(ctx, line, line_len)) {
         return;
     }
 
@@ -1085,7 +1141,7 @@ static void parse_advanced_pattern(nfa_builder_context_t* ctx, const char* line)
                 const char* value_start = name_end + 1;
                 while (*value_start == ' ' || *value_start == '\t') value_start++;
                 if (*value_start == '\0' || *value_start == '\n' || *value_start == '#') {
-                    ERROR("Fragment '%s' has empty value", ctx->fragments[ctx->fragment_count].name);
+                    nfa_parser_set_error(ctx, PARSE_ERROR_FRAGMENT, 0, "Fragment '%s' has empty value", ctx->fragments[ctx->fragment_count].name);
                     ctx->has_fragment_error = true;
                     return;
                 }
@@ -1093,7 +1149,7 @@ static void parse_advanced_pattern(nfa_builder_context_t* ctx, const char* line)
                 // Check for duplicate
                 for (int i = 0; i < ctx->fragment_count; i++) {
                     if (strcmp(ctx->fragments[i].name, ctx->fragments[ctx->fragment_count].name) == 0) {
-                        ERROR("Duplicate fragment name '%s'", ctx->fragments[ctx->fragment_count].name);
+                        nfa_parser_set_error(ctx, PARSE_ERROR_FRAGMENT, 0, "Duplicate fragment name '%s'", ctx->fragments[ctx->fragment_count].name);
                         ctx->has_fragment_error = true;
                         return;
                     }

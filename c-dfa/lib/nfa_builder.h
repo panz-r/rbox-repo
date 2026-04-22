@@ -13,6 +13,7 @@
 #include "../include/nfa.h"
 #include "../include/dfa_types.h"
 #include "../include/multi_target_array.h"
+#include "../include/dfa_errors.h"
 #include "nfa_preminimize.h"
 
 // Category IDs (generic, pattern-defined)
@@ -32,6 +33,7 @@ enum {
 #define MAX_FRAGMENTS     100
 #define MAX_FRAGMENT_NAME  64
 #define MAX_FRAGMENT_VALUE 512
+#define MAX_FRAGMENT_DEPTH 32
 
 // Capture constants
 #define MAX_CAPTURE_NAME 32
@@ -55,6 +57,14 @@ typedef struct {
     int symbol_id;
     bool is_special;
 } char_class_t;
+
+// Parse error info
+typedef struct {
+    bool has_error;
+    parse_error_type_t type;
+    int position;
+    char message[256];
+} parse_error_info_t;
 
 // Extended NFA state for nfa_builder - includes fields not needed for DFA construction
 typedef struct {
@@ -187,6 +197,8 @@ typedef struct {
     bool has_pending_quantifier;
     bool current_is_in_group;
     bool parsing_fragment_value;
+    int fragment_depth;
+    parse_error_info_t last_error;
 
     // Category system
     char dynamic_category_names[CAT_COUNT][MAX_CATEGORY_NAME];
@@ -256,6 +268,14 @@ void nfa_construct_add_transition(nfa_builder_context_t* ctx, int from, int to, 
 void nfa_construct_write_file(nfa_builder_context_t* ctx, const char* filename);
 void nfa_construct_cleanup(nfa_builder_context_t* ctx);
 
+// --- NFA inspection helpers ---
+int nfa_get_state_count(const nfa_graph_t* graph);
+int nfa_get_accepting_state_count(const nfa_graph_t* graph);
+bool nfa_state_is_accepting(const nfa_graph_t* graph, int state_idx);
+int nfa_get_outgoing_symbols(const nfa_graph_t* graph, int state_idx, int* symbols_out, int max_symbols);
+bool nfa_has_transition(const nfa_graph_t* graph, int from_state, int symbol, int to_state);
+int nfa_count_transitions(const nfa_graph_t* graph);
+
 // --- nfa_capture.c ---
 int nfa_capture_get_id(nfa_builder_context_t* ctx, const char* name);
 const char* nfa_capture_get_name(nfa_builder_context_t* ctx, int id);
@@ -287,5 +307,12 @@ void nfa_category_parse_mapping(nfa_builder_context_t* ctx, const char* line);
 
 // --- Legacy compatibility (for nfa2dfa.c which uses find_symbol_id directly) ---
 int find_symbol_id(unsigned char c);
+
+// --- Parser error handling ---
+void nfa_parser_set_error(nfa_builder_context_t* ctx, parse_error_type_t type,
+                         int position, const char* fmt, ...);
+void nfa_parser_clear_error(nfa_builder_context_t* ctx);
+bool nfa_parser_has_error(const nfa_builder_context_t* ctx);
+const parse_error_info_t* nfa_parser_get_error(const nfa_builder_context_t* ctx);
 
 #endif // NFA_BUILDER_H
