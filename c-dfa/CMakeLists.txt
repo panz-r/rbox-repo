@@ -103,9 +103,12 @@ include(CTest)
 # Full Test Suite (equivalent to old `make test`)
 # ============================================================================
 
-# Run all test suites using ctest
+# Run all test suites using ctest with JUnit XML output for summary
+find_program(PYTHON python3 REQUIRED)
+
 add_custom_target(test-full
-    COMMAND ctest --parallel
+    COMMAND ctest --parallel --output-junit ${CMAKE_BINARY_DIR}/test-results.xml
+        --test-output-size-passed 0 --test-output-size-failed 0
     DEPENDS
         dfa_test
         test_minimize_integrity
@@ -113,6 +116,14 @@ add_custom_target(test-full
         test_eval_only
         regression_test
         test_capture_e2e
+)
+
+# Print summary after test-full runs
+add_custom_command(TARGET test-full
+    POST_BUILD
+    COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tests/scripts/parse_junit.py
+        ${CMAKE_BINARY_DIR}/test-results.xml
+    COMMENT "Parsing test results..."
 )
 
 # ============================================================================
