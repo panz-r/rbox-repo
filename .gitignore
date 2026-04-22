@@ -1,4 +1,5 @@
 # generated files
+merged-*.txt
 rbox-preload/readonlybox_dfa.c 
 .cache/
 .qwen/
@@ -28,3 +29,5 @@ rbox-ptrace/.cache/
 telemetry-id
 # compile_commands.json
 compile_commands.json
+# opencode
+.opencode/package-lock.json
