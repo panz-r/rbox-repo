@@ -8,6 +8,7 @@
 
 #include "../lib/nfa_builder.h"
 #include "../include/nfa.h"
+#include "../include/nfa_dsl.h"
 #include "../include/multi_target_array.h"
 #include "../include/cdfa_defines.h"
 #include <stdio.h>
@@ -182,10 +183,19 @@ static bool parse_fails_with_error(const char* pattern_line, parse_error_type_t 
 static bool test_literal_a(void) {
     nfa_graph_t* g = parse_pattern("[safe] a");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int real_start = follow_epsilon_chain(g, 0);
-    int target = find_transition_target(g, real_start, 'a');
-    ASSERT_TRUE(target >= 0);
+
+    /* DSL structural verification */
+    const char* expected =
+        "version: 1\n"
+        "0: start\n"
+        "0 EPS -> 1\n"
+        "1:\n"
+        "1 EPS -> 2\n"
+        "2:\n"
+        "2 'a' -> 3\n"
+        "3: accept category=0x01 pattern=1 eos\n";
+
+    ASSERT_NFA_EQ_STR(g, expected, "literal 'a'");
     nfa_graph_free(g);
     return true;
 }
@@ -193,9 +203,30 @@ static bool test_literal_a(void) {
 static bool test_literal_abc(void) {
     nfa_graph_t* g = parse_pattern("[safe] abc");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 4);
-    int s0 = follow_epsilon_chain(g, 0);
-    ASSERT_TRUE(find_transition_target(g, s0, 'a') >= 0);
+
+    /* DSL structural verification: NFA for 'abc' should have:
+     * - start state with EPS to first char state
+     * - 'a' -> 'b' -> 'c' chain
+     * - accept state with category=0x01 (safe) and eos marker */
+    const char* expected =
+        "version: 1\n"
+        "0: start\n"
+        "0 EPS -> 1\n"
+        "1:\n"
+        "1 EPS -> 2\n"
+        "2:\n"
+        "2 'a' -> 3\n"
+        "3:\n"
+        "3 EPS -> 4\n"
+        "4:\n"
+        "4 'b' -> 5\n"
+        "5:\n"
+        "5 EPS -> 6\n"
+        "6:\n"
+        "6 'c' -> 7\n"
+        "7: accept category=0x01 pattern=1 eos\n";
+
+    ASSERT_NFA_EQ_STR(g, expected, "literal 'abc'");
     nfa_graph_free(g);
     return true;
 }
@@ -288,9 +319,13 @@ static bool test_too_long_pattern(void) {
 static bool test_simple_group(void) {
     nfa_graph_t* g = parse_pattern("[safe] (a)");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    ASSERT_TRUE(has_transition_on(g, s0, 'a'));
+
+    /* DSL structural verification: grouping doesn't change structure */
+    char* dsl = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl != NULL);
+    ASSERT_TRUE(strstr(dsl, "'a'") != NULL);  /* Has 'a' transition */
+    free(dsl);
+
     nfa_graph_free(g);
     return true;
 }
@@ -429,11 +464,15 @@ static bool test_empty_group_question(void) {
 static bool test_alternation_two(void) {
     nfa_graph_t* g = parse_pattern("[safe] (a|b)");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 3);
-    int s0 = follow_epsilon_chain(g, 0);
-    int ta = find_transition_target(g, s0, 'a');
-    int tb = find_transition_target(g, s0, 'b');
-    ASSERT_TRUE(ta >= 0 || tb >= 0);
+
+    /* DSL verification: alternation has both branches */
+    char* dsl = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl != NULL);
+    ASSERT_TRUE(strstr(dsl, "'a'") != NULL);
+    ASSERT_TRUE(strstr(dsl, "'b'") != NULL);
+    ASSERT_TRUE(strstr(dsl, "EPS") != NULL);  /* Has epsilon transitions */
+    free(dsl);
+
     nfa_graph_free(g);
     return true;
 }
@@ -441,7 +480,15 @@ static bool test_alternation_two(void) {
 static bool test_alternation_three(void) {
     nfa_graph_t* g = parse_pattern("[safe] (a|b|c)");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 4);
+
+    /* DSL verification: alternation has all three paths */
+    char* dsl = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl != NULL);
+    ASSERT_TRUE(strstr(dsl, "'a'") != NULL);
+    ASSERT_TRUE(strstr(dsl, "'b'") != NULL);
+    ASSERT_TRUE(strstr(dsl, "'c'") != NULL);
+    free(dsl);
+
     nfa_graph_free(g);
     return true;
 }
@@ -449,7 +496,13 @@ static bool test_alternation_three(void) {
 static bool test_alternation_empty_first(void) {
     nfa_graph_t* g = parse_pattern("[safe] (|a)");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
+
+    /* DSL verification: empty first means epsilon from start can skip to accept */
+    char* dsl = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl != NULL);
+    ASSERT_TRUE(strstr(dsl, "'a'") != NULL);
+    free(dsl);
+
     nfa_graph_free(g);
     return true;
 }
@@ -457,7 +510,13 @@ static bool test_alternation_empty_first(void) {
 static bool test_alternation_empty_last(void) {
     nfa_graph_t* g = parse_pattern("[safe] (a|)");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
+
+    /* DSL verification: empty last is similar */
+    char* dsl = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl != NULL);
+    ASSERT_TRUE(strstr(dsl, "'a'") != NULL);
+    free(dsl);
+
     nfa_graph_free(g);
     return true;
 }
@@ -465,7 +524,15 @@ static bool test_alternation_empty_last(void) {
 static bool test_nested_alternation(void) {
     nfa_graph_t* g = parse_pattern("[safe] (a|(b|c))");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 4);
+
+    /* DSL verification: nested alternation has 'a', 'b', 'c' paths */
+    char* dsl = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl != NULL);
+    ASSERT_TRUE(strstr(dsl, "'a'") != NULL);
+    ASSERT_TRUE(strstr(dsl, "'b'") != NULL);
+    ASSERT_TRUE(strstr(dsl, "'c'") != NULL);
+    free(dsl);
+
     nfa_graph_free(g);
     return true;
 }
