@@ -2216,7 +2216,7 @@ static void run_sat_optimization_tests(void) {
 
 static void build_dfa_with_config(const char* patterns_file, const char* dfa_file,
                                   dfa_minimize_algo_t min_algo, bool use_sat_compress,
-                                  bool enable_sat_premin, bool preminimize, bool compress) {
+                                  bool enable_sat_premin, bool compress) {
     char patterns_path[512];
     resolve_patterns_path(patterns_file, patterns_path, sizeof(patterns_path));
 
@@ -2297,9 +2297,9 @@ static void run_minimization_algo_comparison_tests(void) {
     const char* brzozowski_dfa = "build_test/brzozowski.dfa";
 
     // Build same pattern file with three different algorithms
-    build_dfa_with_config(patterns_file, moore_dfa, DFA_MIN_MOORE, false, false, true, true);
-    build_dfa_with_config(patterns_file, hopcroft_dfa, DFA_MIN_HOPCROFT, false, false, true, true);
-    build_dfa_with_config(patterns_file, brzozowski_dfa, DFA_MIN_BRZOZOWSKI, false, false, true, true);
+    build_dfa_with_config(patterns_file, moore_dfa, DFA_MIN_MOORE, false, false, true);
+    build_dfa_with_config(patterns_file, hopcroft_dfa, DFA_MIN_HOPCROFT, false, false, true);
+    build_dfa_with_config(patterns_file, brzozowski_dfa, DFA_MIN_BRZOZOWSKI, false, false, true);
 
     // Track files for cleanup
     track_dfa_file(moore_dfa);

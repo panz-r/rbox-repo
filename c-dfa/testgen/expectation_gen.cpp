@@ -28,7 +28,7 @@ using namespace std;std::string expectationTypeToString(ExpectationType type) {
 }
 
 bool hasFragment(const std::string& pattern) {
-    return pattern.find("((") != std::string::npos;
+    return pattern.find("[[") != std::string::npos;
 }
 
 bool hasQuantifier(const std::string& pattern, char quant) {
@@ -104,13 +104,13 @@ std::string extractCharClass(const std::string& pattern) {
 std::map<std::string, std::string> extractFragmentDefs(const std::string& pattern) {
     std::map<std::string, std::string> frags;
     size_t pos = 0;
-    while ((pos = pattern.find("((", pos)) != std::string::npos) {
+    while ((pos = pattern.find("[[", pos)) != std::string::npos) {
         size_t name_start = pos + 2;
-        size_t name_end = pattern.find("))", name_start);
+        size_t name_end = pattern.find("]]", name_start);
         if (name_end != std::string::npos) {
             std::string name = pattern.substr(name_start, name_end - name_start);
             size_t def_start = name_end + 2;
-            size_t def_end = pattern.find("))", def_start);
+            size_t def_end = pattern.find("]]", def_start);
             if (def_end != std::string::npos) {
                 std::string def = pattern.substr(def_start, def_end - def_start);
                 frags[name] = def;
@@ -141,7 +141,7 @@ std::vector<Expectation> generateFragmentExpectations(const std::string& pattern
         exp.meta["fragment_name"] = frag_name;
         exp.meta["fragment_definition"] = frag_def;
         
-        std::string frag_ref = "((" + frag_name + "))";
+        std::string frag_ref = "[[" + frag_name + "]]";
         if (pattern.find(frag_ref) != std::string::npos) {
             exp.meta["pattern_has_reference"] = "yes";
         }

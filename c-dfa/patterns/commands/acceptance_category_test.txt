@@ -23,7 +23,7 @@
 #   [fragment:uppercase] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
 #   [fragment:digit] 0|1|2|3|4|5|6|7|8|9
 #
-# Reference with: ((lowercase))+ or ((digit))* etc.
+# Reference with: [[lowercase]]+ or [[digit]]* etc.
 
 # Define fragments for quantifier test patterns
 [fragment:b] b
@@ -102,10 +102,10 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 # The critical bug case - different acceptance categories MUST not interfere
 # ============================================
 
-[safe::readonly::quant1] a((b))+
-[caution::network::quant2] abc((b))+
-[modifying::filesystem::quant3] ab((c))+
-[dangerous::destructive] abcd((d))+
+[safe::readonly::quant1] a[[b]]+
+[caution::network::quant2] abc[[b]]+
+[modifying::filesystem::quant3] ab[[c]]+
+[dangerous::destructive] abcd[[d]]+
 
 # ============================================
 # GROUP 5: Complex patterns with multiple shared components
@@ -135,10 +135,10 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 # Test that wildcard behavior is category-isolated
 # ============================================
 
-[safe::readonly::wild1] git show ((safe::filename))*
-[caution::network::wild2] git diff ((safe::filename))*
-[modifying::filesystem::wild3] git add ((safe::filename))*
-[dangerous::destructive::wild4] git rm ((safe::filename))*
+[safe::readonly::wild1] git show [[safe::filename]]*
+[caution::network::wild2] git diff [[safe::filename]]*
+[modifying::filesystem::wild3] git add [[safe::filename]]*
+[dangerous::destructive::wild4] git rm [[safe::filename]]*
 
 # ============================================
 # GROUP 8: Edge case - empty/short patterns vs longer patterns
@@ -157,10 +157,10 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 # Note: Using fragments instead of character ranges
 # ============================================
 
-[safe::readonly::class1] ls ((lowercase))*
-[caution::network::class2] curl ((alphanum))*
-[modifying::filesystem::class3] touch ((uppercase))*
-[dangerous::destructive::class4] rm -rf ((lowercase))*
+[safe::readonly::class1] ls [[lowercase]]*
+[caution::network::class2] curl [[alphanum]]*
+[modifying::filesystem::class3] touch [[uppercase]]*
+[dangerous::destructive::class4] rm -rf [[lowercase]]*
 
 # ============================================
 # GROUP 10: The critical bug reproduction cases
@@ -168,8 +168,8 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 # ============================================
 
 # Case 10.1: Single-char fragment quantifiers (THE BUG)
-[safe::readonly::critical1] a((b))+
-[caution::network::critical2] abc((b))+
+[safe::readonly::critical1] a[[b]]+
+[caution::network::critical2] abc[[b]]+
 
 # Case 10.2: Prefix sharing with different endings
 [safe::readonly::critical3] git log
@@ -191,17 +191,17 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 # ============================================
 
 # Nested + quantifiers with shared prefix
-[safe::readonly::nested_quant1] x((y))+((z))+
-[caution::network::nested_quant2] xy((z))+((z))+
+[safe::readonly::nested_quant1] x[[y]]+[[z]]+
+[caution::network::nested_quant2] xy[[z]]+[[z]]+
 
 # Triple nesting with shared prefixes
-[safe::readonly::triple_nest1] a((b))+((c))+
-[caution::network::triple_nest2] ab((c))+((d))+
+[safe::readonly::triple_nest1] a[[b]]+[[c]]+
+[caution::network::triple_nest2] ab[[c]]+[[d]]+
 
 # Quantifier inside fragment, fragment used with quantifier
 [fragment:q] q
-[safe::readonly::frag_quant1] p((q))+((r))+
-[caution::network::frag_quant2] pq((r))+((s))+
+[safe::readonly::frag_quant1] p[[q]]+[[r]]+
+[caution::network::frag_quant2] pq[[r]]+[[s]]+
 
 # ============================================
 # GROUP 12: ALTERNATIVES (a|b) WITH SHARED PREFIXES
@@ -230,18 +230,18 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 [fragment:overlap_b] a|b
 
 # Overlapping character classes in different categories - using fragments
-[safe::readonly::overlap1] cmd ((overlap_a))*
-[caution::network::overlap2] cmd ((overlap_b))*
+[safe::readonly::overlap1] cmd [[overlap_a]]*
+[caution::network::overlap2] cmd [[overlap_b]]*
 
 # Nested character classes - using fragments
 [fragment:alpha_frag] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
 [fragment:alnum_frag] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
-[safe::readonly::class_nest1] cmd ((alpha_frag))+
-[caution::network::class_nest2] cmd ((alnum_frag))+
+[safe::readonly::class_nest1] cmd [[alpha_frag]]+
+[caution::network::class_nest2] cmd [[alnum_frag]]+
 
 # Character range edge cases (using fragments instead of ranges)
-[safe::readonly::range1] a((digit))b((digit))c
-[caution::network::range2] a((digit))b((digit))c
+[safe::readonly::range1] a[[digit]]b[[digit]]c
+[caution::network::range2] a[[digit]]b[[digit]]c
 
 # ============================================
 # GROUP 14: FRAGMENT CHAINS
@@ -257,8 +257,8 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 [caution::network::chain2] cmd sub3
 
 # Fragments with quantifiers
-[safe::readonly::frag_chain1] ((git)) ((status))+
-[caution::network::frag_chain2] ((git)) ((push))+
+[safe::readonly::frag_chain1] [[git]] [[status]]+
+[caution::network::frag_chain2] [[git]] [[push]]+
 
 # ============================================
 # GROUP 15: ZERO-LENGTH MATCH EDGE CASES
@@ -271,7 +271,7 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 
 # Fragment that matches empty (if supported)
 # [fragment:empty]
-# [safe::readonly::empty_frag] (empty)((status))+
+# [safe::readonly::empty_frag] (empty)[[status]]+
 
 # ============================================
 # GROUP 16: QUANTIFIER INTERACTION BUGS
@@ -279,18 +279,18 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 # ============================================
 
 # * followed by + (edge case)
-[safe::readonly::star_plus1] a((b))*((c))+
-[caution::network::star_plus2] ab((c))*((d))+
+[safe::readonly::star_plus1] a[[b]]*[[c]]+
+[caution::network::star_plus2] ab[[c]]*[[d]]+
 
 
 # + followed by * (should be same as + for same pattern)
-[safe::readonly::plus_star1] a((b))+((c))*
-[caution::network::plus_star2] ab((c))+((d))*
+[safe::readonly::plus_star1] a[[b]]+[[c]]*
+[caution::network::plus_star2] ab[[c]]+[[d]]*
 
 # Multiple different quantifiers on same base
-[safe::readonly::multi_quant1] x((y))+
-[caution::network::multi_quant2] x((y))*
-[modifying::filesystem::multi_quant3] x((y))
+[safe::readonly::multi_quant1] x[[y]]+
+[caution::network::multi_quant2] x[[y]]*
+[modifying::filesystem::multi_quant3] x[[y]]
 
 # ============================================
 # GROUP 17: DEEP STATE SHARING STRESS TEST
@@ -336,7 +336,7 @@ ACCEPTANCE_MAPPING [safe::readonly::critical5] -> 0
 [modifying::filesystem::same3] specific_command_name
 
 # Same pattern with quantifiers in different categories
-[safe::readonly::same_quant1] token((value))+
-[caution::network::same_quant2] token((value))+
-[modifying::filesystem::same_quant3] token((value))+
+[safe::readonly::same_quant1] token[[value]]+
+[caution::network::same_quant2] token[[value]]+
+[modifying::filesystem::same_quant3] token[[value]]+
 

@@ -371,7 +371,7 @@ static bool test_nested_quantifiers(void) {
         "0: safe\n"
         "\n"
         "[fragment:x] a\n"
-        "[safe] ((x))*";
+        "[safe] [[x]]*";
     
     nfa_builder_context_t* ctx = nfa_builder_context_create();
     ASSERT_TRUE(ctx != NULL);
@@ -568,7 +568,7 @@ static bool test_fragment_simple(void) {
         "0: safe\n"
         "\n"
         "[fragment:foo] a\n"
-        "[safe] ((foo))\n";
+        "[safe] [[foo]]\n";
     
     nfa_builder_context_t* ctx = nfa_builder_context_create();
     ASSERT_TRUE(ctx != NULL);
@@ -600,7 +600,7 @@ static bool test_fragment_undefined(void) {
         "0: safe\n"
         "\n"
         "[fragment:foo] a\n"
-        "[safe] ((bar))\n";
+        "[safe] [[bar]]\n";
     
     nfa_builder_context_t* ctx = nfa_builder_context_create();
     ASSERT_TRUE(ctx != NULL);
@@ -630,7 +630,7 @@ static bool test_fragment_in_alternation(void) {
         "\n"
         "[fragment:x] a\n"
         "[fragment:y] b\n"
-        "[safe] ((x))|((y))\n";
+        "[safe] [[x]]|[[y]]\n";
     
     nfa_builder_context_t* ctx = nfa_builder_context_create();
     ASSERT_TRUE(ctx != NULL);
@@ -664,11 +664,11 @@ static bool test_fragment_depth_limit(void) {
         char fragname[32];
         snprintf(fragname, sizeof(fragname), "f%d", i);
         char line[128];
-        snprintf(line, sizeof(line), "[fragment:%s] x((f%d))\n", fragname, i + 1);
+        snprintf(line, sizeof(line), "[fragment:%s] x[[f%d]]\n", fragname, i + 1);
         strcat(spec, line);
     }
     strcat(spec, "[fragment:f31] x\n");
-    strcat(spec, "[safe] ((f0))\n");
+    strcat(spec, "[safe] [[f0]]\n");
     
     nfa_builder_context_t* ctx = nfa_builder_context_create();
     ASSERT_TRUE(ctx != NULL);
@@ -716,6 +716,17 @@ static bool test_error_invalid_category(void) {
     nfa_parser_parse_pattern(ctx, "[unknown] a");
     ASSERT_TRUE(nfa_parser_has_error(ctx));
     nfa_builder_context_destroy(ctx);
+    return true;
+}
+
+static bool test_error_double_paren(void) {
+    nfa_builder_context_t* ctx = nfa_builder_context_create();
+    ASSERT_TRUE(ctx != NULL);
+    nfa_construct_init(ctx);
+    nfa_parser_parse_pattern(ctx, "[safe] ((a))");
+    bool has_err = nfa_parser_has_error(ctx);
+    nfa_builder_context_destroy(ctx);
+    ASSERT_TRUE(has_err);
     return true;
 }
 
@@ -786,6 +797,7 @@ int main(ATTR_UNUSED int argc, ATTR_UNUSED char** argv) {
     printf("\nError Conditions:\n");
     TEST(error_empty_pattern);
     TEST(error_invalid_category);
+    TEST(error_double_paren);
     
     printf("\n=================\n");
     printf("SUMMARY: %d/%d passed\n", tests_passed, tests_run);

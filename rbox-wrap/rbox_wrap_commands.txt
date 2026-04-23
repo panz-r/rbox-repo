@@ -70,8 +70,8 @@ IDENTIFIER "rbox-wrap-cmd-v1"
 #   [fragment:name] pattern_value
 #
 # FRAGMENT REFERENCES
-#   ((name))                - References fragment "name"
-#   ((namespace::name))     - References "name" in "namespace"
+#   [[name]]                - References fragment "name"
+#   [[namespace::name]]     - References "name" in "namespace"
 #
 # QUANTIFIERS (applied to preceding element)
 #   *               - Zero or more of preceding element
@@ -95,7 +95,7 @@ IDENTIFIER "rbox-wrap-cmd-v1"
 
 # Echo commands (safe - no side effects)
 [autoallow:misc] echo
-[autoallow:misc] echo ((safe::filename))+
+[autoallow:misc] echo [[safe::filename]]+
 
 # True/false commands (safe - no side effects)
 [autoallow:misc] true
@@ -103,7 +103,7 @@ IDENTIFIER "rbox-wrap-cmd-v1"
 
 # File system read-only commands
 [autoallow:readonly:file] ls
-[autoallow:readonly:file] ls ((safe::filename))+
+[autoallow:readonly:file] ls [[safe::filename]]+
 [autoallow:readonly:file] ls -la
 [autoallow:readonly:file] ls -l
 [autoallow:readonly:file] ls -a
@@ -115,42 +115,42 @@ IDENTIFIER "rbox-wrap-cmd-v1"
 [autoallow:readonly:file] ls --color-auto
 [autoallow:readonly:file] ls --color=auto
 [autoallow:readonly:file] cat
-[autoallow:readonly:file] cat ((safe::filename))+
+[autoallow:readonly:file] cat [[safe::filename]]+
 [autoallow:readonly:file] head
-[autoallow:readonly:file] head -n ((safe::digit))
-[autoallow:readonly:file] head -n ((safe::digit))+ ((safe::filename))+
-[autoallow:readonly:file] head -n ((safe::digit))+ file.txt
+[autoallow:readonly:file] head -n [[safe::digit]]
+[autoallow:readonly:file] head -n [[safe::digit]]+ [[safe::filename]]+
+[autoallow:readonly:file] head -n [[safe::digit]]+ file.txt
 [autoallow:readonly:file] tail
-[autoallow:readonly:file] tail -n ((safe::digit))
-[autoallow:readonly:file] tail -n ((safe::digit))+ ((safe::filename))+
-[autoallow:readonly:file] tail -n ((safe::digit))+ file.txt
+[autoallow:readonly:file] tail -n [[safe::digit]]
+[autoallow:readonly:file] tail -n [[safe::digit]]+ [[safe::filename]]+
+[autoallow:readonly:file] tail -n [[safe::digit]]+ file.txt
 [autoallow:readonly:file] more
 [autoallow:readonly:file] less
 [autoallow:readonly:file] md5sum
 [autoallow:readonly:file] sha256sum
 [autoallow:readonly:file] sha1sum
 [autoallow:readonly:file] basename
-[autoallow:readonly:file] basename ((safe::filename))+
+[autoallow:readonly:file] basename [[safe::filename]]+
 [autoallow:readonly:file] dirname
-[autoallow:readonly:file] dirname ((safe::filename))+
+[autoallow:readonly:file] dirname [[safe::filename]]+
 [autoallow:readonly:file] dircolors
 [autoallow:readonly:file] dircolors -b
 [autoallow:readonly:file] lesspipe
 
 # Text processing commands
 [autoallow:processing:text] grep
-[autoallow:processing:text] grep ((safe::filename))+
+[autoallow:processing:text] grep [[safe::filename]]+
 [autoallow:processing:text] grep -r
 [autoallow:processing:text] grep -R
 [autoallow:processing:text] egrep
 [autoallow:processing:text] fgrep
 [autoallow:processing:text] find
-[autoallow:processing:text] find ((safe::filename))+
+[autoallow:processing:text] find [[safe::filename]]+
 [autoallow:processing:text] xargs
 [autoallow:processing:text] sort
-[autoallow:processing:text] sort ((safe::filename))+
+[autoallow:processing:text] sort [[safe::filename]]+
 [autoallow:processing:text] uniq
-[autoallow:processing:text] uniq ((safe::filename))+
+[autoallow:processing:text] uniq [[safe::filename]]+
 [autoallow:processing:text] wc
 [autoallow:processing:text] wc -l
 [autoallow:processing:text] wc -w
@@ -210,7 +210,7 @@ IDENTIFIER "rbox-wrap-cmd-v1"
 
 # Help commands
 [autoallow:help] man
-[autoallow:help] man ((safe::filename))+
+[autoallow:help] man [[safe::filename]]+
 [autoallow:help] help
 [autoallow:help] --help
 [autoallow:help] -h
@@ -235,17 +235,17 @@ IDENTIFIER "rbox-wrap-cmd-v1"
 
 # File analysis
 [autoallow:analysis] file
-[autoallow:analysis] file ((safe::filename))+
+[autoallow:analysis] file [[safe::filename]]+
 [autoallow:analysis] stat
-[autoallow:analysis] stat ((safe::filename))+
+[autoallow:analysis] stat [[safe::filename]]+
 [autoallow:analysis] readlink
 [autoallow:analysis] readlink -f
 [autoallow:analysis] which
-[autoallow:analysis] which ((safe::filename))+
+[autoallow:analysis] which [[safe::filename]]+
 [autoallow:analysis] type
-[autoallow:analysis] type ((safe::filename))+
+[autoallow:analysis] type [[safe::filename]]+
 [autoallow:analysis] whereis
-[autoallow:analysis] whereis ((safe::filename))+
+[autoallow:analysis] whereis [[safe::filename]]+
 
 # Misc safe commands
 [autoallow:misc] base64 --decode

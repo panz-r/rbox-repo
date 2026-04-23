@@ -100,7 +100,7 @@ std::string serializePattern(std::shared_ptr<PatternNode> node) {
         }
 
         case PatternType::FRAGMENT_REF:
-            return "((" + node->fragment_name + "))+";
+            return "[[" + node->fragment_name + "]]";
 
         default:
             return node->value;

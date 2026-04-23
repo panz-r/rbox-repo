@@ -99,7 +99,7 @@ SER_TEST(serializePattern_fragmentRef) {
     auto node = PatternNode::createFragment("frag1", {"seed"}, {});
     node->type = PatternType::FRAGMENT_REF;
     
-    SER_ASSERT_EQ(serializePattern(node), "((frag1))+");
+    SER_ASSERT_EQ(serializePattern(node), "[[frag1]]");
 }
 
 SER_TEST(serializePattern_fragmentInQuantifier) {
@@ -110,7 +110,7 @@ SER_TEST(serializePattern_fragmentInQuantifier) {
     node->type = PatternType::PLUS_QUANTIFIER;
     node->quantified = frag_node;
     
-    SER_ASSERT_EQ(serializePattern(node), "(((myfrag))+)+");
+    SER_ASSERT_EQ(serializePattern(node), "([[myfrag]])+");
 }
 
 // ============================================================================

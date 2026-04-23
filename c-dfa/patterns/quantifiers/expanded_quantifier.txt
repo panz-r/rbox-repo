@@ -12,7 +12,7 @@
 # ============================================================================
 # Pattern File for Quantifier Edge Cases Tests
 # ============================================================================
-# Tests: (a)+, a(a)+, ab(c)+, test12(3)+, xyz((abc))+, (a)?, (a)*
+# Tests: (a)+, a(a)+, ab(c)+, test12(3)+, xyz[[abc]]+, (a)?, (a)*
 # ============================================================================
 
 [fragment:a] a
@@ -34,8 +34,8 @@
 [safe:quantifier] test12(3)+
 
 # Fragment with quantifier
-[safe:quantifier] xyz((abc))+
-[safe:quantifier] xyz((abc))abc
+[safe:quantifier] xyz[[abc]]+
+[safe:quantifier] xyz[[abc]]abc
 
 # Optional and star patterns
 [safe:quantifier] (a)?

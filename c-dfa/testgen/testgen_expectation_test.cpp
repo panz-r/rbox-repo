@@ -78,8 +78,8 @@ EG_TEST(expectationTypeToString_unknown) {
 // ============================================================================
 
 EG_TEST(hasFragment_true) {
-    EG_ASSERT_TRUE(hasFragment("((frag))+"));
-    EG_ASSERT_TRUE(hasFragment("((test::x))"));
+    EG_ASSERT_TRUE(hasFragment("[[frag]]+"));
+    EG_ASSERT_TRUE(hasFragment("[[test::x]]"));
 }
 
 EG_TEST(hasFragment_false) {

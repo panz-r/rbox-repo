@@ -161,31 +161,31 @@ WARNING: Duplicate pattern detected:
 
 Fragment references are validated with namespace semantics:
 
-- `((name))` - Looks for `name` in the **same namespace** as the pattern's category
-- `((ns::name))` - Looks for `ns::name` explicitly (cross-namespace)
+- `[[name]]` - Looks for `name` in the **same namespace** as the pattern's category
+- `[[ns::name]]` - Looks for `ns::name` explicitly (cross-namespace)
 
 Example:
 ```
 [fragment:safe::digit] 0|1|2|3|4|5|6|7|8|9
 [fragment:caution::word] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 
-[safe] ((digit))+        → Looks for safe::digit ✓
-[caution] ((word))+      → Looks for caution::word ✓
-[test] ((safe::digit))+  → Cross-namespace reference ✓
-[caution] ((digit))+     → ERROR: Looks for caution::digit (not defined)
+[safe] [[digit]]+        → Looks for safe::digit ✓
+[caution] [[word]]+      → Looks for caution::word ✓
+[test] [[safe::digit]]+  → Cross-namespace reference ✓
+[caution] [[digit]]+     → ERROR: Looks for caution::digit (not defined)
 ```
 
 ### Fragment Syntax
 
 **Correct syntax:**
-- `((fragment))` - Reference to a fragment
+- `[[fragment]]` - Reference to a fragment in the current namespace
+- `[[ns::fragment]]` - Reference to a fragment in a specific namespace
 - `(a|b)` - Alternation (single parentheses)
 
 **Incorrect syntax:**
-- `((a|b))` - This is NOT a fragment reference, it's malformed alternation
-- `((a|b|c))` - Same issue
+- `((a|b))` - Double parentheses are not allowed - use alternation `(a|b)` or fragment reference `[[ns::name]]`
 
-If you see errors like "undefined fragment 'a|b'", check that you're using single parentheses for alternation: `(a|b)` not `((a|b))`.
+**Note:** The `[[...]]` syntax was previously `((...))`. Double parentheses `((...))` now result in an error.
 
 ## Current Status
 

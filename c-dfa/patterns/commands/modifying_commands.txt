@@ -87,11 +87,11 @@
 [modifying:file:write] find . -name "\.log" -delete
 [modifying:file:write] xargs rm < filelist.txt
 [modifying:file:write] rm $(find . -name "\.tmp")
-[modifying:file:write] for file in (()*).tmp; do rm "$file"; done
+[modifying:file:write] for file in [[)*).tmp; do rm "$file"; done
 
 # Patterns with dangerous wildcards
-[modifying:file:write] rm -rf (()*)
-[modifying:file:write] rm -rf .(()*)
+[modifying:file:write] rm -rf [[)*)
+[modifying:file:write] rm -rf .[[)*)
 [modifying:file:write] chmod -R 777 /
 [modifying:file:write] chown -R user:group /
-[modifying:file:write] mv (()*) ../
+[modifying:file:write] mv [[)*) ../

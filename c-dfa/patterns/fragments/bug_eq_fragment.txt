@@ -1,11 +1,11 @@
 # ============================================================================
 # Pattern File for Bug Test: = followed by fragment reference
 # ============================================================================
-# Bug: When '=' immediately precedes a fragment reference '((FRAG))' inside
+# Bug: When '=' immediately precedes a fragment reference '[[FRAG]]' inside
 # an optional group, the parser produces a degenerate NFA with only 1 state.
 #
-# Example: ls( =)((safe::x)) produces 1 state (BROKEN)
-#          ls(z)((safe::x)) produces ~17 states (WORKS)
+# Example: ls( =)[[safe::x]] produces 1 state (BROKEN)
+#          ls(z)[[safe::x]] produces ~17 states (WORKS)
 #
 # This test file captures the bug for regression testing.
 # ============================================================================
@@ -34,26 +34,26 @@ ACCEPTANCE_MAPPING [safe] -> 0
 # ============================================================================
 
 # Character before fragment - various characters (all WORK)
-[safe:test_a] ls(a)((safe::x))
-[safe:test_z] ls(z)((safe::x))
-[safe:test_1] ls(1)((safe::x))
-[safe:test_dash] ls(-)((safe::x))
-[safe:test_amp] ls(&)((safe::x))
-[safe:test_at] ls(@)((safe::x))
-[safe:test_colon] ls(:)((safe::x))
-[safe:test_dot] ls(.)((safe::x))
+[safe:test_a] ls(a)[[safe::x]]
+[safe:test_z] ls(z)[[safe::x]]
+[safe:test_1] ls(1)[[safe::x]]
+[safe:test_dash] ls(-)[[safe::x]]
+[safe:test_amp] ls(&)[[safe::x]]
+[safe:test_at] ls(@)[[safe::x]]
+[safe:test_colon] ls(:)[[safe::x]]
+[safe:test_dot] ls(.)[[safe::x]]
 
 # Character + fragment reference (no space)
-[safe:test_a2] ls(a)((safe::x))
-[safe:test_z2] ls(z)((safe::x))
+[safe:test_a2] ls(a)[[safe::x]]
+[safe:test_z2] ls(z)[[safe::x]]
 
 # Character in optional group + fragment
-[safe:test_zq] ls(z)?((safe::x))
-[safe:test_aq] ls(a)?((safe::x))
+[safe:test_zq] ls(z)?[[safe::x]]
+[safe:test_aq] ls(a)?[[safe::x]]
 
 # Fragment reference then character
-[safe:test_fa] ((safe::x))a
-[safe:test_fz] ((safe::x))z
+[safe:test_fa] [[safe::x]]a
+[safe:test_fz] [[safe::x]]z
 
 # ============================================================================
 # SECTION 2: Bug patterns - = followed by fragment in optional groups
@@ -62,10 +62,10 @@ ACCEPTANCE_MAPPING [safe] -> 0
 # ============================================================================
 
 # BUG: = followed by fragment in optional group (all BROKEN - 1 state)
-[safe:test_bug_eq1] ls( =)?((safe::x))
-[safe:test_bug_eq2] ls(=)?((safe::x))
-[safe:test_bug_eq3] ls( =)((safe::x))
-[safe:test_bug_eq4] ls(=)((safe::x))
+[safe:test_bug_eq1] ls( =)?[[safe::x]]
+[safe:test_bug_eq2] ls(=)?[[safe::x]]
+[safe:test_bug_eq3] ls( =)[[safe::x]]
+[safe:test_bug_eq4] ls(=)[[safe::x]]
 
 # ============================================================================
 # SECTION 3: Complex patterns with =
@@ -73,8 +73,8 @@ ACCEPTANCE_MAPPING [safe] -> 0
 
 # These should all work when the bug is fixed
 [safe:test_complex1] ls( --color=auto)?
-[safe:test_complex2] ls( --color=auto)?((safe::filename))*
-[safe:test_complex3] ls( (--color=auto )?((safe::filename))*)?
+[safe:test_complex2] ls( --color=auto)?[[safe::filename]]*
+[safe:test_complex3] ls( (--color=auto )?[[safe::filename]]*)?
 
 # ============================================================================
 # SECTION 4: Fragments with = in different positions

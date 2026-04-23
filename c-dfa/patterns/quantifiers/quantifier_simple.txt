@@ -12,4 +12,4 @@
 # Simple + quantifier test
 [fragment:B] b
 
-[safe] a((B))+
+[safe] a[[B]]+

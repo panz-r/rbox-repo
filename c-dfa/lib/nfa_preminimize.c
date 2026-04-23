@@ -281,7 +281,6 @@ static int get_epsilon_closed_targets(const nfa_state_t* nfa, int state_idx, int
     }
 
     bool truncated = false;
-    int closure[MAX_EPSILON_CLOSURE];
     int result_count = 0;
 
     for (int i = 0; i < immediate_count && result_count < MAX_EPSILON_CLOSURE; i++) {
@@ -1392,7 +1391,6 @@ static int merge_common_suffixes_pass(nfa_state_t* nfa, int state_count, bool* d
         // Count outgoing transitions
         int out_count = 0;
         int out_target = -1;
-        int single_trans_count = 0;  // Count from transitions[] array
         int mta_trans_count = 0;     // Count from multi_targets
 
         // Check multi-targets (new format - used for ALL transitions in NFA builder)

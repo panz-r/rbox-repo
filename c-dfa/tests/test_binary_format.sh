@@ -395,7 +395,7 @@ cat > "$BUILD/pat_frag_full.txt" << 'EOF'
 
 [fragment:LOW] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 
-[safe] match <res>((LOW))+</res> done
+[safe] match <res>[[LOW]]+</res> done
 EOF
 build_dfa "$BUILD/pat_frag_full.txt" "$BUILD/frag_full.dfa"
 cat > "$BUILD/test_frag_full.c" << 'CEOF'
@@ -437,8 +437,8 @@ cat > "$BUILD/pat_capture.txt" << 'EOF'
 
 [fragment:LOW] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 
-[safe:capture:get] GET /api/<res>((LOW))+</res>
-[safe:capture:post] POST /api/<res>((LOW))+</res>
+[safe:capture:get] GET /api/<res>[[LOW]]+</res>
+[safe:capture:post] POST /api/<res>[[LOW]]+</res>
 EOF
 build_dfa "$BUILD/pat_capture.txt" "$BUILD/capture_markers.dfa"
 cat > "$BUILD/test_capture.c" << 'CEOF'
@@ -477,9 +477,9 @@ cat > "$BUILD/pat_http.txt" << 'EOF'
 [fragment:HTTP::UPPER] A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z
 [fragment:HTTP::LOWER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 
-[safe:capture:get] GET /api/<resource>((HTTP::LOWER))+</resource> HTTP/1\.1
-[safe:capture:post] POST /api/<resource>((HTTP::LOWER))+</resource> HTTP/1\.1
-[safe:capture:curl] curl -X <method>((HTTP::UPPER))+</method> http://api.example.com
+[safe:capture:get] GET /api/<resource>[[HTTP::LOWER]]+</resource> HTTP/1\.1
+[safe:capture:post] POST /api/<resource>[[HTTP::LOWER]]+</resource> HTTP/1\.1
+[safe:capture:curl] curl -X <method>[[HTTP::UPPER]]+</method> http://api.example.com
 EOF
 build_dfa "$BUILD/pat_http.txt" "$BUILD/http_patterns.dfa"
 cat > "$BUILD/test_http.c" << 'CEOF'
@@ -653,7 +653,7 @@ cat > "$BUILD/pat_alpha.txt" << 'EOF'
 
 [fragment:ALNUM] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9
 
-[safe] cmd ((ALNUM))+
+[safe] cmd [[ALNUM]]+
 EOF
 build_dfa "$BUILD/pat_alpha.txt" "$BUILD/alpha_test.dfa"
 cat > "$BUILD/test_alpha.c" << 'CEOF'

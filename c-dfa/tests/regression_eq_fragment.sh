@@ -49,39 +49,39 @@ eval_match() {
     fi
 }
 
-# Test 1: Bug pattern - ls( =)((safe::x)) - originally crashed
-echo "[TEST 1] Bug pattern ls( =)((safe::x))"
+# Test 1: Bug pattern - ls( =)[[safe::x]] - originally crashed
+echo "[TEST 1] Bug pattern ls( =)[[safe::x]]"
 cat > "$BUILD/regression_bug1.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [fragment:safe::x] a|b|c
-[safe] ls( =)((safe::x))
+[safe] ls( =)[[safe::x]]
 EOF
 if compile_pattern "$BUILD/regression_bug1.txt" "$BUILD/regression_bug1.dfa"; then
     if eval_match "$BUILD/regression_bug1.dfa" "ls=a" "1" ||
        eval_match "$BUILD/regression_bug1.dfa" "ls =a" "1"; then
-        pass "ls( =)((safe::x)) - compiles and works - BUG FIXED!"
+        pass "ls( =)[[safe::x]] - compiles and works - BUG FIXED!"
     else
-        fail "ls( =)((safe::x)) - compiles but DFA doesn't work correctly"
+        fail "ls( =)[[safe::x]] - compiles but DFA doesn't work correctly"
     fi
 else
-    fail "ls( =)((safe::x)) - failed to compile - BUG STILL PRESENT"
+    fail "ls( =)[[safe::x]] - failed to compile - BUG STILL PRESENT"
 fi
 
-# Test 2: Bug pattern - ls(=)?((safe::x)) - variant with explicit optional marker
-echo "[TEST 2] Bug pattern ls(=)?((safe::x))"
+# Test 2: Bug pattern - ls(=)?[[safe::x]] - variant with explicit optional marker
+echo "[TEST 2] Bug pattern ls(=)?[[safe::x]]"
 cat > "$BUILD/regression_bug2.txt" << 'EOF'
 ACCEPTANCE_MAPPING [safe] -> 0
 [fragment:safe::x] a|b|c
-[safe] ls(=)?((safe::x))
+[safe] ls(=)?[[safe::x]]
 EOF
 if compile_pattern "$BUILD/regression_bug2.txt" "$BUILD/regression_bug2.dfa"; then
     if eval_match "$BUILD/regression_bug2.dfa" "ls=a" "1"; then
-        pass "ls(=)?((safe::x)) - compiles and matches 'ls=a' - BUG FIXED!"
+        pass "ls(=)?[[safe::x]] - compiles and matches 'ls=a' - BUG FIXED!"
     else
-        fail "ls(=)?((safe::x)) - compiles but DFA doesn't match"
+        fail "ls(=)?[[safe::x]] - compiles but DFA doesn't match"
     fi
 else
-    fail "ls(=)?((safe::x)) - failed to compile - BUG STILL PRESENT"
+    fail "ls(=)?[[safe::x]] - failed to compile - BUG STILL PRESENT"
 fi
 
 # Test 3: Pattern without the problematic '= ' sequence

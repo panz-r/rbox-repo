@@ -56,8 +56,8 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 #   [fragment:name] pattern_value
 #
 # FRAGMENT REFERENCES
-#   ((name))                - References fragment "name"
-#   ((namespace::name))     - References "name" in "namespace"
+#   [[name]]                - References fragment "name"
+#   [[namespace::name]]     - References "name" in "namespace"
 #
 # QUANTIFIERS (applied to preceding element)
 #   *               - Zero or more of preceding element
@@ -92,17 +92,17 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 [autoallow:readonly:git] git status --short
 [autoallow:readonly:git] (/usr/lib/git-core/)?git status --porcelain=2
 [autoallow:readonly:git] git log
-[autoallow:readonly:git] git log -n ((safe::digit))+
+[autoallow:readonly:git] git log -n [[safe::digit]]+
 [autoallow:readonly:git] git log --oneline
-[autoallow:readonly:git] git log --oneline -n ((safe::digit))+
+[autoallow:readonly:git] git log --oneline -n [[safe::digit]]+
 [autoallow:readonly:git] git log --graph
-[autoallow:readonly:git] git log --graph -n ((safe::digit))+
+[autoallow:readonly:git] git log --graph -n [[safe::digit]]+
 [autoallow:readonly:git] git log --decorate
-[autoallow:readonly:git] git log --decorate -n ((safe::digit))+
+[autoallow:readonly:git] git log --decorate -n [[safe::digit]]+
 [autoallow:readonly:git] git log --oneline --graph
 [autoallow:readonly:git] git log --oneline --decorate
 [autoallow:readonly:git] git log --oneline --graph --decorate
-[autoallow:readonly:git] git log ((safe::filename))*
+[autoallow:readonly:git] git log [[safe::filename]]*
 [autoallow:readonly:git] git tag -l
 [autoallow:readonly:git] git tag --list
 [autoallow:readonly:git] git config --list
@@ -133,50 +133,50 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 [autoallow:readonly:git] git count-objects
 
 # File system read-only commands
-[autoallow:readonly:file] ls( --color=auto)?( -(la|l|a))?( ((safe::filename))*)?
+[autoallow:readonly:file] ls( --color=auto)?( -(la|l|a))?( [[safe::filename]]*)?
 [autoallow:readonly:file] ls -R
 [autoallow:readonly:file] ls -r
 [autoallow:readonly:file] ls -t
 [autoallow:readonly:file] ls -S
 [autoallow:readonly:file] ls -ltr
 [autoallow:readonly:file] cat
-[autoallow:readonly:file] cat ((safe::filename))+
+[autoallow:readonly:file] cat [[safe::filename]]+
 [autoallow:readonly:file] head
-[autoallow:readonly:file] head -n ((safe::digit))
-[autoallow:readonly:file] head -n ((safe::digit)) ((safe::filename))*
-[autoallow:readonly:file] head -n ((safe::digit))+ file.txt
+[autoallow:readonly:file] head -n [[safe::digit]]
+[autoallow:readonly:file] head -n [[safe::digit]] [[safe::filename]]*
+[autoallow:readonly:file] head -n [[safe::digit]]+ file.txt
 [autoallow:readonly:file] tail
-[autoallow:readonly:file] tail -n ((safe::digit))
-[autoallow:readonly:file] tail -n ((safe::digit)) ((safe::filename))*
-[autoallow:readonly:file] tail -n ((safe::digit))+ file.txt
+[autoallow:readonly:file] tail -n [[safe::digit]]
+[autoallow:readonly:file] tail -n [[safe::digit]] [[safe::filename]]*
+[autoallow:readonly:file] tail -n [[safe::digit]]+ file.txt
 [autoallow:readonly:file] more
 [autoallow:readonly:file] less
 [autoallow:readonly:file] md5sum
 [autoallow:readonly:file] sha256sum
 [autoallow:readonly:file] sha1sum
 [autoallow:readonly:file] basename
-[autoallow:readonly:file] basename ((safe::filename))+
+[autoallow:readonly:file] basename [[safe::filename]]+
 [autoallow:readonly:file] dirname
-[autoallow:readonly:file] dirname ((safe::filename))+
+[autoallow:readonly:file] dirname [[safe::filename]]+
 [autoallow:readonly:file] dircolors
 [autoallow:readonly:file] dircolors -b
 [autoallow:readonly:file] lesspipe
 
 # Text processing commands
 [autoallow:processing:text] grep
-[autoallow:processing:text] grep ((safe::filename))*
+[autoallow:processing:text] grep [[safe::filename]]*
 [autoallow:processing:text] grep -r
 [autoallow:processing:text] grep -R
 [autoallow:processing:text] egrep
 [autoallow:processing:text] fgrep
 [autoallow:processing:text] find
-[autoallow:processing:text] find ((safe::filename))*
+[autoallow:processing:text] find [[safe::filename]]*
 [autoallow:processing:text] xargs
 [autoallow:processing:text] sort
-[autoallow:processing:text] sort ((safe::filename))*
+[autoallow:processing:text] sort [[safe::filename]]*
 [autoallow:processing:text] uniq
-[autoallow:processing:text] uniq ((safe::filename))*
-[autoallow:processing:text] wc( -l)?( ((safe::filename))*)?
+[autoallow:processing:text] uniq [[safe::filename]]*
+[autoallow:processing:text] wc( -l)?( [[safe::filename]]*)?
 [autoallow:processing:text] wc -w
 [autoallow:processing:text] wc -c
 [autoallow:processing:text] cut
@@ -221,7 +221,7 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 
 # Network read-only commands
 [autoallow:network:readonly] ping -c
-[autoallow:network:readonly] ping -c ((safe::digit))+
+[autoallow:network:readonly] ping -c [[safe::digit]]+
 [autoallow:network:readonly] ping6 -c
 [autoallow:network:readonly] curl -I
 [autoallow:network:readonly] curl --head
@@ -268,7 +268,7 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 # File analysis
 [autoallow:analysis] file
 [autoallow:analysis] stat
-[autoallow:analysis] stat ((safe::filename))*
+[autoallow:analysis] stat [[safe::filename]]*
 [autoallow:analysis] readlink
 [autoallow:analysis] readlink -f
 [autoallow:analysis] which
@@ -290,7 +290,7 @@ IDENTIFIER "rbox-ptrace-cmd-v1"
 
 # Help commands
 [autoallow:help] man
-[autoallow:help] man ((safe::filename))*
+[autoallow:help] man [[safe::filename]]*
 [autoallow:help] help
 [autoallow:help] --help
 [autoallow:help] -h

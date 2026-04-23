@@ -50,9 +50,9 @@
 # Nested alternations
 [safe:altnest1] (a|b)|c
 [safe:altnest2] a|(b|c)
-[safe:altnest3] (a|(b|c))|d
+[safe:altnest3] (a|(b|c]]|d
 
 # Complex mixed
 [safe:altmix1] (a|b|c)+
 [safe:altmix2] (a|ab|abc)+
-[safe:altmix3] ((a)+|(b)+|(c)+)
+[safe:altmix3] [[a)+|(b)+|(c)+)

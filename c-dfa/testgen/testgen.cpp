@@ -314,10 +314,10 @@ static void collectFragmentNames(std::shared_ptr<PatternNode> node, std::set<std
 std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
     if (pattern.empty()) return nullptr;
     
-    // Handle FRAGMENT_REF pattern: ((fragment_name))+ or ((fragment_name))+suffix
+    // Handle FRAGMENT_REF pattern: [[fragment_name]]+ or [[fragment_name]]+suffix
     // This must be checked BEFORE general parenthesized patterns
-    if (pattern.size() >= 6 && pattern.substr(0, 2) == "((") {
-        size_t closing = pattern.find("))");
+    if (pattern.size() >= 6 && pattern.substr(0, 2) == "[[") {
+        size_t closing = pattern.find("]]");
         if (closing == std::string::npos) return nullptr;
         
         std::string rest = pattern.substr(closing + 2);
@@ -354,35 +354,15 @@ std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
         }
     }
     
-    // Find the closing paren for a parenthesized group, respecting nested parens and FRAGMENT_REF
+    // Find the closing paren for a parenthesized group, respecting nested parens
+    // Note: FRAGMENT_REF now uses [[...]] syntax, not nested parens
     auto findClosingParen = [](const std::string& s, size_t start) -> size_t {
         int depth = 1;
         for (size_t i = start; i < s.size(); i++) {
-            // Check for FRAGMENT_REF: ((
-            if (i + 1 < s.size() && s[i] == '(' && s[i+1] == '(') {
-                // Skip to the matching )) of this FRAGMENT_REF only
-                // Use depth tracking to find the correct closing pair
-                int frag_depth = 1;
-                size_t j = i + 2;
-                while (j + 1 < s.size() && frag_depth > 0) {
-                    if (s[j] == '(' && s[j+1] == '(') {
-                        frag_depth++;
-                        j += 2;
-                    } else if (s[j] == ')' && s[j+1] == ')') {
-                        frag_depth--;
-                        if (frag_depth > 0) j += 2;
-                    } else {
-                        j++;
-                    }
-                }
-                if (frag_depth == 0) {
-                    i = j;  // Will be incremented by loop
-                    continue;
-                }
-                // If we couldn't find matching )), fall through to regular handling
-            }
-            if (s[i] == '(') depth++;
-            else if (s[i] == ')') {
+            // Check for nested paren groups (but not [[ which is fragment ref)
+            if (s[i] == '(' && (i + 1 >= s.size() || s[i+1] != '[')) {
+                depth++;
+            } else if (s[i] == ')' && (i + 1 >= s.size() || s[i+1] != ']')) {
                 depth--;
                 if (depth == 0) return i;
             }
@@ -404,9 +384,9 @@ std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
                 int depth = 0;
                 size_t start = 0;
                 for (size_t i = 0; i <= s.size(); i++) {
-                    if (i < s.size() && s[i] == '(' && i + 1 < s.size() && s[i+1] == '(') {
-                        // Skip FRAGMENT_REF
-                        size_t frag_end = s.find("))", i + 2);
+                    if (i < s.size() && s[i] == '[' && i + 1 < s.size() && s[i+1] == '[') {
+                        // Skip FRAGMENT_REF [[...]]
+                        size_t frag_end = s.find("]]", i + 2);
                         if (frag_end != std::string::npos) {
                             i = frag_end + 1;
                             continue;
@@ -1625,42 +1605,23 @@ bool TestGenerator::wouldPatternMatch([[maybe_unused]] const std::string& input,
 }
 
 // Extract fragment references from a pattern string
-// FRAGMENT_REF format: ((name))+ where name can contain namespace like "test::name"
-// Handles nested FRAGMENT_REFs by tracking parenthesis depth
-// FRAGMENT_REF is: ( ( name ) ) +  where + is the quantifier
+// FRAGMENT_REF format: [[name]]+ where name can contain namespace like "test::name"
+// FRAGMENT_REF is: [[ name ]] + where + is the quantifier
 static std::vector<std::string> extractFragmentRefsFromPattern(const std::string& pattern) {
     std::vector<std::string> refs;
     size_t pos = 0;
     while (pos < pattern.size()) {
-        if (pos + 2 < pattern.size() && pattern[pos] == '(' && pattern[pos+1] == '(') {
+        if (pos + 2 < pattern.size() && pattern[pos] == '[' && pattern[pos+1] == '[') {
             size_t start = pos + 2;
             size_t end = start;
-            int depth = 1;
-            bool found = false;
-            while (end < pattern.size() && depth > 0) {
-                if (end + 1 < pattern.size() && pattern[end] == '(' && pattern[end+1] == '(') {
-                    depth++;
-                    end += 2;
-                } else if (end + 1 < pattern.size() && pattern[end] == ')' && pattern[end+1] == ')') {
-                    depth--;
-                    if (depth == 0) {
-                        found = true;
-                        break;
-                    }
-                    end += 2;
-                } else {
-                    end++;
-                }
+            while (end < pattern.size() && !(end + 1 < pattern.size() && pattern[end] == ']' && pattern[end+1] == ']')) {
+                end++;
             }
-            if (found && end > start) {
+            if (end + 1 < pattern.size() && pattern[end] == ']' && pattern[end+1] == ']') {
                 std::string frag_name = pattern.substr(start, end - start);
-                // After )) there should be a + quantifier, skip it
+                // After ]] there might be a quantifier, skip it
                 size_t after_end = end + 2;
-                if (after_end < pattern.size() && pattern[after_end] == '+') {
-                    after_end++;
-                } else if (after_end < pattern.size() && pattern[after_end] == '*') {
-                    after_end++;
-                } else if (after_end < pattern.size() && pattern[after_end] == '?') {
+                if (after_end < pattern.size() && (pattern[after_end] == '+' || pattern[after_end] == '*' || pattern[after_end] == '?')) {
                     after_end++;
                 }
                 // Validate: fragment name should be alphanumeric + underscore + hyphen + ::

@@ -75,7 +75,7 @@ Match exact characters:
 
 **Quantifier Compatibility:**
 - Literals: Require grouping `(a)+`
-- Fragments: Work directly `((frag))+` or `((frag))*`
+- Fragments: Work directly `[[frag]]+` or `[[frag]]*`
 - Groups: Work directly `(a|b)+`
 
 **Escape Sequences:**
@@ -97,7 +97,7 @@ Match exact characters:
 
 # Quantifiers (parentheses REQUIRED for literals)
 [safe:file:read] git log (-n)* -> allow      # zero or more -n flags (grouped)
-[safe:file:read] echo ((ARG))+ -> allow      # one or more args (fragment)
+[safe:file:read] echo [[ARG]]+ -> allow      # one or more args (fragment)
 [safe:file:read] ls -la (h)? -> allow        # optional char (grouped)
 ```
 

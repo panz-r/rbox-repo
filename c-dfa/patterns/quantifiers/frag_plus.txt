@@ -19,9 +19,9 @@
 [fragment:frag_ABC] A|B|C
 [fragment:frag_AB] A|B
 
-[safe:test] a((TQ_B))+
+[safe:test] a[[TQ_B]]+
 [safe:test] alpha beta
 [safe:test] outer inner
-[safe:test] ((frag_xyz))+
-[safe:test] ((frag_ABC))+
-[safe:test] ((frag_AB))+
+[safe:test] [[frag_xyz]]+
+[safe:test] [[frag_ABC]]+
+[safe:test] [[frag_AB]]+

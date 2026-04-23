@@ -155,18 +155,18 @@ Pattern File → [Pattern Ordering] → NFA Builder → [NFA Pre-Minimization] �
 
 Fragments follow namespace-qualified naming:
 
-- `((a::b))` - References fragment 'b' in namespace 'a' (explicit cross-namespace)
-- `((c))` - References fragment 'c' in the **same namespace** as the pattern
+- `[[a::b]]` - References fragment 'b' in namespace 'a' (explicit cross-namespace)
+- `[[c]]` - References fragment 'c' in the **same namespace** as the pattern
 
 Example:
 ```
 [fragment:safe::digit] 0|1|2|3|4|5|6|7|8|9
 [fragment:caution::word] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 
-[safe] ((digit))+     → Looks for safe::digit ✓
-[caution] ((word))+   → Looks for caution::word ✓
-[test] ((safe::digit))+ → Looks for safe::digit directly ✓
-[caution] ((digit))+  → ERROR: Looks for caution::digit (not defined)
+[safe] [[digit]]+     → Looks for safe::digit ✓
+[caution] [[word]]+   → Looks for caution::word ✓
+[test] [[safe::digit]]+ → Looks for safe::digit directly ✓
+[caution] [[digit]]+  → ERROR: Looks for caution::digit (not defined)
 ```
 
 ### Implementation

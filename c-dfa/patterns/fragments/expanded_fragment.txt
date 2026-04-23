@@ -12,7 +12,7 @@
 # ============================================================================
 # Pattern File for Fragment Interactions Tests
 # ============================================================================
-# Tests: ((x))+((y))+, abc((def))+, ((a|b))+((c|d))+, etc.
+# Tests: [[x]]+[[y]]+, abc[[def]]+, [[a|b]]+[[c|d]]+, etc.
 # ============================================================================
 
 [fragment:x] x
@@ -27,9 +27,9 @@
 [fragment:def] def
 
 # Multiple fragments with quantifiers
-[safe:frag] ((x))+((y))+
-[safe:frag] abc((def))+
-[safe:frag] ((a))+
+[safe:frag] [[x]]+[[y]]+
+[safe:frag] abc[[def]]+
+[safe:frag] [[a]]+
 
 # Fragment alternation
 [safe:frag] (a|b)+(c|d)+

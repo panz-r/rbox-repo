@@ -41,29 +41,29 @@
 [fragment:digit] 0|1|2|3|4|5|6|7|8|9
 
 # ============================================================================
-# GROUP 1: Plus Quantifier (()+) - Fragment-based
+# GROUP 1: Plus Quantifier [[)+) - Fragment-based
 # ============================================================================
 # Test: Fragment-based + quantifier (one or more)
-[safe] a((TQ::B))+
-[safe] x((TQ::Y))+
-[safe] xyz((TQ::A))+
-[safe] abc((TQ::B))+
+[safe] a[[TQ::B]]+
+[safe] x[[TQ::Y]]+
+[safe] xyz[[TQ::A]]+
+[safe] abc[[TQ::B]]+
 
 # ============================================================================
-# GROUP 2: Star Quantifier (()*) - Fragment-based
+# GROUP 2: Star Quantifier [[)*) - Fragment-based
 # ============================================================================
 # Test: Fragment-based * quantifier (zero or more)
-[safe] a((TQ::B))*
-[safe] x((TQ::Y))*
-[safe] abc((TQ::B))*
+[safe] a[[TQ::B]]*
+[safe] x[[TQ::Y]]*
+[safe] abc[[TQ::B]]*
 
 # ============================================================================
-# GROUP 3: Question Mark Quantifier (()?) - Fragment-based
+# GROUP 3: Question Mark Quantifier [[)?) - Fragment-based
 # ============================================================================
 # Test: Fragment-based ? quantifier (zero or one)
-[safe] git((TQ::B))?
-[safe] x((TQ::Y))?
-[safe] abc((TQ::B))?
+[safe] git[[TQ::B]]?
+[safe] x[[TQ::Y]]?
+[safe] abc[[TQ::B]]?
 
 # ============================================================================
 # GROUP 4: Literal + Quantifier
@@ -77,14 +77,14 @@
 # GROUP 5: Multiple Characters Before Quantifier
 # ============================================================================
 # Test: Multiple literal characters before + quantifier
-[safe] abc((TQ::B))+
-[safe] xyz((TQ::A))+
+[safe] abc[[TQ::B]]+
+[safe] xyz[[TQ::A]]+
 
 # ============================================================================
-# abc((d))+ variant for testing
+# abc[[d]]+ variant for testing
 # ============================================================================
 [fragment:d] d
-[safe] abc((d))+
+[safe] abc[[d]]+
 
 # ============================================================================
 # GROUP 6: Escape Sequences
@@ -99,10 +99,10 @@
 # ============================================================================
 # Test: Wildcard patterns with (.)* and combined with literals
 # NOTE: Moved to caution category so they don't match everything in safe tests
-[caution:wildcard:test] (()*)
-[caution:wildcard:test] ((.)+)
-[caution:wildcard:test] (()*)\.txt
-[caution:wildcard:test] file(()*)
+[caution:wildcard:test] [[)*)
+[caution:wildcard:test] [[.)+)
+[caution:wildcard:test] [[)*)\.txt
+[caution:wildcard:test] file[[)*)
 
 # ============================================================================
 # GROUP 8: Edge Cases - Simple patterns only (no broad POSIX classes)
@@ -126,20 +126,20 @@
 # ============================================================================
 # Test: Character classes with quantifiers using fragments
 # NOTE: Moved to caution category - these match many characters and interfere with tests
-[caution:classes:test] ((alpha))+
-[caution:classes:test] ((ALPHA))+
-[caution:classes:test] ((digit))+
-[caution:classes:test] ((ALPHA))|((alpha))*
-[caution:classes:test] ((ALPHA))|((alpha))|((digit))|(_)+
+[caution:classes:test] [[alpha]]+
+[caution:classes:test] [[ALPHA]]+
+[caution:classes:test] [[digit]]+
+[caution:classes:test] [[ALPHA]]|[[alpha]]*
+[caution:classes:test] [[ALPHA]]|[[alpha]]|[[digit]]|(_)+
 
 # ============================================================================
 # GROUP 13: Nested Quantifiers
 # ============================================================================
 # Test: Nested parentheses with quantifiers
-[safe] ((a))+
-[safe] ((TQ::A))+
-[safe] (((a)))*
-[safe] (x((TQ::Y))+)?
+[safe] [[a]]+
+[safe] [[TQ::A]]+
+[safe] [[(a]])*
+[safe] (x[[TQ::Y]]+)?
 
 # ============================================================================
 # GROUP 14: Escaped Special Characters
@@ -152,19 +152,19 @@
 # ============================================================================
 # GROUP 15: Multiple Characters Before Quantifier (Extended)
 # ============================================================================
-# Test: Extended abc((B))+ tests
-[safe] abc((TQ::B))+
-[safe] abc((TQ::B))*
-[safe] abc((TQ::B))?
+# Test: Extended abc[[B]]+ tests
+[safe] abc[[TQ::B]]+
+[safe] abc[[TQ::B]]*
+[safe] abc[[TQ::B]]?
 
 # ============================================================================
 # GROUP 16: Digit Quantifiers
 # ============================================================================
 # Test: Quantifiers with digit fragments
-[safe] ((TQ::DIGIT))+
-[safe] ((TQ::DIGIT))*
-[safe] X((TQ::DIGIT))+
-[safe] X((TQ::DIGIT))?
+[safe] [[TQ::DIGIT]]+
+[safe] [[TQ::DIGIT]]*
+[safe] X[[TQ::DIGIT]]+
+[safe] X[[TQ::DIGIT]]?
 
 # ============================================================================
 # GROUP 17: Combined Quantifiers
@@ -177,9 +177,9 @@
 # GROUP 18: Multi-Character Fragments
 # ============================================================================
 # Test: Multi-character fragments with quantifiers
-[safe] ((TQ::ARG))+
-[safe] ((TQ::MIDDLE))?
-[safe] abc((TQ::CD))+
+[safe] [[TQ::ARG]]+
+[safe] [[TQ::MIDDLE]]?
+[safe] abc[[TQ::CD]]+
 
 # ============================================================================
 # GROUP 19: Literal Character Tests

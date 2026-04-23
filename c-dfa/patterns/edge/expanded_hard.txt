@@ -12,7 +12,7 @@
 # ============================================================================
 # Pattern File for Hard Edge Cases Tests
 # ============================================================================
-# Tests: (a+a+)+b, ((a))+((a))+, (ab)+, (a|aa)+, (a|b|c)+
+# Tests: (a+a+)+b, [[a]]+[[a]]+, (ab)+, (a|aa)+, (a|b|c)+
 # Note: [abc]+ syntax not supported, using (a|b|c)+ instead
 # ============================================================================
 
@@ -21,10 +21,10 @@
 [fragment:c] c
 
 # Nested plus patterns
-[safe:hard] ((a)+(a)+)+b
+[safe:hard] [[a)+(a)+)+b
 
 # Overlapping fragment references
-[safe:hard] ((a))+((a))+
+[safe:hard] [[a]]+[[a]]+
 
 # Grouped literal in quantifier
 [safe:hard] (ab)+

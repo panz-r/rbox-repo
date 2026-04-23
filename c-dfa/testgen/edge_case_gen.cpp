@@ -61,7 +61,7 @@ static EdgeCaseResult createRangeBoundaryEdge(std::mt19937& rng) {
     
     result.proof = "EDGE_CASE: RANGE_BOUNDARY\n";
     result.proof += "  Fragment: " + frag_name + " = " + frag_def + "\n";
-    result.proof += "  Pattern: ((" + frag_name + "))+\n";
+    result.proof += "  Pattern: [[" + frag_name + "]]+\n";
     
     for (char c : selected) {
         result.matching_seeds.push_back(std::string(1, c));
@@ -253,7 +253,7 @@ static EdgeCaseResult createNestedQuantifierEdge(std::mt19937& rng) {
     }
     
     result.proof = "EDGE_CASE: NESTED_QUANTIFIER\n";
-    result.proof += "  Pattern: ((" + inner + ")+)*\n";
+    result.proof += "  Pattern: (" + inner + "+)*\n";
     result.proof += "  Matching: ";
     for (auto& s : result.matching_seeds) result.proof += s + " ";
     result.proof += "\n  Counters: ";

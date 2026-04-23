@@ -62,7 +62,7 @@ Parses pattern syntax and builds NFA in a single pass.
 | `a?` | Zero or one of preceding element |
 | `a\|b` | Alternation - matches a OR b |
 | `(expr)` | Groups expressions |
-| `((FRAGMENT))` | Fragment reference |
+| `[[FRAGMENT]]` | Fragment reference |
 | `<cap>pattern</cap>` | Capture tag |
 | `\*` | Standalone `*` as wildcard argument |
 | `\x` | Escape character x literally |

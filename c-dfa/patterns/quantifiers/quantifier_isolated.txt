@@ -18,7 +18,7 @@
 #   [safe:plus]       -> 0x01  (tests for (a)+)
 #   [caution:star]    -> 0x02  (tests for (a)*)
 #   [modifying:quest]  -> 0x04  (tests for (a)?)
-#   [dangerous:ab]     -> 0x08  (tests for a((b))+)
+#   [dangerous:ab]     -> 0x08  (tests for a[[b]]+)
 # ============================================================================
 
 # Fragment definitions
@@ -40,11 +40,11 @@
 [modifying:quest] (a)?
 
 # ============================================================================
-# a((b))+ tests - Category 0x08
+# a[[b]]+ tests - Category 0x08
 # ============================================================================
-[dangerous:ab] a((b))+
+[dangerous:ab] a[[b]]+
 
 # ============================================================================
-# abc((b))+ tests - Category 0x20 (admin) - for test that expects this pattern
+# abc[[b]]+ tests - Category 0x20 (admin) - for test that expects this pattern
 # ============================================================================
-[admin:abc_quant] abc((b))+
+[admin:abc_quant] abc[[b]]+

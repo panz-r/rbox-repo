@@ -24,7 +24,7 @@
 # Instead of [a-z] or [0-9], define fragments:
 #   [fragment:digit] 0|1|2|3|4|5|6|7|8|9
 #   [fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
-# Reference with: ((digit))+ or ((lowercase))* etc.
+# Reference with: [[digit]]+ or [[lowercase]]* etc.
 # ============================================================================
 
 # Fragments for character classes (using explicit alternation - replaces ranges)
@@ -34,17 +34,17 @@
 [fragment:alphanum] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|_|-|\.
 
 # Single capture tests
-[safe:capture:single] git log -n <num>((digit))+</num>
-[safe:capture:single] cat <file>((alphanum))+</file>
-[safe:capture:single] echo <msg>((lowercase))+</msg>
-[safe:capture:single] head -n <lines>((digit))+</lines>
+[safe:capture:single] git log -n <num>[[digit]]+</num>
+[safe:capture:single] cat <file>[[alphanum]]+</file>
+[safe:capture:single] echo <msg>[[lowercase]]+</msg>
+[safe:capture:single] head -n <lines>[[digit]]+</lines>
 
 # Multiple captures in one pattern
-[safe:capture:multi] cp <src>((alphanum))+</src> <dst>((alphanum))+</dst>
+[safe:capture:multi] cp <src>[[alphanum]]+</src> <dst>[[alphanum]]+</dst>
 
 # Capture at different positions
-[safe:capture:pos1] mkdir <dir>((lowercase))+</dir>
-[safe:capture:pos2] rmdir <dir>((lowercase))+</dir>
-[safe:capture:pos3] touch <file>((alphanum))+</file>
+[safe:capture:pos1] mkdir <dir>[[lowercase]]+</dir>
+[safe:capture:pos2] rmdir <dir>[[lowercase]]+</dir>
+[safe:capture:pos3] touch <file>[[alphanum]]+</file>
 
 # End of capture test patterns

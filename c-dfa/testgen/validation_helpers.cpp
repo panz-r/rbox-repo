@@ -91,7 +91,7 @@ std::shared_ptr<PatternNode> createQuantifiedLiteral(
     return lit_node;
 }
 
-// Create quantified fragment: ((frag))+
+// Create quantified fragment: [[frag]]+
 std::shared_ptr<PatternNode> createQuantifiedFragment(
     const std::string& frag_name,
     PatternType type,
@@ -193,5 +193,5 @@ std::string extractFragment(const std::string& char_class,
     
     fragments[full_name] = char_class;
     
-    return "((" + full_name + "))+";
+    return "[[" + full_name + "]]+";
 }

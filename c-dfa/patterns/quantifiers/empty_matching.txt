@@ -32,6 +32,6 @@
 [safe:empty_alt5] (a|b|)
 
 # Complex nested with empty
-[safe:empty_nested1] ((a)*b)
-[safe:empty_nested2] ((a)*(b)*)
-[safe:empty_nested3] ((a)?b)
+[safe:empty_nested1] [[a)*b)
+[safe:empty_nested2] [[a)*(b)*)
+[safe:empty_nested3] [[a)?b)

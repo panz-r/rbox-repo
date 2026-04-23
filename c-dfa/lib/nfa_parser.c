@@ -130,7 +130,7 @@ static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const ch
         .loop_first_char = '\0'
     };
 
-    if (pattern[*pos] != '(' || pattern[*pos + 1] != '(') {
+    if (pattern[*pos] != '[' || pattern[*pos + 1] != '[') {
         result.exit_state = start_state;
         return result;
     }
@@ -142,11 +142,11 @@ static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const ch
     }
 
     size_t j = *pos + 2;
-    while (pattern[j] != '\0' && !(pattern[j] == ')' && pattern[j + 1] == ')')) {
+    while (pattern[j] != '\0' && !(pattern[j] == ']' && pattern[j + 1] == ']')) {
         j++;
     }
 
-    if (pattern[j] != ')' || pattern[j + 1] != ')') {
+    if (pattern[j] != ']' || pattern[j + 1] != ']') {
         WARNING("Malformed fragment reference at position %d", *pos);
         result.exit_state = start_state;
         return result;
@@ -334,6 +334,48 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
         }
 
         case '[': {
+            // Check for fragment reference [[name]]
+            if (pattern[*pos + 1] == '[') {
+                size_t j = *pos + 2;
+                while (pattern[j] != '\0' && !(pattern[j] == ']' && pattern[j + 1] == ']')) {
+                    j++;
+                }
+                if (pattern[j] == ']' && pattern[j + 1] == ']') {
+                    char frag_name[MAX_FRAGMENT_NAME];
+                    size_t name_len = j - (*pos + 2);
+                    if (name_len > 0 && name_len < sizeof(frag_name)) {
+                        strncpy(frag_name, &pattern[*pos + 2], name_len);
+                        frag_name[name_len] = '\0';
+                        normalize_fragment_name(frag_name);
+                        const char* frag_value = find_fragment(ctx, frag_name);
+                        if (frag_value != NULL) {
+                            fragment_result_t frag_result = parse_rdp_fragment(ctx, pattern, pos, start_state);
+                            ctx->current_fragment = frag_result;
+
+                            if (ctx->prev_frag_exit >= 0) {
+                                int epsilon_sid = VSYM_EPS;
+                                if (epsilon_sid != -1) {
+                                    nfa_construct_add_transition(ctx, ctx->prev_frag_exit, frag_result.anchor_state, epsilon_sid);
+                                }
+                            }
+
+                            ctx->prev_frag_exit = frag_result.exit_state;
+                            return frag_result.exit_state;
+                        }
+                        int word_chars = 0;
+                        for (int ci = 0; frag_name[ci] != '\0'; ci++) {
+                            if (isalnum((unsigned char)frag_name[ci]) || frag_name[ci] == '_') {
+                                word_chars++;
+                            }
+                        }
+                        if (word_chars > (int)name_len / 3) {
+                            nfa_parser_set_error(ctx, PARSE_ERROR_UNDEFINED_FRAGMENT, *pos, "Fragment '%s' not found", frag_name);
+                            return -1;
+                        }
+                    }
+                }
+                // Not a valid fragment reference, fall through to bracket handling
+            }
             int result = parse_rdp_class(ctx, pattern, pos, start_state);
             if (result < 0) {
                 return start_state;
@@ -366,13 +408,29 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
                 return finalized_star;
             }
 
-            // Check for fragment reference ((name::subname))
+            // Check for double parenthesis ((...)) - not allowed UNLESS followed by quantifier
+            // This allows ((group))+ patterns which are valid quantified groups
             if (pattern[*pos + 1] == '(') {
                 size_t j = *pos + 2;
                 while (pattern[j] != '\0' && !(pattern[j] == ')' && pattern[j + 1] == ')')) {
                     j++;
                 }
                 if (pattern[j] == ')' && pattern[j + 1] == ')') {
+                    char next = pattern[j + 2];
+                    if (next != '+' && next != '*' && next != '?') {
+                        nfa_parser_set_error(ctx, PARSE_ERROR_SYNTAX, *pos, "Double parentheses ((...)) are not allowed. Use [[name]] for fragment references.");
+                        return -1;
+                    }
+                }
+            }
+
+            // Check for fragment reference [[name::subname]]
+            if (pattern[*pos + 1] == '[') {
+                size_t j = *pos + 2;
+                while (pattern[j] != '\0' && !(pattern[j] == ']' && pattern[j + 1] == ']')) {
+                    j++;
+                }
+                if (pattern[j] == ']' && pattern[j + 1] == ']') {
                     char frag_name[MAX_FRAGMENT_NAME];
                     size_t name_len = j - (*pos + 2);
                     if (name_len > 0 && name_len < sizeof(frag_name)) {
@@ -513,7 +571,7 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
 // ============================================================================
 
 // Check if a quantifier at the given position is valid.
-// Quantifiers (*, +, ?) must follow a closing parenthesis ')' or '] ]' (fragment reference).
+// Quantifiers (*, +, ?) must follow a closing parenthesis ')' or ']' (fragment reference]).
 // This prevents the common misunderstanding that * is a wildcard.
 static bool quantifier_is_valid(const char* pattern, int quant_pos, ATTR_UNUSED nfa_builder_context_t* ctx) {
     int quotes = 0;
@@ -538,7 +596,7 @@ static bool quantifier_is_valid(const char* pattern, int quant_pos, ATTR_UNUSED 
         break;
     }
     if (p < 0) return false;
-    return pattern[p] == ')';
+    return pattern[p] == ')' || pattern[p] == ']';
 }
 
 static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state) {

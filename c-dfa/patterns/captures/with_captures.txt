@@ -46,13 +46,13 @@
 
 # File operation captures
 # Test input: cp abc.txt xyz.txt
-[safe:capture:cp] cp <src>((lowercase))+\.txt</src> <dst>((lowercase))+\.txt</dst>
+[safe:capture:cp] cp <src>[[lowercase]]+\.txt</src> <dst>[[lowercase]]+\.txt</dst>
 
 # Test input: mv old.txt new.txt
-[safe:capture:mv] mv <old>((lowercase))+\.txt</old> <new>((lowercase))+\.txt</new>
+[safe:capture:mv] mv <old>[[lowercase]]+\.txt</old> <new>[[lowercase]]+\.txt</new>
 
 # Test input: rsync -avz src/ dest/
-[safe:capture:rsync] rsync -avz <src>((lowercase))+/</src> <dest>((lowercase))+/</dest>
+[safe:capture:rsync] rsync -avz <src>[[lowercase]]+/</src> <dest>[[lowercase]]+/</dest>
 
 # Test input: echo hello world
-[safe:capture:echo] echo <w1>((lowercase))+</w1> <w2>((lowercase))+</w2>
+[safe:capture:echo] echo <w1>[[lowercase]]+</w1> <w2>[[lowercase]]+</w2>

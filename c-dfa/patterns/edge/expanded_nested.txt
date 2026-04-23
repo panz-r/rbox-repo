@@ -12,21 +12,21 @@
 # ============================================================================
 # Pattern File for Nested Quantifiers Tests
 # ============================================================================
-# Tests: ((a))+, (((a)))+, (a*)+, (a+)*, etc.
+# Tests: [[a]]+, [[(a]])+, (a*)+, (a+)*, etc.
 # ============================================================================
 
 [fragment:a] a
 [fragment:b] b
 
 # Double and triple nesting
-[safe:nested] ((a))+
-[safe:nested] (((a)))+
+[safe:nested] [[a]]+
+[safe:nested] [[(a]])+
 
 # Mixed nesting
-[safe:nested] ((a)+)+
+[safe:nested] [[a)+)+
 
 # Star inside plus
-[safe:nested] ((a)*)+
+[safe:nested] [[a)*)+
 
 # Plus inside star
-[safe:nested] ((a)+)*
+[safe:nested] [[a)+)*

@@ -17,7 +17,7 @@
 # Fragments for character classes
 [fragment:LETTER] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 
-# Nested captures: cmd x<outer>a<inner>((LETTER))+</inner>d</outer>y
+# Nested captures: cmd x<outer>a<inner>[[LETTER]]+</inner>d</outer>y
 # Input: cmd xabbbcdy
 # The outer should capture from 'a' to 'd', inner should capture the middle letters
-[safe:nested] cmd x<outer>a<inner>((LETTER))+</inner>d</outer>y
+[safe:nested] cmd x<outer>a<inner>[[LETTER]]+</inner>d</outer>y

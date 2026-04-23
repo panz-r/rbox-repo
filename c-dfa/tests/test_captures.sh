@@ -142,7 +142,7 @@ cat > "$BUILD/cap6.txt" << 'EOF'
 [CATEGORIES]
 0: safe
 [fragment:safe::lower] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
-[safe:capture:word] word <w>((safe::lower))+</w> done
+[safe:capture:word] word <w>[[safe::lower]]+</w> done
 EOF
 if build_dfa "$BUILD/cap6.txt" "$BUILD/cap6.dfa" && test_eval_file "$BUILD/cap6.dfa" "word hello done" "1"; then
     pass "capture_with_quantifier"
@@ -156,7 +156,7 @@ cat > "$BUILD/cap7.txt" << 'EOF'
 [CATEGORIES]
 0: safe
 [fragment:safe::cmd] cat|ls|grep
-[safe:capture:cmd] ((safe::cmd)) <file>test.txt</file>
+[safe:capture:cmd] [[safe::cmd]] <file>test.txt</file>
 EOF
 if build_dfa "$BUILD/cap7.txt" "$BUILD/cap7.dfa" && \
    test_eval_file "$BUILD/cap7.dfa" "cat test.txt" "1" && \

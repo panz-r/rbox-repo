@@ -17,20 +17,20 @@
 [fragment:x] x
 [fragment:y] y
 
-# a((b))+ - requires at least 'ab' (does NOT match empty)
-[safe:quant1] a((b))+
+# a[[b]]+ - requires at least 'ab' (does NOT match empty)
+[safe:quant1] a[[b]]+
 
-# a((b))* - requires 'a' (does NOT match empty on its own)
-[safe:quant1_star] a((b))*
+# a[[b]]* - requires 'a' (does NOT match empty on its own)
+[safe:quant1_star] a[[b]]*
 
-# a((b))? - requires 'a' (does NOT match empty on its own)
-[safe:quant1_opt] a((b))?
+# a[[b]]? - requires 'a' (does NOT match empty on its own)
+[safe:quant1_opt] a[[b]]?
 
-# abc((d))+ - requires at least 'abcd'
-[caution:quant2] abc((d))+
+# abc[[d]]+ - requires at least 'abcd'
+[caution:quant2] abc[[d]]+
 
-# ((x)y)+ - requires at least 'xy' (does NOT match empty)
-[safe:quant_xy] ((x)y)+
+# [[x)y)+ - requires at least 'xy' (does NOT match empty)
+[safe:quant_xy] [[x)y)+
 
-# ((x)y)* - CAN match empty (zero repetitions is valid)
-[caution:quant_xy_star] ((x)y)*
+# [[x)y)* - CAN match empty (zero repetitions is valid)
+[caution:quant_xy_star] [[x)y)*

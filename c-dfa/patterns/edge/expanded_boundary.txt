@@ -26,8 +26,8 @@
 [safe:boundary] abcdef
 
 # Over-quantification
-[safe:boundary] ((a)+)+
-[safe:boundary] (((a)+)+)+
+[safe:boundary] [[a)+)+
+[safe:boundary] [[(a)+)+)+
 
 # Mixed quantifiers
 [safe:boundary] (a)?(b)+

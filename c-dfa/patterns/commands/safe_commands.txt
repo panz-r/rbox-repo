@@ -81,9 +81,9 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #     [fragment:ALNUM] a|b|c|...|0|1|...|9
 #
 #   Reference fragments with double parens:
-#     ((DIGIT))         - Matches a single digit
-#     ((DIGIT))+        - Matches one or more digits
-#     ((LOWER))+        - Matches one or more lowercase letters
+#     [[DIGIT]]         - Matches a single digit
+#     [[DIGIT]]+        - Matches one or more digits
+#     [[LOWER]]+        - Matches one or more lowercase letters
 #
 # QUANTIFIERS (applied to preceding element)
 #   *               - Zero or more of preceding element
@@ -91,8 +91,8 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   ?               - Zero or one of preceding element (limited support)
 #
 #   Examples:
-#     git log -n ((DIGIT))+   - One or more digits using fragment
-#     cat ((FILENAME))*        - Zero or more filenames
+#     git log -n [[DIGIT]]+   - One or more digits using fragment
+#     cat [[FILENAME]]*        - Zero or more filenames
 #
 # GROUPING AND ALTERNATION
 #   (expr)          - Groups expressions together
@@ -103,14 +103,14 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #     (yes|no)             - Matches "yes" or "no"
 #
 # FRAGMENT REFERENCES
-#   ((name))                - References fragment "name"
-#   ((namespace::name))     - References "name" in "namespace"
+#   [[name]]                - References fragment "name"
+#   [[namespace::name]]     - References "name" in "namespace"
 #
 #   Fragments must be defined before use. See FRAGMENTS section below.
 #
 #   Examples:
-#     ((FILENAME))         - Expands to filename fragment pattern
-#     ((git::DIGIT))       - Expands to git::DIGIT fragment
+#     [[FILENAME]]         - Expands to filename fragment pattern
+#     [[git::DIGIT]]       - Expands to git::DIGIT fragment
 #
 # CAPTURE TAGS
 #   <capname>pattern</capname>  - Captures matched portion with name
@@ -119,8 +119,8 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   <cmd>git|svn|hg</cmd><op>status|log|diff</op>
 #
 #   Examples:
-#     cat <filename>((FILENAME))</filename>
-#     git log -n <count>((DIGIT))+</count>
+#     cat <filename>[[FILENAME]]</filename>
+#     git log -n <count>[[DIGIT]]+</count>
 #
 # WILDCARD (* at argument position)
 #   * used as standalone argument matches ANY argument:
@@ -164,14 +164,14 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #     [fragment:FILENAME] a|b|c|...|0|1|...|9|_|-|.|/  (all valid filename chars)
 #
 # FRAGMENT REFERENCE
-#   Reference with double parens: ((name))
-#     ((DIGIT))         - Matches single digit
-#     ((DIGIT))+        - Matches one or more digits
-#     ((FILENAME))*     - Matches zero or more filenames
+#   Reference with double parens: [[name]]
+#     [[DIGIT]]         - Matches single digit
+#     [[DIGIT]]+        - Matches one or more digits
+#     [[FILENAME]]*     - Matches zero or more filenames
 #
 # Fragment namespaces:
-#   - Simple: [fragment:name] - Referenced as ((name))
-#   - Namespaced: [fragment:ns::name] - Referenced as ((ns::name))
+#   - Simple: [fragment:name] - Referenced as [[name]]
+#   - Namespaced: [fragment:ns::name] - Referenced as [[ns::name]]
 #
 # Fragments must be defined at the TOP of the file, before patterns that use them.
 #
@@ -181,7 +181,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #
 # 1. + QUANTIFIER ON FRAGMENTS
 #    The + quantifier (one or more) works best with fragment references:
-#    CORRECT:   ((FILENAME))+   - Fragment with + for precise matching
+#    CORRECT:   [[FILENAME]]+   - Fragment with + for precise matching
 #    NOTE:      Fragment references are recommended for single-char matching
 #
 # 2. ? QUANTIFIER LIMITATIONS
@@ -219,9 +219,9 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   [safe] cat *                   - Matches "cat file.txt", "cat anything"
 #
 # FRAGMENT REFERENCES
-#   [safe] cat ((FILENAME))        - Uses FILENAME fragment
-#   [safe] git log -n ((DIGIT))+    - One or more digits
-#   [safe] tail -n ((safe::digit)) - Single digit argument
+#   [safe] cat [[FILENAME]]        - Uses FILENAME fragment
+#   [safe] git log -n [[DIGIT]]+    - One or more digits
+#   [safe] tail -n [[safe::digit]] - Single digit argument
 #
 # ============================================================================
 # FRAGMENT DEFINITIONS (must come before patterns that use them)
@@ -235,22 +235,22 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 # ACTUAL PATTERNS (using fragments defined above)
 # ============================================================================
 
-[safe] git log -n ((safe::digit))+
+[safe] git log -n [[safe::digit]]+
 
-[safe] git log -n ((safe::digit))+
+[safe] git log -n [[safe::digit]]+
 
-[safe] git log --oneline -n ((safe::digit))+
+[safe] git log --oneline -n [[safe::digit]]+
 
-[safe] git log --graph -n ((safe::digit))+
+[safe] git log --graph -n [[safe::digit]]+
 
-[safe] git log --decorate -n ((safe::digit))+
+[safe] git log --decorate -n [[safe::digit]]+
 
-[safe::readonly::file] head -n ((safe::digit))
-[safe::readonly::file] head -n ((safe::digit))+ ((safe::filename))*
-[safe::readonly::file] head -n ((safe::digit))+ file.txt
-[safe::readonly::file] tail -n ((safe::digit))
-[safe::readonly::file] tail -n ((safe::digit))+ ((safe::filename))*
-[safe::readonly::file] tail -n ((safe::digit))+ file.txt
+[safe::readonly::file] head -n [[safe::digit]]
+[safe::readonly::file] head -n [[safe::digit]]+ [[safe::filename]]*
+[safe::readonly::file] head -n [[safe::digit]]+ file.txt
+[safe::readonly::file] tail -n [[safe::digit]]
+[safe::readonly::file] tail -n [[safe::digit]]+ [[safe::filename]]*
+[safe::readonly::file] tail -n [[safe::digit]]+ file.txt
 
 [safe::readonly::system] which socat
 
@@ -268,7 +268,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [safe::readonly::git] git branch
 
-[safe::readonly::file] ls ((safe::filename))*
+[safe::readonly::file] ls [[safe::filename]]*
 
 [safe::readonly::file] ls -la
 
@@ -278,10 +278,10 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [safe::readonly::file] ls --color-auto
 
-[safe::readonly::file] cat ((safe::filename))*
+[safe::readonly::file] cat [[safe::filename]]*
 [safe::readonly::file] cat
 [safe::readonly::file] cat test.txt
-[safe::readonly::file] cat ((safe::filename))
+[safe::readonly::file] cat [[safe::filename]]
 
 [safe::readonly::git] git log
 [safe::readonly::git] git log --oneline
@@ -292,7 +292,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [safe::readonly::git] git log --oneline --graph
 
-[safe::readonly::git] git log ((safe::filename))*
+[safe::readonly::git] git log [[safe::filename]]*
 
 [safe::readonly::git] git tag -l
 
@@ -310,9 +310,9 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 
 [safe::readonly::git] git ls-files
 
-[safe::readonly::quant1] a((safe::b))+
+[safe::readonly::quant1] a[[safe::b]]+
 
-[caution::network::quant2] abc((safe::b))+
+[caution::network::quant2] abc[[safe::b]]+
 
 # ============================================================================
 # PATTERN PERFORMANCE NOTES
@@ -321,15 +321,15 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 # EFFICIENT PATTERNS (Fast DFA matching)
 #   - Simple literals:        [safe] git status
 #   - Fixed arguments:        [safe] git log --oneline
-#   - Named fragments:        [safe] cat ((FILENAME))
+#   - Named fragments:        [safe] cat [[FILENAME]]
 #
 # MODERATE PATTERNS (Still efficient)
 #   - Character classes:      [safe] tail -n [0-9] (NOT SUPPORTED - use fragments)
-#   - Single-char fragments:  [safe] git log -n ((safe::digit))
-#   - Wildcards:              [safe] cat ((safe::filename))*
+#   - Single-char fragments:  [safe] git log -n [[safe::digit]]
+#   - Wildcards:              [safe] cat [[safe::filename]]*
 #
 # EXPENSIVE PATTERNS (May slow DFA)
-#   - Multi-char fragments:   [safe] grep ((LONG_PATTERN))+
+#   - Multi-char fragments:   [safe] grep [[LONG_PATTERN]]+
 #   - Nested alternations:    [safe] (git|svn|hg) (status|log|diff)
 #   - Wide character classes: [safe] [a-zA-Z0-9_.-]+
 #
@@ -352,7 +352,7 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   Character:    [abc]               (matches a, b, or c)
 #   Negated:       [^abc]               (NOT a, b, or c)
 #   Quantifier:    *  +  ?             (zero-or-more, one-or-more, zero-or-one)
-#   Fragment:      ((NAME))             (inserts fragment pattern)
+#   Fragment:      [[NAME]]             (inserts fragment pattern)
 #   Alternation:   (a|b|c)             (a OR b OR c)
 #   Capture:       <name>...</name>     (captures matched text)
 #   Wildcard:      *                    (matches any argument)
@@ -365,12 +365,12 @@ IDENTIFIER "ReadOnlyBox Safe Commands v1.0"
 #   [fragment:ns::name] a|b|c|...
 #
 # REFERENCE:
-#   ((ns::name))              - Insert fragment
+#   [[ns::name]]              - Insert fragment
 #
 # COMMON PATTERNS:
 #   [safe::readonly::git] git status
-#   [safe::readonly::file] cat ((safe::filename))*
-#   [safe::readonly::file] tail -n ((safe::digit))
+#   [safe::readonly::file] cat [[safe::filename]]*
+#   [safe::readonly::file] tail -n [[safe::digit]]
 #   [safe] git (status|log|diff)
 #
 # ============================================================================

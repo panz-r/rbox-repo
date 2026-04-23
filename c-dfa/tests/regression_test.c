@@ -91,9 +91,9 @@ int main(void) {
     printf("==============================\n");
     
     // Bug #6: = followed by fragment reference in optional group
-    // Pattern: ls( =)?((safe::x)) where safe::x=a
+    // Pattern: ls( =)?[[safe::x]] where safe::x=a
     // ( =)? means space-then-equals is optional
-    // ((safe::x)) means fragment is REQUIRED
+    // [[safe::x]] means fragment is REQUIRED
     // Matches: "lsa" (ls + nothing + a), "ls =a" (ls + space + = + a)
     TestCase eq_frag_cases[] = {
         { "lsa", true, 0x01 },    // ls + nothing + a
@@ -103,7 +103,7 @@ int main(void) {
         { "ls x", false, 0 },    // x not =
     };
     run_group("BUG #6: = followed by fragment (FIXED)", 
-             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::x] a\n[safe] ls( =)?((safe::x))",
+             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::x] a\n[safe] ls( =)?[[safe::x]]",
              eq_frag_cases, 5);
     
     // Bug #6 control: other chars before fragment work
@@ -113,7 +113,7 @@ int main(void) {
         { "ls", false, 0 },      // fragment required
     };
     run_group("BUG #6: Control - other chars before fragment",
-             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::x] a\n[safe] ls(z)?((safe::x))",
+             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::x] a\n[safe] ls(z)?[[safe::x]]",
              other_char_cases, 3);
     
     // Bug #6: literal = at end of pattern (space before = required)
@@ -139,21 +139,21 @@ int main(void) {
              opt_group_3_cases, 4);
     
     // Bug #8: Complex nested optional groups
-    // Pattern: ls( (--color=auto )?(-(la|l|a) )?((x))* )?
+    // Pattern: ls( (--color=auto )?(-(la|l|a) )?[[x]]* )?
     // The outer group requires: space + content + space (all three optionals must leave trailing space)
     // So "ls " alone doesn't work (needs trailing space after optional content)
     TestCase complex_opt_cases[] = {
         { "ls", true, 0x01 },              // ls + nothing (outer optional skipped)
-        { "ls x ", true, 0x01 },           // ls + space + x + space (x matches ((x))*)
+        { "ls x ", true, 0x01 },           // ls + space + x + space (x matches [[x]]*)
         { "ls -la x ", true, 0x01 },       // ls + space + -la + space + x + space
         { "ls --color=auto -a x ", true, 0x01 },  // full optional content
     };
     run_group("BUG #8: Complex nested optional groups (FIXED)",
-             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::x] x\n[safe] ls( (--color=auto )?(-(la|l|a) )?((safe::x))* )?",
+             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::x] x\n[safe] ls( (--color=auto )?(-(la|l|a) )?[[safe::x]]* )?",
              complex_opt_cases, 4);
     
     // Bug #8 full pattern: Complex nested optional groups with fragment reference
-    // Pattern: ls( (--color=auto )?(-(la|l|a) )?((safe::filename))* )?
+    // Pattern: ls( (--color=auto )?(-(la|l|a) )?[[safe::filename]]* )?
     // Fragment safe::filename=/tmp|file|a, matches /tmp, file, or a
     // Note: outer group requires trailing space after optional content
     TestCase full_pattern_cases[] = {
@@ -162,11 +162,11 @@ int main(void) {
         { "ls --color=auto -l /tmp ", true, 0x01 },  // full optional content + trailing space
     };
     run_group("BUG #8 Full: ls with --color, -l, and filename fragment",
-             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::filename] /tmp|file|a\n[safe] ls( (--color=auto )?(-(la|l|a) )?((safe::filename))* )?",
+             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::filename] /tmp|file|a\n[safe] ls( (--color=auto )?(-(la|l|a) )?[[safe::filename]]* )?",
              full_pattern_cases, 3);
     
     // Bug #8 variant: Alternative spacing pattern
-    // Pattern: ls( --color=auto)?( -(la|l|a))?( ((safe::filename))* )?
+    // Pattern: ls( --color=auto)?( -(la|l|a))?( [[safe::filename]]* )?
     // Same semantics but different spacing between groups
     TestCase alt_spacing_cases[] = {
         { "ls", true, 0x01 },              // ls + nothing
@@ -176,7 +176,7 @@ int main(void) {
         { "ls --color=auto -l /tmp ", true, 0x01 },  // full optionals
     };
     run_group("BUG #8 Variant: alt spacing pattern",
-             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::filename] /tmp|file|a\n[safe] ls( --color=auto)?( -(la|l|a))?( ((safe::filename))* )?",
+             "ACCEPTANCE_MAPPING [safe] -> 0\n[fragment:safe::filename] /tmp|file|a\n[safe] ls( --color=auto)?( -(la|l|a))?( [[safe::filename]]* )?",
              alt_spacing_cases, 5);
     
     // Working optional group patterns (control tests)

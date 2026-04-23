@@ -19,7 +19,7 @@ enum class PatternType {
     PLUS_QUANTIFIER,   // One or more: (abc)+
     STAR_QUANTIFIER,   // Zero or more: (abc)*
     ALTERNATION,       // OR: (a|b|c)
-    FRAGMENT_REF,      // Fragment reference: ((name))+
+    FRAGMENT_REF,      // Fragment reference: [[name]]+
     SEQUENCE           // Sequence: abcdef
 };
 
@@ -74,7 +74,7 @@ enum class EdgeCaseType {
     PARTIAL_MATCH_FAIL,  // Prefix matches, then fails (ab matches, abx fails)
     QUANTIFIER_EDGE,    // Empty, single, multiple repetitions
     ALTERNATION_EDGE,   // Some alternatives match, some don't
-    NESTED_QUANTIFIER   // Nested quantifiers ((ab)+)*
+    NESTED_QUANTIFIER   // Nested quantifiers (ab+)*
 };
 
 struct EdgeCaseResult {

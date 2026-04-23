@@ -23,10 +23,10 @@
 
 # HTTP request capture - test input: GET /api/users HTTP/1.1
 # Method is GET or POST at the start
-[safe:capture:get] GET /api/<resource>((HTTP::LOWER))+</resource> HTTP/1\.1
+[safe:capture:get] GET /api/<resource>[[HTTP::LOWER]]+</resource> HTTP/1\.1
 
 # POST request capture - test input: POST /api/data HTTP/1.1
-[safe:capture:post] POST /api/<resource>((HTTP::LOWER))+</resource> HTTP/1\.1
+[safe:capture:post] POST /api/<resource>[[HTTP::LOWER]]+</resource> HTTP/1\.1
 
 # curl with method capture - test input: curl -X GET http://api.example.com
-[safe:capture:curl] curl -X <method>((HTTP::UPPER))+</method> http://api.example.com
+[safe:capture:curl] curl -X <method>[[HTTP::UPPER]]+</method> http://api.example.com

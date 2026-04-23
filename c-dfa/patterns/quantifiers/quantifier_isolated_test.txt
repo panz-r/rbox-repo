@@ -19,20 +19,20 @@
 [fragment:x] x
 [fragment:c] c
 
-# a((b))+ - requires at least 'ab'
-[safe:quant1] a((b))+
+# a[[b]]+ - requires at least 'ab'
+[safe:quant1] a[[b]]+
 
-# a((b))* - requires 'a' but can have zero b's
-[safe:quant1_star] a((b))*
+# a[[b]]* - requires 'a' but can have zero b's
+[safe:quant1_star] a[[b]]*
 
-# a((b))? - requires 'a' but can have zero b's
-[safe:quant1_opt] a((b))?
+# a[[b]]? - requires 'a' but can have zero b's
+[safe:quant1_opt] a[[b]]?
 
-# abc((d))+ - requires at least 'abcd'
-[caution:quant2] abc((d))+
+# abc[[d]]+ - requires at least 'abcd'
+[caution:quant2] abc[[d]]+
 
-# ((x)y)+ - requires at least 'xy'
-[safe:quant_xy] ((x)y)+
+# [[x)y)+ - requires at least 'xy'
+[safe:quant_xy] [[x)y)+
 
-# ((x)y)* - can match empty, but test expects no match on empty
+# [[x)y)* - can match empty, but test expects no match on empty
 # We'll omit this since it conflicts with the test expectation

@@ -21,7 +21,7 @@
 
 # Safe file operations
 [safe:file:read] cat file.txt
-[safe:file:read] cat (()*).txt
+[safe:file:read] cat [[)*).txt
 [safe:file:read] grep pattern file.txt
 [safe:file:read] find . -name "\.txt"
 [safe:file:read] ls -la

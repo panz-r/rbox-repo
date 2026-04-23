@@ -17,7 +17,7 @@
 # Instead of [a-z] or [0-9], define fragments:
 #   [fragment:digit] 0|1|2|3|4|5|6|7|8|9
 #   [fragment:lowercase] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
-# Reference with: ((digit))+ or ((lowercase))* etc.
+# Reference with: [[digit]]+ or [[lowercase]]* etc.
 # ============================================================================
 
 # Fragments for character classes (using explicit alternation - replaces ranges)
@@ -27,22 +27,22 @@
 [fragment:alphanum] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|0|1|2|3|4|5|6|7|8|9|_|-
 
 # Capture a number after -n flag
-[safe:capture:num] git log -n <num>((digit))+</num>
+[safe:capture:num] git log -n <num>[[digit]]+</num>
 
 # Simple version without category
-git log -n <n>((digit))+</n>
+git log -n <n>[[digit]]+</n>
 
 # Capture a filename
-[safe:capture:file] cat <file>((alphanum))+</file>
+[safe:capture:file] cat <file>[[alphanum]]+</file>
 
 # Simple word capture
-[safe:capture:word] echo <msg>((lowercase))+</msg>
+[safe:capture:word] echo <msg>[[lowercase]]+</msg>
 
 # head with capture - test input: head -n 10 file.txt
-[safe:capture:head] head -n <lines>((digit))+</lines> <file>((alphanum))+\.txt</file>
+[safe:capture:head] head -n <lines>[[digit]]+</lines> <file>[[alphanum]]+\.txt</file>
 
 # tail with capture - test input: tail -n 5 file.txt
-[safe:capture:tail] tail -n <lines>((digit))+</lines> <file>((alphanum))+\.txt</file>
+[safe:capture:tail] tail -n <lines>[[digit]]+</lines> <file>[[alphanum]]+\.txt</file>
 
 # grep with capture - test input: grep pattern file.txt
-[safe:capture:grep] grep <pattern>((lowercase))+</pattern> <file>((alphanum))+\.txt</file>
+[safe:capture:grep] grep <pattern>[[lowercase]]+</pattern> <file>[[alphanum]]+\.txt</file>

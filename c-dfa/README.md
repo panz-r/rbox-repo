@@ -104,14 +104,14 @@ Fragments are reusable pattern components with namespace support:
 [fragment:caution::word] a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 
 # Reference fragments
-[safe] ((digit))+        → Looks for safe::digit
-[caution] ((word))+       → Looks for caution::word
-[test] ((safe::digit))+   → Cross-namespace reference (looks for safe::digit)
+[safe] [[digit]]+        → Looks for safe::digit
+[caution] [[word]]+       → Looks for caution::word
+[test] [[safe::digit]]+   → Cross-namespace reference (looks for safe::digit)
 ```
 
 **Namespace Semantics:**
-- `((a::b))` - References fragment 'b' in namespace 'a' (explicit)
-- `((c))` - References fragment 'c' in the **same namespace** as the pattern
+- `[[a::b]]` - References fragment 'b' in namespace 'a' (explicit)
+- `[[c]]` - References fragment 'c' in the **same namespace** as the pattern
 
 ## Building the DFA
 

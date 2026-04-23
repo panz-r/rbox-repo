@@ -188,8 +188,8 @@ bool nfa_validate_pattern_file(nfa_builder_context_t* ctx, const char* spec_file
                 if (*p == '*' || *p == '+' || *p == '?') {
                     char* q = p - 1;
                     while (q >= pattern_start && (*q == ' ' || *q == '\t')) q--;
-                    if (q < pattern_start || *q != ')') {
-                        ERROR("'%c' quantifier must follow ')' at line %d - use \\%c for literal", *p, line_num, *p);
+                    if (q < pattern_start || (*q != ')' && *q != ']')) {
+                        ERROR("'%c' quantifier must follow ')' or ']' at line %d - use \\%c for literal", *p, line_num, *p);
                         errors++;
                     }
                 }

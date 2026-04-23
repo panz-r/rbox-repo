@@ -413,8 +413,8 @@ VH_TEST(extractFragment_deterministicOutput) {
     auto result = extractFragment("abc", fragments, rng, true);
     
     VH_ASSERT_TRUE(!result.empty());
-    VH_ASSERT_TRUE(result.find("((") != std::string::npos);
-    VH_ASSERT_TRUE(result.find("))+") != std::string::npos);
+    VH_ASSERT_TRUE(result.find("[[") != std::string::npos);
+    VH_ASSERT_TRUE(result.find("]]+") != std::string::npos);
     VH_ASSERT_TRUE(!fragments.empty());
 }
 

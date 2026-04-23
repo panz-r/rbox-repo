@@ -33,17 +33,17 @@
 # ============================================================================
 
 # Simple fragment (replaces [abc])
-[safe:class_pos] cmd ((abc))
-[safe:class_pos] cmd ((abc)) extra
+[safe:class_pos] cmd [[abc]]
+[safe:class_pos] cmd [[abc]] extra
 
 # Fragment with quantifier
-[safe:class_quant] cmd ((abc))+
-[safe:class_quant] cmd ((abc))*
-[safe:class_quant] cmd ((abc))?
+[safe:class_quant] cmd [[abc]]+
+[safe:class_quant] cmd [[abc]]*
+[safe:class_quant] cmd [[abc]]?
 
 # Fragment with multiple quantifiers
-[safe:class_multi] cmd ((abc))+ extra
-[safe:class_multi] cmd ((abc))* extra
+[safe:class_multi] cmd [[abc]]+ extra
+[safe:class_multi] cmd [[abc]]* extra
 
 # ============================================================================
 # NEGATED "CLASS" TESTS - Using fragments with alternation
@@ -51,12 +51,12 @@
 # ============================================================================
 
 # Fragment as alternative to negated class
-[safe:class_neg] cmd ((xyz))
-[safe:class_neg] cmd ((xyz)) extra
+[safe:class_neg] cmd [[xyz]]
+[safe:class_neg] cmd [[xyz]] extra
 
 # Fragment with quantifier
-[safe:class_neg_quant] cmd ((xyz))+
-[safe:class_neg_quant] cmd ((xyz))*
+[safe:class_neg_quant] cmd [[xyz]]+
+[safe:class_neg_quant] cmd [[xyz]]*
 
 # ============================================================================
 # QUOTED CHARACTER TESTS - 'x' syntax
@@ -77,27 +77,27 @@
 # ============================================================================
 
 # Fragment containing fragment
-[fragment:nested_inner] ((lower))
-[safe:nested_frag] cmd ((nested_inner))
-[safe:nested_frag] cmd ((nested_inner))+
+[fragment:nested_inner] [[lower]]
+[safe:nested_frag] cmd [[nested_inner]]
+[safe:nested_frag] cmd [[nested_inner]]+
 
 # Deeply nested fragments
 [fragment:deep1] a
-[fragment:deep2] ((deep1))b
-[fragment:deep3] ((deep2))c
-[safe:deep_nested] cmd ((deep3))
+[fragment:deep2] [[deep1]]b
+[fragment:deep3] [[deep2]]c
+[safe:deep_nested] cmd [[deep3]]
 
 # ============================================================================
 # MULTIPLE CAPTURE TESTS
 # ============================================================================
 
 # Multiple captures in one pattern
-[safe:multi_cap] cmd <first>((abc))</first> <second>((xyz))</second>
-[safe:multi_cap] cmd <a>((lower))</a> <b>((digit))</b>
+[safe:multi_cap] cmd <first>[[abc]]</first> <second>[[xyz]]</second>
+[safe:multi_cap] cmd <a>[[lower]]</a> <b>[[digit]]</b>
 
 # Captures with quantifiers
-[safe:cap_quant] cmd <num>((digit))+</num>
-[safe:cap_quant] cmd <chars>((lower))*</chars>
+[safe:cap_quant] cmd <num>[[digit]]+</num>
+[safe:cap_quant] cmd <chars>[[lower]]*</chars>
 
 # ============================================================================
 # EMPTY ALTERNATION TESTS - (a|) syntax
@@ -115,8 +115,8 @@
 # INTERACTION: Fragment + alternation
 # ============================================================================
 
-[safe:class_alt] ((abc))|((xyz))
-[safe:class_alt] (((abc))|((xyz)))+
+[safe:class_alt] [[abc]]|[[xyz]]
+[safe:class_alt] [[(abc]]|[[xyz]])+
 
 # ============================================================================
 # INTERACTION: Quoted + alternation
@@ -129,8 +129,8 @@
 # INTERACTION: Fragment + fragment
 # ============================================================================
 
-[safe:frag_class] cmd ((lower))((digit))
-[safe:frag_class] cmd ((digit))+((lower))*
+[safe:frag_class] cmd [[lower]][[digit]]
+[safe:frag_class] cmd [[digit]]+[[lower]]*
 
 # ============================================================================
 # EDGE CASES: Single char vs fragment
@@ -138,16 +138,16 @@
 
 # Single char should behave same as single-char fragment
 [safe:single_vs_class] cmd a
-[safe:single_vs_class] cmd ((abc))
-[safe:single_vs_class] cmd ((abc))+
+[safe:single_vs_class] cmd [[abc]]
+[safe:single_vs_class] cmd [[abc]]+
 
 # ============================================================================
 # EDGE CASES: Overlapping fragments
 # ============================================================================
 
-[safe:overlap1] cmd ((abc))
-[safe:overlap2] cmd ((xy))
-[safe:overlap_both] cmd ((abc)) ((xy))
+[safe:overlap1] cmd [[abc]]
+[safe:overlap2] cmd [[xy]]
+[safe:overlap_both] cmd [[abc]] [[xy]]
 
 # ============================================================================
 # QUOTED CHARACTER EDGE CASES
@@ -173,7 +173,7 @@
 
 [safe:nested_alt1] cmd (a|b|c|d|e)
 [safe:nested_alt2] cmd (a|b)|(c|d)
-[safe:nested_alt3] cmd (a|(b|(c|d)))
+[safe:nested_alt3] cmd (a|(b|(c|d]])
 [safe:nested_alt4] cmd (a|b|c|d|e)
 
 # ============================================================================
@@ -181,24 +181,24 @@
 # ============================================================================
 
 # Different quantifiers on same fragment
-[safe:frag_q1] cmd ((abc))
-[safe:frag_q2] cmd ((abc))+
-[safe:frag_q3] cmd ((abc))*
-[safe:frag_q4] cmd ((abc))?
+[safe:frag_q1] cmd [[abc]]
+[safe:frag_q2] cmd [[abc]]+
+[safe:frag_q3] cmd [[abc]]*
+[safe:frag_q4] cmd [[abc]]?
 
 # Multiple fragments, different quantifiers
-[safe:frag_q5] cmd ((abc))+((xyz))*
-[safe:frag_q6] cmd ((abc))*((xyz))+
-[safe:frag_q7] cmd ((abc))?((xyz))?
-[safe:frag_q8] cmd ((abc))+((xyz))+((abc))*
+[safe:frag_q5] cmd [[abc]]+[[xyz]]*
+[safe:frag_q6] cmd [[abc]]*[[xyz]]+
+[safe:frag_q7] cmd [[abc]]?[[xyz]]?
+[safe:frag_q8] cmd [[abc]]+[[xyz]]+[[abc]]*
 
 # ============================================================================
 # CATEGORY + FRAGMENT INTERACTIONS
 # ============================================================================
 
-[safe:cat_frag1] ((digit))+
-[caution:cat_frag2] ((letter))+
-[modifying:cat_frag3] ((digit))*((letter))
+[safe:cat_frag1] [[digit]]+
+[caution:cat_frag2] [[letter]]+
+[modifying:cat_frag3] [[digit]]*[[letter]]
 
 [safe:cat_alt1] (a|b|c)
 [caution:cat_alt2] (x|y|z)
@@ -211,10 +211,10 @@
 [fragment:world] w|o|r|l|d
 [fragment:hi] h|i
 
-[safe:multi_frag_word] cmd ((hello))
-[safe:multi_frag_world] cmd ((world))
-[safe:multi_frag_both] cmd ((hello)) ((world))
-[safe:multi_frag_chain] cmd ((hi))((hello))
+[safe:multi_frag_word] cmd [[hello]]
+[safe:multi_frag_world] cmd [[world]]
+[safe:multi_frag_both] cmd [[hello]] [[world]]
+[safe:multi_frag_chain] cmd [[hi]][[hello]]
 
 # ============================================================================
 # BOUNDARY: SINGLE CHAR
