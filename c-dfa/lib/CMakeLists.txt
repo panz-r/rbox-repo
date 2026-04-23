@@ -18,6 +18,7 @@ set(LIB_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/nfa_preminimize.c
     ${CMAKE_CURRENT_SOURCE_DIR}/pattern_order.c
     ${CMAKE_CURRENT_SOURCE_DIR}/multi_target_array.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tools/nfa_dsl.c
     # SAT C++ modules
     ${CMAKE_CURRENT_SOURCE_DIR}/dfa_minimize_sat.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dfa_layout_sat.cpp

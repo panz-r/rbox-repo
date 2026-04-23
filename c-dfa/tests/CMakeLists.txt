@@ -72,6 +72,15 @@ target_link_libraries(test_parser PRIVATE
     readonlybox_dfa_headers
 )
 
+# NFA DSL tests
+add_executable(test_nfa_dsl
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_nfa_dsl.c
+)
+target_link_libraries(test_nfa_dsl PRIVATE
+    readonlybox_dfa
+    readonlybox_dfa_headers
+)
+
 # ============================================================================
 # Test Targets
 # ============================================================================
@@ -83,6 +92,7 @@ add_custom_target(tests DEPENDS
     regression_test
     test_capture_e2e
     test_parser
+    test_nfa_dsl
     testgen_test
 )
 
@@ -293,6 +303,13 @@ set_tests_properties(test_parser PROPERTIES
     WORKING_DIRECTORY "${TEST_WORKING_DIR}"
     TIMEOUT 30
     LABELS "parser")
+
+add_test(NAME test_nfa_dsl
+    COMMAND test_nfa_dsl)
+set_tests_properties(test_nfa_dsl PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 60
+    LABELS "dsl")
 
 # Shell-based tests
 add_test(NAME test_binary_format

@@ -17,8 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include "nfa_builder.h"
-#include "nfa_dsl.h"
+#include "../lib/nfa_builder.h"
+#include "../include/nfa_dsl.h"
 #include "../include/dfa_errors.h"
 #include "../include/dfa_format.h"
 
@@ -78,6 +78,15 @@ static void destroy_ctx(nfa_builder_context_t *ctx) {
     nfa_builder_context_destroy(ctx);
 }
 
+/* Helper: serialize builder context to DSL string using new API */
+static char *ctx_to_dsl(nfa_builder_context_t *ctx) {
+    nfa_graph_t *graph = nfa_builder_finalize(ctx, NULL, NULL);
+    if (!graph) return NULL;
+    char *dsl = nfa_graph_dsl_to_string(graph);
+    nfa_graph_free(graph);
+    return dsl;
+}
+
 /* ============================================================================
  * Tests: Basic serialization and parsing
  * ============================================================================ */
@@ -90,7 +99,7 @@ static bool test_serialize_simple(void) {
     int s1 = nfa_construct_add_state_with_category(ctx, 0x01);
     nfa_construct_add_transition(ctx, 0, s1, 'a');
 
-    char *dsl = nfa_dsl_to_string(ctx);
+    char *dsl = ctx_to_dsl(ctx);
     CHECK(dsl, "nfa_dsl_to_string returned NULL");
 
     /* Canonical output: always includes category and pattern on accept.
@@ -353,7 +362,7 @@ static bool test_canonical_bfs_renumbering(void) {
     nfa_construct_add_transition(ctx, s1, s3, 'a');
     nfa_construct_add_transition(ctx, s2, s3, 'b');
 
-    char *dsl = nfa_dsl_to_string(ctx);
+    char *dsl = ctx_to_dsl(ctx);
     CHECK(dsl, "nfa_dsl_to_string returned NULL");
 
     /* The canonical output should have 4 reachable states numbered 0-3 */
@@ -397,7 +406,7 @@ static bool test_canonical_unreachable_omitted(void) {
     /* state 2 -> state 3 (unreachable - no incoming edges from reachable states) */
     nfa_construct_add_transition(ctx, s2, s3, 'z');
 
-    char *dsl = nfa_dsl_to_string(ctx);
+    char *dsl = ctx_to_dsl(ctx);
     CHECK(dsl, "nfa_dsl_to_string returned NULL");
 
     /* Only 2 states should appear: 0 (start) and 1 (accept) */
@@ -426,7 +435,7 @@ static bool test_canonical_accept_always_has_category_pattern(void) {
     int s1 = nfa_construct_add_state_with_category(ctx, 0x01);
     nfa_construct_add_transition(ctx, 0, s1, 'x');
 
-    char *dsl = nfa_dsl_to_string(ctx);
+    char *dsl = ctx_to_dsl(ctx);
     CHECK(dsl, "nfa_dsl_to_string returned NULL");
 
     /* Should always have both category and pattern */
@@ -453,8 +462,8 @@ static bool test_canonical_deterministic_output(void) {
     nfa_construct_add_transition(ctx, 0, s2, VSYM_EPS);
     nfa_construct_add_transition(ctx, s1, s2, 'a');
 
-    char *dsl1 = nfa_dsl_to_string(ctx);
-    char *dsl2 = nfa_dsl_to_string(ctx);
+    char *dsl1 = ctx_to_dsl(ctx);
+    char *dsl2 = ctx_to_dsl(ctx);
     CHECK(dsl1 && dsl2, "nfa_dsl_to_string returned NULL");
     CHECK(strcmp(dsl1, dsl2) == 0, "two serializations of same NFA should be identical");
 
@@ -479,7 +488,7 @@ static bool test_canonical_roundtrip(void) {
     nfa_construct_add_transition(ctx, s1, s2, 'b');
     nfa_construct_add_transition(ctx, 0, s2, 'a');
 
-    char *dsl_orig = nfa_dsl_to_string(ctx);
+    char *dsl_orig = ctx_to_dsl(ctx);
     CHECK(dsl_orig, "first serialization failed");
 
     /* Parse the DSL back */
@@ -521,7 +530,7 @@ static bool test_canonical_multiple_patterns(void) {
     int s2 = nfa_construct_add_state_with_category(ctx, 0x02);
     nfa_construct_add_transition(ctx, 0, s2, 'b');
 
-    char *dsl = nfa_dsl_to_string(ctx);
+    char *dsl = ctx_to_dsl(ctx);
     CHECK(dsl, "nfa_dsl_to_string returned NULL");
 
     /* Both accept states should be present with different categories */
@@ -553,7 +562,7 @@ static bool test_canonical_epsilon_chain(void) {
     nfa_construct_add_transition(ctx, s1, s2, VSYM_EPS);
     nfa_construct_add_transition(ctx, s2, s3, 'a');
 
-    char *dsl = nfa_dsl_to_string(ctx);
+    char *dsl = ctx_to_dsl(ctx);
     CHECK(dsl, "nfa_dsl_to_string returned NULL");
 
     /* Should be 4 states, all reachable via BFS */
@@ -601,8 +610,10 @@ static bool test_filtered_from_start_state(void) {
 
     /* Start from state 1 (accept for 'a'): single-node subgraph */
     nfa_dsl_filter_t filter = nfa_dsl_filter_from_state(1);
-    char *dsl = nfa_dsl_to_string_filtered(ctx, filter);
-    CHECK(dsl, "nfa_dsl_to_string_filtered returned NULL");
+    nfa_graph_t *g1 = nfa_builder_finalize(ctx, NULL, NULL);
+    char *dsl = g1 ? nfa_graph_dsl_to_string_filtered(g1, filter) : NULL;
+    if (g1) nfa_graph_free(g1);
+    CHECK(dsl, "nfa_graph_dsl_to_string_filtered returned NULL");
 
     const char *expected =
         "# Focused NFA from state 1\n"
@@ -621,8 +632,11 @@ static bool test_filtered_pattern(void) {
     CHECK(ctx, "failed to build multi-pattern NFA");
 
     nfa_dsl_filter_t filter = nfa_dsl_filter_for_pattern(1, 0);
-    char *dsl = nfa_dsl_to_string_filtered(ctx, filter);
-    CHECK(dsl, "nfa_dsl_to_string_filtered returned NULL");
+    nfa_graph_t *g2 = nfa_builder_finalize(ctx, NULL, NULL);
+    char *dsl = g2 ? nfa_graph_dsl_to_string_filtered(g2, filter) : NULL;
+    if (g2) nfa_graph_free(g2);
+    CHECK(dsl, "nfa_graph_dsl_to_string_filtered returned NULL");
+    CHECK(dsl, "nfa_graph_dsl_to_string_filtered returned NULL");
 
     CHECK(strstr(dsl, "# Focused NFA for pattern 1") != NULL,
           "missing pattern header comment");
@@ -662,7 +676,9 @@ static bool test_filtered_isolated_branch(void) {
 
     /* Start from state 2: only states 2 and 4, renumbered to 0,1 */
     nfa_dsl_filter_t filter = nfa_dsl_filter_from_state(s2);
-    char *focused = nfa_dsl_to_string_filtered(ctx, filter);
+    nfa_graph_t *g2 = nfa_builder_finalize(ctx, NULL, NULL);
+    char *focused = g2 ? nfa_graph_dsl_to_string_filtered(g2, filter) : NULL;
+    if (g2) nfa_graph_free(g2);
     CHECK(focused, "focused serialization failed");
 
     const char *expected =
@@ -699,7 +715,7 @@ static bool test_filtered_with_markers(void) {
     mta_add_marker(&ctx->nfa[0].multi_targets, 'b', 1, 0, 0);
 
     /* Full dump: both markers */
-    char *full = nfa_dsl_to_string(ctx);
+    char *full = ctx_to_dsl(ctx);
     CHECK(full, "full serialization failed");
     /* Markers are packed: MARKER_PACK(pid, uid, type).
      * pid=0 -> 0x00000000, pid=1 -> 0x00020000 */
@@ -710,7 +726,9 @@ static bool test_filtered_with_markers(void) {
     /* Filtered for pattern 1, excluding other markers.
      * Only markers with pattern_id=1 should remain. */
     nfa_dsl_filter_t filter = nfa_dsl_filter_for_pattern(1, 0);
-    char *filtered = nfa_dsl_to_string_filtered(ctx, filter);
+    nfa_graph_t *g3 = nfa_builder_finalize(ctx, NULL, NULL);
+    char *filtered = g3 ? nfa_graph_dsl_to_string_filtered(g3, filter) : NULL;
+    if (g3) nfa_graph_free(g3);
     CHECK(filtered, "filtered serialization failed");
 
     CHECK(strstr(filtered, "0x00000000") == NULL,
@@ -734,7 +752,9 @@ static bool test_filtered_empty_subgraph(void) {
     nfa_construct_add_transition(ctx, 0, s1, 'a');
 
     nfa_dsl_filter_t filter = nfa_dsl_filter_from_state(999);
-    char *dsl = nfa_dsl_to_string_filtered(ctx, filter);
+    nfa_graph_t *g4 = nfa_builder_finalize(ctx, NULL, NULL);
+    char *dsl = g4 ? nfa_graph_dsl_to_string_filtered(g4, filter) : NULL;
+    if (g4) nfa_graph_free(g4);
     CHECK(dsl, "should return non-NULL for empty subgraph");
     CHECK(strlen(dsl) == 0, "invalid start should produce empty output");
 
@@ -757,7 +777,7 @@ static bool test_version_header(void) {
     int s1 = nfa_construct_add_state_with_category(ctx, 0x01);
     nfa_construct_add_transition(ctx, 0, s1, 'x');
 
-    char *dsl = nfa_dsl_to_string(ctx);
+    char *dsl = ctx_to_dsl(ctx);
     CHECK(dsl, "nfa_dsl_to_string returned NULL");
     CHECK(strncmp(dsl, "version: 1\n", 11) == 0, "output must start with version: 1");
 
@@ -846,7 +866,18 @@ static bool test_roundtrip_ok(void) {
     nfa_construct_add_transition(ctx, 0, s1, 'a');
     nfa_construct_add_transition(ctx, 0, s1, 'b');
 
-    char *diff = nfa_dsl_verify_roundtrip(ctx);
+    char *diff;
+    {
+        nfa_graph_t *graph = nfa_builder_finalize(ctx, NULL, NULL);
+        if (!graph) {
+            destroy_ctx(ctx);
+            FAIL("nfa_builder_finalize returned NULL");
+            PASS();
+            return false;
+        }
+        diff = nfa_graph_dsl_verify_roundtrip(graph);
+        nfa_graph_free(graph);
+    }
     CHECK(diff == NULL, "round-trip should be consistent");
 
     free(diff);
@@ -982,11 +1013,15 @@ static bool test_assert_macro_pass(void) {
     int s1 = nfa_construct_add_state_with_category(ctx, 0x01);
     nfa_construct_add_transition(ctx, 0, s1, 'z');
 
-    char *actual = nfa_dsl_to_string(ctx);
+    char *actual = ctx_to_dsl(ctx);
     CHECK(actual, "nfa_dsl_to_string returned NULL");
 
-    /* Should match */
-    ASSERT_NFA_EQ_STR(ctx, actual, "assert macro pass test");
+    /* Should match - need to finalize ctx to graph for macro */
+    nfa_graph_t *g = nfa_builder_finalize(ctx, NULL, NULL);
+    if (g) {
+        ASSERT_NFA_EQ_STR(g, actual, "assert macro pass test");
+        nfa_graph_free(g);
+    }
 
     free(actual);
     destroy_ctx(ctx);
@@ -1010,7 +1045,7 @@ static bool test_assert_macro_fail(void) {
 
     /* This should print diff to stderr and we catch the return */
     char *expected = "WRONG OUTPUT\n";
-    char *actual = nfa_dsl_to_string(ctx);
+    char *actual = ctx_to_dsl(ctx);
     bool result = nfa_dsl_assert_equal("test", expected, actual) == false;
 
     stderr = old_stderr;

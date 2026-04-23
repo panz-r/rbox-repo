@@ -82,30 +82,29 @@ typedef struct {
 } dsl_nfa_t;
 
 /* ============================================================================
- * Serializer: Dump builder NFA to DSL format
+ * NFA Graph Serializer: Dump nfa_graph_t to DSL format
  *
- * The ctx parameter is a pointer to nfa_builder_context_t defined in
- * tools/nfa_builder.h. It is declared as void* here to avoid pulling
- * the builder header into every consumer.
+ * Serializes a finalized nfa_graph_t (from nfa_builder_finalize) to DSL.
+ * Uses BFS canonicalization for deterministic output.
  * ============================================================================ */
 
 /**
- * Serialize an NFA builder context to DSL format (canonicalized).
+ * Serialize an nfa_graph_t to DSL format (canonicalized).
  * Includes version header. Output is deterministic.
  *
  * @param out   Output FILE stream
- * @param ctx   Pointer to nfa_builder_context_t (from tools/nfa_builder.h)
+ * @param graph Pointer to nfa_graph_t (from nfa_builder_finalize)
  */
-void nfa_dsl_dump(FILE *out, const void *ctx);
+void nfa_graph_dsl_dump(FILE *out, const nfa_graph_t *graph);
 
 /**
- * Serialize an NFA builder context to a malloc'd string.
+ * Serialize an nfa_graph_t to a malloc'd string.
  * Caller must free() the returned pointer.
  * Returns NULL on allocation failure.
  *
- * @param ctx   Pointer to nfa_builder_context_t (from tools/nfa_builder.h)
+ * @param graph Pointer to nfa_graph_t
  */
-char *nfa_dsl_to_string(const void *ctx);
+char *nfa_graph_dsl_to_string(const nfa_graph_t *graph);
 
 /* ============================================================================
  * Focused Serialization: Sub-graph extraction
@@ -118,8 +117,8 @@ typedef struct {
                              * start_state that belong to this pattern or are
                              * on a path to/from such states. -1 = no filter. */
     bool include_markers_for_other_patterns;  /* If false, omit markers whose
-                                               * packed pattern_id != pattern_id_filter.
-                                               * Ignored when pattern_id_filter < 0. */
+                                               packed pattern_id != pattern_id_filter.
+                                               Ignored when pattern_id_filter < 0. */
 } nfa_dsl_filter_t;
 
 /** Convenience: create a filter for all states reachable from a given start. */
@@ -141,8 +140,8 @@ static inline nfa_dsl_filter_t nfa_dsl_filter_for_pattern(int pattern_id,
     return f;
 }
 
-void nfa_dsl_dump_filtered(FILE *out, const void *ctx, nfa_dsl_filter_t filter);
-char *nfa_dsl_to_string_filtered(const void *ctx, nfa_dsl_filter_t filter);
+void nfa_graph_dsl_dump_filtered(FILE *out, const nfa_graph_t *graph, nfa_dsl_filter_t filter);
+char *nfa_graph_dsl_to_string_filtered(const nfa_graph_t *graph, nfa_dsl_filter_t filter);
 
 /* ============================================================================
  * Deserializer
@@ -187,11 +186,11 @@ bool nfa_dsl_assert_equal(const char *label,
  * ============================================================================ */
 
 /**
- * Verify round-trip integrity: serialize ctx -> parse -> serialize -> compare.
+ * Verify round-trip integrity: serialize graph -> parse -> serialize -> compare.
  * Returns NULL if the round-trip is consistent.
  * On mismatch, returns a malloc'd diff string (caller frees).
  */
-char *nfa_dsl_verify_roundtrip(const void *ctx);
+char *nfa_graph_dsl_verify_roundtrip(const nfa_graph_t *graph);
 
 /* ============================================================================
  * Validator / Linter
@@ -385,77 +384,81 @@ void dfa_dsl_free(dsl_dfa_t *dfa);
  * Test assertion macros
  *
  * These macros are intended for use in test functions. They compare an
- * actual NFA (from the builder) against an expected DSL string and produce
+ * actual NFA graph output against an expected DSL string and produce
  * readable diff output on failure.
  * ============================================================================ */
 
 /**
- * ASSERT_NFA_EQ_STR - Compare builder NFA output against an expected string.
+ * ASSERT_NFA_EQ_STR - Compare nfa_graph_t output against an expected string.
  * On mismatch, prints a diff to stderr and returns false from the test function.
  *
  * Usage:
+ *   nfa_graph_t *graph = nfa_builder_finalize(ctx, NULL);
  *   const char *expected = "version: 1\n0: start\n0 'a' -> 1\n1: accept ...\n";
- *   ASSERT_NFA_EQ_STR(ctx, expected, "literal 'a' test");
+ *   ASSERT_NFA_EQ_STR(graph, expected, "literal 'a' test");
+ *   nfa_graph_free(graph);
  */
-#define ASSERT_NFA_EQ_STR(ctx_ptr, expected_str, test_label) do {           \
-    char *_actual = nfa_dsl_to_string(ctx_ptr);                             \
-    if (!_actual) {                                                         \
-        fprintf(stderr, "FAIL [%s]: nfa_dsl_to_string returned NULL\n",    \
-                test_label);                                                \
-        free(_actual);                                                      \
-        return false;                                                       \
-    }                                                                       \
-    if (strcmp(_actual, expected_str) != 0) {                               \
-        fprintf(stderr, "FAIL [%s]: NFA output mismatch\n", test_label);   \
-        nfa_dsl_assert_equal(test_label, expected_str, _actual);           \
-        free(_actual);                                                      \
-        return false;                                                       \
-    }                                                                       \
-    free(_actual);                                                          \
+#define ASSERT_NFA_EQ_STR(graph_ptr, expected_str, test_label) do {                \
+    char *_actual = nfa_graph_dsl_to_string(graph_ptr);                          \
+    if (!_actual) {                                                               \
+        fprintf(stderr, "FAIL [%s]: nfa_graph_dsl_to_string returned NULL\n",   \
+                test_label);                                                      \
+        free(_actual);                                                             \
+        return false;                                                              \
+    }                                                                              \
+    if (strcmp(_actual, expected_str) != 0) {                                      \
+        fprintf(stderr, "FAIL [%s]: NFA output mismatch\n", test_label);        \
+        nfa_dsl_assert_equal(test_label, expected_str, _actual);                  \
+        free(_actual);                                                            \
+        return false;                                                              \
+    }                                                                              \
+    free(_actual);                                                                \
 } while(0)
 
 /**
- * ASSERT_NFA_EQ_FILE - Compare builder NFA output against a golden file.
+ * ASSERT_NFA_EQ_FILE - Compare nfa_graph_t output against a golden file.
  * Reads the golden file, compares against canonical output.
  * On mismatch, prints a diff and returns false.
  *
  * Usage:
- *   ASSERT_NFA_EQ_FILE(ctx, "tests/expected/literal_a.nfa", "literal 'a' test");
+ *   nfa_graph_t *graph = nfa_builder_finalize(ctx, NULL);
+ *   ASSERT_NFA_EQ_FILE(graph, "tests/expected/literal_a.nfa", "literal 'a' test");
+ *   nfa_graph_free(graph);
  */
-#define ASSERT_NFA_EQ_FILE(ctx_ptr, golden_path, test_label) do {           \
-    char *_actual = nfa_dsl_to_string(ctx_ptr);                             \
-    if (!_actual) {                                                         \
-        fprintf(stderr, "FAIL [%s]: nfa_dsl_to_string returned NULL\n",    \
-                test_label);                                                \
-        return false;                                                       \
-    }                                                                       \
-    FILE *_gf = fopen(golden_path, "r");                                    \
-    char *_expected = NULL;                                                 \
-    if (_gf) {                                                              \
-        fseek(_gf, 0, SEEK_END);                                            \
-        long _gsz = ftell(_gf);                                             \
-        fseek(_gf, 0, SEEK_SET);                                            \
-        _expected = malloc((size_t)_gsz + 1);                               \
-        if (_expected) {                                                    \
-            size_t _nr = fread(_expected, 1, (size_t)_gsz, _gf);           \
-            _expected[_nr] = '\0';                                          \
-        }                                                                   \
-        fclose(_gf);                                                        \
-    }                                                                       \
-    if (!_expected) {                                                       \
-        fprintf(stderr, "FAIL [%s]: cannot read golden file '%s'\n",        \
-                test_label, golden_path);                                   \
-        free(_actual);                                                      \
-        return false;                                                       \
-    }                                                                       \
-    if (strcmp(_actual, _expected) != 0) {                                  \
-        fprintf(stderr, "FAIL [%s]: NFA mismatch against %s\n",             \
-                test_label, golden_path);                                   \
-        nfa_dsl_assert_equal(test_label, _expected, _actual);              \
-        free(_actual); free(_expected);                                     \
-        return false;                                                       \
-    }                                                                       \
-    free(_actual); free(_expected);                                         \
+#define ASSERT_NFA_EQ_FILE(graph_ptr, golden_path, test_label) do {                \
+    char *_actual = nfa_graph_dsl_to_string(graph_ptr);                           \
+    if (!_actual) {                                                               \
+        fprintf(stderr, "FAIL [%s]: nfa_graph_dsl_to_string returned NULL\n",   \
+                test_label);                                                      \
+        return false;                                                              \
+    }                                                                              \
+    FILE *_gf = fopen(golden_path, "r");                                          \
+    char *_expected = NULL;                                                        \
+    if (_gf) {                                                                    \
+        fseek(_gf, 0, SEEK_END);                                                  \
+        long _gsz = ftell(_gf);                                                   \
+        fseek(_gf, 0, SEEK_SET);                                                  \
+        _expected = malloc((size_t)_gsz + 1);                                      \
+        if (_expected) {                                                           \
+            size_t _nr = fread(_expected, 1, (size_t)_gsz, _gf);                 \
+            _expected[_nr] = '\0';                                                 \
+        }                                                                         \
+        fclose(_gf);                                                              \
+    }                                                                             \
+    if (!_expected) {                                                              \
+        fprintf(stderr, "FAIL [%s]: cannot read golden file '%s'\n",               \
+                test_label, golden_path);                                          \
+        free(_actual);                                                            \
+        return false;                                                              \
+    }                                                                             \
+    if (strcmp(_actual, _expected) != 0) {                                        \
+        fprintf(stderr, "FAIL [%s]: NFA mismatch against %s\n",                    \
+                test_label, golden_path);                                          \
+        nfa_dsl_assert_equal(test_label, _expected, _actual);                     \
+        free(_actual); free(_expected);                                           \
+        return false;                                                              \
+    }                                                                             \
+    free(_actual); free(_expected);                                               \
 } while(0)
 
 #ifdef __cplusplus

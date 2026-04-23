@@ -9,14 +9,18 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "nfa_builder.h"
+#include "../lib/nfa_builder.h"
 #include "../include/nfa_dsl.h"
 #include "../include/dfa_errors.h"
 #include "../include/dfa_types.h"
 #include "../include/dfa_format.h"
-#include "nfa2dfa_context.h"
 
 #include <ctype.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -144,10 +148,10 @@ static uint64_t fnv1a_update_i32(uint64_t h, int32_t v) {
     return fnv1a_update(h, &v, sizeof(v));
 }
 
-/* Compute a canonical signature for a builder NFA state.
+/* Compute a canonical signature for an NFA state.
  * This hashes the state's properties and all outgoing transitions
  * (with targets and markers sorted for determinism). */
-static uint64_t compute_canonical_signature(const nfa_builder_state_t *s) {
+static uint64_t compute_state_signature(const nfa_state_t *s) {
     uint64_t h = fnv1a_init();
 
     /* Accepting properties */
@@ -237,7 +241,7 @@ static int cmp_bfs_entry(const void *a, const void *b) {
 }
 
 static bool canonicalize_bfs_ex(
-        const nfa_builder_state_t *states,
+        const nfa_state_t *states,
         int state_count,
         int start_state,
         int pattern_filter ATTR_UNUSED,
@@ -275,7 +279,7 @@ static bool canonicalize_bfs_ex(
 
     visited[start_state] = true;
     frontier[frontier_end].old_id = start_state;
-    frontier[frontier_end].signature = compute_canonical_signature(&states[start_state]);
+    frontier[frontier_end].signature = compute_state_signature(&states[start_state]);
     frontier_end++;
 
     while (frontier_start < frontier_end) {
@@ -296,7 +300,7 @@ static bool canonicalize_bfs_ex(
             new_id++;
 
             /* Discover unvisited neighbors */
-            const nfa_builder_state_t *s = &states[old_id];
+            const nfa_state_t *s = &states[old_id];
             for (int sym = 0; sym < MAX_SYMBOLS; sym++) {
                 int count = 0;
                 int *targets = mta_get_target_array((multi_target_array_t *)&s->multi_targets,
@@ -313,7 +317,7 @@ static bool canonicalize_bfs_ex(
                          * Pattern filtering primarily affects marker output. */
                         visited[target] = true;
                         frontier[frontier_end].old_id = target;
-                        frontier[frontier_end].signature = compute_canonical_signature(&states[target]);
+                        frontier[frontier_end].signature = compute_state_signature(&states[target]);
                         frontier_end++;
                     }
                 }
@@ -332,15 +336,16 @@ static bool canonicalize_bfs_ex(
     return true;
 }
 
-/* Legacy wrapper: canonicalize from state 0 (full NFA) */
-static int *canonicalize_bfs(const nfa_builder_context_t *ctx,
+/* Wrapper: canonicalize from state 0 (full NFA) */
+static int *canonicalize_bfs(const nfa_state_t *states,
+                              int state_count,
                               int **canonical_order_out,
                               int *reachable_count_out) {
     int *old_to_new = NULL;
     int *canonical_order = NULL;
     int reachable_count = 0;
 
-    bool ok = canonicalize_bfs_ex(ctx->nfa, ctx->nfa_state_count, 0, -1,
+    bool ok = canonicalize_bfs_ex(states, state_count, 0, -1,
                                    &old_to_new, &canonical_order, &reachable_count);
     if (!ok) return NULL;
 
@@ -365,7 +370,7 @@ static int *canonicalize_bfs(const nfa_builder_context_t *ctx,
  * ============================================================================ */
 
 static void dsl_serialize_state(FILE *out,
-                                 const nfa_builder_state_t *s,
+                                 const nfa_state_t *s,
                                  int new_id,
                                  bool is_start,
                                  const int *old_to_new,
@@ -465,15 +470,19 @@ static void dsl_serialize_state(FILE *out,
  * Serializer: nfa_dsl_dump (canonicalized, full NFA)
  * ============================================================================ */
 
-void nfa_dsl_dump(FILE *out, const void *ctx_v) {
-    const nfa_builder_context_t *ctx = (const nfa_builder_context_t *)ctx_v;
-    int state_count = ctx->nfa_state_count;
+/* ============================================================================
+ * Serializer: nfa_graph_dsl_dump (canonicalized, full NFA from graph)
+ * ============================================================================ */
+
+void nfa_graph_dsl_dump(FILE *out, const nfa_graph_t *graph) {
+    int state_count = graph->state_count;
 
     if (state_count == 0) return;
 
     int reachable_count = 0;
     int *canonical_order = NULL;
-    int *old_to_new = canonicalize_bfs(ctx, &canonical_order, &reachable_count);
+int *old_to_new = canonicalize_bfs(graph->states, state_count,
+                                        &canonical_order, &reachable_count);
 
     if (!old_to_new || !canonical_order || reachable_count == 0) {
         free(old_to_new); free(canonical_order);
@@ -482,13 +491,9 @@ void nfa_dsl_dump(FILE *out, const void *ctx_v) {
 
     fprintf(out, "version: %d\n", NFA_DSL_VERSION);
 
-    if (ctx->pattern_identifier[0]) {
-        fprintf(out, "identifier=%s\n", ctx->pattern_identifier);
-    }
-
     for (int ci = 0; ci < reachable_count; ci++) {
         int old_id = canonical_order[ci];
-        dsl_serialize_state(out, &ctx->nfa[old_id], ci, ci == 0,
+        dsl_serialize_state(out, &graph->states[old_id], ci, ci == 0,
                             old_to_new, -1);
     }
 
@@ -497,13 +502,37 @@ void nfa_dsl_dump(FILE *out, const void *ctx_v) {
 }
 
 /* ============================================================================
- * Serializer: nfa_dsl_dump_filtered (focused sub-graph)
+ * Serializer: nfa_graph_dsl_to_string
  * ============================================================================ */
 
-void nfa_dsl_dump_filtered(FILE *out, const void *ctx_v, nfa_dsl_filter_t filter) {
-    const nfa_builder_context_t *ctx = (const nfa_builder_context_t *)ctx_v;
-    const nfa_builder_state_t *states = ctx->nfa;
-    int state_count = ctx->nfa_state_count;
+char *nfa_graph_dsl_to_string(const nfa_graph_t *graph) {
+    size_t buf_size = (size_t)(graph->state_count * 256 + 1024);
+    char *buf = malloc(buf_size);
+    if (!buf) return NULL;
+
+    FILE *out = fmemopen(buf, buf_size, "w");
+    if (!out) {
+        free(buf);
+        return NULL;
+    }
+
+    nfa_graph_dsl_dump(out, graph);
+    fflush(out);
+    size_t actual_len = (size_t)ftell(out);
+    fclose(out);
+
+    buf[actual_len] = '\0';
+    char *shrunk = realloc(buf, actual_len + 1);
+    return shrunk ? shrunk : buf;
+}
+
+/* ============================================================================
+ * Serializer: nfa_graph_dsl_dump_filtered (focused sub-graph)
+ * ============================================================================ */
+
+void nfa_graph_dsl_dump_filtered(FILE *out, const nfa_graph_t *graph, nfa_dsl_filter_t filter) {
+    const nfa_state_t *states = graph->states;
+    int state_count = graph->state_count;
 
     if (state_count == 0) return;
 
@@ -529,10 +558,6 @@ void nfa_dsl_dump_filtered(FILE *out, const void *ctx_v, nfa_dsl_filter_t filter
         fprintf(out, "# Focused NFA from state %d\n", start);
     }
 
-    if (ctx->pattern_identifier[0]) {
-        fprintf(out, "identifier=%s\n", ctx->pattern_identifier);
-    }
-
     /* Determine marker filter */
     int marker_pid = -1;
     if (filter.pattern_id_filter >= 0 && !filter.include_markers_for_other_patterns) {
@@ -550,9 +575,8 @@ void nfa_dsl_dump_filtered(FILE *out, const void *ctx_v, nfa_dsl_filter_t filter
     free(canonical_order);
 }
 
-char *nfa_dsl_to_string_filtered(const void *ctx_v, nfa_dsl_filter_t filter) {
-    const nfa_builder_context_t *ctx = (const nfa_builder_context_t *)ctx_v;
-    size_t buf_size = (size_t)(ctx->nfa_state_count * 256 + 1024);
+char *nfa_graph_dsl_to_string_filtered(const nfa_graph_t *graph, nfa_dsl_filter_t filter) {
+    size_t buf_size = (size_t)(graph->state_count * 256 + 1024);
     char *buf = malloc(buf_size);
     if (!buf) return NULL;
 
@@ -562,7 +586,7 @@ char *nfa_dsl_to_string_filtered(const void *ctx_v, nfa_dsl_filter_t filter) {
         return NULL;
     }
 
-    nfa_dsl_dump_filtered(out, ctx, filter);
+    nfa_graph_dsl_dump_filtered(out, graph, filter);
     fflush(out);
     size_t actual_len = (size_t)ftell(out);
     fclose(out);
@@ -573,31 +597,30 @@ char *nfa_dsl_to_string_filtered(const void *ctx_v, nfa_dsl_filter_t filter) {
 }
 
 /* ============================================================================
- * Serializer: nfa_dsl_to_string
+ * Round-trip verification
  * ============================================================================ */
 
-char *nfa_dsl_to_string(const void *ctx_v) {
-    const nfa_builder_context_t *ctx = (const nfa_builder_context_t *)ctx_v;
-    /* Use a temporary file via open_memstream for dynamic buffer */
-    size_t buf_size = (size_t)(ctx->nfa_state_count * 256 + 1024);
-    char *buf = malloc(buf_size);
-    if (!buf) return NULL;
-
-    FILE *out = fmemopen(buf, buf_size, "w");
-    if (!out) {
-        free(buf);
-        return NULL;
+char *nfa_graph_dsl_verify_roundtrip(const nfa_graph_t *graph) {
+    char *first = nfa_graph_dsl_to_string(graph);
+    if (!first) {
+        return strdup("nfa_graph_dsl_to_string returned NULL on first call");
     }
 
-    nfa_dsl_dump(out, ctx);
-    fflush(out);
-    size_t actual_len = (size_t)ftell(out);
-    fclose(out);
+    /* Serialize the same graph again - deterministic output must match */
+    char *second = nfa_graph_dsl_to_string(graph);
+    if (!second) {
+        free(first);
+        return strdup("nfa_graph_dsl_to_string returned NULL on second call");
+    }
 
-    buf[actual_len] = '\0';
-    /* Shrink to fit */
-    char *shrunk = realloc(buf, actual_len + 1);
-    return shrunk ? shrunk : buf;
+    char *diff = NULL;
+    if (strcmp(first, second) != 0) {
+        diff = nfa_dsl_diff(first, second);
+    }
+
+    free(first);
+    free(second);
+    return diff;
 }
 
 /* ============================================================================
@@ -1419,31 +1442,8 @@ bool nfa_dsl_assert_equal(const char *label,
 }
 
 /* ============================================================================
- * Round-trip verification
+ * Round-trip verification (uses nfa_graph_dsl_verify_roundtrip)
  * ============================================================================ */
-
-char *nfa_dsl_verify_roundtrip(const void *ctx) {
-    char *first = nfa_dsl_to_string(ctx);
-    if (!first) {
-        return strdup("nfa_dsl_to_string returned NULL on first call");
-    }
-
-    /* Serialize the same context again - deterministic output must match */
-    char *second = nfa_dsl_to_string(ctx);
-    if (!second) {
-        free(first);
-        return strdup("nfa_dsl_to_string returned NULL on second call");
-    }
-
-    char *diff = NULL;
-    if (strcmp(first, second) != 0) {
-        diff = nfa_dsl_diff(first, second);
-    }
-
-    free(first);
-    free(second);
-    return diff;
-}
 
 /* ============================================================================
  * Validator / Linter
@@ -1722,6 +1722,7 @@ static int *dfa_canonicalize_bfs(
         const build_dfa_state_t * const *dfa,
         int state_count,
         int start_state,
+        int alphabet_size,
         int **canonical_order_out,
         int *reachable_count_out)
 {
@@ -1770,8 +1771,7 @@ static int *dfa_canonicalize_bfs(
             new_id++;
 
             const build_dfa_state_t *s = dfa[old_id];
-            int alphabet_sz = s->alphabet_size;
-            for (int sym = 0; sym < alphabet_sz; sym++) {
+            for (int sym = 0; sym < alphabet_size; sym++) {
                 int target = s->transitions[sym];
                 if (target >= 0 && target < state_count && !visited[target]) {
                     visited[target] = true;
@@ -1838,10 +1838,11 @@ static dfa_range_t *dfa_build_ranges(
         int end = i;
         bool has_marker = (s->marker_offsets[i] != 0);
 
-        /* Extend range while same target and same marker presence */
+        /* Extend range while same target and same marker offset value */
+        uint32_t marker_offset = s->marker_offsets[start];
         while (end + 1 < BYTE_VALUE_MAX &&
                s->transitions[end + 1] == target &&
-               (s->marker_offsets[end + 1] != 0) == has_marker) {
+               s->marker_offsets[end + 1] == marker_offset) {
             end++;
         }
 
@@ -1973,7 +1974,8 @@ static void dfa_serialize_state(
                                              default_target, &actual_default);
 
     /* Output ranges */
-    for (int r = 0; r < range_count; r++) {
+    if (ranges) {
+        for (int r = 0; r < range_count; r++) {
         const dfa_range_t *rng = &ranges[r];
         int remapped_target = old_to_new[rng->target];
 
@@ -2009,6 +2011,7 @@ static void dfa_serialize_state(
         }
 
         fprintf(out, "\n");
+    }
     }
 
     free(ranges);
@@ -2113,7 +2116,7 @@ void dfa_dsl_dump(FILE *out,
     /* Canonical BFS from state 0 */
     int reachable_count = 0;
     int *canonical_order = NULL;
-    int *old_to_new = dfa_canonicalize_bfs(dfa, state_count, 0,
+    int *old_to_new = dfa_canonicalize_bfs(dfa, state_count, 0, alphabet_size,
                                              &canonical_order, &reachable_count);
     if (!old_to_new || !canonical_order || reachable_count == 0) {
         free(old_to_new); free(canonical_order);
