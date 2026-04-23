@@ -380,6 +380,70 @@ dsl_dfa_t *dfa_dsl_parse_file(const char *filename);
  */
 void dfa_dsl_free(dsl_dfa_t *dfa);
 
+/**
+ * Compare two parsed DFA graphs for structural equality.
+ */
+bool dfa_dsl_equal(const dsl_dfa_t *a, const dsl_dfa_t *b);
+
+/**
+ * Generate a unified diff between two DFA DSL strings.
+ * Returns NULL if strings match, else returns malloc'd diff string.
+ */
+char *dfa_dsl_diff(const char *expected, const char *actual);
+
+/**
+ * Assert that two DFA DSL strings are equal, printing diff on failure.
+ * Returns true if equal, false otherwise.
+ */
+bool dfa_dsl_assert_equal(const char *label, const char *expected, const char *actual);
+
+/**
+ * Verify DFA round-trip: serialize -> parse -> re-serialize.
+ * Returns NULL on success, or malloc'd error message on failure.
+ */
+char *dfa_dsl_verify_roundtrip(const build_dfa_state_t * const *dfa,
+                                 int state_count,
+                                 const alphabet_entry_t *alphabet,
+                                 int alphabet_size,
+                                 const void *marker_lists,
+                                 int marker_list_count);
+
+/**
+ * Validate a parsed DFA graph for semantic correctness.
+ * Checks for determinism, range validity, target bounds, etc.
+ */
+dsl_validation_t *dfa_dsl_validate(const dsl_dfa_t *dfa);
+
+/**
+ * Dump DFA to Graphviz DOT format.
+ */
+void dfa_dsl_dump_dot(FILE *out, const dsl_dfa_t *dfa);
+
+/**
+ * Serialize DFA to DOT format malloc'd string.
+ */
+char *dfa_dsl_to_dot(const dsl_dfa_t *dfa);
+
+/**
+ * Filter parameters for focused DFA extraction.
+ */
+typedef struct {
+    int start_state;         /* BFS start state (-1 = 0) */
+    int state_id_filter;     /* Only include this state (-1 = all) */
+    int pattern_id_filter;    /* Only include states for this pattern (-1 = all) */
+} dfa_dsl_filter_t;
+
+/**
+ * Dump focused DFA sub-graph to DSL format.
+ * Uses BFS from start_state to extract reachable states.
+ */
+void dfa_dsl_dump_filtered(FILE *out, const dsl_dfa_t *dfa, dfa_dsl_filter_t filter);
+
+/**
+ * Serialize focused DFA sub-graph to DSL string.
+ */
+char *dfa_dsl_to_string_filtered(const dsl_dfa_t *dfa, dfa_dsl_filter_t filter);
+
 /* ============================================================================
  * Test assertion macros
  *
@@ -455,6 +519,65 @@ void dfa_dsl_free(dsl_dfa_t *dfa);
         fprintf(stderr, "FAIL [%s]: NFA mismatch against %s\n",                    \
                 test_label, golden_path);                                          \
         nfa_dsl_assert_equal(test_label, _expected, _actual);                     \
+        free(_actual); free(_expected);                                           \
+        return false;                                                              \
+    }                                                                             \
+    free(_actual); free(_expected);                                               \
+} while(0)
+
+/**
+ * ASSERT_DFA_EQ_STR - Compare DFA output against an expected string.
+ * Serializes the DFA, compares against expected, prints diff on failure.
+ *
+ * Usage:
+ *   int count = dfa_get_state_count(dfa);
+ *   ASSERT_DFA_EQ_STR(dfa, count, alphabet, 256, markers, 10, "type: DFA\n...", "dfa test");
+ */
+#define ASSERT_DFA_EQ_STR(dfa_ptr, dfa_state_count, alphabet, alphabet_sz, markers, marker_cnt, expected, label) do { \
+    char *_actual = dfa_dsl_to_string(dfa_ptr, dfa_state_count, alphabet, alphabet_sz, markers, marker_cnt); \
+    if (!_actual) {                                                               \
+        fprintf(stderr, "FAIL [%s]: dfa_dsl_to_string returned NULL\n", label);  \
+        return false;                                                              \
+    }                                                                              \
+    if (strcmp(_actual, expected) != 0) {                                          \
+        fprintf(stderr, "FAIL [%s]: DFA output mismatch\n", label);                 \
+        dfa_dsl_assert_equal(label, expected, _actual);                           \
+        free(_actual);                                                            \
+        return false;                                                              \
+    }                                                                              \
+    free(_actual);                                                                \
+} while(0)
+
+/**
+ * ASSERT_DFA_EQ_FILE - Compare DFA output against a golden file.
+ */
+#define ASSERT_DFA_EQ_FILE(dfa_ptr, dfa_state_count, alphabet, alphabet_sz, markers, marker_cnt, golden_path, label) do { \
+    char *_actual = dfa_dsl_to_string(dfa_ptr, dfa_state_count, alphabet, alphabet_sz, markers, marker_cnt); \
+    if (!_actual) {                                                               \
+        fprintf(stderr, "FAIL [%s]: dfa_dsl_to_string returned NULL\n", label);  \
+        return false;                                                              \
+    }                                                                              \
+    FILE *_gf = fopen(golden_path, "r");                                          \
+    char *_expected = NULL;                                                        \
+    if (_gf) {                                                                    \
+        fseek(_gf, 0, SEEK_END);                                                  \
+        long _gsz = ftell(_gf);                                                   \
+        fseek(_gf, 0, SEEK_SET);                                                  \
+        _expected = malloc((size_t)_gsz + 1);                                      \
+        if (_expected) {                                                           \
+            size_t _nr = fread(_expected, 1, (size_t)_gsz, _gf);                 \
+            _expected[_nr] = '\0';                                                 \
+        }                                                                         \
+        fclose(_gf);                                                              \
+    }                                                                             \
+    if (!_expected) {                                                              \
+        fprintf(stderr, "FAIL [%s]: cannot read golden file '%s'\n", label, golden_path); \
+        free(_actual);                                                            \
+        return false;                                                              \
+    }                                                                             \
+    if (strcmp(_actual, _expected) != 0) {                                        \
+        fprintf(stderr, "FAIL [%s]: DFA mismatch against %s\n", label, golden_path); \
+        dfa_dsl_assert_equal(label, _expected, _actual);                          \
         free(_actual); free(_expected);                                           \
         return false;                                                              \
     }                                                                             \

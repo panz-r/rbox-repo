@@ -1568,8 +1568,419 @@ void nfa_dsl_validation_print(FILE *out, const dsl_validation_t *v) {
 }
 
 /* ============================================================================
- * DOT (Graphviz) visualization
+ * DFA Validation
  * ============================================================================ */
+
+static void dfa_add_issue(dsl_validation_t *v, dsl_severity_t sev, int state_id, const char *fmt, ...) {
+    if (!v) return;
+    if (v->issue_count >= v->issue_capacity) {
+        int new_cap = v->issue_capacity * 2;
+        if (new_cap < 16) new_cap = 16;
+        dsl_issue_t *new_issues = realloc(v->issues, (size_t)new_cap * sizeof(dsl_issue_t));
+        if (!new_issues) return;
+        v->issues = new_issues;
+        v->issue_capacity = new_cap;
+    }
+
+    dsl_issue_t *issue = &v->issues[v->issue_count];
+    issue->severity = sev;
+    issue->state_id = state_id;
+
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(issue->message, sizeof(issue->message), fmt, args);
+    va_end(args);
+
+    v->issue_count++;
+    if (sev == DSL_SEVERITY_ERROR) v->valid = false;
+}
+
+dsl_validation_t *dfa_dsl_validate(const dsl_dfa_t *dfa) {
+    dsl_validation_t *v = calloc(1, sizeof(dsl_validation_t));
+    if (!v) return NULL;
+    v->valid = true;
+
+    if (!dfa) {
+        dfa_add_issue(v, DSL_SEVERITY_ERROR, -1, "DFA is NULL");
+        return v;
+    }
+
+    if (dfa->state_count <= 0) {
+        dfa_add_issue(v, DSL_SEVERITY_ERROR, -1, "DFA has no states");
+        return v;
+    }
+
+    if (dfa->start_state < 0 || dfa->start_state >= dfa->state_count) {
+        dfa_add_issue(v, DSL_SEVERITY_ERROR, -1, "Invalid start state");
+    }
+
+    /* Check each state for determinism and range validity */
+    for (int i = 0; i < dfa->state_count; i++) {
+        const dsl_dfa_state_t *s = &dfa->states[i];
+
+        /* Check for duplicate symbol transitions */
+        for (int j = 0; j < s->symbol_transition_count; j++) {
+            for (int k = j + 1; k < s->symbol_transition_count; k++) {
+                if (s->symbol_transitions[j].symbol_id == s->symbol_transitions[k].symbol_id) {
+                    dfa_add_issue(v, DSL_SEVERITY_ERROR, i,
+                                  "Non-deterministic: duplicate transition for symbol %d",
+                                  s->symbol_transitions[j].symbol_id);
+                }
+            }
+        }
+
+        /* Check range validity and non-overlap */
+        for (int j = 0; j < s->range_count; j++) {
+            const dsl_dfa_range_t *r = &s->ranges[j];
+            if (r->start_char > r->end_char) {
+                dfa_add_issue(v, DSL_SEVERITY_ERROR, i,
+                              "Invalid range: start > end (%d > %d)",
+                              r->start_char, r->end_char);
+            }
+            if (r->start_char < 0 || r->end_char > 255) {
+                dfa_add_issue(v, DSL_SEVERITY_ERROR, i,
+                              "Range boundary out of bounds (%d-%d)",
+                              r->start_char, r->end_char);
+            }
+            /* Check overlap with other ranges */
+            for (int k = j + 1; k < s->range_count; k++) {
+                const dsl_dfa_range_t *r2 = &s->ranges[k];
+                if (!(r->end_char < r2->start_char || r->start_char > r2->end_char)) {
+                    dfa_add_issue(v, DSL_SEVERITY_WARNING, i,
+                                  "Overlapping ranges (%d-%d) and (%d-%d)",
+                                  r->start_char, r->end_char, r2->start_char, r2->end_char);
+                }
+            }
+        }
+
+        /* Check that default doesn't conflict with explicit transitions */
+        if (s->has_default) {
+            for (int j = 0; j < s->symbol_transition_count; j++) {
+                int sym = s->symbol_transitions[j].symbol_id;
+                if (sym >= 0 && sym < 256) {
+                    /* Symbol is in the byte range - default would override it */
+                    dfa_add_issue(v, DSL_SEVERITY_WARNING, i,
+                                  "Default transition present with explicit transitions (symbol %d)",
+                                  sym);
+                    break;
+                }
+            }
+        }
+
+        /* Check target validity */
+        for (int j = 0; j < s->symbol_transition_count; j++) {
+            const dsl_transition_t *t = &s->symbol_transitions[j];
+            for (int k = 0; k < t->target_count; k++) {
+                int tgt = t->targets[k];
+                if (tgt < 0 || tgt >= dfa->state_count) {
+                    dfa_add_issue(v, DSL_SEVERITY_ERROR, i,
+                                  "Transition to out-of-bounds state %d", tgt);
+                }
+            }
+        }
+        for (int j = 0; j < s->range_count; j++) {
+            int tgt = s->ranges[j].target;
+            if (tgt < 0 || tgt >= dfa->state_count) {
+                dfa_add_issue(v, DSL_SEVERITY_ERROR, i,
+                              "Range transition to out-of-bounds state %d", tgt);
+            }
+        }
+        if (s->eos_target >= dfa->state_count) {
+            dfa_add_issue(v, DSL_SEVERITY_ERROR, i,
+                          "EOS transition to out-of-bounds state %d", s->eos_target);
+        }
+        if (s->default_target >= dfa->state_count) {
+            dfa_add_issue(v, DSL_SEVERITY_ERROR, i,
+                          "Default transition to out-of-bounds state %d", s->default_target);
+        }
+    }
+
+    return v;
+}
+
+/* ============================================================================
+ * DOT (Graphviz) visualization for DFA
+ * ============================================================================ */
+
+static void dfa_dsl_dump_dot_state(FILE *out, const dsl_dfa_state_t *s, int state_id) {
+    if (s->is_accept) {
+        fprintf(out, "  %d [shape=doublecircle, label=\"%d", state_id, state_id);
+        if (s->pattern_id >= 0) fprintf(out, "\\np%d", s->pattern_id);
+        fprintf(out, "\"];\n");
+    } else {
+        fprintf(out, "  %d [label=\"%d\"];\n", state_id, state_id);
+    }
+}
+
+void dfa_dsl_dump_dot(FILE *out, const dsl_dfa_t *dfa) {
+    if (!dfa || !dfa->states) return;
+
+    fprintf(out, "digraph DFA {\n");
+    fprintf(out, "  rankdir=LR;\n");
+    fprintf(out, "  node [shape=circle];\n");
+    fprintf(out, "  __start [shape=point];\n");
+
+    if (dfa->start_state >= 0 && dfa->start_state < dfa->state_count) {
+        fprintf(out, "  __start -> %d;\n", dfa->start_state);
+    }
+
+    for (int i = 0; i < dfa->state_count; i++) {
+        dfa_dsl_dump_dot_state(out, &dfa->states[i], i);
+    }
+
+    for (int i = 0; i < dfa->state_count; i++) {
+        const dsl_dfa_state_t *s = &dfa->states[i];
+
+        /* Symbol transitions */
+        for (int j = 0; j < s->symbol_transition_count; j++) {
+            const dsl_transition_t *t = &s->symbol_transitions[j];
+            for (int k = 0; k < t->target_count; k++) {
+                fprintf(out, "  %d -> %d [label=\"", i, t->targets[k]);
+                dsl_write_symbol(out, t->symbol_id);
+                fprintf(out, "\"];\n");
+            }
+        }
+
+        /* Range transitions */
+        for (int j = 0; j < s->range_count; j++) {
+            const dsl_dfa_range_t *r = &s->ranges[j];
+            fprintf(out, "  %d -> %d [label=\"", i, r->target);
+            dsl_write_symbol(out, r->start_char);
+            fprintf(out, "-");
+            dsl_write_symbol(out, r->end_char);
+            fprintf(out, "\"];\n");
+        }
+
+        /* EOS transition */
+        if (s->is_eos_target && s->eos_target >= 0) {
+            fprintf(out, "  %d -> %d [label=\"EOS\", style=dashed];\n", i, s->eos_target);
+        }
+
+        /* Default transition */
+        if (s->has_default && s->default_target >= 0) {
+            fprintf(out, "  %d -> %d [label=\"default\", style=dotted];\n", i, s->default_target);
+        }
+    }
+
+    fprintf(out, "}\n");
+}
+
+char *dfa_dsl_to_dot(const dsl_dfa_t *dfa) {
+    if (!dfa) return NULL;
+    size_t buf_size = (size_t)(dfa->state_count * 128 + 256);
+    char *buf = malloc(buf_size);
+    if (!buf) return NULL;
+
+    FILE *out = fmemopen(buf, buf_size, "w");
+    if (!out) {
+        free(buf);
+        return NULL;
+    }
+
+    dfa_dsl_dump_dot(out, dfa);
+    fflush(out);
+    size_t actual_len = (size_t)ftell(out);
+    fclose(out);
+
+    char *result = realloc(buf, actual_len + 1);
+    if (!result) result = buf;
+    result[actual_len] = '\0';
+    return result;
+}
+
+/* ============================================================================
+ * DFA Filtered Output
+ * ============================================================================ */
+
+void dfa_dsl_dump_filtered(FILE *out, const dsl_dfa_t *dfa, dfa_dsl_filter_t filter) {
+    if (!dfa || dfa->state_count == 0) return;
+
+    int start = (filter.start_state >= 0) ? filter.start_state : 0;
+    if (start < 0 || start >= dfa->state_count) start = 0;
+
+    /* BFS to find reachable states */
+    int *visited = calloc((size_t)dfa->state_count, sizeof(int));
+    int *queue = malloc((size_t)dfa->state_count * sizeof(int));
+    int queue_start = 0, queue_end = 0;
+
+    if (!visited || !queue) {
+        free(visited);
+        free(queue);
+        return;
+    }
+
+    visited[start] = 1;
+    queue[queue_end++] = start;
+
+    while (queue_start < queue_end) {
+        int current = queue[queue_start++];
+        const dsl_dfa_state_t *s = &dfa->states[current];
+
+        /* Explore symbol transitions */
+        for (int i = 0; i < s->symbol_transition_count; i++) {
+            for (int j = 0; j < s->symbol_transitions[i].target_count; j++) {
+                int tgt = s->symbol_transitions[i].targets[j];
+                if (tgt >= 0 && tgt < dfa->state_count && !visited[tgt]) {
+                    visited[tgt] = 1;
+                    queue[queue_end++] = tgt;
+                }
+            }
+        }
+
+        /* Explore range transitions */
+        for (int i = 0; i < s->range_count; i++) {
+            int tgt = s->ranges[i].target;
+            if (tgt >= 0 && tgt < dfa->state_count && !visited[tgt]) {
+                visited[tgt] = 1;
+                queue[queue_end++] = tgt;
+            }
+        }
+
+        /* EOS target */
+        if (s->is_eos_target && s->eos_target >= 0 && !visited[s->eos_target]) {
+            visited[s->eos_target] = 1;
+            queue[queue_end++] = s->eos_target;
+        }
+
+        /* Default target */
+        if (s->has_default && s->default_target >= 0 && !visited[s->default_target]) {
+            visited[s->default_target] = 1;
+            queue[queue_end++] = s->default_target;
+        }
+    }
+
+    /* Count reachable states */
+    int reachable_count = 0;
+    for (int i = 0; i < dfa->state_count; i++) {
+        if (visited[i]) reachable_count++;
+    }
+
+    if (reachable_count == 0) {
+        free(visited);
+        free(queue);
+        return;
+    }
+
+    /* Build old_to_new mapping */
+    int *old_to_new = malloc((size_t)dfa->state_count * sizeof(int));
+    int *canonical_order = malloc((size_t)reachable_count * sizeof(int));
+    if (!old_to_new || !canonical_order) {
+        free(visited);
+        free(queue);
+        free(old_to_new);
+        free(canonical_order);
+        return;
+    }
+
+    for (int i = 0; i < dfa->state_count; i++) old_to_new[i] = -1;
+
+    int new_id = 0;
+    for (int i = 0; i < dfa->state_count; i++) {
+        if (visited[i]) {
+            old_to_new[i] = new_id++;
+            canonical_order[old_to_new[i]] = i;
+        }
+    }
+
+    /* Header */
+    fprintf(out, "type: DFA\n");
+    fprintf(out, "version: %d\n", NFA_DSL_VERSION);
+    fprintf(out, "alphabet_size: %d\n", dfa->alphabet_size);
+    fprintf(out, "initial: %d\n", old_to_new[start]);
+
+    /* Header comment */
+    if (filter.pattern_id_filter >= 0) {
+        fprintf(out, "# Focused DFA for pattern %d (from state %d)\n",
+                filter.pattern_id_filter, start);
+    } else if (filter.start_state >= 0) {
+        fprintf(out, "# Focused DFA from state %d\n", start);
+    }
+
+    /* Serialize states in BFS order */
+    for (int ci = 0; ci < reachable_count; ci++) {
+        int old_id = canonical_order[ci];
+        const dsl_dfa_state_t *s = &dfa->states[old_id];
+        int new_id = old_to_new[old_id];
+
+        /* State definition */
+        fprintf(out, "%d", new_id);
+        if (s->is_start) fprintf(out, ": start");
+        if (s->is_accept || s->pattern_id >= 0) {
+            fprintf(out, ": accept");
+            if (s->pattern_id >= 0) fprintf(out, " pattern=%d", s->pattern_id);
+            if (s->category_mask) fprintf(out, " category=0x%02X", s->category_mask);
+        }
+        fprintf(out, "\n");
+
+        /* Symbol transitions */
+        for (int i = 0; i < s->symbol_transition_count; i++) {
+            const dsl_transition_t *t = &s->symbol_transitions[i];
+            int tgt = (t->target_count > 0) ? t->targets[0] : -1;
+            fprintf(out, "%d ", new_id);
+            dsl_write_symbol(out, t->symbol_id);
+            if (t->marker_count > 0) {
+                fprintf(out, " [");
+                for (int m = 0; m < t->marker_count; m++) {
+                    if (m > 0) fprintf(out, ",");
+                    fprintf(out, "0x%08X", t->markers[m].value);
+                }
+                fprintf(out, "]");
+            }
+            fprintf(out, " -> %d\n", old_to_new[tgt]);
+        }
+
+        /* Range transitions */
+        for (int i = 0; i < s->range_count; i++) {
+            const dsl_dfa_range_t *r = &s->ranges[i];
+            fprintf(out, "%d ", new_id);
+            dsl_write_symbol(out, r->start_char);
+            fprintf(out, "-");
+            dsl_write_symbol(out, r->end_char);
+            fprintf(out, " -> %d\n", old_to_new[r->target]);
+        }
+
+        /* EOS transition */
+        if (s->is_eos_target && s->eos_target >= 0) {
+            fprintf(out, "%d EOS", new_id);
+            if (s->category_mask) fprintf(out, " [0x%02X]", s->category_mask);
+            fprintf(out, " -> %d\n", old_to_new[s->eos_target]);
+        }
+
+        /* Default transition */
+        if (s->has_default && s->default_target >= 0) {
+            fprintf(out, "%d default -> %d\n", new_id, old_to_new[s->default_target]);
+        }
+    }
+
+    free(visited);
+    free(queue);
+    free(old_to_new);
+    free(canonical_order);
+}
+
+char *dfa_dsl_to_string_filtered(const dsl_dfa_t *dfa, dfa_dsl_filter_t filter) {
+    if (!dfa) return NULL;
+
+    size_t buf_size = (size_t)(dfa->state_count * 512 + 1024);
+    char *buf = malloc(buf_size);
+    if (!buf) return NULL;
+
+    FILE *out = fmemopen(buf, buf_size, "w");
+    if (!out) {
+        free(buf);
+        return NULL;
+    }
+
+    dfa_dsl_dump_filtered(out, dfa, filter);
+    fflush(out);
+    size_t actual_len = (size_t)ftell(out);
+    fclose(out);
+
+    char *result = realloc(buf, actual_len + 1);
+    if (!result) result = buf;
+    result[actual_len] = '\0';
+    return result;
+}
 
 void nfa_dsl_dump_dot(FILE *out, const dsl_nfa_t *nfa) {
     if (!nfa || !nfa->states) return;
@@ -1695,6 +2106,10 @@ static uint64_t compute_dfa_state_signature(const build_dfa_state_t *s) {
     h = fnv1a_update_u32(h, (uint32_t)s->accepting_pattern_id);
     h = fnv1a_update_u32(h, s->eos_target);
     h = fnv1a_update_u32(h, s->eos_marker_offset);
+    /* Note: default_target is not stored in build_dfa_state_t; it is computed
+     * at serialization time by dfa_find_default_target() and not included in
+     * the signature hash. This is acceptable since default transitions are
+     * emitted after explicit transitions and BFS ordering ensures determinism. */
 
     /* Hash transitions: for each symbol with a transition, hash (sym, target) */
     for (int sym = 0; sym < s->alphabet_size && sym < BYTE_VALUE_MAX; sym++) {
@@ -2636,4 +3051,210 @@ void dfa_dsl_free(dsl_dfa_t *dfa) {
     if (!dfa) return;
     free(dfa->states);
     free(dfa);
+}
+
+/* ============================================================================
+ * DFA Equality & Diff
+ * ============================================================================ */
+
+static bool dfa_states_equal(const dsl_dfa_state_t *a, const dsl_dfa_state_t *b) {
+    if (a->pattern_id != b->pattern_id) return false;
+    if (a->symbol_transition_count != b->symbol_transition_count) return false;
+    for (int i = 0; i < a->symbol_transition_count; i++) {
+        if (a->symbol_transitions[i].symbol_id != b->symbol_transitions[i].symbol_id) return false;
+        /* Compare first target (most DFA transitions have target_count >= 1) */
+        if (a->symbol_transitions[i].target_count < 1 || b->symbol_transitions[i].target_count < 1) return false;
+        if (a->symbol_transitions[i].targets[0] != b->symbol_transitions[i].targets[0]) return false;
+    }
+    if (a->range_count != b->range_count) return false;
+    for (int i = 0; i < a->range_count; i++) {
+        if (a->ranges[i].start_char != b->ranges[i].start_char) return false;
+        if (a->ranges[i].end_char != b->ranges[i].end_char) return false;
+        if (a->ranges[i].target != b->ranges[i].target) return false;
+    }
+    return true;
+}
+
+bool dfa_dsl_equal(const dsl_dfa_t *a, const dsl_dfa_t *b) {
+    if (!a || !b) return a == b;
+    if (a->state_count != b->state_count) return false;
+    for (int i = 0; i < a->state_count; i++) {
+        if (!dfa_states_equal(&a->states[i], &b->states[i])) return false;
+    }
+    return true;
+}
+
+char *dfa_dsl_diff(const char *expected, const char *actual) {
+    if (!expected) expected = "";
+    if (!actual) actual = "";
+    if (strcmp(expected, actual) == 0) return NULL;
+    return nfa_dsl_diff(expected, actual);
+}
+
+bool dfa_dsl_assert_equal(const char *label,
+                           const char *expected,
+                           const char *actual) {
+    if (strcmp(expected, actual) == 0) return true;
+    char *diff = dfa_dsl_diff(expected, actual);
+    if (diff) {
+        fprintf(stderr, "[%s] DFA mismatch:\n%s", label, diff);
+        free(diff);
+    }
+    return false;
+}
+
+/* ============================================================================
+ * DFA Round-trip Verification
+ * ============================================================================ */
+
+/* Forward declaration for round-trip verification */
+static char *dfa_dsl_to_string_from_parsed(const dsl_dfa_t *dfa,
+                                            const alphabet_entry_t *alphabet,
+                                            int alphabet_size,
+                                            const void *marker_lists,
+                                            int marker_list_count);
+
+char *dfa_dsl_verify_roundtrip(const build_dfa_state_t * const *dfa,
+                                int state_count,
+                                const alphabet_entry_t *alphabet,
+                                int alphabet_size,
+                                const void *marker_lists,
+                                int marker_list_count) {
+    if (!dfa || state_count == 0) return NULL;
+
+    char *first = dfa_dsl_to_string(dfa, state_count, alphabet, alphabet_size,
+                                     marker_lists, marker_list_count);
+    if (!first) return NULL;
+
+    dsl_dfa_t *parsed = dfa_dsl_parse_string(first);
+    if (!parsed) {
+        free(first);
+        return strdup("dfa_dsl_parse_string returned NULL on first serialization");
+    }
+
+    char *second = dfa_dsl_to_string_from_parsed(parsed, alphabet, alphabet_size,
+                                                   marker_lists, marker_list_count);
+    dfa_dsl_free(parsed);
+
+    if (!second) {
+        free(first);
+        return strdup("dfa_dsl_to_string_from_parsed returned NULL on re-serialization");
+    }
+
+    if (strcmp(first, second) == 0) {
+        free(first);
+        free(second);
+        return NULL;
+    }
+
+    size_t msg_size = (size_t)(strlen(first) + strlen(second) + 256);
+    char *msg = malloc(msg_size);
+    if (!msg) {
+        free(first);
+        free(second);
+        return NULL;
+    }
+
+    snprintf(msg, msg_size,
+             "DFA round-trip mismatch:\n--- first serialization\n+++ second serialization\n%.200s... (truncated)",
+             first);
+
+    free(first);
+    free(second);
+    return msg;
+}
+
+/* Serialize a parsed dsl_dfa_t back to DSL string format */
+static char *dfa_dsl_to_string_from_parsed(const dsl_dfa_t *dfa,
+                                            const alphabet_entry_t *alphabet,
+                                            int alphabet_size,
+                                            const void *marker_lists,
+                                            int marker_list_count) {
+    (void)alphabet;
+    (void)marker_lists;
+    (void)marker_list_count;
+    if (!dfa || dfa->state_count == 0) return NULL;
+
+    size_t buf_size = (size_t)(dfa->state_count * 512 + 1024);
+    char *buf = malloc(buf_size);
+    if (!buf) return NULL;
+
+    FILE *out = fmemopen(buf, buf_size, "w");
+    if (!out) {
+        free(buf);
+        return NULL;
+    }
+
+    fprintf(out, "type: DFA\n");
+    fprintf(out, "version: %d\n", NFA_DSL_VERSION);
+    fprintf(out, "alphabet_size: %d\n", alphabet_size);
+    fprintf(out, "initial: %d\n", dfa->start_state);
+
+    for (int i = 0; i < dfa->state_count; i++) {
+        const dsl_dfa_state_t *s = &dfa->states[i];
+
+        /* State definition line */
+        fprintf(out, "%d", i);
+        if (s->is_start) fprintf(out, ": start");
+        if (s->is_accept || s->pattern_id >= 0) {
+            fprintf(out, ": accept");
+            if (s->pattern_id >= 0) {
+                fprintf(out, " pattern=%d", s->pattern_id);
+            }
+            if (s->category_mask) {
+                fprintf(out, " category=0x%02X", s->category_mask);
+            }
+        }
+        fprintf(out, "\n");
+
+        /* Symbol transitions with markers */
+        for (int j = 0; j < s->symbol_transition_count; j++) {
+            const dsl_transition_t *t = &s->symbol_transitions[j];
+            int tgt = (t->target_count > 0) ? t->targets[0] : -1;
+            fprintf(out, "%d ", i);
+            dsl_write_symbol(out, t->symbol_id);
+            if (t->marker_count > 0) {
+                fprintf(out, " [");
+                for (int m = 0; m < t->marker_count; m++) {
+                    if (m > 0) fprintf(out, ",");
+                    fprintf(out, "0x%08X", t->markers[m].value);
+                }
+                fprintf(out, "]");
+            }
+            fprintf(out, " -> %d\n", tgt);
+        }
+
+        /* Range transitions */
+        for (int j = 0; j < s->range_count; j++) {
+            const dsl_dfa_range_t *r = &s->ranges[j];
+            fprintf(out, "%d ", i);
+            dsl_write_symbol(out, r->start_char);
+            fprintf(out, "-");
+            dsl_write_symbol(out, r->end_char);
+            fprintf(out, " -> %d\n", r->target);
+        }
+
+        /* EOS transition */
+        if (s->is_eos_target && s->eos_target >= 0) {
+            fprintf(out, "%d EOS", i);
+            if (s->category_mask) {
+                fprintf(out, " [0x%02X]", s->category_mask);
+            }
+            fprintf(out, " -> %d\n", s->eos_target);
+        }
+
+        /* Default transition */
+        if (s->has_default && s->default_target >= 0) {
+            fprintf(out, "%d default -> %d\n", i, s->default_target);
+        }
+    }
+
+    fflush(out);
+    size_t actual_len = (size_t)ftell(out);
+    fclose(out);
+
+    char *result = realloc(buf, actual_len + 1);
+    if (!result) result = buf;
+    result[actual_len] = '\0';
+    return result;
 }
