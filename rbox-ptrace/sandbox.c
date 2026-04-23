@@ -795,18 +795,12 @@ static int apply_landlock(int *landlock_failed) {
         return 0;
     }
 
-    int abi = syscall(__NR_landlock_create_ruleset, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
-    if (abi < 1) {
-        LOG_ERROR("Landlock not supported (ABI version %d)", abi);
-        return -1;
-    }
-
     int allow_count = 0;
     int deny_count = 0;
     struct allowed_entry *allow_entries = sandbox_parse_allow_list(allow_env, &allow_count,
                                                                  real_path_validator, NULL);
     struct denied_entry *deny_entries = sandbox_parse_deny_list(deny_env, &deny_count,
-                                                               real_path_validator, NULL);
+                                                              real_path_validator, NULL);
 
     if (allow_count == 0 && deny_count == 0) {
         if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
@@ -820,6 +814,17 @@ static int apply_landlock(int *landlock_failed) {
         sandbox_free_allow_entries(allow_entries, allow_count);
         sandbox_free_deny_entries(deny_entries, deny_count);
         return -2;
+    }
+
+    int abi = syscall(__NR_landlock_create_ruleset, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
+    if (abi < 1) {
+        LOG_ERROR("Landlock not supported (ABI version %d), falling back to interception", abi);
+        extern soft_ruleset_t *hard_fallthrough_fs_rules;
+        hard_fallthrough_fs_rules = hard_rules;
+        sandbox_free_allow_entries(allow_entries, allow_count);
+        sandbox_free_deny_entries(deny_entries, deny_count);
+        *landlock_failed = 1;
+        return -1;
     }
 
     for (int i = 0; i < allow_count; i++) {
