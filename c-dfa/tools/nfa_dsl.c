@@ -14,14 +14,11 @@
 #include "../include/dfa_errors.h"
 #include "../include/dfa_types.h"
 #include "../include/dfa_format.h"
+#include "../include/cdfa_defines.h"
 
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <strings.h>
-#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -549,6 +546,8 @@ void nfa_graph_dsl_dump_filtered(FILE *out, const nfa_graph_t *graph, nfa_dsl_fi
         free(old_to_new); free(canonical_order);
         return;
     }
+
+    fprintf(out, "version: %d\n", NFA_DSL_VERSION);
 
     /* Header comment for focused output */
     if (filter.pattern_id_filter >= 0) {
@@ -1976,42 +1975,42 @@ static void dfa_serialize_state(
     /* Output ranges */
     if (ranges) {
         for (int r = 0; r < range_count; r++) {
-        const dfa_range_t *rng = &ranges[r];
-        int remapped_target = old_to_new[rng->target];
+            const dfa_range_t *rng = &ranges[r];
+            int remapped_target = old_to_new[rng->target];
 
-        if (rng->start_sym == rng->end_sym) {
-            /* Single literal */
-            fprintf(out, "%d ", new_id);
-            dsl_write_symbol(out, rng->start_sym);
-            fprintf(out, " -> %d", remapped_target);
-        } else {
-            /* Range */
-            fprintf(out, "%d ", new_id);
-            dsl_write_symbol(out, rng->start_sym);
-            fprintf(out, "-");
-            dsl_write_symbol(out, rng->end_sym);
-            fprintf(out, " -> %d", remapped_target);
-        }
-
-        /* Markers for this range */
-        if (rng->has_marker && mlists) {
-            uint32_t markers[16];
-            int mc = dfa_resolve_markers(mlists,
-                                          s->marker_offsets[rng->start_sym],
-                                          markers, 16);
-            if (mc > 0) {
-                qsort(markers, (size_t)mc, sizeof(uint32_t), cmp_uint32);
-                fprintf(out, " [");
-                for (int m = 0; m < mc; m++) {
-                    if (m > 0) fprintf(out, ",");
-                    fprintf(out, "0x%08X", markers[m]);
-                }
-                fprintf(out, "]");
+            if (rng->start_sym == rng->end_sym) {
+                /* Single literal */
+                fprintf(out, "%d ", new_id);
+                dsl_write_symbol(out, rng->start_sym);
+                fprintf(out, " -> %d", remapped_target);
+            } else {
+                /* Range */
+                fprintf(out, "%d ", new_id);
+                dsl_write_symbol(out, rng->start_sym);
+                fprintf(out, "-");
+                dsl_write_symbol(out, rng->end_sym);
+                fprintf(out, " -> %d", remapped_target);
             }
-        }
 
-        fprintf(out, "\n");
-    }
+            /* Markers for this range */
+            if (rng->has_marker && mlists) {
+                uint32_t markers[16];
+                int mc = dfa_resolve_markers(mlists,
+                                              s->marker_offsets[rng->start_sym],
+                                              markers, 16);
+                if (mc > 0) {
+                    qsort(markers, (size_t)mc, sizeof(uint32_t), cmp_uint32);
+                    fprintf(out, " [");
+                    for (int m = 0; m < mc; m++) {
+                        if (m > 0) fprintf(out, ",");
+                        fprintf(out, "0x%08X", markers[m]);
+                    }
+                    fprintf(out, "]");
+                }
+            }
+
+            fprintf(out, "\n");
+        }
     }
 
     free(ranges);

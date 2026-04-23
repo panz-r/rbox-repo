@@ -616,6 +616,7 @@ static bool test_filtered_from_start_state(void) {
     CHECK(dsl, "nfa_graph_dsl_to_string_filtered returned NULL");
 
     const char *expected =
+        "version: 1\n"
         "# Focused NFA from state 1\n"
         "0: start accept category=0x01 pattern=1\n";
     CHECK(strcmp(dsl, expected) == 0, "focused output mismatch");
@@ -682,6 +683,7 @@ static bool test_filtered_isolated_branch(void) {
     CHECK(focused, "focused serialization failed");
 
     const char *expected =
+        "version: 1\n"
         "# Focused NFA from state 2\n"
         "0: start\n"
         "0 'b' -> 1\n"
