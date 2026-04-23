@@ -60,44 +60,6 @@ static const char* CATEGORIES_SECTION =
     "\n";
 
 // ============================================================================
-// Helper Functions
-// ============================================================================
-
-static bool has_transition_on(nfa_graph_t* g, int from, int sym) {
-    if (from < 0 || from >= g->state_count) return false;
-    if (g->states[from].multi_targets.has_first_target[sym]) return true;
-    mta_entry_t* e = g->states[from].multi_targets.symbol_map[sym];
-    return e != NULL && e->target_count > 0;
-}
-
-static int find_transition_target(nfa_graph_t* g, int from, int sym) {
-    if (from < 0 || from >= g->state_count) return -1;
-    if (g->states[from].multi_targets.has_first_target[sym]) {
-        return g->states[from].multi_targets.first_targets[sym];
-    }
-    mta_entry_t* e = g->states[from].multi_targets.symbol_map[sym];
-    if (e && e->target_count > 0) return e->targets[0];
-    return -1;
-}
-
-static int follow_epsilon_chain(nfa_graph_t* g, int start) {
-    int current = start;
-    for (int iterations = 0; iterations < g->state_count; iterations++) {
-        if (current < 0 || current >= g->state_count) return -1;
-        int next = -1;
-        if (g->states[current].multi_targets.has_first_target[VSYM_EPS]) {
-            next = g->states[current].multi_targets.first_targets[VSYM_EPS];
-        } else {
-            mta_entry_t* e = g->states[current].multi_targets.symbol_map[VSYM_EPS];
-            if (e && e->target_count > 0) next = e->targets[0];
-        }
-        if (next < 0) break;
-        if (next == current) break;
-        current = next;
-    }
-    return current;
-}
-
 /* ============================================================================
  * DSL Query Helpers
  * ============================================================================ */
@@ -188,6 +150,14 @@ static bool dsl_has_path(const dsl_nfa_t *nfa, int from, int to, const int *seq,
 #define ASSERT_DSL_NO_EPSILON_TO(nfa, from, to) do { \
     if (dsl_has_epsilon(nfa, from, to)) { \
         printf("  ASSERT FAILED: Unexpected epsilon %d -> %d exists\n", from, to); \
+        return false; \
+    } \
+} while(0)
+
+#define ASSERT_DSL_HAS_MARKER(nfa, from, sym, marker) do { \
+    if (!dsl_has_marker(nfa, from, sym, marker)) { \
+        printf("  ASSERT FAILED: Marker 0x%08X not found on transition %d -%s-> ...\n", \
+                marker, from, nfa_dsl_symbol_name(sym)); \
         return false; \
     } \
 } while(0)
@@ -480,9 +450,22 @@ static bool test_simple_group(void) {
 static bool test_nested_groups(void) {
     nfa_graph_t* g = parse_pattern("[safe] (ab)");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 3);
-    int s0 = follow_epsilon_chain(g, 0);
-    ASSERT_TRUE(has_transition_on(g, s0, 'a'));
+
+    /* Use DSL query helpers to verify the structure */
+    dsl_nfa_t *dsl = nfa_graph_to_dsl(g);
+    ASSERT_TRUE(dsl != NULL);
+
+    /* Verify 'a' and 'b' transitions exist (structure may vary) */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(strstr(dsl_str, " 'a' -> ") != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'b' -> ") != NULL);
+    free(dsl_str);
+
+    /* Verify accepting state exists */
+    int last_state = dsl->state_count - 1;
+    ASSERT_DSL_ACCEPTING(dsl, last_state, 0);
+
+    nfa_dsl_free(dsl);
     nfa_graph_free(g);
     return true;
 }
