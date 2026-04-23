@@ -11,14 +11,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "../include/nfa.h"
+#include "../include/nfa_dsl.h"
 #include "dfa_minimize.h"
 
-typedef struct {
-    int symbol_id;
-    int start_char;
-    int end_char;
-    bool is_special;
-} alphabet_entry_t;
+/* alphabet_entry_t is defined in include/nfa_dsl.h */
 
 typedef struct {
     // NFA storage

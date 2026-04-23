@@ -3,4 +3,5 @@ test_minimize_integrity
 test_sat_encoding
 test_library_api
 test_eval_only
+test_nfa_dsl
 regression_test

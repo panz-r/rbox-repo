@@ -57,7 +57,8 @@ NFA_BUILDER_MODULES = $(TOOLS_DIR)/nfa_construct.o \
                       $(TOOLS_DIR)/nfa_categories.o \
                       $(TOOLS_DIR)/nfa_parser.o \
                       $(TOOLS_DIR)/nfa_validate.o \
-                      $(TOOLS_DIR)/nfa_alphabet.o
+                      $(TOOLS_DIR)/nfa_alphabet.o \
+                      $(TOOLS_DIR)/nfa_dsl.o
 
 # ============================================================================
 # Static Library Target
@@ -210,6 +211,9 @@ $(TOOLS_DIR)/nfa_validate.o: $(TOOLS_DIR)/nfa_validate.c $(INCLUDE_DIR)/*.h $(TO
 $(TOOLS_DIR)/nfa_alphabet.o: $(TOOLS_DIR)/nfa_alphabet.c $(INCLUDE_DIR)/*.h $(TOOLS_DIR)/nfa_builder.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(TOOLS_DIR)/nfa_dsl.o: $(TOOLS_DIR)/nfa_dsl.c $(INCLUDE_DIR)/*.h $(TOOLS_DIR)/nfa_builder.h $(INCLUDE_DIR)/nfa_dsl.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(TOOLS_DIR)/dfa_minimize.o: $(TOOLS_DIR)/dfa_minimize.c $(INCLUDE_DIR)/*.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -292,6 +296,10 @@ $(TESTS_DIR)/regression_test: $(TESTS_DIR)/regression_test.c $(LIB) $(INCLUDE_DI
 # Build eval-only test (links against libdfa_eval.a only, no builder deps)
 $(TESTS_DIR)/test_eval_only: $(TESTS_DIR)/test_eval_only.c $(EVAL_LIB) $(INCLUDE_DIR)/dfa.h $(INCLUDE_DIR)/dfa_types.h
 	$(CC) $(CFLAGS) -o $@ $(TESTS_DIR)/test_eval_only.c -L. -ldfa_eval $(LDFLAGS)
+
+# NFA DSL serialization/deserialization tests
+$(TESTS_DIR)/test_nfa_dsl: $(TESTS_DIR)/test_nfa_dsl.c $(LIB) $(INCLUDE_DIR)/*.h $(TOOLS_DIR)/nfa_builder.h
+	$(CC) $(CFLAGS) -I$(TOOLS_DIR) -o $@ $(TESTS_DIR)/test_nfa_dsl.c -L. -lreadonlybox_dfa $(LDFLAGS)
 
 # Run minimization integrity test
 test-integrity: $(TESTS_DIR)/test_minimize_integrity
