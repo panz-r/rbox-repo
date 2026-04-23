@@ -1312,6 +1312,19 @@ void nfa_dsl_free(dsl_nfa_t *nfa) {
 }
 
 /* ============================================================================
+ * NFA Graph Conversion
+ * ============================================================================ */
+
+dsl_nfa_t *nfa_graph_to_dsl(const nfa_graph_t *graph) {
+    if (!graph) return NULL;
+    char *str = nfa_graph_dsl_to_string(graph);
+    if (!str) return NULL;
+    dsl_nfa_t *dsl = nfa_dsl_parse_string(str);
+    free(str);
+    return dsl;
+}
+
+/* ============================================================================
  * Comparison: structural equality
  * ============================================================================ */
 

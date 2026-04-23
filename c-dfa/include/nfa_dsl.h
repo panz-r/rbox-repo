@@ -152,6 +152,17 @@ dsl_nfa_t *nfa_dsl_parse_string(const char *text);
 void nfa_dsl_free(dsl_nfa_t *nfa);
 
 /* ============================================================================
+ * NFA Graph Conversion
+ * ============================================================================ */
+
+/**
+ * Convert an nfa_graph_t to a queryable dsl_nfa_t.
+ * Serializes the graph to DSL string, then parses it back.
+ * Caller must free() the returned pointer with nfa_dsl_free().
+ */
+dsl_nfa_t *nfa_graph_to_dsl(const nfa_graph_t *graph);
+
+/* ============================================================================
  * Comparison
  * ============================================================================ */
 
