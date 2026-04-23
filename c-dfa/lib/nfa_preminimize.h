@@ -76,6 +76,19 @@ int nfa_preminimize(nfa_state_t* nfa, int* state_count, const nfa_premin_options
 void nfa_premin_get_stats(nfa_premin_stats_t* stats);
 
 /**
+ * Check if a state has a transition to a specific target on a symbol.
+ * Checks all three transition representations:
+ * 1. has_first_target/first_targets fast-path
+ * 2. symbol_map multi-target entries
+ *
+ * @param state NFA state to check
+ * @param sym Symbol ID
+ * @param target Target state index
+ * @return true if transition exists
+ */
+bool nfa_has_transition_to(const nfa_state_t* state, int sym, int target);
+
+/**
  * Compute a signature hash for an NFA state.
  * States with identical signatures are merge candidates.
  * 

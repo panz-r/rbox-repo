@@ -167,7 +167,7 @@ static void sig_cache_grow(int new_capacity) {
  * 2. has_first_target/first_targets fast-path
  * 3. symbol_map multi-target entries
  */
-static bool nfa_has_transition_to(const nfa_state_t* state, int sym, int target) {
+bool nfa_has_transition_to(const nfa_state_t* state, int sym, int target) {
     if (!state || sym < 0 || sym >= MAX_SYMBOLS || target < 0) {
         return false;
     }

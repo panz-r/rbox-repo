@@ -9,8 +9,45 @@
 #define _NFA_DSL_UTILS_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stddef.h>
+#include "../include/nfa_dsl.h"
 #include "../lib/nfa_builder.h"
+
+/**
+ * DSL NFA Query Helpers
+ * 
+ * These functions work with dsl_nfa_t (parsed from DSL) to verify
+ * transition structure without needing a full nfa_graph_t.
+ */
+
+/**
+ * Check if a state has a transition on a symbol to a specific target.
+ */
+bool dsl_has_transition(const dsl_nfa_t *nfa, int from, int sym, int to);
+
+/**
+ * Check if a state has an epsilon transition to a specific target.
+ */
+static inline bool dsl_has_epsilon(const dsl_nfa_t *nfa, int from, int to) {
+    return dsl_has_transition(nfa, from, VSYM_EPS, to);
+}
+
+/**
+ * Check if a state is accepting with optional category mask.
+ */
+bool dsl_state_is_accepting(const dsl_nfa_t *nfa, int state, uint8_t mask);
+
+/**
+ * Check if a transition has a specific marker value.
+ */
+bool dsl_has_marker(const dsl_nfa_t *nfa, int from, int sym, uint32_t marker);
+
+/**
+ * Check if a path exists from 'from' to 'to' following the symbol sequence.
+ * Uses BFS to find any valid path.
+ */
+bool dsl_has_path(const dsl_nfa_t *nfa, int from, int to, const int *seq, int len);
 
 /**
  * Extract symbol sequence from a canonical NFA DSL string.

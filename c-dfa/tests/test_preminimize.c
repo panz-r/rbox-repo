@@ -10,6 +10,7 @@
 
 #include "../lib/nfa_preminimize.h"
 #include "../include/nfa.h"
+#include "../include/nfa_dsl.h"
 #include "../include/multi_target_array.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,9 +36,6 @@ static nfa_state_t* create_test_nfa(int num_states) {
     nfa_state_t* nfa = calloc((size_t)num_states, sizeof(nfa_state_t));
     for (int i = 0; i < num_states; i++) {
         mta_init(&nfa[i].multi_targets);
-        for (int j = 0; j < MAX_SYMBOLS; j++) {
-            nfa[i].transitions[j] = -1;
-        }
     }
     return nfa;
 }
@@ -50,6 +48,51 @@ static void cleanup_test_nfa(nfa_state_t* nfa, int num_states) {
 }
 
 // ============================================================================
+// DSL Verification Helpers
+// ============================================================================
+
+static alphabet_entry_t test_alpha[256];
+static bool test_alpha_init = false;
+
+static void init_test_alphabet(void) {
+    if (test_alpha_init) return;
+    for (int i = 0; i < 256; i++) {
+        test_alpha[i].symbol_id = i;
+        test_alpha[i].start_char = i;
+        test_alpha[i].end_char = i;
+        test_alpha[i].is_special = false;
+    }
+    test_alpha_init = true;
+}
+
+/* Wrap raw nfa_state_t array into nfa_graph_t for DSL serialization */
+static nfa_graph_t* wrap_nfa_for_dsl(nfa_state_t* states, int state_count) {
+    init_test_alphabet();
+    nfa_graph_t* g = calloc(1, sizeof(nfa_graph_t));
+    g->states = states;
+    g->state_count = state_count;
+    g->alphabet = test_alpha;
+    g->alphabet_size = 256;
+    return g;
+}
+
+/* Assert NFA structure matches expected DSL string */
+#define ASSERT_NFA_STRUCT(nfa_ptr, state_cnt, expected_dsl, label) do { \
+    nfa_graph_t* __g = wrap_nfa_for_dsl(nfa_ptr, state_cnt); \
+    char* __actual = nfa_graph_dsl_to_string(__g); \
+    if (!__actual || strcmp(__actual, expected_dsl) != 0) { \
+        printf("  FAIL [%s]: NFA structure mismatch\n", label); \
+        printf("    Expected:\n%s\n", expected_dsl); \
+        printf("    Actual:\n%s\n", __actual ? __actual : "(null)"); \
+        free(__actual); \
+        free(__g); \
+        return false; \
+    } \
+    free(__actual); \
+    free(__g); \
+} while(0)
+
+// ============================================================================
 // Section 1: has_transition_to() API Tests
 // ============================================================================
 
@@ -57,7 +100,7 @@ static bool test_has_transition_legacy_array(void) {
     nfa_state_t* nfa = create_test_nfa(1);
     
     // Set transition via legacy array
-    nfa[0].transitions[10] = 42;
+    mta_add_target(&nfa[0].multi_targets, 10, 42);
     
     bool result1 = nfa_has_transition_to(&nfa[0], 10, 42);
     bool result2 = nfa_has_transition_to(&nfa[0], 10, 99);  // Wrong target
@@ -176,9 +219,9 @@ static bool test_prefix_merge_skips_mutual_legacy(void) {
     nfa_state_t* s2 = create_test_nfa(1);
     
     // 1 -> 2 on symbol 3 (mutual check from s1 perspective)
-    s1[0].transitions[3] = 2;
+    mta_add_target(&s1[0].multi_targets, 3, 2);
     // 2 -> 1 on symbol 3 (mutual check from s2 perspective)  
-    s2[0].transitions[3] = 1;
+    mta_add_target(&s2[0].multi_targets, 3, 1);
     
     bool mutual = nfa_has_transition_to(&s1[0], 3, 2) && nfa_has_transition_to(&s2[0], 3, 1);
     
@@ -226,7 +269,7 @@ static bool test_prefix_merge_succeeds_no_mutual(void) {
     nfa_state_t* s1 = create_test_nfa(1);
     
     // s1 transitions to state 99 on symbol 3 (not to s2)
-    s1[0].transitions[3] = 99;
+    mta_add_target(&s1[0].multi_targets, 3, 99);
     
     bool has_to_99 = nfa_has_transition_to(&s1[0], 3, 99);
     bool has_to_1 = nfa_has_transition_to(&s1[0], 3, 1);  // No transition to state 1
@@ -247,9 +290,9 @@ static bool test_suffix_merge_skips_mutual(void) {
     nfa_state_t* s2 = create_test_nfa(1);
     
     // s1 has transition TO s2 on symbol 3
-    s1[0].transitions[3] = 2;
+    mta_add_target(&s1[0].multi_targets, 3, 2);
     // s2 has transition TO s1 on symbol 3
-    s2[0].transitions[3] = 1;
+    mta_add_target(&s2[0].multi_targets, 3, 1);
     
     // For suffix merge: rep has incoming from s, s has incoming from rep
     // But we check outgoing: rep -> s and s -> rep
@@ -289,10 +332,10 @@ static bool test_sat_merge_detection(void) {
     bool* dead_states = calloc(3, sizeof(bool));
     
     // Create a simple NFA where state 0 -> 1 on sym 5
-    nfa[0].transitions[5] = 1;
+    mta_add_target(&nfa[0].multi_targets, 5, 1);
     // State 1 -> 2 on sym 3 (mutual would be 2 -> 1)
-    nfa[1].transitions[3] = 2;
-    nfa[2].transitions[3] = 1;  // Mutual: 2 -> 1
+    mta_add_target(&nfa[1].multi_targets, 3, 2);
+    mta_add_target(&nfa[2].multi_targets, 3, 1);  // Mutual: 2 -> 1
     
     // Verify mutual detection works
     bool mutual = nfa_has_transition_to(&nfa[1], 3, 2) && nfa_has_transition_to(&nfa[2], 3, 1);
@@ -328,9 +371,9 @@ static bool test_preminimize_mutual_detection_full(void) {
     bool* dead_states = calloc(3, sizeof(bool));
     
     // Simple chain: 0 -> 1 -> 2 with potential loop
-    nfa[0].transitions[5] = 1;  // 0 on sym 5 -> 1
-    nfa[1].transitions[3] = 2;   // 1 on sym 3 -> 2
-    nfa[2].transitions[3] = 1;   // 2 on sym 3 -> 1 (MUTUAL!)
+    mta_add_target(&nfa[0].multi_targets, 5, 1);  // 0 on sym 5 -> 1
+    mta_add_target(&nfa[1].multi_targets, 3, 2);   // 1 on sym 3 -> 2
+    mta_add_target(&nfa[2].multi_targets, 3, 1);   // 2 on sym 3 -> 1 (MUTUAL!)
     
     // Also give 1 and 2 outgoing to state 3 (accepting)
     nfa[2].category_mask = 0x01;  // Mark as accepting
@@ -346,32 +389,50 @@ static bool test_preminimize_mutual_detection_full(void) {
     
     nfa_preminimize(nfa, &state_count, &opts);
     
-    // Get stats to verify
     nfa_premin_stats_t stats;
     nfa_premin_get_stats(&stats);
     
     // Mutual transition should have prevented merge of 1 and 2
-    // States 0, 1, 2 should all still exist (or 0 might be pruned)
+    // States 0, 1, 2 should all still exist (mutual loop preserved)
+    // Use DSL to verify the mutual loop is still intact
+    const char* expected =
+        "version: 1\n"
+        "0: start\n"
+        "0 \\x05 -> 1\n"
+        "1:\n"
+        "1 \\x03 -> 2\n"
+        "2: accept category=0x01 pattern=0\n"
+        "2 \\x03 -> 1\n";
+    
+    nfa_graph_t* g = wrap_nfa_for_dsl(nfa, state_count);
+    char* actual = nfa_graph_dsl_to_string(g);
+    bool match = (strcmp(actual, expected) == 0);
+    if (!match) {
+        printf("  FAIL [mutual loop]: structure mismatch\n");
+        printf("    Expected:\n%s", expected);
+        printf("    Actual:\n%s", actual);
+    }
+    free(actual);
+    free(g);
     
     free(dead_states);
     cleanup_test_nfa(nfa, 3);
     
-    // The key assertion: prefix_merged should be 0 because mutual prevented it
-    return stats.prefix_merged == 0;
+    // Mutual should prevent prefix merge
+    return match && stats.prefix_merged == 0;
 }
 
 static bool test_preminimize_no_mutual_allows_merge(void) {
     // Create NFA with NO mutual transitions - merge should succeed
     nfa_state_t* nfa = create_test_nfa(4);
     int state_count = 4;
-    bool* dead_states = calloc(4, sizeof(bool));
     
     // Chain: 0 -> 1 -> 2 and 0 -> 3 -> 2 (different paths, same end)
     // States 1 and 3 have same signature (same outgoing: to 2)
-    nfa[0].transitions[5] = 1;
-    nfa[0].transitions[6] = 3;
-    nfa[1].transitions[3] = 2;
-    nfa[3].transitions[3] = 2;
+    mta_add_target(&nfa[0].multi_targets, 5, 1);
+    mta_add_target(&nfa[0].multi_targets, 6, 3);
+    mta_add_target(&nfa[1].multi_targets, 3, 2);
+    mta_add_target(&nfa[3].multi_targets, 3, 2);
     nfa[2].category_mask = 0x01;  // Accepting
     
     // Run preminimize with prefix merging enabled
@@ -389,14 +450,42 @@ static bool test_preminimize_no_mutual_allows_merge(void) {
     nfa_premin_get_stats(&stats);
     
     // Without mutual, prefix merge should reduce state count
-    // States 1 and 3 might be merged (or 0 might be removed if unreachable from start)
+    // Verify accepting state exists
+    bool has_accepting = false;
+    for (int i = 0; i < state_count; i++) {
+        if (nfa[i].category_mask == 0x01) {
+            has_accepting = true;
+            break;
+        }
+    }
     
-    free(dead_states);
+    // Use DSL to verify final structure: accepting state and key transitions preserved
+    // States 1 and 3 have same outgoing (\x03 -> 2), but may not merge if mutual check blocks
+    const char* expected =
+        "version: 1\n"
+        "0: start\n"
+        "0 \\x05 -> 1\n"
+        "0 \\x06 -> 1\n"
+        "1:\n"
+        "1 \\x03 -> 2\n"
+        "2: accept category=0x01 pattern=0\n";
+    
+    nfa_graph_t* g = wrap_nfa_for_dsl(nfa, state_count);
+    char* actual = nfa_graph_dsl_to_string(g);
+    bool match = (strcmp(actual, expected) == 0);
+    if (!match) {
+        printf("  FAIL [final NFA]: structure mismatch\n");
+        printf("    Expected:\n%s", expected);
+        printf("    Actual:\n%s", actual);
+    }
+    free(actual);
+    free(g);
+    
     cleanup_test_nfa(nfa, 4);
     
-    // Either merge happened or states were optimized
-    // The important thing is the function ran without error
-    return true;
+    // Verify key properties preserved (accepting state, both transitions present)
+    // Merge may or may not happen depending on mutual detection in bidirectional pass
+    return has_accepting && match;
 }
 
 // ============================================================================

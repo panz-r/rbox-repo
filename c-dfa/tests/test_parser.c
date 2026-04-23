@@ -61,68 +61,7 @@ static const char* CATEGORIES_SECTION =
 
 // ============================================================================
 /* ============================================================================
- * DSL Query Helpers
- * ============================================================================ */
-
-static bool dsl_has_transition(const dsl_nfa_t *nfa, int from, int sym, int to) {
-    if (!nfa || from < 0 || from >= nfa->state_count) return false;
-    const dsl_state_t *s = &nfa->states[from];
-    for (int i = 0; i < s->transition_count; i++) {
-        const dsl_transition_t *t = &s->transitions[i];
-        if (t->symbol_id != sym) continue;
-        for (int j = 0; j < t->target_count; j++) {
-            if (t->targets[j] == to) return true;
-        }
-    }
-    return false;
-}
-
-static bool dsl_has_epsilon(const dsl_nfa_t *nfa, int from, int to) {
-    return dsl_has_transition(nfa, from, VSYM_EPS, to);
-}
-
-static bool dsl_state_is_accepting(const dsl_nfa_t *nfa, int state, uint8_t mask) {
-    if (!nfa || state < 0 || state >= nfa->state_count) return false;
-    const dsl_state_t *s = &nfa->states[state];
-    if (!s->is_accept) return false;
-    if (mask != 0 && s->category_mask != mask) return false;
-    return true;
-}
-
-static bool dsl_has_marker(const dsl_nfa_t *nfa, int from, int sym, uint32_t marker) {
-    if (!nfa || from < 0 || from >= nfa->state_count) return false;
-    const dsl_state_t *s = &nfa->states[from];
-    for (int i = 0; i < s->transition_count; i++) {
-        const dsl_transition_t *t = &s->transitions[i];
-        if (t->symbol_id != sym) continue;
-        for (int j = 0; j < t->marker_count; j++) {
-            if (t->markers[j].value == marker) return true;
-        }
-    }
-    return false;
-}
-
-static bool dsl_has_path_bfs(const dsl_nfa_t *nfa, int from, int to, const int *seq, int len) {
-    if (len == 0) return from == to;
-    const dsl_state_t *s = &nfa->states[from];
-    for (int i = 0; i < s->transition_count; i++) {
-        const dsl_transition_t *t = &s->transitions[i];
-        if (t->symbol_id != seq[0]) continue;
-        for (int j = 0; j < t->target_count; j++) {
-            if (dsl_has_path_bfs(nfa, t->targets[j], to, seq + 1, len - 1))
-                return true;
-        }
-    }
-    return false;
-}
-
-static bool dsl_has_path(const dsl_nfa_t *nfa, int from, int to, const int *seq, int len) {
-    if (len == 0) return from == to;
-    return dsl_has_path_bfs(nfa, from, to, seq, len);
-}
-
-/* ============================================================================
- * DSL Assertion Macros
+ * DSL Assertion Macros (use nfa_dsl_utils.h helpers)
  * ============================================================================ */
 
 #define ASSERT_DSL_TRANSITION(nfa, from, sym, to) do { \

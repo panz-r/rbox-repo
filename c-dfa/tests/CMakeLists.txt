@@ -83,6 +83,15 @@ target_link_libraries(test_nfa_dsl PRIVATE
     readonlybox_dfa_headers
 )
 
+# Preminimize unit tests
+add_executable(test_preminimize
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_preminimize.c
+)
+target_link_libraries(test_preminimize PRIVATE
+    readonlybox_dfa
+    readonlybox_dfa_headers
+)
+
 # ============================================================================
 # Test Targets
 # ============================================================================
@@ -95,6 +104,7 @@ add_custom_target(tests DEPENDS
     test_capture_e2e
     test_parser
     test_nfa_dsl
+    test_preminimize
     testgen_test
 )
 
@@ -312,6 +322,13 @@ set_tests_properties(test_nfa_dsl PROPERTIES
     WORKING_DIRECTORY "${TEST_WORKING_DIR}"
     TIMEOUT 60
     LABELS "dsl")
+
+add_test(NAME test_preminimize
+    COMMAND test_preminimize)
+set_tests_properties(test_preminimize PROPERTIES
+    WORKING_DIRECTORY "${TEST_WORKING_DIR}"
+    TIMEOUT 60
+    LABELS "preminimize")
 
 # Shell-based tests
 add_test(NAME test_binary_format
