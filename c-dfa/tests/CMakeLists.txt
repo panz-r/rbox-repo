@@ -66,6 +66,7 @@ target_link_libraries(test_capture_e2e PRIVATE
 # Parser unit tests
 add_executable(test_parser
     ${CMAKE_CURRENT_SOURCE_DIR}/test_parser.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tools/nfa_dsl_utils.c
 )
 target_link_libraries(test_parser PRIVATE
     readonlybox_dfa
@@ -75,6 +76,7 @@ target_link_libraries(test_parser PRIVATE
 # NFA DSL tests
 add_executable(test_nfa_dsl
     ${CMAKE_CURRENT_SOURCE_DIR}/test_nfa_dsl.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tools/nfa_dsl_utils.c
 )
 target_link_libraries(test_nfa_dsl PRIVATE
     readonlybox_dfa

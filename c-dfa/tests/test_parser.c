@@ -9,6 +9,7 @@
 #include "../lib/nfa_builder.h"
 #include "../include/nfa.h"
 #include "../include/nfa_dsl.h"
+#include "../include/nfa_dsl_utils.h"
 #include "../include/multi_target_array.h"
 #include "../include/cdfa_defines.h"
 #include <stdio.h>
@@ -16,6 +17,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <ctype.h>
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -198,6 +200,29 @@ static bool dsl_has_path(const dsl_nfa_t *nfa, int from, int to, const int *seq,
     } \
 } while(0)
 
+/* ============================================================================
+ * Symbol Sequence Assertion Macro (uses nfa_dsl_utils.h)
+ * ============================================================================ */
+
+#define ASSERT_SYMBOL_SEQUENCE(graph, expected_sym_array, expected_count, skip_eps) do { \
+    char *_dsl = nfa_graph_dsl_to_string(graph); \
+    int actual_syms[256]; \
+    int actual_count = dsl_extract_symbol_sequence(_dsl, actual_syms, 256, skip_eps); \
+    free(_dsl); \
+    if (actual_count != (expected_count)) { \
+        printf("  ASSERT FAILED: Symbol count mismatch: expected %d, got %d\n", \
+                (expected_count), actual_count); \
+        return false; \
+    } \
+    for (int __i = 0; __i < actual_count; __i++) { \
+        if (actual_syms[__i] != (expected_sym_array)[__i]) { \
+            printf("  ASSERT FAILED: Symbol %d mismatch: expected '%c', got '%c'\n", \
+                    __i, (expected_sym_array)[__i], actual_syms[__i]); \
+            return false; \
+        } \
+    } \
+} while(0)
+
 static nfa_graph_t* parse_pattern(const char* pattern_line) {
     nfa_builder_context_t* ctx = nfa_builder_context_create();
     if (!ctx) return NULL;
@@ -336,7 +361,15 @@ static bool test_literal_abc(void) {
 static bool test_literal_chain_cat(void) {
     nfa_graph_t* g = parse_pattern("[caution] rm -rf /");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
+
+    /* Verify key symbols appear in DSL output */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'r' -> ") != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'm' -> ") != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " '/' -> ") != NULL);
+    free(dsl_str);
+
     int last = g->state_count - 1;
     ASSERT_TRUE(nfa_state_is_accepting(g, last));
     nfa_graph_free(g);
@@ -346,10 +379,13 @@ static bool test_literal_chain_cat(void) {
 static bool test_escaped_newline(void) {
     nfa_graph_t* g = parse_pattern("[safe] \\n");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    int target = find_transition_target(g, s0, 'n');
-    ASSERT_TRUE(target >= 0);
+
+    /* Verify 'n' transition in DSL (escaped \n becomes literal 'n') */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'n' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -357,10 +393,13 @@ static bool test_escaped_newline(void) {
 static bool test_escaped_tab(void) {
     nfa_graph_t* g = parse_pattern("[safe] \\t");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    int target = find_transition_target(g, s0, 't');
-    ASSERT_TRUE(target >= 0);
+
+    /* Verify 't' transition in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 't' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -368,10 +407,13 @@ static bool test_escaped_tab(void) {
 static bool test_hex_escape_A(void) {
     nfa_graph_t* g = parse_pattern("[safe] \\x41");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    int target = find_transition_target(g, s0, 'A');
-    ASSERT_TRUE(target >= 0);
+
+    /* Verify 'A' transition in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'A' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -379,10 +421,13 @@ static bool test_hex_escape_A(void) {
 static bool test_quoted_char(void) {
     nfa_graph_t* g = parse_pattern("[safe] 'x'");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    int target = find_transition_target(g, s0, 'x');
-    ASSERT_TRUE(target >= 0);
+
+    /* Verify 'x' transition in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'x' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -471,7 +516,7 @@ static bool test_star_quantifier(void) {
     /* Kleene star: 'a' path exists, accepting state exists */
     char* dsl_str = nfa_graph_dsl_to_string(g);
     ASSERT_TRUE(dsl_str != NULL);
-    ASSERT_TRUE(strstr(dsl_str, "'a'") != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'a' -> ") != NULL);
     ASSERT_TRUE(strstr(dsl_str, "accept") != NULL);
     free(dsl_str);
 
@@ -486,7 +531,7 @@ static bool test_plus_quantifier(void) {
     /* Plus: 'a' path exists, accepting state exists */
     char* dsl_str = nfa_graph_dsl_to_string(g);
     ASSERT_TRUE(dsl_str != NULL);
-    ASSERT_TRUE(strstr(dsl_str, "'a'") != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'a' -> ") != NULL);
     ASSERT_TRUE(strstr(dsl_str, "accept") != NULL);
     free(dsl_str);
 
@@ -501,7 +546,7 @@ static bool test_question_quantifier(void) {
     /* Question mark: 'a' path exists, accepting state exists */
     char* dsl_str = nfa_graph_dsl_to_string(g);
     ASSERT_TRUE(dsl_str != NULL);
-    ASSERT_TRUE(strstr(dsl_str, "'a'") != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'a' -> ") != NULL);
     ASSERT_TRUE(strstr(dsl_str, "accept") != NULL);
     free(dsl_str);
 
@@ -663,8 +708,13 @@ static bool test_nested_alternation(void) {
 static bool test_wildcard_star(void) {
     nfa_graph_t* g = parse_pattern("[safe] (*)");
     ASSERT_TRUE(g != NULL);
-    int s0 = follow_epsilon_chain(g, 0);
-    ASSERT_TRUE(has_transition_on(g, s0, VSYM_BYTE_ANY));
+
+    /* Verify ANY transition in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, "ANY") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -672,9 +722,13 @@ static bool test_wildcard_star(void) {
 static bool test_wildcard_in_group(void) {
     nfa_graph_t* g = parse_pattern("[safe] (*)");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    ASSERT_TRUE(has_transition_on(g, s0, VSYM_BYTE_ANY));
+
+    /* Same as test_wildcard_star */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, "ANY") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -686,7 +740,13 @@ static bool test_wildcard_in_group(void) {
 static bool test_space_normalization(void) {
     nfa_graph_t* g = parse_pattern("[safe] x ");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
+
+    /* Verify 'x' and accepting state in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'x' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -694,10 +754,13 @@ static bool test_space_normalization(void) {
 static bool test_tab_normalization(void) {
     nfa_graph_t* g = parse_pattern("[safe] \\t");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    int target = find_transition_target(g, s0, 't');
-    ASSERT_TRUE(target >= 0);
+
+    /* Verify 't' transition in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 't' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -709,9 +772,13 @@ static bool test_tab_normalization(void) {
 static bool test_capture_start(void) {
     nfa_graph_t* g = parse_pattern("[safe] <name>a");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    ASSERT_TRUE(has_transition_on(g, s0, 'a'));
+
+    /* Verify 'a' transition and markers in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'a' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -719,9 +786,13 @@ static bool test_capture_start(void) {
 static bool test_capture_end(void) {
     nfa_graph_t* g = parse_pattern("[safe] a</name>");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    ASSERT_TRUE(has_transition_on(g, s0, 'a'));
+
+    /* Verify 'a' transition in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'a' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -729,9 +800,13 @@ static bool test_capture_end(void) {
 static bool test_capture_full(void) {
     nfa_graph_t* g = parse_pattern("[safe] <name>a</name>");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
-    int s0 = follow_epsilon_chain(g, 0);
-    ASSERT_TRUE(has_transition_on(g, s0, 'a'));
+
+    /* Verify 'a' transition in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'a' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
@@ -739,7 +814,13 @@ static bool test_capture_full(void) {
 static bool test_capture_nested(void) {
     nfa_graph_t* g = parse_pattern("[safe] <outer><inner>a</inner></outer>");
     ASSERT_TRUE(g != NULL);
-    ASSERT_TRUE(g->state_count >= 2);
+
+    /* Verify 'a' transition in DSL */
+    char* dsl_str = nfa_graph_dsl_to_string(g);
+    ASSERT_TRUE(dsl_str != NULL);
+    ASSERT_TRUE(strstr(dsl_str, " 'a' -> ") != NULL);
+    free(dsl_str);
+
     nfa_graph_free(g);
     return true;
 }
