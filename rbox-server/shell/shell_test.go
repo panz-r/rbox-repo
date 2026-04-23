@@ -55,7 +55,8 @@ func TestEvalEmpty(t *testing.T) {
 
 	result, err := g.Eval("")
 	assert.NoError(t, err)
-	assert.Nil(t, result)
+	assert.NotNil(t, result)
+	assert.Equal(t, VerdictAllow, result.Verdict)
 }
 
 func TestEvalPipe(t *testing.T) {

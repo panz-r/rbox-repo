@@ -8,8 +8,9 @@ package shell
 import "C"
 import (
 	"fmt"
-	"os"
+	"io"
 	"runtime"
+	"sync"
 	"unsafe"
 )
 
@@ -53,6 +54,7 @@ type EvalResult struct {
 }
 
 type Gate struct {
+	mu   sync.Mutex
 	gate *C.sg_gate_t
 	buf  []byte
 }
@@ -63,14 +65,9 @@ func NewGate() (*Gate, error) {
 		return nil, fmt.Errorf("sg_gate_new failed")
 	}
 
-	cfg := (*C.sg_violation_config_t)(C.malloc(C.size_t(unsafe.Sizeof(C.sg_violation_config_t{}))))
-	if cfg != nil {
-		C.sg_violation_config_default(cfg)
-		C.sg_gate_set_violation_config(g, cfg)
-		C.free(unsafe.Pointer(cfg))
-	} else {
-		fmt.Fprintf(os.Stderr, "Warning: shellgate violation config allocation failed\n")
-	}
+	var cfg C.sg_violation_config_t
+	C.sg_violation_config_default(&cfg)
+	C.sg_gate_set_violation_config(g, &cfg)
 
 	C.sg_gate_set_suggestions(g, C.bool(true))
 
@@ -82,18 +79,32 @@ func NewGate() (*Gate, error) {
 	return gate, nil
 }
 
-func (g *Gate) Close() {
+func (g *Gate) Close() error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate != nil {
 		C.sg_gate_free(g.gate)
 		g.gate = nil
 	}
 	runtime.SetFinalizer(g, nil)
+	return nil
 }
 
+var _ io.Closer = (*Gate)(nil)
+
 func (g *Gate) Eval(cmd string) (*EvalResult, error) {
-	if cmd == "" || g.gate == nil {
-		return nil, nil
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.gate == nil {
+		return nil, fmt.Errorf("gate is closed")
 	}
+	if cmd == "" {
+		return &EvalResult{Verdict: VerdictAllow}, nil
+	}
+
+	// SG_ERR_TRUNC returns partial results (valid per C contract).
+	// Caller should check result.Truncated to detect truncation.
 
 	cCmd := C.CString(cmd)
 	defer C.free(unsafe.Pointer(cCmd))
@@ -102,7 +113,8 @@ func (g *Gate) Eval(cmd string) (*EvalResult, error) {
 	rc := C.sg_eval(
 		g.gate,
 		cCmd,
-		(*C.char)(unsafe.Pointer(&g.buf[0])),
+		C.size_t(len(cmd)),
+		(*C.char)(unsafe.Pointer(unsafe.SliceData(g.buf))),
 		C.size_t(len(g.buf)),
 		&out,
 	)
@@ -165,8 +177,10 @@ func (g *Gate) Eval(cmd string) (*EvalResult, error) {
 }
 
 func (g *Gate) AddRule(pattern string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
-		return fmt.Errorf("gate is nil")
+		return fmt.Errorf("gate is closed")
 	}
 	cPat := C.CString(pattern)
 	defer C.free(unsafe.Pointer(cPat))
@@ -178,8 +192,10 @@ func (g *Gate) AddRule(pattern string) error {
 }
 
 func (g *Gate) RemoveRule(pattern string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
-		return fmt.Errorf("gate is nil")
+		return fmt.Errorf("gate is closed")
 	}
 	cPat := C.CString(pattern)
 	defer C.free(unsafe.Pointer(cPat))
@@ -191,8 +207,10 @@ func (g *Gate) RemoveRule(pattern string) error {
 }
 
 func (g *Gate) RemoveDenyRule(pattern string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
-		return fmt.Errorf("gate is nil")
+		return fmt.Errorf("gate is closed")
 	}
 	cPat := C.CString(pattern)
 	defer C.free(unsafe.Pointer(cPat))
@@ -204,6 +222,8 @@ func (g *Gate) RemoveDenyRule(pattern string) error {
 }
 
 func (g *Gate) RuleCount() uint32 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
 		return 0
 	}
@@ -211,8 +231,10 @@ func (g *Gate) RuleCount() uint32 {
 }
 
 func (g *Gate) AddDenyRule(pattern string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
-		return fmt.Errorf("gate is nil")
+		return fmt.Errorf("gate is closed")
 	}
 	cPat := C.CString(pattern)
 	defer C.free(unsafe.Pointer(cPat))
@@ -224,6 +246,8 @@ func (g *Gate) AddDenyRule(pattern string) error {
 }
 
 func (g *Gate) DenyRuleCount() uint32 {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
 		return 0
 	}
@@ -231,8 +255,10 @@ func (g *Gate) DenyRuleCount() uint32 {
 }
 
 func (g *Gate) SavePolicy(path string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
-		return fmt.Errorf("gate is nil")
+		return fmt.Errorf("gate is closed")
 	}
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
@@ -244,8 +270,10 @@ func (g *Gate) SavePolicy(path string) error {
 }
 
 func (g *Gate) LoadPolicy(path string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
-		return fmt.Errorf("gate is nil")
+		return fmt.Errorf("gate is closed")
 	}
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
@@ -257,8 +285,10 @@ func (g *Gate) LoadPolicy(path string) error {
 }
 
 func (g *Gate) SetCWD(cwd string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if g.gate == nil {
-		return fmt.Errorf("gate is nil")
+		return fmt.Errorf("gate is closed")
 	}
 	cCwd := C.CString(cwd)
 	defer C.free(unsafe.Pointer(cCwd))
