@@ -31,7 +31,7 @@ int dsl_extract_symbol_sequence(const char *dsl, int *symbols, int max_syms, boo
         while (sym_start > line_start && !isspace(*(sym_start-1))) sym_start--;
 
         int sym_len = sym_end - sym_start;
-        if (sym_len > 0 && sym_len < 32) {
+        if (sym_len > 0 && sym_len < 31) {
             char sym_name[32];
             strncpy(sym_name, sym_start, sym_len);
             sym_name[sym_len] = '\0';
@@ -48,11 +48,39 @@ int dsl_extract_symbol_sequence(const char *dsl, int *symbols, int max_syms, boo
             } else if (strcmp(sym_name, "SPACE") == 0 || strcmp(sym_name, "TAB") == 0) {
                 /* Skip whitespace normalization transitions (loops, not single chars) */
             } else if (sym_name[0] == '\'' && sym_name[sym_len-1] == '\'') {
-                /* Literal character like 'a' or ' ' */
-                sym_id = (unsigned char)sym_name[1];
+                /* Literal character like 'a' or ' ' or escaped sequences like '\n' */
+                if (sym_len >= 3 && sym_name[1] == '\\') {
+                    /* Handle escaped sequences: \n, \t, \r, \\, \', \xHH */
+                    char esc = sym_name[2];
+                    switch (esc) {
+                        case 'n':  sym_id = '\n'; break;
+                        case 't':  sym_id = '\t'; break;
+                        case 'r':  sym_id = '\r'; break;
+                        case '\\': sym_id = '\\'; break;
+                        case '\'': sym_id = '\''; break;
+                        case 'x': {
+                            /* \xHH hex escape - requires at least 5 chars: '\xHH\'' */
+                            if (sym_len >= 5 && sym_name[4] == '\'') {
+                                char hex[3] = {sym_name[3], sym_name[4] == '\'' ? sym_name[5] : '0', 0};
+                                if (sym_name[4] == '\'') {
+                                    hex[0] = sym_name[3];
+                                    hex[1] = sym_name[4];
+                                } else {
+                                    hex[0] = sym_name[3];
+                                    hex[1] = 0;
+                                }
+                                sym_id = (int)strtol(hex, NULL, 16);
+                            }
+                            break;
+                        }
+                        default: sym_id = -1;
+                    }
+                } else {
+                    sym_id = (unsigned char)sym_name[1];
+                }
             } else if (strncmp(sym_name, "\\x", 2) == 0 && sym_len >= 4) {
-                /* Hex escape like \x41 for 'A' */
-                char hex[3] = {sym_name[2], sym_name[3], 0};
+                /* Hex escape like \x41 for 'A' (unquoted) */
+                char hex[3] = {sym_name[2], sym_len >= 4 ? sym_name[3] : '0', 0};
                 sym_id = (int)strtol(hex, NULL, 16);
             }
 
