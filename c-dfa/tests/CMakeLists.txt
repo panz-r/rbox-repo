@@ -4,6 +4,7 @@
 # Test runner (dfa_test.c) - comprehensive test suite
 add_executable(dfa_test
     ${CMAKE_CURRENT_SOURCE_DIR}/dfa_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/golden_utils.c
 )
 target_link_libraries(dfa_test PRIVATE
     readonlybox_dfa
@@ -15,6 +16,7 @@ target_link_libraries(dfa_test PRIVATE
 # Minimization integrity test
 add_executable(test_minimize_integrity
     ${CMAKE_CURRENT_SOURCE_DIR}/test_minimize_integrity.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/golden_utils.c
 )
 target_link_libraries(test_minimize_integrity PRIVATE
     readonlybox_dfa

@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include "golden_utils.h"
 #include "../include/nfa.h"
 #include "../include/nfa_dsl.h"
 #include "../lib/dfa_minimize.h"
@@ -131,33 +132,9 @@ static void init_test_alphabet(void) {
     test_alpha_init = true;
 }
 
-// Get path to golden directory
-// When run via CTest: working dir is c-dfa/, so use "golden/minimize_integrity"
-// When run directly from build/tests/: use "../golden/minimize_integrity"
-static const char* get_golden_dir(void) {
-    // Try relative path from build directory first
-    if (access("../golden/minimize_integrity", F_OK) == 0) {
-        return "../golden/minimize_integrity";
-    }
-    // Fall back to path from c-dfa/ (CTest working dir)
-    return "golden/minimize_integrity";
-}
-
 // Load golden file into malloc'd string
 static char* load_golden_rel(const char* dir, const char* filename) {
-    char path[512];
-    snprintf(path, sizeof(path), "%s/%s", dir, filename);
-    FILE* f = fopen(path, "r");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* buf = malloc((size_t)sz + 1);
-    if (!buf) { fclose(f); return NULL; }
-    size_t n = fread(buf, 1, (size_t)sz, f);
-    buf[n] = '\0';
-    fclose(f);
-    return buf;
+    return golden_load(dir, filename);
 }
 
 // Compare DFA output against golden file, print diff on mismatch
@@ -268,7 +245,7 @@ static int test_marker_aware_partitioning(void) {
 
     // Use golden file to verify exact structure
     bool ok = check_dfa_golden(dfa_ptr, result, 
-                               get_golden_dir(), "marker_aware_partitioning.dfa",
+                               golden_get_dir("minimize_integrity"), "marker_aware_partitioning.dfa",
                                "Chain structure (a->b->c->d loop)");
 
     // dfa_minimize destroys states beyond result count
@@ -322,7 +299,7 @@ static int test_marker_offset_spread(void) {
 
     // Verify structure with golden file (redundant count check removed - golden enforces exact structure)
     bool ok = check_dfa_golden(dfa_ptr, result, 
-                               get_golden_dir(), "marker_offset_spread.dfa",
+                               golden_get_dir("minimize_integrity"), "marker_offset_spread.dfa",
                                "Marker offset spread structure");
     
     // dfa_minimize destroys states beyond result count
@@ -362,7 +339,7 @@ static int test_equivalent_states_merge(void) {
 
     check(result == 1, "Minimization reduced to 1 state");
     bool ok = check_dfa_golden(dfa_ptr, result, 
-                               get_golden_dir(), "equivalent_states_merge.dfa",
+                               golden_get_dir("minimize_integrity"), "equivalent_states_merge.dfa",
                                "Equivalent states merge");
 
     for (int i = 0; i < result; i++) {
@@ -398,7 +375,7 @@ static int test_flags_prevent_merge(void) {
     check(result >= 1 && result <= 2, "Valid state count after minimization");
     printf("  [INFO] Result: %d state(s) after minimization\n", result);
 
-    bool ok = check_dfa_golden(dfa_ptr, result, get_golden_dir(), "flags_different.dfa",
+    bool ok = check_dfa_golden(dfa_ptr, result, golden_get_dir("minimize_integrity"), "flags_different.dfa",
                                "Flags test structure");
 
     for (int i = 0; i < result; i++) {
@@ -435,7 +412,7 @@ static int test_markers_ignored(void) {
     // Markers are IGNORED during minimization - states should merge
     check(result == 1, "Minimization reduced to 1 state");
     bool ok = check_dfa_golden(dfa_ptr, result, 
-                               get_golden_dir(), "markers_ignored.dfa",
+                               golden_get_dir("minimize_integrity"), "markers_ignored.dfa",
                                "Markers ignored");
 
     for (int i = 0; i < result; i++) {

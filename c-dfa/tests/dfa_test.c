@@ -5,6 +5,7 @@
 #include "dfa_internal.h"
 #include "dfa_types.h"
 #include "pipeline.h"
+#include "golden_utils.h"
 #include "nfa_dsl.h"
 #include "multi_target_array.h"
 #include <stdio.h>
@@ -179,7 +180,7 @@ static void resolve_patterns_path(const char* patterns_file, char* patterns_path
     }
 }
 
-// Forward declarations
+// Forward declaration
 static void build_dfa(const char* patterns_file, const char* dfa_file,
                       const char* golden_file);
 static bool check_dfa_golden(pipeline_t* p, const char* golden_dir,
@@ -228,7 +229,7 @@ static void build_dfa(const char* patterns_file, const char* dfa_file,
 
     // Check golden file if provided
     if (golden_file && g_record_goldens) {
-        check_dfa_golden(p, "golden/dfa_tests", golden_file, "golden");
+        check_dfa_golden(p, golden_get_dir("dfa_tests"), golden_file, "golden");
     }
 
     // Save binary to output file
@@ -306,25 +307,12 @@ static bool check_dfa_golden(pipeline_t* p, const char* golden_dir,
         return false;
     }
     
-    FILE* f = fopen(path, "r");
-    if (!f) {
+    char* expected = golden_load(golden_dir, golden_file);
+    if (!expected) {
         printf("  [FAIL] Golden file missing: %s\n", path);
         free(actual);
         return false;
     }
-    
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* expected = malloc((size_t)sz + 1);
-    if (!expected) {
-        fclose(f);
-        free(actual);
-        return false;
-    }
-    size_t n = fread(expected, 1, (size_t)sz, f);
-    expected[n] = '\0';
-    fclose(f);
     
     bool ok = (strcmp(actual, expected) == 0);
     if (!ok) {
