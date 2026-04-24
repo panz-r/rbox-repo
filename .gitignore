@@ -31,3 +31,4 @@ telemetry-id
 compile_commands.json
 # opencode
 .opencode/package-lock.json
+.worktrees/
