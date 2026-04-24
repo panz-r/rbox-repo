@@ -138,6 +138,28 @@ static void apply_memory_limit(void) {
     }
 }
 
+/* Convert Landlock access flags to SOFT_ACCESS flags for ptrace interception fallback.
+ * Landlock flags and SOFT_ACCESS flags use different bit positions, so direct
+ * comparison fails. This function maps Landlock semantics to SOFT_ACCESS semantics. */
+static uint32_t landlock_to_soft_access(uint64_t landlock_access) {
+    uint32_t soft = 0;
+    if (landlock_access & (LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR)) {
+        soft |= SOFT_ACCESS_READ;
+    }
+    if (landlock_access & (LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_TRUNCATE |
+                           LANDLOCK_ACCESS_FS_REMOVE_DIR | LANDLOCK_ACCESS_FS_REMOVE_FILE |
+                           LANDLOCK_ACCESS_FS_MAKE_DIR | LANDLOCK_ACCESS_FS_MAKE_REG |
+                           LANDLOCK_ACCESS_FS_MAKE_SOCK | LANDLOCK_ACCESS_FS_MAKE_FIFO |
+                           LANDLOCK_ACCESS_FS_MAKE_BLOCK | LANDLOCK_ACCESS_FS_MAKE_SYM |
+                           LANDLOCK_ACCESS_FS_MAKE_CHAR | LANDLOCK_ACCESS_FS_REFER)) {
+        soft |= SOFT_ACCESS_WRITE;
+    }
+    if (landlock_access & LANDLOCK_ACCESS_FS_EXECUTE) {
+        soft |= SOFT_ACCESS_EXEC;
+    }
+    return soft;
+}
+
 uint64_t sandbox_parse_access_mode(const char *mode) {
     uint64_t access_ro = LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR;
     uint64_t access_rx = access_ro | LANDLOCK_ACCESS_FS_EXECUTE;
@@ -842,7 +864,7 @@ static int apply_landlock(int *landlock_failed) {
         } else {
             snprintf(recursive_path, sizeof(recursive_path), "%.*s/...", (int)path_len, allow_entries[i].resolved);
         }
-        soft_ruleset_add_rule_at_layer(hard_rules, 0, recursive_path, allow_entries[i].access,
+        soft_ruleset_add_rule_at_layer(hard_rules, 4, recursive_path, landlock_to_soft_access(allow_entries[i].access),
                                       SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     }
 
@@ -861,7 +883,7 @@ static int apply_landlock(int *landlock_failed) {
         } else {
             snprintf(recursive_path, sizeof(recursive_path), "%.*s/...", (int)path_len, deny_entries[i].resolved);
         }
-        soft_ruleset_add_rule_at_layer(hard_rules, 0, recursive_path, SOFT_ACCESS_DENY,
+        soft_ruleset_add_rule_at_layer(hard_rules, 5, recursive_path, SOFT_ACCESS_DENY,
                                       SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
     }
 
@@ -1081,6 +1103,92 @@ static int apply_no_network(void) {
 
     DEBUG_PRINT("SANDBOX: Network syscalls blocked via seccomp\n");
     return 0;
+}
+
+/* Build hard ruleset from READONLYBOX_HARD_ALLOW/HARD_DENY env vars.
+ * Called in the parent process BEFORE get_effective_fs_rules() so the
+ * interception ruleset includes hard rules. Does NOT apply Landlock. */
+void sandbox_build_hard_ruleset(void) {
+    const char *allow_env = getenv("READONLYBOX_HARD_ALLOW");
+    const char *deny_env = getenv("READONLYBOX_HARD_DENY");
+
+    if ((!allow_env || !*allow_env) && (!deny_env || !*deny_env)) {
+        return;
+    }
+
+    int allow_count = 0;
+    int deny_count = 0;
+    struct allowed_entry *allow_entries = sandbox_parse_allow_list(allow_env, &allow_count,
+                                                                 real_path_validator, NULL);
+    struct denied_entry *deny_entries = sandbox_parse_deny_list(deny_env, &deny_count,
+                                                              real_path_validator, NULL);
+
+    if (allow_count == 0 && deny_count == 0) {
+        if (allow_entries) sandbox_free_allow_entries(allow_entries, allow_count);
+        if (deny_entries) sandbox_free_deny_entries(deny_entries, deny_count);
+        return;
+    }
+
+    soft_ruleset_t *hard_rules = soft_ruleset_new();
+    if (!hard_rules) {
+        LOG_ERROR("Failed to create hard ruleset for interception");
+        sandbox_free_allow_entries(allow_entries, allow_count);
+        sandbox_free_deny_entries(deny_entries, deny_count);
+        return;
+    }
+
+    /* Layer 4: hard allow rules — SPECIFICITY (longest match wins) */
+    soft_ruleset_set_layer_type(hard_rules, 4, LAYER_SPECIFICITY, 0);
+
+    for (int i = 0; i < allow_count; i++) {
+        char recursive_path[PATH_MAX];
+        size_t path_len = strlen(allow_entries[i].resolved);
+        while (path_len > 1 && allow_entries[i].resolved[path_len - 1] == '/') {
+            path_len--;
+        }
+        if (path_len + 4 >= PATH_MAX) {
+            LOG_ERROR("Path too long for hard expansion: %s", allow_entries[i].resolved);
+            continue;
+        }
+        if (path_len == 1 && allow_entries[i].resolved[0] == '/') {
+            snprintf(recursive_path, sizeof(recursive_path), "/...");
+        } else {
+            snprintf(recursive_path, sizeof(recursive_path), "%.*s/...", (int)path_len, allow_entries[i].resolved);
+        }
+        soft_ruleset_add_rule_at_layer(hard_rules, 4, recursive_path, landlock_to_soft_access(allow_entries[i].access),
+                                      SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+    }
+
+    /* Layer 5: hard deny rules — PRECEDENCE (shadows lower layers) */
+    soft_ruleset_set_layer_type(hard_rules, 5, LAYER_PRECEDENCE, 0);
+
+    for (int i = 0; i < deny_count; i++) {
+        char recursive_path[PATH_MAX];
+        size_t path_len = strlen(deny_entries[i].resolved);
+        while (path_len > 1 && deny_entries[i].resolved[path_len - 1] == '/') {
+            path_len--;
+        }
+        if (path_len + 4 >= PATH_MAX) {
+            LOG_ERROR("Path too long for hard expansion: %s", deny_entries[i].resolved);
+            continue;
+        }
+        if (path_len == 1 && deny_entries[i].resolved[0] == '/') {
+            snprintf(recursive_path, sizeof(recursive_path), "/...");
+        } else {
+            snprintf(recursive_path, sizeof(recursive_path), "%.*s/...", (int)path_len, deny_entries[i].resolved);
+        }
+        soft_ruleset_add_rule_at_layer(hard_rules, 5, recursive_path, SOFT_ACCESS_DENY,
+                                      SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+    }
+
+    extern soft_ruleset_t *hard_fallthrough_fs_rules;
+    hard_fallthrough_fs_rules = hard_rules;
+
+    sandbox_free_allow_entries(allow_entries, allow_count);
+    sandbox_free_deny_entries(deny_entries, deny_count);
+
+    DEBUG_PRINT("SANDBOX: Hard ruleset built for interception with %zu rules\n",
+            soft_ruleset_rule_count(hard_rules));
 }
 
 /* Apply all sandbox restrictions as defined by environment variables.

@@ -33,6 +33,7 @@
 #include "compat_strl.h"
 
 extern soft_ruleset_t *get_effective_fs_rules(void);
+extern int is_hard_rules_present(void);
 
 /* Soft mode enum - maps to ruleset access flags */
 typedef enum {
@@ -83,6 +84,7 @@ static soft_binary_op_t syscall_to_operation(long sysnum, uint32_t *out_syscall_
         case SYSCALL_ACCESS:
         case SYSCALL_FACCESSAT:
         case SYSCALL_FACCESSAT2:
+        case SYSCALL_STATX:
             return SOFT_OP_READ;
 
         /* Execute operations */
@@ -427,6 +429,7 @@ static int syscall_is_filesystem(USER_REGS *regs) {
     switch (sysnum) {
         case SYSCALL_OPEN:
         case SYSCALL_OPENAT:
+        case SYSCALL_OPENAT2:
         case SYSCALL_CREAT:
         case SYSCALL_MKDIR:
         case SYSCALL_MKDIRAT:
@@ -451,6 +454,7 @@ static int syscall_is_filesystem(USER_REGS *regs) {
         case SYSCALL_ACCESS:
         case SYSCALL_FACCESSAT:
         case SYSCALL_FACCESSAT2:
+        case SYSCALL_STATX:
             return 1;
         default:
             return 0;
@@ -713,9 +717,11 @@ static int block_syscall(pid_t pid, USER_REGS *regs, ProcessState *state) {
 #elif defined(__riscv)
     regs->regs[7] = 20;   /* __NR_getpid on riscv */
 #else
+    DEBUG_PRINT("block_syscall: unsupported arch\n");
     return -1;
 #endif
 
+    DEBUG_PRINT("HANDLER: block_syscall: replacing syscall %ld with getpid, pid=%d\n", state->blocked_syscall, pid);
     if (SET_REGS(pid, regs) == -1) {
         if (errno == ESRCH) {
             DEBUG_PRINT("HANDLER: pid %d already exited (race), skipping block_syscall\n", pid);
@@ -829,6 +835,8 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
     if (state->detached) {
         return 0;
     }
+
+    (void)REG_SYSCALL(regs);
 
     /* Clear stale environment decisions before any DFA or filtering checks.
      * These variables may be set from a previous command and should not affect
@@ -1113,8 +1121,12 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
         return 0;
     }
 
-    /* Check for filesystem syscalls (soft policy) */
-    if (syscall_is_filesystem(regs)) {
+    /* Check for filesystem syscalls (soft policy) - only at syscall ENTRY.
+     * Skip interception before the first execve completes: the child process
+     * is still running trusted code (realpath, apply_sandboxing, etc.) and
+     * intercepting its stat/open calls causes infinite loops when hard rules
+     * block paths the child needs to validate during apply_landlock(). */
+    if (state->initial_execve && state->syscall_at_entry && syscall_is_filesystem(regs)) {
         soft_ruleset_t *rs = get_effective_fs_rules();
         if (rs && soft_ruleset_rule_count(rs) > 0) {
             soft_access_ctx_t ctxs[16];
@@ -1148,9 +1160,30 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 }
                 case SYSCALL_OPENAT: {
                     dirfd1 = (int)REG_ARG1(regs);
-                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    unsigned long path_ptr = REG_ARG2(regs);
+                    path1 = memory_read_string(pid, path_ptr);
                     if (path1) {
                         int flags = (int)REG_ARG3(regs);
+                        access_mask = open_flags_to_access(flags);
+                        if (flags & O_CREAT) {
+                            is_creat = 1;
+                            access_mask |= SOFT_ACCESS_CREATE;
+                        }
+                    }
+                    break;
+                }
+                case SYSCALL_OPENAT2: {
+                    dirfd1 = (int)REG_ARG1(regs);
+                    path1 = memory_read_string(pid, REG_ARG2(regs));
+                    if (path1) {
+                        /* openat2 has flags in a struct at arg3, but we can read the first int */
+                        unsigned long how_ptr = REG_ARG3(regs);
+                        int flags = 0;
+                        if (how_ptr) {
+                            /* Read the 'flags' field from struct open_how (first 8 bytes) */
+                            ptrace(PTRACE_PEEKDATA, pid, (void*)how_ptr, &flags);
+                            if (errno != 0) flags = 0;
+                        }
                         access_mask = open_flags_to_access(flags);
                         if (flags & O_CREAT) {
                             is_creat = 1;
@@ -1261,10 +1294,14 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 case SYSCALL_ACCESS:
                 case SYSCALL_FACCESSAT:
                 case SYSCALL_FACCESSAT2:
+                case SYSCALL_STATX:
                     access_mask = SOFT_ACCESS_READ;
                     if (sysnum == SYSCALL_STAT || sysnum == SYSCALL_LSTAT) {
                         path1 = memory_read_string(pid, REG_ARG1(regs));
                         dirfd1 = AT_FDCWD;
+                    } else if (sysnum == SYSCALL_STATX) {
+                        dirfd1 = (int)REG_ARG1(regs);
+                        path1 = memory_read_string(pid, REG_ARG2(regs));
                     } else if (sysnum == SYSCALL_NEWFSTATAT) {
                         dirfd1 = (int)REG_ARG1(regs);
                         path1 = memory_read_string(pid, REG_ARG2(regs));
@@ -1274,6 +1311,16 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                     } else {
                         dirfd1 = (int)REG_ARG1(regs);
                         path1 = memory_read_string(pid, REG_ARG2(regs));
+                    }
+                    /* On aarch64 there is no fstat syscall; glibc implements
+                     * fstat(fd) as newfstatat(fd, "", buf, AT_EMPTY_PATH).
+                     * Similarly statx(fd, "", AT_EMPTY_PATH, ...) is fd-based.
+                     * These are operations on an already-open fd whose openat
+                     * was already policy-checked — allow unconditionally. */
+                    if (path1 && path1[0] == '\0') {
+                        free(path1);
+                        path1 = NULL;
+                        return 0;
                     }
                     break;
                 case SYSCALL_FSTAT:
@@ -1287,12 +1334,15 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
             /* Resolve path1 if present */
             if (path1) {
                 int file_exists = -1;
+                char orig_path[PATH_MAX];
+                strlcpy(orig_path, path1, sizeof(orig_path));
                 char *resolved = resolve_path_at(pid, dirfd1, path1, path_buf1, sizeof(path_buf1), &file_exists);
                 free(path1);
                 path1 = NULL;
                 if (!resolved) {
-                    DEBUG_PRINT("HANDLER: pid=%d path resolution failed for path1, allowing kernel\n", pid);
+                    DEBUG_PRINT("HANDLER: path resolution FAILED for '%s'\n", orig_path);
                 } else {
+                    DEBUG_PRINT("HANDLER: resolved '%s' -> '%s'\n", orig_path, path_buf1);
                     /* Fast-path: allow critical devices that interactive shells need */
                     if (is_critical_device(path_buf1)) {
                         DEBUG_PRINT("HANDLER: pid=%d critical device %s, allowing syscall\n", pid, path_buf1);
@@ -1357,10 +1407,21 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                 path2 = NULL;
             }
 
-            if (ctx_count > 0) {
-                DEBUG_PRINT("HANDLER: pid=%d filesystem syscall %ld, checking %d contexts\n",
-                           pid, sysnum, ctx_count);
+            if (ctx_count == 0) {
+                if (is_hard_rules_present()) {
+                    DEBUG_PRINT("HANDLER: pid=%d ctx_count=0 with hard rules, blocking\n", pid);
+                    int block_result = block_syscall(pid, regs, state);
+                    if (block_result < 0) {
+                        kill(pid, SIGKILL);
+                    }
+                    free(path1);
+                    free(path2);
+                    return -1;
+                }
+                /* Soft policy: no opinion → allow */
+            }
 
+            if (ctx_count > 0) {
                 int should_block = 0;
 
                 for (int i = 0; i < ctx_count; i++) {
@@ -1375,23 +1436,32 @@ int syscall_handle_entry(pid_t pid, USER_REGS *regs, ProcessState *state) {
                      *   → granted has any bits set → allow
                      */
                     if (check_result == 0) {
-                        /* Soft policy has no opinion - allow syscall to proceed */
+                        if (is_hard_rules_present()) {
+                            DEBUG_PRINT("HANDLER: pid=%d context %d undetermined, hard rules active, blocking syscall\n", pid, i);
+                            should_block = 1;
+                            break;
+                        }
                         DEBUG_PRINT("HANDLER: pid=%d context %d undetermined, allowing syscall\n", pid, i);
                         goto allow_syscall;
                     }
 
                     /* check_result == 1: rule matched, check if it's a DENY */
                     if (granted == 0) {
-                        /* Explicit DENY rule matched - block the syscall */
                         DEBUG_PRINT("HANDLER: pid=%d context %d explicit DENY, blocking syscall\n", pid, i);
                         should_block = 1;
                         break;
                     }
 
-                    /* Rule matched and granted has some access bits - allow for this context.
-                     * Note: If granted doesn't have all needed bits, soft policy still allows
-                     * (it only blocks on explicit DENY). The kernel will handle insufficient
-                     * permissions if the rule doesn't cover all requested access. */
+                    /* Rule matched — check if all requested access bits are granted.
+                     * e.g. policy grants READ (0x1) but syscall wants WRITE (0x2). */
+                    if ((granted & access_mask) != access_mask) {
+                        uint32_t missing = access_mask & ~granted;
+                        DEBUG_PRINT("HANDLER: pid=%d context %d insufficient access (granted=0x%x, needed=0x%x, missing=0x%x)\n",
+                                   pid, i, granted, access_mask, missing);
+                        should_block = 1;
+                        break;
+                    }
+
                     DEBUG_PRINT("HANDLER: pid=%d context %d allowed (granted=0x%x, needed=0x%x)\n",
                                pid, i, granted, access_mask);
                 }
@@ -1722,41 +1792,24 @@ static int filter_env_decisions(ProcessState *state, pid_t pid, USER_REGS *regs)
     return 0;
 }
 
-/* Handle syscall exit (after execution) */
+/* Handle syscall exit (after execution).
+ *
+ * After the PTRACE_EVENT_EXEC fix, this function is only called during
+ * execve processing (when in_execve=1). All non-execve syscall exits are
+ * handled by the main loop's blocked_syscall override + handle_entry().
+ */
 int syscall_handle_exit(pid_t pid, USER_REGS *regs, ProcessState *state) {
-    (void)pid;  /* Currently unused but may be needed for future logging */
+    (void)pid;
+    (void)REG_SYSCALL(regs);
 
     if (!state) return 0;
 
-    /* Check if this syscall was blocked on entry - if so, override the return value */
-    if (state->blocked_syscall != 0) {
-        /* We blocked this syscall by replacing it with getpid.
-         * Now we need to return -EACCES instead of getpid's result. */
-        DEBUG_PRINT("HANDLER: overriding blocked syscall %ld return value to -EACCES\n",
-                   state->blocked_syscall);
-#ifdef __x86_64__
-        regs->rax = -EACCES;
-#elif defined(__aarch64__)
-        regs->regs[0] = -EACCES;
-#elif defined(__riscv)
-        regs->regs[10] = -EACCES;
-#endif
-        /* Write the modified registers back */
-        if (SET_REGS(pid, regs) == -1) {
-            if (errno != ESRCH) {
-                perror("ptrace(SET_REGS) for blocked syscall");
-            }
-        }
-        state->blocked_syscall = 0;
-    }
-
     if (state->in_execve && syscall_is_execve(regs)) {
         state->in_execve = 0;
+        state->syscall_at_entry = 0;
 
-        /* Check if execve failed */
-        long retval = REG_ARG1(regs);  /* Return value is in RAX */
+        long retval = REG_ARG1(regs);
         if (retval < 0) {
-            /* execve failed - clean up saved state */
             free(state->execve_pathname);
             state->execve_pathname = NULL;
             memory_free_string_array(state->execve_argv);
@@ -1766,11 +1819,6 @@ int syscall_handle_exit(pid_t pid, USER_REGS *regs, ProcessState *state) {
             memory_free_ulong_array(state->execve_envp_addrs);
             state->execve_envp_addrs = NULL;
         }
-
-        /* Note: We now detach in syscall_handle_entry when post_redirect_exec is first set,
-         * so this block is no longer needed. The state is also cleaned up there.
-         * Keeping this only for cleanup of saved state on execve failure.
-         */
     }
 
     return 0;

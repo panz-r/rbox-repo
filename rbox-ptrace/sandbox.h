@@ -48,6 +48,11 @@ void sandbox_free_allow_entries(struct allowed_entry *entries, int count);
 
 void sandbox_free_deny_entries(struct denied_entry *entries, int count);
 
+/* Build hard ruleset from READONLYBOX_HARD_ALLOW/HARD_DENY env vars.
+ * Must be called in the parent process BEFORE get_effective_fs_rules()
+ * so the interception ruleset includes hard rules. */
+void sandbox_build_hard_ruleset(void);
+
 /* Apply all sandbox restrictions as defined by environment variables.
  * Must be called after the child has been traced (PTRACE_TRACEME)
  * but before dropping privileges. */

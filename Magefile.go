@@ -344,6 +344,8 @@ func BuildBinaries() error {
 	for _, bin := range []string{"readonlybox-ptrace"} {
 		binPath := filepath.Join(wd, binDir, bin)
 		forceRebuildIfNewer(binPath, dfaSo)
+		forceRebuildIfNewer(binPath, filepath.Join(wd, rboxRulesetDir, "build", "lib", "liblandlock-builder.a"))
+		forceRebuildIfNewer(binPath, filepath.Join(wd, cDfaDir, "libdfa_eval.a"))
 	}
 
 	protoLib := filepath.Join(wd, rboxProtocolDir, "librbox_protocol.so")

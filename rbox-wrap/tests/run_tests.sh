@@ -522,8 +522,9 @@ fi
 
 # Test --uid with valid UID (requires sudo for privilege dropping)
 if command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
+    start_server_auto_allow
     # Test --uid flag - verify UID actually changes to 1000
-    output=$(sudo $WRAPPER --uid 1000 --run -- id -u 2>&1 | tr -d '\n')
+    output=$(sudo $WRAPPER --socket "$SOCKET" --uid 1000 --run -- id -u 2>&1 | tr -d '\n')
     if [ "$output" = "1000" ]; then
         pass "Privilege dropping via --uid works"
     else
@@ -532,7 +533,7 @@ if command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
 
     # Test READONLYBOX_UID - verify UID actually changes
     export READONLYBOX_UID=1000
-    output=$(sudo $WRAPPER --run -- id -u 2>&1 | tr -d '\n')
+    output=$(sudo $WRAPPER --socket "$SOCKET" --run -- id -u 2>&1 | tr -d '\n')
     if [ "$output" = "1000" ]; then
         pass "Privilege dropping via READONLYBOX_UID works"
     else

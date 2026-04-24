@@ -589,7 +589,7 @@ static uint32_t match_static_rules(const effective_ruleset_t *eff,
     }
 
     if (out_matched_pattern) *out_matched_pattern = last_pattern;
-    if (!any_matched) return 0;
+    if (!any_matched) return SPECIFICITY_NO_MATCH;
     /* granted may be 0 if modes were disjoint — but that's NOT a deny */
     if (out_deny) *out_deny = deny_matched;
     return granted;
@@ -611,6 +611,7 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
     uint32_t granted = SOFT_ACCESS_ALL;
     const char *last_pattern = NULL;
     bool deny_matched = false;
+    bool any_matched = false;
 
     for (int i = 0; i < eff->dynamic_count; i++) {
         const compiled_rule_t *r = &eff->dynamic_rules[i];
@@ -619,6 +620,7 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
         if (!compiled_subject_matches(r, eff, ctx->subject)) continue;
         if (!compiled_rule_matches_path(r, eff, path, ctx)) continue;
 
+        any_matched = true;
         if (r->mode & SOFT_ACCESS_DENY) {
             deny_matched = true;
             if (out_matched_pattern) *out_matched_pattern = get_pattern(eff, r);
@@ -630,6 +632,7 @@ static uint32_t match_dynamic_rules(const effective_ruleset_t *eff,
     }
 
     if (out_matched_pattern) *out_matched_pattern = last_pattern;
+    if (!any_matched) return SPECIFICITY_NO_MATCH;
     if (out_deny) *out_deny = deny_matched;
     return granted;
 }
@@ -675,6 +678,24 @@ uint32_t eval_effective_path(const effective_ruleset_t *eff,
     const char *static_matched = NULL;
     bool static_deny = false;
     uint32_t granted = match_static_rules(eff, path, op, ctx, &static_matched, &static_deny);
+    if (granted == SPECIFICITY_NO_MATCH) {
+        /* No PRECEDENCE static rules matched; check dynamic */
+        const char *dyn_pattern = NULL;
+        bool dyn_deny = false;
+        uint32_t dyn_granted = match_dynamic_rules(eff, path, op, ctx, &dyn_pattern, &dyn_deny);
+        if (dyn_deny) {
+            if (out_matched_pattern) *out_matched_pattern = dyn_pattern;
+            return 0; /* DENY matched in PRECEDENCE dynamic rules */
+        }
+        if (dyn_granted == SPECIFICITY_NO_MATCH) {
+            /* Neither static nor dynamic PRECEDENCE rules matched */
+            if (out_matched_pattern) *out_matched_pattern = NULL;
+            return SPECIFICITY_NO_MATCH;
+        }
+        /* Only dynamic matched */
+        if (out_matched_pattern) *out_matched_pattern = dyn_pattern;
+        return dyn_granted;
+    }
     if (static_deny) {
         if (out_matched_pattern) *out_matched_pattern = static_matched;
         return 0; /* DENY matched in PRECEDENCE static rules */
@@ -701,7 +722,7 @@ uint32_t eval_effective_path(const effective_ruleset_t *eff,
         granted = dyn_granted;
         if (out_matched_pattern) *out_matched_pattern = dyn_pattern;
     }
-    /* Neither matched → granted=0 (no rule matched) */
+    /* Neither matched → already handled by SPECIFICITY_NO_MATCH above */
 
     return granted;
 }

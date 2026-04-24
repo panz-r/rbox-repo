@@ -406,10 +406,10 @@ static int trace_process(pid_t initial_pid) {
                                           PTRACE_O_EXITKILL);
                 if (setopts_ret < 0) {
                     if (errno == ESRCH) {
-                        /* Child already exited before we could set options - this is a race,
-                         * not an error. Clean up process state since PID is no longer valid. */
-                        DEBUG_PRINT("PARENT: child %d already exited (race), skipping options\n", (int)child_pid);
-                        syscall_remove_process_state((pid_t)child_pid);
+                        /* Child not yet scheduled - this is a race, not an exit.
+                         * The child will stop with SIGSTOP shortly; we'll set
+                         * options then. Do NOT remove process state. */
+                        DEBUG_PRINT("PARENT: child %d not yet scheduled (ESRCH), will configure on first stop\n", (int)child_pid);
                     } else {
                         DEBUG_PRINT("PARENT: child %d SETOPTIONS failed: %s\n", (int)child_pid, strerror(errno));
                         /* Only kill if process still exists */
@@ -433,6 +433,9 @@ static int trace_process(pid_t initial_pid) {
         if (status >> 8 == (SIGTRAP | (PTRACE_EVENT_EXEC << 8))) {
             ProcessState *state = syscall_get_process_state(pid);
             if (state) {
+                /* Update execve_pathname to reflect the new program image.
+                 * PTRACE_EVENT_EXEC only fires on successful execve, so
+                 * /proc/pid/exe is always valid here. */
                 char exe_path[PATH_MAX];
                 char proc_link[64];
                 snprintf(proc_link, sizeof(proc_link), "/proc/%d/exe", pid);
@@ -442,6 +445,16 @@ static int trace_process(pid_t initial_pid) {
                     free(state->execve_pathname);
                     state->execve_pathname = strdup(exe_path);
                 }
+                /* PTRACE_EVENT_EXEC replaces the normal syscall-exit stop,
+                 * so handle_exit() is never called for this execve. We must
+                 * clear in_execve and reset syscall_at_entry here so that
+                 * subsequent syscalls are dispatched to handle_entry().
+                 *
+                 * syscall_at_entry=0 ensures the next toggle (at the first
+                 * syscall stop of the new program) sets it to 1 (entry),
+                 * so the filesystem handler runs correctly. */
+                state->in_execve = 0;
+                state->syscall_at_entry = 0;
             }
             ptrace(PTRACE_SYSCALL, pid, 0, 0);
             continue;
@@ -471,6 +484,57 @@ static int trace_process(pid_t initial_pid) {
                     continue;
                 }
 
+                /*
+                 * Syscall entry/exit dispatch:
+                 *
+                 * PTRACE_SYSCALL delivers a stop at both entry and exit of each
+                 * syscall. We toggle syscall_at_entry to track which phase we're in:
+                 *   0 → 1 = entry (before syscall executes)
+                 *   1 → 0 = exit  (after syscall executes)
+                 *
+                 * During execve processing (in_execve=1), the toggle is suppressed
+                 * because PTRACE_EVENT_EXEC replaces the normal exit stop for
+                 * successful execve, disrupting the toggle rhythm.
+                 *
+                 * After PTRACE_EVENT_EXEC resets in_execve=0 and syscall_at_entry=0,
+                 * all subsequent stops are dispatched to handle_entry(), which
+                 * internally checks syscall_at_entry to route filesystem checks
+                 * to entry stops only. Blocked syscall return overrides happen at
+                 * exit stops (syscall_at_entry=0) here in the main loop.
+                 */
+
+                /* Toggle entry/exit state only for non-execve syscalls */
+                if (!state->in_execve) {
+                    state->syscall_at_entry = !state->syscall_at_entry;
+                }
+
+                /* Override return value for blocked syscalls at exit stops.
+                 * When a filesystem syscall is blocked on entry, we replace it
+                 * with getpid (a harmless noop). At the exit stop, getpid returns
+                 * the pid, but we need to return -EACCES instead. */
+                if (!state->syscall_at_entry && state->blocked_syscall != 0) {
+                    DEBUG_PRINT("HANDLER: overriding blocked syscall %ld return value to -EACCES\n",
+                                state->blocked_syscall);
+#ifdef __x86_64__
+                    regs.rax = -EACCES;
+#elif defined(__aarch64__)
+                    regs.regs[0] = -EACCES;
+#elif defined(__riscv)
+                    regs.regs[10] = -EACCES;
+#endif
+                    if (SET_REGS(pid, &regs) == -1) {
+                        if (errno != ESRCH) {
+                            perror("ptrace(SETREGS) for blocked syscall");
+                        }
+                    }
+                    state->blocked_syscall = 0;
+                }
+
+                /* Dispatch to handler:
+                 * - in_execve=1: execve in progress, send both entry and exit to handle_exit.
+                 *   (handle_exit clears in_execve on execve exit or failure.)
+                 * - in_execve=0: normal syscall, send to handle_entry for both entry and exit.
+                 *   (handle_entry checks syscall_at_entry internally for filesystem checks.) */
                 if (!state->in_execve) {
                     syscall_handle_entry(pid, &regs, state);
                 } else {
@@ -483,8 +547,19 @@ static int trace_process(pid_t initial_pid) {
 
             /* CRITICAL: Swallow SIGSTOP to prevent infinite stop-deliver loop.
              * Forwarding SIGSTOP causes the tracee to stop immediately again,
-             * trapping the tracer in a loop and preventing execv. */
+             * trapping the tracer in a loop and preventing execv.
+             *
+             * Also use this as the hook to set ptrace options on new children
+             * where SETOPTIONS failed with ESRCH during clone handling. */
             if (sig == SIGSTOP) {
+                /* Set options on this process if not already done */
+                ptrace(PTRACE_SETOPTIONS, pid, 0,
+                       PTRACE_O_TRACESYSGOOD |
+                       PTRACE_O_TRACEEXEC |
+                       PTRACE_O_TRACECLONE |
+                       PTRACE_O_TRACEFORK |
+                       PTRACE_O_TRACEVFORK |
+                       PTRACE_O_EXITKILL);
                 ptrace(PTRACE_SYSCALL, pid, 0, 0);
             } else {
                 /* Forward all other signals (e.g., SIGINT, SIGTERM, SIGTSTP) */
@@ -923,18 +998,17 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        /* Note: Layers 0-1 are reserved for hard policy fallback (deny/allow).
-         * Hard rules use PRECEDENCE mode to shadow soft rules.
-         * Soft rules start at layer 2. */
+        /* Layer 0: Soft DENY rules - PRECEDENCE mode (highest priority veto) */
+        soft_ruleset_set_layer_type(user_fs_rules, 0, LAYER_PRECEDENCE, 0);
 
-        /* Layer 2: User rules - SPECIFICITY mode (longest match wins) */
+        /* Layer 1: User soft allow rules - SPECIFICITY mode (longest match wins) */
+        soft_ruleset_set_layer_type(user_fs_rules, 1, LAYER_SPECIFICITY, 0);
+
+        /* Layer 2: Builtin ALLOW rules - SPECIFICITY mode (fallback) */
         soft_ruleset_set_layer_type(user_fs_rules, 2, LAYER_SPECIFICITY, 0);
 
-        /* Layer 3: Builtin ALLOW rules - SPECIFICITY mode (fallback) */
-        soft_ruleset_set_layer_type(user_fs_rules, 3, LAYER_SPECIFICITY, 0);
-
-        /* Layer 4: Builtin DENY rules - PRECEDENCE mode (shadows lower layers) */
-        soft_ruleset_set_layer_type(user_fs_rules, 4, LAYER_PRECEDENCE, 0);
+        /* Layer 3: Builtin DENY rules - PRECEDENCE mode (shadows lower layers) */
+        soft_ruleset_set_layer_type(user_fs_rules, 3, LAYER_PRECEDENCE, 0);
 
         /* Parse and load user rules from environment */
         const char *allow_env = getenv("READONLYBOX_SOFT_ALLOW");
@@ -983,7 +1057,7 @@ int main(int argc, char *argv[]) {
                             case SOFT_MODE_RWX: access = SOFT_ACCESS_ALL; break;
                             default: access = 0; break;
                         }
-                        soft_ruleset_add_rule_at_layer(user_fs_rules, 2, recursive_path, access,
+                        soft_ruleset_add_rule_at_layer(user_fs_rules, 1, recursive_path, access,
                                 SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
                     }
                     token = strtok_r(NULL, ",", &saveptr);
@@ -1019,7 +1093,7 @@ int main(int argc, char *argv[]) {
                             snprintf(recursive_path, sizeof(recursive_path), "%.*s/...", (int)path_len, path);
                         }
 
-                        soft_ruleset_add_rule_at_layer(user_fs_rules, 2, recursive_path, SOFT_ACCESS_DENY,
+                        soft_ruleset_add_rule_at_layer(user_fs_rules, 0, recursive_path, SOFT_ACCESS_DENY,
                                 SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
                     }
                     token = strtok_r(NULL, ",", &saveptr);
@@ -1038,12 +1112,12 @@ int main(int argc, char *argv[]) {
             if (user) {
                 char path[PATH_MAX];
                 snprintf(path, sizeof(path), "/home/%s", user);
-                soft_ruleset_add_rule_at_layer(user_fs_rules, 2, path,
+                soft_ruleset_add_rule_at_layer(user_fs_rules, 1, path,
                         SOFT_ACCESS_READ | SOFT_ACCESS_WRITE | SOFT_ACCESS_EXEC,
                         SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
 
                 snprintf(path, sizeof(path), "/run/user/%d", getuid());
-                soft_ruleset_add_rule_at_layer(user_fs_rules, 2, path,
+                soft_ruleset_add_rule_at_layer(user_fs_rules, 1, path,
                         SOFT_ACCESS_READ | SOFT_ACCESS_WRITE,
                         SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
             }
@@ -1076,7 +1150,7 @@ int main(int argc, char *argv[]) {
         for (size_t i = 0; i < sizeof(builtin_allow) / sizeof(builtin_allow[0]); i++) {
             char recursive_path[PATH_MAX];
             snprintf(recursive_path, sizeof(recursive_path), "%s/...", builtin_allow[i].path);
-            soft_ruleset_add_rule_at_layer(user_fs_rules, 3, recursive_path, builtin_allow[i].access,
+            soft_ruleset_add_rule_at_layer(user_fs_rules, 2, recursive_path, builtin_allow[i].access,
                     SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
         }
 
@@ -1098,7 +1172,7 @@ int main(int argc, char *argv[]) {
         for (size_t i = 0; i < sizeof(builtin_deny) / sizeof(builtin_deny[0]); i++) {
             char recursive_path[PATH_MAX];
             snprintf(recursive_path, sizeof(recursive_path), "%s/...", builtin_deny[i]);
-            soft_ruleset_add_rule_at_layer(user_fs_rules, 4, recursive_path, SOFT_ACCESS_DENY,
+            soft_ruleset_add_rule_at_layer(user_fs_rules, 3, recursive_path, SOFT_ACCESS_DENY,
                     SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
         }
     }
@@ -1106,6 +1180,11 @@ int main(int argc, char *argv[]) {
     unsetenv("READONLYBOX_SOFT_ALLOW");
     unsetenv("READONLYBOX_SOFT_DENY");
     unsetenv("READONLYBOX_SOFT_DEBUG");
+
+    /* Build hard ruleset from env vars so the parent's interception
+     * ruleset includes hard rules. The child will also build its own
+     * copy inside apply_sandboxing(). */
+    sandbox_build_hard_ruleset();
 
     soft_ruleset_t *effective_fs_rules = get_effective_fs_rules();
     if (effective_fs_rules) {

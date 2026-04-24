@@ -1000,11 +1000,17 @@ static uint32_t eval_all_layers(const soft_ruleset_t *rs,
     }
 
     /* First try the compiled effective ruleset */
-    if (rs->is_compiled && (rs->effective.static_count > 0 || rs->effective.dynamic_count > 0)) {
+    if (rs->is_compiled && (rs->effective.static_count > 0 || rs->effective.dynamic_count > 0 ||
+                            rs->effective.spec_static_count > 0 || rs->effective.spec_dynamic_count > 0)) {
         const char *matched = NULL;
         uint32_t granted = eval_effective_path(&rs->effective, path, op, ctx,
                                                &matched);
         if (out_matched_pattern) *out_matched_pattern = matched;
+        if (granted == SPECIFICITY_NO_MATCH) {
+            /* No rules matched in compiled ruleset — signal undetermined */
+            if (out_matched_pattern) *out_matched_pattern = NULL;
+            return 0;
+        }
         if (granted == 0 && matched != NULL) {
             /* DENY matched in effective ruleset */
             if (out_deny_layer) *out_deny_layer = 0;

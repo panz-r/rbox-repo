@@ -150,6 +150,11 @@
 #else
     #error "SYS_openat not available on this platform"
 #endif
+#ifdef SYS_openat2
+    #define SYSCALL_OPENAT2     SYS_openat2
+#else
+    #define SYSCALL_OPENAT2     437  /* __NR_openat2 on aarch64 */
+#endif
 #ifdef SYS_creat
     #define SYSCALL_CREAT       SYS_creat
 #else
@@ -262,6 +267,11 @@
 #else
     #define SYSCALL_FACCESSAT2 (-1)
 #endif
+#ifdef SYS_statx
+    #define SYSCALL_STATX   SYS_statx
+#else
+    #define SYSCALL_STATX   (-1)
+#endif
 
 /*
  * Process state tracking structure.
@@ -284,6 +294,7 @@ typedef struct {
     int initial_execve;     /* This is the initial execve (first one) */
     int detached;           /* Process has been detached */
     int validated;          /* This execve has been validated */
+    int syscall_at_entry;   /* 1 = current ptrace stop is at syscall entry, 0 = at exit */
     char *execve_pathname;  /* Saved pathname for execve */
     char **execve_argv;     /* Saved argv for execve */
     char **execve_envp;     /* Saved envp for execve */
