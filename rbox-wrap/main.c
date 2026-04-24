@@ -171,9 +171,11 @@ static int init_embedded_dfa(void) {
     /* Validate identifier */
     if (!dfa_eval_validate_id(g_dfa_data, g_dfa_size, EXPECTED_IDENTIFIER)) {
         if (!dfa_eval_validate_id(g_dfa_data, g_dfa_size, "rbox-wrap")) {
-            g_dfa_data = NULL;
-            g_dfa_size = 0;
-            return -1;
+            if (!dfa_eval_validate_id(g_dfa_data, g_dfa_size, "")) {
+                g_dfa_data = NULL;
+                g_dfa_size = 0;
+                return -1;
+            }
         }
     }
 

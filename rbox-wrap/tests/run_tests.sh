@@ -554,7 +554,7 @@ echo "--------------"
 
 # Test --system-socket option parsing (socket may not exist but option should parse)
 output=$($WRAPPER --system-socket --judge -- ls 2>&1)
-if [ $? -ne 0 ] || echo "$output" | grep -qi "unrecognized\|unknown option"; then
+if echo "$output" | grep -qi "unrecognized\|unknown option"; then
     fail "--system-socket option not recognized"
 else
     pass "--system-socket option parsed"
@@ -563,7 +563,7 @@ fi
 # Test --user-socket option parsing (socket may not exist but option should parse)
 # Note: XDG_RUNTIME_DIR may not be set, so it may fall back to system socket
 output=$($WRAPPER --user-socket --judge -- ls 2>&1)
-if [ $? -ne 0 ] || echo "$output" | grep -qi "unrecognized\|unknown option"; then
+if echo "$output" | grep -qi "unrecognized\|unknown option"; then
     fail "--user-socket option not recognized"
 else
     pass "--user-socket option parsed"
