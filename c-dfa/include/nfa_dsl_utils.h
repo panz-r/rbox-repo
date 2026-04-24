@@ -157,4 +157,40 @@ int dfa_dsl_find_reachable_states(const dsl_dfa_t *dfa, int *out_states, int max
  */
 bool dfa_dsl_is_isomorphic(const dsl_dfa_t *a, const dsl_dfa_t *b);
 
+/**
+ * Count the number of accepting states in a DFA.
+ */
+int dfa_dsl_count_accepting_states(const dsl_dfa_t *dfa);
+
+/**
+ * Count the number of transitions from a state.
+ */
+int dfa_dsl_count_outgoing_transitions(const dsl_dfa_t *dfa, int state_id);
+
+/**
+ * Check if a path exists from one state to another following any transitions.
+ * Uses BFS to find any valid path.
+ */
+bool dfa_dsl_has_path(const dsl_dfa_t *dfa, int from, int to);
+
+/**
+ * Find all states that have the specified category mask.
+ * Fills the provided array with state IDs (max count elements).
+ * Returns the actual number of states found.
+ */
+int dfa_dsl_find_states_by_category(const dsl_dfa_t *dfa, uint8_t category,
+                                    int *out_states, int max_count);
+
+/**
+ * Check if all states in the DFA are reachable from the start state.
+ * Returns true if all states are reachable.
+ */
+bool dfa_dsl_all_states_reachable(const dsl_dfa_t *dfa);
+
+/**
+ * Get statistics about the DFA structure.
+ * Returns a string with stats (caller must free).
+ */
+char* dfa_dsl_get_stats(const dsl_dfa_t *dfa);
+
 #endif /* _NFA_DSL_UTILS_H */

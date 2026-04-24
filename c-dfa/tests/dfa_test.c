@@ -1127,7 +1127,8 @@ static void run_edge_case_tests(void) {
     };
 
     run_test_group("EDGE CASE TESTS", "patterns_edge_cases.txt",
-                   "build_test/edge_cases.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/edge_cases.dfa", "edge_cases.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_caution_command_tests(void) {
@@ -1142,7 +1143,8 @@ static void run_caution_command_tests(void) {
     };
 
     run_test_group("CAUTION COMMAND TESTS", "patterns_caution_commands.txt",
-                   "build_test/caution_commands.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/caution_commands.dfa", "caution_commands.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_modifying_command_tests(void) {
@@ -1157,7 +1159,7 @@ static void run_modifying_command_tests(void) {
     };
 
     run_test_group("MODIFYING COMMAND TESTS", "patterns_modifying_commands.txt",
-                   "build_test/modifying_commands.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/modifying_commands.dfa", "modifying_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_network_command_tests(void) {
@@ -1172,7 +1174,7 @@ static void run_network_command_tests(void) {
     };
 
     run_test_group("NETWORK COMMAND TESTS", "patterns_network_commands.txt",
-                   "build_test/network_commands.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/network_commands.dfa", "network_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_combined_tests(void) {
@@ -1654,7 +1656,8 @@ static void run_stress_structural_tests(void) {
     };
 
     run_test_group("STRESS: Structural Integrity", "stress_test.txt",
-                   "build_test/stress_structural.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/stress_structural.dfa", "stress_structural.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_stress_whitespace_tests(void) {
@@ -1677,7 +1680,8 @@ static void run_stress_whitespace_tests(void) {
     };
 
     run_test_group("STRESS: Whitespace & Wildcards", "stress_test.txt",
-                   "build_test/stress_whitespace.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/stress_whitespace.dfa", "stress_whitespace.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -1718,7 +1722,8 @@ static void run_long_chain_tests(void) {
     };
 
     run_test_group("LONG CHAIN TESTS", "patterns_long_chain.txt",
-                   "build_test/long_chain.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/long_chain.dfa", "long_chain.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -1747,7 +1752,8 @@ static void run_deep_nested_tests(void) {
     };
 
     run_test_group("DEEP NESTED TESTS", "patterns_deep_nested.txt",
-                   "build_test/deep_nested.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/deep_nested.dfa", "deep_nested.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -2169,7 +2175,7 @@ static void run_build_command_tests(void) {
     };
 
     run_test_group("BUILD COMMAND TESTS", "patterns_build_commands.txt",
-                   "build_test/build_commands.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/build_commands.dfa", "build_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -2212,7 +2218,7 @@ static void run_container_command_tests(void) {
     };
 
     run_test_group("CONTAINER COMMAND TESTS", "patterns_container_commands.txt",
-                   "build_test/container_commands.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/container_commands.dfa", "container_commands.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -2229,7 +2235,8 @@ static void run_all_category_isolation_tests(void) {
         {"SAFE_CMD alpha", false, 0, CAT_MASK_1, "safe should NOT get 0x02"},
     };
     run_test_group("SAFE ISOLATION", "patterns_acceptance_category_test.txt",
-                   "build_test/safe_isolation.dfa", NULL, safe_cases, sizeof(safe_cases)/sizeof(safe_cases[0]));
+                   "build_test/safe_isolation.dfa", "safe_isolation.dfa",
+                   safe_cases, sizeof(safe_cases)/sizeof(safe_cases[0]));
 
     // Category 1: caution (0x02)
     TestCase caution_cases[] = {
@@ -2243,7 +2250,8 @@ static void run_all_category_isolation_tests(void) {
         {"cat /etc/passwd", false, 0, CAT_MASK_7, "caution should NOT get 0x80"},
     };
     run_test_group("CAUTION ISOLATION", "patterns_caution_commands.txt",
-                   "build_test/caution_isolation.dfa", NULL, caution_cases, sizeof(caution_cases)/sizeof(caution_cases[0]));
+                   "build_test/caution_isolation.dfa", "caution_isolation.dfa",
+                   caution_cases, sizeof(caution_cases)/sizeof(caution_cases[0]));
 
     // Category 4: network (0x10)
     TestCase network_cases[] = {
@@ -2257,7 +2265,7 @@ static void run_all_category_isolation_tests(void) {
         {"ping google.com", false, 0, CAT_MASK_7, "network should NOT get 0x80"},
     };
     run_test_group("NETWORK ISOLATION", "patterns_network_commands.txt",
-                   "build_test/network_isolation.dfa", NULL, network_cases, sizeof(network_cases)/sizeof(network_cases[0]));
+                   "build_test/network_isolation.dfa", "network_isolation.dfa", network_cases, sizeof(network_cases)/sizeof(network_cases[0]));
 }
 
 static void run_category_isolation_t_tests(void) {
@@ -2273,7 +2281,7 @@ static void run_category_isolation_t_tests(void) {
         {"rm file.txt", false, 0, CAT_MASK_7, "modifying should NOT get 0x80"},
     };
     run_test_group("MODIFYING ISOLATION", "patterns_modifying_commands.txt",
-                   "build_test/modifying_isolation.dfa", NULL, modifying_cases, sizeof(modifying_cases)/sizeof(modifying_cases[0]));
+                   "build_test/modifying_isolation.dfa", "modifying_isolation.dfa", modifying_cases, sizeof(modifying_cases)/sizeof(modifying_cases[0]));
 
     // Category 6: build (0x40)
     TestCase build_cases[] = {
@@ -2287,7 +2295,7 @@ static void run_category_isolation_t_tests(void) {
         {"make", false, 0, CAT_MASK_7, "build should NOT get 0x80"},
     };
     run_test_group("BUILD ISOLATION", "patterns_build_commands.txt",
-                   "build_test/build_isolation.dfa", NULL, build_cases, sizeof(build_cases)/sizeof(build_cases[0]));
+                   "build_test/build_isolation.dfa", "build_isolation.dfa", build_cases, sizeof(build_cases)/sizeof(build_cases[0]));
 
     // Category 7: container (0x80)
     TestCase container_cases[] = {
@@ -2301,7 +2309,7 @@ static void run_category_isolation_t_tests(void) {
         {"docker ps", false, 0, CAT_MASK_6, "container should NOT get 0x40"},
     };
     run_test_group("CONTAINER ISOLATION", "patterns_container_commands.txt",
-                   "build_test/container_isolation.dfa", NULL, container_cases, sizeof(container_cases)/sizeof(container_cases[0]));
+                   "build_test/container_isolation.dfa", "container_isolation.dfa", container_cases, sizeof(container_cases)/sizeof(container_cases[0]));
 }
 
 static void run_category_isolation_u_tests(void) {
@@ -2317,7 +2325,7 @@ static void run_category_isolation_u_tests(void) {
         {"reboot", false, 0, CAT_MASK_7, "dangerous should NOT get 0x80"},
     };
     run_test_group("DANGEROUS ISOLATION", "patterns_dangerous_commands.txt",
-                   "build_test/dangerous_isolation.dfa", NULL, dangerous_cases, sizeof(dangerous_cases)/sizeof(dangerous_cases[0]));
+                   "build_test/dangerous_isolation.dfa", "dangerous_isolation.dfa", dangerous_cases, sizeof(dangerous_cases)/sizeof(dangerous_cases[0]));
 
     // Category 5: admin (0x20)
     TestCase admin_cases[] = {
@@ -2331,7 +2339,7 @@ static void run_category_isolation_u_tests(void) {
         {"sudo command", false, 0, CAT_MASK_7, "admin should NOT get 0x80"},
     };
     run_test_group("ADMIN ISOLATION", "patterns_admin_commands.txt",
-                   "build_test/admin_isolation.dfa", NULL, admin_cases, sizeof(admin_cases)/sizeof(admin_cases[0]));
+                   "build_test/admin_isolation.dfa", "admin_isolation.dfa", admin_cases, sizeof(admin_cases)/sizeof(admin_cases[0]));
 }
 
 // ============================================================================

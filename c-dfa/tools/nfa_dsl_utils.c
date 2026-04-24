@@ -362,3 +362,101 @@ bool dfa_dsl_is_isomorphic(const dsl_dfa_t *a, const dsl_dfa_t *b) {
     free(a_str); free(b_str);
     return result;
 }
+
+int dfa_dsl_count_accepting_states(const dsl_dfa_t *dfa) {
+    if (!dfa) return 0;
+    int count = 0;
+    for (int i = 0; i < dfa->state_count; i++) {
+        if (dfa->states[i].is_accept) count++;
+    }
+    return count;
+}
+
+int dfa_dsl_count_outgoing_transitions(const dsl_dfa_t *dfa, int state_id) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return 0;
+    return dfa->states[state_id].symbol_transition_count;
+}
+
+bool dfa_dsl_has_path(const dsl_dfa_t *dfa, int from, int to) {
+    if (!dfa || from < 0 || from >= dfa->state_count) return false;
+    if (from == to) return true;
+    
+    bool *visited = calloc((size_t)dfa->state_count, sizeof(bool));
+    if (!visited) return false;
+    
+    int queue[256];
+    int queue_head = 0, queue_tail = 0;
+    
+    queue[queue_tail++] = from;
+    visited[from] = true;
+    
+    while (queue_head < queue_tail) {
+        int curr = queue[queue_head++];
+        if (curr == to) {
+            free(visited);
+            return true;
+        }
+        
+        const dsl_dfa_state_t *s = &dfa->states[curr];
+        
+        for (int i = 0; i < s->symbol_transition_count && queue_tail < 256; i++) {
+            for (int t = 0; t < s->symbol_transitions[i].target_count; t++) {
+                int target = s->symbol_transitions[i].targets[t];
+                if (!visited[target]) {
+                    visited[target] = true;
+                    queue[queue_tail++] = target;
+                }
+            }
+        }
+        
+        if (s->is_eos_target && s->eos_target >= 0 && !visited[s->eos_target]) {
+            visited[s->eos_target] = true;
+            if (queue_tail < 256) queue[queue_tail++] = s->eos_target;
+        }
+    }
+    
+    free(visited);
+    return false;
+}
+
+int dfa_dsl_find_states_by_category(const dsl_dfa_t *dfa, uint8_t category,
+                                    int *out_states, int max_count) {
+    if (!dfa || !out_states || max_count <= 0) return 0;
+    
+    int count = 0;
+    for (int i = 0; i < dfa->state_count && count < max_count; i++) {
+        if (dfa->states[i].category_mask == category) {
+            out_states[count++] = i;
+        }
+    }
+    return count;
+}
+
+bool dfa_dsl_all_states_reachable(const dsl_dfa_t *dfa) {
+    if (!dfa) return false;
+    
+    int reachable[1024];
+    int count = dfa_dsl_find_reachable_states(dfa, reachable, 1024);
+    return count == dfa->state_count;
+}
+
+char* dfa_dsl_get_stats(const dsl_dfa_t *dfa) {
+    if (!dfa) return NULL;
+    
+    int accepting = dfa_dsl_count_accepting_states(dfa);
+    int reachable = 0;
+    dfa_dsl_find_reachable_states(dfa, &reachable, 1);  // Just count
+    
+    int total_trans = 0;
+    for (int i = 0; i < dfa->state_count; i++) {
+        total_trans += dfa->states[i].symbol_transition_count;
+    }
+    
+    char *result = malloc(256);
+    if (result) {
+        snprintf(result, 256,
+                 "states=%d accepting=%d reachable=%d transitions=%d alphabet=%d",
+                 dfa->state_count, accepting, reachable, total_trans, dfa->alphabet_size);
+    }
+    return result;
+}
