@@ -181,3 +181,184 @@ bool nfa_assert_symbol_sequence(const nfa_graph_t *graph,
     }
     return true;
 }
+
+/* ============================================================================
+ * DSL DFA Query Helpers
+ *
+ * These functions work with dsl_dfa_t (parsed from DFA DSL) to verify
+ * transition structure without needing the full build_dfa_state_t array.
+ * ============================================================================ */
+
+/**
+ * Get the number of states in a parsed DFA.
+ */
+int dfa_dsl_get_state_count(const dsl_dfa_t *dfa) {
+    if (!dfa) return 0;
+    return dfa->state_count;
+}
+
+/**
+ * Get the number of transitions in a state.
+ */
+int dfa_dsl_get_transition_count(const dsl_dfa_t *dfa, int state_id) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return 0;
+    const dsl_dfa_state_t *s = &dfa->states[state_id];
+    return s->symbol_transition_count;
+}
+
+/**
+ * Check if a state has a transition on the given symbol.
+ */
+bool dfa_dsl_has_transition(const dsl_dfa_t *dfa, int state_id, int symbol) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return false;
+    const dsl_dfa_state_t *s = &dfa->states[state_id];
+    for (int i = 0; i < s->symbol_transition_count; i++) {
+        if (s->symbol_transitions[i].symbol_id == symbol) return true;
+    }
+    return false;
+}
+
+/**
+ * Get the target state for a transition on a given symbol.
+ * Returns -1 if no such transition exists.
+ */
+int dfa_dsl_get_target(const dsl_dfa_t *dfa, int state_id, int symbol) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return -1;
+    const dsl_dfa_state_t *s = &dfa->states[state_id];
+    for (int i = 0; i < s->symbol_transition_count; i++) {
+        if (s->symbol_transitions[i].symbol_id == symbol) {
+            if (s->symbol_transitions[i].target_count > 0) {
+                return s->symbol_transitions[i].targets[0];
+            }
+        }
+    }
+    return -1;
+}
+
+/**
+ * Check if a state is accepting.
+ */
+bool dfa_dsl_is_accepting(const dsl_dfa_t *dfa, int state_id) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return false;
+    return dfa->states[state_id].is_accept;
+}
+
+/**
+ * Check if a state is the start state.
+ */
+bool dfa_dsl_is_start(const dsl_dfa_t *dfa, int state_id) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return false;
+    return dfa->states[state_id].is_start;
+}
+
+/**
+ * Get the category mask for a state.
+ * Returns 0 if state doesn't exist or has no category.
+ */
+uint8_t dfa_dsl_get_category(const dsl_dfa_t *dfa, int state_id) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return 0;
+    return dfa->states[state_id].category_mask;
+}
+
+/**
+ * Check if a transition has a marker with the given value.
+ */
+bool dfa_dsl_transition_has_marker(const dsl_dfa_t *dfa, int state_id,
+                                   int symbol, uint32_t marker_value) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return false;
+    const dsl_dfa_state_t *s = &dfa->states[state_id];
+    for (int i = 0; i < s->symbol_transition_count; i++) {
+        if (s->symbol_transitions[i].symbol_id == symbol) {
+            for (int m = 0; m < s->symbol_transitions[i].marker_count; m++) {
+                if (s->symbol_transitions[i].markers[m].value == marker_value) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Check if a state has the EOS (end-of-sequence) flag.
+ */
+bool dfa_dsl_state_has_eos(const dsl_dfa_t *dfa, int state_id) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return false;
+    return dfa->states[state_id].is_eos_target;
+}
+
+/**
+ * Get the EOS target for a state.
+ * Returns -1 if no EOS target.
+ */
+int dfa_dsl_get_eos_target(const dsl_dfa_t *dfa, int state_id) {
+    if (!dfa || state_id < 0 || state_id >= dfa->state_count) return -1;
+    return dfa->states[state_id].eos_target;
+}
+
+/**
+ * Find states that are reachable from the start state via BFS.
+ * Fills the provided array with state IDs (max count elements).
+ * Returns the actual number of states found.
+ */
+int dfa_dsl_find_reachable_states(const dsl_dfa_t *dfa, int *out_states, int max_count) {
+    if (!dfa || !out_states || max_count <= 0) return 0;
+    
+    bool *visited = calloc((size_t)dfa->state_count, sizeof(bool));
+    if (!visited) return 0;
+    
+    int queue[256];
+    int queue_head = 0, queue_tail = 0;
+    int count = 0;
+    
+    queue[queue_tail++] = dfa->start_state;
+    visited[dfa->start_state] = true;
+    
+    while (queue_head < queue_tail && count < max_count) {
+        int curr = queue[queue_head++];
+        out_states[count++] = curr;
+        
+        const dsl_dfa_state_t *s = &dfa->states[curr];
+        
+        for (int i = 0; i < s->symbol_transition_count && queue_tail < 256; i++) {
+            for (int t = 0; t < s->symbol_transitions[i].target_count; t++) {
+                int target = s->symbol_transitions[i].targets[t];
+                if (!visited[target]) {
+                    visited[target] = true;
+                    queue[queue_tail++] = target;
+                }
+            }
+        }
+        
+        if (s->is_eos_target && s->eos_target >= 0 && !visited[s->eos_target]) {
+            visited[s->eos_target] = true;
+            if (queue_tail < 256) queue[queue_tail++] = s->eos_target;
+        }
+    }
+    
+    free(visited);
+    return count;
+}
+
+/**
+ * Check if two DFAs are structurally isomorphic (same shape, different state IDs).
+ * Uses canonical BFS numbering to determine isomorphism.
+ * Returns true if isomorphic.
+ */
+bool dfa_dsl_is_isomorphic(const dsl_dfa_t *a, const dsl_dfa_t *b) {
+    if (!a || !b) return false;
+    if (a->state_count != b->state_count) return false;
+    if (a->alphabet_size != b->alphabet_size) return false;
+    
+    char *a_str = dfa_dsl_to_string_filtered(a, (dfa_dsl_filter_t){-1, -1, -1});
+    char *b_str = dfa_dsl_to_string_filtered(b, (dfa_dsl_filter_t){-1, -1, -1});
+    
+    if (!a_str || !b_str) {
+        free(a_str); free(b_str);
+        return false;
+    }
+    
+    bool result = (strcmp(a_str, b_str) == 0);
+    free(a_str); free(b_str);
+    return result;
+}

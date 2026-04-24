@@ -1,8 +1,12 @@
 /**
- * nfa_dsl_utils.h - DSL utilities for NFA testing
+ * nfa_dsl_utils.h - DSL utilities for NFA and DFA testing
  *
- * Provides helper functions and macros for verifying NFA structure
+ * Provides helper functions and macros for verifying NFA and DFA structure
  * by inspecting serialized DSL output.
+ *
+ * Two sets of helpers:
+ *   - DSL NFA Query Helpers: work with dsl_nfa_t (parsed NFA DSL)
+ *   - DSL DFA Query Helpers: work with dsl_dfa_t (parsed DFA DSL)
  */
 
 #ifndef _NFA_DSL_UTILS_H
@@ -77,5 +81,80 @@ bool nfa_assert_symbol_sequence(const nfa_graph_t *graph,
  */
 #define ASSERT_NFA_SYMBOL_SEQUENCE(graph, expected, skip_eps) \
     nfa_assert_symbol_sequence(graph, expected, sizeof(expected)/sizeof(int), skip_eps)
+
+/* ============================================================================
+ * DSL DFA Query Helpers
+ *
+ * These functions work with dsl_dfa_t (parsed from DFA DSL) to verify
+ * transition structure without needing the full build_dfa_state_t array.
+ * ============================================================================ */
+
+/**
+ * Get the number of states in a parsed DFA.
+ */
+int dfa_dsl_get_state_count(const dsl_dfa_t *dfa);
+
+/**
+ * Get the number of transitions in a state.
+ */
+int dfa_dsl_get_transition_count(const dsl_dfa_t *dfa, int state_id);
+
+/**
+ * Check if a state has a transition on the given symbol.
+ */
+bool dfa_dsl_has_transition(const dsl_dfa_t *dfa, int state_id, int symbol);
+
+/**
+ * Get the target state for a transition on a given symbol.
+ * Returns -1 if no such transition exists.
+ */
+int dfa_dsl_get_target(const dsl_dfa_t *dfa, int state_id, int symbol);
+
+/**
+ * Check if a state is accepting.
+ */
+bool dfa_dsl_is_accepting(const dsl_dfa_t *dfa, int state_id);
+
+/**
+ * Check if a state is the start state.
+ */
+bool dfa_dsl_is_start(const dsl_dfa_t *dfa, int state_id);
+
+/**
+ * Get the category mask for a state.
+ * Returns 0 if state doesn't exist or has no category.
+ */
+uint8_t dfa_dsl_get_category(const dsl_dfa_t *dfa, int state_id);
+
+/**
+ * Check if a transition has a marker with the given value.
+ */
+bool dfa_dsl_transition_has_marker(const dsl_dfa_t *dfa, int state_id,
+                                   int symbol, uint32_t marker_value);
+
+/**
+ * Check if a state has the EOS (end-of-sequence) flag.
+ */
+bool dfa_dsl_state_has_eos(const dsl_dfa_t *dfa, int state_id);
+
+/**
+ * Get the EOS target for a state.
+ * Returns -1 if no EOS target.
+ */
+int dfa_dsl_get_eos_target(const dsl_dfa_t *dfa, int state_id);
+
+/**
+ * Find states that are reachable from the start state via BFS.
+ * Fills the provided array with state IDs (max count elements).
+ * Returns the actual number of states found.
+ */
+int dfa_dsl_find_reachable_states(const dsl_dfa_t *dfa, int *out_states, int max_count);
+
+/**
+ * Check if two DFAs are structurally isomorphic (same shape, different state IDs).
+ * Uses canonical BFS numbering to determine isomorphism.
+ * Returns true if isomorphic.
+ */
+bool dfa_dsl_is_isomorphic(const dsl_dfa_t *a, const dsl_dfa_t *b);
 
 #endif /* _NFA_DSL_UTILS_H */

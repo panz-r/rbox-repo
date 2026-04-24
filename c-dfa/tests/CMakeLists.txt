@@ -5,6 +5,7 @@
 add_executable(dfa_test
     ${CMAKE_CURRENT_SOURCE_DIR}/dfa_test.c
     ${CMAKE_CURRENT_SOURCE_DIR}/golden_utils.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tools/nfa_dsl_utils.c
 )
 target_link_libraries(dfa_test PRIVATE
     readonlybox_dfa
