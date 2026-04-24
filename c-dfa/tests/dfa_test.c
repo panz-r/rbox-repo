@@ -799,7 +799,8 @@ static void run_character_class_tests(void) {
     };
 
     run_test_group("CHARACTER CLASS TESTS", "patterns_character_classes.txt",
-                   "build_test/char_classes.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/char_classes.dfa", "char_classes.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_category_tests(void) {
@@ -840,7 +841,8 @@ static void run_tripled_quantifier_depth(void) {
     };
 
     run_test_group("TRIPLED QUANTIFIER DEPTH", "patterns_quantifier_comprehensive.txt",
-                   "build_test/tripled_quant.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/tripled_quant.dfa", "tripled_quant.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_tripled_fragment_interactions(void) {
@@ -855,7 +857,7 @@ static void run_tripled_fragment_interactions(void) {
     };
 
     run_test_group("TRIPLED FRAGMENT INTERACTIONS", "patterns_frag_plus.txt",
-                   "build_test/tripled_frag.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/tripled_frag.dfa", "tripled_frag.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_tripled_boundary(void) {
@@ -871,7 +873,7 @@ static void run_tripled_boundary(void) {
     };
 
     run_test_group("TRIPLED BOUNDARY CONDITIONS", "patterns_tripled_boundary.txt",
-                   "build_test/tripled_bound.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/tripled_bound.dfa", "tripled_bound.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_tripled_hard_edges(void) {
@@ -885,7 +887,7 @@ static void run_tripled_hard_edges(void) {
     };
 
     run_test_group("TRIPLED HARD EDGE CASES", "patterns_hard_edges.txt",
-                   "build_test/tripled_hard.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/tripled_hard.dfa", "tripled_hard.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_tripled_syntax(void) {
@@ -901,7 +903,7 @@ static void run_tripled_syntax(void) {
     };
 
     run_test_group("TRIPLED SYNTAX INTERACTIONS", "patterns_space_test.txt",
-                   "build_test/tripled_syntax.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/tripled_syntax.dfa", "tripled_syntax.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_tripled_category_isolation(void) {
@@ -917,7 +919,7 @@ static void run_tripled_category_isolation(void) {
     };
 
     run_test_group("TRIPLED CATEGORY ISOLATION", "patterns_acceptance_category_test.txt",
-                   "build_test/tripled_cat.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/tripled_cat.dfa", "tripled_cat.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_tripled_quantifier_interactions(void) {
@@ -937,7 +939,8 @@ static void run_tripled_quantifier_interactions(void) {
     };
 
     run_test_group("TRIPLED QUANTIFIER INTERACTIONS", "patterns_quantifier_interactions_isolated.txt",
-                   "build_test/tripled_quant_int.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/tripled_quant_int.dfa", "tripled_quant_int.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
     static void run_expanded_quantifier_tests(void) {
@@ -954,7 +957,7 @@ static void run_tripled_quantifier_interactions(void) {
     };
 
     run_test_group("EXPANDED QUANTIFIER EDGE CASES", "patterns_expanded_quantifier_isolated.txt",
-                   "build_test/expanded_quantifier.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_quantifier.dfa", "expanded_quantifier.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_expanded_alternation_tests(void) {
@@ -972,7 +975,7 @@ static void run_expanded_alternation_tests(void) {
     };
 
     run_test_group("EXPANDED ALTERNATION TESTS", "patterns_expanded_alternation.txt",
-                   "build_test/expanded_alternation.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_alternation.dfa", "expanded_alternation.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_expanded_nested_tests(void) {
@@ -994,7 +997,7 @@ static void run_expanded_nested_tests(void) {
     };
 
     run_test_group("EXPANDED NESTED QUANTIFIER TESTS", "patterns_expanded_nested.txt",
-                   "build_test/expanded_nested.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_nested.dfa", "expanded_nested.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_expanded_fragment_tests(void) {
@@ -1014,7 +1017,7 @@ static void run_expanded_fragment_tests(void) {
     };
 
     run_test_group("EXPANDED FRAGMENT INTERACTION TESTS", "patterns_expanded_fragment.txt",
-                   "build_test/expanded_fragment.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_fragment.dfa", "expanded_fragment.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_expanded_boundary_tests(void) {
@@ -1038,7 +1041,7 @@ static void run_expanded_boundary_tests(void) {
     };
 
     run_test_group("EXPANDED BOUNDARY CONDITION TESTS", "patterns_expanded_boundary.txt",
-                   "build_test/expanded_boundary.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_boundary.dfa", "expanded_boundary.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_expanded_interaction_tests(void) {
@@ -1060,7 +1063,7 @@ static void run_expanded_interaction_tests(void) {
     };
 
     run_test_group("EXPANDED QUANTIFIER INTERACTION TESTS", "patterns_expanded_interactions.txt",
-                   "build_test/expanded_interactions.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_interactions.dfa", "expanded_interactions.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_expanded_mixed_tests(void) {
@@ -1079,7 +1082,7 @@ static void run_expanded_mixed_tests(void) {
     };
 
     run_test_group("EXPANDED MIXED LITERAL/FRAGMENT TESTS", "patterns_expanded_mixed.txt",
-                   "build_test/expanded_mixed.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_mixed.dfa", "expanded_mixed.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_expanded_hard_tests(void) {
@@ -1103,7 +1106,7 @@ static void run_expanded_hard_tests(void) {
     };
 
     run_test_group("EXPANDED HARD EDGE CASE TESTS", "patterns_expanded_hard.txt",
-                   "build_test/expanded_hard.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_hard.dfa", "expanded_hard.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_expanded_perf_tests(void) {
@@ -1121,7 +1124,7 @@ static void run_expanded_perf_tests(void) {
     };
 
     run_test_group("EXPANDED PERFORMANCE STRESS TESTS", "patterns_expanded_perf.txt",
-                   "build_test/expanded_perf.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/expanded_perf.dfa", "expanded_perf.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // Test Set B: Edge cases
@@ -1256,7 +1259,7 @@ static void run_combined_tests(void) {
     };
 
     run_test_group("COMBINED PATTERN TESTS", "patterns_combined.txt",
-                   "build_test/combined.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/combined.dfa", "combined.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_minimal_tests(void) {
@@ -1270,7 +1273,7 @@ static void run_minimal_tests(void) {
     };
 
     run_test_group("MINIMAL PATTERN TESTS", "patterns_minimal.txt",
-                   "build_test/minimal.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/minimal.dfa", "minimal.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_simple_quantifier_tests(void) {
@@ -1284,7 +1287,7 @@ static void run_simple_quantifier_tests(void) {
     };
 
     run_test_group("SIMPLE QUANTIFIER TESTS", "patterns_quantifier_simple.txt",
-                   "build_test/simple_quant.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/simple_quant.dfa", "simple_quant.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_step_tests(void) {
@@ -1296,7 +1299,7 @@ static void run_step_tests(void) {
     };
 
     run_test_group("STEP PATTERN TESTS", "patterns_step1.txt",
-                   "build_test/step1.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/step1.dfa", "step1.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_test_pattern_tests(void) {
@@ -1308,7 +1311,7 @@ static void run_test_pattern_tests(void) {
     };
 
     run_test_group("TEST PATTERN TESTS", "patterns_test.txt",
-                   "build_test/test_patterns.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/test_patterns.dfa", "test_patterns.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // Capture tests - now working after NFA-to-DFA fixes
@@ -1880,7 +1883,7 @@ static void run_complex_alternation_tests(void) {
     };
 
     run_test_group("COMPLEX ALTERNATION TESTS", "patterns_complex_alternation.txt",
-                   "build_test/complex_alternation.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/complex_alternation.dfa", "complex_alternation.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -1912,7 +1915,7 @@ static void run_quantifier_combo_tests(void) {
     };
 
     run_test_group("QUANTIFIER COMBO TESTS", "patterns_quantifier_combos.txt",
-                   "build_test/quantifier_combos.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/quantifier_combos.dfa", "quantifier_combos.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -1943,7 +1946,7 @@ static void run_overlapping_prefix_tests(void) {
     };
 
     run_test_group("OVERLAPPING PREFIX TESTS", "patterns_overlapping_prefix.txt",
-                   "build_test/overlapping_prefix.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/overlapping_prefix.dfa", "overlapping_prefix.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -1985,7 +1988,7 @@ static void run_quantifier_edge_tests(void) {
     };
 
     run_test_group("QUANTIFIER EDGE TESTS", "patterns_quantifier_edge.txt",
-                   "build_test/quantifier_edge.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/quantifier_edge.dfa", "quantifier_edge.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -2014,7 +2017,7 @@ static void run_fragment_interact_tests(void) {
     };
 
     run_test_group("FRAGMENT INTERACT TESTS", "patterns_fragment_interact.txt",
-                   "build_test/fragment_interact.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/fragment_interact.dfa", "fragment_interact.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -2040,7 +2043,7 @@ static void run_whitespace_tests(void) {
     };
 
     run_test_group("WHITESPACE TESTS", "patterns_whitespace.txt",
-                   "build_test/whitespace.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/whitespace.dfa", "whitespace.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -2075,7 +2078,7 @@ static void run_empty_matching_tests(void) {
     };
 
     run_test_group("EMPTY MATCHING TESTS", "empty_matching.txt",
-                   "build_test/empty_matching.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/empty_matching.dfa", "empty_matching.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // NEW: Boundary Tests
@@ -2093,7 +2096,7 @@ static void run_boundary_new_tests(void) {
     };
 
     run_test_group("BOUNDARY NEW TESTS", "patterns_boundary.txt",
-                   "build_test/boundary_new.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/boundary_new.dfa", "boundary_new.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // NEW: Category Mix Tests
@@ -2107,7 +2110,7 @@ static void run_category_mix_tests(void) {
     };
 
     run_test_group("CATEGORY MIX TESTS", "patterns_category_mix.txt",
-                   "build_test/category_mix.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/category_mix.dfa", "category_mix.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // Partial Mapping Tests - ACCEPTANCE_MAPPING with fewer components than patterns
@@ -2123,7 +2126,7 @@ static void run_partial_mapping_tests(void) {
     };
 
     run_test_group("PARTIAL MAPPING TESTS", "patterns_partial_mapping.txt",
-                   "build_test/partial_mapping.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/partial_mapping.dfa", "partial_mapping.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // Negative Integrity Tests - Ensure we're not over-accepting
@@ -2156,7 +2159,7 @@ static void run_negative_integrity_tests(void) {
     };
 
     run_test_group("NEGATIVE INTEGRITY TESTS", "patterns_negative_integrity.txt",
-                   "build_test/negative_integrity.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/negative_integrity.dfa", "negative_integrity.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // Nested Capture Tests - Stress test for nested captures
@@ -2222,7 +2225,7 @@ static void run_factorization_tests(void) {
     };
 
     run_test_group("SUFFIX FACTORIZATION TESTS", "basic/factorization_test.txt",
-                   "build_test/factorization.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/factorization.dfa", "factorization.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -2457,7 +2460,7 @@ static void run_multi_category_mask_tests(void) {
     };
 
     run_test_group("MULTI CATEGORY MASK TESTS", "patterns_combined.txt",
-                   "build_test/multi_cat_mask.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/multi_cat_mask.dfa", "multi_cat_mask.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
@@ -2473,7 +2476,7 @@ static void run_sat_optimization_tests(void) {
         {"cat test.txt", true, 0, 0, "basic cat works"},
     };
     run_test_group("SAT PREMIN BASIC", "patterns_safe_commands.txt",
-                   "build_test/sat_premin_basic.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/sat_premin_basic.dfa", "sat_premin_basic.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void build_dfa_with_config(const char* patterns_file, const char* dfa_file,
@@ -2666,7 +2669,7 @@ static void run_large_scale_stress_tests(void) {
     track_dfa_file("build_test/large_scale.dfa");
 
     run_test_group("LARGE SCALE PATTERNS", "patterns_combined.txt",
-                   "build_test/large_scale.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/large_scale.dfa", "large_scale.dfa", cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
