@@ -25,9 +25,9 @@
 [safe:boundary] abc
 [safe:boundary] abcdef
 
-# Over-quantification
-[safe:boundary] [[a)+)+
-[safe:boundary] [[(a)+)+)+
+# Over-quantification - fix migration bug: ((a)+)+ was group, not fragment
+[safe:boundary] ((a)+)+
+[safe:boundary] (((a)+)+)+
 
 # Mixed quantifiers
 [safe:boundary] (a)?(b)+

@@ -31,8 +31,8 @@
 # abc[[d]]+ - requires at least 'abcd'
 [caution:quant2] abc[[d]]+
 
-# [[x)y)+ - requires at least 'xy'
-[safe:quant_xy] [[x)y)+
+# ((x)y)+ - requires at least 'xy'
+[safe:quant_xy] ((x)y)+
 
-# [[x)y)* - can match empty, but test expects no match on empty
+# ((x)y)* - can match empty, but test expects no match on empty
 # We'll omit this since it conflicts with the test expectation

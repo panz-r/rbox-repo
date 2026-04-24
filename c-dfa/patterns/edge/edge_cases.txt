@@ -177,7 +177,7 @@
 
 [safe:alt_many] cmd (a|b|c|d|e|f|g|h|i|j)
 [safe:alt_nested1] cmd (a|b|c|d)
-[safe:alt_nested2] cmd (a|(b|(c|d]])
+[safe:alt_nested2] cmd (a|(b|(c|d)))
 [safe:alt_empty1] cmd (a|)
 [safe:alt_empty2] cmd (|a)
 [safe:alt_empty3] cmd (|)

@@ -49,9 +49,9 @@
 [safe:q24] (a|b|c)+
 
 # Nested quantifiers
-[safe:q25] [[a)+)+
-[safe:q26] [[a)*)*
-[safe:q27] [[a)?)? 
+[safe:q25] ((a)+)+
+[safe:q26] ((a)*)*
+[safe:q27] ((a)?)? 
 
 # Quantifier after group
 [safe:q28] (ab)+

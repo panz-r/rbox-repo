@@ -68,7 +68,7 @@
 [safe:quantifier:group1] abc[[TQ::B]]+
 
 # ============================================================================
-# GROUP 2: Star Quantifier [[)*) - Fragment-based
+# GROUP 2: Star Quantifier ()* - Fragment-based
 # ============================================================================
 # Test: Fragment-based * quantifier (zero or more)
 [safe:quantifier:group2] a[[TQ::B]]*
@@ -111,10 +111,10 @@
 # GROUP 7: Wildcards
 # ============================================================================
 # Test: Wildcard patterns with (.)* and combined with literals
-[safe:quantifier:group7] [[)*)
-[safe:quantifier:group7] [[.)+)
-[safe:quantifier:group7] [[)*)\.txt
-[safe:quantifier:group7] file[[)*)
+[safe:quantifier:group7] ()*
+[safe:quantifier:group7] (.)+
+[safe:quantifier:group7] ()*\.txt
+[safe:quantifier:group7] file()*
 
 # ============================================================================
 # GROUP 8: Edge Cases
@@ -168,7 +168,7 @@
 # Test: Nested parentheses with quantifiers
 [safe:quantifier:group13] [[a]]+
 [safe:quantifier:group13] [[TQ::A]]+
-[safe:quantifier:group13] [[(a]])*
+[safe:quantifier:group13] ((a))*
 [safe:quantifier:group13] (x[[TQ::Y]]+)?
 
 # ============================================================================

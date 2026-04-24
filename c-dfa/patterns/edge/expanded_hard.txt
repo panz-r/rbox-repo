@@ -20,8 +20,8 @@
 [fragment:b] b
 [fragment:c] c
 
-# Nested plus patterns
-[safe:hard] [[a)+(a)+)+b
+# Nested plus patterns - fix migration bug: ((a)+(a)+)+b was groups, not fragments
+[safe:hard] ((a)+(a)+)+b
 
 # Overlapping fragment references
 [safe:hard] [[a]]+[[a]]+

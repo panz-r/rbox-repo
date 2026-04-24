@@ -30,7 +30,7 @@
 [safe:capture:num] git log -n <num>[[digit]]+</num>
 
 # Simple version without category
-git log -n <n>[[digit]]+</n>
+[safe] git log -n <n>[[digit]]+</n>
 
 # Capture a filename
 [safe:capture:file] cat <file>[[alphanum]]+</file>

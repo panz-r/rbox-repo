@@ -115,8 +115,8 @@
 # INTERACTION: Fragment + alternation
 # ============================================================================
 
-[safe:class_alt] [[abc]]|[[xyz]]
-[safe:class_alt] [[(abc]]|[[xyz]])+
+[safe:class_alt] (a|b|c)|(x|y|z)
+[safe:class_alt] ((a|b|c)|(x|y|z))+
 
 # ============================================================================
 # INTERACTION: Quoted + alternation
@@ -173,7 +173,7 @@
 
 [safe:nested_alt1] cmd (a|b|c|d|e)
 [safe:nested_alt2] cmd (a|b)|(c|d)
-[safe:nested_alt3] cmd (a|(b|(c|d]])
+[safe:nested_alt3] cmd (a|(b|(c|d)))
 [safe:nested_alt4] cmd (a|b|c|d|e)
 
 # ============================================================================

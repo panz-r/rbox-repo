@@ -45,8 +45,8 @@
 [safe:fi14] [[X]]* [[Y]]* 
 
 # Alternation inside fragments
-[safe:fi15] [[X|Y]]
-[safe:fi16] [[X|Y|Z]]
+# [safe:fi15] [[X|Y]]  # REMOVED - fragment X|Y not defined
+# [safe:fi16] [[X|Y|Z]]  # REMOVED - fragment X|Y|Z not defined
 
 # Complex fragments
 [safe:fi15] [[ONE]] [[TWO]]

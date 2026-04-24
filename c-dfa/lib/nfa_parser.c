@@ -142,7 +142,21 @@ static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const ch
     }
 
     size_t j = *pos + 2;
-    while (pattern[j] != '\0' && !(pattern[j] == ']' && pattern[j + 1] == ']')) {
+    
+    // Find the closing ]] for this fragment
+    // For [[f]]|[[g]], stop at the first ]] (before the |)
+    // For [[f]], stop at the ]]
+    while (pattern[j] != '\0') {
+        if (pattern[j] == ']' && pattern[j + 1] == ']') {
+            // Check if this ]] is the end of this fragment
+            // It's the end if NOT followed by alternation pattern ]]
+            bool is_alternation = (pattern[j + 2] == ']' && pattern[j + 3] == '[');
+            if (!is_alternation) {
+                // This is the closing ]] of this fragment
+                break;
+            }
+            // This ]] is followed by alternation, continue scanning
+        }
         j++;
     }
 

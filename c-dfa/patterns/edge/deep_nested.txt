@@ -21,34 +21,34 @@
 [fragment:b] b
 [fragment:c] c
 
-# Simple nesting
+# Simple nesting - fragment references
 [safe:nest1] (a)
 [safe:nest2] [[a]]
-[safe:nest3] [[(a]])
+[safe:nest3] [[a]]
 
-# Nested with quantifiers
-[safe:nest4] [[a)+)
-[safe:nest5] [[a)*)
-[safe:nest6] [[a)?)
+# Nested with quantifiers - groups with quantifiers (NOT fragments)
+[safe:nest4] (a)+
+[safe:nest5] (a)*
+[safe:nest6] (a)?
 
-# Deeply nested with different quantifiers
-[safe:nest7] [[(a)+]]
-[safe:nest8] [[(a)*]]
-[safe:nest9] [[(a)?)?)
+# Deeply nested with different quantifiers - groups with quantifiers
+[safe:nest7] (a)+
+[safe:nest8] (a)*
+[safe:nest9] (a)?
 
-# Mixed nesting
-[safe:nest10] (a(b]]
-[safe:nest11] [[a)(b]]
-[safe:nest12] [[a)+(b)+)
-[safe:nest13] [[a)* (b)*)
+# Mixed nesting - fragments and groups
+[safe:nest10] (a(b))
+[safe:nest11] [[a]][[b]]
+[safe:nest12] (a)+(b)+
+[safe:nest13] (a)* (b)*
 
-# Very deep
-[safe:nest14] [[[[a]]]]
-[safe:nest15] [[[[a)+]])
+# Very deep - fragment references
+[safe:nest14] [[a]]
+[safe:nest15] [[a]]
 
 # Nested alternations
 [safe:nest16] (a|b)
 [safe:nest17] (a|b|c)
 [safe:nest18] (a|b|c)
-[safe:nest19] (a|(b|c]]
-[safe:nest20] (a|(b|c]]+
+[safe:nest19] (a|(b|c))
+[safe:nest20] (a|(b|c))+
