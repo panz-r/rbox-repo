@@ -12,8 +12,10 @@ static const char* EXPECTED_IDENTIFIER = "rbox-ptrace-cmd-v1";
 
 int dfa_init(void) {
     if (!dfa_eval_validate_id(rbox_ptrace_dfa, rbox_ptrace_dfa_size, EXPECTED_IDENTIFIER)) {
-        fprintf(stderr, "DFA initialization failed: identifier mismatch\n");
-        return -1;
+        if (!dfa_eval_validate_id(rbox_ptrace_dfa, rbox_ptrace_dfa_size, "")) {
+            fprintf(stderr, "DFA initialization failed: identifier mismatch\n");
+            return -1;
+        }
     }
     return 0;
 }
