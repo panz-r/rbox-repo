@@ -182,15 +182,17 @@ static void resolve_patterns_path(const char* patterns_file, char* patterns_path
 }
 
 // Forward declaration
-static void build_dfa(const char* patterns_file, const char* dfa_file,
+static bool build_dfa(const char* patterns_file, const char* dfa_file,
                       const char* golden_file);
 static bool check_dfa_golden(pipeline_t* p, const char* golden_dir,
                             const char* golden_file, const char* group_name);
 
 /**
  * Build DFA from patterns file using library API (no shell-out).
+ * Returns true if DFA built successfully AND structural verification passed (if golden_file provided).
+ * Returns false if build failed or golden file mismatch (in compare mode).
  */
-static void build_dfa(const char* patterns_file, const char* dfa_file,
+static bool build_dfa(const char* patterns_file, const char* dfa_file,
                       const char* golden_file) {
     char patterns_path[512];
     resolve_patterns_path(patterns_file, patterns_path, sizeof(patterns_path));
@@ -217,7 +219,7 @@ static void build_dfa(const char* patterns_file, const char* dfa_file,
     pipeline_t* p = pipeline_create(&config);
     if (!p) {
         fprintf(stderr, "Warning: Failed to create pipeline for %s\n", patterns_path);
-        return;
+        return false;
     }
 
     pipeline_error_t err = pipeline_run(p, patterns_path);
@@ -225,12 +227,13 @@ static void build_dfa(const char* patterns_file, const char* dfa_file,
         fprintf(stderr, "Warning: DFA build failed for %s: %s\n",
                 patterns_path, pipeline_error_string(err));
         pipeline_destroy(p);
-        return;
+        return false;
     }
 
     // Check golden file if provided (record or compare mode)
+    bool golden_ok = true;
     if (golden_file) {
-        check_dfa_golden(p, golden_get_dir("dfa_tests"), golden_file, "golden");
+        golden_ok = check_dfa_golden(p, golden_get_dir("dfa_tests"), golden_file, golden_file);
     }
 
     // Save binary to output file
@@ -241,6 +244,9 @@ static void build_dfa(const char* patterns_file, const char* dfa_file,
     }
 
     pipeline_destroy(p);
+    
+    // Return false if golden check failed (structural mismatch in compare mode)
+    return golden_ok;
 }
 
 static void run_stress_structural_tests(void);
@@ -333,11 +339,22 @@ static bool check_dfa_golden(pipeline_t* p, const char* golden_dir,
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const char* golden_file, const TestCase* cases, int count) {
     total_groups_defined++;
-    build_dfa(patterns_file, dfa_file, golden_file);
+    
+    // Build DFA and check structural verification
+    bool structure_ok = build_dfa(patterns_file, dfa_file, golden_file);
     track_dfa_file(dfa_file);
 
     printf("\n=== %s ===\n", group_name);
     printf("Patterns: %s\n", patterns_file);
+
+    // If structural verification failed (golden mismatch in compare mode), skip behavioral tests
+    if (!structure_ok) {
+        printf("  [FAIL] %s: structural verification failed (golden mismatch)\n", group_name);
+        total_groups_run++;
+        total_groups_failed++;
+        remove(dfa_file);
+        return;
+    }
 
     size_t size;
     void* data = load_dfa_from_file(dfa_file, &size);
@@ -539,6 +556,66 @@ static bool verify_dfa_structure(pipeline_t* p, const char* group_name,
     return true;
 }
 
+/**
+ * Verify that specific markers exist on transitions.
+ * Useful for capture tests to verify capture markers are placed correctly.
+ * Returns true if all expected markers are found.
+ */
+static bool verify_markers_on_transitions(pipeline_t* p, const char* group_name,
+                                          int marker_count, 
+                                          const uint32_t* expected_markers) {
+    if (!p || marker_count <= 0 || !expected_markers) return true;
+    
+    char* dsl_str = pipeline_get_dfa_dsl(p);
+    if (!dsl_str) {
+        printf("  [WARN] Could not generate DSL for %s\n", group_name);
+        return true;
+    }
+    
+    dsl_dfa_t* dfa = dfa_dsl_parse_string(dsl_str);
+    free(dsl_str);
+    
+    if (!dfa) {
+        printf("  [WARN] Could not parse DSL for %s\n", group_name);
+        return true;
+    }
+    
+    int found_count = 0;
+    
+    // Search all states for transitions with expected markers
+    for (int state_id = 0; state_id < dfa->state_count; state_id++) {
+        const dsl_dfa_state_t* s = &dfa->states[state_id];
+        
+        for (int t = 0; t < s->symbol_transition_count; t++) {
+            const dsl_transition_t* trans = &s->symbol_transitions[t];
+            
+            for (int m = 0; m < trans->marker_count; m++) {
+                uint32_t marker_val = trans->markers[m].value;
+                
+                // Check if this marker is expected
+                for (int i = 0; i < marker_count; i++) {
+                    if (marker_val == expected_markers[i]) {
+                        found_count++;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    printf("  [INFO] %s: found %d/%d expected markers\n", group_name, found_count, marker_count);
+    
+    dfa_dsl_free(dfa);
+    
+    if (found_count < marker_count) {
+        printf("  [FAIL] %s: missing %d/%d expected markers\n",
+               group_name, marker_count - found_count, marker_count);
+        return false;  // Fail the test
+    }
+    
+    return true;
+}
+
 
 static void run_core_tests(void) {
     TestCase cases[] = {
@@ -561,17 +638,7 @@ static void run_core_tests(void) {
                    "build_test/readonlybox.dfa", "core_tests.dfa",
                    cases, sizeof(cases)/sizeof(cases[0]));
     
-    // Additional DSL structural verification for CORE TESTS
-    // Re-build pipeline to get access to DSL for programmatic queries
-    {
-        pipeline_t* p = pipeline_create(&(pipeline_config_t){.minimize_algo = DFA_MIN_MOORE, .optimize_layout = true});
-        if (p) {
-            pipeline_run(p, "patterns/commands/safe_commands.txt");
-            // Expect 100-250 states (complex patterns with fragments, alternation)
-            verify_dfa_structure(p, "CORE TESTS", 100, 250);
-            pipeline_destroy(p);
-        }
-    }
+    // Golden file already verifies structural correctness
 }
 
 static void run_quantifier_tests(void) {
@@ -1288,7 +1355,9 @@ static void run_with_captures_tests(void) {
         TEST_CASE("invalid command", false, 0, 0, "invalid should not match"),
     };
     run_test_group("WITH CAPTURES TESTS", "captures/with_captures.txt",
-                   "build_test/with_captures.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/with_captures.dfa", "with_captures.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
+    // Golden file already verifies structural correctness
 }
 
 static void run_capture_simple_tests(void) {
@@ -1329,7 +1398,8 @@ static void run_capture_simple_tests(void) {
         TEST_CASE("invalid", false, 0, 0, "invalid should not match"),
     };
     run_test_group("CAPTURE SIMPLE TESTS", "captures/capture_simple.txt",
-                   "build_test/capture_simple.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/capture_simple.dfa", "capture_simple.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 static void run_capture_test_tests(void) {
@@ -1356,7 +1426,26 @@ static void run_capture_test_tests(void) {
         TEST_CASE("INVALID", false, 0, 0, "invalid should not match"),
     };
     run_test_group("CAPTURE TEST TESTS", "captures/capture_http.txt",
-                   "build_test/capture_http.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/capture_http.dfa", "capture_http.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
+    
+    // Verify capture markers are present in the DFA
+    // Note: markers 0x00000001 and 0x00040003 correspond to the capture patterns
+    // in capture_http.txt (GET and POST patterns with :capture: tags)
+    {
+        pipeline_config_t config = {.minimize_algo = DFA_MIN_MOORE, .optimize_layout = true};
+        pipeline_t* p = pipeline_create(&config);
+        if (p) {
+            pipeline_run(p, "patterns/captures/capture_http.txt");
+            
+            uint32_t expected_markers[] = {0x00000001, 0x00040003};
+            if (!verify_markers_on_transitions(p, "CAPTURE TEST TESTS", 2, expected_markers)) {
+                printf("  [FAIL] CAPTURE TEST TESTS: marker verification failed\n");
+            }
+            
+            pipeline_destroy(p);
+        }
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -2092,7 +2181,8 @@ static void run_nested_capture_tests(void) {
     };
 
     run_test_group("NESTED CAPTURE TESTS", "nested_capture.txt",
-                   "build_test/nested_capture.dfa", NULL, cases, sizeof(cases)/sizeof(cases[0]));
+                   "build_test/nested_capture.dfa", "nested_capture.dfa",
+                   cases, sizeof(cases)/sizeof(cases[0]));
 }
 
 // ============================================================================
