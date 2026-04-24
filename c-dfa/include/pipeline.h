@@ -240,6 +240,13 @@ int pipeline_get_dfa_state_count(pipeline_t* p) ATTR_NONNULL(1);
  */
 size_t pipeline_get_binary_size(pipeline_t* p) ATTR_NONNULL(1);
 
+/**
+ * Get DSL string representation of the built DFA.
+ * Useful for structural verification in tests.
+ * Returns malloc'd string (caller must free), or NULL if DFA not built.
+ */
+char* pipeline_get_dfa_dsl(pipeline_t* p) ATTR_NONNULL(1);
+
 // ============================================================================
 // Pattern Ordering
 // ============================================================================

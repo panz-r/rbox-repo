@@ -5,6 +5,7 @@
 #include "dfa_internal.h"
 #include "dfa_types.h"
 #include "pipeline.h"
+#include "nfa_dsl.h"
 #include "multi_target_array.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 static int total_tests_run = 0;
 static int total_tests_passed = 0;
@@ -21,6 +23,7 @@ static int total_groups_defined = 0;
 static const char* minimize_algo = "--minimize-moore";
 static bool use_compress_sat = false;
 static unsigned int test_set_mask = 0;
+static bool g_record_goldens = false;
 #define TEST_SET_A 0x01
 #define TEST_SET_B 0x02
 #define TEST_SET_C 0x04
@@ -98,6 +101,7 @@ static void print_usage(const char* progname) {
     printf("  --minimize-hopcroft    Use Hopcroft's algorithm for DFA minimization\n");
     printf("  --minimize-sat         Use SAT-based minimization (requires CaDiCaL)\n");
     printf("  --compress-sat         Use SAT-based compression for optimal rule merging\n");
+    printf("  --record-goldens       Generate/update golden DSL files instead of comparing\n");
     printf("  --test-set A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U  Run only tests for specified test set(s)\n");
     printf("                          A = Core tests (basic patterns)\n");
     printf("                          B = Expanded tests (quantifier expansions)\n");
@@ -175,10 +179,17 @@ static void resolve_patterns_path(const char* patterns_file, char* patterns_path
     }
 }
 
+// Forward declarations
+static void build_dfa(const char* patterns_file, const char* dfa_file,
+                      const char* golden_file);
+static bool check_dfa_golden(pipeline_t* p, const char* golden_dir,
+                            const char* golden_file, const char* group_name);
+
 /**
  * Build DFA from patterns file using library API (no shell-out).
  */
-static void build_dfa(const char* patterns_file, const char* dfa_file) {
+static void build_dfa(const char* patterns_file, const char* dfa_file,
+                      const char* golden_file) {
     char patterns_path[512];
     resolve_patterns_path(patterns_file, patterns_path, sizeof(patterns_path));
 
@@ -213,6 +224,11 @@ static void build_dfa(const char* patterns_file, const char* dfa_file) {
                 patterns_path, pipeline_error_string(err));
         pipeline_destroy(p);
         return;
+    }
+
+    // Check golden file if provided
+    if (golden_file && g_record_goldens) {
+        check_dfa_golden(p, "golden/dfa_tests", golden_file, "golden");
     }
 
     // Save binary to output file
@@ -257,10 +273,76 @@ static void run_pattern_ordering_tests(void);
 static void run_category_isolation_t_tests(void);
 static void run_category_isolation_u_tests(void);
 
+// ============================================================================
+// DSL Golden File Helpers
+// ============================================================================
+
+/* Check or update golden file for a test group.
+ * Returns true if structure matches (or was updated). */
+static bool check_dfa_golden(pipeline_t* p, const char* golden_dir,
+                            const char* golden_file, const char* group_name) {
+    if (!p || !golden_dir || !golden_file) return true;
+    
+    char* actual = pipeline_get_dfa_dsl(p);
+    if (!actual) {
+        printf("  [WARN] Could not generate DSL for %s\n", group_name);
+        return false;
+    }
+    
+    char path[512];
+    snprintf(path, sizeof(path), "%s/%s", golden_dir, golden_file);
+    
+    if (g_record_goldens) {
+        FILE* f = fopen(path, "w");
+        if (f) {
+            fputs(actual, f);
+            fclose(f);
+            printf("  [INFO] Updated golden: %s\n", golden_file);
+            free(actual);
+            return true;
+        }
+        printf("  [FAIL] Could not write golden: %s\n", path);
+        free(actual);
+        return false;
+    }
+    
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        printf("  [FAIL] Golden file missing: %s\n", path);
+        free(actual);
+        return false;
+    }
+    
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* expected = malloc((size_t)sz + 1);
+    if (!expected) {
+        fclose(f);
+        free(actual);
+        return false;
+    }
+    size_t n = fread(expected, 1, (size_t)sz, f);
+    expected[n] = '\0';
+    fclose(f);
+    
+    bool ok = (strcmp(actual, expected) == 0);
+    if (!ok) {
+        printf("  [FAIL] %s: structure mismatch\n", group_name);
+        // Print diff
+        char* diff = dfa_dsl_diff(expected, actual);
+        if (diff) { printf("%s", diff); free(diff); }
+    }
+    
+    free(actual);
+    free(expected);
+    return ok;
+}
+
 static void run_test_group(const char* group_name, const char* patterns_file, const char* dfa_file,
                           const TestCase* cases, int count) {
     total_groups_defined++;
-    build_dfa(patterns_file, dfa_file);
+    build_dfa(patterns_file, dfa_file, NULL);  // NULL = no golden file check
     track_dfa_file(dfa_file);
 
     printf("\n=== %s ===\n", group_name);
@@ -1210,6 +1292,8 @@ int main(int argc, char* argv[]) {
             minimize_algo = "--minimize-sat";
         } else if (strcmp(argv[i], "--compress-sat") == 0) {
             use_compress_sat = true;
+        } else if (strcmp(argv[i], "--record-goldens") == 0) {
+            g_record_goldens = true;
         } else if (strcmp(argv[i], "--test-set") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Error: --test-set requires an argument\n");
@@ -2400,7 +2484,7 @@ static void run_large_scale_stress_tests(void) {
     };
 
     // First build a large DFA using combined patterns
-    build_dfa("patterns_combined.txt", "build_test/large_scale.dfa");
+    build_dfa("patterns_combined.txt", "build_test/large_scale.dfa", NULL);
     track_dfa_file("build_test/large_scale.dfa");
 
     run_test_group("LARGE SCALE PATTERNS", "patterns_combined.txt",
@@ -2471,7 +2555,7 @@ static void run_binary_format_robustness_tests(void) {
     // Test 3: Invalid magic number
     {
         // Build a valid DFA first, then corrupt the magic number
-        build_dfa("patterns_safe_commands.txt", "build_test/valid_magic.dfa");
+        build_dfa("patterns_safe_commands.txt", "build_test/valid_magic.dfa", NULL);
         track_dfa_file("build_test/valid_magic.dfa");
 
         FILE* f = fopen("build_test/invalid_magic.dfa", "r+b");
@@ -2500,7 +2584,7 @@ static void run_binary_format_robustness_tests(void) {
 
     // Test 4: Valid DFA loads correctly
     {
-        build_dfa("patterns_safe_commands.txt", "build_test/valid_test.dfa");
+        build_dfa("patterns_safe_commands.txt", "build_test/valid_test.dfa", NULL);
         track_dfa_file("build_test/valid_test.dfa");
 
         size_t size;
@@ -2557,7 +2641,7 @@ static void run_limit_config_tests(void) {
 
     // Test 1: Build with default settings (baseline)
     {
-        build_dfa("patterns_safe_commands.txt", "build_test/limit_baseline.dfa");
+        build_dfa("patterns_safe_commands.txt", "build_test/limit_baseline.dfa", NULL);
         track_dfa_file("build_test/limit_baseline.dfa");
 
         size_t size;

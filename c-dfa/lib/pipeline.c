@@ -486,6 +486,16 @@ size_t pipeline_get_binary_size(pipeline_t* p) {
     return p->binary_size;
 }
 
+char* pipeline_get_dfa_dsl(pipeline_t* p) {
+    if (!p || !p->nfa2dfa_ctx || !p->nfa2dfa_ctx->dfa) return NULL;
+    if (p->nfa2dfa_ctx->dfa_state_count == 0) return NULL;
+    
+    nfa2dfa_context_t* ctx = p->nfa2dfa_ctx;
+    return dfa_dsl_to_string((const build_dfa_state_t* const*)ctx->dfa, ctx->dfa_state_count,
+                             ctx->alphabet, ctx->alphabet_size,
+                             ctx->dfa_marker_lists, ctx->marker_list_count);
+}
+
 void pipeline_get_ordering_stats(pipeline_t* p, pipeline_ordering_stats_t* stats) {
     if (!p || !stats) return;
     pattern_order_stats_t po_stats;
