@@ -1,0 +1,6 @@
+type: DFA
+version: 1
+alphabet_size: 256
+initial: 0
+0: start
+0 'a'-'b' -> 0 [0x00000100]
