@@ -1181,20 +1181,27 @@ std::shared_ptr<PatternNode> introduceCharClass(
     
     switch (node->type) {
         case PatternType::LITERAL: {
-            // 10% chance to convert literal to character class + quantifier
-            if (node->value.length() >= 2 && chance_dist(rng) < 10) {
-                std::string val = node->value;
+            // 10% chance to widen a single-char literal into a multi-char fragment
+            // e.g. literal 'g' -> fragment [[class9]] where class9 = (d|e|f|g)
+            // Only safe for single-char literals: replacing a multi-char literal
+            // with a single-char fragment changes the matched language.
+            if (node->value.length() == 1 && chance_dist(rng) < 10) {
+                char lit_char = node->value[0];
                 
-                // Find a range of characters in the literal
-                char min_char = val[0];
-                char max_char = val[0];
-                for (char c : val) {
-                    if (c < min_char) min_char = c;
-                    if (c > max_char) max_char = c;
+                // Find a range of characters around the literal char
+                char min_char = lit_char;
+                char max_char = lit_char;
+                
+                // Only create class if we can widen to nearby chars
+                if (min_char > ' ' && max_char < '~') {
+                    // Widen by 1-3 chars in each direction
+                    std::uniform_int_distribution<int> widen_dist(1, 3);
+                    int widen = widen_dist(rng);
+                    min_char = std::max((char)(' ' + 1), (char)(min_char - widen));
+                    max_char = std::min((char)('~' - 1), (char)(max_char + widen));
                 }
                 
-                // Only create class if range is small and meaningful
-                if (max_char - min_char <= 5 && max_char != min_char) {
+                if (max_char != min_char) {
                     // Create candidate char class
                     std::string class_def = "(";
                     for (char c = min_char; c <= max_char; c++) {
@@ -1203,15 +1210,14 @@ std::shared_ptr<PatternNode> introduceCharClass(
                     }
                     class_def += ")";
                     
-                    // CRITICAL: Validate that no counter input matches the char class pattern
-                    // The char class (a|b|c)+ with + quantifier matches ANY length >= 1
-                    // where ALL characters are in the class. This is MUCH broader than a literal.
+                    // Validate: the widened fragment must not cause any counter to match.
+                    // Since we're replacing a single-char literal, check if any counter
+                    // has its corresponding char in the widened range.
                     bool would_match_counters = false;
-                    std::vector<std::string> violating_counters;
                     
                     for (const auto& counter : node->counter_seeds) {
-                        // Check if counter would match (char_class)+
-                        // Counter matches if: length >= 1 AND all chars in [min_char, max_char]
+                        // If a counter consists entirely of chars in the class range,
+                        // the widened fragment might cause it to match
                         if (counter.length() >= 1) {
                             bool all_chars_in_class = true;
                             for (char c : counter) {
@@ -1222,13 +1228,12 @@ std::shared_ptr<PatternNode> introduceCharClass(
                             }
                             if (all_chars_in_class) {
                                 would_match_counters = true;
-                                violating_counters.push_back(counter);
+                                break;
                             }
                         }
                     }
                     
                     if (would_match_counters) {
-                        // Char class (with + quantifier) would match counter inputs - DON'T introduce it
                         return node;
                     }
                     
@@ -1236,7 +1241,6 @@ std::shared_ptr<PatternNode> introduceCharClass(
                     std::string frag_name = "class" + std::to_string(rng() % 100);
                     fragment_defs[frag_name] = class_def;
                     
-                    // Create fragment reference - it already has + quantifier in serialization!
                     auto frag_node = PatternNode::createFragment(
                         frag_name, node->matched_seeds, node->counter_seeds);
                     frag_node->matched_seeds = node->matched_seeds;
