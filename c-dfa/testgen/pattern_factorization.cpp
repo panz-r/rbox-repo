@@ -272,8 +272,11 @@ std::shared_ptr<PatternNode> factorAlternation(
                 new_children.push_back(lit);
                 new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
             } else {
-                // Multiple alternatives share a prefix - create inner alternation with factored prefix
-                // Structure: prefix + (remainder1 | remainder2 | ...)
+                // Multiple alternatives share a first char - factor using the longest
+                // common prefix, not just the grouping prefix (1 char).
+                std::string group_prefix = findCommonPrefix(group_alts);
+                
+                // Structure: group_prefix + (remainder1 | remainder2 | ...)
                 // CRITICAL: Check if any input equals the prefix exactly (would have empty remainder)
                 // NEW: Handle empty remainders by creating optional structure
                 // If an alternative equals the prefix exactly, its remainder is empty (ε)
@@ -283,9 +286,8 @@ std::shared_ptr<PatternNode> factorAlternation(
                 bool has_empty_remainder = false;
                 
                 for (size_t i = 0; i < group_alts.size(); i++) {
-                    std::string rem = group_alts[i].substr(prefix.size());
+                    std::string rem = group_alts[i].substr(group_prefix.size());
                     if (rem.empty()) {
-                        // This alternative IS the prefix - create ε (empty) literal
                         has_empty_remainder = true;
                         auto empty_lit = PatternNode::createLiteral("", {group_seeds[i]}, all_counter_seeds);
                         inner_children.push_back(empty_lit);
@@ -301,7 +303,7 @@ std::shared_ptr<PatternNode> factorAlternation(
                 // If not, don't create nested pattern - keep as separate literals
                 std::vector<std::string> remainders;
                 for (size_t i = 0; i < group_alts.size(); i++) {
-                    std::string rem = group_alts[i].substr(prefix.size());
+                    std::string rem = group_alts[i].substr(group_prefix.size());
                     if (!rem.empty()) {
                         remainders.push_back(rem);
                     }
@@ -332,26 +334,40 @@ std::shared_ptr<PatternNode> factorAlternation(
                 inner_alt->counter_seeds = all_counter_seeds;
                 
                 // If we have empty remainder, wrap in optional to make it cleaner
-                if (has_empty_remainder && inner_children.size() == 2) {
-                    // Convert (rem|"") to (rem)?
-                    // Find the non-empty child
-                    for (auto& child : inner_children) {
-                        if (!child->value.empty()) {
-                            auto opt_node = PatternNode::createQuantified(
-                                child, PatternType::OPTIONAL, child->matched_seeds, child->counter_seeds);
-                            opt_node->matched_seeds = group_seeds;
-                            opt_node->counter_seeds = all_counter_seeds;
-                            
-                            std::vector<std::shared_ptr<PatternNode>> seq_kids;
-                            seq_kids.push_back(PatternNode::createLiteral(prefix, group_seeds, all_counter_seeds));
-                            seq_kids.push_back(opt_node);
-                            auto seq = PatternNode::createSequence(seq_kids, group_seeds, all_counter_seeds);
-                            
-                            new_children.push_back(seq);
-                            new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
-                            break;
+                // This handles both 2-child and multi-child cases correctly
+                // (rem|"") -> (rem)?   and   (""|rem|rem2) -> (rem|rem2)?
+                if (has_empty_remainder) {
+                    // Build an alternation of all non-empty children, then wrap in ?
+                    std::vector<std::shared_ptr<PatternNode>> non_empty_children;
+                    std::vector<std::string> non_empty_seeds;
+                    for (size_t i = 0; i < inner_children.size(); i++) {
+                        if (!inner_children[i]->value.empty()) {
+                            non_empty_children.push_back(inner_children[i]);
+                            non_empty_seeds.push_back(inner_seeds[i]);
                         }
                     }
+                    
+                    std::shared_ptr<PatternNode> opt_inner;
+                    if (non_empty_children.size() == 1) {
+                        opt_inner = non_empty_children[0];
+                    } else {
+                        opt_inner = PatternNode::createAlternation(non_empty_children, non_empty_seeds, all_counter_seeds);
+                        opt_inner->matched_seeds = non_empty_seeds;
+                        opt_inner->counter_seeds = all_counter_seeds;
+                    }
+                    
+                    auto opt_node = PatternNode::createQuantified(
+                        opt_inner, PatternType::OPTIONAL, group_seeds, all_counter_seeds);
+                    opt_node->matched_seeds = group_seeds;
+                    opt_node->counter_seeds = all_counter_seeds;
+                    
+                    std::vector<std::shared_ptr<PatternNode>> seq_kids;
+                    seq_kids.push_back(PatternNode::createLiteral(group_prefix, group_seeds, all_counter_seeds));
+                    seq_kids.push_back(opt_node);
+                    auto seq = PatternNode::createSequence(seq_kids, group_seeds, all_counter_seeds);
+                    
+                    new_children.push_back(seq);
+                    new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
                 } else if (!has_empty_remainder) {
                     // All have non-empty remainders
                     // CRITICAL: Validate that all inputs will match the factored pattern
@@ -363,7 +379,7 @@ std::shared_ptr<PatternNode> factorAlternation(
                         if (i > 0) inner_pattern += "|";
                         inner_pattern += inner_children[i]->value;
                     }
-                    std::string factored_pattern = prefix + "(" + inner_pattern + ")";
+                    std::string factored_pattern = group_prefix + "(" + inner_pattern + ")";
                     
                     // Check each input against the factored pattern
                     // Simple check: input should equal prefix + one of the remainders
@@ -372,7 +388,7 @@ std::shared_ptr<PatternNode> factorAlternation(
                     
                     for (size_t i = 0; i < group_alts.size(); i++) {
                         const std::string& input = group_alts[i];
-                        std::string remainder = input.substr(prefix.size());
+                        std::string remainder = input.substr(group_prefix.size());
                         
                         // Check if remainder exactly matches any inner child value
                         bool remainder_matches = false;
@@ -407,25 +423,13 @@ std::shared_ptr<PatternNode> factorAlternation(
                         // NOTE: No recursive call - each factorization must do full verification
                         
                         std::vector<std::shared_ptr<PatternNode>> seq_kids;
-                        seq_kids.push_back(PatternNode::createLiteral(prefix, group_seeds, all_counter_seeds));
+                        seq_kids.push_back(PatternNode::createLiteral(group_prefix, group_seeds, all_counter_seeds));
                         seq_kids.push_back(inner_alt);
                         auto seq = PatternNode::createSequence(seq_kids, group_seeds, all_counter_seeds);
                         
                         new_children.push_back(seq);
                         new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
                     }
-                } else {
-                    // Multiple alternatives with mixed empty/non-empty remainders
-                    // Keep as alternation with prefix + (rem|ε|rem2|ε|...)
-                    // NOTE: No recursive call - each factorization must do full verification
-                    
-                    std::vector<std::shared_ptr<PatternNode>> seq_kids;
-                    seq_kids.push_back(PatternNode::createLiteral(prefix, group_seeds, all_counter_seeds));
-                    seq_kids.push_back(inner_alt);
-                    auto seq = PatternNode::createSequence(seq_kids, group_seeds, all_counter_seeds);
-                    
-                    new_children.push_back(seq);
-                    new_seeds.insert(new_seeds.end(), group_seeds.begin(), group_seeds.end());
                 }
             }
         }
