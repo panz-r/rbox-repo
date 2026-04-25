@@ -1620,21 +1620,25 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
         result.proof += "\n  [FALLBACK] All retries failed, creating trivial alternation\n";
         std::vector<std::shared_ptr<PatternNode>> alts;
         std::vector<std::string> all_counters;
+        std::vector<std::string> filtered_matching;
         for (const auto& c : tc.counter_inputs) {
             all_counters.push_back(c);
         }
         for (const auto& m : tc.matching_inputs) {
+            if (m.empty()) continue;  // Empty strings can't be serialized as alternatives
+            filtered_matching.push_back(m);
             alts.push_back(PatternNode::createLiteral(m, {m}, all_counters));
         }
         if (!alts.empty()) {
             if (alts.size() == 1) {
                 result.ast = alts[0];
             } else {
-                result.ast = PatternNode::createAlternation(alts, tc.matching_inputs, all_counters);
+                result.ast = PatternNode::createAlternation(alts, filtered_matching, all_counters);
             }
             result.pattern = serializePattern(result.ast);
             result.fragments.clear();
             pattern_valid = true;
+            tc.matching_inputs = filtered_matching;  // Update to filtered set
         }
     }
 
