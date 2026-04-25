@@ -908,14 +908,14 @@ static bool test_error_invalid_category(void) {
     return true;
 }
 
-static bool test_error_double_paren(void) {
+static bool test_double_paren_is_grouping(void) {
     nfa_builder_context_t* ctx = nfa_builder_context_create();
     ASSERT_TRUE(ctx != NULL);
     nfa_construct_init(ctx);
     nfa_parser_parse_pattern(ctx, "[safe] ((a))");
     bool has_err = nfa_parser_has_error(ctx);
     nfa_builder_context_destroy(ctx);
-    ASSERT_TRUE(has_err);
+    ASSERT_TRUE(!has_err);  // ((a)) is valid nested grouping, not an error
     return true;
 }
 
@@ -986,7 +986,7 @@ int main(ATTR_UNUSED int argc, ATTR_UNUSED char** argv) {
     printf("\nError Conditions:\n");
     TEST(error_empty_pattern);
     TEST(error_invalid_category);
-    TEST(error_double_paren);
+    TEST(double_paren_is_grouping);
     
     printf("\n=================\n");
     printf("SUMMARY: %d/%d passed\n", tests_passed, tests_run);

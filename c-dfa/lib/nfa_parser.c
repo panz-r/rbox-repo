@@ -37,22 +37,9 @@ static const char* find_fragment(nfa_builder_context_t* ctx, const char* name) {
 }
 
 static void normalize_fragment_name(char* name) {
-    if (strstr(name, "::") != NULL) {
-        return;
-    }
-    for (int i = 0; name[i] != '\0'; i++) {
-        if (name[i] == ':' && name[i + 1] != ':') {
-            int len = strlen(name);
-            if (len + 1 < MAX_FRAGMENT_NAME) {
-                for (int k = len; k > i; k--) {
-                    name[k] = name[k - 1];
-                }
-                name[i] = ':';
-                name[i + 1] = ':';
-            }
-            break;
-        }
-    }
+    // Keep fragment name as-is (no normalization)
+    // Previously this added :: prefix which caused mismatches with definitions
+    (void)name;
 }
 
 // ============================================================================
@@ -425,7 +412,26 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
             // Check for fragment reference [[name::subname]]
             // Note: double parentheses ((...)) are allowed for nested grouping.
             // Fragment references use [[name]] syntax which is checked below.
+            // IMPORTANT: ( [[ frag ]] | ... ) is a GROUP containing a fragment ref,
+            // NOT a fragment ref inside parens.  Let the group parser handle it.
+            // Only intercept if ( [[ frag ]] ) with no alternation inside.
             if (pattern[*pos + 1] == '[') {
+                // Scan ahead to see if this (...) contains a '|' before the matching ')'
+                // If so, it's a group with alternation, not a fragment reference in parens
+                size_t scan = *pos + 1;
+                int depth = 1;
+                bool has_alternation = false;
+                while (pattern[scan] && depth > 0) {
+                    if (pattern[scan] == '(') depth++;
+                    else if (pattern[scan] == ')') { depth--; if (depth == 0) break; }
+                    else if (pattern[scan] == '|' && depth == 1) has_alternation = true;
+                    scan++;
+                }
+                if (has_alternation) {
+                    // This is a group with alternation, parse as regular group
+                    (*pos)++;
+                    return parse_rdp_alternation_internal(ctx, pattern, pos, start_state);
+                }
                 size_t j = *pos + 2;
                 while (pattern[j] != '\0' && !(pattern[j] == ']' && pattern[j + 1] == ']')) {
                     j++;

@@ -692,6 +692,112 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
         }
     }
     
+    // ---- Strategy 7: Substring split ----
+    // Find longest common substring and split around it
+    {
+        if (matching_states.size() >= 2 && matching_states.size() <= 20) {
+            std::string best_substr;
+            // Find common substring in all matching inputs
+            for (size_t i = 0; i < matching_states[0].remaining.size(); i++) {
+                for (size_t len = 1; len <= matching_states[0].remaining.size() - i; len++) {
+                    std::string substr = matching_states[0].remaining.substr(i, len);
+                    bool in_all = true;
+                    for (size_t j = 1; j < matching_states.size(); j++) {
+                        if (matching_states[j].remaining.find(substr) == std::string::npos) {
+                            in_all = false;
+                            break;
+                        }
+                    }
+                    if (in_all && substr.size() > best_substr.size()) {
+                        best_substr = substr;
+                    }
+                }
+            }
+            
+            if (best_substr.size() >= 2) {
+                // Split around the common substring
+                std::vector<InputState> pre_states, post_states;
+                for (const auto& s : matching_states) {
+                    size_t pos = s.remaining.find(best_substr);
+                    if (pos != std::string::npos) {
+                        InputState pre(s.full_input, s.is_matching);
+                        pre.remaining = s.remaining.substr(0, pos);
+                        pre_states.push_back(pre);
+                        
+                        InputState post(s.full_input, s.is_matching);
+                        post.remaining = s.remaining.substr(pos + best_substr.size());
+                        post_states.push_back(post);
+                    }
+                }
+                
+                if (!pre_states.empty() && !post_states.empty()) {
+                    auto pre_result = buildRecursive(pre_states, counter_states, depth + 1, rng);
+                    auto post_result = buildRecursive(post_states, counter_states, depth + 1, rng);
+                    
+                    if (pre_result.success && post_result.success && pre_result.ast && post_result.ast) {
+                        auto lit_node = PatternNode::createLiteral(best_substr);
+                        auto seq_children = std::vector<std::shared_ptr<PatternNode>>{pre_result.ast, lit_node, post_result.ast};
+                        BuildResult result;
+                        result.ast = PatternNode::createSequence(seq_children);
+                        std::vector<std::string> seeds;
+                        for (const auto& s : matching_states) seeds.push_back(s.full_input);
+                        result.ast->matched_seeds = seeds;
+                        result.proof = "  [Depth " + std::to_string(depth) + "] Substring split on '" + best_substr + "'\n" +
+                                      pre_result.proof + post_result.proof;
+                        result.success = true;
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+    
+    // ---- Strategy 8: Repetition detection ----
+    // If all matching inputs are repetitions of a unit, create a + pattern
+    {
+        if (matching_states.size() >= 2) {
+            std::string unit;
+            bool all_repetition = false;
+            
+            for (const auto& s : matching_states) {
+                if (s.remaining.empty()) continue;
+                // Find smallest unit that repeats to form this string
+                for (size_t u = 1; u <= s.remaining.size() / 2; u++) {
+                    std::string candidate = s.remaining.substr(0, u);
+                    size_t rep_count = s.remaining.size() / candidate.size();
+                    if (rep_count >= 1 && candidate.compare(s.remaining.substr(0, candidate.size() * rep_count)) == 0 &&
+                        candidate.size() * rep_count == s.remaining.size()) {
+                        bool valid_unit = true;
+                        // Check counter inputs don't match this unit
+                        for (const auto& c : counter_states) {
+                            if (!c.remaining.empty() && c.remaining.find(candidate) != std::string::npos) {
+                                valid_unit = false;
+                                break;
+                            }
+                        }
+                        if (valid_unit && (unit.empty() || candidate == unit)) {
+                            if (unit.empty()) unit = candidate;
+                            all_repetition = true;
+                        }
+                    }
+                }
+                if (!all_repetition) break;
+            }
+            
+            if (all_repetition && !unit.empty() && unit.size() <= 4) {
+                auto unit_node = PatternNode::createLiteral(unit);
+                BuildResult result;
+                result.ast = PatternNode::createQuantified(unit_node, PatternType::PLUS_QUANTIFIER);
+                std::vector<std::string> seeds;
+                for (const auto& s : matching_states) seeds.push_back(s.full_input);
+                result.ast->matched_seeds = seeds;
+                result.proof = "  [Depth " + std::to_string(depth) + "] Repetition detected: '" + unit + "'+\n";
+                result.success = true;
+                return result;
+            }
+        }
+    }
+    
     // Fallback: flat alternation
     return makeAlternation(matching_states, counter_states, {});
 }

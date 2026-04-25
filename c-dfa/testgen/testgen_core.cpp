@@ -68,17 +68,17 @@ TestCase TestCaseCore::toOldTestCase(int test_id) const {
         }
     }
     
-    // DEFENSIVE FIX: Ensure all FRAGMENT_REF nodes in AST have definitions
-    // Derives actual definitions from the AST node's matched_seeds when possible
+    // DEFENSIVE FIX: Ensure all FRAGMENT_REF nodes in AST have definitions.
+    // Only produces sound definitions when all matched_seeds are identical.
+    // When seeds differ or are absent, clears the pattern to skip this test case.
     if (ast) {
         std::set<std::string> ast_frags;
         collectFragmentNames(ast, ast_frags);
         for (const auto& frag_name : ast_frags) {
             if (tc.fragments.find(frag_name) == tc.fragments.end()) {
-                // Search the AST for this fragment ref to get its matched_seeds
                 std::function<std::vector<std::string>(std::shared_ptr<PatternNode>)> findSeeds;
                 findSeeds = [&](std::shared_ptr<PatternNode> n) -> std::vector<std::string> {
-                    if (!n) return {};
+                    if (!n) return std::vector<std::string>();
                     if (n->type == PatternType::FRAGMENT_REF && n->fragment_name == frag_name) {
                         return n->matched_seeds;
                     }
@@ -87,18 +87,25 @@ TestCase TestCaseCore::toOldTestCase(int test_id) const {
                         if (!s.empty()) return s;
                     }
                     if (n->quantified) return findSeeds(n->quantified);
-                    return {};
+                    return std::vector<std::string>();
                 };
                 auto seeds = findSeeds(ast);
                 if (!seeds.empty()) {
-                    // All seeds the same -> use as literal definition
                     bool all_same = true;
                     for (const auto& s : seeds) {
                         if (s != seeds[0]) { all_same = false; break; }
                     }
-                    tc.fragments[frag_name] = all_same ? seeds[0] : std::string(1, seeds[0].empty() ? 'Z' : seeds[0][0]);
+                    if (all_same) {
+                        tc.fragments[frag_name] = seeds[0];
+                    } else {
+                        // Seeds differ — no sound definition; skip this test case
+                        tc.pattern = "";
+                        return tc;
+                    }
                 } else {
-                    tc.fragments[frag_name] = "Z";
+                    // No seeds — skip this test case
+                    tc.pattern = "";
+                    return tc;
                 }
             }
         }

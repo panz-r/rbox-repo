@@ -187,6 +187,8 @@ struct Options {
     bool run_tests = false;
     bool keep_files = false;
     int mutations_per_test = 10;
+    bool cross_validate = false;  // Cross-validate PatternMatcher with pipeline
+    bool fast_mode = false;      // Skip heavy strategies, mutations
 };
 
 class TestGenerator {
@@ -199,6 +201,8 @@ public:
     int runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file, int* passed_out = nullptr, int* failed_out = nullptr, int* skipped_out = nullptr);
     int runTestsIndividual(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, const std::string& expectations_file, int* passed_out = nullptr, int* failed_out = nullptr, int* skipped_out = nullptr);
     void setTestsPerBatch(int count) { tests_per_batch_override = count; }
+    void setCrossValidate(bool val) { cross_validate = val; }
+    void setFastMode(bool val) { fast_mode = val; }
     
     std::string categoryToString(Category cat);
     std::map<std::string, std::string> generateFragments(Complexity complexity);
@@ -227,6 +231,8 @@ private:
     std::mt19937 rng;
     int global_failed_count = 0;  // Persist across batches for saving failed cases
     int tests_per_batch_override = 0;  // Override for tests per batch
+    bool cross_validate = false;  // Cross-validate PatternMatcher with pipeline
+    bool fast_mode = false;       // Skip heavy strategies, mutations
     
     // Batch-level tracking for category uniqueness
     std::set<Category> batch_used_matching_;

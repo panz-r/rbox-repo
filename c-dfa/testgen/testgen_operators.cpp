@@ -91,56 +91,39 @@ static bool hasAllFragmentDefs(std::shared_ptr<PatternNode> node, const std::map
 }
 
 // Ensure all FRAGMENT_REF nodes in AST have definitions in fragments map.
-// Derives actual definitions from matched_seeds when possible, falls back
-// to a union-of-chars definition when seeds aren't available.
-static void ensureFragmentDefs(std::shared_ptr<PatternNode> node, std::map<std::string, std::string>& fragments) {
-    if (!node) return;
+// When all matched_seeds are identical, uses the exact literal (sound).
+// When seeds differ or are absent, marks the fragment as missing (returns false
+// via a sentinel) so callers can reject the mutation/test case.
+// Returns false if a fragment ref has no sound definition.
+static bool ensureFragmentDefs(std::shared_ptr<PatternNode> node, std::map<std::string, std::string>& fragments) {
+    if (!node) return true;
     if (node->type == PatternType::FRAGMENT_REF) {
         if (fragments.find(node->fragment_name) == fragments.end()) {
-            // Try to derive definition from matched_seeds
+            // Only produce a sound definition when all seeds are identical
             if (!node->matched_seeds.empty()) {
-                // Use common prefix of seeds as the fragment definition
-                std::string def = node->matched_seeds[0];
-                for (size_t i = 1; i < node->matched_seeds.size() && !def.empty(); i++) {
-                    size_t j = 0;
-                    while (j < node->matched_seeds[i].size() && j < def.size() &&
-                           node->matched_seeds[i][j] == def[j]) {
-                        j++;
-                    }
-                    def = def.substr(0, j);
-                }
-                // If all seeds are identical, use that as definition
                 bool all_same = true;
                 for (const auto& s : node->matched_seeds) {
                     if (s != node->matched_seeds[0]) { all_same = false; break; }
                 }
                 if (all_same) {
                     fragments[node->fragment_name] = node->matched_seeds[0];
-                } else if (!def.empty()) {
-                    // Common prefix as fallback
-                    fragments[node->fragment_name] = def;
                 } else {
-                    // Union of unique chars from all seeds
-                    std::set<char> chars;
-                    for (const auto& s : node->matched_seeds) {
-                        for (char c : s) chars.insert(c);
-                    }
-                    std::string char_class;
-                    for (char c : chars) char_class += c;
-                    fragments[node->fragment_name] = char_class;
+                    // Seeds differ — no sound definition possible, signal failure
+                    return false;
                 }
             } else {
-                // No seeds available - use a single char that's unlikely to match counters
-                fragments[node->fragment_name] = "Z";
+                // No seeds — no sound definition possible
+                return false;
             }
         }
     }
     if (node->quantified) {
-        ensureFragmentDefs(node->quantified, fragments);
+        if (!ensureFragmentDefs(node->quantified, fragments)) return false;
     }
     for (auto& child : node->children) {
-        ensureFragmentDefs(child, fragments);
+        if (!ensureFragmentDefs(child, fragments)) return false;
     }
+    return true;
 }
 
 // Pattern matching is now handled by PatternMatcher (pattern_matcher.h)
@@ -265,7 +248,7 @@ CoordinatedMutationResult CharSubstituteCoordOp::apply(const TestCaseCore& origi
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | CHAR_SUB(" + old_char + "→" + new_char + ")";
     
     Expectation e;
@@ -325,7 +308,7 @@ CoordinatedMutationResult AddAlternativeCoordOp::apply(const TestCaseCore& origi
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | ADD_ALT(+" + new_alt_val + ")";
     
     Expectation e;
@@ -390,7 +373,7 @@ CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& origi
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | NEST_Q(+)";
     
     Expectation e;
@@ -460,7 +443,7 @@ CoordinatedMutationResult ExtendSequenceCoordOp::apply(const TestCaseCore& origi
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | EXTEND(+" + extra + ")";
     
     Expectation e;
@@ -526,7 +509,7 @@ CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& origin
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | DEEPEN_NESTING";
     
     Expectation e;
@@ -632,6 +615,7 @@ static bool extractPrefixMatch(const std::string& input, std::shared_ptr<Pattern
             std::string child_prefix;
             std::string child_rem;
             if (extractPrefixMatch(remainder, pattern->quantified, child_prefix, child_rem)) {
+                if (child_rem.size() >= remainder.size()) break;  // no progress guard
                 total_prefix += child_prefix;
                 remainder = child_rem;
                 count++;
@@ -654,6 +638,7 @@ static bool extractPrefixMatch(const std::string& input, std::shared_ptr<Pattern
             std::string child_prefix;
             std::string child_rem;
             if (extractPrefixMatch(remainder, pattern->quantified, child_prefix, child_rem)) {
+                if (child_rem.size() >= remainder.size()) break;  // no progress guard
                 total_prefix += child_prefix;
                 remainder = child_rem;
             } else {
@@ -735,6 +720,7 @@ static bool extractSuffixMatch(const std::string& input, std::shared_ptr<Pattern
             std::string child_suffix;
             std::string child_rem;
             if (extractSuffixMatch(remainder, pattern->quantified, child_rem, child_suffix)) {
+                if (child_rem.size() >= remainder.size()) break;  // no progress guard
                 total_suffix = child_suffix + total_suffix;
                 remainder = child_rem;
                 count++;
@@ -757,6 +743,7 @@ static bool extractSuffixMatch(const std::string& input, std::shared_ptr<Pattern
             std::string child_suffix;
             std::string child_rem;
             if (extractSuffixMatch(remainder, pattern->quantified, child_rem, child_suffix)) {
+                if (child_rem.size() >= remainder.size()) break;  // no progress guard
                 total_suffix = child_suffix + total_suffix;
                 remainder = child_rem;
             } else {
@@ -999,7 +986,7 @@ CoordinatedMutationResult CutBasedCoordOp::apply(const TestCaseCore& original, [
     }
     
     result.mutated_tc.ast = mutated_ast;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.valid = true;
     result.proof = original.proof + " | CUT_BASED(type=" + std::to_string(mutation_type) + ")";
     
@@ -1076,7 +1063,7 @@ CoordinatedMutationResult ExtendAlternationCoordOp::apply(const TestCaseCore& or
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | EXTEND_ALT(+" + new_alt_val + ")";
     
     Expectation e;
@@ -1145,7 +1132,7 @@ CoordinatedMutationResult RemoveQuantifierCoordOp::apply(const TestCaseCore& ori
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | REMOVE_QUANTIFIER";
     
     Expectation e;
@@ -1217,7 +1204,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         result.mutated_tc.ast = mutated_ast;
         result.mutated_tc.fragments = original.fragments;
-        ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+        if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
         result.mutated_tc.proof = original.proof + " | ALTER_ALT(" + std::string(1, old_char) + "→" + std::string(1, new_char) + ")";
         
         Expectation e;
@@ -1279,7 +1266,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         result.mutated_tc.ast = mutated_ast;
         result.mutated_tc.fragments = original.fragments;
-        ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+        if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
         result.mutated_tc.proof = original.proof + " | ALTER_ALT_EXTEND(+" + std::string(1, extra) + ")";
         
         Expectation e;
@@ -1359,7 +1346,7 @@ CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore&
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | FLATTEN_QUANTIFIED_ALT";
     
     Expectation e;
@@ -1437,7 +1424,7 @@ CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& or
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | UNWRAP_FRAGMENT_REF";
     
     Expectation e;
@@ -1504,7 +1491,7 @@ CoordinatedMutationResult SequenceToAlternationCoordOp::apply(const TestCaseCore
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | SEQ_TO_ALT";
     
     Expectation e;
@@ -1568,7 +1555,7 @@ CoordinatedMutationResult QuantifyAlternationCoordOp::apply(const TestCaseCore& 
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     
     std::string quant_name = (idx == 0) ? "+" : (idx == 1) ? "*" : "?";
     result.mutated_tc.proof = original.proof + " | QUANTIFY_ALT(" + quant_name + ")";
@@ -1638,7 +1625,7 @@ CoordinatedMutationResult PrefixSuffixAlternationCoordOp::apply(const TestCaseCo
     
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
-    ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments);
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
     result.mutated_tc.proof = original.proof + " | PREFIX_SUFFIX_ALT(+" + prefix + ", +" + suffix + ")";
     
     Expectation e;

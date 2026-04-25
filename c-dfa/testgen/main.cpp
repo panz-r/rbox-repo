@@ -17,6 +17,8 @@ void printUsage(const char* prog) {
     std::cout << "  -m N          Mutations per test case (default: 10, 0 to disable)\n";
     std::cout << "  -r            Run tests through c-dfa\n";
     std::cout << "  -k            Keep generated files\n";
+    std::cout << "  --fast        Skip heavy strategies and mutations\n";
+    std::cout << "  --cross-validate  Cross-validate PatternMatcher with pipeline\n";
     std::cout << "  -h, --help    Show this help\n";
 }
 
@@ -46,6 +48,11 @@ int main(int argc, char* argv[]) {
             run_tests = true;
         } else if (strcmp(argv[i], "-k") == 0) {
             keep_files = true;
+        } else if (strcmp(argv[i], "--fast") == 0) {
+            opts.fast_mode = true;
+            opts.mutations_per_test = 0;
+        } else if (strcmp(argv[i], "--cross-validate") == 0) {
+            opts.cross_validate = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printUsage(argv[0]);
             return 0;
