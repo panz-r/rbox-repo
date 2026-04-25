@@ -167,7 +167,34 @@ std::shared_ptr<PatternNode> createSequenceNode(const std::vector<std::shared_pt
     return PatternNode::createSequence(nodes, seeds);
 }
 
-std::string extractFragment(const std::string& char_class, 
+// Determine if a string looks like a character class definition (e.g., "abc", "[xyz]")
+static bool looksLikeCharClass(const std::string& s) {
+    if (s.empty()) return false;
+    // If it starts with [ and contains ], it's a char class
+    if (s[0] == '[') return s.find(']') != std::string::npos;
+    // If it's short and all unique characters, it's likely intended as a char class
+    if (s.size() <= 10) {
+        std::set<char> unique_chars(s.begin(), s.end());
+        return unique_chars.size() == s.size();  // All unique = intended as char class
+    }
+    return false;
+}
+
+// Determine if a string is a literal (fixed string, not a character class)
+static bool looksLikeLiteral(const std::string& s) {
+    if (s.empty()) return false;
+    // If it starts with [ but has no closing ], it's a literal
+    if (s[0] == '[' && s.find(']') == std::string::npos) return true;
+    // If it contains characters that suggest it's meant to be literal (e.g., repeated chars)
+    if (s.size() > 3) {
+        std::set<char> unique_chars(s.begin(), s.end());
+        // If many duplicates relative to size, likely literal
+        if (unique_chars.size() < s.size() * 0.7) return true;
+    }
+    return false;
+}
+
+std::string extractFragment(const std::string& input, 
                           std::map<std::string, std::string>& fragments,
                           std::mt19937& rng,
                           bool force_simple) {
@@ -191,7 +218,32 @@ std::string extractFragment(const std::string& char_class,
         full_name = frag_name;
     }
     
-    fragments[full_name] = char_class;
+    // Determine the fragment definition
+    // If input looks like a literal string (repeating chars, fixed sequence),
+    // use the literal form. Otherwise, use as-is (might be a char class).
+    std::string frag_def = input;
+    
+    if (looksLikeLiteral(input) && !force_simple) {
+        // Keep as literal - it's a fixed sequence
+        // Don't convert to char class
+    } else if (!looksLikeCharClass(input)) {
+        // Not clearly a char class - could be a literal that should be kept
+        // Only convert to char class if explicitly forced
+        if (force_simple) {
+            // When forced, try to create a sensible char class
+            std::string chars;
+            for (char c : input) {
+                if (chars.find(c) == std::string::npos) {
+                    chars += c;
+                }
+            }
+            if (!chars.empty() && chars.size() < input.size()) {
+                frag_def = chars;  // Use unique chars as char class
+            }
+        }
+    }
+    
+    fragments[full_name] = frag_def;
     
     return "[[" + full_name + "]]+";
 }

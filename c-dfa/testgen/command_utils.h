@@ -9,7 +9,9 @@ struct CommandResult {
     int exit_code = 0;
 };
 
-CommandResult runCommand(const std::string& cmd);
+// Run command with optional timeout (in seconds)
+// timeout_secs <= 0 means no timeout
+CommandResult runCommand(const std::string& cmd, int timeout_secs = 0);
 std::string getToolsDir();
 
 #endif // COMMAND_UTILS_H

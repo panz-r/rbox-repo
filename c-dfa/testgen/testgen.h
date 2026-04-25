@@ -176,6 +176,8 @@ int run_strategy_tests();
 int run_expectation_gen_tests();
 int run_inductive_builder_tests();
 int run_pattern_serializer_tests();
+int run_pattern_matcher_tests();
+int run_pattern_matcher_fuzz_tests();
 
 struct Options {
     int num_tests = 100;
@@ -225,6 +227,11 @@ private:
     std::mt19937 rng;
     int global_failed_count = 0;  // Persist across batches for saving failed cases
     int tests_per_batch_override = 0;  // Override for tests per batch
+    
+    // Batch-level tracking for category uniqueness
+    std::set<Category> batch_used_matching_;
+    std::set<Category> batch_used_counter_;
+    std::set<std::string> batch_used_inputs_;  // Global seed uniqueness
     
     std::string makeLiteralPattern(const std::vector<std::string>& parts);
     std::string makeMediumPattern(const std::vector<std::string>& parts, 

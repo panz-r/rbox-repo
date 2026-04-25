@@ -309,5 +309,11 @@ int main() {
     std::cout << "\n";
     int ser_result = run_pattern_serializer_tests();
     
-    return (tests_passed == tests_run && pf_result == 0 && vh_result == 0 && ps_result == 0 && eg_result == 0 && ib_result == 0 && ser_result == 0) ? 0 : 1;
+    std::cout << "\n";
+    int pm_result = run_pattern_matcher_tests();
+    
+    std::cout << "\n";
+    int fuzz_result = run_pattern_matcher_fuzz_tests();
+    
+    return (tests_passed == tests_run && pf_result == 0 && vh_result == 0 && ps_result == 0 && eg_result == 0 && ib_result == 0 && ser_result == 0 && pm_result == 0 && fuzz_result == 0) ? 0 : 1;
 }

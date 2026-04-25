@@ -6,6 +6,8 @@
 #include "inductive_builder.h"
 #include "edge_case_gen.h"
 #include "testgen_mutation_tree.h"
+#include "pattern_matcher.h"
+#include "pipeline.h"
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -15,6 +17,7 @@
 #include <cstring>
 #include <set>
 #include <unordered_set>
+#include <unordered_map>
 #include <optional>
 #include <tuple>
 #include <unistd.h>
@@ -288,11 +291,258 @@ bool wouldInputMatchPattern(const std::string& input, const std::string& pattern
         }
     }
     
+    // Handle character classes: [abc]+ or [abc]
+    // If pattern contains '[' it may be a character class
+    size_t char_class_start = clean_pattern.find('[');
+    if (char_class_start != std::string::npos) {
+        // Extract character class definition
+        size_t char_class_end = clean_pattern.find(']', char_class_start);
+        if (char_class_end != std::string::npos && char_class_end > char_class_start) {
+            std::string char_class = clean_pattern.substr(char_class_start + 1, char_class_end - char_class_start - 1);
+            
+            // Check if it's a simple character class (no nested [] or complex regex)
+            bool is_simple_class = true;
+            for (char c : char_class) {
+                if (c == '[' || c == ']' || c == '-' || c == '^') {
+                    is_simple_class = false;
+                    break;
+                }
+            }
+            
+            if (is_simple_class) {
+                // Parse simple character class
+                std::set<char> allowed;
+                for (char c : char_class) {
+                    allowed.insert(c);
+                }
+                
+                // Check if quantifier follows
+                bool is_plus = false;
+                bool is_star = false;
+                bool is_optional = false;
+                size_t quant_pos = char_class_end + 1;
+                if (quant_pos < clean_pattern.size()) {
+                    if (clean_pattern[quant_pos] == '+') is_plus = true;
+                    else if (clean_pattern[quant_pos] == '*') is_star = true;
+                    else if (clean_pattern[quant_pos] == '?') is_optional = true;
+                }
+                
+                // Check if entire pattern is just the char class (possibly with quantifier)
+                std::string before_class = clean_pattern.substr(0, char_class_start);
+                std::string after_class = quant_pos < clean_pattern.size() ? 
+                    clean_pattern.substr(quant_pos + 1) : "";
+                
+                // If there's content before the char class, check prefix first
+                if (!before_class.empty()) {
+                    if (input.size() < before_class.size() || 
+                        input.substr(0, before_class.size()) != before_class) {
+                        return false;
+                    }
+                }
+                
+                // Extract the part after the prefix
+                std::string remainder = before_class.empty() ? input : input.substr(before_class.size());
+                
+                // Handle quantifiers
+                if (is_optional) {
+                    // [abc]? matches empty or single char
+                    if (remainder.empty() || (remainder.size() == 1 && allowed.count(remainder[0]))) {
+                        if (after_class.empty() || remainder.size() < input.size()) {
+                            return remainder.empty() || allowed.count(remainder[0]);
+                        }
+                        return after_class.empty() ? true : false;
+                    }
+                }
+                
+                if (is_plus) {
+                    // [abc]+ matches one or more of the characters
+                    if (remainder.empty()) return false;
+                    for (char c : remainder) {
+                        if (allowed.count(c) == 0) return false;
+                    }
+                    // Check suffix if any
+                    if (!after_class.empty()) {
+                        return remainder.size() < input.size() && 
+                               input.substr(remainder.size()) == after_class;
+                    }
+                    return true;
+                }
+                
+                if (is_star) {
+                    // [abc]* matches zero or more
+                    if (remainder.empty()) return true;
+                    for (char c : remainder) {
+                        if (allowed.count(c) == 0) return false;
+                    }
+                    if (!after_class.empty()) {
+                        return remainder.size() < input.size() && 
+                               input.substr(remainder.size()) == after_class;
+                    }
+                    return true;
+                }
+                
+                // No quantifier - must match exactly the character class (single char)
+                if (remainder.size() == 1 && allowed.count(remainder[0])) {
+                    if (!after_class.empty()) {
+                        return remainder.size() + before_class.size() < input.size() &&
+                               input.substr(remainder.size() + before_class.size()) == after_class;
+                    }
+                    return before_class.empty() || remainder.size() + before_class.size() == input.size();
+                }
+            }
+        }
+    }
+    
     // If we get here, the input doesn't match any alternative we could parse
     return false;
 }
 
+// Validate pattern against inputs using in-process pipeline API.
+// Returns: (all_matching_match, all_counters_dont_match)
+// Much faster than forking cdfatool for each input.
+std::pair<bool, bool> validatePatternWithPipeline(const std::string& pattern,
+                                                   const std::vector<std::string>& matching,
+                                                   const std::vector<std::string>& counters,
+                                                   const std::map<std::string, std::string>& fragments) {
+    bool all_matching_match = true;
+    bool all_counters_dont_match = true;
+    
+    // Write a temporary pattern file
+    char tmp_pat[] = "/tmp/testgen_val_XXXXXX.txt";
+    int fd = mkstemp(tmp_pat);
+    if (fd < 0) return {false, false};
+    
+    FILE* fp = fdopen(fd, "w");
+    if (!fp) {
+        close(fd);
+        unlink(tmp_pat);
+        return {false, false};
+    }
+    
+    for (const auto& [name, def] : fragments) {
+        fprintf(fp, "fragment %s = %s\n", name.c_str(), def.c_str());
+    }
+    fprintf(fp, "[1] %s\n", pattern.c_str());
+    fclose(fp);
+    
+    // Build DFA in-process
+    pipeline_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.minimize_algo = (dfa_minimize_algo_t)0; // MOORE
+    config.verbose = false;
+    config.compress = true;
+    config.optimize_layout = true;
+    
+    pipeline_t* p = pipeline_create(&config);
+    if (!p) {
+        unlink(tmp_pat);
+        return {false, false};
+    }
+    
+    pipeline_error_t err = pipeline_run(p, tmp_pat);
+    if (err != PIPELINE_OK) {
+        pipeline_destroy(p);
+        unlink(tmp_pat);
+        return {false, false};
+    }
+    
+    size_t binary_size = 0;
+    const uint8_t* binary = pipeline_get_binary(p, &binary_size);
+    if (!binary || binary_size == 0) {
+        pipeline_destroy(p);
+        unlink(tmp_pat);
+        return {false, false};
+    }
+    
+    // Create evaluator from in-memory binary
+    dfa_evaluator_t* eval = dfa_eval_create(binary, binary_size);
+    if (!eval) {
+        pipeline_destroy(p);
+        unlink(tmp_pat);
+        return {false, false};
+    }
+    
+    // Evaluate matching inputs
+    for (const auto& input : matching) {
+        dfa_result_t result = dfa_eval_evaluate(eval, input.c_str());
+        if (!result.matched) {
+            all_matching_match = false;
+            break;
+        }
+    }
+    
+    // Evaluate counter inputs
+    if (all_matching_match) {
+        for (const auto& input : counters) {
+            dfa_result_t result = dfa_eval_evaluate(eval, input.c_str());
+            if (result.matched) {
+                all_counters_dont_match = false;
+                break;
+            }
+        }
+    }
+    
+    dfa_eval_destroy(eval);
+    pipeline_destroy(p);
+    unlink(tmp_pat);
+    
+    return {all_matching_match, all_counters_dont_match};
+}
+
+// Legacy wrapper kept for compatibility; now uses in-process pipeline
+std::pair<bool, bool> validatePatternWithDSL(const std::string& pattern,
+                                              const std::vector<std::string>& matching,
+                                              const std::vector<std::string>& counters,
+                                              const std::map<std::string, std::string>& fragments,
+                                              const std::string& /* tools_dir */) {
+    return validatePatternWithPipeline(pattern, matching, counters, fragments);
+}
+
 // Serialize PatternNode to string with capture tags
+
+// ============================================================================
+// Pattern Validation Cache
+// ============================================================================
+// Caches PatternMatcher::validate results keyed by serialized pattern + inputs.
+// Avoids redundant NFA simulation for repeated validation of the same pattern.
+
+static std::unordered_map<std::string, bool> g_validation_cache;
+static const size_t MAX_CACHE_SIZE = 1024;
+
+static std::string makeValidationKey(
+    const std::shared_ptr<PatternNode>& ast,
+    const std::vector<std::string>& matching,
+    const std::vector<std::string>& counters,
+    const std::map<std::string, std::string>& fragments) {
+    std::string key;
+    key.reserve(256);
+    if (ast) key += serializePattern(ast);
+    key += "|M:";
+    for (const auto& m : matching) { key += m; key += ","; }
+    key += "|C:";
+    for (const auto& c : counters) { key += c; key += ","; }
+    key += "|F:";
+    for (const auto& [k, v] : fragments) { key += k; key += "="; key += v; key += ","; }
+    return key;
+}
+
+static bool cachedValidate(
+    const std::shared_ptr<PatternNode>& ast,
+    const std::vector<std::string>& matching,
+    const std::vector<std::string>& counters,
+    const std::map<std::string, std::string>& fragments) {
+    std::string key = makeValidationKey(ast, matching, counters, fragments);
+    auto it = g_validation_cache.find(key);
+    if (it != g_validation_cache.end()) return it->second;
+    
+    bool result = PatternMatcher::validateWithFragments(ast, matching, counters, fragments);
+    
+    if (g_validation_cache.size() >= MAX_CACHE_SIZE) {
+        g_validation_cache.clear();
+    }
+    g_validation_cache[key] = result;
+    return result;
+}
 
 // Collect all FRAGMENT_REF names from an AST
 static void collectFragmentNames(std::shared_ptr<PatternNode> node, std::set<std::string>& names) {
@@ -692,17 +942,18 @@ TestGenerator::TestGenerator(const Options& opts) : opts(opts) {
 
 std::vector<TestCase> TestGenerator::generate() {
     std::vector<TestCase> tests;
-    // For combined testing, max 4 test cases (8 patterns: 4 matching + 4 counter)
     int max_tests = std::min(opts.num_tests, 4);
     tests.reserve(max_tests * (1 + opts.mutations_per_test));
     
-    // Track all inputs used so far to avoid collisions between test cases
     std::set<std::string> all_used_inputs;
+    int total_mutations = 0;
+    int total_attempts = 0;
     
     for (int i = 0; i < max_tests; i++) {
+        std::cout << "  Generating test case " << (i + 1) << "/" << max_tests << "..." << std::flush;
+        
         TestCase base_tc = generateTestCase(i, all_used_inputs);
         
-        // Add this test case's inputs to the global set
         for (const auto& inp : base_tc.matching_inputs) {
             all_used_inputs.insert(inp);
         }
@@ -712,17 +963,17 @@ std::vector<TestCase> TestGenerator::generate() {
         
         tests.push_back(base_tc);
         
-        // Apply mutation chain: each successful mutation becomes the input for the next
         TestGen::CoordinatedMutationEngine coord_engine;
         TestGen::TestCaseCore current_core = TestGen::TestCaseCore::fromOldTestCase(base_tc);
         std::string proof_chain = base_tc.proof;
         
         int mutations_applied = 0;
         int mutation_attempts = 0;
-        const int max_attempts = opts.mutations_per_test * 3;
+        const int max_attempts = opts.mutations_per_test * 2;
         
         while (mutations_applied < opts.mutations_per_test && mutation_attempts < max_attempts) {
             mutation_attempts++;
+            total_attempts++;
             
             auto mutations = coord_engine.mutate(current_core, 5, rng);
             if (mutations.empty()) break;
@@ -752,8 +1003,19 @@ std::vector<TestCase> TestGenerator::generate() {
             proof_chain = mutated_tc.proof;
             current_core = next_core;
             mutations_applied++;
+            total_mutations++;
         }
+        
+        std::cout << " " << mutations_applied << " mutations (" << mutation_attempts
+                  << " attempts)" << std::endl;
     }
+    
+    if (total_attempts > 0) {
+        std::cout << "  Mutation success rate: " << total_mutations << "/" << total_attempts
+                  << " (" << std::fixed << std::setprecision(0)
+                  << (100.0 * total_mutations / total_attempts) << "%)" << std::endl;
+    }
+    
     return tests;
 }
 
@@ -1215,35 +1477,27 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     TestCase tc;
     tc.test_id = test_id;
     
-    // Assign random categories ensuring uniqueness within the batch
-    // Use randomCategory() to test all 8 categories, not just a hardcoded subset
-    // Must avoid: 
-    // 1. Duplicate matching categories within the same batch
-    // 2. Counter category matching any category already used in the batch
-    
-    static std::set<Category> batch_used_matching;
-    static std::set<Category> batch_used_counter;
-    
     // First test in batch? Clear the tracking sets
     if (test_id == 0) {
-        batch_used_matching.clear();
-        batch_used_counter.clear();
+        batch_used_matching_.clear();
+        batch_used_counter_.clear();
+        batch_used_inputs_.clear();
     }
     
     // Select a unique matching category not used in this batch
     do {
         tc.category = randomCategory();
-    } while (batch_used_matching.count(tc.category) > 0);
-    batch_used_matching.insert(tc.category);
+    } while (batch_used_matching_.count(tc.category) > 0);
+    batch_used_matching_.insert(tc.category);
     
     // Select a counter category not equal to any matching category in this batch
     // and not already used as a counter category
     do {
         tc.counter_category = randomCategory();
     } while (tc.counter_category == tc.category || 
-             batch_used_matching.count(tc.counter_category) > 0 ||
-             batch_used_counter.count(tc.counter_category) > 0);
-    batch_used_counter.insert(tc.counter_category);
+             batch_used_matching_.count(tc.counter_category) > 0 ||
+             batch_used_counter_.count(tc.counter_category) > 0);
+    batch_used_counter_.insert(tc.counter_category);
     
     tc.complexity = opts.complexity;
     tc.fragments.clear();
@@ -1281,35 +1535,106 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
         tc.counter_inputs = counter_seeds;
     }
     
-    PatternResult result;
+    // Track seeds in batch_used_inputs_ for global uniqueness
+    for (const auto& s : tc.matching_inputs) {
+        batch_used_inputs_.insert(s);
+    }
+    for (const auto& s : tc.counter_inputs) {
+        batch_used_inputs_.insert(s);
+    }
     
-    std::map<std::string, std::string> edge_fragments;
-    if (use_edge_case && edge_ast) {
-        // Use edge-case AST directly
-        result.ast = edge_ast;
-        // Add fragment definitions from edge case
-        for (const auto& frag : edge.fragments) {
-            result.fragments[frag.first] = frag.second;
-        }
-    } else {
-        // Use InductiveBuilder as primary approach
-        InductiveBuilder::BuildResult ib_result = InductiveBuilder::buildInductive(
-            tc.matching_inputs, tc.counter_inputs, rng);
+    PatternResult result;
+    bool pattern_valid = false;
+    int max_retries = 5;
+    
+    // Retry loop for pattern generation
+    for (int retry = 0; retry < max_retries && !pattern_valid; retry++) {
+        result = PatternResult();
+        result.proof = "Retry " + std::to_string(retry + 1) + ":\n";
         
-        if (ib_result.success && ib_result.ast) {
-            result.ast = ib_result.ast;
-            result.fragments = ib_result.fragments;
-            result.pattern = serializePattern(ib_result.ast);
-            result.proof = ib_result.proof;
-        } else {
-            // Fallback to old approach if InductiveBuilder fails
-            PatternResult fallback = generateSeparatingPattern(tc.matching_inputs, tc.counter_inputs, tc.complexity, rng);
-            result = fallback;
-            // CRITICAL FIX: Strategies set result.pattern but NOT result.ast
-            // Parse the pattern string to AST so transformations can work on it
-            if (!result.pattern.empty() && !result.ast) {
-                result.ast = parsePatternToAST(result.pattern);
+        std::map<std::string, std::string> edge_fragments;
+        if (use_edge_case && edge_ast) {
+            // Use edge-case AST directly
+            result.ast = edge_ast;
+            // Add fragment definitions from edge case
+            for (const auto& frag : edge.fragments) {
+                result.fragments[frag.first] = frag.second;
             }
+        } else {
+            // Use InductiveBuilder as primary approach
+            InductiveBuilder::BuildResult ib_result = InductiveBuilder::buildInductive(
+                tc.matching_inputs, tc.counter_inputs, rng);
+            
+            if (ib_result.success && ib_result.ast) {
+                result.ast = ib_result.ast;
+                result.fragments = ib_result.fragments;
+                result.pattern = serializePattern(ib_result.ast);
+                result.proof += ib_result.proof;
+            } else {
+                // Fallback to old approach if InductiveBuilder fails
+                PatternResult fallback = generateSeparatingPattern(tc.matching_inputs, tc.counter_inputs, tc.complexity, rng);
+                result = fallback;
+                result.proof += fallback.proof;
+                // CRITICAL FIX: Strategies set result.pattern but NOT result.ast
+                // Parse the pattern string to AST so transformations can work on it
+                if (!result.pattern.empty() && !result.ast) {
+                    result.ast = parsePatternToAST(result.pattern);
+                }
+            }
+        }
+        
+        // Validate: check if all matched seeds match and no counter matches
+        // Uses the NFA-based PatternMatcher for accurate AST-level validation
+        if (!result.pattern.empty() && result.ast) {
+            bool pattern_validates = cachedValidate(
+                result.ast, tc.matching_inputs, tc.counter_inputs, tc.fragments);
+            
+            if (pattern_validates) {
+                pattern_valid = true;
+                result.proof += "  [PASS] Pattern validation passed (NFA matcher)\n";
+            } else {
+                // Get detailed failure explanation
+                std::string failure = PatternMatcher::explainFailure(
+                    result.ast, tc.matching_inputs, tc.counter_inputs, tc.fragments);
+                result.proof += "  " + failure;
+                if (retry < max_retries - 1) {
+                    result.proof += "  [RETRY] Pattern invalid, regenerating...\n";
+                    // Regenerate seeds for next attempt
+                    auto [new_matching, new_counters] = generateSeeds(tc.complexity, used_inputs);
+                    tc.matching_inputs = new_matching;
+                    tc.counter_inputs = new_counters;
+                    // Update batch tracking
+                    for (const auto& s : new_matching) {
+                        batch_used_inputs_.insert(s);
+                    }
+                    for (const auto& s : new_counters) {
+                        batch_used_inputs_.insert(s);
+                    }
+                }
+            }
+        }
+    }
+    
+    // If all retries failed, create trivial alternation as last resort
+    if (!pattern_valid) {
+        result.proof += "\n  [FALLBACK] All retries failed, creating trivial alternation\n";
+        std::vector<std::shared_ptr<PatternNode>> alts;
+        std::vector<std::string> all_counters;
+        for (const auto& c : tc.counter_inputs) {
+            all_counters.push_back(c);
+        }
+        for (const auto& m : tc.matching_inputs) {
+            alts.push_back(PatternNode::createLiteral(m, {m}, all_counters));
+        }
+        if (!alts.empty()) {
+            if (alts.size() == 1) {
+                result.ast = alts[0];
+            } else {
+                result.ast = PatternNode::createAlternation(alts, tc.matching_inputs, all_counters);
+            }
+            result.pattern = serializePattern(result.ast);
+            result.fragments.clear();
+            pattern_valid = true;
         }
     }
 
@@ -1390,8 +1715,8 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
                     continue;
                 }
                 
-                // Use recursive matching function that handles nested patterns
-                bool found_match = wouldInputMatchPattern(input, after_factor);
+                // Use NFA-based matcher for accurate pattern matching
+                bool found_match = PatternMatcher::matches(result.ast, input);
                 
                 if (found_match) {
                     result.proof += "      ✓ '" + input + "': matches pattern\n";
@@ -1484,16 +1809,36 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     tc.proof = result.proof;
     
     // COMPREHENSIVE FIX: Ensure all FRAGMENT_REF nodes in AST have definitions
-    // This validates and fixes any missing fragment definitions from transformations
+    // Derives actual definitions from the AST node's matched_seeds when possible
     if (result.ast && !tc.pattern.empty()) {
         std::set<std::string> ast_frags;
         collectFragmentNames(result.ast, ast_frags);
         for (const auto& frag_name : ast_frags) {
             if (tc.fragments.find(frag_name) == tc.fragments.end()) {
-                // This should never happen - indicates a bug upstream
-                fprintf(stderr, "ERROR: Fragment '%s' referenced in AST but has no definition - adding placeholder\n", 
-                        frag_name.c_str());
-                tc.fragments[frag_name] = ".";
+                // Search the AST for this fragment ref to get its matched_seeds
+                std::function<std::vector<std::string>(std::shared_ptr<PatternNode>)> findSeeds;
+                findSeeds = [&](std::shared_ptr<PatternNode> n) -> std::vector<std::string> {
+                    if (!n) return {};
+                    if (n->type == PatternType::FRAGMENT_REF && n->fragment_name == frag_name) {
+                        return n->matched_seeds;
+                    }
+                    for (auto& child : n->children) {
+                        auto s = findSeeds(child);
+                        if (!s.empty()) return s;
+                    }
+                    if (n->quantified) return findSeeds(n->quantified);
+                    return {};
+                };
+                auto seeds = findSeeds(result.ast);
+                if (!seeds.empty()) {
+                    bool all_same = true;
+                    for (const auto& s : seeds) {
+                        if (s != seeds[0]) { all_same = false; break; }
+                    }
+                    tc.fragments[frag_name] = all_same ? seeds[0] : std::string(1, seeds[0].empty() ? 'Z' : seeds[0][0]);
+                } else {
+                    tc.fragments[frag_name] = "Z";
+                }
             }
         }
     }
@@ -1812,6 +2157,8 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
     
     std::cout << "1. Building DFA...\n";
     std::string dfa_file = output_dir + "/test.dfa";
+    // Remove existing DFA file to avoid "already exists" error
+    unlink(dfa_file.c_str());
     std::string dfa_cmd = tools_dir + "/cdfatool compile " + abs_pattern + " -o " + dfa_file + " 2>&1";
     int result = system(dfa_cmd.c_str());
     if (result != 0) {

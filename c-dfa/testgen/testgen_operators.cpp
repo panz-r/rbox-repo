@@ -1,5 +1,6 @@
 #include "testgen_operators.h"
 #include "pattern_serializer.h"
+#include "pattern_matcher.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -89,13 +90,49 @@ static bool hasAllFragmentDefs(std::shared_ptr<PatternNode> node, const std::map
     return true;
 }
 
-// Ensure all FRAGMENT_REF nodes in AST have definitions in fragments map
-// Adds placeholder definitions for any missing fragment refs
+// Ensure all FRAGMENT_REF nodes in AST have definitions in fragments map.
+// Derives actual definitions from matched_seeds when possible, falls back
+// to a union-of-chars definition when seeds aren't available.
 static void ensureFragmentDefs(std::shared_ptr<PatternNode> node, std::map<std::string, std::string>& fragments) {
     if (!node) return;
     if (node->type == PatternType::FRAGMENT_REF) {
         if (fragments.find(node->fragment_name) == fragments.end()) {
-            fragments[node->fragment_name] = ".";
+            // Try to derive definition from matched_seeds
+            if (!node->matched_seeds.empty()) {
+                // Use common prefix of seeds as the fragment definition
+                std::string def = node->matched_seeds[0];
+                for (size_t i = 1; i < node->matched_seeds.size() && !def.empty(); i++) {
+                    size_t j = 0;
+                    while (j < node->matched_seeds[i].size() && j < def.size() &&
+                           node->matched_seeds[i][j] == def[j]) {
+                        j++;
+                    }
+                    def = def.substr(0, j);
+                }
+                // If all seeds are identical, use that as definition
+                bool all_same = true;
+                for (const auto& s : node->matched_seeds) {
+                    if (s != node->matched_seeds[0]) { all_same = false; break; }
+                }
+                if (all_same) {
+                    fragments[node->fragment_name] = node->matched_seeds[0];
+                } else if (!def.empty()) {
+                    // Common prefix as fallback
+                    fragments[node->fragment_name] = def;
+                } else {
+                    // Union of unique chars from all seeds
+                    std::set<char> chars;
+                    for (const auto& s : node->matched_seeds) {
+                        for (char c : s) chars.insert(c);
+                    }
+                    std::string char_class;
+                    for (char c : chars) char_class += c;
+                    fragments[node->fragment_name] = char_class;
+                }
+            } else {
+                // No seeds available - use a single char that's unlikely to match counters
+                fragments[node->fragment_name] = "Z";
+            }
         }
     }
     if (node->quantified) {
@@ -106,101 +143,8 @@ static void ensureFragmentDefs(std::shared_ptr<PatternNode> node, std::map<std::
     }
 }
 
-static bool patternMatchesPlus(const std::string& content, const std::string& str) {
-    if (str.empty() || content.empty()) return false;
-    size_t content_len = content.size();
-    if (str.size() % content_len != 0) return false;
-    for (size_t i = 0; i < str.size(); i += content_len) {
-        if (str.substr(i, content_len) != content) return false;
-    }
-    return true;
-}
-
-static bool patternMatchesStar(const std::string& content, const std::string& str) {
-    if (content.empty()) return str.empty();
-    if (str.empty()) return true;
-    size_t content_len = content.size();
-    if (str.size() % content_len != 0) return false;
-    for (size_t i = 0; i < str.size(); i += content_len) {
-        if (str.substr(i, content_len) != content) return false;
-    }
-    return true;
-}
-
-static bool wouldMatchPattern(const std::string& input, std::shared_ptr<PatternNode> pattern) {
-    if (!pattern) return false;
-    if (input.empty()) return false;
-    
-    switch (pattern->type) {
-        case PatternType::LITERAL:
-            return input == pattern->value;
-        case PatternType::PLUS_QUANTIFIER:
-            if (pattern->quantified) {
-                if (pattern->quantified->type == PatternType::LITERAL) {
-                    return patternMatchesPlus(pattern->quantified->value, input);
-                }
-                if (pattern->quantified->type == PatternType::ALTERNATION) {
-                    for (auto& child : pattern->quantified->children) {
-                        if (child && child->type == PatternType::LITERAL) {
-                            if (patternMatchesPlus(child->value, input)) return true;
-                        }
-                    }
-                    return false;
-                }
-                return wouldMatchPattern(input, pattern->quantified);
-            }
-            return !input.empty();
-        case PatternType::STAR_QUANTIFIER:
-            if (pattern->quantified) {
-                if (pattern->quantified->type == PatternType::LITERAL) {
-                    return patternMatchesStar(pattern->quantified->value, input);
-                }
-                if (pattern->quantified->type == PatternType::ALTERNATION) {
-                    for (auto& child : pattern->quantified->children) {
-                        if (child && child->type == PatternType::LITERAL) {
-                            if (patternMatchesStar(child->value, input)) return true;
-                        }
-                    }
-                    return false;
-                }
-            }
-            return true;
-        case PatternType::OPTIONAL:
-            if (pattern->quantified) {
-                if (pattern->quantified->type == PatternType::LITERAL) {
-                    return input.empty() || input == pattern->quantified->value;
-                }
-                return input.empty() || wouldMatchPattern(input, pattern->quantified);
-            }
-            return true;
-        case PatternType::ALTERNATION:
-            for (auto& child : pattern->children) {
-                if (wouldMatchPattern(input, child)) return true;
-            }
-            return false;
-        case PatternType::SEQUENCE: {
-            if (pattern->children.empty()) return false;
-            std::string remaining = input;
-            for (size_t i = 0; i < pattern->children.size(); ++i) {
-                bool matched = false;
-                for (size_t len = 0; len <= remaining.size(); ++len) {
-                    std::string prefix = remaining.substr(0, len);
-                    if (wouldMatchPattern(prefix, pattern->children[i])) {
-                        remaining = remaining.substr(len);
-                        matched = true;
-                        break;
-                    }
-                }
-                if (!matched) return false;
-            }
-            return remaining.empty();
-        }
-        case PatternType::FRAGMENT_REF:
-            return false;
-        default:
-            return false;
-    }
-}
+// Pattern matching is now handled by PatternMatcher (pattern_matcher.h)
+// The old wouldMatchPattern and patternMatchesPlus/Star helpers are removed.
 
 static std::string randomAlpha(int len, std::mt19937& rng) {
     static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -363,7 +307,7 @@ CoordinatedMutationResult AddAlternativeCoordOp::apply(const TestCaseCore& origi
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -418,7 +362,7 @@ CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& origi
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("matching")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 result.mutated_tc.inputs.add(node.value, {"matching"});
             }
         }
@@ -426,7 +370,7 @@ CoordinatedMutationResult NestQuantifierCoordOp::apply(const TestCaseCore& origi
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -554,7 +498,7 @@ CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& origin
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("matching")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 result.mutated_tc.inputs.add(node.value, {"matching"});
             }
         }
@@ -562,7 +506,7 @@ CoordinatedMutationResult DeepenNestingCoordOp::apply(const TestCaseCore& origin
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -613,8 +557,6 @@ struct CutPosition {
     std::vector<std::string> pre_counters;
     std::vector<std::string> post_counters;
 };
-
-static bool wouldMatchPattern(const std::string& input, std::shared_ptr<PatternNode> pattern);
 
 static std::string serializeAstSimple(std::shared_ptr<PatternNode> node) {
     if (!node) return "";
@@ -1116,7 +1058,7 @@ CoordinatedMutationResult ExtendAlternationCoordOp::apply(const TestCaseCore& or
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -1173,7 +1115,7 @@ CoordinatedMutationResult RemoveQuantifierCoordOp::apply(const TestCaseCore& ori
                 int pos = std::uniform_int_distribution<int>(0, node.value.size() - 1)(rng);
                 mutated_val = node.value.substr(0, pos) + node.value.substr(pos + 1);
             }
-            if (wouldMatchPattern(mutated_val, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, mutated_val)) {
                 result.mutated_tc.inputs.add(mutated_val, {"matching"});
             } else {
                 result.mutated_tc.inputs.add(node.value, {"matching"});
@@ -1183,7 +1125,7 @@ CoordinatedMutationResult RemoveQuantifierCoordOp::apply(const TestCaseCore& ori
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -1247,7 +1189,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         for (auto& node : original.inputs.nodes) {
             if (node.categories.count("matching")) {
-                if (wouldMatchPattern(node.value, mutated_ast)) {
+                if (PatternMatcher::matches(mutated_ast, node.value)) {
                     result.mutated_tc.inputs.add(node.value, {"matching"});
                 }
             }
@@ -1255,7 +1197,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         for (auto& node : original.inputs.nodes) {
             if (node.categories.count("counter")) {
-                if (wouldMatchPattern(node.value, mutated_ast)) {
+                if (PatternMatcher::matches(mutated_ast, node.value)) {
                     return result;
                 }
                 result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -1309,7 +1251,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         for (auto& node : original.inputs.nodes) {
             if (node.categories.count("matching")) {
-                if (wouldMatchPattern(node.value, mutated_ast)) {
+                if (PatternMatcher::matches(mutated_ast, node.value)) {
                     result.mutated_tc.inputs.add(node.value, {"matching"});
                 }
             }
@@ -1317,7 +1259,7 @@ CoordinatedMutationResult AlterAlternativeCoordOp::apply(const TestCaseCore& ori
         
         for (auto& node : original.inputs.nodes) {
             if (node.categories.count("counter")) {
-                if (wouldMatchPattern(node.value, mutated_ast)) {
+                if (PatternMatcher::matches(mutated_ast, node.value)) {
                     return result;
                 }
                 result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -1397,7 +1339,7 @@ CoordinatedMutationResult FlattenQuantifiedAltCoordOp::apply(const TestCaseCore&
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -1467,7 +1409,7 @@ CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& or
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("matching")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 result.mutated_tc.inputs.add(node.value, {"matching"});
             }
         }
@@ -1475,7 +1417,7 @@ CoordinatedMutationResult UnwrapFragmentRefCoordOp::apply(const TestCaseCore& or
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -1542,7 +1484,7 @@ CoordinatedMutationResult SequenceToAlternationCoordOp::apply(const TestCaseCore
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -1606,7 +1548,7 @@ CoordinatedMutationResult QuantifyAlternationCoordOp::apply(const TestCaseCore& 
     
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
-            if (wouldMatchPattern(node.value, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
                 return result;
             }
             result.mutated_tc.inputs.add(node.value, {"counter"});
@@ -1676,7 +1618,7 @@ CoordinatedMutationResult PrefixSuffixAlternationCoordOp::apply(const TestCaseCo
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("counter")) {
             std::string with_affix = prefix + node.value + suffix;
-            if (wouldMatchPattern(with_affix, mutated_ast)) {
+            if (PatternMatcher::matches(mutated_ast, with_affix)) {
                 return result;
             }
             result.mutated_tc.inputs.add(with_affix, {"counter"});
@@ -1740,7 +1682,19 @@ std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(
         if (result.valid) {
             if (isValidPattern(result.mutated_tc.ast) && 
                 hasAllFragmentDefs(result.mutated_tc.ast, result.mutated_tc.fragments)) {
-                all_results.push_back(result);
+                // Validate with PatternMatcher: ensure all matching inputs match
+                // and no counter inputs match the mutated AST
+                std::vector<std::string> match_inputs;
+                std::vector<std::string> counter_inputs;
+                for (auto& node : result.mutated_tc.inputs.nodes) {
+                    if (node.categories.count("matching")) match_inputs.push_back(node.value);
+                    else if (node.categories.count("counter")) counter_inputs.push_back(node.value);
+                }
+                if (PatternMatcher::validateWithFragments(
+                        result.mutated_tc.ast, match_inputs, counter_inputs,
+                        result.mutated_tc.fragments)) {
+                    all_results.push_back(result);
+                }
             }
         }
     }

@@ -69,15 +69,37 @@ TestCase TestCaseCore::toOldTestCase(int test_id) const {
     }
     
     // DEFENSIVE FIX: Ensure all FRAGMENT_REF nodes in AST have definitions
-    // This catches issues where mutations create FRAGMENT_REF nodes without definitions
+    // Derives actual definitions from the AST node's matched_seeds when possible
     if (ast) {
         std::set<std::string> ast_frags;
         collectFragmentNames(ast, ast_frags);
         for (const auto& frag_name : ast_frags) {
             if (tc.fragments.find(frag_name) == tc.fragments.end()) {
-                fprintf(stderr, "WARNING: Fragment '%s' in mutated AST but has no definition, adding placeholder\n",
-                        frag_name.c_str());
-                tc.fragments[frag_name] = ".";
+                // Search the AST for this fragment ref to get its matched_seeds
+                std::function<std::vector<std::string>(std::shared_ptr<PatternNode>)> findSeeds;
+                findSeeds = [&](std::shared_ptr<PatternNode> n) -> std::vector<std::string> {
+                    if (!n) return {};
+                    if (n->type == PatternType::FRAGMENT_REF && n->fragment_name == frag_name) {
+                        return n->matched_seeds;
+                    }
+                    for (auto& child : n->children) {
+                        auto s = findSeeds(child);
+                        if (!s.empty()) return s;
+                    }
+                    if (n->quantified) return findSeeds(n->quantified);
+                    return {};
+                };
+                auto seeds = findSeeds(ast);
+                if (!seeds.empty()) {
+                    // All seeds the same -> use as literal definition
+                    bool all_same = true;
+                    for (const auto& s : seeds) {
+                        if (s != seeds[0]) { all_same = false; break; }
+                    }
+                    tc.fragments[frag_name] = all_same ? seeds[0] : std::string(1, seeds[0].empty() ? 'Z' : seeds[0][0]);
+                } else {
+                    tc.fragments[frag_name] = "Z";
+                }
             }
         }
     }

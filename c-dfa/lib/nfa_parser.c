@@ -422,23 +422,9 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
                 return finalized_star;
             }
 
-            // Check for double parenthesis ((...)) - not allowed UNLESS followed by quantifier
-            // This allows ((group))+ patterns which are valid quantified groups
-            if (pattern[*pos + 1] == '(') {
-                size_t j = *pos + 2;
-                while (pattern[j] != '\0' && !(pattern[j] == ')' && pattern[j + 1] == ')')) {
-                    j++;
-                }
-                if (pattern[j] == ')' && pattern[j + 1] == ')') {
-                    char next = pattern[j + 2];
-                    if (next != '+' && next != '*' && next != '?') {
-                        nfa_parser_set_error(ctx, PARSE_ERROR_SYNTAX, *pos, "Double parentheses ((...)) are not allowed. Use [[name]] for fragment references.");
-                        return -1;
-                    }
-                }
-            }
-
             // Check for fragment reference [[name::subname]]
+            // Note: double parentheses ((...)) are allowed for nested grouping.
+            // Fragment references use [[name]] syntax which is checked below.
             if (pattern[*pos + 1] == '[') {
                 size_t j = *pos + 2;
                 while (pattern[j] != '\0' && !(pattern[j] == ']' && pattern[j + 1] == ']')) {

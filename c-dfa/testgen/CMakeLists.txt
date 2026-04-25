@@ -14,6 +14,7 @@ set(TESTGEN_SOURCES
     testgen_core.cpp
     testgen_operators.cpp
     testgen_mutation_tree.cpp
+    pattern_matcher.cpp
 )
 
 # Library version for linking with other targets
@@ -22,7 +23,7 @@ target_include_directories(testgen_lib PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
 )
-target_link_libraries(testgen_lib PUBLIC pthread)
+target_link_libraries(testgen_lib PUBLIC pthread readonlybox_dfa)
 
 # Main testgen executable
 add_executable(testgen main.cpp)
@@ -37,6 +38,8 @@ add_executable(testgen_test
     testgen_expectation_test.cpp
     testgen_inductive_builder_test.cpp
     testgen_serializer_test.cpp
+    testgen_pattern_matcher_test.cpp
+    testgen_pattern_matcher_fuzz.cpp
 )
 target_link_libraries(testgen_test PRIVATE testgen_lib)
 

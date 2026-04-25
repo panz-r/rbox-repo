@@ -83,9 +83,14 @@ std::string serializePattern(std::shared_ptr<PatternNode> node) {
             }
 
             std::string result = "(";
+            bool first = true;
             for (size_t i = 0; i < node->children.size(); i++) {
-                if (i > 0) result += "|";
-                result += serializePattern(node->children[i]);
+                std::string child_str = serializePattern(node->children[i]);
+                // Skip empty alternatives - they're invalid in the DSL
+                if (child_str.empty()) continue;
+                if (!first) result += "|";
+                result += child_str;
+                first = false;
             }
             result += ")";
             return result;
