@@ -1813,11 +1813,202 @@ CoordinatedMutationResult SwapAlternativesCoordOp::apply(const TestCaseCore& ori
     Expectation e;
     e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
     e.description = "Swapped alternatives at positions " + std::to_string(i) + " and " + std::to_string(j);
+    e.expected_match = "yes";
     e.meta["mutation"] = "SWAP_ALTERNATIVES_COORD";
+    // Set input to a surviving matching input
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            e.input = node.value;
+            break;
+        }
+    }
     result.mutated_tc.expectations.add(e);
 
     result.valid = true;
     result.proof = "Swapped alternative order";
+    return result;
+}
+
+CoordinatedMutationResult InlineFragmentCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast || original.fragments.empty()) return result;
+
+    auto mutated_ast = copyNode(original.ast);
+    if (!mutated_ast) return result;
+
+    // Find a fragment reference node and inline its definition
+    std::function<bool(std::shared_ptr<PatternNode>)> inline_fragment =
+        [&](std::shared_ptr<PatternNode> node) -> bool {
+        if (!node) return false;
+        if (node->type == PatternType::FRAGMENT_REF && !node->fragment_name.empty()) {
+            auto it = original.fragments.find(node->fragment_name);
+            if (it != original.fragments.end()) {
+                // Parse the fragment definition into AST nodes
+                std::string frag_def = it->second;
+                std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+                std::vector<std::string> alt_seeds;
+
+                // Split by '|' to get alternatives
+                size_t start = 0;
+                while (start < frag_def.size()) {
+                    size_t pos = frag_def.find('|', start);
+                    if (pos == std::string::npos) pos = frag_def.size();
+                    std::string alt = frag_def.substr(start, pos - start);
+                    if (!alt.empty()) {
+                        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+                        alt_seeds.push_back(alt);
+                    }
+                    if (pos >= frag_def.size()) break;
+                    start = pos + 1;
+                }
+
+                if (alt_nodes.size() == 1) {
+                    // Single alternative: replace with literal
+                    node->type = PatternType::LITERAL;
+                    node->value = frag_def;
+                    node->fragment_name.clear();
+                    node->children.clear();
+                } else if (alt_nodes.size() > 1) {
+                    // Multiple alternatives: replace with alternation
+                    node->type = PatternType::ALTERNATION;
+                    node->value.clear();
+                    node->fragment_name.clear();
+                    node->children = alt_nodes;
+                }
+                return true;
+            }
+        }
+        if (node->quantified) inline_fragment(node->quantified);
+        for (auto& child : node->children) inline_fragment(child);
+        return false;
+    };
+
+    inline_fragment(mutated_ast);
+
+    if (!isValidPattern(mutated_ast)) return result;
+
+    // Collect fragment refs still present
+    if (containsFragmentRef(mutated_ast)) return result;
+
+    // Validate matching inputs still match (fragment inlining preserves semantics)
+    std::vector<std::string> match_inputs, counter_inputs;
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) match_inputs.push_back(node.value);
+        else if (node.categories.count("counter")) counter_inputs.push_back(node.value);
+    }
+
+    if (!PatternMatcher::validateWithFragments(mutated_ast, match_inputs, counter_inputs, {})) {
+        return result;
+    }
+
+    // Inputs unchanged since inlining preserves semantics
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        } else if (node.categories.count("counter")) {
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        } else {
+            result.mutated_tc.inputs.add(node.value, {});
+        }
+    }
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | INLINE_FRAGMENT";
+
+    Expectation e;
+    e.type = ExpectationType::MATCH_EXACT;
+    e.description = "Inlined fragment definition into pattern";
+    e.expected_match = "yes";
+    e.meta["mutation"] = "INLINE_FRAGMENT";
+    // Set input to a surviving matching input
+    for (const auto& m : match_inputs) {
+        e.input = m;
+        break;
+    }
+    result.mutated_tc.expectations.add(e);
+
+    result.valid = true;
+    result.proof = "Inlined fragment definition";
+    return result;
+}
+
+CoordinatedMutationResult SwapSequenceChildrenCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast) return result;
+
+    auto mutated_ast = copyNode(original.ast);
+    if (!mutated_ast) return result;
+
+    // Find a sequence node with at least 2 children
+    std::function<bool(std::shared_ptr<PatternNode>)> find_and_swap =
+        [&](std::shared_ptr<PatternNode> node) -> bool {
+        if (!node) return false;
+        if (node->type == PatternType::SEQUENCE && node->children.size() >= 2) {
+            // Pick two adjacent children and swap them
+            size_t i = std::uniform_int_distribution<size_t>(0, node->children.size() - 2)(rng);
+            std::swap(node->children[i], node->children[i + 1]);
+            return true;
+        }
+        if (node->quantified) { if (find_and_swap(node->quantified)) return true; }
+        for (auto& child : node->children) { if (find_and_swap(child)) return true; }
+        return false;
+    };
+
+    if (!find_and_swap(mutated_ast)) return result;
+
+    if (!isValidPattern(mutated_ast)) return result;
+
+    // Re-check matching inputs via PatternMatcher — some may no longer match
+    std::vector<std::string> new_match_inputs, new_counter_inputs;
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
+                new_match_inputs.push_back(node.value);
+            }
+        } else if (node.categories.count("counter")) {
+            new_counter_inputs.push_back(node.value);
+        }
+    }
+
+    // Reject if fewer than 1 matching input survives
+    if (new_match_inputs.empty()) return result;
+
+    // Counters should still not match
+    for (const auto& c : new_counter_inputs) {
+        if (PatternMatcher::matches(mutated_ast, c)) return result;
+    }
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | SWAP_SEQ_CHILDREN";
+
+    for (const auto& m : new_match_inputs) {
+        result.mutated_tc.inputs.add(m, {"matching"});
+    }
+    for (const auto& c : new_counter_inputs) {
+        result.mutated_tc.inputs.add(c, {"counter"});
+    }
+
+    Expectation e;
+    e.type = ExpectationType::MATCH_EXACT;
+    e.description = "Swapped adjacent children in a sequence";
+    e.expected_match = "yes";
+    e.meta["mutation"] = "SWAP_SEQUENCE_CHILDREN";
+    e.meta["surviving_inputs"] = std::to_string(new_match_inputs.size());
+    // Set input to a surviving matching input
+    for (const auto& m : new_match_inputs) {
+        e.input = m;
+        break;
+    }
+    result.mutated_tc.expectations.add(e);
+
+    result.valid = true;
+    result.proof = "Swapped adjacent sequence children";
     return result;
 }
 
@@ -1836,6 +2027,8 @@ CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<ExtractFragmentCoordOp>());
     operators.push_back(std::make_unique<RedundantGroupCoordOp>());
     operators.push_back(std::make_unique<SwapAlternativesCoordOp>());
+    operators.push_back(std::make_unique<InlineFragmentCoordOp>());
+    operators.push_back(std::make_unique<SwapSequenceChildrenCoordOp>());
 }
 
 std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(

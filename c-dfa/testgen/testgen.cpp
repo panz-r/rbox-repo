@@ -613,6 +613,34 @@ static void collectFragmentNames(std::shared_ptr<PatternNode> node, std::set<std
     }
 }
 
+// Filter matched_seeds on every AST node to remove inputs that no longer
+// match the full pattern. This is needed because factorization/rewrites can
+// change the language, and stale seeds in inner nodes cause the expectation
+// generator to emit expectations for inputs that don't actually match.
+static void filterMatchedSeedsRecursive(std::shared_ptr<PatternNode> node,
+                                         const std::set<std::string>& valid_inputs) {
+    if (!node) return;
+    
+    // Filter this node's matched_seeds
+    if (!node->matched_seeds.empty()) {
+        std::vector<std::string> filtered;
+        for (const auto& s : node->matched_seeds) {
+            if (valid_inputs.count(s)) {
+                filtered.push_back(s);
+            }
+        }
+        node->matched_seeds = std::move(filtered);
+    }
+    
+    // Recurse
+    if (node->quantified) {
+        filterMatchedSeedsRecursive(node->quantified, valid_inputs);
+    }
+    for (auto& child : node->children) {
+        filterMatchedSeedsRecursive(child, valid_inputs);
+    }
+}
+
 
 
 // Parse pattern string to AST (simple parser for basic patterns)
@@ -1201,8 +1229,26 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
         int target_len = min_len + std::uniform_int_distribution<int>(0, max_len - min_len)(rng);
         
         // Determine how to build this string:
-        // 0 = pure random, 1 = repeat base_unit, 2 = repeat prefix, 3 = prefix + repeat
-        int build_type = std::uniform_int_distribution<int>(0, 3)(rng);
+        // 0 = pure random, 1 = repeat base_unit, 2 = repeat prefix,
+        // 3 = prefix + repeat, 4 = common suffix + varying prefix,
+        // 5 = overlapping fragments (shared inner substring), 6 = near-miss source
+        int build_type;
+        double r_type = std::uniform_real_distribution<double>(0.0, 1.0)(rng);
+        if (r_type < 0.10) {
+            build_type = 0;  // Pure random (10%)
+        } else if (r_type < 0.35) {
+            build_type = 1;  // Repeat base unit (25%)
+        } else if (r_type < 0.55) {
+            build_type = 2;  // Repeat prefix (20%)
+        } else if (r_type < 0.70) {
+            build_type = 3;  // Prefix + autocorrelation (15%)
+        } else if (r_type < 0.85) {
+            build_type = 4;  // Common suffix + varying prefix (15%)
+        } else if (r_type < 0.97) {
+            build_type = 5;  // Overlapping fragments (12%)
+        } else {
+            build_type = 6;  // Near-miss (3%)
+        }
         
         std::string s;
         if (build_type == 0) {
@@ -1223,7 +1269,7 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
                 s += prefix;
             }
             s = s.substr(0, target_len);
-        } else {
+        } else if (build_type == 3) {
             // Prefix + variation: start with some chars from base, then vary
             int prefix_len = std::uniform_int_distribution<int>(1, std::min(3, target_len-1))(rng);
             s = base_unit.substr(0, prefix_len);
@@ -1249,6 +1295,50 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
                     s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
                 }
             }
+        } else if (build_type == 4) {
+            // Common suffix + varying prefix: picks a suffix, then prepends varying prefixes.
+            // Directly tests the suffix-distinguishing strategy.
+            int suffix_len = 2 + std::uniform_int_distribution<int>(0, 1)(rng);
+            std::string suffix;
+            for (int j = 0; j < suffix_len; j++) {
+                suffix += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            }
+            // Build prefix of length target_len - suffix_len
+            int prefix_len = target_len - suffix_len;
+            for (int j = 0; j < prefix_len; j++) {
+                s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            }
+            s += suffix;
+        } else if (build_type == 5) {
+            // Overlapping fragments: shared inner substring with varying prefix and suffix.
+            // Tests substring-split strategy.
+            int inner_len = 2 + std::uniform_int_distribution<int>(0, 1)(rng);
+            std::string inner;
+            for (int j = 0; j < inner_len; j++) {
+                inner += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            }
+            // Varying prefix
+            int pre_len = std::uniform_int_distribution<int>(1, std::max(1, target_len - inner_len - 1))(rng);
+            for (int j = 0; j < pre_len; j++) {
+                s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            }
+            s += inner;
+            // Varying suffix to reach target_len
+            while ((int)s.size() < target_len) {
+                s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            }
+            s = s.substr(0, target_len);
+        } else {
+            // build_type == 6: near-miss source (starts with a slightly wrong pattern
+            // that may be corrected by the builder; this seed will itself be matching
+            // but its variants generated later may be near-counters)
+            int prefix_len = std::uniform_int_distribution<int>(1, std::max(1, target_len - 1))(rng);
+            for (int j = 0; j < prefix_len; j++) {
+                s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            }
+            // Add one extra random char
+            s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            s = s.substr(0, target_len);
         }
         
         if (used.insert(s).second) {
@@ -1288,9 +1378,10 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
         std::string s;
         int len = min_len + std::uniform_int_distribution<int>(0, max_len - min_len)(rng);
         
-        // For counters, use completely different approach:
-        // Use a different character set or reverse patterns
-        int counter_type = std::uniform_int_distribution<int>(0, 2)(rng);
+        // For counters, use different approaches including near-miss generation:
+        // 0 = different charset, 1 = modified matching seed, 2 = pure random,
+        // 3 = single-char swap (precise near-miss)
+        int counter_type = std::uniform_int_distribution<int>(0, 3)(rng);
         
         if (counter_type == 0) {
             // Different character set (e.g., only lowercase when matching uses mixed)
@@ -1321,10 +1412,35 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
                     s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
                 }
             }
-        } else {
+        } else if (counter_type == 2) {
             // Pure random (high entropy - opposite of matching)
             for (int j = 0; j < len; j++) {
                 s += randChar();
+            }
+        } else {
+            // counter_type == 3: single-char swap near-miss.
+            // Take a matching seed and swap exactly one character at a random position.
+            // This tests that the distinguishing strategy is precise (one char matters).
+            if (!matching_seeds.empty()) {
+                const std::string& src = matching_seeds[std::uniform_int_distribution<int>(0, matching_seeds.size()-1)(rng)];
+                if (!src.empty()) {
+                    s = src;
+                    int pos = std::uniform_int_distribution<int>(0, (int)s.size() - 1)(rng);
+                    char original = s[pos];
+                    char replacement;
+                    do {
+                        replacement = alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+                    } while (replacement == original);
+                    s[pos] = replacement;
+                } else {
+                    for (int j = 0; j < len; j++) {
+                        s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+                    }
+                }
+            } else {
+                for (int j = 0; j < len; j++) {
+                    s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+                }
             }
         }
         
@@ -1967,6 +2083,10 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
             result.proof += "  [POST-VALIDATION] Filtered " + 
                           std::to_string(tc.matching_inputs.size() - verified_matching.size()) +
                           " inputs that no longer match after transformations\n";
+            // Also prune stale seeds from the AST so the expectation generator
+            // only produces expectations for inputs that actually match.
+            std::set<std::string> valid_set(verified_matching.begin(), verified_matching.end());
+            filterMatchedSeedsRecursive(result.ast, valid_set);
         }
         tc.matching_inputs = verified_matching;
     }

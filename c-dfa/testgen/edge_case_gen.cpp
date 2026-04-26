@@ -428,6 +428,93 @@ static EdgeCaseResult createFragmentCycleEdge(std::mt19937& rng) {
     return result;
 }
 
+static EdgeCaseResult createOverlappingAlternationEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::OVERLAPPING_ALTERNATION;
+    
+    // Generate a product structure: prefixes × suffixes
+    // Example: {ab, cd} × {X, Y, Z} = {abX, abY, abZ, cdX, cdY, cdZ}
+    // The inductive builder should discover (ab|cd)(X|Y|Z) via prefix/suffix split.
+    std::vector<std::string> prefixes;
+    std::vector<std::string> suffixes;
+    
+    // 2-3 distinct prefixes
+    int num_prefixes = 2 + std::uniform_int_distribution<int>(0, 1)(rng);
+    // 2-3 distinct suffixes
+    int num_suffixes = 2 + std::uniform_int_distribution<int>(0, 1)(rng);
+    
+    // Generate unique prefixes
+    std::set<std::string> seen_prefixes;
+    while ((int)prefixes.size() < num_prefixes) {
+        std::string p = randomAlphaEdge(2, rng);
+        if (seen_prefixes.insert(p).second) {
+            prefixes.push_back(p);
+        }
+    }
+    
+    // Generate unique suffixes
+    std::set<std::string> seen_suffixes;
+    while ((int)suffixes.size() < num_suffixes) {
+        std::string s = randomAlphaEdge(2, rng);
+        if (seen_suffixes.insert(s).second) {
+            suffixes.push_back(s);
+        }
+    }
+    
+    // Generate matching seeds as the product
+    for (const auto& p : prefixes) {
+        for (const auto& s : suffixes) {
+            result.matching_seeds.push_back(p + s);
+        }
+    }
+    
+    // Generate counters:
+    // 1. Wrong suffix for known prefix (e.g., "abW" where only abX, abY, abZ exist)
+    if (!prefixes.empty() && !suffixes.empty()) {
+        std::string wrong_suffix = randomAlphaEdge(2, rng);
+        while (std::find(suffixes.begin(), suffixes.end(), wrong_suffix) != suffixes.end()) {
+            wrong_suffix = randomAlphaEdge(2, rng);
+        }
+        result.counter_seeds.push_back(prefixes[0] + wrong_suffix);
+    }
+    
+    // 2. Wrong prefix for known suffix (e.g., "efX" where only abX, cdX exist)
+    if (!prefixes.empty() && !suffixes.empty()) {
+        std::string wrong_prefix = randomAlphaEdge(2, rng);
+        while (std::find(prefixes.begin(), prefixes.end(), wrong_prefix) != prefixes.end()) {
+            wrong_prefix = randomAlphaEdge(2, rng);
+        }
+        result.counter_seeds.push_back(wrong_prefix + suffixes[0]);
+    }
+    
+    // 3. Mix of valid prefix and suffix but product not in set (longer string)
+    if (!prefixes.empty() && !suffixes.empty()) {
+        result.counter_seeds.push_back(prefixes[0] + randomAlphaEdge(3, rng));
+    }
+    
+    // 4. Random counters of varying lengths
+    for (int i = 0; i < 3; i++) {
+        std::string c = randomAlphaEdge(3 + std::uniform_int_distribution<int>(0, 2)(rng), rng);
+        result.counter_seeds.push_back(c);
+    }
+    
+    result.proof = "EDGE_CASE: OVERLAPPING_ALTERNATION\n";
+    result.proof += "  Prefixes: {";
+    for (size_t i = 0; i < prefixes.size(); i++) {
+        if (i > 0) result.proof += ", ";
+        result.proof += prefixes[i];
+    }
+    result.proof += "}  Suffixes: {";
+    for (size_t i = 0; i < suffixes.size(); i++) {
+        if (i > 0) result.proof += ", ";
+        result.proof += suffixes[i];
+    }
+    result.proof += "}\n";
+    result.proof += "  Matching seeds: " + std::to_string(result.matching_seeds.size()) + " products\n";
+    result.proof += "  Rationale: Tests prefix/suffix factorization — builder should find (prefix1|prefix2)(suffix1|suffix2)\n";
+    return result;
+}
+
 EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
     switch (type) {
         case EdgeCaseType::RANGE_BOUNDARY:
@@ -450,6 +537,8 @@ EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
             return createLongAlternationEdge(rng);
         case EdgeCaseType::FRAGMENT_CYCLE:
             return createFragmentCycleEdge(rng);
+        case EdgeCaseType::OVERLAPPING_ALTERNATION:
+            return createOverlappingAlternationEdge(rng);
         default:
             return createPartialMatchEdge(rng);
     }

@@ -4,15 +4,19 @@
 // Strategies (in order of preference):
 // 1. Distinguishing prefix (multi-char)
 // 2. Distinguishing char class at any position
+// 2b. Fragment-based char class (40% chance, wraps char class in fragment def)
 // 3. Distinguishing char at any position
-// 4. Distinguishing suffix (multi-char)
-// 5. Length-based partition
-// 6. First-char partition (split by groups)
-// 7. Fallback: flat alternation
+// 4-6. [Randomized order] Distinguishing suffix, length partition, first-char partition
+// 7. Distinguishing substring (anywhere in string, not just prefix/suffix)
+// 8. Common substring split (no counter check)
+// 9. Repetition detection
+// Fallback: flat alternation
 // ============================================================================
 
 #include "inductive_builder.h"
 #include "testgen.h"
+
+#include <algorithm>
 
 using namespace std;
 
@@ -145,6 +149,61 @@ static std::string findDistinguishingSuffix(const std::vector<InputState>& match
         
         if (distinguishes) return trial;
     }
+    return "";
+}
+
+// Find a substring (not at ends) that appears in ALL matching remainders
+// but in NO counter remainder. Returns the longest such substring.
+// Unlike prefix/suffix, this can be anywhere in the string.
+static std::string findDistinguishingSubstring(
+    const std::vector<InputState>& matching_states,
+    const std::vector<InputState>& counter_states) {
+    
+    if (matching_states.size() < 2) return "";
+    
+    // Collect remainders
+    std::vector<std::string> match_rem;
+    for (const auto& s : matching_states) {
+        if (!s.remaining.empty()) match_rem.push_back(s.remaining);
+    }
+    if (match_rem.empty()) return "";
+    
+    size_t min_len = match_rem[0].size();
+    for (const auto& r : match_rem) min_len = std::min(min_len, r.size());
+    if (min_len < 2) return "";
+    
+    std::string best;
+    
+    // Try all substrings of the first matching remainder (longest first)
+    for (size_t len = min_len; len >= 2 && best.empty(); len--) {
+        for (size_t start = 0; start + len <= match_rem[0].size(); start++) {
+            std::string candidate = match_rem[0].substr(start, len);
+            
+            // Check: present in ALL matching remainders
+            bool in_all = true;
+            for (size_t j = 1; j < match_rem.size(); j++) {
+                if (match_rem[j].find(candidate) == std::string::npos) {
+                    in_all = false;
+                    break;
+                }
+            }
+            if (!in_all) continue;
+            
+            // Check: absent from ALL counter remainders
+            bool in_any_counter = false;
+            for (const auto& cs : counter_states) {
+                if (cs.remaining.find(candidate) != std::string::npos) {
+                    in_any_counter = true;
+                    break;
+                }
+            }
+            if (in_any_counter) continue;
+            
+            // Found the longest distinguishing substring
+            return candidate;
+        }
+    }
+    
     return "";
 }
 
@@ -357,6 +416,10 @@ static BuildResult buildSeqWithPrefix(
     
     BuildResult result;
     result.ast = PatternNode::createSequence(seq_nodes, seeds, counters_for_children);
+    // Propagate child fragments
+    if (suffix_result.success) {
+        for (const auto& [k, v] : suffix_result.fragments) result.fragments[k] = v;
+    }
     result.proof = "  [Depth " + std::to_string(depth) + "] " + strategy_name + ": \"" + prefix + "\"\n";
     if (suffix_result.success) result.proof += suffix_result.proof;
     result.success = true;
@@ -399,6 +462,10 @@ static BuildResult buildSeqWithSuffix(
     
     BuildResult result;
     result.ast = PatternNode::createSequence(seq_nodes, seeds, counters_for_children);
+    // Propagate child fragments
+    if (prefix_result.success) {
+        for (const auto& [k, v] : prefix_result.fragments) result.fragments[k] = v;
+    }
     result.proof = "  [Depth " + std::to_string(depth) + "] " + strategy_name + ": \"" + suffix + "\"\n";
     if (prefix_result.success) result.proof += prefix_result.proof;
     result.success = true;
@@ -541,6 +608,63 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
         return result;
     }
     
+    // ---- Strategy 2b: Fragment-based char class ----
+    // Same as Strategy 2 multi-char, but wraps (c1|c2|...) into a fragment definition.
+    // Tests the pipeline's fragment expansion path with alternation fragments.
+    // Only activates 40% of the time (to avoid always preferring fragments).
+    if (!dist_class.empty() && dist_class.size() >= 2 &&
+        std::uniform_int_distribution<int>(0, 9)(rng) < 4) {
+        
+        // Build fragment definition as alternation of single chars
+        static int frag_char_counter = 0;
+        std::string frag_name = "fc" + std::to_string(frag_char_counter++);
+        std::string frag_def;
+        for (char c : dist_class) {
+            if (!frag_def.empty()) frag_def += "|";
+            frag_def += std::string(1, c);
+        }
+        
+        auto frag_ref = PatternNode::createFragment(frag_name);
+        
+        std::vector<InputState> new_matching;
+        std::vector<InputState> new_counter_states;
+        for (const auto& s : matching_states) {
+            if (!s.remaining.empty() && dist_class.count(s.remaining[0])) {
+                new_matching.push_back(InputState(s.full_input, true));
+                new_matching.back().remaining = s.remaining.substr(1);
+            }
+        }
+        for (const auto& c : counter_states) {
+            if (c.remaining.empty() || !dist_class.count(c.remaining[0])) {
+                new_counter_states.push_back(InputState(c.full_input, false));
+            }
+        }
+        
+        auto suffix_result = buildRecursive(new_matching, new_counter_states, depth + 1, rng);
+        
+        std::vector<std::shared_ptr<PatternNode>> seq_nodes;
+        std::vector<std::string> seeds;
+        for (const auto& m : new_matching) seeds.push_back(m.full_input);
+        seq_nodes.push_back(frag_ref);
+        if (suffix_result.success && suffix_result.ast) {
+            seq_nodes.push_back(suffix_result.ast);
+        }
+        
+        BuildResult result;
+        result.ast = PatternNode::createSequence(seq_nodes, seeds, counters_for_children);
+        result.fragments[frag_name] = frag_def;
+        // Merge child fragments
+        if (suffix_result.success) {
+            for (const auto& [k, v] : suffix_result.fragments) {
+                result.fragments[k] = v;
+            }
+        }
+        result.proof = "  [Depth " + std::to_string(depth) + "] Fragment char class: [[" + frag_name + "]] = " + frag_def + "\n";
+        if (suffix_result.success) result.proof += suffix_result.proof;
+        result.success = true;
+        return result;
+    }
+    
     // ---- Strategy 3: Single distinguishing char ----
     auto [pos, ch] = findDistinguishingChar(matching_states, counter_states);
     if (ch != '\0') {
@@ -565,89 +689,182 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
                                   "Distinguished by char at pos " + std::to_string(pos));
     }
     
-    // ---- Strategy 4: Distinguishing suffix ----
-    std::string dist_suffix = findDistinguishingSuffix(matching_states, counter_states);
-    if (!dist_suffix.empty() && dist_suffix.size() > 0) {
-        std::vector<InputState> new_matching;
-        std::vector<InputState> new_counter_states;
-        
-        for (const auto& s : matching_states) {
-            if (s.remaining.size() >= dist_suffix.size() &&
-                s.remaining.substr(s.remaining.size() - dist_suffix.size()) == dist_suffix) {
-                new_matching.push_back(InputState(s.full_input, true));
-                new_matching.back().remaining = s.remaining.substr(0, s.remaining.size() - dist_suffix.size());
-            }
-        }
-        for (const auto& c : counter_states) {
-            if (c.remaining.size() < dist_suffix.size() ||
-                c.remaining.substr(c.remaining.size() - dist_suffix.size()) != dist_suffix) {
-                new_counter_states.push_back(InputState(c.full_input, false));
-            }
-        }
-        
-        if (!new_matching.empty()) {
-            return buildSeqWithSuffix(new_matching, new_counter_states, dist_suffix,
-                                      counters_for_children, depth, rng,
-                                      "Distinguished by suffix");
-        }
-    }
-    
-    // ---- Strategy 5: Length-based partition ----
-    // Group matching inputs by length, build pattern for each length group
+    // ---- Strategies 4-6: Try in randomized order for diversity ----
+    // Suffix, length partition, and first-char partition are independent;
+    // trying them in different orders yields different ASTs across runs.
     {
-        std::map<size_t, std::vector<InputState>> by_length;
-        for (const auto& s : matching_states) {
-            by_length[s.remaining.size()].push_back(s);
-        }
+        // Define strategy functions as lambdas that return optional BuildResult
+        using StratFn = std::function<BuildResult()>;
+        struct StratEntry { int id; StratFn fn; };
         
-        if (by_length.size() > 1 && by_length.size() <= 6) {
-            // Check if any length group has no counters of that length
+        std::vector<StratEntry> strats;
+        
+        // Strategy 4: Distinguishing suffix
+        strats.push_back({4, [&]() -> BuildResult {
+            std::string dsuf = findDistinguishingSuffix(matching_states, counter_states);
+            if (dsuf.empty()) return {};
+            
+            std::vector<InputState> nm, nc;
+            for (const auto& s : matching_states) {
+                if (s.remaining.size() >= dsuf.size() &&
+                    s.remaining.substr(s.remaining.size() - dsuf.size()) == dsuf) {
+                    nm.push_back(InputState(s.full_input, true));
+                    nm.back().remaining = s.remaining.substr(0, s.remaining.size() - dsuf.size());
+                }
+            }
+            for (const auto& c : counter_states) {
+                if (c.remaining.size() < dsuf.size() ||
+                    c.remaining.substr(c.remaining.size() - dsuf.size()) != dsuf) {
+                    nc.push_back(InputState(c.full_input, false));
+                }
+            }
+            
+            if (!nm.empty()) {
+                return buildSeqWithSuffix(nm, nc, dsuf, counters_for_children, depth, rng,
+                                          "Distinguished by suffix");
+            }
+            return {};
+        }});
+        
+        // Strategy 5: Length-based partition
+        strats.push_back({5, [&]() -> BuildResult {
+            std::map<size_t, std::vector<InputState>> by_length;
+            for (const auto& s : matching_states) {
+                by_length[s.remaining.size()].push_back(s);
+            }
+            
+            if (by_length.size() <= 1 || by_length.size() > 6) return {};
+            
             std::set<size_t> counter_lengths;
             for (const auto& cs : counter_states) {
                 counter_lengths.insert(cs.remaining.size());
             }
             
-            bool has_length_distinction = false;
+            bool has_distinction = false;
             for (const auto& [len, group] : by_length) {
                 if (!counter_lengths.count(len) && !group.empty()) {
-                    has_length_distinction = true;
+                    has_distinction = true;
                     break;
                 }
             }
+            if (!has_distinction) return {};
             
-            if (has_length_distinction) {
-                std::vector<std::shared_ptr<PatternNode>> length_alts;
-                std::vector<std::string> all_seeds;
-                bool all_ok = true;
-                
-                for (auto& [len, group] : by_length) {
-                    // Get counters of different lengths
-                    std::vector<InputState> other_counters;
-                    for (const auto& cs : counter_states) {
-                        if (cs.remaining.size() != len) {
-                            other_counters.push_back(cs);
-                        }
-                    }
-                    
-                    auto sub_result = buildRecursive(group, other_counters, depth + 1, rng);
-                    if (sub_result.success && sub_result.ast) {
-                        length_alts.push_back(sub_result.ast);
-                        for (const auto& g : group) all_seeds.push_back(g.full_input);
-                    } else {
-                        all_ok = false;
-                        break;
+            std::vector<std::shared_ptr<PatternNode>> length_alts;
+            std::vector<std::string> all_seeds;
+            
+            for (auto& [len, group] : by_length) {
+                std::vector<InputState> other_counters;
+                for (const auto& cs : counter_states) {
+                    if (cs.remaining.size() != len) {
+                        other_counters.push_back(cs);
                     }
                 }
                 
-                if (all_ok && !length_alts.empty()) {
+                auto sub_result = buildRecursive(group, other_counters, depth + 1, rng);
+                if (sub_result.success && sub_result.ast) {
+                    length_alts.push_back(sub_result.ast);
+                    for (const auto& g : group) all_seeds.push_back(g.full_input);
+                } else {
+                    return {};
+                }
+            }
+            
+            if (!length_alts.empty()) {
+                BuildResult result;
+                if (length_alts.size() == 1) {
+                    result.ast = length_alts[0];
+                } else {
+                    result.ast = PatternNode::createAlternation(length_alts, all_seeds, counters_for_children);
+                }
+                result.proof = "  [Depth " + std::to_string(depth) + "] Distinguished by length (" +
+                              std::to_string(by_length.size()) + " groups)\n";
+                result.success = true;
+                return result;
+            }
+            return {};
+        }});
+        
+        // Strategy 6: First-char partition
+        strats.push_back({6, [&]() -> BuildResult {
+            std::map<char, std::vector<InputState>> by_fc;
+            for (const auto& s : matching_states) {
+                if (!s.remaining.empty()) {
+                    by_fc[s.remaining[0]].push_back(s);
+                }
+            }
+            
+            if (by_fc.size() <= 1 || by_fc.size() > 8) return {};
+            
+            std::vector<std::shared_ptr<PatternNode>> group_alts;
+            std::vector<std::string> all_seeds;
+            
+            for (auto& [fc, group] : by_fc) {
+                auto sub_result = buildRecursive(group, counter_states, depth + 1, rng);
+                if (sub_result.success && sub_result.ast) {
+                    group_alts.push_back(sub_result.ast);
+                    for (const auto& g : group) all_seeds.push_back(g.full_input);
+                } else {
+                    return {};
+                }
+            }
+            
+            if (!group_alts.empty()) {
+                BuildResult result;
+                result.ast = PatternNode::createAlternation(group_alts, all_seeds, counters_for_children);
+                result.proof = "  [Depth " + std::to_string(depth) + "] Partitioned by first char (" +
+                              std::to_string(by_fc.size()) + " groups)\n";
+                result.success = true;
+                return result;
+            }
+            return {};
+        }});
+        
+        // Shuffle and try each
+        std::shuffle(strats.begin(), strats.end(), rng);
+        for (auto& entry : strats) {
+            BuildResult r = entry.fn();
+            if (r.success) return r;
+        }
+    }
+    
+    // ---- Strategy 7: Distinguishing substring split ----
+    // Find a substring (anywhere, not just prefix/suffix) present in ALL matching
+    // but absent from ALL counters. Split around it and recurse.
+    {
+        std::string dist_substr = findDistinguishingSubstring(matching_states, counter_states);
+        if (!dist_substr.empty() && dist_substr.size() >= 2) {
+            // Find where the substring appears in each matching input (use first occurrence)
+            std::vector<InputState> pre_states, post_states;
+            for (const auto& s : matching_states) {
+                size_t pos = s.remaining.find(dist_substr);
+                if (pos != std::string::npos) {
+                    InputState pre(s.full_input, s.is_matching);
+                    pre.remaining = s.remaining.substr(0, pos);
+                    pre_states.push_back(pre);
+                    
+                    InputState post(s.full_input, s.is_matching);
+                    post.remaining = s.remaining.substr(pos + dist_substr.size());
+                    post_states.push_back(post);
+                }
+            }
+            
+            if (!pre_states.empty() && !post_states.empty()) {
+                auto pre_result = buildRecursive(pre_states, counter_states, depth + 1, rng);
+                auto post_result = buildRecursive(post_states, counter_states, depth + 1, rng);
+                
+                if (pre_result.success && post_result.success && pre_result.ast && post_result.ast) {
+                    auto lit_node = PatternNode::createLiteral(dist_substr);
+                    auto seq_children = std::vector<std::shared_ptr<PatternNode>>{pre_result.ast, lit_node, post_result.ast};
                     BuildResult result;
-                    if (length_alts.size() == 1) {
-                        result.ast = length_alts[0];
-                    } else {
-                        result.ast = PatternNode::createAlternation(length_alts, all_seeds, counters_for_children);
-                    }
-                    result.proof = "  [Depth " + std::to_string(depth) + "] Distinguished by length (" + 
-                                  std::to_string(by_length.size()) + " groups)\n";
+                    result.ast = PatternNode::createSequence(seq_children);
+                    std::vector<std::string> seeds;
+                    for (const auto& s : matching_states) seeds.push_back(s.full_input);
+                    result.ast->matched_seeds = seeds;
+                    // Merge child fragments
+                    for (const auto& [k, v] : pre_result.fragments) result.fragments[k] = v;
+                    for (const auto& [k, v] : post_result.fragments) result.fragments[k] = v;
+                    result.proof = "  [Depth " + std::to_string(depth) + "] Distinguishing substring '" + dist_substr + "'\n" +
+                                  pre_result.proof + post_result.proof;
                     result.success = true;
                     return result;
                 }
@@ -655,44 +872,7 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
         }
     }
     
-    // ---- Strategy 6: First-char partition ----
-    // Split matching inputs into groups by their first character, build each recursively
-    {
-        std::map<char, std::vector<InputState>> by_first_char;
-        for (const auto& s : matching_states) {
-            if (!s.remaining.empty()) {
-                by_first_char[s.remaining[0]].push_back(s);
-            }
-        }
-        
-        if (by_first_char.size() > 1 && by_first_char.size() <= 8) {
-            std::vector<std::shared_ptr<PatternNode>> group_alts;
-            std::vector<std::string> all_seeds;
-            bool all_ok = true;
-            
-            for (auto& [fc, group] : by_first_char) {
-                auto sub_result = buildRecursive(group, counter_states, depth + 1, rng);
-                if (sub_result.success && sub_result.ast) {
-                    group_alts.push_back(sub_result.ast);
-                    for (const auto& g : group) all_seeds.push_back(g.full_input);
-                } else {
-                    all_ok = false;
-                    break;
-                }
-            }
-            
-            if (all_ok && !group_alts.empty()) {
-                BuildResult result;
-                result.ast = PatternNode::createAlternation(group_alts, all_seeds, counters_for_children);
-                result.proof = "  [Depth " + std::to_string(depth) + "] Partitioned by first char (" +
-                              std::to_string(by_first_char.size()) + " groups)\n";
-                result.success = true;
-                return result;
-            }
-        }
-    }
-    
-    // ---- Strategy 7: Substring split ----
+    // ---- Strategy 8: Common substring split ----
     // Find longest common substring and split around it
     {
         if (matching_states.size() >= 2 && matching_states.size() <= 20) {
@@ -752,7 +932,7 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
         }
     }
     
-    // ---- Strategy 8: Repetition detection ----
+    // ---- Strategy 9: Repetition detection ----
     // If all matching inputs are repetitions of a unit, create a + pattern
     {
         if (matching_states.size() >= 2) {

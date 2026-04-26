@@ -79,7 +79,8 @@ enum class EdgeCaseType {
     DEEP_NESTING,        // Deeply nested parentheses (>10 levels)
     EMPTY_GROUP_QUANT,   // Quantifier on empty-ish group: ()+()*()?
     LONG_ALTERNATION,    // Alternation with many alternatives (>10)
-    FRAGMENT_CYCLE       // Fragment definitions that reference each other (stress test)
+    FRAGMENT_CYCLE,      // Fragment definitions that reference each other (stress test)
+    OVERLAPPING_ALTERNATION  // Product structure: ab(X|Y|Z), cd(X|Y|Z) — tests factorization
 };
 
 struct EdgeCaseResult {

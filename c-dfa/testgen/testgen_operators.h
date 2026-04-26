@@ -32,6 +32,8 @@ enum class CoordinatedMutationType {
     FLATTEN_QUANTIFIED_ALT,
     UNWRAP_FRAGMENT_REF,
     SEQUENCE_TO_ALTERNATION,
+    INLINE_FRAGMENT,
+    SWAP_SEQUENCE_CHILDREN,
 };
 
 struct CoordinatedMutationResult {
@@ -200,6 +202,28 @@ class SwapAlternativesCoordOp : public CoordinatedMutationOperator {
 public:
     CoordinatedMutationType type() const override { return CoordinatedMutationType::ALTER_ALTERNATIVE; }
     std::string name() const override { return "SWAP_ALTERNATIVES_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+// Replace a [[fragment]] reference with its literal definition.
+// E.g., if fragX = a|b|c, then [[fragX]] becomes (a|b|c).
+// Preserves matching semantics (fragment ref is equivalent to its definition).
+class InlineFragmentCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::INLINE_FRAGMENT; }
+    std::string name() const override { return "INLINE_FRAGMENT"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+// Swap two adjacent children in a SEQUENCE node.
+// E.g., (A B C) -> (A C B). The pipeline must handle permuted concatenation order.
+// Matching inputs are re-checked via PatternMatcher; reject if fewer than 1 survives.
+class SwapSequenceChildrenCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::SWAP_SEQUENCE_CHILDREN; }
+    std::string name() const override { return "SWAP_SEQUENCE_CHILDREN"; }
     bool isGeneralizing() const override { return false; }
     CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
