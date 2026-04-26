@@ -10,6 +10,7 @@
 // 7. Distinguishing substring (anywhere in string, not just prefix/suffix)
 // 8. Common substring split (no counter check)
 // 9. Repetition detection
+// 10. Simultaneous prefix+suffix factorization
 // Fallback: flat alternation
 // ============================================================================
 
@@ -974,6 +975,121 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
                 result.proof = "  [Depth " + std::to_string(depth) + "] Repetition detected: '" + unit + "'+\n";
                 result.success = true;
                 return result;
+            }
+        }
+    }
+    
+    // ---- Strategy 10: Simultaneous prefix+suffix factorization ----
+    // If all matching inputs share both a common prefix P and common suffix S,
+    // and P+S is shorter than every input, extract both and recurse on the middle.
+    // Produces patterns like a(b|c|de)f from ["abf", "acf", "adef"].
+    {
+        if (matching_states.size() >= 2) {
+            // Find common prefix
+            std::string common_pre;
+            {
+                size_t min_len = matching_states[0].remaining.size();
+                for (const auto& s : matching_states) min_len = std::min(min_len, s.remaining.size());
+                for (size_t i = 0; i < min_len; i++) {
+                    char c = matching_states[0].remaining[i];
+                    bool all_same = true;
+                    for (size_t j = 1; j < matching_states.size(); j++) {
+                        if (matching_states[j].remaining[i] != c) {
+                            all_same = false;
+                            break;
+                        }
+                    }
+                    if (all_same) common_pre += c;
+                    else break;
+                }
+            }
+            
+            // Find common suffix
+            std::string common_suf;
+            {
+                size_t min_len = matching_states[0].remaining.size();
+                for (const auto& s : matching_states) min_len = std::min(min_len, s.remaining.size());
+                for (size_t i = 0; i < min_len; i++) {
+                    char c = matching_states[0].remaining[matching_states[0].remaining.size() - 1 - i];
+                    bool all_same = true;
+                    for (size_t j = 1; j < matching_states.size(); j++) {
+                        if (matching_states[j].remaining[matching_states[j].remaining.size() - 1 - i] != c) {
+                            all_same = false;
+                            break;
+                        }
+                    }
+                    if (all_same) common_suf = c + common_suf;
+                    else break;
+                }
+            }
+            
+            // Need both prefix and suffix, and they can't overlap
+            if (common_pre.size() >= 1 && common_suf.size() >= 1) {
+                // Check that prefix+suffix don't overlap in any input
+                bool no_overlap = true;
+                for (const auto& s : matching_states) {
+                    if (common_pre.size() + common_suf.size() > s.remaining.size()) {
+                        no_overlap = false;
+                        break;
+                    }
+                }
+                
+                if (no_overlap) {
+                    // Build middle subproblem: strip prefix and suffix from each matching input
+                    std::vector<InputState> middle_states;
+                    for (const auto& s : matching_states) {
+                        InputState mid(s.full_input, true);
+                        size_t pre_len = common_pre.size();
+                        size_t suf_len = common_suf.size();
+                        mid.remaining = s.remaining.substr(pre_len, s.remaining.size() - pre_len - suf_len);
+                        middle_states.push_back(mid);
+                    }
+                    
+                    // Check that at least some middle parts are non-empty
+                    bool any_nonempty = false;
+                    for (const auto& m : middle_states) {
+                        if (!m.remaining.empty()) { any_nonempty = true; break; }
+                    }
+                    
+                    if (any_nonempty) {
+                        // Filter counters: only those that start with prefix and end with suffix
+                        // are relevant for the middle subproblem
+                        std::vector<InputState> relevant_counters;
+                        for (const auto& c : counter_states) {
+                            if (c.remaining.size() >= common_pre.size() + common_suf.size() &&
+                                c.remaining.substr(0, common_pre.size()) == common_pre &&
+                                c.remaining.substr(c.remaining.size() - common_suf.size()) == common_suf) {
+                                InputState mid_c(c.full_input, false);
+                                mid_c.remaining = c.remaining.substr(common_pre.size(),
+                                    c.remaining.size() - common_pre.size() - common_suf.size());
+                                relevant_counters.push_back(mid_c);
+                            }
+                        }
+                        
+                        auto middle_result = buildRecursive(middle_states, relevant_counters, depth + 1, rng);
+                        
+                        if (middle_result.success && middle_result.ast) {
+                            auto pre_node = PatternNode::createLiteral(common_pre);
+                            auto suf_node = PatternNode::createLiteral(common_suf);
+                            std::vector<std::shared_ptr<PatternNode>> seq_children;
+                            seq_children.push_back(pre_node);
+                            seq_children.push_back(middle_result.ast);
+                            seq_children.push_back(suf_node);
+                            
+                            BuildResult result;
+                            result.ast = PatternNode::createSequence(seq_children);
+                            std::vector<std::string> seeds;
+                            for (const auto& s : matching_states) seeds.push_back(s.full_input);
+                            result.ast->matched_seeds = seeds;
+                            for (const auto& [k, v] : middle_result.fragments) result.fragments[k] = v;
+                            result.proof = "  [Depth " + std::to_string(depth) + "] Simultaneous prefix+suffix: '" +
+                                          common_pre + "' + middle + '" + common_suf + "'\n" +
+                                          middle_result.proof;
+                            result.success = true;
+                            return result;
+                        }
+                    }
+                }
             }
         }
     }

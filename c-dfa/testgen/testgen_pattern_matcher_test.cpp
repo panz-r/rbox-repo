@@ -416,6 +416,9 @@ PM_TEST(optionalInSequence) {
 // Main
 // ============================================================================
 
+// Forward declaration for brute-force cross-validation test (defined after this function)
+void pm_test_bruteForce_crossValidate();
+
 int run_pattern_matcher_tests() {
     std::cout << "PatternMatcher Unit Tests\n";
     std::cout << "=========================\n\n";
@@ -480,8 +483,198 @@ int run_pattern_matcher_tests() {
     RUN_PM_TEST(complexNestedPattern);
     RUN_PM_TEST(optionalInSequence);
 
+    std::cout << "\nBrute-force cross-validation:\n";
+    RUN_PM_TEST(bruteForce_crossValidate);
+
     std::cout << "\n=========================\n";
     std::cout << "Results: " << pm_tests_passed << "/" << pm_tests_run << " tests passed\n\n";
 
     return (pm_tests_passed == pm_tests_run) ? 0 : 1;
+}
+
+// Brute-force match: try to match input[pos:] against node.
+// Returns true if there exists a full match (pos == input.size() at end).
+static bool bruteForceMatch(const std::shared_ptr<PatternNode>& node,
+                            const std::string& input, size_t pos, int depth_limit) {
+    if (depth_limit <= 0 || !node) return false;
+    
+    switch (node->type) {
+        case PatternType::LITERAL:
+            if (input.substr(pos, node->value.size()) == node->value &&
+                pos + node->value.size() <= input.size()) {
+                return pos + node->value.size() == input.size();
+            }
+            return false;
+            
+        case PatternType::ALTERNATION:
+            for (const auto& child : node->children) {
+                if (bruteForceMatch(child, input, pos, depth_limit - 1)) return true;
+            }
+            return false;
+            
+        case PatternType::SEQUENCE:
+            if (node->children.empty()) return pos == input.size();
+            // Match children sequentially
+            {
+                std::function<bool(size_t, size_t)> matchSeq;
+                matchSeq = [&](size_t child_idx, size_t p) -> bool {
+                    if (child_idx >= node->children.size()) return p == input.size();
+                    // Try to match child at position p, then recurse
+                    const auto& child = node->children[child_idx];
+                    // For literal children, we can do exact matching
+                    if (child->type == PatternType::LITERAL) {
+                        if (input.substr(p, child->value.size()) == child->value &&
+                            p + child->value.size() <= input.size()) {
+                            return matchSeq(child_idx + 1, p + child->value.size());
+                        }
+                        return false;
+                    }
+                    // For non-literal, we need to try all possible consumption lengths
+                    // Since we only have small strings, try all positions
+                    for (size_t end = p; end <= input.size(); end++) {
+                        // Check if child matches input[p:end]
+                        std::string sub = input.substr(p, end - p);
+                        // Build a temporary match: child should consume exactly (end-p) chars
+                        if (bruteForceMatch(child, sub, 0, depth_limit - 1)) {
+                            if (matchSeq(child_idx + 1, end)) return true;
+                        }
+                    }
+                    return false;
+                };
+                return matchSeq(0, pos);
+            }
+            
+        case PatternType::PLUS_QUANTIFIER:
+            if (!node->quantified) return false;
+            // One or more: must match at least once
+            for (size_t end = pos + 1; end <= input.size(); end++) {
+                std::string sub = input.substr(pos, end - pos);
+                if (bruteForceMatch(node->quantified, sub, 0, depth_limit - 1)) {
+                    // Check if remaining also matches the plus (recursively) or is empty
+                    if (end == input.size()) return true;
+                    // Try matching more repetitions
+                    std::string remaining = input.substr(end);
+                    // Build a new match for the remaining as same PLUS pattern
+                    auto plus_copy = PatternNode::createQuantified(node->quantified, PatternType::PLUS_QUANTIFIER);
+                    if (bruteForceMatch(plus_copy, remaining, 0, depth_limit - 1)) return true;
+                    // Also try just one more match then done
+                    if (bruteForceMatch(node->quantified, remaining, 0, depth_limit - 1)) return true;
+                }
+            }
+            return false;
+            
+        case PatternType::STAR_QUANTIFIER:
+            if (pos == input.size()) return true;  // empty match
+            if (!node->quantified) return pos == input.size();
+            // Try one or more matches
+            {
+                auto plus_node = PatternNode::createQuantified(node->quantified, PatternType::PLUS_QUANTIFIER);
+                return bruteForceMatch(plus_node, input, pos, depth_limit - 1);
+            }
+            
+        case PatternType::OPTIONAL:
+            if (pos == input.size()) return true;  // skip
+            if (!node->quantified) return true;
+            return bruteForceMatch(node->quantified, input, pos, depth_limit - 1);
+            
+        case PatternType::FRAGMENT_REF:
+            // Can't resolve fragments in brute-force; skip these test cases
+            return false;
+            
+        default:
+            return false;
+    }
+}
+
+// Generate a simple random pattern AST
+static std::shared_ptr<PatternNode> generateSimplePattern(std::mt19937& rng, int depth) {
+    static const char chars[] = "abc";
+    std::uniform_int_distribution<int> char_dist(0, 2);
+    std::uniform_int_distribution<int> type_dist(0, 4);
+    
+    if (depth <= 0) {
+        // Must be a literal
+        int len = 1 + std::uniform_int_distribution<int>(0, 1)(rng);
+        std::string val;
+        for (int i = 0; i < len; i++) val += chars[char_dist(rng)];
+        return PatternNode::createLiteral(val);
+    }
+    
+    int t = type_dist(rng);
+    if (t == 0) {
+        // Literal
+        int len = 1 + std::uniform_int_distribution<int>(0, 2)(rng);
+        std::string val;
+        for (int i = 0; i < len; i++) val += chars[char_dist(rng)];
+        return PatternNode::createLiteral(val);
+    } else if (t == 1) {
+        // Alternation of 2-3 literals
+        int n = 2 + std::uniform_int_distribution<int>(0, 1)(rng);
+        std::vector<std::shared_ptr<PatternNode>> alts;
+        for (int i = 0; i < n; i++) {
+            std::string val;
+            val += chars[char_dist(rng)];
+            alts.push_back(PatternNode::createLiteral(val));
+        }
+        return PatternNode::createAlternation(alts);
+    } else if (t == 2) {
+        // Sequence of 2 literals
+        auto a = generateSimplePattern(rng, 0);
+        auto b = generateSimplePattern(rng, 0);
+        return PatternNode::createSequence({a, b});
+    } else if (t == 3) {
+        // Optional
+        auto inner = generateSimplePattern(rng, depth - 1);
+        return PatternNode::createQuantified(inner, PatternType::OPTIONAL);
+    } else {
+        // Plus
+        auto inner = generateSimplePattern(rng, 0);
+        return PatternNode::createQuantified(inner, PatternType::PLUS_QUANTIFIER);
+    }
+}
+
+// Generate random test strings
+static std::vector<std::string> generateTestStrings(std::mt19937& rng, int count) {
+    static const char chars[] = "abc";
+    std::uniform_int_distribution<int> char_dist(0, 2);
+    std::uniform_int_distribution<int> len_dist(0, 4);
+    
+    std::vector<std::string> result;
+    for (int i = 0; i < count; i++) {
+        int len = len_dist(rng);
+        std::string s;
+        for (int j = 0; j < len; j++) s += chars[char_dist(rng)];
+        result.push_back(s);
+    }
+    return result;
+}
+
+PM_TEST(bruteForce_crossValidate) {
+    // Compare PatternMatcher::matches against brute-force on 3000 random pattern×string pairs.
+    // Limited to small alphabet (abc) and short strings (≤4 chars) for tractability.
+    std::mt19937 rng(12345);
+    const int iterations = 500;
+    const int strings_per_pattern = 6;
+    int mismatches = 0;
+    
+    for (int i = 0; i < iterations; i++) {
+        auto pattern = generateSimplePattern(rng, 2);
+        auto strings = generateTestStrings(rng, strings_per_pattern);
+        
+        for (const auto& s : strings) {
+            bool pm_result = PatternMatcher::matches(pattern, s);
+            bool bf_result = bruteForceMatch(pattern, s, 0, 10);
+            
+            if (pm_result != bf_result) {
+                mismatches++;
+                // Only report first few to avoid spam
+                if (mismatches <= 3) {
+                    std::cerr << "  MISMATCH: input='" << s << "' PM=" << pm_result
+                              << " BF=" << bf_result << "\n";
+                }
+            }
+        }
+    }
+    
+    PM_ASSERT_TRUE(mismatches == 0);
 }

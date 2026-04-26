@@ -515,6 +515,122 @@ static EdgeCaseResult createOverlappingAlternationEdge(std::mt19937& rng) {
     return result;
 }
 
+static EdgeCaseResult createFragmentChainEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::FRAGMENT_CHAIN;
+    
+    // Create a chain of 3 fragments: fa=value, fb=[[fa]]+suffix, fc=[[fb]]+suffix2
+    // Pattern: [[fc]]+ → expands to (value+suffix+suffix2)+
+    // Tests the pipeline's fragment expansion depth limit.
+    
+    std::string base = randomAlphaEdge(2, rng);
+    std::string suf_b = randomAlphaEdge(1, rng);
+    std::string suf_c = randomAlphaEdge(1, rng);
+    
+    // Ensure suffixes are different from base to avoid ambiguity
+    while (suf_b == base.substr(0, 1)) suf_b = randomAlphaEdge(1, rng);
+    while (suf_c == suf_b || suf_c == base.substr(0, 1)) suf_c = randomAlphaEdge(1, rng);
+    
+    std::string fa_name = "chainA";
+    std::string fb_name = "chainB";
+    std::string fc_name = "chainC";
+    
+    std::string expanded_b = base + suf_b;
+    std::string expanded_c = expanded_b + suf_c;
+    
+    result.fragments[fa_name] = base;
+    result.fragments[fb_name] = "[[chainA]]" + suf_b;
+    result.fragments[fc_name] = "[[chainB]]" + suf_c;
+    
+    // Build AST: [[fc]]+
+    auto fa_ref = PatternNode::createFragment(fc_name, {expanded_c});
+    auto plus_node = PatternNode::createQuantified(fa_ref, PatternType::PLUS_QUANTIFIER);
+    result.initial_ast = plus_node;
+    
+    // Matching: one repetition and two repetitions
+    result.matching_seeds = {expanded_c, expanded_c + expanded_c};
+    
+    // Counters: partial chains, wrong order, base alone
+    result.counter_seeds = {
+        base,                    // only fa
+        expanded_b,              // only fb (missing suffix_c)
+        suf_c,                   // just the suffix
+        base + suf_c,            // skip middle
+        expanded_c + expanded_b, // second rep is wrong
+        randomAlphaEdge(3, rng)
+    };
+    
+    result.proof = "EDGE_CASE: FRAGMENT_CHAIN\n";
+    result.proof += "  Fragments: " + fa_name + "=" + base + ", " +
+                   fb_name + "=[[" + fa_name + "]]" + suf_b + ", " +
+                   fc_name + "=[[" + fb_name + "]]" + suf_c + "\n";
+    result.proof += "  Pattern: [[" + fc_name + "]]+\n";
+    result.proof += "  Expanded: (" + expanded_c + ")+\n";
+    result.proof += "  Rationale: Tests depth-limited recursive fragment expansion\n";
+    return result;
+}
+
+static EdgeCaseResult createVariedLengthAlternationEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::VARIED_LENGTH_ALT;
+    
+    // Generate an alternation where alternatives have different lengths:
+    // e.g., "a", "ab", "abc", "abcd"
+    // Stresses the alternation merging and length-partitioning logic.
+    
+    // Pick a base character
+    char base_char = 'a' + std::uniform_int_distribution<int>(0, 25)(rng);
+    // Pick 3-5 alternatives of increasing length
+    int num_alts = 3 + std::uniform_int_distribution<int>(0, 2)(rng);
+    
+    std::vector<std::string> alternatives;
+    std::string current;
+    for (int i = 0; i < num_alts; i++) {
+        current += static_cast<char>('a' + std::uniform_int_distribution<int>(0, 25)(rng));
+        alternatives.push_back(current);
+    }
+    
+    // Ensure all alternatives are unique (they are by construction since each adds a char)
+    
+    result.matching_seeds = alternatives;
+    
+    // Generate counters: strings of the same lengths but different content
+    for (int i = 0; i < num_alts; i++) {
+        std::string counter;
+        for (int j = 0; j <= i; j++) {
+            char c;
+            do {
+                c = 'a' + std::uniform_int_distribution<int>(0, 25)(rng);
+            } while (c == alternatives[i][j] && j == 0);  // at least first char differs
+            counter += c;
+        }
+        // Ensure not accidentally equal to any matching seed
+        bool is_match = false;
+        for (const auto& m : result.matching_seeds) {
+            if (counter == m) { is_match = true; break; }
+        }
+        if (!is_match) {
+            result.counter_seeds.push_back(counter);
+        }
+    }
+    
+    // Add some more random counters
+    for (int i = 0; i < 3; i++) {
+        result.counter_seeds.push_back(randomAlphaEdge(
+            1 + std::uniform_int_distribution<int>(0, num_alts)(rng), rng));
+    }
+    
+    result.proof = "EDGE_CASE: VARIED_LENGTH_ALT\n";
+    result.proof += "  Alternatives: ";
+    for (size_t i = 0; i < alternatives.size(); i++) {
+        if (i > 0) result.proof += "|";
+        result.proof += alternatives[i];
+    }
+    result.proof += "\n";
+    result.proof += "  Rationale: Tests alternation merging with different-length alternatives\n";
+    return result;
+}
+
 EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
     switch (type) {
         case EdgeCaseType::RANGE_BOUNDARY:
@@ -539,6 +655,10 @@ EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
             return createFragmentCycleEdge(rng);
         case EdgeCaseType::OVERLAPPING_ALTERNATION:
             return createOverlappingAlternationEdge(rng);
+        case EdgeCaseType::FRAGMENT_CHAIN:
+            return createFragmentChainEdge(rng);
+        case EdgeCaseType::VARIED_LENGTH_ALT:
+            return createVariedLengthAlternationEdge(rng);
         default:
             return createPartialMatchEdge(rng);
     }

@@ -43,26 +43,101 @@ public:
     
     void recordCoverage(const std::string& test_id, const CoverageData& data) {
         coverage_map[test_id] = data;
+        // Merge into global coverage
+        for (int line : data.covered_lines) global_covered_lines.insert(line);
+        for (const auto& edge : data.covered_edges) global_covered_edges.insert(edge);
+        // Track coverage history for plateau detection
+        coverage_history.push_back(global_covered_lines.size() + global_covered_edges.size());
     }
     
-    double coverageGain([[maybe_unused]] const TestCaseCore& tc) const {
-        return 0.0;
+    // Estimate coverage gain for a test case based on its AST complexity.
+    // More complex patterns (more alternatives, quantifiers, fragments) are
+    // likely to exercise more DFA states. This is a heuristic — the real
+    // coverage is recorded via recordCoverage after pipeline execution.
+    double coverageGain(const TestCaseCore& tc) const {
+        if (!tc.ast) return 0.0;
+        
+        // Estimate new state coverage from AST complexity
+        double estimated_new = 0.0;
+        
+        // Count AST features that correspond to DFA states
+        int features = countFeatures(tc.ast);
+        
+        // Estimate: each feature might touch ~2-3 new states
+        // Discount by what we've already covered
+        double coverage_ratio = 0.0;
+        size_t total = global_covered_lines.size() + global_covered_edges.size();
+        if (total > 0) {
+            // Simple decay: more coverage = diminishing returns
+            coverage_ratio = 1.0 / (1.0 + total * 0.01);
+        } else {
+            coverage_ratio = 1.0;
+        }
+        
+        estimated_new = features * coverage_ratio;
+        return estimated_new;
     }
     
     std::vector<std::string> uncoveredStates() const {
+        // This would require DFA introspection which isn't available
+        // Return empty for now — placeholder for future pipeline integration
         return {};
     }
     
     bool plateaued() const {
-        return false;
+        // Plateau = last N recordings added no new coverage
+        const size_t window = 5;
+        if (coverage_history.size() < window) return false;
+        
+        size_t latest = coverage_history.back();
+        size_t oldest_in_window = coverage_history[coverage_history.size() - window];
+        return latest == oldest_in_window;
     }
     
     CoverageData baseline() const {
-        return CoverageData{};
+        CoverageData b;
+        b.covered_lines = global_covered_lines;
+        b.covered_edges = global_covered_edges;
+        return b;
     }
     
+    void reset() {
+        coverage_map.clear();
+        global_covered_lines.clear();
+        global_covered_edges.clear();
+        coverage_history.clear();
+    }
+
 private:
     std::map<std::string, CoverageData> coverage_map;
+    std::set<int> global_covered_lines;
+    std::set<std::pair<int,int>> global_covered_edges;
+    std::vector<size_t> coverage_history;
+    
+    // Count AST features that map to DFA state complexity
+    static int countFeatures(std::shared_ptr<PatternNode> node) {
+        if (!node) return 0;
+        int count = 0;
+        switch (node->type) {
+            case PatternType::ALTERNATION:
+                count = (int)node->children.size();
+                break;
+            case PatternType::PLUS_QUANTIFIER:
+            case PatternType::STAR_QUANTIFIER:
+            case PatternType::OPTIONAL:
+                count = 2;  // quantifier adds loop states
+                break;
+            case PatternType::FRAGMENT_REF:
+                count = 3;  // fragment expansion adds states
+                break;
+            default:
+                count = 1;
+                break;
+        }
+        if (node->quantified) count += countFeatures(node->quantified);
+        for (auto& child : node->children) count += countFeatures(child);
+        return count;
+    }
 };
 
 class MutationTree {

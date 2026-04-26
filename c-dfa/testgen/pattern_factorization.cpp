@@ -5,6 +5,7 @@
 
 #include "pattern_factorization.h"
 #include "pattern_serializer.h"
+#include "pattern_matcher.h"
 #include <algorithm>  // for std::shuffle
 
 // ============================================================================
@@ -605,6 +606,31 @@ std::shared_ptr<PatternNode> factorSuffixes(std::shared_ptr<PatternNode> node, i
     return result;
 }
 
+// Verify that all matched_seeds of a node still match it after factoring.
+// Returns true if all seeds match, false if any don't.
+// If verification fails and original_children is non-empty, restores those children.
+static bool verifyFactoredNode(
+    std::shared_ptr<PatternNode> node,
+    const std::vector<std::shared_ptr<PatternNode>>& original_children,
+    FactorizationProof* proof_out) {
+    
+    if (!node || node->matched_seeds.empty()) return true;
+    
+    for (const auto& seed : node->matched_seeds) {
+        if (!PatternMatcher::matches(node, seed)) {
+            // Revert: restore original children
+            if (!original_children.empty()) {
+                node->children = original_children;
+            }
+            if (proof_out) {
+                proof_out->valid = false;
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
 // Recursively factor all alternations in an AST
 std::shared_ptr<PatternNode> factorPattern(
     std::shared_ptr<PatternNode> node, 
@@ -624,15 +650,29 @@ std::shared_ptr<PatternNode> factorPattern(
             if (node->type == PatternType::ALTERNATION) {
                 node = factorSuffixes(node, depth);
             }
-            // Recursively factor children
-            for (auto& child : node->children) {
-                child = factorPattern(child, depth + 1, proof_out);
+            // Recursively factor children, with verification
+            {
+                auto saved_children = node->children;  // deep copy not needed: children are shared_ptr
+                for (auto& child : node->children) {
+                    child = factorPattern(child, depth + 1, proof_out);
+                }
+                // Verify all seeds still match after recursive factoring
+                if (!verifyFactoredNode(node, saved_children, proof_out)) {
+                    // Revert: children already restored by verifyFactoredNode
+                }
             }
             return node;
             
         case PatternType::SEQUENCE:
-            for (auto& child : node->children) {
-                child = factorPattern(child, depth + 1, proof_out);
+            {
+                auto saved_children = node->children;
+                for (auto& child : node->children) {
+                    child = factorPattern(child, depth + 1, proof_out);
+                }
+                // Verify all seeds still match after recursive factoring
+                if (!verifyFactoredNode(node, saved_children, proof_out)) {
+                    // Revert: children already restored by verifyFactoredNode
+                }
             }
             return node;
             
@@ -640,7 +680,12 @@ std::shared_ptr<PatternNode> factorPattern(
         case PatternType::STAR_QUANTIFIER:
         case PatternType::OPTIONAL:
             if (node->quantified) {
+                auto saved = node->quantified;
                 node->quantified = factorPattern(node->quantified, depth + 1, proof_out);
+                // Verify quantified node's seeds still match
+                if (!verifyFactoredNode(node, {saved}, proof_out)) {
+                    node->quantified = saved;  // restore
+                }
             }
             return node;
             
