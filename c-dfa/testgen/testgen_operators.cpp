@@ -1643,6 +1643,184 @@ CoordinatedMutationResult PrefixSuffixAlternationCoordOp::apply(const TestCaseCo
     return result;
 }
 
+CoordinatedMutationResult ExtractFragmentCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast) return result;
+
+    // Only works on literal or alternation patterns (no existing fragments)
+    if (containsFragmentRef(original.ast)) return result;
+
+    // Find a literal node with enough characters to extract a substring
+    std::vector<std::shared_ptr<PatternNode>> literals;
+    findTopLevelLiterals(original.ast, literals);
+    if (literals.empty()) return result;
+
+    auto target = literals[std::uniform_int_distribution<size_t>(0, literals.size() - 1)(rng)];
+    if (target->value.size() < 3) return result;
+
+    // Pick a substring to extract (1-2 chars from middle)
+    int substr_len = std::uniform_int_distribution<int>(1, std::min(2, (int)target->value.size() - 2))(rng);
+    int substr_pos = std::uniform_int_distribution<int>(1, (int)target->value.size() - substr_len - 1)(rng);
+    std::string extracted = target->value.substr(substr_pos, substr_len);
+    std::string prefix = target->value.substr(0, substr_pos);
+    std::string suffix = target->value.substr(substr_pos + substr_len);
+
+    // Create fragment
+    static int frag_id = 0;
+    std::string frag_name = "ext" + std::to_string(frag_id++);
+
+    auto mutated_ast = copyNode(original.ast);
+    std::vector<std::shared_ptr<PatternNode>> mut_literals;
+    findTopLevelLiterals(mutated_ast, mut_literals);
+    for (auto& lit : mut_literals) {
+        if (lit->value == target->value) {
+            // Replace literal with sequence: prefix + frag_ref + suffix
+            auto pre = PatternNode::createLiteral(prefix, {});
+            auto frag_ref = PatternNode::createFragment(frag_name, {});
+            auto suf = PatternNode::createLiteral(suffix, {});
+            auto seq = PatternNode::createSequence({pre, frag_ref, suf}, {});
+            *lit = *seq;
+            break;
+        }
+    }
+
+    if (!isValidPattern(mutated_ast)) return result;
+
+    // Copy inputs unchanged
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        } else if (node.categories.count("counter")) {
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) { has_matching = true; break; }
+    }
+    if (!has_matching) return result;
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.fragments[frag_name] = extracted;
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
+    result.mutated_tc.proof = original.proof + " | EXTRACT_FRAG(" + extracted + "->" + frag_name + ")";
+
+    Expectation e;
+    e.type = ExpectationType::FRAGMENT_MATCH;
+    e.description = "Extracted substring '" + extracted + "' as fragment " + frag_name;
+    e.meta["fragment"] = frag_name;
+    e.meta["mutation"] = "EXTRACT_FRAGMENT_COORD";
+    result.mutated_tc.expectations.add(e);
+
+    result.valid = true;
+    result.proof = "Extracted fragment: " + frag_name + "=" + extracted;
+    return result;
+}
+
+CoordinatedMutationResult RedundantGroupCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast) return result;
+    if (containsFragmentRef(original.ast)) return result;
+
+    // Wrap the entire AST in a redundant group (parens)
+    auto mutated_ast = copyNode(original.ast);
+    if (!mutated_ast) return result;
+
+    // Wrapping in group doesn't change semantics, so inputs remain valid
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        } else if (node.categories.count("counter")) {
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) { has_matching = true; break; }
+    }
+    if (!has_matching) return result;
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
+    result.mutated_tc.proof = original.proof + " | REDUNDANT_GROUP";
+
+    Expectation e;
+    e.type = ExpectationType::MATCH_EXACT;
+    e.description = "Wrapped in redundant group";
+    e.meta["mutation"] = "REDUNDANT_GROUP_COORD";
+    // Use a sample matching input for the expectation
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            e.input = node.value;
+            break;
+        }
+    }
+    e.expected_match = "yes";
+    result.mutated_tc.expectations.add(e);
+
+    result.valid = true;
+    result.proof = "Added redundant grouping";
+    return result;
+}
+
+CoordinatedMutationResult SwapAlternativesCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast) return result;
+    if (original.ast->type != PatternType::ALTERNATION) return result;
+    if (original.ast->children.size() < 2) return result;
+
+    auto mutated_ast = copyNode(original.ast);
+    if (!mutated_ast) return result;
+
+    // Swap two random alternatives
+    size_t i = std::uniform_int_distribution<size_t>(0, mutated_ast->children.size() - 1)(rng);
+    size_t j = std::uniform_int_distribution<size_t>(0, mutated_ast->children.size() - 1)(rng);
+    while (j == i) j = std::uniform_int_distribution<size_t>(0, mutated_ast->children.size() - 1)(rng);
+    std::swap(mutated_ast->children[i], mutated_ast->children[j]);
+
+    if (!isValidPattern(mutated_ast)) return result;
+
+    // Alternation order doesn't affect matching, inputs remain valid
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        } else if (node.categories.count("counter")) {
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) { has_matching = true; break; }
+    }
+    if (!has_matching) return result;
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
+    result.mutated_tc.proof = original.proof + " | SWAP_ALTS(" + std::to_string(i) + "<->" + std::to_string(j) + ")";
+
+    Expectation e;
+    e.type = ExpectationType::ALTERNATION_INDIVIDUAL;
+    e.description = "Swapped alternatives at positions " + std::to_string(i) + " and " + std::to_string(j);
+    e.meta["mutation"] = "SWAP_ALTERNATIVES_COORD";
+    result.mutated_tc.expectations.add(e);
+
+    result.valid = true;
+    result.proof = "Swapped alternative order";
+    return result;
+}
+
 CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<CharSubstituteCoordOp>());
     operators.push_back(std::make_unique<NestQuantifierCoordOp>());
@@ -1655,6 +1833,9 @@ CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<SequenceToAlternationCoordOp>());
     operators.push_back(std::make_unique<QuantifyAlternationCoordOp>());
     operators.push_back(std::make_unique<PrefixSuffixAlternationCoordOp>());
+    operators.push_back(std::make_unique<ExtractFragmentCoordOp>());
+    operators.push_back(std::make_unique<RedundantGroupCoordOp>());
+    operators.push_back(std::make_unique<SwapAlternativesCoordOp>());
 }
 
 std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(

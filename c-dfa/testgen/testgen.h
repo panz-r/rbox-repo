@@ -74,7 +74,12 @@ enum class EdgeCaseType {
     PARTIAL_MATCH_FAIL,  // Prefix matches, then fails (ab matches, abx fails)
     QUANTIFIER_EDGE,    // Empty, single, multiple repetitions
     ALTERNATION_EDGE,   // Some alternatives match, some don't
-    NESTED_QUANTIFIER   // Nested quantifiers (ab+)*
+    NESTED_QUANTIFIER,   // Nested quantifiers (ab+)*
+    EMPTY_ALTERNATION,   // Pattern with (|) - empty alternative
+    DEEP_NESTING,        // Deeply nested parentheses (>10 levels)
+    EMPTY_GROUP_QUANT,   // Quantifier on empty-ish group: ()+()*()?
+    LONG_ALTERNATION,    // Alternation with many alternatives (>10)
+    FRAGMENT_CYCLE       // Fragment definitions that reference each other (stress test)
 };
 
 struct EdgeCaseResult {

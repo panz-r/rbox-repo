@@ -1,6 +1,7 @@
 #include "testgen.h"
 #include "pattern_strategies.h"
 #include "pattern_serializer.h"
+#include "pattern_factorization.h"
 #include "command_utils.h"
 #include "expectation_gen.h"
 #include "inductive_builder.h"
@@ -489,6 +490,60 @@ std::pair<bool, bool> validatePatternWithPipeline(const std::string& pattern,
     return {all_matching_match, all_counters_dont_match};
 }
 
+// Result of evaluating a single input against a DFA
+struct EvalResult {
+    bool matched;
+    int reported_category;   // 1-indexed from DFA
+    int category_mask;      // bitmask
+};
+
+// Compile a pattern file and return evaluator. Caller must call dfa_eval_destroy + pipeline_destroy.
+// Returns nullptr on failure.
+struct PipelineHolder {
+    pipeline_t* pipeline = nullptr;
+    dfa_evaluator_t* evaluator = nullptr;
+    const uint8_t* binary = nullptr;
+    size_t binary_size = 0;
+    
+    ~PipelineHolder() {
+        if (evaluator) dfa_eval_destroy(evaluator);
+        if (pipeline) pipeline_destroy(pipeline);
+    }
+    
+    bool init(const std::string& pattern_file) {
+        pipeline_config_t config;
+        memset(&config, 0, sizeof(config));
+        config.minimize_algo = (dfa_minimize_algo_t)0;
+        config.verbose = false;
+        config.compress = true;
+        config.optimize_layout = true;
+        
+        pipeline = pipeline_create(&config);
+        if (!pipeline) return false;
+        
+        pipeline_error_t err = pipeline_run(pipeline, pattern_file.c_str());
+        if (err != PIPELINE_OK) return false;
+        
+        binary = pipeline_get_binary(pipeline, &binary_size);
+        if (!binary || binary_size == 0) return false;
+        
+        evaluator = dfa_eval_create(binary, binary_size);
+        if (!evaluator) return false;
+        
+        return true;
+    }
+    
+    EvalResult eval(const std::string& input) {
+        EvalResult r{false, 0, 0};
+        if (!evaluator) return r;
+        dfa_result_t result = dfa_eval_evaluate(evaluator, input.c_str());
+        r.matched = result.matched;
+        r.reported_category = result.category;
+        r.category_mask = result.category_mask;
+        return r;
+    }
+};
+
 // Legacy wrapper kept for compatibility; now uses in-process pipeline
 std::pair<bool, bool> validatePatternWithDSL(const std::string& pattern,
                                               const std::vector<std::string>& matching,
@@ -598,6 +653,7 @@ std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
                 if (rest_node) {
                     return PatternNode::createSequence({node, rest_node}, {});
                 }
+                // If rest failed to parse, return just the fragment node
             }
             
             return node;
@@ -654,13 +710,23 @@ std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
             };
             
             std::vector<std::string> alt_strings = splitAlternation(inner);
+            
+            // Check what comes after the closing paren (quantifier)
+            std::string after = pattern.substr(close_paren + 1);
+            
             if (alt_strings.size() >= 2) {
                 for (const auto& alt : alt_strings) {
-                    alts.push_back(parsePatternToAST(alt));
+                    auto parsed = parsePatternToAST(alt);
+                    if (parsed) {
+                        alts.push_back(parsed);
+                    } else {
+                        // Fallback: treat unparseable alternative as literal
+                        alts.push_back(PatternNode::createLiteral(alt, {}));
+                    }
                 }
                 
-                // Check what comes after the closing paren
-                std::string after = pattern.substr(close_paren + 1);
+                if (alts.empty()) return nullptr;
+
                 std::shared_ptr<PatternNode> alt_node = PatternNode::createAlternation(alts, {});
                 
                 if (after == "+") {
@@ -676,8 +742,23 @@ std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
                 // If nothing after, it's just a grouped alternation, return as-is
                 return alt_node;
             } else if (alt_strings.size() == 1) {
-                // Single alternative - recurse to handle FRAGMENT_REF inside
-                return parsePatternToAST(alt_strings[0]);
+                // Single alternative - recurse to handle FRAGMENT_REF inside,
+                // then apply quantifier if present
+                auto inner_node = parsePatternToAST(alt_strings[0]);
+                if (!inner_node) inner_node = PatternNode::createLiteral(alt_strings[0], {});
+                
+                if (after == "+" || after == "*" || after == "?") {
+                    auto quant_inner = PatternFactorization::copyPatternNode(inner_node);
+                    if (after == "+") {
+                        inner_node->type = PatternType::PLUS_QUANTIFIER;
+                    } else if (after == "*") {
+                        inner_node->type = PatternType::STAR_QUANTIFIER;
+                    } else {
+                        inner_node->type = PatternType::OPTIONAL;
+                    }
+                    inner_node->quantified = quant_inner;
+                }
+                return inner_node;
             }
         }
     }
@@ -707,7 +788,42 @@ std::shared_ptr<PatternNode> parsePatternToAST(const std::string& pattern) {
         }
     }
     
-    // Simple literal
+    // Simple literal or mixed sequence (e.g., "b(a|c)" = literal "b" + group "(a|c)")
+    // Scan for the first group or fragment reference that isn't at position 0
+    size_t first_group = std::string::npos;
+    size_t first_frag = std::string::npos;
+    for (size_t i = 0; i < pattern.size(); i++) {
+        if (pattern[i] == '(' && (i + 1 >= pattern.size() || pattern[i + 1] != '[')) {
+            first_group = i;
+            break;
+        }
+        if (i + 1 < pattern.size() && pattern[i] == '[' && pattern[i + 1] == '[') {
+            first_frag = i;
+            break;
+        }
+    }
+    
+    // If we found a group or fragment ref not at the start, split into sequence
+    if ((first_group != std::string::npos && first_group > 0) ||
+        (first_frag != std::string::npos && first_frag > 0)) {
+        // Determine which comes first
+        size_t split_pos = std::string::npos;
+        if (first_group != std::string::npos) split_pos = std::min(split_pos, first_group);
+        if (first_frag != std::string::npos) split_pos = std::min(split_pos, first_frag);
+        
+        // Split: literal prefix + rest
+        std::string prefix = pattern.substr(0, split_pos);
+        std::string rest = pattern.substr(split_pos);
+        
+        auto prefix_node = PatternNode::createLiteral(prefix, {});
+        auto rest_node = parsePatternToAST(rest);
+        if (rest_node) {
+            return PatternNode::createSequence({prefix_node, rest_node}, {});
+        }
+        // If rest failed to parse, return just the prefix literal
+        return prefix_node;
+    }
+    
     return PatternNode::createLiteral(pattern, {});
 }
 
@@ -1022,15 +1138,28 @@ std::vector<TestCase> TestGenerator::generate() {
 // Generate random seed strings for a test case
 std::pair<std::vector<std::string>, std::vector<std::string>> 
 TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_inputs) {
-    // Only use safe characters that don't need escaping in regex patterns
+    // Safe characters for regex patterns
     const std::string lowercase = "abcdefghijklmnopqrstuvwxyz";
     const std::string uppercase = "ABCDEFGHIJKLMQRSTUVWXYZ";
     const std::string digits = "0123456789";
     const std::string alphanum = lowercase + uppercase + digits;
+    // Special characters that test parsing and are safe as pattern literals.
+    // Space normalizes to [ \t]+ in the C parser, so we include it to test that.
+    // Exclude: backslash (escape), brackets/parens (syntax), *+? (quantifiers), | (alt)
+    const std::string special_chars = "!@#%^&_-;:.,>/~`=";
+    const double special_prob = 0.12;  // 12% chance per character
     
     std::vector<std::string> matching_seeds;
     std::vector<std::string> counter_seeds;
     std::set<std::string> used = used_inputs;
+    
+    // Helper: pick a random character with occasional special chars
+    auto randChar = [&]() -> char {
+        if (std::uniform_real_distribution<double>(0.0, 1.0)(rng) < special_prob) {
+            return special_chars[std::uniform_int_distribution<int>(0, special_chars.size()-1)(rng)];
+        }
+        return alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+    };
     
     // Generate correlation-based seeds with structure
     // Auto-correlation: 5 elements, each randomly initialized to [0.02, 0.34]
@@ -1079,7 +1208,7 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
         if (build_type == 0) {
             // Pure random (add some entropy)
             for (int j = 0; j < target_len; j++) {
-                s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+                s += randChar();
             }
         } else if (build_type == 1) {
             // Repeat base unit
@@ -1195,7 +1324,7 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
         } else {
             // Pure random (high entropy - opposite of matching)
             for (int j = 0; j < len; j++) {
-                s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+                s += randChar();
             }
         }
         
@@ -1380,7 +1509,7 @@ bool charClassPlusMatches(const std::string& char_class, const std::string& str)
 // This recursively factors common prefixes AND suffixes outside alternations.
 // (Namespace definition continues from forward declaration above)
 
-#include "pattern_factorization.h"
+// pattern_factorization.h is already included at top of file
 
 // Main pattern generator - try all strategies
 PatternResult generateSeparatingPattern(const std::vector<std::string>& matching,
@@ -1509,12 +1638,16 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     
     if (use_edge_case) {
         // Randomly select an edge case type (skip NESTED_QUANTIFIER for now - creates conflicting expectations)
-        std::uniform_int_distribution<int> edge_type_dist(0, 3);
+        std::uniform_int_distribution<int> edge_type_dist(0, 7);
         EdgeCaseType edge_types[] = {
             EdgeCaseType::RANGE_BOUNDARY,
             EdgeCaseType::PARTIAL_MATCH_FAIL,
             EdgeCaseType::QUANTIFIER_EDGE,
-            EdgeCaseType::ALTERNATION_EDGE
+            EdgeCaseType::ALTERNATION_EDGE,
+            EdgeCaseType::EMPTY_ALTERNATION,
+            EdgeCaseType::DEEP_NESTING,
+            EdgeCaseType::EMPTY_GROUP_QUANT,
+            EdgeCaseType::LONG_ALTERNATION
         };
         EdgeCaseType selected_type = edge_types[edge_type_dist(rng)];
         
@@ -1590,6 +1723,24 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
                 result.ast, tc.matching_inputs, tc.counter_inputs, tc.fragments);
             
             if (pattern_validates) {
+                // Also verify that the AST's matched_seeds actually match via PatternMatcher.
+                // The inductive builder may set matched_seeds optimistically; filter out
+                // any that don't actually match.
+                if (result.ast && !result.ast->matched_seeds.empty()) {
+                    std::vector<std::string> verified_seeds;
+                    for (const auto& seed : result.ast->matched_seeds) {
+                        if (PatternMatcher::matches(result.ast, seed)) {
+                            verified_seeds.push_back(seed);
+                        }
+                    }
+                    if (verified_seeds.size() != result.ast->matched_seeds.size()) {
+                        result.proof += "  [SEED-FILTER] Removed " + 
+                            std::to_string(result.ast->matched_seeds.size() - verified_seeds.size()) +
+                            " seeds that don't match AST\n";
+                    }
+                    result.ast->matched_seeds = verified_seeds;
+                }
+                
                 pattern_valid = true;
                 result.proof += "  [PASS] Pattern validation passed (NFA matcher)\n";
             } else {
@@ -1800,6 +1951,40 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     // Use the AST's matched_seeds which contains all inputs that validly match
     if (result.ast && !result.ast->matched_seeds.empty()) {
         tc.matching_inputs = result.ast->matched_seeds;
+    }
+    
+    // POST-TRANSFORMATION VALIDATION: After factorization, rewrites, and star insertion,
+    // the pattern may have changed semantics. Filter matching_inputs to only those that
+    // actually match the final AST. This catches cases where rewrites introduced bugs.
+    if (result.ast && !tc.matching_inputs.empty()) {
+        std::vector<std::string> verified_matching;
+        for (const auto& input : tc.matching_inputs) {
+            if (PatternMatcher::matches(result.ast, input)) {
+                verified_matching.push_back(input);
+            }
+        }
+        if (verified_matching.size() != tc.matching_inputs.size()) {
+            result.proof += "  [POST-VALIDATION] Filtered " + 
+                          std::to_string(tc.matching_inputs.size() - verified_matching.size()) +
+                          " inputs that no longer match after transformations\n";
+        }
+        tc.matching_inputs = verified_matching;
+    }
+    
+    // Also verify counter inputs still don't match the final pattern
+    if (result.ast && !tc.counter_inputs.empty()) {
+        std::vector<std::string> verified_counters;
+        for (const auto& input : tc.counter_inputs) {
+            if (!PatternMatcher::matches(result.ast, input)) {
+                verified_counters.push_back(input);
+            }
+        }
+        if (verified_counters.size() != tc.counter_inputs.size()) {
+            result.proof += "  [POST-VALIDATION] Removed " +
+                          std::to_string(tc.counter_inputs.size() - verified_counters.size()) +
+                          " counter inputs that now match after transformations\n";
+        }
+        tc.counter_inputs = verified_counters;
     }
     
     // Generate expectations from the AST (uses matched_seeds annotations)
@@ -2160,13 +2345,10 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
     std::string output_dir = abs_pattern.substr(0, abs_pattern.rfind('/'));
     
     std::cout << "1. Building DFA...\n";
-    std::string dfa_file = output_dir + "/test.dfa";
-    // Remove existing DFA file to avoid "already exists" error
-    unlink(dfa_file.c_str());
-    std::string dfa_cmd = tools_dir + "/cdfatool compile " + abs_pattern + " -o " + dfa_file + " 2>&1";
-    int result = system(dfa_cmd.c_str());
-    if (result != 0) {
-        std::cerr << "cdfatool compile failed!\n";
+    
+    PipelineHolder pipeline;
+    if (!pipeline.init(abs_pattern)) {
+        std::cerr << "DFA build failed!\n";
         return 1;
     }
     std::cout << "   DFA built successfully\n\n";
@@ -2192,54 +2374,11 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
         bool all_matched = true;
         std::string match_fail_reason;
         for (const auto& match_in : tc.matching_inputs) {
-            std::string cmd = tools_dir + "/cdfatool eval " + dfa_file + " <<< \"" + match_in + "\"";
-            CommandResult res = runCommand(cmd);
+            EvalResult res = pipeline.eval(match_in);
             
-            if (res.exit_code != 0) {
-                all_matched = false;
-                match_fail_reason = "exit_code=" + std::to_string(res.exit_code);
-                break;
-            }
-            
-            bool matched = false;
-            int category_mask = 0;
-            
-            // Parse stdout for matched, category, and category_mask
-            if (res.stdout.empty()) {
-                all_matched = false;
-                match_fail_reason = "stdout was empty";
-                break;
-            }
-            
-            size_t match_pos = res.stdout.find("matched=1");
-            if (match_pos != std::string::npos) {
-                matched = true;
-            }
-            
-            // Parse reported category (1-indexed: 1=SAFE, 2=CAUTION, etc.)
-            int reported_category = 0;
-            size_t cat_pos = res.stdout.find("category=");
-            if (cat_pos != std::string::npos) {
-                std::string cat_str = res.stdout.substr(cat_pos + 9);
-                size_t end_pos = cat_str.find(' ');
-                if (end_pos == std::string::npos) end_pos = cat_str.find('(');
-                if (end_pos != std::string::npos) cat_str = cat_str.substr(0, end_pos);
-                reported_category = atoi(cat_str.c_str());
-            }
-            
-            // Parse category_mask
-            size_t mask_pos = res.stdout.find("category_mask=0x");
-            if (mask_pos != std::string::npos) {
-                std::string mask_str = res.stdout.substr(mask_pos + 16);  // "category_mask=0x" is 16 chars
-                // Extract hex value up to space or end
-                size_t end_pos = mask_str.find(' ');
-                if (end_pos != std::string::npos) {
-                    mask_str = mask_str.substr(0, end_pos);
-                }
-                category_mask = (int)strtol(mask_str.c_str(), nullptr, 16);
-            }
-            
-
+            bool matched = res.matched;
+            int category_mask = res.category_mask;
+            int reported_category = res.reported_category;
             
             int category_bit = (1 << expected_match_category);
             bool mask_has_expected = (category_mask & category_bit);
@@ -2341,30 +2480,14 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
         bool any_counter_matched = false;
         std::string counter_fail_reason;
         for (const auto& counter : tc.counter_inputs) {
-            std::string counter_cmd = tools_dir + "/cdfatool eval " + dfa_file + " <<< \"" + counter + "\"";
-            CommandResult res = runCommand(counter_cmd);
+            EvalResult res = pipeline.eval(counter);
             
-            if (res.exit_code != 0) {
-                any_counter_matched = true;  // Treat as failure
-                counter_fail_reason = "exit_code=" + std::to_string(res.exit_code);
+            // Counter input should NOT match with the matching category
+            // Note: reported_category is 1-indexed (from DFA), expected_match_category is 0-indexed
+            if (res.matched && res.reported_category == expected_match_category + 1) {
+                any_counter_matched = true;
                 break;
             }
-            
-            int last_counter_cat = 0;
-            size_t cat_pos = res.stdout.find("category=");
-            if (cat_pos != std::string::npos) {
-                std::string cat_str = res.stdout.substr(cat_pos + 9);
-                // Extract number up to space or parenthesis
-                size_t end_pos = cat_str.find(' ');
-                if (end_pos == std::string::npos) end_pos = cat_str.find('(');
-                if (end_pos != std::string::npos) {
-                    cat_str = cat_str.substr(0, end_pos);
-                }
-                last_counter_cat = atoi(cat_str.c_str());
-            }
-            // Counter input should NOT match with the matching category
-            // Note: last_counter_cat is 1-indexed (from DFA), expected_match_category is 0-indexed
-            if (last_counter_cat == expected_match_category + 1) any_counter_matched = true;
         }
         
         if (!any_counter_matched) {
@@ -2386,32 +2509,10 @@ int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::strin
                     }
                 }
                 
-                std::string cmd = tools_dir + "/cdfatool eval " + dfa_file + " <<< \"" + test_input + "\"";
-                CommandResult res = runCommand(cmd);
+                EvalResult eres = pipeline.eval(test_input);
                 
-                // Check for errors (ignore LOADING DFA debug messages)
-                if (res.exit_code != 0) {
-                    expectations_passed = false;
-                    expectation_fail_reason = "exit_code=" + std::to_string(res.exit_code) + ", stderr=" + res.stderr;
-                    break;
-                }
-                bool matched = false;
-                int matched_category = 0;
-                
-                // Parse stdout
-                if (res.stdout.find("matched=1") != std::string::npos) {
-                    matched = true;
-                }
-                size_t cat_pos = res.stdout.find("category=");
-                if (cat_pos != std::string::npos) {
-                    std::string cat_str = res.stdout.substr(cat_pos + 9);
-                    size_t end_pos = cat_str.find(' ');
-                    if (end_pos == std::string::npos) end_pos = cat_str.find('(');
-                    if (end_pos != std::string::npos) {
-                        cat_str = cat_str.substr(0, end_pos);
-                    }
-                    matched_category = atoi(cat_str.c_str());
-                }
+                bool matched = eres.matched;
+                int matched_category = eres.reported_category;
                 
                 bool expected_match = (exp.expected_match == "yes");
                 

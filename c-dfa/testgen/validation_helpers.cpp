@@ -198,24 +198,13 @@ std::string extractFragment(const std::string& input,
                           std::map<std::string, std::string>& fragments,
                           std::mt19937& rng,
                           bool force_simple) {
-    // Create fragment name
-    static const char* frag_names[] = {"a", "b", "c", "d", "e", "f", "g", "h", "x", "y", "z"};
-    std::string frag_name = frag_names[std::uniform_int_distribution<int>(0, 10)(rng)];
+    // Create unique fragment name using incrementing counter
+    static int frag_counter = 0;
+    std::string full_name = "frag" + std::to_string(frag_counter++);
     
-    // Add numeric suffix to make unique
-    frag_name += std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
-    
-    // Decide whether to use namespaced format (30% chance)
-    bool use_namespace = !force_simple && std::uniform_int_distribution<int>(0, 99)(rng) < 30;
-    std::string full_name;
-    
-    if (use_namespace) {
-        // Use test namespace
-        std::string namespaces[] = {"test", "gen", "tgen", "pat"};
-        std::string ns = namespaces[std::uniform_int_distribution<int>(0, 3)(rng)];
-        full_name = ns + "::" + frag_name;
-    } else {
-        full_name = frag_name;
+    // Ensure no collision with existing fragments
+    while (fragments.count(full_name)) {
+        full_name = "frag" + std::to_string(frag_counter++);
     }
     
     // Determine the fragment definition

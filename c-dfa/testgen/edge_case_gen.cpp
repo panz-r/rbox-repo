@@ -263,6 +263,171 @@ static EdgeCaseResult createNestedQuantifierEdge(std::mt19937& rng) {
     return result;
 }
 
+static EdgeCaseResult createEmptyAlternationEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::EMPTY_ALTERNATION;
+
+    // Pattern: (a|b|) which matches "a", "b", or empty string
+    std::string a = std::string(1, 'a' + std::uniform_int_distribution<int>(0, 25)(rng));
+    std::string b = std::string(1, 'a' + std::uniform_int_distribution<int>(0, 25)(rng));
+    while (b == a) b = std::string(1, 'a' + std::uniform_int_distribution<int>(0, 25)(rng));
+
+    auto lit_a = PatternNode::createLiteral(a, {a});
+    auto lit_b = PatternNode::createLiteral(b, {b});
+    auto empty_lit = PatternNode::createLiteral("", {""});
+    auto alt_node = PatternNode::createAlternation({lit_a, lit_b, empty_lit}, {a, b, ""});
+    result.initial_ast = alt_node;
+
+    result.matching_seeds = {a, b, ""};
+    
+    // Counter: strings that are neither a nor b nor empty
+    char c = 'a' + std::uniform_int_distribution<int>(0, 25)(rng);
+    while (std::string(1, c) == a || std::string(1, c) == b) {
+        c = 'a' + std::uniform_int_distribution<int>(0, 25)(rng);
+    }
+    result.counter_seeds = {std::string(1, c), a + b, b + a, "xyz"};
+
+    result.proof = "EDGE_CASE: EMPTY_ALTERNATION\n";
+    result.proof += "  Pattern: (" + a + "|" + b + "|)\n";
+    result.proof += "  Matching: " + a + ", " + b + ", <empty>\n";
+    result.proof += "  Rationale: Tests empty alternative (|) - matches empty or a or b\n";
+    return result;
+}
+
+static EdgeCaseResult createDeepNestingEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::DEEP_NESTING;
+
+    // Build deeply nested pattern: ((((((ab)+)*)
+    std::string inner = randomAlphaEdge(2, rng);
+    int depth = 6 + std::uniform_int_distribution<int>(0, 4)(rng);  // 6-10 levels
+
+    auto node = PatternNode::createLiteral(inner, {inner});
+    node->type = PatternType::PLUS_QUANTIFIER;
+    node->quantified = PatternNode::createLiteral(inner, {inner});
+
+    for (int i = 0; i < depth; i++) {
+        auto wrapped = PatternNode::createQuantified(node, PatternType::STAR_QUANTIFIER, {inner});
+        node = wrapped;
+    }
+    result.initial_ast = node;
+
+    result.matching_seeds = {inner, inner + inner, inner + inner + inner};
+    result.counter_seeds = {inner + "x", "x" + inner, "x"};
+
+    result.proof = "EDGE_CASE: DEEP_NESTING\n";
+    result.proof += "  Depth: " + std::to_string(depth) + "\n";
+    result.proof += "  Inner: " + inner + "\n";
+    result.proof += "  Rationale: Tests deeply nested quantifiers\n";
+    return result;
+}
+
+static EdgeCaseResult createEmptyGroupQuantEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::EMPTY_GROUP_QUANT;
+
+    // Pattern: (a|b)+ where the plus quantifier is applied to a simple alternation
+    // Tests that quantifiers on groups work correctly
+    std::string a = randomAlphaEdge(1, rng);
+    std::string b = randomAlphaEdge(1, rng);
+    while (b == a) b = randomAlphaEdge(1, rng);
+
+    auto lit_a = PatternNode::createLiteral(a, {a});
+    auto lit_b = PatternNode::createLiteral(b, {b});
+    auto alt_node = PatternNode::createAlternation({lit_a, lit_b}, {a, b});
+    
+    // Wrap in quantifier
+    auto quant_node = PatternNode::createQuantified(alt_node, PatternType::PLUS_QUANTIFIER, {a, b, a+b, b+a});
+    result.initial_ast = quant_node;
+
+    result.matching_seeds = {a, b, a + b, b + a, a + a, b + b};
+    result.counter_seeds = {"", "x", a + "x", "x" + a};
+
+    result.proof = "EDGE_CASE: EMPTY_GROUP_QUANT\n";
+    result.proof += "  Pattern: (" + a + "|" + b + ")+\n";
+    result.proof += "  Rationale: Tests quantified group with alternation\n";
+    return result;
+}
+
+static EdgeCaseResult createLongAlternationEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::LONG_ALTERNATION;
+
+    int num_alts = 12 + std::uniform_int_distribution<int>(0, 8)(rng);  // 12-20 alternatives
+    std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+    std::vector<std::string> alts;
+    std::set<char> used_chars;
+
+    for (int i = 0; i < num_alts; i++) {
+        std::string alt;
+        do {
+            alt = randomAlphaEdge(1 + std::uniform_int_distribution<int>(0, 2)(rng), rng);
+        } while (!alt.empty() && used_chars.count(alt[0]));
+        if (!alt.empty()) used_chars.insert(alt[0]);
+        alts.push_back(alt);
+        alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+    }
+
+    auto node = PatternNode::createAlternation(alt_nodes, alts);
+    result.initial_ast = node;
+
+    for (auto& alt : alts) {
+        result.matching_seeds.push_back(alt);
+    }
+
+    // Generate counters that don't match any alternative
+    for (int i = 0; i < 10; i++) {
+        std::string counter = randomAlphaEdge(3, rng);
+        bool matches_any = false;
+        for (auto& alt : alts) {
+            if (counter == alt) { matches_any = true; break; }
+        }
+        if (!matches_any) {
+            result.counter_seeds.push_back(counter);
+        }
+    }
+
+    result.proof = "EDGE_CASE: LONG_ALTERNATION\n";
+    result.proof += "  Num alternatives: " + std::to_string(num_alts) + "\n";
+    result.proof += "  Rationale: Tests alternation with many alternatives (>10)\n";
+    return result;
+}
+
+static EdgeCaseResult createFragmentCycleEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::FRAGMENT_CYCLE;
+
+    // Create two fragments that reference different patterns
+    // (actual cycles would hang the parser, so we test near-cycle patterns)
+    std::string base_a = randomAlphaEdge(2, rng);
+    std::string base_b = randomAlphaEdge(2, rng);
+    while (base_b == base_a) base_b = randomAlphaEdge(2, rng);
+
+    std::string frag_a_name = "cycA";
+    std::string frag_b_name = "cycB";
+
+    result.fragments[frag_a_name] = base_a;
+    result.fragments[frag_b_name] = base_b;
+
+    // Pattern: [[cycA]][[cycB]]+ (sequence of fragment refs)
+    auto frag_a_node = PatternNode::createFragment(frag_a_name, {base_a});
+    auto frag_b_node = PatternNode::createFragment(frag_b_name, {base_b});
+    frag_b_node->type = PatternType::PLUS_QUANTIFIER;
+    frag_b_node->quantified = PatternNode::createFragment(frag_b_name, {base_b});
+
+    auto seq_node = PatternNode::createSequence({frag_a_node, frag_b_node}, {base_a + base_b});
+    result.initial_ast = seq_node;
+
+    result.matching_seeds = {base_a + base_b, base_a + base_b + base_b};
+    result.counter_seeds = {base_b, base_a, base_b + base_a, "x"};
+
+    result.proof = "EDGE_CASE: FRAGMENT_CYCLE\n";
+    result.proof += "  Fragments: " + frag_a_name + "=" + base_a + ", " + frag_b_name + "=" + base_b + "\n";
+    result.proof += "  Pattern: [[" + frag_a_name + "]][[" + frag_b_name + "]]+\n";
+    result.proof += "  Rationale: Tests multiple fragment references in sequence (near-cycle stress)\n";
+    return result;
+}
+
 EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
     switch (type) {
         case EdgeCaseType::RANGE_BOUNDARY:
@@ -275,6 +440,16 @@ EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
             return createAlternationEdge(rng);
         case EdgeCaseType::NESTED_QUANTIFIER:
             return createNestedQuantifierEdge(rng);
+        case EdgeCaseType::EMPTY_ALTERNATION:
+            return createEmptyAlternationEdge(rng);
+        case EdgeCaseType::DEEP_NESTING:
+            return createDeepNestingEdge(rng);
+        case EdgeCaseType::EMPTY_GROUP_QUANT:
+            return createEmptyGroupQuantEdge(rng);
+        case EdgeCaseType::LONG_ALTERNATION:
+            return createLongAlternationEdge(rng);
+        case EdgeCaseType::FRAGMENT_CYCLE:
+            return createFragmentCycleEdge(rng);
         default:
             return createPartialMatchEdge(rng);
     }

@@ -173,6 +173,37 @@ public:
     CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 
+// Extract a substring from a literal into a fragment reference.
+// E.g., literal "abcde" -> sequence "ab" + fragment_ref("fgX") + "de"
+// with fragment fgX = "c". Preserves semantics but tests fragment handling.
+class ExtractFragmentCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::UNWRAP_FRAGMENT_REF; }
+    std::string name() const override { return "EXTRACT_FRAGMENT_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+// Insert redundant grouping around a sub-expression.
+// E.g., "abc" -> "(abc)". Preserves matching semantics.
+class RedundantGroupCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::DEEPEN_NESTING; }
+    std::string name() const override { return "REDUNDANT_GROUP_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+// Swap order of alternatives in an alternation.
+// E.g., (a|b|c) -> (c|a|b). Preserves matching semantics.
+class SwapAlternativesCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::ALTER_ALTERNATIVE; }
+    std::string name() const override { return "SWAP_ALTERNATIVES_COORD"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
 class CoordinatedMutationEngine {
 public:
     CoordinatedMutationEngine();
