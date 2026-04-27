@@ -9,6 +9,16 @@
 #include <algorithm>  // for std::shuffle
 
 // ============================================================================
+// Fragment name generator - uses incrementing counter to avoid collisions
+// ============================================================================
+static int g_frag_extract_counter = 0;
+namespace PatternFactorization {
+std::string nextFragName() {
+    return "xf" + std::to_string(g_frag_extract_counter++);
+}
+}
+
+// ============================================================================
 // Constraint Subdivision - Distribute counter-inputs among child nodes
 // For a sequence A+B+C, we can subdivide counter constraints:
 // - A (prefix): Cannot match patterns ending with distinguishing char
@@ -606,19 +616,20 @@ std::shared_ptr<PatternNode> factorSuffixes(std::shared_ptr<PatternNode> node, i
     return result;
 }
 
-// Verify that all matched_seeds of a node still match it after factoring.
-// Returns true if all seeds match, false if any don't.
+// Verify that all matched_seeds of a node still match it after factoring,
+// AND that no counter_seeds accidentally start matching.
+// Returns true if verification passes, false if any don't.
 // If verification fails and original_children is non-empty, restores those children.
 static bool verifyFactoredNode(
     std::shared_ptr<PatternNode> node,
     const std::vector<std::shared_ptr<PatternNode>>& original_children,
     FactorizationProof* proof_out) {
     
-    if (!node || node->matched_seeds.empty()) return true;
+    if (!node) return true;
     
+    // Verify all matching seeds still match
     for (const auto& seed : node->matched_seeds) {
         if (!PatternMatcher::matches(node, seed)) {
-            // Revert: restore original children
             if (!original_children.empty()) {
                 node->children = original_children;
             }
@@ -628,6 +639,20 @@ static bool verifyFactoredNode(
             return false;
         }
     }
+    
+    // Verify no counter seeds accidentally match after factoring
+    for (const auto& seed : node->counter_seeds) {
+        if (PatternMatcher::matches(node, seed)) {
+            if (!original_children.empty()) {
+                node->children = original_children;
+            }
+            if (proof_out) {
+                proof_out->valid = false;
+            }
+            return false;
+        }
+    }
+    
     return true;
 }
 
@@ -1287,7 +1312,7 @@ std::shared_ptr<PatternNode> introduceCharClass(
                     }
                     
                     // Validation passed - create the fragment
-                    std::string frag_name = "class" + std::to_string(rng() % 100);
+                    std::string frag_name = nextFragName();
                     fragment_defs[frag_name] = class_def;
                     
                     auto frag_node = PatternNode::createFragment(
@@ -1616,7 +1641,7 @@ std::shared_ptr<PatternNode> extractFragmentRewrite(
             
             // 8% chance to extract literal to fragment
             if (node->value.length() >= 3 && chance_dist(rng) < 8) {
-                std::string frag_name = "frag" + std::to_string(rng() % 1000);
+                std::string frag_name = nextFragName();
                 std::string frag_def = node->value;
                 
                 // Register fragment
@@ -1637,7 +1662,7 @@ std::shared_ptr<PatternNode> extractFragmentRewrite(
         case PatternType::SEQUENCE: {
             // 5% chance to extract entire alternation/sequence
             if (node->children.size() >= 2 && chance_dist(rng) < 5) {
-                std::string frag_name = "sub" + std::to_string(rng() % 1000);
+                std::string frag_name = nextFragName();
                 std::string frag_def = serializePattern(node);
                 
                 // Don't extract if already simple

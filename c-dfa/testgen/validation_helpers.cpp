@@ -200,11 +200,11 @@ std::string extractFragment(const std::string& input,
                           bool force_simple) {
     // Create unique fragment name using incrementing counter
     static int frag_counter = 0;
-    std::string full_name = "frag" + std::to_string(frag_counter++);
+    std::string full_name = "valfrag" + std::to_string(frag_counter++);
     
     // Ensure no collision with existing fragments
     while (fragments.count(full_name)) {
-        full_name = "frag" + std::to_string(frag_counter++);
+        full_name = "valfrag" + std::to_string(frag_counter++);
     }
     
     // Determine the fragment definition

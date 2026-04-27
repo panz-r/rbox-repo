@@ -1228,26 +1228,28 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
         // Length varies around base unit length
         int target_len = min_len + std::uniform_int_distribution<int>(0, max_len - min_len)(rng);
         
-        // Determine how to build this string:
         // 0 = pure random, 1 = repeat base_unit, 2 = repeat prefix,
         // 3 = prefix + repeat, 4 = common suffix + varying prefix,
-        // 5 = overlapping fragments (shared inner substring), 6 = near-miss source
+        // 5 = overlapping fragments (shared inner substring), 6 = near-miss source,
+        // 7 = shared-inner-substring with tight prefix/suffix
         int build_type;
         double r_type = std::uniform_real_distribution<double>(0.0, 1.0)(rng);
         if (r_type < 0.10) {
             build_type = 0;  // Pure random (10%)
         } else if (r_type < 0.35) {
             build_type = 1;  // Repeat base unit (25%)
-        } else if (r_type < 0.55) {
-            build_type = 2;  // Repeat prefix (20%)
-        } else if (r_type < 0.70) {
-            build_type = 3;  // Prefix + autocorrelation (15%)
-        } else if (r_type < 0.85) {
-            build_type = 4;  // Common suffix + varying prefix (15%)
-        } else if (r_type < 0.97) {
-            build_type = 5;  // Overlapping fragments (12%)
+        } else if (r_type < 0.52) {
+            build_type = 2;  // Repeat prefix (17%)
+        } else if (r_type < 0.64) {
+            build_type = 3;  // Prefix + autocorrelation (12%)
+        } else if (r_type < 0.76) {
+            build_type = 4;  // Common suffix + varying prefix (12%)
+        } else if (r_type < 0.86) {
+            build_type = 5;  // Overlapping fragments (10%)
+        } else if (r_type < 0.93) {
+            build_type = 7;  // Shared inner substring with tight prefix/suffix (7%)
         } else {
-            build_type = 6;  // Near-miss (3%)
+            build_type = 6;  // Near-miss (7%)
         }
         
         std::string s;
@@ -1328,7 +1330,7 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
                 s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
             }
             s = s.substr(0, target_len);
-        } else {
+        } else if (build_type == 6) {
             // build_type == 6: near-miss source (starts with a slightly wrong pattern
             // that may be corrected by the builder; this seed will itself be matching
             // but its variants generated later may be near-counters)
@@ -1338,6 +1340,27 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
             }
             // Add one extra random char
             s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            s = s.substr(0, target_len);
+        } else if (build_type == 7) {
+            // build_type == 7: shared inner substring with tight prefix/suffix.
+            // All matching seeds share a fixed prefix (2-3 chars), a varying middle
+            // (1-2 chars from a small set), and a fixed suffix (2-3 chars).
+            // Tests distinguishing-char and char-class strategies.
+            int pre_len = 2 + std::uniform_int_distribution<int>(0, 1)(rng);
+            int suf_len = 2 + std::uniform_int_distribution<int>(0, 1)(rng);
+            int mid_len = std::max(1, target_len - pre_len - suf_len);
+            // Fixed prefix
+            for (int j = 0; j < pre_len; j++) {
+                s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            }
+            // Varying middle (from small set)
+            for (int j = 0; j < mid_len; j++) {
+                s += alphanum[std::uniform_int_distribution<int>(0, 4)(rng)];  // first 5 chars only
+            }
+            // Fixed suffix
+            for (int j = 0; j < suf_len && (int)s.size() < target_len; j++) {
+                s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
+            }
             s = s.substr(0, target_len);
         }
         
@@ -1780,7 +1803,17 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     } else {
         // Normal random seeding
         auto [matching_seeds, counter_seeds] = generateSeeds(tc.complexity, used_inputs);
-        tc.matching_inputs = matching_seeds;
+        // Deduplicate matching seeds (correlation-based generation can produce dupes)
+        {
+            std::set<std::string> seen;
+            std::vector<std::string> deduped;
+            for (const auto& s : matching_seeds) {
+                if (seen.insert(s).second) {
+                    deduped.push_back(s);
+                }
+            }
+            tc.matching_inputs = std::move(deduped);
+        }
         tc.counter_inputs = counter_seeds;
     }
     
@@ -1868,7 +1901,17 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
                     result.proof += "  [RETRY] Pattern invalid, regenerating...\n";
                     // Regenerate seeds for next attempt
                     auto [new_matching, new_counters] = generateSeeds(tc.complexity, used_inputs);
-                    tc.matching_inputs = new_matching;
+                    // Deduplicate matching seeds
+                    {
+                        std::set<std::string> seen;
+                        std::vector<std::string> deduped;
+                        for (const auto& s : new_matching) {
+                            if (seen.insert(s).second) {
+                                deduped.push_back(s);
+                            }
+                        }
+                        tc.matching_inputs = std::move(deduped);
+                    }
                     tc.counter_inputs = new_counters;
                     // Update batch tracking
                     for (const auto& s : new_matching) {
@@ -2302,10 +2345,11 @@ void TestGenerator::writePatternFile(const std::vector<TestCase>& tests, const s
     std::ofstream out(filename);
     out << "# Auto-generated test patterns\n\n";
     
-    // Collect all fragment definitions and validate references
+    // Collect all fragment definitions (keep FIRST definition if names collide)
     std::map<std::string, std::string> all_fragments;
     for (const auto& tc : tests) {
         for (const auto& f : tc.fragments) {
+            // Skip if already defined (keep first definition, avoid duplicate writes)
             if (all_fragments.find(f.first) == all_fragments.end()) {
                 all_fragments[f.first] = f.second;
             }

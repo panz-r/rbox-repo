@@ -4,6 +4,9 @@
 #include "testgen.h"
 
 namespace PatternFactorization {
+    // Fragment name generator - uses incrementing counter to avoid collisions
+    std::string nextFragName();
+
     std::string findCommonPrefix(const std::vector<std::string>& strings);
     std::string findCommonSuffix(const std::vector<std::string>& strings);
     std::map<std::string, std::vector<std::string>> groupByPrefix(const std::vector<std::string>& alternatives, size_t prefix_len);

@@ -5,6 +5,7 @@
 // 1. Distinguishing prefix (multi-char)
 // 2. Distinguishing char class at any position
 // 2b. Fragment-based char class (40% chance, wraps char class in fragment def)
+// 2c. Fragment-based LCS splitting (30% chance, wraps longest common substring in fragment)
 // 3. Distinguishing char at any position
 // 4-6. [Randomized order] Distinguishing suffix, length partition, first-char partition
 // 7. Distinguishing substring (anywhere in string, not just prefix/suffix)
@@ -16,6 +17,7 @@
 
 #include "inductive_builder.h"
 #include "testgen.h"
+#include "pattern_factorization.h"
 
 #include <algorithm>
 
@@ -83,17 +85,20 @@ std::string findDistinguishingPrefix(const std::vector<InputState>& matching_sta
         for (const auto& cs : counter_states) {
             if (cs.remaining.find(trial) == 0) {
                 std::string counter_rem = cs.remaining.substr(trial.size());
-                bool all_same = true;
+                // Reject if ANY matching remainder equals the counter remainder.
+                // The old logic only rejected when ALL matched, which allowed
+                // counters that shared a remainder with one matching input.
+                bool found_match = false;
                 for (const auto& ms : matching_states) {
                     if (ms.remaining.find(trial) == 0) {
                         std::string match_rem = ms.remaining.substr(trial.size());
-                        if (match_rem != counter_rem) {
-                            all_same = false;
+                        if (match_rem == counter_rem) {
+                            found_match = true;
                             break;
                         }
                     }
                 }
-                if (all_same) {
+                if (found_match) {
                     distinguishes = false;
                     break;
                 }
@@ -130,18 +135,21 @@ static std::string findDistinguishingSuffix(const std::vector<InputState>& match
                 cs.remaining.substr(cs.remaining.size() - trial.size()) == trial) {
                 // Counter also ends with trial
                 std::string counter_pre = cs.remaining.substr(0, cs.remaining.size() - trial.size());
-                bool all_same = true;
+                // Reject if ANY matching prefix equals the counter prefix.
+                // The old logic only rejected when ALL matched, which allowed
+                // counters that shared a prefix with one matching input.
+                bool found_match = false;
                 for (const auto& ms : matching_states) {
                     if (ms.remaining.size() >= trial.size() &&
                         ms.remaining.substr(ms.remaining.size() - trial.size()) == trial) {
                         std::string match_pre = ms.remaining.substr(0, ms.remaining.size() - trial.size());
-                        if (match_pre != counter_pre) {
-                            all_same = false;
+                        if (match_pre == counter_pre) {
+                            found_match = true;
                             break;
                         }
                     }
                 }
-                if (all_same) {
+                if (found_match) {
                     distinguishes = false;
                     break;
                 }
@@ -478,7 +486,7 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
                                   std::vector<InputState> counter_states,
                                   int depth,
                                   std::mt19937& rng) {
-    if (depth > 12) {
+    if (depth > 20) {
         return makeAlternation(matching_states, counter_states, {});
     }
     
@@ -617,8 +625,7 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
         std::uniform_int_distribution<int>(0, 9)(rng) < 4) {
         
         // Build fragment definition as alternation of single chars
-        static int frag_char_counter = 0;
-        std::string frag_name = "fc" + std::to_string(frag_char_counter++);
+        std::string frag_name = PatternFactorization::nextFragName();
         std::string frag_def;
         for (char c : dist_class) {
             if (!frag_def.empty()) frag_def += "|";
@@ -664,6 +671,81 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
         if (suffix_result.success) result.proof += suffix_result.proof;
         result.success = true;
         return result;
+    }
+    
+    // ---- Strategy 2c: Fragment-based LCS splitting ----
+    // Find the longest common substring of all matching inputs, define a fragment
+    // with that value, and recurse on the pre/post contexts. Tests the pipeline's
+    // fragment expansion path with multi-char fragment values.
+    // Only activates 30% of the time and requires LCS length >= 2.
+    {
+        if (matching_states.size() >= 2 && matching_states.size() <= 20 &&
+            std::uniform_int_distribution<int>(0, 9)(rng) < 3) {
+            
+            // Find longest common substring
+            std::string best_substr;
+            for (size_t i = 0; i < matching_states[0].remaining.size(); i++) {
+                for (size_t len = 2; len <= matching_states[0].remaining.size() - i; len++) {
+                    std::string substr = matching_states[0].remaining.substr(i, len);
+                    bool in_all = true;
+                    for (size_t j = 1; j < matching_states.size(); j++) {
+                        if (matching_states[j].remaining.find(substr) == std::string::npos) {
+                            in_all = false;
+                            break;
+                        }
+                    }
+                    if (in_all && substr.size() > best_substr.size()) {
+                        best_substr = substr;
+                    }
+                }
+            }
+            
+            if (best_substr.size() >= 2) {
+                std::string frag_name = PatternFactorization::nextFragName();
+                
+                auto frag_ref = PatternNode::createFragment(frag_name);
+                
+                // Split each matching input at first occurrence of the LCS
+                std::vector<InputState> pre_states, post_states;
+                for (const auto& s : matching_states) {
+                    size_t pos = s.remaining.find(best_substr);
+                    if (pos != std::string::npos) {
+                        InputState pre(s.full_input, true);
+                        pre.remaining = s.remaining.substr(0, pos);
+                        pre_states.push_back(pre);
+                        
+                        InputState post(s.full_input, true);
+                        post.remaining = s.remaining.substr(pos + best_substr.size());
+                        post_states.push_back(post);
+                    }
+                }
+                
+                if (!pre_states.empty() && !post_states.empty()) {
+                    auto pre_result = buildRecursive(pre_states, counter_states, depth + 1, rng);
+                    auto post_result = buildRecursive(post_states, counter_states, depth + 1, rng);
+                    
+                    if (pre_result.success && post_result.success && pre_result.ast && post_result.ast) {
+                        std::vector<std::shared_ptr<PatternNode>> seq_children;
+                        seq_children.push_back(pre_result.ast);
+                        seq_children.push_back(frag_ref);
+                        seq_children.push_back(post_result.ast);
+                        
+                        BuildResult result;
+                        result.ast = PatternNode::createSequence(seq_children);
+                        std::vector<std::string> seeds;
+                        for (const auto& s : matching_states) seeds.push_back(s.full_input);
+                        result.ast->matched_seeds = seeds;
+                        result.fragments[frag_name] = best_substr;
+                        for (const auto& [k, v] : pre_result.fragments) result.fragments[k] = v;
+                        for (const auto& [k, v] : post_result.fragments) result.fragments[k] = v;
+                        result.proof = "  [Depth " + std::to_string(depth) + "] Fragment LCS: [[" + frag_name + "]] = " + best_substr + "\n" +
+                                      pre_result.proof + post_result.proof;
+                        result.success = true;
+                        return result;
+                    }
+                }
+            }
+        }
     }
     
     // ---- Strategy 3: Single distinguishing char ----
@@ -820,8 +902,24 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
             return {};
         }});
         
-        // Shuffle and try each
+        // Shuffle and try each, with depth-dependent bias:
+        // even depths favor prefix-oriented, odd depths favor suffix-oriented
         std::shuffle(strats.begin(), strats.end(), rng);
+        if (depth % 2 == 1) {
+            // Move suffix strategy (id=4) to front if present
+            auto it = std::find_if(strats.begin(), strats.end(),
+                [](const auto& e) { return e.id == 4; });
+            if (it != strats.end() && it != strats.begin()) {
+                std::iter_swap(it, strats.begin());
+            }
+        } else {
+            // Move first-char partition (id=6) to front if present
+            auto it = std::find_if(strats.begin(), strats.end(),
+                [](const auto& e) { return e.id == 6; });
+            if (it != strats.end() && it != strats.begin()) {
+                std::iter_swap(it, strats.begin());
+            }
+        }
         for (auto& entry : strats) {
             BuildResult r = entry.fn();
             if (r.success) return r;
@@ -1113,6 +1211,17 @@ BuildResult buildInductive(const std::vector<std::string>& matching,
     }
     
     BuildResult result = buildRecursive(matching_states, counter_states, 0, rng);
+    
+    // Retry with different depth budget if first attempt failed
+    // (randomized starting depth effectively varies the recursion budget)
+    if (!result.success && matching.size() >= 2) {
+        // Try starting at depth 1-3, which reduces the effective budget from 12 to 9-11
+        int start_depth = 1 + std::uniform_int_distribution<int>(0, 2)(rng);
+        result = buildRecursive(matching_states, counter_states, start_depth, rng);
+        if (result.success) {
+            result.proof = "INDUCTIVE BUILD (reduced depth budget, start=" + std::to_string(start_depth) + "):\n" + result.proof;
+        }
+    }
     
     if (result.success && result.ast) {
         std::string proof = "INDUCTIVE BUILD:\n";

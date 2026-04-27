@@ -51,7 +51,7 @@ static void reset_pattern_state(nfa_builder_context_t* ctx) {
     ctx->capture_stack_depth = 0;
     ctx->pending_capture_defer_id = -1;
     ctx->last_element_sid = -1;
-    ctx->prev_frag_exit = -1;
+    ctx->prev_frag_exit = -1;  // Reset at start of each pattern (alternation)
     nfa_parser_clear_error(ctx);
 }
 
@@ -93,6 +93,7 @@ const parse_error_info_t* nfa_parser_get_error(const nfa_builder_context_t* ctx)
 // ============================================================================
 
 static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
+static void collect_fragment_from_line(nfa_builder_context_t* ctx, const char* line);
 static int parse_rdp_class(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
 static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
 static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, int* pos, int start_state);
@@ -154,9 +155,11 @@ static fragment_result_t parse_rdp_fragment(nfa_builder_context_t* ctx, const ch
     }
 
     char frag_name[MAX_FRAGMENT_NAME];
+    // j points to first ']' of ']]'. pattern at *pos is '[' and *pos+1 is '[', so name is at *pos+2.
+    // Length = j - (*pos + 2), which gives exactly the 'name' in '[[name]]'
     size_t name_len = j - (*pos + 2);
-    if (name_len >= sizeof(frag_name)) {
-        WARNING("Fragment name too long at position %d", *pos);
+    if (name_len >= sizeof(frag_name) || name_len == 0) {
+        WARNING("Fragment name too long or empty at position %d", *pos);
         *pos = j + 2;
         result.exit_state = start_state;
         return result;
@@ -343,6 +346,8 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
                 }
                 if (pattern[j] == ']' && pattern[j + 1] == ']') {
                     char frag_name[MAX_FRAGMENT_NAME];
+                    // j points to first ']' of ']]'. Name starts at *pos+2 (after [[) with length (j - *pos - 2)
+                    // which gives exactly the characters between [[ and the first ]]
                     size_t name_len = j - (*pos + 2);
                     if (name_len > 0 && name_len < sizeof(frag_name)) {
                         strncpy(frag_name, &pattern[*pos + 2], name_len);
@@ -425,6 +430,23 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
                     if (pattern[scan] == '(') depth++;
                     else if (pattern[scan] == ')') { depth--; if (depth == 0) break; }
                     else if (pattern[scan] == '|' && depth == 1) has_alternation = true;
+                    // Skip over fragment reference [[...]] in scan (depth tracking must ignore it)
+                    else if (pattern[scan] == '[' && pattern[scan + 1] == '[') {
+                        scan += 2;
+                        while (pattern[scan] && !(pattern[scan] == ']' && pattern[scan + 1] == ']')) {
+                            scan++;
+                        }
+                        if (pattern[scan]) {
+                            scan++;  // skip first ']' of ']]'
+                            // Check if this ]] is immediately followed by ')' (closing the group)
+                            // Pattern: ( [[ frag ]] ) or ( [[ frag ]] ) + | ...
+                            // We need to skip past ]]) to find the real group closing )
+                            if (pattern[scan] == ']' && pattern[scan + 1] == ')') {
+                                scan += 2;  // skip ']' and ')', continue scanning
+                            }
+                        }
+                        continue;
+                    }
                     scan++;
                 }
                 if (has_alternation) {
@@ -438,6 +460,8 @@ static int parse_rdp_element(nfa_builder_context_t* ctx, const char* pattern, in
                 }
                 if (pattern[j] == ']' && pattern[j + 1] == ']') {
                     char frag_name[MAX_FRAGMENT_NAME];
+                    // j points to first ']' of ']]'. Name starts at *pos+2 with length (j - *pos - 2).
+                    // Subtract 2 from j (instead of 1) to exclude both ']]' characters
                     size_t name_len = j - (*pos + 2);
                     if (name_len > 0 && name_len < sizeof(frag_name)) {
                         strncpy(frag_name, &pattern[*pos + 2], name_len);
@@ -626,6 +650,12 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
             if (*pos > 0 && pattern[*pos - 1] == '(') {
                 break;
             }
+            // Guard: if current_fragment was never populated (empty element),
+            // treat * as a literal and don't apply quantifier logic.
+            if (ctx->current_fragment.anchor_state < 0) {
+                (*pos)++;  // consume * as literal
+                break;
+            }
             if (!quantifier_is_valid(pattern, *pos, ctx)) {
                 nfa_parser_set_error(ctx, PARSE_ERROR_QUANTIFIER_POSITION, *pos,
                     "'*' quantifier must follow ')' - use (expr)* for zero-or-more");
@@ -636,13 +666,14 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
             int exit_state = nfa_construct_add_state_with_minimization(ctx, false);
             int element_entry = ctx->current_fragment.anchor_state;
             if (element_entry < 0) element_entry = start_state;
+            int element_exit = ctx->current_fragment.exit_state;
+            if (element_exit < 0) element_exit = element_entry;
 
             int skip_origin = element_entry;
             nfa_construct_add_transition(ctx, skip_origin, exit_state, epsilon_sid);
-
-            if (ctx->current_fragment.exit_state != -1) {
-                nfa_construct_add_transition(ctx, ctx->current_fragment.exit_state, element_entry, epsilon_sid);
-                nfa_construct_add_transition(ctx, ctx->current_fragment.exit_state, exit_state, epsilon_sid);
+            // Loop-back: element_exit -> element_entry (for more repetitions)
+            if (element_exit >= 0 && element_exit != element_entry) {
+                nfa_construct_add_transition(ctx, element_exit, element_entry, epsilon_sid);
             }
 
             nfa_construct_finalize_state(ctx, exit_state);
@@ -652,6 +683,12 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
             ctx->current_fragment.exit_state = exit_state;
 
         } else if (op == '+') {
+            // Guard: if current_fragment was never populated (empty element),
+            // treat + as a literal and don't apply quantifier logic.
+            if (ctx->current_fragment.anchor_state < 0) {
+                (*pos)++;  // consume + as literal
+                break;
+            }
             if (!quantifier_is_valid(pattern, *pos, ctx)) {
                 nfa_parser_set_error(ctx, PARSE_ERROR_QUANTIFIER_POSITION, *pos,
                     "'+' quantifier must follow ')' - use (expr)+ for one-or-more");
@@ -662,17 +699,27 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
             int exit_state = nfa_construct_add_state_with_minimization(ctx, false);
             int element_entry = ctx->current_fragment.anchor_state;
             if (element_entry < 0) element_entry = start_state;
-
-            if (ctx->current_fragment.exit_state != -1) {
-                nfa_construct_add_transition(ctx, ctx->current_fragment.exit_state, element_entry, epsilon_sid);
-                nfa_construct_add_transition(ctx, ctx->current_fragment.exit_state, exit_state, epsilon_sid);
+            int element_exit = ctx->current_fragment.exit_state;
+            if (element_exit < 0) element_exit = element_entry;
+            // Loop-back: element_exit -> element_entry (for more repetitions)
+            // AND: element_exit -> exit_state (to exit the loop after at least one match)
+            if (element_exit >= 0) {
+                nfa_construct_add_transition(ctx, element_exit, element_entry, epsilon_sid);
+                nfa_construct_add_transition(ctx, element_exit, exit_state, epsilon_sid);
             }
 
             nfa_construct_finalize_state(ctx, exit_state);
             current = exit_state;
+            ctx->current_fragment.anchor_state = element_entry;
             ctx->current_fragment.exit_state = exit_state;
 
         } else if (op == '?') {
+            // Guard: if current_fragment was never populated (empty element),
+            // treat ? as a literal and don't apply quantifier logic.
+            if (ctx->current_fragment.anchor_state < 0) {
+                (*pos)++;  // consume ? as literal
+                break;
+            }
             if (!quantifier_is_valid(pattern, *pos, ctx)) {
                 nfa_parser_set_error(ctx, PARSE_ERROR_QUANTIFIER_POSITION, *pos,
                     "'?' quantifier must follow ')' - use (expr)? for optional");
@@ -683,18 +730,20 @@ static int parse_rdp_postfix(nfa_builder_context_t* ctx, const char* pattern, in
             int exit_state = nfa_construct_add_state_with_minimization(ctx, false);
             int element_entry = ctx->current_fragment.anchor_state;
             if (element_entry < 0) element_entry = start_state;
+            int element_exit = ctx->current_fragment.exit_state;
+            if (element_exit < 0) element_exit = element_entry;
 
-            int skip_origin = element_entry;
-            nfa_construct_add_transition(ctx, skip_origin, exit_state, epsilon_sid);
-
-            if (ctx->current_fragment.exit_state != -1) {
-                nfa_construct_add_transition(ctx, ctx->current_fragment.exit_state, exit_state, epsilon_sid);
+            // Skip transition: element_entry -> exit_state (allow zero)
+            nfa_construct_add_transition(ctx, element_entry, exit_state, epsilon_sid);
+            // Through transition: element_exit -> exit_state (allow one)
+            if (element_exit >= 0 && element_exit != element_entry) {
+                nfa_construct_add_transition(ctx, element_exit, exit_state, epsilon_sid);
             }
 
             nfa_construct_finalize_state(ctx, exit_state);
             current = exit_state;
 
-            ctx->current_fragment.anchor_state = skip_origin;
+            ctx->current_fragment.anchor_state = element_entry;
             ctx->current_fragment.exit_state = exit_state;
 
         } else {
@@ -746,12 +795,9 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
         anchor_state = nfa_construct_add_state_with_minimization(ctx, false);
         nfa_construct_add_transition(ctx, 0, anchor_state, VSYM_EPS);
     } else {
-        anchor_state = nfa_construct_add_state_with_minimization(ctx, false);
-        if (epsilon_sid != -1) {
-            nfa_construct_add_transition(ctx, start_state, anchor_state, epsilon_sid);
-        } else {
-            anchor_state = start_state;
-        }
+        // start_state was already created (e.g., as real_start in parse_advanced_pattern),
+        // use it directly as anchor to avoid creating an unnecessary intermediate state.
+        anchor_state = start_state;
     }
 
     bool was_in_group = ctx->current_is_in_group;
@@ -761,10 +807,43 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
 
     ctx->current_is_in_group = was_in_group;
 
-    if (pattern[*pos] == '|') {
-        int merge_state = nfa_construct_add_state_with_minimization(ctx, false);
+    // Handle parse error: if first sequence failed, return error
+    if (first_end < 0) {
+        return -1;
+    }
 
-        if (epsilon_sid != -1) {
+    // Handle empty first alternative: when parse_rdp_sequence consumed nothing
+    // (e.g., (?|a|b) where ? is at position 1, not the '|' at position 0),
+    // advance past the '|' and parse the rest as alternation.
+    // NOTE: we do NOT enter the '|' block below to avoid a self-loop epsilon
+    // transition from anchor_state to itself (which would create from=-1).
+    if (first_end == anchor_state && pattern[*pos] == '|') {
+        (*pos)++;  // skip '|' and continue to parse remaining alternatives
+        // Parse remaining alternatives (empty-first-alternative case)
+        while (pattern[*pos] == '|') {
+            (*pos)++;
+            if (pattern[*pos] == ')' || pattern[*pos] == '\0') {
+                continue;  // skip empty alternative
+            }
+            int branch_end = parse_rdp_sequence(ctx, pattern, pos, anchor_state);
+            if (branch_end < 0) return -1;  // Handle parse error
+        }
+        // Handle closing paren if present
+        if (pattern[*pos] == ')') {
+            (*pos)++;
+            memset(&ctx->current_fragment, 0, sizeof(ctx->current_fragment));
+            ctx->current_fragment.anchor_state = anchor_state;
+            ctx->current_fragment.exit_state = anchor_state;  // empty: exit == anchor
+            ctx->current_fragment.fragment_entry_state = start_state;
+            int postfix_result = parse_rdp_postfix(ctx, pattern, pos, anchor_state);
+            if (postfix_result < 0) return -1;
+            nfa_construct_finalize_state(ctx, anchor_state);
+            return postfix_result;
+        }
+    } else if (pattern[*pos] == '|') {
+        // Non-empty first alternative - normal alternation handling
+        int merge_state = nfa_construct_add_state_with_minimization(ctx, false);
+        if (epsilon_sid != -1 && first_end >= 0) {
             nfa_construct_add_transition(ctx, first_end, merge_state, epsilon_sid);
         }
 
@@ -772,7 +851,6 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
         bool has_empty_alternative = false;
         while (pattern[*pos] == '|') {
             (*pos)++;
-
             if (pattern[*pos] == ')' || pattern[*pos] == '\0') {
                 if (epsilon_sid != -1) {
                     nfa_construct_add_transition(ctx, anchor_state, merge_state, epsilon_sid);
@@ -780,16 +858,15 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
                 has_empty_alternative = true;
                 continue;
             }
-
             int branch_end = parse_rdp_sequence(ctx, pattern, pos, anchor_state);
-
+            if (branch_end < 0) return -1;  // Handle parse error in branch
             if (epsilon_sid != -1) {
                 nfa_construct_add_transition(ctx, branch_end, merge_state, epsilon_sid);
             }
             last_branch_end = branch_end;
         }
 
-        if (last_branch_end != merge_state && epsilon_sid != -1) {
+        if (last_branch_end != merge_state && epsilon_sid != -1 && last_branch_end >= 0) {
             nfa_construct_add_transition(ctx, merge_state, last_branch_end, epsilon_sid);
         }
 
@@ -799,7 +876,6 @@ static int parse_rdp_alternation_internal(nfa_builder_context_t* ctx, const char
             while (pattern[check_pos] == ')') check_pos++;
             char next_char = pattern[check_pos];
             bool end_of_pattern = (next_char == '\0');
-
             if (has_empty_alternative || end_of_pattern) {
                 ctx->nfa[merge_state].category_mask = ctx->current_pattern_cat_mask;
                 ctx->nfa[merge_state].is_eos_target = true;
@@ -909,6 +985,10 @@ static bool validate_pattern_input_local(nfa_builder_context_t* ctx, const char*
     int bracket_depth = 0;
     int paren_depth = 0;
     for (size_t i = 0; i < len; i++) {
+        if (line[i] == '\\' && i + 1 < len) {
+            i++;  // Skip escaped character
+            continue;
+        }
         if (line[i] == '[') bracket_depth++;
         if (line[i] == ']') bracket_depth--;
         if (line[i] == '(') paren_depth++;
@@ -1223,18 +1303,31 @@ static void parse_advanced_pattern(nfa_builder_context_t* ctx, const char* line)
                     return;
                 }
 
-                // Check for duplicate
+                // Check for duplicate - overwrite with new definition
+                bool found = false;
                 for (int i = 0; i < ctx->fragment_count; i++) {
                     if (strcmp(ctx->fragments[i].name, ctx->fragments[ctx->fragment_count].name) == 0) {
-                        nfa_parser_set_error(ctx, PARSE_ERROR_FRAGMENT, 0, "Duplicate fragment name '%s'", ctx->fragments[ctx->fragment_count].name);
-                        ctx->has_fragment_error = true;
-                        return;
+                        // Overwrite the existing fragment definition
+                        size_t val_len = strlen(value_start);
+                        if (val_len >= MAX_FRAGMENT_VALUE) val_len = MAX_FRAGMENT_VALUE - 1;
+                        strncpy(ctx->fragments[i].value, value_start, MAX_FRAGMENT_VALUE - 1);
+                        ctx->fragments[i].value[MAX_FRAGMENT_VALUE - 1] = '\0';
+                        // Trim trailing whitespace/newlines from value
+                        while (strlen(ctx->fragments[i].value) > 0 &&
+                               (ctx->fragments[i].value[strlen(ctx->fragments[i].value)-1] == '\n' ||
+                                ctx->fragments[i].value[strlen(ctx->fragments[i].value)-1] == '\r')) {
+                            ctx->fragments[i].value[strlen(ctx->fragments[i].value)-1] = '\0';
+                        }
+                        found = true;
+                        break;
                     }
                 }
 
-                strncpy(ctx->fragments[ctx->fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
-                ctx->fragments[ctx->fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
-                ctx->fragment_count++;
+                if (!found) {
+                    strncpy(ctx->fragments[ctx->fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
+                    ctx->fragments[ctx->fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
+                    ctx->fragment_count++;
+                }
             }
         }
         return;
@@ -1379,6 +1472,77 @@ void nfa_parser_read_spec_file(nfa_builder_context_t* ctx, const char* filename)
     fclose(file);
 
     VP(ctx, "Read %d patterns from %s\n", ctx->pattern_count, filename);
+}
+
+/**
+ * Collect fragment definitions from a single line (no NFA construction).
+ * Used as a pre-pass before nfa_construct_init to ensure all fragment
+ * definitions are available before pattern parsing begins.
+ */
+static void collect_fragment_from_line(nfa_builder_context_t* ctx, const char* line) {
+    // Skip whitespace
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line == '\0') return;
+
+    // Check for fragment or character set definition
+    if (strncmp(line, "[fragment:", 10) == 0 || strncmp(line, "[characterset:", 14) == 0) {
+        int prefix_len = (line[1] == 'f') ? 10 : 14;
+        const char* name_start = line + prefix_len;
+        const char* name_end = strchr(name_start, ']');
+        if (name_end != NULL && ctx->fragment_count < MAX_FRAGMENTS) {
+            size_t name_len = name_end - name_start;
+            if (name_len < MAX_FRAGMENT_NAME) {
+                char frag_name[MAX_FRAGMENT_NAME];
+                strncpy(frag_name, name_start, name_len);
+                frag_name[name_len] = '\0';
+
+                // Normalize separator
+                if (strstr(frag_name, "::") == NULL) {
+                    for (int i = 0; frag_name[i]; i++) {
+                        if (frag_name[i] == ':') {
+                            int len = strlen(frag_name);
+                            for (int k = len; k > i; k--) {
+                                frag_name[k] = frag_name[k - 1];
+                            }
+                            frag_name[i] = ':';
+                            frag_name[i + 1] = ':';
+                            break;
+                        }
+                    }
+                }
+
+                const char* value_start = name_end + 1;
+                while (*value_start == ' ' || *value_start == '\t') value_start++;
+                if (*value_start == '\0' || *value_start == '\n' || *value_start == '#') {
+                    return;  // Empty value
+                }
+
+                // Check for duplicate
+                bool dup = false;
+                for (int i = 0; i < ctx->fragment_count; i++) {
+                    if (strcmp(ctx->fragments[i].name, frag_name) == 0) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (dup) return;
+
+                // Store fragment name AND value
+                strncpy(ctx->fragments[ctx->fragment_count].name, frag_name, MAX_FRAGMENT_NAME - 1);
+                ctx->fragments[ctx->fragment_count].name[MAX_FRAGMENT_NAME - 1] = '\0';
+                strncpy(ctx->fragments[ctx->fragment_count].value, value_start, MAX_FRAGMENT_VALUE - 1);
+                ctx->fragments[ctx->fragment_count].value[MAX_FRAGMENT_VALUE - 1] = '\0';
+                ctx->fragment_count++;
+            }
+        }
+    }
+}
+
+/**
+ * Public API: collect all fragment definitions from a line (no NFA construction).
+ */
+void nfa_parser_collect_fragments(nfa_builder_context_t* ctx, const char* line) {
+    collect_fragment_from_line(ctx, line);
 }
 
 // ============================================================================

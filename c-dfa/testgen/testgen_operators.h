@@ -34,6 +34,7 @@ enum class CoordinatedMutationType {
     SEQUENCE_TO_ALTERNATION,
     INLINE_FRAGMENT,
     SWAP_SEQUENCE_CHILDREN,
+    WRAP_OPTIONAL,
 };
 
 struct CoordinatedMutationResult {
@@ -225,6 +226,16 @@ public:
     CoordinatedMutationType type() const override { return CoordinatedMutationType::SWAP_SEQUENCE_CHILDREN; }
     std::string name() const override { return "SWAP_SEQUENCE_CHILDREN"; }
     bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+// Wrap a LITERAL child inside a SEQUENCE in an optional quantifier.
+// Matching inputs are re-checked; reject if fewer than 1 survives.
+class WrapOptionalCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::WRAP_OPTIONAL; }
+    std::string name() const override { return "WRAP_OPTIONAL"; }
+    bool isGeneralizing() const override { return true; }
     CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 

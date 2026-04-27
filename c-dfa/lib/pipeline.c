@@ -278,6 +278,16 @@ pipeline_error_t pipeline_build_nfa(pipeline_t* p) {
     p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
 
     nfa_construct_init(p->builder_ctx);
+
+    // Pre-pass: collect all fragment definitions after nfa_construct_init.
+    // nfa_construct_init resets fragment_count=0, so we collect fragments
+    // after init so they survive the full pattern-parsing loop.
+    for (int i = 0; i < p->pattern_count && p->ordered_patterns; i++) {
+        if (!p->ordered_patterns[i].is_duplicate && !p->ordered_patterns[i].has_error) {
+            nfa_parser_collect_fragments(p->builder_ctx, p->ordered_patterns[i].line);
+        }
+    }
+
     // Build NFA from reordered patterns
     int patterns_added = 0;
     for (int i = 0; i < p->pattern_count && p->ordered_patterns; i++) {

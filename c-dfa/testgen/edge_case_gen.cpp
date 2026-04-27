@@ -631,6 +631,8 @@ static EdgeCaseResult createVariedLengthAlternationEdge(std::mt19937& rng) {
     return result;
 }
 
+static EdgeCaseResult createMismatchedCaptureEdge(std::mt19937& rng);
+
 EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
     switch (type) {
         case EdgeCaseType::RANGE_BOUNDARY:
@@ -659,7 +661,58 @@ EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
             return createFragmentChainEdge(rng);
         case EdgeCaseType::VARIED_LENGTH_ALT:
             return createVariedLengthAlternationEdge(rng);
+        case EdgeCaseType::MISMATCHED_CAPTURE:
+            return createMismatchedCaptureEdge(rng);
         default:
             return createPartialMatchEdge(rng);
     }
+}
+
+static EdgeCaseResult createMismatchedCaptureEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::MISMATCHED_CAPTURE;
+    
+    // Generate a pattern with malformed capture tags.
+    // Tests error handling: the pipeline should reject these patterns or treat them
+    // as non-matching since the tags are syntactically invalid.
+    
+    std::string inner = randomAlphaEdge(3, rng);
+    std::string tag_name = "t" + std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
+    std::string tag_name2 = "t" + std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
+    while (tag_name2 == tag_name) tag_name2 = "t" + std::to_string(std::uniform_int_distribution<int>(0, 99)(rng));
+    
+    int variant = std::uniform_int_distribution<int>(0, 2)(rng);
+    
+    std::shared_ptr<PatternNode> ast;
+    
+    if (variant == 0) {
+        // Opening tag with no closing tag: <tag>inner
+        ast = PatternNode::createLiteral(inner);
+        ast->capture_begin_only = tag_name;
+        result.proof = "EDGE_CASE: MISMATCHED_CAPTURE (unmatched begin)\n";
+        result.proof += "  Pattern: <" + tag_name + ">" + inner + "\n";
+    } else if (variant == 1) {
+        // Closing tag with no opening tag: inner</tag>
+        ast = PatternNode::createLiteral(inner);
+        ast->capture_end_only = tag_name;
+        result.proof = "EDGE_CASE: MISMATCHED_CAPTURE (unmatched end)\n";
+        result.proof += "  Pattern: " + inner + "</" + tag_name + ">\n";
+    } else {
+        // Mismatched tags: <a>inner</b>
+        ast = PatternNode::createLiteral(inner);
+        ast->capture_begin_only = tag_name;
+        ast->capture_end_only = tag_name2;
+        result.proof = "EDGE_CASE: MISMATCHED_CAPTURE (mismatched)\n";
+        result.proof += "  Pattern: <" + tag_name + ">" + inner + "</" + tag_name2 + ">\n";
+    }
+    
+    result.initial_ast = ast;
+    
+    // Since the tags are malformed, nothing should match through them.
+    // All inputs become counters (the pattern should not accept any input).
+    result.counter_seeds = {inner, inner + inner, randomAlphaEdge(4, rng), ""};
+    result.matching_seeds = {};  // No inputs should match a malformed pattern
+    
+    result.proof += "  Rationale: Tests pipeline error handling for malformed capture tags\n";
+    return result;
 }

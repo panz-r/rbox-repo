@@ -90,16 +90,27 @@ static bool hasAllFragmentDefs(std::shared_ptr<PatternNode> node, const std::map
     return true;
 }
 
+// Compute the longest common prefix of a set of strings.
+static std::string longestCommonPrefix(const std::vector<std::string>& strs) {
+    if (strs.empty()) return "";
+    std::string prefix = strs[0];
+    for (size_t i = 1; i < strs.size() && !prefix.empty(); i++) {
+        size_t j = 0;
+        while (j < prefix.size() && j < strs[i].size() && prefix[j] == strs[i][j]) j++;
+        prefix = prefix.substr(0, j);
+    }
+    return prefix;
+}
+
 // Ensure all FRAGMENT_REF nodes in AST have definitions in fragments map.
 // When all matched_seeds are identical, uses the exact literal (sound).
-// When seeds differ or are absent, marks the fragment as missing (returns false
-// via a sentinel) so callers can reject the mutation/test case.
+// When seeds differ, synthesizes a definition from the longest common prefix,
+// falling back to failure only if the prefix is empty.
 // Returns false if a fragment ref has no sound definition.
 static bool ensureFragmentDefs(std::shared_ptr<PatternNode> node, std::map<std::string, std::string>& fragments) {
     if (!node) return true;
     if (node->type == PatternType::FRAGMENT_REF) {
         if (fragments.find(node->fragment_name) == fragments.end()) {
-            // Only produce a sound definition when all seeds are identical
             if (!node->matched_seeds.empty()) {
                 bool all_same = true;
                 for (const auto& s : node->matched_seeds) {
@@ -108,8 +119,13 @@ static bool ensureFragmentDefs(std::shared_ptr<PatternNode> node, std::map<std::
                 if (all_same) {
                     fragments[node->fragment_name] = node->matched_seeds[0];
                 } else {
-                    // Seeds differ — no sound definition possible, signal failure
-                    return false;
+                    // Seeds differ — synthesize from longest common prefix
+                    std::string lcp = longestCommonPrefix(node->matched_seeds);
+                    if (!lcp.empty()) {
+                        fragments[node->fragment_name] = lcp;
+                    } else {
+                        return false;
+                    }
                 }
             } else {
                 // No seeds — no sound definition possible
@@ -2012,6 +2028,89 @@ CoordinatedMutationResult SwapSequenceChildrenCoordOp::apply(const TestCaseCore&
     return result;
 }
 
+CoordinatedMutationResult WrapOptionalCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast) return result;
+
+    auto mutated_ast = copyNode(original.ast);
+    if (!mutated_ast) return result;
+
+    // Find a SEQUENCE with a LITERAL child and wrap one in OPTIONAL
+    std::function<bool(std::shared_ptr<PatternNode>)> wrap_literal =
+        [&](std::shared_ptr<PatternNode> node) -> bool {
+        if (!node) return false;
+        if (node->type == PatternType::SEQUENCE && node->children.size() >= 2) {
+            // Find a literal child
+            std::vector<size_t> lit_indices;
+            for (size_t i = 0; i < node->children.size(); i++) {
+                if (node->children[i]->type == PatternType::LITERAL && !node->children[i]->value.empty()) {
+                    lit_indices.push_back(i);
+                }
+            }
+            if (lit_indices.empty()) {
+                // Recurse into children
+                for (auto& child : node->children) {
+                    if (wrap_literal(child)) return true;
+                }
+                return false;
+            }
+            // Pick a random literal child
+            size_t idx = lit_indices[std::uniform_int_distribution<size_t>(0, lit_indices.size()-1)(rng)];
+            auto opt_node = PatternNode::createQuantified(node->children[idx], PatternType::OPTIONAL);
+            node->children[idx] = opt_node;
+            return true;
+        }
+        // Recurse
+        if (node->quantified) { if (wrap_literal(node->quantified)) return true; }
+        for (auto& child : node->children) { if (wrap_literal(child)) return true; }
+        return false;
+    };
+
+    if (!wrap_literal(mutated_ast)) return result;
+
+    if (!isValidPattern(mutated_ast)) return result;
+
+    // Re-check matching inputs
+    std::vector<std::string> new_match, new_counter;
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
+                new_match.push_back(node.value);
+            }
+        } else if (node.categories.count("counter")) {
+            new_counter.push_back(node.value);
+        }
+    }
+
+    if (new_match.empty()) return result;
+
+    // Counters should still not match
+    for (const auto& c : new_counter) {
+        if (PatternMatcher::matches(mutated_ast, c)) return result;
+    }
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | WRAP_OPTIONAL";
+
+    for (const auto& m : new_match) result.mutated_tc.inputs.add(m, {"matching"});
+    for (const auto& c : new_counter) result.mutated_tc.inputs.add(c, {"counter"});
+
+    Expectation e;
+    e.type = ExpectationType::QUANTIFIER_STAR_EMPTY;
+    e.input = new_match[0];
+    e.expected_match = "yes";
+    e.description = "Wrapped literal in optional";
+    e.meta["mutation"] = "WRAP_OPTIONAL";
+    result.mutated_tc.expectations.add(e);
+
+    result.valid = true;
+    result.proof = "Wrapped literal in optional";
+    return result;
+}
+
 CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<CharSubstituteCoordOp>());
     operators.push_back(std::make_unique<NestQuantifierCoordOp>());
@@ -2029,6 +2128,7 @@ CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<SwapAlternativesCoordOp>());
     operators.push_back(std::make_unique<InlineFragmentCoordOp>());
     operators.push_back(std::make_unique<SwapSequenceChildrenCoordOp>());
+    operators.push_back(std::make_unique<WrapOptionalCoordOp>());
 }
 
 std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(

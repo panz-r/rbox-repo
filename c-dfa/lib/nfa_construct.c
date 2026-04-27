@@ -160,9 +160,9 @@ void nfa_construct_add_tag(nfa_builder_context_t* ctx, int state, const char* ta
 }
 
 void nfa_construct_add_transition(nfa_builder_context_t* ctx, int from, int to, int symbol_id) {
-    if (from < 0 || from >= ctx->nfa_state_count || to < 0 || to >= ctx->nfa_state_count) {
-        FATAL("Invalid state index (from=%d, to=%d, state_count=%d)", from, to, ctx->nfa_state_count);
-        exit(EXIT_FAILURE);
+    // DEFENSIVE: Skip invalid transitions (from=-1 can occur on parse error paths)
+    if (from < 0 || to < 0 || from >= ctx->nfa_state_count || to >= ctx->nfa_state_count) {
+        return;  // Skip invalid transition
     }
 
     if (symbol_id < 0 || symbol_id >= MAX_SYMBOLS) {

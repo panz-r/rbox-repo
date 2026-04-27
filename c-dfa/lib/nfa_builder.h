@@ -290,6 +290,7 @@ int nfa_capture_parse_end(nfa_builder_context_t* ctx, const char* pattern, int* 
 
 // --- nfa_parser.c ---
 void nfa_parser_parse_pattern(nfa_builder_context_t* ctx, const char* line);
+void nfa_parser_collect_fragments(nfa_builder_context_t* ctx, const char* line);
 void nfa_parser_read_spec_file(nfa_builder_context_t* ctx, const char* filename);
 
 // RDP functions (called by nfa_capture.c for inline fragment parsing)
