@@ -1,0 +1,32 @@
+type: DFA
+version: 1
+alphabet_size: 261
+initial: 0
+0: start
+0 'c' -> 1
+1:
+1 'm' -> 2
+2:
+2 'd' -> 3
+3:
+3 \t -> 4
+3 ' ' -> 4
+4:
+4 \t -> 4
+4 ' ' -> 4
+4 'x' -> 5
+5:
+5 'a' -> 6 [0x00000000]
+6:
+6 default -> 7
+7:
+7 'd' -> 8 [0x00000003]
+7 default -> 7
+8:
+8 'd' -> 8 [0x00000003]
+8 'y' -> 9 [0x00000001]
+8 default -> 7
+9: accept category=0x01 pattern=0
+9 'd' -> 8 [0x00000003]
+9 EOS -> 9
+9 default -> 7

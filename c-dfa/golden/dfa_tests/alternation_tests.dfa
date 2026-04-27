@@ -1,0 +1,21 @@
+type: DFA
+version: 1
+alphabet_size: 261
+initial: 0
+0: start
+0 'A' -> 1
+0 'D' -> 2
+0 'a'-'c' -> 3
+1:
+1 'B' -> 4
+2:
+2 'E' -> 5
+3: accept category=0x01 pattern=0
+3 'a'-'c' -> 3
+3 EOS -> 3
+4:
+4 'C' -> 6
+5:
+5 'F' -> 6
+6: accept category=0x01 pattern=0
+6 EOS -> 3

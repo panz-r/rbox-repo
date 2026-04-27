@@ -21,6 +21,7 @@ fuzz_nfa.pid
 # Build test artifacts
 output/*
 build_test/*
+!golden/**/*.dfa  # Track golden test files (needed for regression tests)
 src/dfa_test
 src/test_single
 src/test_single_quant

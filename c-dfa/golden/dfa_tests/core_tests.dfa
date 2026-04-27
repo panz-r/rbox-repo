@@ -1,0 +1,1017 @@
+type: DFA
+version: 1
+alphabet_size: 261
+initial: 0
+0: start
+0 'a' -> 3
+0 'c' -> 4
+0 'g' -> 5
+0 'h' -> 1
+0 'l' -> 2
+0 't' -> 7
+0 'w' -> 6
+1:
+1 'e' -> 13
+2:
+2 's' -> 10
+3:
+3 'b' -> 11
+4:
+4 'a' -> 14
+5:
+5 'i' -> 8
+6:
+6 'h' -> 9
+7:
+7 'a' -> 12
+8:
+8 't' -> 18
+9:
+9 'i' -> 19
+10:
+10 \t -> 21
+10 ' ' -> 21
+11: accept category=0x01 pattern=0
+11 'b' -> 22
+11 'c' -> 20
+11 EOS -> 11
+12:
+12 'i' -> 17
+13:
+13 'a' -> 16
+14:
+14 't' -> 15
+15: accept category=0x01 pattern=0
+15 \t -> 25
+15 ' ' -> 25
+15 EOS -> 11
+16:
+16 'd' -> 29
+17:
+17 'l' -> 28
+18:
+18 \t -> 23
+18 ' ' -> 23
+19:
+19 'c' -> 24
+20:
+20 'b' -> 26
+21: accept category=0x01 pattern=0
+21 \t -> 21
+21 ' ' -> 21
+21 EOS -> 11
+21 default -> 27
+22: accept category=0x03 pattern=42
+22 'b' -> 22
+22 EOS -> 11
+23:
+23 \t -> 23
+23 ' ' -> 23
+23 'b' -> 34
+23 'c' -> 35
+23 'd' -> 33
+23 'l' -> 38
+23 'r' -> 42
+23 's' -> 39
+23 't' -> 40
+23 'w' -> 31
+24:
+24 'h' -> 36
+25: accept category=0x01 pattern=0
+25 \t -> 25
+25 ' ' -> 25
+25 EOS -> 11
+25 default -> 32
+26: accept category=0x02 pattern=42
+26 'b' -> 26
+26 EOS -> 22
+27: accept category=0x01 pattern=0
+27 EOS -> 11
+27 default -> 30
+28:
+28 \t -> 37
+28 ' ' -> 37
+29:
+29 \t -> 41
+29 ' ' -> 41
+30: accept category=0x01 pattern=0
+30 EOS -> 11
+30 default -> 47
+31:
+31 'o' -> 51
+32: accept category=0x01 pattern=5
+32 '0'-'9' -> 53
+32 EOS -> 11
+32 default -> 47
+33:
+33 'i' -> 57
+34:
+34 'r' -> 43
+35:
+35 'o' -> 54
+36:
+36 \t -> 56
+36 ' ' -> 56
+37:
+37 \t -> 37
+37 ' ' -> 37
+37 '-' -> 45
+38:
+38 'o' -> 55
+38 's' -> 52
+39:
+39 'h' -> 48
+39 't' -> 44
+40:
+40 'a' -> 50
+41:
+41 \t -> 41
+41 ' ' -> 41
+41 '-' -> 49
+42:
+42 'e' -> 46
+43:
+43 'a' -> 65
+44:
+44 'a' -> 70
+45:
+45 'n' -> 73
+46:
+46 'm' -> 58
+46 'v' -> 59
+47: accept category=0x01 pattern=0
+47 'b' -> 68
+47 EOS -> 11
+47 default -> 47
+48:
+48 'o' -> 72
+49:
+49 'n' -> 63
+50:
+50 'g' -> 67
+51:
+51 'r' -> 66
+52:
+52 '-' -> 62
+53: accept category=0x01 pattern=7
+53 '0'-'9' -> 60
+53 'b' -> 68
+53 EOS -> 11
+53 default -> 47
+54:
+54 'n' -> 64
+55:
+55 'g' -> 71
+56:
+56 \t -> 56
+56 ' ' -> 56
+56 's' -> 69
+57:
+57 'f' -> 61
+58:
+58 'o' -> 79
+59:
+59 '-' -> 75
+60: accept category=0x01 pattern=12
+60 '0'-'9' -> 74
+60 'b' -> 68
+60 EOS -> 11
+60 default -> 47
+61:
+61 'f' -> 80
+62:
+62 'f' -> 87
+63:
+63 \t -> 76
+63 ' ' -> 76
+64:
+64 'f' -> 78
+65:
+65 'n' -> 82
+66:
+66 'k' -> 86
+67:
+67 \t -> 83
+67 ' ' -> 83
+68: accept category=0x01 pattern=0
+68 'b' -> 88
+68 EOS -> 11
+68 default -> 47
+69:
+69 'o' -> 81
+70:
+70 't' -> 85
+71: accept category=0x01 pattern=0
+71 \t -> 84
+71 ' ' -> 84
+71 EOS -> 11
+72:
+72 'w' -> 80
+73:
+73 \t -> 77
+73 ' ' -> 77
+74: accept category=0x01 pattern=0
+74 \t -> 93
+74 ' ' -> 93
+74 '0'-'9' -> 98
+74 'b' -> 102
+74 EOS -> 11
+74 default -> 96
+75:
+75 'p' -> 99
+76:
+76 \t -> 76
+76 ' ' -> 76
+76 default -> 103
+77:
+77 \t -> 77
+77 ' ' -> 77
+77 default -> 91
+78:
+78 'i' -> 94
+79:
+79 't' -> 89
+80: accept category=0x01 pattern=0
+80 \t -> 105
+80 ' ' -> 105
+80 EOS -> 11
+81:
+81 'c' -> 95
+82:
+82 'c' -> 100
+83:
+83 \t -> 83
+83 ' ' -> 83
+83 '-' -> 97
+84: accept category=0x01 pattern=0
+84 \t -> 84
+84 ' ' -> 84
+84 '-' -> 101
+84 EOS -> 11
+84 default -> 47
+85:
+85 'u' -> 92
+86:
+86 't' -> 90
+87:
+87 'i' -> 104
+88: accept category=0x03 pattern=42
+88 'b' -> 88
+88 EOS -> 11
+88 default -> 47
+89:
+89 'e' -> 124
+90:
+90 'r' -> 114
+91: accept category=0x01 pattern=12
+91 \t -> 123
+91 ' ' -> 123
+91 '0'-'9' -> 117
+91 EOS -> 11
+91 default -> 118
+92:
+92 's' -> 106
+93: accept category=0x01 pattern=0
+93 \t -> 93
+93 ' ' -> 93
+93 EOS -> 11
+93 default -> 108
+94:
+94 'g' -> 109
+95:
+95 'a' -> 116
+96: accept category=0x01 pattern=0
+96 '0'-'9' -> 119
+96 'b' -> 102
+96 EOS -> 11
+96 default -> 96
+97:
+97 'l' -> 111
+98: accept category=0x01 pattern=0
+98 \t -> 93
+98 ' ' -> 93
+98 '0'-'9' -> 125
+98 'b' -> 102
+98 EOS -> 11
+98 default -> 96
+99:
+99 'a' -> 112
+100:
+100 'h' -> 107
+101: accept category=0x01 pattern=0
+101 '-' -> 120
+101 'b' -> 68
+101 'n' -> 122
+101 EOS -> 11
+101 default -> 47
+102: accept category=0x01 pattern=0
+102 '0'-'9' -> 119
+102 'b' -> 113
+102 EOS -> 11
+102 default -> 96
+103: accept category=0x01 pattern=7
+103 \t -> 93
+103 ' ' -> 93
+103 '0'-'9' -> 110
+103 EOS -> 11
+103 default -> 108
+104:
+104 'l' -> 121
+105:
+105 \t -> 105
+105 ' ' -> 105
+105 'H' -> 115
+106: accept category=0x01 pattern=0
+106 \t -> 146
+106 ' ' -> 146
+106 EOS -> 11
+107: accept category=0x01 pattern=0
+107 \t -> 148
+107 ' ' -> 148
+107 EOS -> 11
+108: accept category=0x01 pattern=0
+108 '0'-'9' -> 135
+108 EOS -> 11
+108 default -> 108
+109:
+109 \t -> 141
+109 ' ' -> 141
+110: accept category=0x01 pattern=12
+110 \t -> 132
+110 ' ' -> 132
+110 '0'-'9' -> 136
+110 EOS -> 11
+110 default -> 127
+111: accept category=0x01 pattern=0
+111 EOS -> 11
+112:
+112 'r' -> 139
+113: accept category=0x03 pattern=42
+113 '0'-'9' -> 119
+113 'b' -> 113
+113 EOS -> 11
+113 default -> 96
+114:
+114 'e' -> 147
+115:
+115 'E' -> 133
+116:
+116 't' -> 111
+117: accept category=0x01 pattern=0
+117 \t -> 132
+117 ' ' -> 132
+117 '0'-'9' -> 128
+117 EOS -> 11
+117 default -> 145
+118: accept category=0x01 pattern=0
+118 '0'-'9' -> 143
+118 EOS -> 11
+118 default -> 130
+119: accept category=0x01 pattern=0
+119 \t -> 134
+119 ' ' -> 134
+119 '0'-'9' -> 138
+119 'b' -> 102
+119 EOS -> 11
+119 default -> 96
+120: accept category=0x01 pattern=0
+120 'b' -> 68
+120 'd' -> 129
+120 'g' -> 131
+120 'o' -> 137
+120 EOS -> 11
+120 default -> 47
+121:
+121 'e' -> 126
+122: accept category=0x01 pattern=0
+122 \t -> 142
+122 ' ' -> 142
+122 'b' -> 68
+122 EOS -> 11
+122 default -> 47
+123: accept category=0x01 pattern=0
+123 \t -> 123
+123 ' ' -> 123
+123 EOS -> 11
+123 default -> 144
+124:
+124 \t -> 140
+124 ' ' -> 140
+125: accept category=0x01 pattern=0
+125 \t -> 93
+125 ' ' -> 93
+125 '0'-'9' -> 149
+125 'b' -> 102
+125 EOS -> 11
+125 default -> 96
+126:
+126 's' -> 111
+127: accept category=0x01 pattern=0
+127 '0'-'9' -> 166
+127 EOS -> 11
+127 default -> 127
+128: accept category=0x01 pattern=0
+128 \t -> 132
+128 ' ' -> 132
+128 '0'-'9' -> 149
+128 EOS -> 11
+128 default -> 96
+129: accept category=0x01 pattern=0
+129 'b' -> 68
+129 'e' -> 150
+129 EOS -> 11
+129 default -> 47
+130: accept category=0x01 pattern=0
+130 '0'-'9' -> 167
+130 EOS -> 11
+130 default -> 155
+131: accept category=0x01 pattern=0
+131 'b' -> 68
+131 'r' -> 157
+131 EOS -> 11
+131 default -> 47
+132: accept category=0x01 pattern=0
+132 \t -> 132
+132 ' ' -> 132
+132 EOS -> 11
+132 default -> 127
+133:
+133 'A' -> 152
+134:
+134 \t -> 134
+134 ' ' -> 134
+134 'f' -> 164
+135: accept category=0x01 pattern=0
+135 \t -> 134
+135 ' ' -> 134
+135 '0'-'9' -> 161
+135 EOS -> 11
+135 default -> 108
+136: accept category=0x01 pattern=0
+136 \t -> 132
+136 ' ' -> 132
+136 '0'-'9' -> 156
+136 EOS -> 11
+136 default -> 127
+137: accept category=0x01 pattern=0
+137 'b' -> 68
+137 'n' -> 162
+137 EOS -> 11
+137 default -> 47
+138: accept category=0x01 pattern=0
+138 \t -> 123
+138 ' ' -> 123
+138 '0'-'9' -> 138
+138 'b' -> 102
+138 EOS -> 11
+138 default -> 96
+139:
+139 's' -> 158
+140:
+140 \t -> 140
+140 ' ' -> 140
+140 'g' -> 163
+141:
+141 \t -> 141
+141 ' ' -> 141
+141 '-' -> 153
+142:
+142 \t -> 142
+142 ' ' -> 142
+142 default -> 154
+143: accept category=0x01 pattern=0
+143 \t -> 134
+143 ' ' -> 134
+143 '0'-'9' -> 167
+143 EOS -> 11
+143 default -> 155
+144: accept category=0x01 pattern=0
+144 '0'-'9' -> 165
+144 EOS -> 11
+144 default -> 144
+145: accept category=0x01 pattern=0
+145 '0'-'9' -> 119
+145 EOS -> 11
+145 default -> 96
+146:
+146 \t -> 146
+146 ' ' -> 146
+146 '-' -> 159
+147:
+147 'e' -> 160
+148:
+148 \t -> 148
+148 ' ' -> 148
+148 '-' -> 151
+149: accept category=0x01 pattern=0
+149 \t -> 132
+149 ' ' -> 132
+149 '0'-'9' -> 149
+149 'b' -> 102
+149 EOS -> 11
+149 default -> 96
+150: accept category=0x01 pattern=0
+150 'b' -> 68
+150 'c' -> 178
+150 EOS -> 11
+150 default -> 47
+151:
+151 'a' -> 111
+152:
+152 'D' -> 111
+153:
+153 '-' -> 176
+154: accept category=0x01 pattern=0
+154 EOS -> 11
+154 default -> 171
+155: accept category=0x01 pattern=0
+155 '0'-'9' -> 167
+155 'b' -> 179
+155 EOS -> 11
+155 default -> 155
+156: accept category=0x01 pattern=0
+156 \t -> 132
+156 ' ' -> 132
+156 '0'-'9' -> 117
+156 EOS -> 11
+156 default -> 182
+157: accept category=0x01 pattern=0
+157 'a' -> 169
+157 'b' -> 68
+157 EOS -> 11
+157 default -> 47
+158:
+158 'e' -> 173
+159:
+159 '-' -> 175
+159 's' -> 111
+160:
+160 \t -> 180
+160 ' ' -> 180
+161: accept category=0x01 pattern=0
+161 \t -> 123
+161 ' ' -> 123
+161 '0'-'9' -> 170
+161 EOS -> 11
+161 default -> 127
+162: accept category=0x01 pattern=0
+162 'b' -> 68
+162 'e' -> 177
+162 EOS -> 11
+162 default -> 47
+163:
+163 'e' -> 168
+164:
+164 'i' -> 181
+165: accept category=0x01 pattern=0
+165 \t -> 134
+165 ' ' -> 134
+165 '0'-'9' -> 174
+165 EOS -> 11
+165 default -> 118
+166: accept category=0x01 pattern=0
+166 \t -> 134
+166 ' ' -> 134
+166 '0'-'9' -> 172
+166 EOS -> 11
+166 default -> 182
+167: accept category=0x01 pattern=0
+167 \t -> 134
+167 ' ' -> 134
+167 '0'-'9' -> 167
+167 'b' -> 179
+167 EOS -> 11
+167 default -> 155
+168:
+168 't' -> 190
+169: accept category=0x01 pattern=0
+169 'b' -> 68
+169 'p' -> 195
+169 EOS -> 11
+169 default -> 47
+170: accept category=0x01 pattern=0
+170 \t -> 123
+170 ' ' -> 123
+170 '0'-'9' -> 191
+170 EOS -> 11
+170 default -> 127
+171: accept category=0x01 pattern=0
+171 EOS -> 11
+171 default -> 194
+172: accept category=0x01 pattern=0
+172 \t -> 123
+172 ' ' -> 123
+172 '0'-'9' -> 184
+172 EOS -> 11
+172 default -> 145
+173:
+173 \t -> 185
+173 ' ' -> 185
+174: accept category=0x01 pattern=0
+174 \t -> 134
+174 ' ' -> 134
+174 '0'-'9' -> 143
+174 EOS -> 11
+174 default -> 130
+175:
+175 's' -> 186
+176:
+176 'l' -> 193
+177: accept category=0x01 pattern=0
+177 'b' -> 68
+177 'l' -> 189
+177 EOS -> 11
+177 default -> 47
+178: accept category=0x01 pattern=0
+178 'b' -> 68
+178 'o' -> 192
+178 EOS -> 11
+178 default -> 47
+179: accept category=0x01 pattern=0
+179 '0'-'9' -> 167
+179 'b' -> 183
+179 EOS -> 11
+179 default -> 155
+180:
+180 \t -> 180
+180 ' ' -> 180
+180 'l' -> 193
+181:
+181 'l' -> 188
+182: accept category=0x01 pattern=0
+182 '0'-'9' -> 187
+182 EOS -> 11
+182 default -> 145
+183: accept category=0x03 pattern=42
+183 '0'-'9' -> 167
+183 'b' -> 183
+183 EOS -> 11
+183 default -> 155
+184: accept category=0x01 pattern=0
+184 \t -> 123
+184 ' ' -> 123
+184 '0'-'9' -> 138
+184 EOS -> 11
+184 default -> 96
+185:
+185 \t -> 185
+185 ' ' -> 185
+185 '-' -> 196
+186:
+186 'h' -> 200
+187: accept category=0x01 pattern=0
+187 \t -> 134
+187 ' ' -> 134
+187 '0'-'9' -> 138
+187 EOS -> 11
+187 default -> 96
+188:
+188 'e' -> 197
+189: accept category=0x01 pattern=0
+189 'b' -> 68
+189 'i' -> 198
+189 EOS -> 11
+189 default -> 47
+190:
+190 '-' -> 199
+191: accept category=0x01 pattern=0
+191 \t -> 123
+191 ' ' -> 123
+191 '0'-'9' -> 172
+191 EOS -> 11
+191 default -> 182
+192: accept category=0x01 pattern=0
+192 'b' -> 68
+192 'r' -> 203
+192 EOS -> 11
+192 default -> 47
+193:
+193 'i' -> 204
+194: accept category=0x01 pattern=0
+194 EOS -> 11
+194 default -> 201
+195: accept category=0x01 pattern=0
+195 'b' -> 68
+195 'h' -> 202
+195 EOS -> 11
+195 default -> 47
+196:
+196 '-' -> 208
+197:
+197 '.' -> 211
+198: accept category=0x01 pattern=0
+198 'b' -> 68
+198 'n' -> 205
+198 EOS -> 11
+198 default -> 47
+199:
+199 'u' -> 210
+200:
+200 'o' -> 206
+201: accept category=0x01 pattern=0
+201 '0'-'9' -> 209
+201 EOS -> 11
+201 default -> 212
+202: accept category=0x01 pattern=0
+202 \t -> 213
+202 ' ' -> 213
+202 'b' -> 68
+202 EOS -> 11
+202 default -> 47
+203: accept category=0x01 pattern=0
+203 'a' -> 207
+203 'b' -> 68
+203 EOS -> 11
+203 default -> 47
+204:
+204 's' -> 116
+205: accept category=0x01 pattern=0
+205 'b' -> 68
+205 'e' -> 220
+205 EOS -> 11
+205 default -> 47
+206:
+206 'r' -> 116
+207: accept category=0x01 pattern=0
+207 'b' -> 68
+207 't' -> 219
+207 EOS -> 11
+207 default -> 47
+208:
+208 's' -> 216
+209: accept category=0x01 pattern=5
+209 '0'-'9' -> 217
+209 EOS -> 11
+209 default -> 212
+210:
+210 'r' -> 215
+211:
+211 't' -> 218
+212: accept category=0x01 pattern=5
+212 EOS -> 32
+212 default -> 221
+213:
+213 \t -> 213
+213 ' ' -> 213
+213 '-' -> 214
+214:
+214 'n' -> 223
+215:
+215 'l' -> 222
+216:
+216 'h' -> 228
+217: accept category=0x01 pattern=5
+217 '0'-'9' -> 227
+217 EOS -> 11
+217 default -> 212
+218:
+218 'x' -> 116
+219: accept category=0x01 pattern=0
+219 'b' -> 68
+219 'e' -> 226
+219 EOS -> 11
+219 default -> 47
+220: accept category=0x01 pattern=0
+220 \t -> 225
+220 ' ' -> 225
+220 'b' -> 68
+220 EOS -> 11
+220 default -> 47
+221: accept category=0x01 pattern=7
+221 EOS -> 53
+221 default -> 224
+222:
+222 \t -> 233
+222 ' ' -> 233
+223:
+223 \t -> 234
+223 ' ' -> 234
+224: accept category=0x01 pattern=12
+224 EOS -> 60
+224 default -> 229
+225:
+225 \t -> 225
+225 ' ' -> 225
+225 '-' -> 231
+226: accept category=0x01 pattern=0
+226 \t -> 230
+226 ' ' -> 230
+226 'b' -> 68
+226 EOS -> 11
+226 default -> 47
+227: accept category=0x01 pattern=5
+227 '0'-'9' -> 232
+227 EOS -> 11
+227 default -> 212
+228:
+228 'o' -> 235
+229: accept category=0x01 pattern=0
+229 \t -> 93
+229 ' ' -> 93
+229 '0'-'9' -> 238
+229 EOS -> 11
+229 default -> 108
+230:
+230 \t -> 230
+230 ' ' -> 230
+230 '-' -> 236
+231:
+231 '-' -> 241
+231 'n' -> 242
+232: accept category=0x01 pattern=5
+232 \t -> 93
+232 ' ' -> 93
+232 '0'-'9' -> 237
+232 EOS -> 11
+232 default -> 239
+233:
+233 \t -> 233
+233 ' ' -> 233
+233 'o' -> 243
+234:
+234 \t -> 234
+234 ' ' -> 234
+234 default -> 194
+235:
+235 'r' -> 240
+236:
+236 'n' -> 244
+237: accept category=0x01 pattern=5
+237 \t -> 93
+237 ' ' -> 93
+237 '0'-'9' -> 245
+237 EOS -> 11
+237 default -> 239
+238: accept category=0x01 pattern=0
+238 \t -> 93
+238 ' ' -> 93
+238 '0'-'9' -> 103
+238 EOS -> 11
+238 default -> 108
+239: accept category=0x01 pattern=5
+239 '0'-'9' -> 251
+239 EOS -> 11
+239 default -> 108
+240:
+240 't' -> 250
+241:
+241 'd' -> 247
+241 'g' -> 249
+242:
+242 \t -> 246
+242 ' ' -> 246
+243:
+243 'r' -> 248
+244:
+244 \t -> 257
+244 ' ' -> 257
+245: accept category=0x01 pattern=5
+245 \t -> 93
+245 ' ' -> 93
+245 '0'-'9' -> 252
+245 EOS -> 11
+245 default -> 239
+246:
+246 \t -> 246
+246 ' ' -> 246
+246 default -> 171
+247:
+247 'e' -> 255
+248:
+248 'i' -> 256
+249:
+249 'r' -> 253
+250:
+250 \t -> 105
+250 ' ' -> 105
+251: accept category=0x01 pattern=7
+251 \t -> 134
+251 ' ' -> 134
+251 '0'-'9' -> 254
+251 EOS -> 11
+251 default -> 108
+252: accept category=0x01 pattern=5
+252 \t -> 132
+252 ' ' -> 132
+252 '0'-'9' -> 260
+252 EOS -> 11
+252 default -> 259
+253:
+253 'a' -> 261
+254: accept category=0x01 pattern=12
+254 \t -> 123
+254 ' ' -> 123
+254 '0'-'9' -> 136
+254 EOS -> 11
+254 default -> 127
+255:
+255 'c' -> 258
+256:
+256 'g' -> 262
+257:
+257 \t -> 257
+257 ' ' -> 257
+257 default -> 201
+258:
+258 'o' -> 264
+259: accept category=0x01 pattern=5
+259 '0'-'9' -> 263
+259 EOS -> 11
+259 default -> 127
+260: accept category=0x01 pattern=5
+260 \t -> 132
+260 ' ' -> 132
+260 '0'-'9' -> 267
+260 EOS -> 11
+260 default -> 259
+261:
+261 'p' -> 266
+262:
+262 'i' -> 265
+263: accept category=0x01 pattern=7
+263 \t -> 134
+263 ' ' -> 134
+263 '0'-'9' -> 270
+263 EOS -> 11
+263 default -> 182
+264:
+264 'r' -> 271
+265:
+265 'n' -> 111
+266:
+266 'h' -> 111
+267: accept category=0x01 pattern=5
+267 \t -> 132
+267 ' ' -> 132
+267 '0'-'9' -> 268
+267 EOS -> 11
+267 default -> 269
+268: accept category=0x01 pattern=5
+268 \t -> 132
+268 ' ' -> 132
+268 '0'-'9' -> 273
+268 EOS -> 11
+268 default -> 275
+269: accept category=0x01 pattern=5
+269 '0'-'9' -> 274
+269 EOS -> 11
+269 default -> 145
+270: accept category=0x01 pattern=12
+270 \t -> 123
+270 ' ' -> 123
+270 '0'-'9' -> 128
+270 EOS -> 11
+270 default -> 145
+271:
+271 'a' -> 272
+272:
+272 't' -> 280
+273: accept category=0x01 pattern=5
+273 \t -> 132
+273 ' ' -> 132
+273 '0'-'9' -> 277
+273 EOS -> 11
+273 default -> 279
+274: accept category=0x01 pattern=7
+274 \t -> 134
+274 ' ' -> 134
+274 '0'-'9' -> 276
+274 EOS -> 11
+274 default -> 96
+275: accept category=0x01 pattern=5
+275 '0'-'9' -> 278
+275 EOS -> 11
+275 default -> 96
+276: accept category=0x01 pattern=12
+276 \t -> 123
+276 ' ' -> 123
+276 '0'-'9' -> 149
+276 'b' -> 102
+276 EOS -> 11
+276 default -> 96
+277: accept category=0x01 pattern=5
+277 \t -> 132
+277 ' ' -> 132
+277 '0'-'9' -> 277
+277 'b' -> 281
+277 EOS -> 11
+277 default -> 279
+278: accept category=0x01 pattern=7
+278 \t -> 134
+278 ' ' -> 134
+278 '0'-'9' -> 276
+278 'b' -> 102
+278 EOS -> 11
+278 default -> 96
+279: accept category=0x01 pattern=5
+279 '0'-'9' -> 278
+279 'b' -> 102
+279 EOS -> 11
+279 default -> 96
+280:
+280 'e' -> 111
+281: accept category=0x01 pattern=5
+281 '0'-'9' -> 278
+281 'b' -> 113
+281 EOS -> 11
+281 default -> 96

@@ -1,0 +1,9 @@
+type: DFA
+version: 1
+alphabet_size: 261
+initial: 0
+0: start
+0 'a'-'c' -> 1
+1: accept category=0x01 pattern=0
+1 'a'-'c' -> 1
+1 EOS -> 1

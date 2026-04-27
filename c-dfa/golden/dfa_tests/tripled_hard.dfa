@@ -1,0 +1,21 @@
+type: DFA
+version: 1
+alphabet_size: 261
+initial: 0
+0: start
+0 'X' -> 1
+1:
+1 default -> 2
+2:
+2 'Y' -> 3
+2 default -> 4
+3: accept category=0x01 pattern=0
+3 EOS -> 3
+4:
+4 'Y' -> 3
+4 default -> 5
+5:
+5 'Y' -> 3
+5 default -> 6
+6:
+6 'Y' -> 3

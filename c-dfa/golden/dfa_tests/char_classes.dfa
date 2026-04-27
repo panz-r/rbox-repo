@@ -1,0 +1,153 @@
+type: DFA
+version: 1
+alphabet_size: 261
+initial: 0
+0: start accept category=0x01 pattern=0
+0 '0'-'9' -> 3
+0 'a'-'b' -> 2
+0 'c' -> 1
+0 'x'-'z' -> 2
+0 default -> 4
+1: accept category=0x07 pattern=62
+1 'a'-'c' -> 9
+1 'd' -> 8
+1 'm' -> 7
+1 'x'-'z' -> 9
+1 default -> 6
+2: accept category=0x07 pattern=62
+2 'a'-'c' -> 9
+2 'x'-'z' -> 9
+2 default -> 6
+3: accept category=0x01 pattern=0
+3 '0'-'9' -> 3
+3 default -> 5
+4: accept category=0x06 pattern=62
+4 EOS -> 4
+4 default -> 6
+5: accept category=0x04 pattern=62
+5 EOS -> 4
+6: accept category=0x02 pattern=61
+6 EOS -> 4
+6 default -> 6
+7: accept category=0x02 pattern=61
+7 'd' -> 10
+7 EOS -> 4
+7 default -> 6
+8: accept category=0x03 pattern=49
+8 default -> 6
+9: accept category=0x03 pattern=61
+9 'a'-'c' -> 9
+9 'x'-'z' -> 9
+9 default -> 6
+10: accept category=0x02 pattern=61
+10 \t -> 11
+10 ' ' -> 11
+10 EOS -> 4
+10 default -> 6
+11: accept category=0x01 pattern=78
+11 \t -> 11
+11 ' ' -> 11
+11 '0'-'9' -> 14
+11 \\ -> 15
+11 'a' -> 16
+11 'e' -> 12
+11 'h' -> 12
+11 'l' -> 12
+11 'o' -> 12
+11 'x' -> 17
+11 default -> 13
+12: accept category=0x01 pattern=19
+12 \t -> 24
+12 ' ' -> 24
+12 '0'-'9' -> 25
+12 default -> 19
+13: accept category=0x01 pattern=19
+13 \t -> 18
+13 ' ' -> 18
+13 '0'-'9' -> 25
+13 default -> 19
+14: accept category=0x01 pattern=0
+14 '0'-'9' -> 14
+14 default -> 19
+15:
+15 '-'-'.' -> 25
+15 '_' -> 25
+16: accept category=0x01 pattern=19
+16 \t -> 18
+16 ' ' -> 18
+16 ')' -> 20
+16 '0'-'9' -> 25
+16 'b' -> 21
+16 '|' -> 22
+16 default -> 19
+17: accept category=0x01 pattern=19
+17 \t -> 18
+17 ' ' -> 18
+17 '0'-'9' -> 25
+17 'y' -> 23
+17 default -> 19
+18:
+18 \t -> 18
+18 ' ' -> 18
+18 default -> 25
+19: accept category=0x01 pattern=0
+19 default -> 19
+20: accept category=0x01 pattern=0
+20 ')' -> 20
+21: accept category=0x01 pattern=0
+21 'c' -> 26
+21 default -> 19
+22:
+22 'b' -> 27
+23: accept category=0x01 pattern=0
+23 'z' -> 28
+23 default -> 19
+24:
+24 \t -> 24
+24 ' ' -> 24
+24 default -> 25
+25: accept category=0x01 pattern=0
+26: accept category=0x01 pattern=20
+26 \t -> 30
+26 ' ' -> 30
+26 'a' -> 31
+26 default -> 19
+27:
+27 ')' -> 20
+28: accept category=0x01 pattern=0
+28 \t -> 29
+28 ' ' -> 29
+28 default -> 19
+29:
+29 \t -> 29
+29 ' ' -> 29
+29 'e' -> 34
+30:
+30 \t -> 30
+30 ' ' -> 30
+30 'e' -> 34
+30 'x' -> 33
+30 'y' -> 25
+31: accept category=0x01 pattern=0
+31 'b' -> 32
+31 default -> 19
+32: accept category=0x01 pattern=0
+32 'c' -> 36
+32 default -> 19
+33: accept category=0x01 pattern=0
+33 'y' -> 35
+34:
+34 'x' -> 37
+35:
+35 'z' -> 25
+36: accept category=0x01 pattern=0
+36 \t -> 29
+36 ' ' -> 29
+36 'a' -> 31
+36 default -> 19
+37:
+37 't' -> 38
+38:
+38 'r' -> 39
+39:
+39 'a' -> 25

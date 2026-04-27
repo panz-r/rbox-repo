@@ -1,0 +1,148 @@
+type: DFA
+version: 1
+alphabet_size: 261
+initial: 0
+0: start accept category=0x01 pattern=0
+0 '.' -> 1
+0 '_' -> 6
+0 'a' -> 5
+0 'g' -> 2
+0 'h' -> 8
+0 'p' -> 3
+0 't' -> 7
+0 default -> 4
+1: accept category=0x01 pattern=0
+1 '.' -> 15
+1 't' -> 13
+2: accept category=0x01 pattern=0
+2 'i' -> 11
+2 default -> 4
+3: accept category=0x01 pattern=0
+3 'a' -> 9
+3 default -> 4
+4: accept category=0x01 pattern=0
+4 default -> 4
+5: accept category=0x01 pattern=0
+5 '*'-'+' -> 14
+5 default -> 4
+6: accept category=0x01 pattern=0
+6 '_' -> 6
+7: accept category=0x01 pattern=0
+7 'e' -> 12
+7 default -> 4
+8: accept category=0x01 pattern=0
+8 'e' -> 10
+8 default -> 4
+9: accept category=0x01 pattern=0
+9 't' -> 17
+9 default -> 4
+10: accept category=0x01 pattern=0
+10 'l' -> 21
+10 default -> 4
+11: accept category=0x01 pattern=0
+11 't' -> 16
+11 default -> 4
+12: accept category=0x01 pattern=0
+12 's' -> 19
+12 default -> 4
+13:
+13 'x' -> 18
+14:
+14 'b' -> 20
+15: accept category=0x01 pattern=0
+15 '.' -> 15
+16: accept category=0x01 pattern=0
+16 \t -> 25
+16 ' ' -> 25
+16 default -> 4
+17: accept category=0x01 pattern=0
+17 'h' -> 24
+17 default -> 4
+18:
+18 't' -> 20
+19: accept category=0x01 pattern=0
+19 't' -> 22
+19 default -> 4
+20: accept category=0x01 pattern=0
+21: accept category=0x01 pattern=0
+21 'l' -> 23
+21 default -> 4
+22: accept category=0x01 pattern=0
+22 ' ' -> 28
+22 '+' -> 31
+22 default -> 4
+23: accept category=0x01 pattern=0
+23 'o' -> 29
+23 default -> 4
+24: accept category=0x01 pattern=0
+24 '/' -> 26
+24 default -> 4
+25:
+25 \t -> 25
+25 ' ' -> 25
+25 'd' -> 32
+25 'l' -> 30
+25 's' -> 27
+26:
+26 't' -> 37
+27:
+27 't' -> 39
+28:
+28 'p' -> 38
+29: accept category=0x01 pattern=0
+29 ' ' -> 33
+29 default -> 4
+30:
+30 'o' -> 35
+31:
+31 'v' -> 36
+32:
+32 'i' -> 34
+33:
+33 'w' -> 45
+34:
+34 'f' -> 44
+35:
+35 'g' -> 20
+36:
+36 'a' -> 41
+37:
+37 'o' -> 40
+38:
+38 'a' -> 42
+39:
+39 'a' -> 43
+40:
+40 '/' -> 47
+41:
+41 'l' -> 49
+42:
+42 't' -> 48
+43:
+43 't' -> 50
+44:
+44 'f' -> 20
+45:
+45 'o' -> 46
+46:
+46 'r' -> 51
+47:
+47 'f' -> 54
+48:
+48 'h' -> 20
+49:
+49 'u' -> 53
+50:
+50 'u' -> 52
+51:
+51 'l' -> 55
+52:
+52 's' -> 20
+53:
+53 'e' -> 20
+54:
+54 'i' -> 56
+55:
+55 'd' -> 20
+56:
+56 'l' -> 53

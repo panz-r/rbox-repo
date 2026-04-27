@@ -1,0 +1,30 @@
+type: DFA
+version: 1
+alphabet_size: 261
+initial: 0
+0: start accept category=0x01 pattern=0
+0 'a' -> 1
+0 'b' -> 2
+0 'c' -> 3
+1: accept category=0x01 pattern=0
+1 'a' -> 6
+1 'b' -> 4
+1 'c' -> 3
+2: accept category=0x01 pattern=0
+2 'b' -> 5
+2 'c' -> 3
+3: accept category=0x01 pattern=0
+4: accept category=0x01 pattern=0
+4 'b' -> 5
+4 'c' -> 7
+5: accept category=0x01 pattern=0
+5 'b' -> 5
+6: accept category=0x01 pattern=0
+6 'a' -> 6
+6 'b' -> 3
+7: accept category=0x01 pattern=0
+7 'd' -> 8
+8:
+8 'e' -> 9
+9:
+9 'f' -> 3
