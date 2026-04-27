@@ -22,6 +22,7 @@ fuzz_nfa.pid
 output/*
 build_test/*
 !golden/**/*.dfa  # Track golden test files (needed for regression tests)
+test_output/*     # Temporary test data files (regenerated on each test run)
 src/dfa_test
 src/test_single
 src/test_single_quant

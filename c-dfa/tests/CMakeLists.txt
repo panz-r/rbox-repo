@@ -95,6 +95,9 @@ target_link_libraries(test_preminimize PRIVATE
     readonlybox_dfa_headers
 )
 
+# Create test_output directory for temporary test data files
+file(MAKE_DIRECTORY ${CMAKE_SOURCE_DIR}/test_output)
+
 # ============================================================================
 # Test Targets
 # ============================================================================
