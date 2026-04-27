@@ -1231,25 +1231,32 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
         // 0 = pure random, 1 = repeat base_unit, 2 = repeat prefix,
         // 3 = prefix + repeat, 4 = common suffix + varying prefix,
         // 5 = overlapping fragments (shared inner substring), 6 = near-miss source,
-        // 7 = shared-inner-substring with tight prefix/suffix
+        // 7 = shared-inner-substring with tight prefix/suffix,
+        // 8 = case variations, 9 = digit/punctuation mixing, 10 = simple alpha
         int build_type;
         double r_type = std::uniform_real_distribution<double>(0.0, 1.0)(rng);
         if (r_type < 0.10) {
             build_type = 0;  // Pure random (10%)
-        } else if (r_type < 0.35) {
-            build_type = 1;  // Repeat base unit (25%)
-        } else if (r_type < 0.52) {
-            build_type = 2;  // Repeat prefix (17%)
-        } else if (r_type < 0.64) {
-            build_type = 3;  // Prefix + autocorrelation (12%)
-        } else if (r_type < 0.76) {
-            build_type = 4;  // Common suffix + varying prefix (12%)
+        } else if (r_type < 0.33) {
+            build_type = 1;  // Repeat base unit (23%)
+        } else if (r_type < 0.49) {
+            build_type = 2;  // Repeat prefix (16%)
+        } else if (r_type < 0.60) {
+            build_type = 3;  // Prefix + autocorrelation (11%)
+        } else if (r_type < 0.70) {
+            build_type = 4;  // Common suffix + varying prefix (10%)
+        } else if (r_type < 0.79) {
+            build_type = 5;  // Overlapping fragments (9%)
         } else if (r_type < 0.86) {
-            build_type = 5;  // Overlapping fragments (10%)
-        } else if (r_type < 0.93) {
             build_type = 7;  // Shared inner substring with tight prefix/suffix (7%)
+        } else if (r_type < 0.91) {
+            build_type = 8;  // Case variations (5%)
+        } else if (r_type < 0.96) {
+            build_type = 9;  // Digit/punctuation mixing (5%)
+        } else if (r_type < 0.98) {
+            build_type = 10; // Simple alpha (2%)
         } else {
-            build_type = 6;  // Near-miss (7%)
+            build_type = 6;  // Near-miss (2%)
         }
         
         std::string s;
@@ -1362,6 +1369,43 @@ TestGenerator::generateSeeds(Complexity complexity, std::set<std::string>& used_
                 s += alphanum[std::uniform_int_distribution<int>(0, alphanum.size()-1)(rng)];
             }
             s = s.substr(0, target_len);
+        } else if (build_type == 8) {
+            // build_type == 8: Case variations - mix case within words to test case-sensitivity.
+            // E.g., "AbC", "aBc", "ABc" - tests how pattern parser handles case distinctions.
+            std::string base = lowercase.substr(0, target_len);
+            for (int j = 0; j < target_len; j++) {
+                char c = lowercase[std::uniform_int_distribution<int>(0, lowercase.size()-1)(rng)];
+                // Randomly uppercase 30% of characters
+                if (std::uniform_real_distribution<double>(0.0, 1.0)(rng) < 0.3) {
+                    c = std::toupper(c);
+                }
+                s += c;
+            }
+        } else if (build_type == 9) {
+            // build_type == 9: Digit/punctuation mixing - tests patterns with mixed char classes.
+            // E.g., "ab12!c", "12@#$" - stresses parser's handling of mixed special chars.
+            for (int j = 0; j < target_len; j++) {
+                int char_type = std::uniform_int_distribution<int>(0, 2)(rng);
+                if (char_type == 0) {
+                    s += lowercase[std::uniform_int_distribution<int>(0, lowercase.size()-1)(rng)];
+                } else if (char_type == 1) {
+                    s += digits[std::uniform_int_distribution<int>(0, digits.size()-1)(rng)];
+                } else {
+                    // Special char
+                    s += special_chars[std::uniform_int_distribution<int>(0, special_chars.size()-1)(rng)];
+                }
+            }
+        } else if (build_type == 10) {
+            // build_type == 10: Embedded angle-bracket-like strings (as literals).
+            // Tests parser's handling of angle brackets and similar syntax chars.
+            // E.g., "<tag>val</tag>" but without actual capture semantics.
+            std::string pre = "a";
+            std::string mid;
+            for (int j = 0; j < target_len - 2; j++) {
+                mid += lowercase[std::uniform_int_distribution<int>(0, lowercase.size()-1)(rng)];
+            }
+            std::string suf = "z";
+            s = pre + mid + suf;
         }
         
         if (used.insert(s).second) {
@@ -1776,8 +1820,8 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
     EdgeCaseResult edge;  // Declare outside to use in fragment handling
     
     if (use_edge_case) {
-        // Randomly select an edge case type (skip NESTED_QUANTIFIER for now - creates conflicting expectations)
-        std::uniform_int_distribution<int> edge_type_dist(0, 7);
+        // Randomly select an edge case type
+        std::uniform_int_distribution<int> edge_type_dist(0, 9);
         EdgeCaseType edge_types[] = {
             EdgeCaseType::RANGE_BOUNDARY,
             EdgeCaseType::PARTIAL_MATCH_FAIL,
@@ -1786,7 +1830,9 @@ TestCase TestGenerator::generateTestCase(int test_id, std::set<std::string>& use
             EdgeCaseType::EMPTY_ALTERNATION,
             EdgeCaseType::DEEP_NESTING,
             EdgeCaseType::EMPTY_GROUP_QUANT,
-            EdgeCaseType::LONG_ALTERNATION
+            EdgeCaseType::LONG_ALTERNATION,
+            EdgeCaseType::FRAGMENT_WITH_ALT,
+            EdgeCaseType::MIXED_FRAG_LITERAL
         };
         EdgeCaseType selected_type = edge_types[edge_type_dist(rng)];
         
@@ -2377,7 +2423,21 @@ void TestGenerator::writePatternFile(const std::vector<TestCase>& tests, const s
     if (!all_fragments.empty()) {
         out << "# Fragment definitions\n";
         for (const auto& f : all_fragments) {
-            out << "[fragment:" << f.first << "] " << f.second << "\n";
+            // Escape special regex characters in fragment values to ensure valid pattern syntax
+            std::string escaped_value;
+            for (size_t i = 0; i < f.second.size(); i++) {
+                char c = f.second[i];
+                // Escape ? if it's not preceded by ) and not part of a valid escape sequence
+                if (c == '?') {
+                    // Check if preceded by ) - then it's a quantifier, which is valid
+                    bool preceded_by_paren = (i > 0 && f.second[i - 1] == ')');
+                    if (!preceded_by_paren) {
+                        escaped_value += '\\';
+                    }
+                }
+                escaped_value += c;
+            }
+            out << "[fragment:" << f.first << "] " << escaped_value << "\n";
         }
         out << "\n";
     }
@@ -2500,7 +2560,7 @@ void TestGenerator::writeExpectations(const std::vector<TestCase>& tests, const 
     std::cout << "Written expectations: " << filename << "\n";
 }
 
-int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& cwd, const std::string& tools_dir, const std::string& pattern_file, [[maybe_unused]] const std::string& expectations_file, int* passed_out, int* failed_out, int* skipped_out) {
+int TestGenerator::runTests(const std::vector<TestCase>& tests, const std::string& cwd, [[maybe_unused]] const std::string& tools_dir, const std::string& pattern_file, [[maybe_unused]] const std::string& expectations_file, int* passed_out, int* failed_out, int* skipped_out) {
     std::cout << "\n" << std::string(60, '=') << "\n";
     std::cout << "Running tests through c-dfa...\n";
     std::cout << std::string(60, '=') << "\n\n";

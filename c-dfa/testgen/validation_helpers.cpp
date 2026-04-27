@@ -196,7 +196,7 @@ static bool looksLikeLiteral(const std::string& s) {
 
 std::string extractFragment(const std::string& input, 
                           std::map<std::string, std::string>& fragments,
-                          std::mt19937& rng,
+                          [[maybe_unused]] std::mt19937& rng,
                           bool force_simple) {
     // Create unique fragment name using incrementing counter
     static int frag_counter = 0;

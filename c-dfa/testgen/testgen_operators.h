@@ -35,6 +35,9 @@ enum class CoordinatedMutationType {
     INLINE_FRAGMENT,
     SWAP_SEQUENCE_CHILDREN,
     WRAP_OPTIONAL,
+    MERGE_ADJACENT_LITERALS,
+    ADD_REDUNDANT_PARENS,
+    ALTERNATION_TO_FRAGMENT,
 };
 
 struct CoordinatedMutationResult {
@@ -236,6 +239,37 @@ public:
     CoordinatedMutationType type() const override { return CoordinatedMutationType::WRAP_OPTIONAL; }
     std::string name() const override { return "WRAP_OPTIONAL"; }
     bool isGeneralizing() const override { return true; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+// Merge two adjacent LITERAL children in a SEQUENCE into one.
+// E.g., (AB) (CD) -> (ABCD). Tests fragment/sequence merging.
+class MergeAdjacentLiteralsCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::MERGE_ADJACENT_LITERALS; }
+    std::string name() const override { return "MERGE_ADJACENT_LITERALS"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+// Wrap a sub-expression in redundant parentheses.
+// E.g., (AB) -> ((AB)). Tests parser's handling of nested parens.
+class AddRedundantParensCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::ADD_REDUNDANT_PARENS; }
+    std::string name() const override { return "ADD_REDUNDANT_PARENS"; }
+    bool isGeneralizing() const override { return false; }
+    CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
+};
+
+// Convert a LITERAL alternation (a|b|c) into a fragment definition + reference.
+// E.g., (a|b|c) -> fragment [fragX]=a|b|c, [[fragX]].
+// Tests fragment expansion path with character-class fragments.
+class AlternationToFragmentCoordOp : public CoordinatedMutationOperator {
+public:
+    CoordinatedMutationType type() const override { return CoordinatedMutationType::ALTERNATION_TO_FRAGMENT; }
+    std::string name() const override { return "ALTERNATION_TO_FRAGMENT"; }
+    bool isGeneralizing() const override { return false; }
     CoordinatedMutationResult apply(const TestCaseCore& original, std::mt19937& rng) const override;
 };
 

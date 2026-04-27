@@ -353,6 +353,58 @@ static EdgeCaseResult createLongAlternationEdge(std::mt19937& rng) {
     EdgeCaseResult result;
     result.type = EdgeCaseType::LONG_ALTERNATION;
 
+    // Choose whether to test: 1) many alternatives, or 2) very long literals
+    bool long_literals = std::uniform_int_distribution<int>(0, 1)(rng) == 1;
+    
+    if (long_literals) {
+        // Test alternation with very long literal alternatives (50+ chars)
+        int num_alts = 3 + std::uniform_int_distribution<int>(0, 2)(rng);
+        std::vector<std::shared_ptr<PatternNode>> alt_nodes;
+        std::vector<std::string> alts;
+        
+        for (int i = 0; i < num_alts; i++) {
+            int lit_len = 50 + std::uniform_int_distribution<int>(0, 20)(rng);  // 50-70 chars
+            std::string alt;
+            for (int j = 0; j < lit_len; j++) {
+                alt += 'a' + std::uniform_int_distribution<int>(0, 25)(rng);
+            }
+            alts.push_back(alt);
+            alt_nodes.push_back(PatternNode::createLiteral(alt, {alt}));
+        }
+        
+        auto node = PatternNode::createAlternation(alt_nodes, alts);
+        result.initial_ast = node;
+        
+        for (auto& alt : alts) {
+            result.matching_seeds.push_back(alt);
+        }
+        
+        // Counters: variations of the long strings
+        for (auto& alt : alts) {
+            std::string counter = alt;
+            if (counter.size() > 5) {
+                // Change one char in the middle
+                counter[counter.size() / 2] = (counter[counter.size() / 2] == 'a') ? 'b' : 'a';
+                result.counter_seeds.push_back(counter);
+            }
+        }
+        // Also add some completely different long strings
+        for (int i = 0; i < 3; i++) {
+            std::string counter;
+            for (int j = 0; j < 55 + i * 5; j++) {
+                counter += 'z';
+            }
+            result.counter_seeds.push_back(counter);
+        }
+        
+        result.proof = "EDGE_CASE: LONG_ALTERNATION (long literals)\n";
+        result.proof += "  Num alternatives: " + std::to_string(num_alts) + "\n";
+        result.proof += "  Literal length: ~50-70 chars each\n";
+        result.proof += "  Rationale: Tests alternation with very long literals\n";
+        return result;
+    }
+
+    // Original: many alternatives with short literals
     int num_alts = 12 + std::uniform_int_distribution<int>(0, 8)(rng);  // 12-20 alternatives
     std::vector<std::shared_ptr<PatternNode>> alt_nodes;
     std::vector<std::string> alts;
@@ -578,8 +630,6 @@ static EdgeCaseResult createVariedLengthAlternationEdge(std::mt19937& rng) {
     // e.g., "a", "ab", "abc", "abcd"
     // Stresses the alternation merging and length-partitioning logic.
     
-    // Pick a base character
-    char base_char = 'a' + std::uniform_int_distribution<int>(0, 25)(rng);
     // Pick 3-5 alternatives of increasing length
     int num_alts = 3 + std::uniform_int_distribution<int>(0, 2)(rng);
     
@@ -632,6 +682,8 @@ static EdgeCaseResult createVariedLengthAlternationEdge(std::mt19937& rng) {
 }
 
 static EdgeCaseResult createMismatchedCaptureEdge(std::mt19937& rng);
+static EdgeCaseResult createFragmentWithAltEdge(std::mt19937& rng);
+static EdgeCaseResult createMixedFragLiteralEdge(std::mt19937& rng);
 
 EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
     switch (type) {
@@ -663,6 +715,10 @@ EdgeCaseResult generateEdgeCase(EdgeCaseType type, std::mt19937& rng) {
             return createVariedLengthAlternationEdge(rng);
         case EdgeCaseType::MISMATCHED_CAPTURE:
             return createMismatchedCaptureEdge(rng);
+        case EdgeCaseType::FRAGMENT_WITH_ALT:
+            return createFragmentWithAltEdge(rng);
+        case EdgeCaseType::MIXED_FRAG_LITERAL:
+            return createMixedFragLiteralEdge(rng);
         default:
             return createPartialMatchEdge(rng);
     }
@@ -714,5 +770,68 @@ static EdgeCaseResult createMismatchedCaptureEdge(std::mt19937& rng) {
     result.matching_seeds = {};  // No inputs should match a malformed pattern
     
     result.proof += "  Rationale: Tests pipeline error handling for malformed capture tags\n";
+    return result;
+}
+
+static EdgeCaseResult createFragmentWithAltEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::FRAGMENT_WITH_ALT;
+
+    // Create a fragment that contains an alternation
+    std::string frag_name = "fragAlt";
+    std::string char1 = randomAlphaEdge(1, rng);
+    std::string char2 = randomAlphaEdge(1, rng);
+    while (char2 == char1) char2 = randomAlphaEdge(1, rng);
+    std::string char3 = randomAlphaEdge(1, rng);
+    while (char3 == char1 || char3 == char2) char3 = randomAlphaEdge(1, rng);
+
+    result.fragments[frag_name] = char1 + "|" + char2 + "|" + char3;
+
+    // Pattern: [[fragAlt]]+ - quantified fragment containing alternation
+    auto frag_node = PatternNode::createFragment(frag_name, {char1, char2, char3});
+    frag_node->type = PatternType::PLUS_QUANTIFIER;
+    frag_node->quantified = PatternNode::createFragment(frag_name, {char1, char2, char3});
+
+    auto seq_node = PatternNode::createSequence({frag_node}, {char1 + char2});
+    result.initial_ast = seq_node;
+
+    result.matching_seeds = {char1, char2, char3, char1 + char1, char2 + char2, char1 + char2, char2 + char1};
+    result.counter_seeds = {"", char1 + "x", "x" + char2, randomAlphaEdge(3, rng)};
+
+    result.proof = "EDGE_CASE: FRAGMENT_WITH_ALT\n";
+    result.proof += "  Fragment: [[" + frag_name + "]] = " + char1 + "|" + char2 + "|" + char3 + "\n";
+    result.proof += "  Pattern: [[" + frag_name + "]]+\n";
+    result.proof += "  Rationale: Tests fragment containing alternation\n";
+    return result;
+}
+
+static EdgeCaseResult createMixedFragLiteralEdge(std::mt19937& rng) {
+    EdgeCaseResult result;
+    result.type = EdgeCaseType::MIXED_FRAG_LITERAL;
+
+    // Create a fragment
+    std::string frag_name = "f1";
+    std::string frag_val = randomAlphaEdge(2, rng);
+    result.fragments[frag_name] = frag_val;
+
+    // Build mixed pattern: literal + fragment + literal
+    std::string pre = randomAlphaEdge(2, rng);
+    std::string post = randomAlphaEdge(2, rng);
+
+    auto frag_node = PatternNode::createFragment(frag_name, {frag_val});
+    auto pre_node = PatternNode::createLiteral(pre, {pre});
+    auto post_node = PatternNode::createLiteral(post, {post});
+
+    auto seq_node = PatternNode::createSequence({pre_node, frag_node, post_node},
+                                                {pre + frag_val + post});
+    result.initial_ast = seq_node;
+
+    result.matching_seeds = {pre + frag_val + post};
+    result.counter_seeds = {frag_val + post, pre + frag_val, pre + post, "x"};
+
+    result.proof = "EDGE_CASE: MIXED_FRAG_LITERAL\n";
+    result.proof += "  Fragment: [[" + frag_name + "]] = " + frag_val + "\n";
+    result.proof += "  Pattern: " + pre + "[[" + frag_name + "]]" + post + "\n";
+    result.proof += "  Rationale: Tests mixed fragment refs + explicit literals in sequence\n";
     return result;
 }

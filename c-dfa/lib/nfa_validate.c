@@ -185,6 +185,8 @@ bool nfa_validate_pattern_file(nfa_builder_context_t* ctx, const char* spec_file
             // Quotes do NOT protect quantifiers - use \* for literal asterisk
             for (char* p = pattern_start; *p; p++) {
                 if (*(p - 1) == '\\' && p > pattern_start) continue;  // escaped
+                // Skip consecutive quantifiers (e.g., ?? or ?+ - second one is part of alternation)
+                if (p > pattern_start && (*(p - 1) == '*' || *(p - 1) == '+' || *(p - 1) == '?')) continue;
                 if (*p == '*' || *p == '+' || *p == '?') {
                     char* q = p - 1;
                     while (q >= pattern_start && (*q == ' ' || *q == '\t')) q--;

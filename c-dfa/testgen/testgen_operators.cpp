@@ -576,7 +576,7 @@ static std::string serializeAstSimple(std::shared_ptr<PatternNode> node) {
         return serializeAstSimple(node->quantified) + "*";
     }
     if (node->type == PatternType::OPTIONAL) {
-        return serializeAstSimple(node->quantified) + "?";
+        return "(" + serializeAstSimple(node->quantified) + ")?";
     }
     if (node->type == PatternType::ALTERNATION) {
         std::string result = "(";
@@ -1702,27 +1702,33 @@ CoordinatedMutationResult ExtractFragmentCoordOp::apply(const TestCaseCore& orig
         }
     }
 
-    if (!isValidPattern(mutated_ast)) return result;
-
-    // Copy inputs unchanged
+    // Re-validate inputs after mutation - fragment extraction may change semantics
+    std::vector<std::string> valid_match, valid_counter;
     for (auto& node : original.inputs.nodes) {
         if (node.categories.count("matching")) {
-            result.mutated_tc.inputs.add(node.value, {"matching"});
+            if (PatternMatcher::matches(mutated_ast, node.value)) {
+                valid_match.push_back(node.value);
+            }
         } else if (node.categories.count("counter")) {
-            result.mutated_tc.inputs.add(node.value, {"counter"});
+            if (!PatternMatcher::matches(mutated_ast, node.value)) {
+                valid_counter.push_back(node.value);
+            }
         }
     }
 
-    bool has_matching = false;
-    for (auto& node : result.mutated_tc.inputs.nodes) {
-        if (node.categories.count("matching")) { has_matching = true; break; }
-    }
-    if (!has_matching) return result;
+    // Require at least one matching input survives
+    if (valid_match.empty()) return result;
 
     result.mutated_tc.ast = mutated_ast;
     result.mutated_tc.fragments = original.fragments;
     result.mutated_tc.fragments[frag_name] = extracted;
     if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
+
+    // Rebuild inputs with validated set
+    result.mutated_tc.inputs = InputGraph();
+    for (const auto& m : valid_match) result.mutated_tc.inputs.add(m, {"matching"});
+    for (const auto& c : valid_counter) result.mutated_tc.inputs.add(c, {"counter"});
+
     result.mutated_tc.proof = original.proof + " | EXTRACT_FRAG(" + extracted + "->" + frag_name + ")";
 
     Expectation e;
@@ -1730,6 +1736,8 @@ CoordinatedMutationResult ExtractFragmentCoordOp::apply(const TestCaseCore& orig
     e.description = "Extracted substring '" + extracted + "' as fragment " + frag_name;
     e.meta["fragment"] = frag_name;
     e.meta["mutation"] = "EXTRACT_FRAGMENT_COORD";
+    e.input = valid_match[0];  // First matching input for verification
+    e.expected_match = "yes";
     result.mutated_tc.expectations.add(e);
 
     result.valid = true;
@@ -1845,7 +1853,7 @@ CoordinatedMutationResult SwapAlternativesCoordOp::apply(const TestCaseCore& ori
     return result;
 }
 
-CoordinatedMutationResult InlineFragmentCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+CoordinatedMutationResult InlineFragmentCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
     CoordinatedMutationResult result;
     result.valid = false;
 
@@ -2111,6 +2119,205 @@ CoordinatedMutationResult WrapOptionalCoordOp::apply(const TestCaseCore& origina
     return result;
 }
 
+CoordinatedMutationResult MergeAdjacentLiteralsCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast) return result;
+
+    std::vector<std::string> new_match;
+    std::vector<std::string> new_counter;
+    std::shared_ptr<PatternNode> mutated_ast = nullptr;
+
+    // Clone and find adjacent LITERAL children in SEQUENCE
+    mutated_ast = copyNode(original.ast);
+    bool merged = false;
+
+    std::function<void(std::shared_ptr<PatternNode>, std::vector<std::shared_ptr<PatternNode>>&)> findAndMerge;
+    findAndMerge = [&](std::shared_ptr<PatternNode> node, std::vector<std::shared_ptr<PatternNode>>& seq_children) {
+        if (!node || merged) return;
+        if (node->type == PatternType::SEQUENCE && !node->children.empty()) {
+            std::vector<std::shared_ptr<PatternNode>> children = node->children;
+            for (size_t i = 0; i + 1 < children.size() && !merged; i++) {
+                if (children[i]->type == PatternType::LITERAL && children[i + 1]->type == PatternType::LITERAL) {
+                    std::string merged_val = children[i]->value + children[i + 1]->value;
+                    // Create merged node
+                    auto merged_node = PatternNode::createLiteral(merged_val, children[i]->matched_seeds, children[i]->counter_seeds);
+                    // Replace both children with merged node
+                    std::vector<std::shared_ptr<PatternNode>> new_children = children;
+                    new_children.erase(new_children.begin() + i, new_children.begin() + i + 2);
+                    new_children.insert(new_children.begin() + i, merged_node);
+                    node->children = new_children;
+                    merged = true;
+                    return;
+                }
+            }
+        }
+        // Recurse
+        for (const auto& child : node->children) {
+            findAndMerge(child, seq_children);
+        }
+    };
+
+    std::vector<std::shared_ptr<PatternNode>> dummy;
+    findAndMerge(mutated_ast, dummy);
+    if (!merged) return result;
+
+    // Verify all original inputs still work
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching") && PatternMatcher::matches(mutated_ast, node.value)) {
+            new_match.push_back(node.value);
+        }
+    }
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter") && !PatternMatcher::matches(mutated_ast, node.value)) {
+            new_counter.push_back(node.value);
+        }
+    }
+
+    if (new_match.empty()) return result;
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.proof = original.proof + " | MERGE_ADJACENT_LITERALS";
+
+    for (const auto& m : new_match) result.mutated_tc.inputs.add(m, {"matching"});
+    for (const auto& c : new_counter) result.mutated_tc.inputs.add(c, {"counter"});
+
+    result.valid = true;
+    result.proof = "Merged adjacent literals";
+    return result;
+}
+
+CoordinatedMutationResult AddRedundantParensCoordOp::apply(const TestCaseCore& original, [[maybe_unused]] std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast) return result;
+    if (containsFragmentRef(original.ast)) return result;
+
+    // Wrap the AST in a redundant group (parens)
+    auto mutated_ast = copyNode(original.ast);
+    if (!mutated_ast) return result;
+
+    // Wrapping in group doesn't change semantics, so inputs remain valid
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            result.mutated_tc.inputs.add(node.value, {"matching"});
+        } else if (node.categories.count("counter")) {
+            result.mutated_tc.inputs.add(node.value, {"counter"});
+        }
+    }
+
+    bool has_matching = false;
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) { has_matching = true; break; }
+    }
+    if (!has_matching) return result;
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    if (!ensureFragmentDefs(mutated_ast, result.mutated_tc.fragments)) { result.valid = false; return result; }
+    result.mutated_tc.proof = original.proof + " | ADD_REDUNDANT_PARENS";
+
+    Expectation e;
+    e.type = ExpectationType::MATCH_EXACT;
+    e.description = "Wrapped in redundant parens";
+    e.meta["mutation"] = "ADD_REDUNDANT_PARENS";
+    for (auto& node : result.mutated_tc.inputs.nodes) {
+        if (node.categories.count("matching")) {
+            e.input = node.value;
+            break;
+        }
+    }
+    e.expected_match = "yes";
+    result.mutated_tc.expectations.add(e);
+
+    result.valid = true;
+    result.proof = "Added redundant parentheses (wrap entire AST in parens)";
+    return result;
+}
+
+CoordinatedMutationResult AlternationToFragmentCoordOp::apply(const TestCaseCore& original, std::mt19937& rng) const {
+    CoordinatedMutationResult result;
+    result.valid = false;
+
+    if (!original.ast) return result;
+
+    std::vector<std::string> new_match;
+    std::vector<std::string> new_counter;
+    std::shared_ptr<PatternNode> mutated_ast = nullptr;
+
+    mutated_ast = copyNode(original.ast);
+    bool converted = false;
+    std::string frag_name;
+    std::string frag_value;
+
+    std::function<void(std::shared_ptr<PatternNode>)> findAndConvert;
+    findAndConvert = [&](std::shared_ptr<PatternNode> node) {
+        if (!node || converted) return;
+        if (node->type == PatternType::ALTERNATION && node->children.size() >= 2) {
+            // Check if all children are single-char literals
+            bool all_single = true;
+            std::vector<std::string> chars;
+            for (const auto& child : node->children) {
+                if (child->type == PatternType::LITERAL && child->value.size() == 1) {
+                    chars.push_back(child->value);
+                } else {
+                    all_single = false;
+                    break;
+                }
+            }
+            if (all_single && chars.size() >= 2) {
+                // Build fragment value
+                frag_value = chars[0];
+                for (size_t i = 1; i < chars.size(); i++) {
+                    frag_value += "|" + chars[i];
+                }
+                frag_name = "fragX" + std::to_string(rng() % 1000);
+                // Replace with fragment reference
+                node->type = PatternType::FRAGMENT_REF;
+                node->fragment_name = frag_name;
+                node->children.clear();
+                node->value = "";
+                converted = true;
+                return;
+            }
+        }
+        for (const auto& child : node->children) {
+            findAndConvert(child);
+        }
+    };
+
+    findAndConvert(mutated_ast);
+    if (!converted) return result;
+
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("matching") && PatternMatcher::matches(mutated_ast, node.value)) {
+            new_match.push_back(node.value);
+        }
+    }
+    for (auto& node : original.inputs.nodes) {
+        if (node.categories.count("counter") && !PatternMatcher::matches(mutated_ast, node.value)) {
+            new_counter.push_back(node.value);
+        }
+    }
+
+    if (new_match.empty()) return result;
+
+    result.mutated_tc.ast = mutated_ast;
+    result.mutated_tc.fragments = original.fragments;
+    result.mutated_tc.fragments[frag_name] = frag_value;
+    result.mutated_tc.proof = original.proof + " | ALTERNATION_TO_FRAGMENT";
+
+    for (const auto& m : new_match) result.mutated_tc.inputs.add(m, {"matching"});
+    for (const auto& c : new_counter) result.mutated_tc.inputs.add(c, {"counter"});
+
+    result.valid = true;
+    result.proof = "Converted alternation to fragment: [[" + frag_name + "]] = " + frag_value;
+    return result;
+}
+
 CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<CharSubstituteCoordOp>());
     operators.push_back(std::make_unique<NestQuantifierCoordOp>());
@@ -2129,6 +2336,9 @@ CoordinatedMutationEngine::CoordinatedMutationEngine() {
     operators.push_back(std::make_unique<InlineFragmentCoordOp>());
     operators.push_back(std::make_unique<SwapSequenceChildrenCoordOp>());
     operators.push_back(std::make_unique<WrapOptionalCoordOp>());
+    operators.push_back(std::make_unique<MergeAdjacentLiteralsCoordOp>());
+    operators.push_back(std::make_unique<AddRedundantParensCoordOp>());
+    operators.push_back(std::make_unique<AlternationToFragmentCoordOp>());
 }
 
 std::vector<CoordinatedMutationResult> CoordinatedMutationEngine::mutate(

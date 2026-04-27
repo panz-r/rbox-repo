@@ -83,7 +83,9 @@ enum class EdgeCaseType {
     OVERLAPPING_ALTERNATION,  // Product structure: ab(X|Y|Z), cd(X|Y|Z) — tests factorization
     FRAGMENT_CHAIN,      // Depth-limited recursive fragment chain: fc→fb→fa
     VARIED_LENGTH_ALT,    // Alternation with different-length alternatives: a|ab|abc|abcd
-    MISMATCHED_CAPTURE   // Malformed capture tags: unclosed, unopened, or mismatched
+    MISMATCHED_CAPTURE,   // Malformed capture tags: unclosed, unopened, or mismatched
+    FRAGMENT_WITH_ALT,    // Fragment containing alternation: [frag]=a|b|c
+    MIXED_FRAG_LITERAL    // Mix fragment refs + explicit literals in sequence
 };
 
 struct EdgeCaseResult {

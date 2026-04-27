@@ -62,6 +62,22 @@ static std::string commonSuffix(const std::vector<std::string>& strings) {
     return suffix;
 }
 
+// Check if pattern (candidate)+ matches a string.
+// This means the string consists entirely of repetitions of candidate,
+// not just that candidate appears somewhere as a substring.
+static bool matchesPlusRepetition(const std::string& unit, const std::string& str) {
+    if (unit.empty() || str.empty()) return false;
+    if (str.size() % unit.size() != 0) return false;
+    
+    size_t reps = str.size() / unit.size();
+    for (size_t i = 0; i < reps; i++) {
+        if (str.compare(i * unit.size(), unit.size(), unit) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Find the longest prefix P such that:
 // - All matching inputs start with P
 // - P distinguishes from counters (either counter doesn't have P, or remainder differs)
@@ -1047,9 +1063,11 @@ BuildResult buildRecursive(std::vector<InputState> matching_states,
                     if (rep_count >= 1 && candidate.compare(s.remaining.substr(0, candidate.size() * rep_count)) == 0 &&
                         candidate.size() * rep_count == s.remaining.size()) {
                         bool valid_unit = true;
-                        // Check counter inputs don't match this unit
+                        // Check: does (candidate)+ match any counter string?
+                        // A counter is invalid only if (candidate)+ matches it somewhere.
+                        // This means: counter contains a pure repetition of candidate starting at some position.
                         for (const auto& c : counter_states) {
-                            if (!c.remaining.empty() && c.remaining.find(candidate) != std::string::npos) {
+                            if (!c.remaining.empty() && matchesPlusRepetition(candidate, c.remaining)) {
                                 valid_unit = false;
                                 break;
                             }
