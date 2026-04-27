@@ -1,0 +1,1 @@
+cp a b ; mv b c ; rm c

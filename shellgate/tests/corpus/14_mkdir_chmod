@@ -1,0 +1,1 @@
+mkdir dir ; chmod 755 dir ; ls dir
