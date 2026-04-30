@@ -56,6 +56,7 @@ var (
 	systemSocket = flag.Bool("system-socket", false, "Use system socket /run/readonlybox/readonlybox.sock")
 	userSocket   = flag.Bool("user-socket", false, "Use user socket $XDG_RUNTIME_DIR/readonlybox.sock")
 	logReader    = flag.Bool("log-reader", false, "Output machine-readable ALLOW/DENY lines to stdout")
+	capturePath  = flag.String("capture", "", "Capture all requests/decisions to JSON Lines file (requires capture build tag)")
 )
 
 const (
@@ -116,6 +117,16 @@ func main() {
 	if gLogger != nil {
 		defer gLogger.Close()
 		gLogger.Log(2, "Server starting v%s", ServerVersion)
+	}
+
+	// Initialize capture (no-op if --capture is empty or build tag is absent)
+	if err := InitCapture(*capturePath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to open capture file: %v\n", err)
+		os.Exit(1)
+	}
+	defer CloseCapture()
+	if CaptureEnabled() {
+		fmt.Printf("Capture: %s\n", *capturePath)
 	}
 
 	if *tui {
@@ -207,6 +218,18 @@ func main() {
 
 		// Make env decisions: auto-deny high-score env vars (score >= 0.8)
 		envDecisions := makeEnvDecisions(req)
+
+		// Capture request+decision before req.Decide frees the C handle
+		if CaptureEnabled() {
+			envCount := req.GetEnvVarCount()
+			envNames := make([]string, envCount)
+			envScores := make([]float32, envCount)
+			for i := 0; i < envCount; i++ {
+				envNames[i] = req.GetEnvVarName(i)
+				envScores[i] = req.GetEnvVarScore(i)
+			}
+			CaptureRequest(cmd, args[1:], caller, syscallName, envCount, envNames, envScores, decision, reason, 0, envDecisions)
+		}
 
 		// Send decision with env decisions
 		if err := req.Decide(decision, reason, 0, envDecisions); err != nil {

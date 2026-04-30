@@ -52,6 +52,7 @@ func Desc(target string) string {
 		"ValidatePatterns":  "Validate command pattern files (needs c-dfa tools)",
 		"Deps":              "Build DFA tools (cdfatool) first",
 		"Install":           "Install binaries to system (requires root)",
+		"ServerCapture":     "Build rbox-server with capture mode enabled (-tags capture)",
 	}
 	return descriptions[target]
 }
@@ -432,6 +433,48 @@ func BuildBinaries() error {
 	}
 
 	fmt.Println("=== All binaries built successfully ===")
+	return nil
+}
+
+// Build rbox-server with capture mode enabled for request logging.
+func ServerCapture() error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	cc := os.Getenv("CC")
+	if cc == "" {
+		cc = "gcc"
+	}
+	var cmd *exec.Cmd
+	rboxProto := filepath.Join(wd, rboxProtocolDir)
+	shellSplit := filepath.Join(wd, shellsplitDir)
+	shellGate := filepath.Join(wd, shellgateDir)
+	shellType := filepath.Join(wd, shelltypeDir)
+	captureBin := filepath.Join(wd, binDir, "readonlybox-server-capture")
+	cmd = exec.Command("go", "build", "-tags", "cgo,capture",
+		"-o", captureBin)
+	cmd.Dir = filepath.Join(wd, rboxServerDir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(),
+		"CGO_LDFLAGS=-L"+rboxProto+" -L"+shellGate+"/build -lrbox_protocol -lshellgate -lshelltype_gate -lshellsplit_gate -lpthread -lm",
+		"CGO_CFLAGS=-I"+rboxProto+"/include -I"+shellSplit+"/include -I"+shellType+"/include -I"+shellGate+"/include",
+		"CC="+cc)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("readonlybox-server-capture build failed: %w", err)
+	}
+
+	cmd = exec.Command("patchelf", "--set-rpath", "$ORIGIN/../lib", captureBin)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("patchelf set-rpath for server-capture failed: %w", err)
+	}
+
+	fmt.Printf("=== Capture-enabled binary: %s ===\n", captureBin)
+	fmt.Println("Usage: readonlybox-server-capture --capture requests.jsonl ...")
 	return nil
 }
 
