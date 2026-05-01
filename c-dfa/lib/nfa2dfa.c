@@ -20,6 +20,9 @@
 #include "nfa_preminimize.h"
 #include "nfa2dfa_context.h"
 #include "../include/cdfa_defines.h"
+#define XXH_STATIC_LINKING_ONLY
+#include "xxhash.h"
+#include <draugr/ht.h>
 
 #if MAX_SYMBOLS != 320
 #error "MAX_SYMBOLS must be 320"
@@ -74,8 +77,7 @@ void dfa_clear_marker_lists(void) {
 #define CTX_NFA(ctx)             ((ctx)->nfa)
 #define CTX_DFA(ctx)             ((ctx)->dfa)
 #define CTX_ALPHABET(ctx)        ((ctx)->alphabet)
-#define CTX_HASH_TABLE(ctx)      ((ctx)->dfa_hash_table)
-#define CTX_NEXT_BUCKET(ctx)     ((ctx)->dfa_next_in_bucket)
+#define CTX_DEDUP(ctx)           ((ctx)->dfa_dedup)
 #define CTX_MARKER_LISTS(ctx)    ((ctx)->dfa_marker_lists)
 
 // Scalar fields
@@ -93,11 +95,6 @@ void dfa_clear_marker_lists(void) {
 // Configuration fields (context-only, ctx guaranteed non-NULL)
 #define CTX_FLAG_VERBOSE(ctx)   ((ctx)->flag_verbose)
 #define CTX_PATTERN_ID(ctx)     ((ctx)->pattern_identifier)
-
-void init_hash_table(ATTR_UNUSED nfa2dfa_context_t* ctx) {
-    memset(CTX_HASH_TABLE(ctx), -1, sizeof(int) * DFA_HASH_SIZE);
-    memset(CTX_NEXT_BUCKET(ctx), -1, sizeof(int) * MAX_STATES);
-}
 
 #define MAX_MARKERS_PER_DFA_TRANSITION 16
 #define MAX_DFA_MARKER_LISTS 8192
@@ -185,48 +182,58 @@ static void sort_states_canonical(ATTR_UNUSED nfa2dfa_context_t* ctx, int* state
     }
 }
 
-// Hash a canonical (sorted) NFA state set
-static uint32_t hash_nfa_set(ATTR_UNUSED nfa2dfa_context_t* ctx, const int* sorted_states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
+// Hash a canonical (sorted) NFA state set using xxhash3
+static uint64_t hash_nfa_set(ATTR_UNUSED nfa2dfa_context_t* ctx, const int* sorted_states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
     (void)ctx;
-    uint32_t hash = FNV_OFFSET_BASIS;
-    for (int i = 0; i < count; i++) {
-        hash ^= (uint32_t)sorted_states[i];
-        hash *= FNV_PRIME;
-    }
-    hash ^= (uint32_t)mask << 24;
-    hash ^= (uint32_t)first_accepting_pattern;
-    return hash;
+    XXH3_state_t state;
+    XXH3_64bits_reset(&state);
+    XXH3_64bits_update(&state, sorted_states, (size_t)count * sizeof(int));
+    XXH3_64bits_update(&state, &mask, sizeof(mask));
+    XXH3_64bits_update(&state, &first_accepting_pattern, sizeof(first_accepting_pattern));
+    return XXH3_64bits_digest(&state);
 }
 
-static int find_dfa_state_hashed(ATTR_UNUSED nfa2dfa_context_t* ctx, uint32_t hash, const int* sorted_states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
-    int* dfa_hash = CTX_HASH_TABLE(ctx);
-    int* dfa_next = CTX_NEXT_BUCKET(ctx);
-    build_dfa_state_t** dfa_arr = CTX_DFA(ctx);
-    int idx = dfa_hash[hash % DFA_HASH_SIZE];
-    while (idx != -1) {
-        if (dfa_arr[idx]->nfa_state_count == count) {
-            uint8_t existing_mask = (uint8_t)(dfa_arr[idx]->flags >> 8);
-            if (existing_mask == mask && dfa_arr[idx]->first_accepting_pattern == first_accepting_pattern) {
-                bool match = true;
-                for (int j = 0; j < count; j++) {
-                    if (dfa_arr[idx]->nfa_states[j] != sorted_states[j]) { match = false; break; }
-                }
-                if (match) return idx;
-            }
-        }
-        idx = dfa_next[idx];
+// Callback context for DFA state lookup via ht_bare_find_all
+struct dfa_find_ctx {
+    nfa2dfa_context_t* ctx;
+    const int* sorted_states;
+    int count;
+    uint8_t mask;
+    uint16_t first_accepting_pattern;
+    int found_idx;
+};
+
+static bool dfa_find_cb(uint32_t val, void* user_ctx) {
+    struct dfa_find_ctx* fc = user_ctx;
+    build_dfa_state_t** dfa_arr = CTX_DFA(fc->ctx);
+    int idx = (int)val;
+    if (dfa_arr[idx]->nfa_state_count != fc->count) return true;
+    uint8_t existing_mask = (uint8_t)(dfa_arr[idx]->flags >> 8);
+    if (existing_mask != fc->mask ||
+        dfa_arr[idx]->first_accepting_pattern != fc->first_accepting_pattern)
+        return true;
+    for (int j = 0; j < fc->count; j++) {
+        if (dfa_arr[idx]->nfa_states[j] != fc->sorted_states[j]) return true;
     }
-    return -1;
+    fc->found_idx = idx;
+    return false; // stop iteration
+}
+
+static int find_dfa_state_hashed(nfa2dfa_context_t* ctx, uint64_t hash, const int* sorted_states, int count, uint8_t mask, uint16_t first_accepting_pattern) {
+    struct dfa_find_ctx fc = {
+        .ctx = ctx, .sorted_states = sorted_states, .count = count,
+        .mask = mask, .first_accepting_pattern = first_accepting_pattern,
+        .found_idx = -1,
+    };
+    ht_bare_find_all(CTX_DEDUP(ctx), hash, dfa_find_cb, &fc);
+    return fc.found_idx;
 }
 
 void dfa_init(ATTR_UNUSED nfa2dfa_context_t* ctx) {
-    int* dfa_hash = CTX_HASH_TABLE(ctx);
-    int* dfa_next = CTX_NEXT_BUCKET(ctx);
     build_dfa_state_t** dfa_arr = CTX_DFA(ctx);
     int* dfa_count_ptr = CTX_DFA_COUNT_PTR(ctx, dfa_state_count);
-    
-    memset(dfa_hash, -1, sizeof(int) * DFA_HASH_SIZE);
-    memset(dfa_next, -1, sizeof(int) * MAX_STATES);
+
+    ht_bare_clear(CTX_DEDUP(ctx));
     // Free any previously allocated states
     for (int i = 0; i < *dfa_count_ptr; i++) {
         if (dfa_arr[i]) {
@@ -438,28 +445,24 @@ static uint8_t collect_fork_categories(ATTR_UNUSED nfa2dfa_context_t* ctx, int* 
 
 int dfa_add_state(ATTR_UNUSED nfa2dfa_context_t* ctx, uint8_t category_mask, int* nfa_states, int nfa_count, uint16_t accepting_pattern_id, uint16_t first_accepting_pattern) {
     build_dfa_state_t** dfa_arr = CTX_DFA(ctx);
-    int* dfa_hash = CTX_HASH_TABLE(ctx);
-    int* dfa_next = CTX_NEXT_BUCKET(ctx);
     int* dfa_count_ptr = CTX_DFA_COUNT_PTR(ctx, dfa_state_count);
-    (void)dfa_hash; (void)dfa_next;
-    
+
     int* sorted = alloc_or_abort(malloc(nfa_count * sizeof(int)), "dfa_add_state sorted");
     for (int i = 0; i < nfa_count; i++) {
         sorted[i] = nfa_states[i];
     }
     sort_states_canonical(ctx, sorted, nfa_count);
 
-    uint32_t h = hash_nfa_set(ctx, sorted, nfa_count, category_mask, first_accepting_pattern);
-    int bucket = h % DFA_HASH_SIZE;
+    uint64_t h = hash_nfa_set(ctx, sorted, nfa_count, category_mask, first_accepting_pattern);
     int existing = find_dfa_state_hashed(ctx, h, sorted, nfa_count, category_mask, first_accepting_pattern);
     if (existing != -1) {
         free(sorted);
         return existing;
     }
-    if (*dfa_count_ptr >= MAX_STATES) { 
+    if (*dfa_count_ptr >= MAX_STATES) {
         FATAL("Max DFA states reached (%d states)", MAX_STATES);
         ERROR("  Split patterns into multiple files or simplify complex patterns");
-        exit(EXIT_FAILURE); 
+        exit(EXIT_FAILURE);
     }
     int state = (*dfa_count_ptr)++;
     // Allocate the state dynamically
@@ -474,7 +477,7 @@ int dfa_add_state(ATTR_UNUSED nfa2dfa_context_t* ctx, uint8_t category_mask, int
     }
     dfa_arr[state]->accepting_pattern_id = accepting_pattern_id;
     dfa_arr[state]->first_accepting_pattern = first_accepting_pattern;
-    
+
     // Store pre-sorted states
     dfa_arr[state]->nfa_state_count = nfa_count;
     if (nfa_count > dfa_arr[state]->nfa_state_capacity) {
@@ -484,8 +487,7 @@ int dfa_add_state(ATTR_UNUSED nfa2dfa_context_t* ctx, uint8_t category_mask, int
         }
     }
     for (int i = 0; i < nfa_count; i++) dfa_arr[state]->nfa_states[i] = sorted[i];
-    dfa_next[state] = dfa_hash[bucket];
-    dfa_hash[bucket] = state;
+    ht_bare_insert(CTX_DEDUP(ctx), h, (uint32_t)state);
     free(sorted);
     return state;
 }

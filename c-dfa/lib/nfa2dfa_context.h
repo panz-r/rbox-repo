@@ -14,6 +14,7 @@
 #include "../include/nfa_dsl.h"
 #include "dfa_minimize.h"
 #include "nfa_builder.h"
+#include <draugr/ht.h>
 
 /* alphabet_entry_t is defined in include/nfa_dsl.h */
 
@@ -32,9 +33,8 @@ typedef struct {
     alphabet_entry_t* alphabet;
     int alphabet_size;
 
-    // Hash table for DFA dedup
-    int* dfa_hash_table;
-    int* dfa_next_in_bucket;
+    // Bare hash table for DFA dedup (hash → DFA state index)
+    ht_bare_t* dfa_dedup;
 
     // Marker harvesting
     MarkerList* dfa_marker_lists;

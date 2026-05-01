@@ -10,6 +10,7 @@
 #include "nfa2dfa_context.h"
 #include "nfa_builder.h"
 #include "multi_target_array.h"
+#include <draugr/ht.h>
 
 static void* checked_malloc(size_t size) {
     if (size == 0) return NULL;
@@ -69,24 +70,19 @@ nfa2dfa_context_t* nfa2dfa_context_create(void) {
     }
     ctx->alphabet_size = 0;
     
-    // Allocate hash table with overflow check
-    size_t hash_size, next_size;
-    if (CKD_MUL(&hash_size, (size_t)DFA_HASH_SIZE, sizeof(int)) ||
-        CKD_MUL(&next_size, (size_t)MAX_STATES, sizeof(int))) {
+    // Allocate bare hash table for DFA state dedup
+    ht_config_t dedup_cfg = {
+        .initial_capacity = 32768,
+        .max_load_factor = 0.85,
+        .min_load_factor = 0,
+        .tomb_threshold = 0.30,
+        .zombie_window = 0,
+    };
+    ctx->dfa_dedup = ht_bare_create(&dedup_cfg);
+    if (!ctx->dfa_dedup) {
         free(ctx->alphabet);
         free(ctx->dfa);
         free(ctx->nfa);
-        free(ctx);
-        return NULL;
-    }
-    ctx->dfa_hash_table = calloc(DFA_HASH_SIZE, sizeof(int));
-    ctx->dfa_next_in_bucket = calloc(MAX_STATES, sizeof(int));
-    if (!ctx->dfa_hash_table || !ctx->dfa_next_in_bucket) {
-        free(ctx->alphabet);
-        free(ctx->dfa);
-        free(ctx->nfa);
-        free(ctx->dfa_hash_table);
-        free(ctx->dfa_next_in_bucket);
         free(ctx);
         return NULL;
     }
@@ -228,9 +224,7 @@ void nfa2dfa_context_destroy(nfa2dfa_context_t* ctx) {
         free(ctx->nfa);
     }
 
-    free(ctx->dfa_hash_table);
-    free(ctx->dfa_next_in_bucket);
-    free(ctx->dfa_marker_lists);
+    ht_bare_destroy(ctx->dfa_dedup);
     free(ctx->alphabet);
     free(ctx);
 }

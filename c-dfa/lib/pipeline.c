@@ -32,7 +32,6 @@
 #include <unistd.h>
 
 // Forward declarations from nfa2dfa.c (compiled with NFA2DFA_BUILDING_LIB)
-void init_hash_table(nfa2dfa_context_t* ctx);
 void load_nfa_file(nfa2dfa_context_t* ctx, const char* filename);
 void nfa_to_dfa(nfa2dfa_context_t* ctx, const nfa_graph_t* nfa_graph);
 void flatten_dfa(nfa2dfa_context_t* ctx, const nfa_graph_t* nfa_graph);
@@ -356,7 +355,7 @@ pipeline_error_t pipeline_load_nfa(pipeline_t* p, const char* nfa_file) {
     p->nfa2dfa_ctx->flag_verbose = p->config.verbose;
 
     // Initialize hash table for DFA construction
-    init_hash_table(p->nfa2dfa_ctx);
+    ht_bare_clear(p->nfa2dfa_ctx->dfa_dedup);
 
     // Load NFA file (populates ctx->nfa and ctx->alphabet)
     load_nfa_file(p->nfa2dfa_ctx, nfa_file);
@@ -389,7 +388,7 @@ pipeline_error_t pipeline_convert_to_dfa(pipeline_t* p) {
     }
 
     // Initialize hash table for DFA construction
-    init_hash_table(p->nfa2dfa_ctx);
+    ht_bare_clear(p->nfa2dfa_ctx->dfa_dedup);
 
     // Convert to DFA using the preminimized NFA from nfa_graph
     long start = get_time_ms();

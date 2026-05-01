@@ -29,7 +29,10 @@ set(LIB_SOURCES
 # ============================================================================
 # readonlybox_dfa Static Library
 # ============================================================================
-add_library(readonlybox_dfa STATIC ${LIB_SOURCES})
+add_library(readonlybox_dfa STATIC ${LIB_SOURCES}
+    ${XXHASH_DIR}/xxhash.c
+    ${DRAUGR_DIR}/src/ht.c
+)
 target_compile_definitions(readonlybox_dfa PRIVATE
     NFABUILDER_NO_MAIN
     NFABUILDER_EXCLUDE_NFA_INIT
@@ -40,6 +43,8 @@ target_include_directories(readonlybox_dfa PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../src>
     $<BUILD_INTERFACE:${CADICAL_DIR}/src>
+    $<BUILD_INTERFACE:${XXHASH_DIR}>
+    $<BUILD_INTERFACE:${DRAUGR_DIR}/include>
 )
 target_link_libraries(readonlybox_dfa PUBLIC
     readonlybox_dfa_headers
@@ -50,7 +55,10 @@ target_link_libraries(readonlybox_dfa PUBLIC
 # ============================================================================
 # readonlybox_dfa Shared Library
 # ============================================================================
-add_library(readonlybox_dfa_shared SHARED ${LIB_SOURCES})
+add_library(readonlybox_dfa_shared SHARED ${LIB_SOURCES}
+    ${XXHASH_DIR}/xxhash.c
+    ${DRAUGR_DIR}/src/ht.c
+)
 target_compile_definitions(readonlybox_dfa_shared PRIVATE
     NFABUILDER_NO_MAIN
     NFABUILDER_EXCLUDE_NFA_INIT
@@ -61,6 +69,8 @@ target_include_directories(readonlybox_dfa_shared PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../src>
     $<BUILD_INTERFACE:${CADICAL_DIR}/src>
+    $<BUILD_INTERFACE:${XXHASH_DIR}>
+    $<BUILD_INTERFACE:${DRAUGR_DIR}/include>
 )
 target_link_libraries(readonlybox_dfa_shared PRIVATE
     readonlybox_dfa_headers

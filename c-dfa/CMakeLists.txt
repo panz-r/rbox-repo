@@ -72,6 +72,8 @@ endif()
 # ============================================================================
 set(CADICAL_DIR "${CMAKE_SOURCE_DIR}/vendor/cadical")
 set(CADICAL_LIB "${CADICAL_DIR}/build/libcadical.a")
+set(XXHASH_DIR "${CMAKE_SOURCE_DIR}/../vendor/xxhash")
+set(DRAUGR_DIR "${CMAKE_SOURCE_DIR}/../draugr")
 
 include(${CMAKE_SOURCE_DIR}/cmake/CaDiCaL.cmake)
 
