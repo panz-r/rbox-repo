@@ -1,6 +1,13 @@
 /**
  * @file test_cache_associativity.c
- * @brief Tests for 8-way set associative cache with LRU eviction
+ * @brief Integration tests for query_cache → ht_cache_t delegation
+ *
+ * Tests the contract at the rule_engine ↔ ht_cache boundary:
+ *   - Hit/miss statistics track correctly
+ *   - Cache survives recompilation (invalidation clears, re-populates)
+ *   - Subject hash discriminates entries for the same path
+ *   - Eval mode coverage allows READ-warmed entries to serve COPY lookups
+ *   - Global LRU evicts least-recently-used entries under pressure
  */
 
 #include "test_framework.h"
@@ -8,200 +15,228 @@
 #include "rule_engine_internal.h"
 #include <string.h>
 
-/* Test 8-way set associative cache behavior */
-static void test_8way_associativity(void)
+static soft_ruleset_t *make_ruleset(void)
 {
-    uint32_t __g = 0;
     soft_ruleset_t *rs = soft_ruleset_new();
-    
-    /* Add rules that will hash to the same cache set */
-    for (int i = 0; i < QUERY_CACHE_WAYS + 2; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/test/same/prefix/path%d", i);
-        
-        TEST_ASSERT(soft_ruleset_add_rule(rs, path, SOFT_ACCESS_READ, SOFT_OP_READ, "", "", 0) == 0,
-                    "assoc: add rule for path");
-    }
-    
+
+    /* Layer 0: PRECEDENCE deny /data/... */
+    soft_ruleset_add_rule_at_layer(rs, 0, "/data/...",
+                   SOFT_ACCESS_DENY, SOFT_OP_READ, NULL, NULL, SOFT_RULE_RECURSIVE);
+    soft_ruleset_add_rule_at_layer(rs, 0, "/public",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0);
+
+    /* Layer 1: SPECIFICITY allow /data/project subtree */
+    soft_ruleset_set_layer_type(rs, 1, LAYER_SPECIFICITY, 0);
+    soft_ruleset_add_rule_at_layer(rs, 1, "/data/project/**",
+                   SOFT_ACCESS_READ, SOFT_OP_READ, NULL, NULL, 0);
+
+    /* Timed writes to /tmp */
+    soft_ruleset_add_rule_at_layer(rs, 1, "/tmp/...",
+                   SOFT_ACCESS_WRITE, SOFT_OP_COPY, NULL, NULL, SOFT_RULE_RECURSIVE);
+
     soft_ruleset_compile(rs);
-    
-    /* First access - all should miss cache */
-    uint64_t misses_before = rs->stats_cache_misses;
-    for (int i = 0; i < QUERY_CACHE_WAYS; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/test/same/prefix/path%d", i);
-        
-        soft_access_ctx_t ctx = {SOFT_OP_READ, path, NULL, "test_subject"};
-        int ret = soft_ruleset_check_ctx(rs, &ctx, &__g, NULL);
-        TEST_ASSERT(ret, "assoc: path allowed");
-    }
-    uint64_t misses_after = rs->stats_cache_misses;
-    TEST_ASSERT(misses_after - misses_before == QUERY_CACHE_WAYS,
-                "assoc: all first accesses should miss cache");
-    
-    /* Reset stats and access again - all should hit cache */
-    rs->stats_cache_hits = 0;
-    rs->stats_cache_misses = 0;
-    
-    for (int i = 0; i < QUERY_CACHE_WAYS; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/test/same/prefix/path%d", i);
-        
-        soft_access_ctx_t ctx = {SOFT_OP_READ, path, NULL, "test_subject"};
-        int ret = soft_ruleset_check_ctx(rs, &ctx, &__g, NULL);
-        TEST_ASSERT(ret, "assoc: path still allowed");
-    }
-    
-    TEST_ASSERT(rs->stats_cache_hits == QUERY_CACHE_WAYS,
-                "assoc: all second accesses should hit cache");
-    TEST_ASSERT(rs->stats_cache_misses == 0,
-                "assoc: no misses on second access");
-    
-    /* Test LRU eviction */
-    rs->stats_cache_hits = 0;
-    rs->stats_cache_misses = 0;
-    
-    // Access first half to make them MRU
-    for (int i = 0; i < QUERY_CACHE_WAYS/2; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/test/same/prefix/path%d", i);
-        
-        soft_access_ctx_t ctx = {SOFT_OP_READ, path, NULL, "test_subject"};
-        int ret = soft_ruleset_check_ctx(rs, &ctx, &__g, NULL);
-        TEST_ASSERT(ret, "assoc: make path MRU");
-    }
-    
-    // Add new paths that will evict the LRU entries
-    for (int i = QUERY_CACHE_WAYS; i < QUERY_CACHE_WAYS + 2; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/test/same/prefix/path%d", i);
-        
-        TEST_ASSERT(soft_ruleset_add_rule(rs, path, SOFT_ACCESS_READ, SOFT_OP_READ, "", "", 0) == 0,
-                    "assoc: add additional rule");
-        
-        soft_access_ctx_t ctx = {SOFT_OP_READ, path, NULL, "test_subject"};
-        int ret = soft_ruleset_check_ctx(rs, &ctx, &__g, NULL);
-        TEST_ASSERT(ret, "assoc: new path allowed");
-    }
-    
-    // The MRU paths should still be cached
-    uint64_t hits = 0;
-    for (int i = 0; i < QUERY_CACHE_WAYS/2; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/test/same/prefix/path%d", i);
-        
-        soft_access_ctx_t ctx = {SOFT_OP_READ, path, NULL, "test_subject"};
-        if (soft_ruleset_check_ctx(rs, &ctx, &__g, NULL)) {
-            hits++;
-        }
-    }
-    
-    TEST_ASSERT(hits > 0, "assoc: some MRU entries should still be cached after eviction");
-    
-    soft_ruleset_free(rs);
+    return rs;
 }
 
-/* Test cache set distribution */
-static void test_cache_set_distribution(void)
-{
-    uint32_t __g = 0;
-    soft_ruleset_t *rs = soft_ruleset_new();
-    
-    /* Add many rules and check that they distribute across cache sets */
-    const int NUM_RULES = 1000;
-    for (int i = 0; i < NUM_RULES; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/dist/test/path/unique%d", i);
-        
-        TEST_ASSERT(soft_ruleset_add_rule(rs, path, SOFT_ACCESS_READ, SOFT_OP_READ, "", "", 0) == 0,
-                    "dist: add rule");
-    }
-    
-    soft_ruleset_compile(rs);
-    
-    /* Access all rules - should get good cache hit rate */
-    // First access - all miss
-    for (int i = 0; i < NUM_RULES; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/dist/test/path/unique%d", i);
-        
-        soft_access_ctx_t ctx = {SOFT_OP_READ, path, NULL, "test"};
-        soft_ruleset_check_ctx(rs, &ctx, &__g, NULL);
-    }
-    
-    // Second access - should get good hit rate with 8-way associativity
-    rs->stats_cache_hits = 0;
-    rs->stats_cache_misses = 0;
-    
-    for (int i = 0; i < NUM_RULES; i++) {
-        char path[64];
-        snprintf(path, sizeof(path), "/dist/test/path/unique%d", i);
-        
-        soft_access_ctx_t ctx = {SOFT_OP_READ, path, NULL, "test"};
-        soft_ruleset_check_ctx(rs, &ctx, &__g, NULL);
-    }
-    
-    uint64_t total_hits = rs->stats_cache_hits;
-    uint64_t total_misses = rs->stats_cache_misses;
-    
-    // With 8-way associativity, we should get excellent hit rates
-    double hit_rate = (double)total_hits / ((double)total_hits + (double)total_misses);
-    TEST_ASSERT(hit_rate > 0.95, "dist: should achieve >95% cache hit rate with 8-way associativity");
-    
-    soft_ruleset_free(rs);
-}
+/* --- Hit/miss counting --- */
 
-/* Test cache statistics tracking */
 static void test_cache_statistics(void)
 {
-    soft_ruleset_t *rs = soft_ruleset_new();
-    uint32_t __g = 0;
-    
-    /* Add some rules */
-    TEST_ASSERT(soft_ruleset_add_rule(rs, "/stats/test1", SOFT_ACCESS_READ, SOFT_OP_READ, "", "", 0) == 0,
-                "stats: add rule1");
-    TEST_ASSERT(soft_ruleset_add_rule(rs, "/stats/test2", SOFT_ACCESS_WRITE, SOFT_OP_WRITE, "", "", 0) == 0,
-                "stats: add rule2");
-    
+    soft_ruleset_t *rs = make_ruleset();
+    uint32_t g = 0;
+
+    TEST_ASSERT(rs->stats_cache_hits == 0, "stats: initial hits 0");
+    TEST_ASSERT(rs->stats_cache_misses == 0, "stats: initial misses 0");
+
+    soft_access_ctx_t ctx = { SOFT_OP_READ, "/public", NULL, "alice" };
+    soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    TEST_ASSERT(rs->stats_cache_hits == 0, "stats: first access misses");
+    TEST_ASSERT(rs->stats_cache_misses == 1, "stats: 1 miss");
+
+    soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    TEST_ASSERT(rs->stats_cache_hits == 1, "stats: second access hits");
+    TEST_ASSERT(rs->stats_cache_misses == 1, "stats: still 1 miss");
+
+    soft_access_ctx_t ctx2 = { SOFT_OP_READ, "/data/project/x.txt", NULL, "alice" };
+    soft_ruleset_check_ctx(rs, &ctx2, &g, NULL);
+    TEST_ASSERT(rs->stats_cache_misses == 2, "stats: different path misses");
+
+    soft_ruleset_free(rs);
+}
+
+/* --- Invalidation clears cache on recompile --- */
+
+static void test_invalidate_clears_cache(void)
+{
+    soft_ruleset_t *rs = make_ruleset();
+    uint32_t g = 0;
+
+    soft_access_ctx_t ctx = { SOFT_OP_READ, "/public", NULL, "alice" };
+    soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+
+    TEST_ASSERT(rs->stats_cache_misses == 1, "inv: first access miss");
+
+    soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    TEST_ASSERT(rs->stats_cache_hits == 1, "inv: second access hit");
+
+    /* Invalidate + recompile should wipe the cache */
+    soft_ruleset_invalidate(rs);
     soft_ruleset_compile(rs);
-    
-    /* Verify initial stats */
-    TEST_ASSERT(rs->stats_cache_hits == 0, "stats: initial hits should be 0");
-    TEST_ASSERT(rs->stats_cache_misses == 0, "stats: initial misses should be 0");
-    
-    /* First access - should miss */
-    soft_access_ctx_t ctx1 = {SOFT_OP_READ, "/stats/test1", NULL, "subject"};
-    int ret1 = soft_ruleset_check_ctx(rs, &ctx1, &__g, NULL);
-    TEST_ASSERT(ret1, "stats: first access allowed");
-    
-    TEST_ASSERT(rs->stats_cache_hits == 0, "stats: first access should miss");
-    TEST_ASSERT(rs->stats_cache_misses == 1, "stats: first access should be 1 miss");
-    
-    /* Second access - should hit */
-    int ret2 = soft_ruleset_check_ctx(rs, &ctx1, &__g, NULL);
-    TEST_ASSERT(ret2, "stats: second access allowed");
-    
-    TEST_ASSERT(rs->stats_cache_hits == 1, "stats: second access should hit");
-    TEST_ASSERT(rs->stats_cache_misses == 1, "stats: still 1 miss total");
-    
-    /* Different path - should miss */
-    soft_access_ctx_t ctx2 = {SOFT_OP_WRITE, "/stats/test2", NULL, "subject"};
-    int ret3 = soft_ruleset_check_ctx(rs, &ctx2, &__g, NULL);
-    TEST_ASSERT(ret3, "stats: different path allowed");
-    
-    TEST_ASSERT(rs->stats_cache_hits == 1, "stats: different path should miss");
-    TEST_ASSERT(rs->stats_cache_misses == 2, "stats: now 2 misses total");
-    
+
+    rs->stats_cache_hits = 0;
+    rs->stats_cache_misses = 0;
+    soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    TEST_ASSERT(rs->stats_cache_misses == 1, "inv: post-invalidate miss");
+    TEST_ASSERT(rs->stats_cache_hits == 0, "inv: no hits after clear");
+
+    soft_ruleset_free(rs);
+}
+
+/* --- Subject discrimination --- */
+
+static void test_subject_discrimination(void)
+{
+    soft_ruleset_t *rs = make_ruleset();
+    uint32_t g = 0;
+
+    soft_access_ctx_t alice = { SOFT_OP_READ, "/public", NULL, "alice" };
+    soft_access_ctx_t bob   = { SOFT_OP_READ, "/public", NULL, "bob" };
+
+    soft_ruleset_check_ctx(rs, &alice, &g, NULL);
+    TEST_ASSERT(rs->stats_cache_misses == 1, "subj: alice miss");
+
+    /* Same path, different subject — should miss (different subject_hash) */
+    soft_ruleset_check_ctx(rs, &bob, &g, NULL);
+    TEST_ASSERT(rs->stats_cache_misses == 2, "subj: bob miss (different subject)");
+
+    /* Alice again — should hit */
+    soft_ruleset_check_ctx(rs, &alice, &g, NULL);
+    TEST_ASSERT(rs->stats_cache_hits == 1, "subj: alice hit");
+
+    soft_ruleset_free(rs);
+}
+
+/* --- Eval mode coverage: READ-warmed serves COPY --- */
+
+static void test_eval_mode_reuse(void)
+{
+    soft_ruleset_t *rs = make_ruleset();
+    uint32_t g = 0;
+
+    /* Warm with READ */
+    soft_access_ctx_t read_ctx = { SOFT_OP_READ, "/data/project/file.txt", NULL, "alice" };
+    int r = soft_ruleset_check_ctx(rs, &read_ctx, &g, NULL);
+    TEST_ASSERT(r && (g & SOFT_ACCESS_READ), "eval: READ grants READ");
+
+    /* COPY needs READ on src, WRITE on dst. The src /data/project/file.txt
+     * was cached with eval=READ. The COPY lookup for src requires
+     * required_mode=READ, so (eval & READ)==READ matches → cache hit for src. */
+    rs->stats_cache_hits = 0;
+    rs->stats_cache_misses = 0;
+
+    soft_access_ctx_t copy_ctx = { SOFT_OP_COPY, "/data/project/file.txt", "/tmp/out.txt", "alice" };
+    r = soft_ruleset_check_ctx(rs, &copy_ctx, &g, NULL);
+    /* At least the src should have been a cache hit */
+    TEST_ASSERT(rs->stats_cache_hits >= 1, "eval: COPY reuses READ-cached src");
+
+    soft_ruleset_free(rs);
+}
+
+/* --- Global LRU evicts under pressure --- */
+
+static void test_lru_eviction_under_pressure(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    uint32_t g = 0;
+
+    /* Fill cache: add more paths than QUERY_CACHE_SIZE */
+    int total = QUERY_CACHE_SIZE + 50;
+    for (int i = 0; i < total; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/lru/path%d", i);
+        soft_ruleset_add_rule(rs, path, SOFT_ACCESS_READ, SOFT_OP_READ, "", "", 0);
+    }
+    soft_ruleset_compile(rs);
+
+    /* Warm up first 20 paths */
+    for (int i = 0; i < 20; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/lru/path%d", i);
+        soft_access_ctx_t ctx = { SOFT_OP_READ, path, NULL, "user" };
+        soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    }
+    TEST_ASSERT(rs->stats_cache_misses == 20, "lru: 20 warmup misses");
+
+    /* Access again — all 20 should hit */
+    rs->stats_cache_hits = 0;
+    rs->stats_cache_misses = 0;
+    for (int i = 0; i < 20; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/lru/path%d", i);
+        soft_access_ctx_t ctx = { SOFT_OP_READ, path, NULL, "user" };
+        soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    }
+    TEST_ASSERT(rs->stats_cache_hits == 20, "lru: 20 warmup hits");
+    TEST_ASSERT(rs->stats_cache_misses == 0, "lru: 0 warmup misses");
+
+    /* Evict everything by accessing QUERY_CACHE_SIZE+ new paths */
+    for (int i = 20; i < total; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/lru/path%d", i);
+        soft_access_ctx_t ctx = { SOFT_OP_READ, path, NULL, "user" };
+        soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    }
+
+    /* Original 20 should now be evicted — they'll miss */
+    rs->stats_cache_hits = 0;
+    rs->stats_cache_misses = 0;
+    for (int i = 0; i < 20; i++) {
+        char path[64];
+        snprintf(path, sizeof(path), "/lru/path%d", i);
+        soft_access_ctx_t ctx = { SOFT_OP_READ, path, NULL, "user" };
+        soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    }
+    /* With 2048-entry cache and 50 extra paths, at least some of the
+     * original 20 should have been evicted. Exact count depends on
+     * which paths the LRU decided to keep. */
+    TEST_ASSERT(rs->stats_cache_misses > 0,
+                "lru: some original entries evicted after pressure");
+
+    soft_ruleset_free(rs);
+}
+
+/* --- Cache works without compilation (lazy creation) --- */
+
+static void test_lazy_cache_creation(void)
+{
+    soft_ruleset_t *rs = soft_ruleset_new();
+    uint32_t g = 0;
+
+    soft_ruleset_add_rule(rs, "/lazy", SOFT_ACCESS_READ, SOFT_OP_READ, "", "", 0);
+    /* No compile — cache is NULL, so lookups miss gracefully */
+
+    soft_access_ctx_t ctx = { SOFT_OP_READ, "/lazy", NULL, "user" };
+    int r = soft_ruleset_check_ctx(rs, &ctx, &g, NULL);
+    TEST_ASSERT(r && (g & SOFT_ACCESS_READ), "lazy: evaluation works without compile");
+    /* The store should have lazily created the cache */
+
+    soft_access_ctx_t ctx2 = { SOFT_OP_READ, "/lazy", NULL, "user" };
+    r = soft_ruleset_check_ctx(rs, &ctx2, &g, NULL);
+    TEST_ASSERT(r && (g & SOFT_ACCESS_READ), "lazy: second access also works");
+
     soft_ruleset_free(rs);
 }
 
 /* Test suite registration */
 void test_cache_associativity_suite(void)
 {
-    printf("  Running cache associativity tests...\n");
-    RUN_TEST(test_8way_associativity);
-    RUN_TEST(test_cache_set_distribution);
+    printf("  Running cache integration tests...\n");
     RUN_TEST(test_cache_statistics);
+    RUN_TEST(test_invalidate_clears_cache);
+    RUN_TEST(test_subject_discrimination);
+    RUN_TEST(test_eval_mode_reuse);
+    RUN_TEST(test_lru_eviction_under_pressure);
+    RUN_TEST(test_lazy_cache_creation);
 }
 
 void test_cache_associativity_run(void)

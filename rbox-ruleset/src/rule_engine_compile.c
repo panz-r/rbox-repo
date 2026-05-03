@@ -839,11 +839,8 @@ void soft_ruleset_invalidate(soft_ruleset_t *rs)
         rs->is_compiled = false;
     }
     /* Also invalidate the query cache */
-    for (uint32_t i = 0; i < QUERY_CACHE_SETS; i++) {
-        for (uint8_t j = 0; j < QUERY_CACHE_WAYS; j++) {
-            rs->query_cache[i].entries[j].valid = 0;
-        }
-    }
+    if (rs->query_cache)
+        ht_cache_clear(rs->query_cache);
 }
 
 bool soft_ruleset_is_compiled(const soft_ruleset_t *rs)
@@ -1147,6 +1144,10 @@ int soft_ruleset_compile_err(soft_ruleset_t *rs,
 
     rs->effective = eff;
     rs->is_compiled = true;
+
+    /* Clear query cache on recompile */
+    if (rs->query_cache)
+        ht_cache_clear(rs->query_cache);
 
     free(removed);
     free(groups);

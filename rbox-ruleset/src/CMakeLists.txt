@@ -10,6 +10,13 @@ set(SRC_FILES
   landlock_bridge.c
 )
 
+# Draugr hash table dependency
+set(DRAUGR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../draugr)
+list(APPEND SRC_FILES
+  ${DRAUGR_DIR}/src/ht.c
+  ${DRAUGR_DIR}/src/ht_cache.c
+)
+
 # Create library target
 add_library(landlock-builder STATIC ${SRC_FILES})
 
@@ -20,6 +27,7 @@ target_include_directories(landlock-builder
     $<INSTALL_INTERFACE:include>
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${DRAUGR_DIR}/include
 )
 
 # Compiler warnings

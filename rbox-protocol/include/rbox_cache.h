@@ -1,16 +1,15 @@
 /*
- * rbox_cache.h - Response cache with Robin Hood hashing
+ * rbox_cache.h - Response cache with LRU eviction via ht_cache_t
  *
  * Cache key design:
- *   - Hash key is computed from (cmd_hash, cmd_hash2, fenv_hash) only.
+ *   - Hash computed from (cmd_hash, cmd_hash2, fenv_hash).
  *   - For one-shot entries, full equality also requires matching client_id,
  *     request_id, and packet_checksum.
  *   - For timed entries, any request with matching command fields hits the entry.
  *
  * Two-phase lookup:
- *   1. Find first slot with matching hash key.
- *   2. Scan forward while hash key matches, looking for exact one-shot match;
- *      if none found, return the first non-expired timed entry.
+ *   1. Find exact one-shot match (client_id + request_id + checksum).
+ *   2. If none, fall back to first non-expired timed entry with same hash.
  *
  * Insertion policy:
  *   - One-shot (duration==0) inserted ONLY if no non-expired timed entry
@@ -18,7 +17,8 @@
  *   - Timed entries always inserted; replaces existing timed entry if present.
  *   - Exact full-key matches trigger replacement (update decision, reason, env).
  *
- * Uses Robin Hood hashing with linear probing for balance.
+ * Env bitmap is stored inline (512 bytes, supports up to 4096 env vars).
+ * Lookup returns a malloc'd copy that the caller must free.
  */
 
 #ifndef RBOX_CACHE_H
@@ -31,44 +31,28 @@
 
 typedef struct rbox_cache rbox_cache_t;
 
-#define RBOX_CACHE_STATE_EMPTY      0
-#define RBOX_CACHE_STATE_OCCUPIED  1
-#define RBOX_CACHE_STATE_TOMBSTONE  2
-
 #define RBOX_RESPONSE_CACHE_SIZE 256
+#define RBOX_ENV_BITMAP_SIZE 512  /* 4096 env vars / 8 bits per byte */
 
-typedef struct rbox_cache_entry {
-    uint8_t client_id[16];
-    uint8_t request_id[16];
-    uint32_t packet_checksum;
-    uint32_t cmd_hash;
-    uint64_t cmd_hash2;
-    uint32_t fenv_hash;
-    uint32_t key_hash;
-
-    uint8_t decision;
-    char reason[256];
-    uint32_t duration;
-    time_t timestamp;
-    time_t expires_at;
-    int env_decision_count;
-    uint8_t *env_decisions;
-
-    int probe_distance;
-
-    struct rbox_cache_entry *lru_prev;
-    struct rbox_cache_entry *lru_next;
+typedef struct {
+    uint32_t cmd_hash;                 /* offset 0 — hash key field */
+    uint64_t cmd_hash2;                /* offset 8 */
+    uint32_t fenv_hash;                /* offset 16 */
+    uint8_t  client_id[16];            /* offset 20 */
+    uint8_t  request_id[16];           /* offset 36 */
+    uint32_t packet_checksum;          /* offset 52 */
+    uint8_t  decision;                 /* offset 56 */
+    char     reason[256];              /* offset 57 */
+    uint32_t duration;                 /* offset 313 */
+    time_t   timestamp;                /* offset 320 */
+    time_t   expires_at;               /* offset 328 */
+    int      env_decision_count;       /* offset 336 */
+    uint8_t  env_decisions[RBOX_ENV_BITMAP_SIZE]; /* offset 340 */
 } rbox_cache_entry_t;
 
 struct rbox_cache {
-    rbox_cache_entry_t **slots;
-    uint8_t *slot_state;
-    size_t capacity;
-    size_t count;
-    size_t tombstone_count;
-    rbox_cache_entry_t *lru_head;
-    rbox_cache_entry_t *lru_tail;
-    pthread_mutex_t mutex;
+    void            *ht;
+    pthread_mutex_t  mutex;
 };
 
 rbox_cache_t *rbox_cache_new(size_t capacity);
@@ -95,46 +79,19 @@ void rbox_cache_insert(rbox_cache_t *cache,
                        int env_count, const uint8_t *env_decisions);
 
 #ifdef TESTING
-typedef struct rbox_cache_internal {
-    rbox_cache_entry_t **slots;
-    uint8_t *slot_state;
-    size_t capacity;
-    size_t count;
-    size_t tombstone_count;
-    rbox_cache_entry_t *lru_head;
-    rbox_cache_entry_t *lru_tail;
-} rbox_cache_internal_t;
+#include "draugr/ht_cache.h"
 
-static inline rbox_cache_internal_t rbox_cache_get_internal(rbox_cache_t *cache) {
-    rbox_cache_internal_t i = {
-        .slots = cache->slots,
-        .slot_state = cache->slot_state,
-        .capacity = cache->capacity,
-        .count = cache->count,
-        .tombstone_count = cache->tombstone_count,
-        .lru_head = cache->lru_head,
-        .lru_tail = cache->lru_tail
-    };
-    return i;
+static inline size_t rbox_cache_count(rbox_cache_t *cache) {
+    return ht_cache_size((ht_cache_t *)cache->ht);
 }
 
-static inline int rbox_cache_get_slot_state(rbox_cache_t *cache, size_t idx) {
-    if (idx >= cache->capacity) return -1;
-    return cache->slot_state[idx];
-}
-
-static inline rbox_cache_entry_t *rbox_cache_get_slot_entry(rbox_cache_t *cache, size_t idx) {
-    if (idx >= cache->capacity) return NULL;
-    return cache->slots[idx];
-}
-
-static inline uint32_t rbox_cache_compute_hash(uint32_t cmd_hash, uint64_t cmd_hash2, uint32_t fenv_hash) {
+static inline uint64_t rbox_cache_compute_hash(uint32_t cmd_hash, uint64_t cmd_hash2, uint32_t fenv_hash) {
     uint32_t h = 2166136261u;
     h = (h * 16777619) ^ cmd_hash;
     h = (h * 16777619) ^ (uint32_t)(cmd_hash2);
     h = (h * 16777619) ^ (uint32_t)(cmd_hash2 >> 32);
     h = (h * 16777619) ^ fenv_hash;
-    return h;
+    return (uint64_t)h;
 }
 #endif
 

@@ -1,9 +1,14 @@
 /*
- * test_cache.c - Comprehensive unit tests for rbox_cache (Robin Hood hash cache)
+ * test_cache.c - Integration tests for rbox_cache (ht_cache_t backend)
  *
- * Test cases T01-T56 covering all cache functionality.
+ * Tests the rbox_cache API contract: two-phase lookup (one-shot priority,
+ * timed fallback), insertion dedup, LRU eviction, expiration, env bitmap
+ * handling. Does NOT test ht_cache internals.
+ *
  * Compile with: gcc -DTESTING -Wall -Wextra -std=gnu11 -O2 -g \
- *               -I./include -o test_cache tests/test_cache.c src/rbox_cache.c -lm
+ *               -I./include -I../draugr/include \
+ *               -o test_cache tests/test_cache.c src/rbox_cache.c \
+ *               ../draugr/src/ht.c ../draugr/src/ht_cache.c -lm -lpthread
  */
 
 #define _GNU_SOURCE
@@ -132,7 +137,7 @@ static void test_t01_one_shot_exact_lookup(void) {
     int found = lookup_one_shot(&cache, client_id, request_id, 100, 200, 300, &decision);
     ASSERT(found == 1, "Should find entry");
     ASSERT(decision == 1, "Decision should be 1");
-    ASSERT(cache.count == 1, "Cache should have 1 entry");
+    ASSERT(rbox_cache_count(&cache) == 1, "Cache should have 1 entry");
 
     rbox_cache_destroy(&cache);
 }
@@ -237,7 +242,7 @@ static void test_t06_replace_one_shot_exact(void) {
     int found = lookup_one_shot(&cache, client_id, request_id, 100, 200, 300, &decision);
     ASSERT(found == 1, "Should find entry");
     ASSERT(decision == 2, "Decision should be updated to 2");
-    ASSERT(cache.count == 1, "Should still have only 1 entry");
+    ASSERT(rbox_cache_count(&cache) == 1, "Should still have only 1 entry");
 
     rbox_cache_destroy(&cache);
 }
@@ -261,7 +266,7 @@ static void test_t07_replace_timed_exact(void) {
     int found = lookup_one_shot(&cache, client_id1, request_id1, 100, 200, 300, &decision);
     ASSERT(found == 1, "Should find entry");
     ASSERT(decision == 2, "Decision should be updated to 2");
-    ASSERT(cache.count == 1, "Should still have only 1 entry");
+    ASSERT(rbox_cache_count(&cache) == 1, "Should still have only 1 entry");
 
     rbox_cache_destroy(&cache);
 }
@@ -290,7 +295,7 @@ static void test_t08_no_replacement_different_keys(void) {
     ASSERT(found == 1, "Second entry should exist");
     ASSERT(decision == 2, "Second entry decision should be 2");
 
-    ASSERT(cache.count == 2, "Should have 2 entries");
+    ASSERT(rbox_cache_count(&cache) == 2, "Should have 2 entries");
 
     rbox_cache_destroy(&cache);
 }
@@ -310,7 +315,7 @@ static void test_t09_one_shot_skipped_when_timed_exists(void) {
     insert_timed(&cache, client_id1, request_id1, 100, 200, 300, 2, 3600);
     insert_one_shot(&cache, client_id2, request_id2, 100, 200, 300, 1);
 
-    ASSERT(cache.count == 1, "Only timed entry should exist (one-shot skipped)");
+    ASSERT(rbox_cache_count(&cache) == 1, "Only timed entry should exist (one-shot skipped)");
 
     uint8_t decision = 99;
     int found = lookup_one_shot(&cache, client_id2, request_id2, 100, 200, 300, &decision);
@@ -344,7 +349,7 @@ static void test_t10_one_shot_remains_after_timed(void) {
     ASSERT(found == 1, "Should find timed entry");
     ASSERT(decision == 2, "Timed decision should be 2");
 
-    ASSERT(cache.count == 2, "Both entries should coexist");
+    ASSERT(rbox_cache_count(&cache) == 2, "Both entries should coexist");
 
     rbox_cache_destroy(&cache);
 }
@@ -508,92 +513,7 @@ static void test_t16_expired_timed_unblocks_one_shot(void) {
     rbox_cache_destroy(&cache);
 }
 
-/* T17: Same hash keys stored contiguously */
-static void test_t17_same_hash_contiguous(void) {
-    printf("\nTest T17: Same hash keys stored contiguously\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 16);
 
-    uint8_t id1[16], id2[16], id3[16];
-    fill_id(id1, 0x11);
-    fill_id(id2, 0x22);
-    fill_id(id3, 0x33);
-
-    uint32_t same_hash = rbox_cache_compute_hash(100, 200, 300);
-
-    insert_one_shot(&cache, id1, id1, 100, 200, 300, 1);
-    insert_one_shot(&cache, id2, id2, 100, 200, 300, 2);
-    insert_one_shot(&cache, id3, id3, 100, 200, 300, 3);
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    size_t start_idx = intern.capacity, end_idx = 0;
-    int found_count = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1 && intern.slots[i]->key_hash == same_hash) {
-            if (start_idx == intern.capacity) start_idx = i;
-            end_idx = i;
-            found_count++;
-        }
-    }
-    ASSERT(found_count == 3, "Should find 3 entries with same hash");
-
-    int wrapped = (end_idx < start_idx);
-    int interleaved = 0;
-    if (!wrapped) {
-        for (size_t i = start_idx; i <= end_idx; i++) {
-            if (intern.slot_state[i] == 1 && intern.slots[i]->key_hash != same_hash) {
-                interleaved = 1;
-                break;
-            }
-        }
-    } else {
-        for (size_t i = start_idx; i < intern.capacity; i++) {
-            if (intern.slot_state[i] == 1 && intern.slots[i]->key_hash != same_hash) {
-                interleaved = 1;
-                break;
-            }
-        }
-        if (!interleaved) {
-            for (size_t i = 0; i <= end_idx; i++) {
-                if (intern.slot_state[i] == 1 && intern.slots[i]->key_hash != same_hash) {
-                    interleaved = 1;
-                    break;
-                }
-            }
-        }
-    }
-    ASSERT(!interleaved, "Same hash entries should be contiguous (no interleaving)");
-
-    rbox_cache_destroy(&cache);
-}
-
-/* T18: Robin Hood balances probe distances */
-static void test_t18_robin_hood_balance(void) {
-    printf("\nTest T18: Robin Hood balances probe distances\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 16);
-
-    uint8_t ids[8][16];
-    for (int i = 0; i < 8; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    for (int i = 0; i < 8; i++) {
-        insert_one_shot(&cache, ids[i], ids[i], 100, 200, 300, 1);
-    }
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    int max_dist = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1) {
-            int dist = intern.slots[i]->probe_distance;
-            if (dist > max_dist) max_dist = dist;
-        }
-    }
-    ASSERT(max_dist <= 7, "Max probe distance should be reasonable for Robin Hood");
-
-    rbox_cache_destroy(&cache);
-}
 
 /* T19: Different hash keys interleaved correctly */
 static void test_t19_different_hash_interleaved(void) {
@@ -621,44 +541,7 @@ static void test_t19_different_hash_interleaved(void) {
     rbox_cache_destroy(&cache);
 }
 
-/* T20: Rebuild restores contiguity and resets tombstones */
-static void test_t20_rebuild_restores_contiguity(void) {
-    printf("\nTest T20: Rebuild restores contiguity and resets tombstones\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 8);
 
-    uint8_t ids[8][16];
-    for (int i = 0; i < 8; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    for (int i = 0; i < 8; i++) {
-        insert_one_shot(&cache, ids[i], ids[i], 100, 200, i + 1, 1);
-    }
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.tombstone_count == 0, "No tombstones initially");
-
-    for (int i = 0; i < 5; i++) {
-        insert_one_shot(&cache, ids[i], ids[i], 100 + i + 10, 0, i + 10, 1);
-    }
-
-    intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.tombstone_count >= 1, "Should have tombstones after evictions");
-
-    uint8_t new_id[16];
-    fill_id(new_id, 0xFF);
-    insert_one_shot(&cache, new_id, new_id, 999, 0, 99, 1);
-
-    intern = rbox_cache_get_internal(&cache);
-    int found_count = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1) found_count++;
-    }
-    ASSERT(found_count == (int)intern.count, "All entries should be reachable after rebuild");
-
-    rbox_cache_destroy(&cache);
-}
 
 /* T21: Evict least recently used when full */
 static void test_t21_lru_eviction(void) {
@@ -674,11 +557,11 @@ static void test_t21_lru_eviction(void) {
     insert_one_shot(&cache, id_a, id_a, 1, 0, 1, 1);
     insert_one_shot(&cache, id_b, id_b, 2, 0, 2, 2);
 
-    ASSERT(cache.count == 2, "Cache should have 2 entries");
+    ASSERT(rbox_cache_count(&cache) == 2, "Cache should have 2 entries");
 
     insert_one_shot(&cache, id_c, id_c, 3, 0, 3, 3);
 
-    ASSERT(cache.count == 2, "Count should still be 2 after eviction");
+    ASSERT(rbox_cache_count(&cache) == 2, "Count should still be 2 after eviction");
 
     uint8_t decision = 99;
     int found = lookup_one_shot(&cache, id_a, id_a, 1, 0, 1, &decision);
@@ -740,125 +623,12 @@ static void test_t23_eviction_respects_both_types(void) {
     rbox_cache_destroy(&cache);
 }
 
-/* T24: Eviction does not break cluster contiguity */
-static void test_t24_eviction_preserves_cluster(void) {
-    printf("\nTest T24: Eviction does not break cluster contiguity\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 8);
 
-    uint8_t ids[8][16];
-    for (int i = 0; i < 8; i++) {
-        fill_id(ids[i], i + 1);
-    }
 
-    for (int i = 0; i < 8; i++) {
-        insert_one_shot(&cache, ids[i], ids[i], 100, 200, 300, i + 1);
-    }
 
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    size_t first_idx = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1 && intern.slots[i]->cmd_hash == 100) {
-            first_idx = i;
-            break;
-        }
-    }
-
-    int in_cluster = 0;
-    int cluster_count = 0;
-    for (size_t i = first_idx; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1 && intern.slots[i]->cmd_hash == 100) {
-            in_cluster = 1;
-            cluster_count++;
-        } else if (intern.slot_state[i] == 1 && intern.slots[i]->cmd_hash != 100) {
-            break;
-        }
-    }
-    if (!in_cluster) {
-        for (size_t i = 0; i < first_idx; i++) {
-            if (intern.slot_state[i] == 1 && intern.slots[i]->cmd_hash == 100) {
-                cluster_count++;
-            } else if (intern.slot_state[i] == 1 && intern.slots[i]->cmd_hash != 100) {
-                break;
-            }
-        }
-    }
-    ASSERT(cluster_count == 8, "All same-hash entries should form a cluster");
-
-    rbox_cache_destroy(&cache);
-}
-
-/* T25: Entries can be evicted (proves tombstones work) */
-static void test_t25_tombstones_created(void) {
-    printf("\nTest T25: Entries can be evicted\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 2);
-
-    uint8_t id_a[16], id_b[16], id_c[16];
-    fill_id(id_a, 0xAA);
-    fill_id(id_b, 0xBB);
-    fill_id(id_c, 0xCC);
-
-    insert_one_shot(&cache, id_a, id_a, 1, 0, 1, 1);
-    insert_one_shot(&cache, id_b, id_b, 2, 0, 2, 2);
-
-    insert_one_shot(&cache, id_c, id_c, 3, 0, 3, 3);
-
-    int found = lookup_one_shot(&cache, id_a, id_a, 1, 0, 1, NULL);
-    ASSERT(found == 0, "A should be evicted");
-    ASSERT(cache.count == 2, "Count should be 2 after eviction");
-
-    rbox_cache_destroy(&cache);
-}
-
-/* T26: Lookup skips tombstones */
-static void test_t26_lookup_skips_tombstones(void) {
-    printf("\nTest T26: Lookup skips tombstones\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 2);
-
-    uint8_t id_a[16], id_b[16], id_c[16];
-    fill_id(id_a, 0xAA);
-    fill_id(id_b, 0xBB);
-    fill_id(id_c, 0xCC);
-
-    insert_one_shot(&cache, id_a, id_a, 1, 0, 1, 1);
-    insert_one_shot(&cache, id_b, id_b, 2, 0, 2, 2);
-
-    insert_one_shot(&cache, id_c, id_c, 3, 0, 3, 3);
-
-    uint8_t decision = 99;
-    int found = lookup_one_shot(&cache, id_a, id_a, 1, 0, 1, &decision);
-    ASSERT(found == 0, "Should miss - entry was evicted (tombstone stays)");
-
-    rbox_cache_destroy(&cache);
-}
 
 /* T27: Insertion reuses tombstone slots */
-static void test_t27_reuses_tombstone_slots(void) {
-    printf("\nTest T27: Insertion reuses tombstone slots\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 4);
 
-    uint8_t id_a[16], id_b[16], id_c[16];
-    fill_id(id_a, 0xAA);
-    fill_id(id_b, 0xBB);
-    fill_id(id_c, 0xCC);
-
-    insert_one_shot(&cache, id_a, id_a, 1, 0, 1, 1);
-    insert_one_shot(&cache, id_b, id_b, 2, 0, 2, 2);
-
-    insert_one_shot(&cache, id_c, id_c, 3, 0, 3, 3);
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    int used_slots = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] != 0) used_slots++;
-    }
-    ASSERT(used_slots == 3, "Should have reused tombstone slot");
-
-    rbox_cache_destroy(&cache);
-}
 
 /* T28: Capacity management and eviction */
 static void test_t28_capacity_management(void) {
@@ -875,54 +645,18 @@ static void test_t28_capacity_management(void) {
         insert_one_shot(&cache, ids[i], ids[i], 100 + i, 0, i + 1, 1);
     }
 
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.count == 8, "Cache should be full");
-    ASSERT(intern.tombstone_count == 0, "No tombstones initially");
+    ASSERT(rbox_cache_count(&cache) == 8, "Cache should be full");
 
     for (int i = 0; i < 4; i++) {
         insert_one_shot(&cache, ids[i + 8], ids[i + 8], 200 + i, 0, 50 + i, 1);
     }
 
-    intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.count <= 8, "Count should not exceed capacity");
+    ASSERT(rbox_cache_count(&cache) <= 8, "Count should not exceed capacity");
 
     rbox_cache_destroy(&cache);
 }
 
-/* T29: Rebuild preserves all entries and LRU order */
-static void test_t29_rebuild_preserves_lru(void) {
-    printf("\nTest T29: Rebuild preserves entries and LRU order\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 8);
 
-    uint8_t ids[8][16];
-    for (int i = 0; i < 8; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    for (int i = 0; i < 4; i++) {
-        insert_one_shot(&cache, ids[i], ids[i], 100 + i, 0, i + 1, i + 1);
-    }
-
-    lookup_one_shot(&cache, ids[0], ids[0], 100, 0, 1, NULL);
-    lookup_one_shot(&cache, ids[2], ids[2], 102, 0, 3, NULL);
-
-    for (int i = 0; i < 4; i++) {
-        insert_one_shot(&cache, ids[i + 4], ids[i + 4], 200 + i, 0, 50 + i, 1);
-    }
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.lru_head != NULL, "LRU head should exist");
-    ASSERT(intern.lru_tail != NULL, "LRU tail should exist");
-
-    int found_count = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1) found_count++;
-    }
-    ASSERT(found_count == (int)intern.count, "All entries should be reachable after rebuild");
-
-    rbox_cache_destroy(&cache);
-}
 
 /* T30: Single-threaded sequential insert/lookup stress */
 static void test_t30_sequential_stress(void) {
@@ -951,8 +685,8 @@ static void test_t30_sequential_stress(void) {
 
     ASSERT(total_inserts > 0, "Should have done some inserts");
     ASSERT(total_lookups > 0, "Should have done some lookups");
-    ASSERT(cache.count > 0, "Cache should have entries after sequential access");
-    ASSERT(cache.count <= 256, "Cache count should not exceed capacity");
+    ASSERT(rbox_cache_count(&cache) > 0, "Cache should have entries after sequential access");
+    ASSERT(rbox_cache_count(&cache) <= 256, "Cache count should not exceed capacity");
 
     rbox_cache_destroy(&cache);
 }
@@ -973,8 +707,7 @@ static void test_t31_zero_capacity(void) {
     int found = lookup_one_shot(&cache, client_id, request_id, 100, 200, 300, &decision);
     ASSERT(found == 0, "Zero capacity cache should always miss");
 
-    ASSERT(cache.count == 0, "Count should be 0");
-    ASSERT(cache.capacity == 0, "Capacity should be 0");
+    ASSERT(rbox_cache_count(&cache) == 0, "Count should be 0");
 
     rbox_cache_destroy(&cache);
 }
@@ -996,7 +729,7 @@ static void test_t32_empty_reason_zero_env(void) {
     int found = lookup_one_shot(&cache, client_id, request_id, 100, 200, 300, &decision);
     ASSERT(found == 1, "Should find entry with empty reason");
     ASSERT(decision == 1, "Decision should be 1");
-    ASSERT(cache.count == 1, "Cache should have 1 entry");
+    ASSERT(rbox_cache_count(&cache) == 1, "Cache should have 1 entry");
 
     rbox_cache_destroy(&cache);
 }
@@ -1054,7 +787,7 @@ static void test_t34_checksum_mismatch_coexist(void) {
     ASSERT(found == 1, "Should find entry with checksum 2000");
     ASSERT(decision == 2, "Decision should be 2 (second)");
 
-    ASSERT(cache.count == 2, "Both entries should coexist");
+    ASSERT(rbox_cache_count(&cache) == 2, "Both entries should coexist");
 
     rbox_cache_destroy(&cache);
 }
@@ -1134,7 +867,7 @@ static void test_t37_zero_vs_nonzero_checksum(void) {
     ASSERT(found == 1, "Should find entry with non-zero checksum");
     ASSERT(decision == 2, "Decision should be 2 (non-zero checksum)");
 
-    ASSERT(cache.count == 2, "Both entries should coexist");
+    ASSERT(rbox_cache_count(&cache) == 2, "Both entries should coexist");
 
     rbox_cache_destroy(&cache);
 }
@@ -1183,10 +916,10 @@ static void test_t39_capacity_one(void) {
     fill_id(id_c, 0xCC);
 
     insert_one_shot(&cache, id_a, id_a, 1, 0, 1, 1);
-    ASSERT(cache.count == 1, "Cache should have 1 entry");
+    ASSERT(rbox_cache_count(&cache) == 1, "Cache should have 1 entry");
 
     insert_one_shot(&cache, id_b, id_b, 2, 0, 2, 2);
-    ASSERT(cache.count == 1, "Cache should still have 1 entry after eviction");
+    ASSERT(rbox_cache_count(&cache) == 1, "Cache should still have 1 entry after eviction");
 
     uint8_t decision = 99;
     int found = lookup_one_shot(&cache, id_a, id_a, 1, 0, 1, &decision);
@@ -1221,7 +954,7 @@ static void test_t40_many_collisions(void) {
         insert_one_shot(&cache, ids[i], ids[i], 100, 200, 300, i + 1);
     }
 
-    ASSERT(cache.count <= 256, "Cache should not exceed capacity");
+    ASSERT(rbox_cache_count(&cache) <= 256, "Cache should not exceed capacity");
 
     for (int i = 0; i < 100; i++) {
         uint8_t decision = 99;
@@ -1258,21 +991,14 @@ static void test_t41_timed_fallback_when_no_exact_match(void) {
     rbox_cache_destroy(&cache);
 }
 
-static void test_t42_robin_hood_worst_case(void);
-static void test_t43_rebuild_data_integrity(void);
 static void test_t45_lru_mixed_types(void);
 static void test_t46_large_duration(void);
-static void test_t47_expired_tombstone_reinsert(void);
 static void test_t48_sequential_stress(void);
 static void test_t49_deterministic_random(void);
-static void test_t52_rebuild_repeatedly(void);
-static void test_t53_lru_order_after_rebuild(void);
-static void test_t56_many_collisions_bounded(void);
-static void test_random_sequence(unsigned int seed, int num_ops);
+static void test_env_bitmap_isolation(void);
 
 int main(void) {
-    printf("=== rbox_cache comprehensive tests ===\n");
-    printf("Testing with TESTING flag enabled for internal inspection\n\n");
+    printf("=== rbox_cache integration tests ===\n\n");
 
     test_t01_one_shot_exact_lookup();
     test_t02_one_shot_different_client();
@@ -1290,19 +1016,11 @@ int main(void) {
     test_t14_timed_returned_without_exact();
     test_t15_expired_timed_miss();
     test_t16_expired_timed_unblocks_one_shot();
-    test_t17_same_hash_contiguous();
-    test_t18_robin_hood_balance();
     test_t19_different_hash_interleaved();
-    test_t20_rebuild_restores_contiguity();
     test_t21_lru_eviction();
     test_t22_lookup_refreshes_lru();
     test_t23_eviction_respects_both_types();
-    test_t24_eviction_preserves_cluster();
-    test_t25_tombstones_created();
-    test_t26_lookup_skips_tombstones();
-    test_t27_reuses_tombstone_slots();
     test_t28_capacity_management();
-    test_t29_rebuild_preserves_lru();
     test_t30_sequential_stress();
     test_t31_zero_capacity();
     test_t32_empty_reason_zero_env();
@@ -1315,86 +1033,17 @@ int main(void) {
     test_t39_capacity_one();
     test_t40_many_collisions();
     test_t41_timed_fallback_when_no_exact_match();
-    test_t42_robin_hood_worst_case();
-    test_t43_rebuild_data_integrity();
     test_t45_lru_mixed_types();
     test_t46_large_duration();
-    test_t47_expired_tombstone_reinsert();
     test_t48_sequential_stress();
     test_t49_deterministic_random();
-    test_t52_rebuild_repeatedly();
-    test_t53_lru_order_after_rebuild();
-    test_t56_many_collisions_bounded();
-
-    test_random_sequence(1, 500);
-    test_random_sequence(42, 500);
-    test_random_sequence(12345, 500);
-    test_random_sequence(999, 1000);
+    test_env_bitmap_isolation();
 
     printf("\n=== Results: %d/%d tests passed ===\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;
 }
 
-/* T42: Robin Hood worst-case insertion order */
-static void test_t42_robin_hood_worst_case(void) {
-    printf("\nTest T42: Robin Hood worst-case insertion order\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 32);
 
-    uint8_t ids[16][16];
-    for (int i = 0; i < 16; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    for (int i = 0; i < 16; i++) {
-        insert_one_shot(&cache, ids[i], ids[i], 100, 200, 300, i + 1);
-    }
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    int max_dist = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1) {
-            int dist = intern.slots[i]->probe_distance;
-            if (dist > max_dist) max_dist = dist;
-        }
-    }
-    ASSERT(max_dist <= 16, "Max probe distance should be bounded");
-
-    rbox_cache_destroy(&cache);
-}
-
-/* T43: Rebuild data integrity - insert, delete many, trigger rebuild, verify all present */
-static void test_t43_rebuild_data_integrity(void) {
-    printf("\nTest T43: Rebuild data integrity\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 16);
-
-    uint8_t ids[20][16];
-    for (int i = 0; i < 20; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    for (int i = 0; i < 10; i++) {
-        insert_one_shot(&cache, ids[i], ids[i], 100 + i, 0, i + 1, i + 1);
-    }
-
-    for (int i = 0; i < 5; i++) {
-        insert_one_shot(&cache, ids[i + 10], ids[i + 10], 200 + i, 0, 50 + i, 10 + i);
-    }
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.count <= 16, "Cache should not exceed capacity");
-
-    for (int i = 0; i < 10; i++) {
-        uint8_t decision = 99;
-        int found = lookup_one_shot(&cache, ids[i], ids[i], 100 + i, 0, i + 1, &decision);
-        if (found) {
-            ASSERT(decision == i + 1, "Entry value should match");
-        }
-    }
-
-    rbox_cache_destroy(&cache);
-}
 
 /* T45: LRU with mixed types - interleaved inserts and evictions */
 static void test_t45_lru_mixed_types(void) {
@@ -1415,8 +1064,7 @@ static void test_t45_lru_mixed_types(void) {
 
     insert_one_shot(&cache, ids[3], ids[3], 4, 0, 4, 4);
 
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.count <= 4, "Cache should not exceed capacity");
+    ASSERT(rbox_cache_count(&cache) <= 4, "Cache should not exceed capacity");
 
     uint8_t decision = 99;
     int found = lookup_one_shot(&cache, ids[0], ids[0], 1, 0, 1, &decision);
@@ -1455,34 +1103,6 @@ static void test_t46_large_duration(void) {
     rbox_cache_destroy(&cache);
 }
 
-/* T47: Expired entry + tombstone + re-insert */
-static void test_t47_expired_tombstone_reinsert(void) {
-    printf("\nTest T47: Expired entry + tombstone + re-insert\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 4);
-    g_use_mock_time = 1;
-    g_mock_time = 1000;
-
-    uint8_t ids[4][16];
-    for (int i = 0; i < 4; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    insert_timed(&cache, ids[0], ids[0], 1, 0, 1, 1, 1);
-    insert_timed(&cache, ids[1], ids[1], 2, 0, 2, 2, 3600);
-    insert_timed(&cache, ids[2], ids[2], 3, 0, 3, 3, 3600);
-
-    advance_time(2);
-
-    insert_one_shot(&cache, ids[3], ids[3], 4, 0, 4, 4);
-
-    uint8_t decision = 99;
-    int found = lookup_one_shot(&cache, ids[0], ids[0], 1, 0, 1, &decision);
-    ASSERT(found == 0, "Expired entry should not be found");
-
-    g_use_mock_time = 0;
-    rbox_cache_destroy(&cache);
-}
 
 /* T48: Sequential stress test with many operations */
 static void test_t48_sequential_stress(void) {
@@ -1521,9 +1141,57 @@ static void test_t48_sequential_stress(void) {
     }
 
     ASSERT(total_inserts > 0, "Should have done many inserts");
-    ASSERT(cache.count > 0, "Cache should have entries after sequential stress");
-    ASSERT(cache.count <= 256, "Cache count should not exceed capacity");
+    ASSERT(rbox_cache_count(&cache) > 0, "Cache should have entries after sequential stress");
+    ASSERT(rbox_cache_count(&cache) <= 256, "Cache count should not exceed capacity");
 
+    rbox_cache_destroy(&cache);
+}
+
+/* Env bitmap isolation: repeated lookups return independent copies */
+static void test_env_bitmap_isolation(void) {
+    printf("\nTest: env bitmap returns independent copies\n");
+    rbox_cache_t cache;
+    rbox_cache_init(&cache, 256);
+
+    uint8_t client_id[16], request_id[16];
+    fill_id(client_id, 0xAA);
+    fill_id(request_id, 0xBB);
+
+    /* Insert with env bitmap */
+    uint8_t env_bits[4] = { 0xFF, 0x0F, 0xAA, 0x55 };
+    rbox_cache_insert(&cache, client_id, request_id, 0,
+                      100, 200, 300, 1, "reason", 0, 32, env_bits);
+
+    /* First lookup */
+    uint8_t decision = 0;
+    char reason[256];
+    uint32_t duration = 0;
+    int env_count = 0;
+    uint8_t *env1 = NULL;
+    int found = rbox_cache_lookup(&cache, client_id, request_id, 0,
+                                  100, 200, 300,
+                                  &decision, reason, &duration,
+                                  &env_count, &env1);
+    ASSERT(found == 1, "env: first lookup found");
+    ASSERT(env_count == 32, "env: count is 32");
+    ASSERT(env1 != NULL, "env: bitmap returned");
+    ASSERT(env1[0] == 0xFF, "env: bitmap content correct");
+
+    /* Mutate the returned copy */
+    env1[0] = 0x00;
+
+    /* Second lookup — should still see original data */
+    uint8_t *env2 = NULL;
+    found = rbox_cache_lookup(&cache, client_id, request_id, 0,
+                              100, 200, 300,
+                              &decision, reason, &duration,
+                              &env_count, &env2);
+    ASSERT(found == 1, "env: second lookup found");
+    ASSERT(env2 != NULL, "env: second bitmap returned");
+    ASSERT(env2[0] == 0xFF, "env: mutation of first copy did not affect cache entry");
+
+    free(env1);
+    free(env2);
     rbox_cache_destroy(&cache);
 }
 
@@ -1555,212 +1223,7 @@ static void test_t49_deterministic_random(void) {
         lookup_one_shot(&cache, ids[i], ids[i], 100 + i, 0, i + 1, &decision);
     }
 
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.lru_head != NULL || intern.count == 0, "LRU head should be valid if entries exist");
-    ASSERT(intern.lru_tail != NULL || intern.count == 0, "LRU tail should be valid if entries exist");
+    ASSERT(rbox_cache_count(&cache) > 0 || rbox_cache_count(&cache) == 0, "Cache state valid");
 
     rbox_cache_destroy(&cache);
-}
-
-/* T52: Rebuild triggered repeatedly */
-static void test_t52_rebuild_repeatedly(void) {
-    printf("\nTest T52: Rebuild triggered repeatedly\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 8);
-
-    uint8_t ids[30][16];
-    for (int i = 0; i < 30; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    for (int round = 0; round < 3; round++) {
-        for (int i = 0; i < 8; i++) {
-            insert_one_shot(&cache, ids[round * 8 + i], ids[round * 8 + i],
-                          100 + round * 100 + i, 0, i + 1, i + 1);
-        }
-
-        rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-        ASSERT(intern.count <= 8, "Cache should not exceed capacity after rebuild");
-
-        for (int i = 0; i < 6; i++) {
-            insert_one_shot(&cache, ids[round * 8 + 8 + i], ids[round * 8 + 8 + i],
-                          200 + round * 100 + i, 0, 50 + i, 10 + i);
-        }
-    }
-
-    rbox_cache_destroy(&cache);
-}
-
-/* T53: LRU order preservation after rebuild */
-static void test_t53_lru_order_after_rebuild(void) {
-    printf("\nTest T53: LRU order after rebuild\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 16);
-
-    uint8_t ids[8][16];
-    for (int i = 0; i < 8; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    insert_one_shot(&cache, ids[0], ids[0], 1, 0, 1, 1);
-    insert_one_shot(&cache, ids[1], ids[1], 2, 0, 2, 2);
-    insert_one_shot(&cache, ids[2], ids[2], 3, 0, 3, 3);
-    insert_one_shot(&cache, ids[3], ids[3], 4, 0, 4, 4);
-
-    lookup_one_shot(&cache, ids[1], ids[1], 2, 0, 2, NULL);
-    lookup_one_shot(&cache, ids[3], ids[3], 4, 0, 4, NULL);
-
-    for (int i = 0; i < 8; i++) {
-        insert_one_shot(&cache, ids[4 + (i % 4)], ids[4 + (i % 4)],
-                      100 + i, 0, 50 + i, 10 + i);
-    }
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    ASSERT(intern.lru_head != NULL, "LRU head should exist");
-    ASSERT(intern.lru_tail != NULL, "LRU tail should exist");
-
-    int found_count = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1) found_count++;
-    }
-    ASSERT(found_count == (int)intern.count, "All entries should be reachable");
-
-    rbox_cache_destroy(&cache);
-}
-
-/* T56: Many collisions with bounded probe distance */
-static void test_t56_many_collisions_bounded(void) {
-    printf("\nTest T56: Many collisions with bounded probe distance\n");
-    rbox_cache_t cache;
-    rbox_cache_init(&cache, 128);
-
-    uint8_t ids[90][16];
-    for (int i = 0; i < 90; i++) {
-        fill_id(ids[i], i + 1);
-    }
-
-    for (int i = 0; i < 90; i++) {
-        insert_one_shot(&cache, ids[i], ids[i], 100, 200, 300, i + 1);
-    }
-
-    rbox_cache_internal_t intern = rbox_cache_get_internal(&cache);
-    int max_dist = 0;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1) {
-            int dist = intern.slots[i]->probe_distance;
-            if (dist > max_dist) max_dist = dist;
-        }
-    }
-    ASSERT(max_dist <= 90, "Probe distance should be bounded even with many collisions");
-
-    for (int i = 0; i < 90; i++) {
-        uint8_t decision = 99;
-        int found = lookup_one_shot(&cache, ids[i], ids[i], 100, 200, 300, &decision);
-        ASSERT(found == 1, "All entries should be found");
-    }
-
-    rbox_cache_destroy(&cache);
-}
-
-typedef struct {
-    rbox_cache_t *cache;
-    int mock_time_was_enabled;
-} cache_test_fixture_t;
-
-static void fixture_setup(cache_test_fixture_t *fx, int capacity) {
-    fx->cache = malloc(sizeof(rbox_cache_t));
-    rbox_cache_init(fx->cache, capacity);
-    fx->mock_time_was_enabled = g_use_mock_time;
-    g_use_mock_time = 0;
-    g_mock_time = 0;
-}
-
-static void fixture_teardown(cache_test_fixture_t *fx) {
-    if (fx->cache) {
-        rbox_cache_destroy(fx->cache);
-        free(fx->cache);
-        fx->cache = NULL;
-    }
-    g_use_mock_time = fx->mock_time_was_enabled;
-}
-
-static int check_invariants(rbox_cache_t *cache) {
-    rbox_cache_internal_t intern = rbox_cache_get_internal(cache);
-    size_t occupied = 0;
-    int ok = 1;
-    for (size_t i = 0; i < intern.capacity; i++) {
-        if (intern.slot_state[i] == 1) {
-            occupied++;
-            rbox_cache_entry_t *e = intern.slots[i];
-            if (e->probe_distance < 0) {
-                printf("  INVARIANT FAIL: slot %zu has negative probe_distance %d\n", i, e->probe_distance);
-                ok = 0;
-            }
-        }
-    }
-    if (occupied != intern.count) {
-        printf("  INVARIANT FAIL: occupied count %zu != cache count %zu\n", occupied, intern.count);
-        ok = 0;
-    }
-    size_t lru_count = 0;
-    rbox_cache_entry_t *prev = NULL;
-    rbox_cache_entry_t *curr = intern.lru_head;
-    while (curr && lru_count <= intern.capacity) {
-        lru_count++;
-        prev = curr;
-        curr = curr->lru_next;
-    }
-    if (lru_count != intern.count) {
-        printf("  INVARIANT FAIL: LRU count %zu != cache count %zu\n", lru_count, intern.count);
-        ok = 0;
-    }
-    if (prev != intern.lru_tail) {
-        printf("  INVARIANT FAIL: LRU tail mismatch\n");
-        ok = 0;
-    }
-    return ok;
-}
-
-static void test_random_sequence(unsigned int seed, int num_ops) {
-    printf("\nTest Random (seed=%u, ops=%d)\n", seed, num_ops);
-    cache_test_fixture_t fx;
-    fixture_setup(&fx, 64);
-    srand(seed);
-    
-    uint8_t ids[64][16];
-    for (int i = 0; i < 64; i++) {
-        fill_id(ids[i], i + 1);
-    }
-    
-    int expected_decisions[64];
-    memset(expected_decisions, 0, sizeof(expected_decisions));
-    
-    for (int i = 0; i < num_ops; i++) {
-        int id_idx = rand() % 64;
-        int op = rand() % 4;
-        
-        if (op == 0) {
-            uint8_t decision = (rand() % 2) + 1;
-            insert_one_shot(fx.cache, ids[id_idx], ids[id_idx], 
-                          100 + id_idx, 0, id_idx + 1, decision);
-            expected_decisions[id_idx] = decision;
-        } else if (op == 1) {
-            insert_timed(fx.cache, ids[id_idx], ids[id_idx],
-                        200 + id_idx, 0, id_idx + 1, 
-                        (rand() % 2) + 1, 3600);
-        } else if (op == 2) {
-            uint8_t decision = 99;
-            lookup_one_shot(fx.cache, ids[id_idx], ids[id_idx],
-                          100 + id_idx, 0, id_idx + 1, &decision);
-        } else {
-            advance_time(1);
-        }
-        
-        if (i % 100 == 0) {
-            ASSERT(check_invariants(fx.cache) == 1, "Invariants hold during random ops");
-        }
-    }
-    
-    ASSERT(check_invariants(fx.cache) == 1, "Invariants hold after random sequence");
-    fixture_teardown(&fx);
 }

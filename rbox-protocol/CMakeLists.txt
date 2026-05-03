@@ -42,6 +42,7 @@ endif()
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/../shellsplit/include)
+include_directories(${CMAKE_SOURCE_DIR}/../draugr/include)
 
 # Define DEBUG_PRINTS for development builds
 add_definitions(-DDEBUG_PRINTS=1)
@@ -50,6 +51,9 @@ add_definitions(-DDEBUG_PRINTS=1)
 set(SHELLSPLIT_SRC ${CMAKE_SOURCE_DIR}/../shellsplit/src/shell_tokenizer.c)
 add_library(shellsplit STATIC ${SHELLSPLIT_SRC})
 target_compile_options(shellsplit PRIVATE -Wall -Wextra -std=gnu11 -pthread -fPIC)
+
+# Draugr hash table dependency
+set(DRAUGR_DIR ${CMAKE_SOURCE_DIR}/../draugr)
 
 # Source files for rbox-protocol library
 set(LIB_SOURCES
@@ -67,6 +71,8 @@ set(LIB_SOURCES
     src/protocol_decoding.c
     src/timer_heap.c
     src/log.c
+    ${DRAUGR_DIR}/src/ht.c
+    ${DRAUGR_DIR}/src/ht_cache.c
 )
 
 # Build shared library

@@ -9,6 +9,7 @@
 #define RULE_ENGINE_INTERNAL_H
 
 #include "rule_engine.h"
+#include "draugr/ht_cache.h"
 #include <stdbool.h>
 
 /* ------------------------------------------------------------------ */
@@ -19,9 +20,7 @@
 #define MAX_LINKED_LEN  8
 #define MAX_LAYERS      64
 #define MAX_CUSTOM_OPS  16
-#define QUERY_CACHE_SETS 256    /**< Number of cache sets (was total entries) */
-#define QUERY_CACHE_WAYS 8      /**< 8-way set associative */
-#define QUERY_CACHE_SIZE (QUERY_CACHE_SETS * QUERY_CACHE_WAYS) /**< Total cache entries */
+#define QUERY_CACHE_SIZE 2048 /**< Total cache entries */
 #define SPECIFICITY_NO_MATCH  UINT32_MAX /**< Sentinel: no SPECIFICITY rule matched */
 
 /* ------------------------------------------------------------------ */
@@ -38,7 +37,7 @@
  */
 
 /* ------------------------------------------------------------------ */
-/*  Query result cache (8-way set associative with true LRU)            */
+/*  Query result cache (ht_cache_t with global LRU)                    */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -57,23 +56,13 @@
  * matched but granted 0" (granted=0, any_matched=1 → denied).
  */
 typedef struct {
-    uint64_t path_hash;       /**< FNV-1a hash of path */
+    uint64_t path_hash;       /**< FNV-1a hash of path (must be at offset 0) */
     uint32_t subject_hash;    /**< FNV-1a hash of subject string */
     uint32_t granted;         /**< SOFT_ACCESS_* bits granted */
     uint32_t eval;            /**< SOFT_ACCESS_* bits that were evaluated */
     int32_t  deny_layer;      /**< -1 = no deny, >=0 = denied at this layer */
-    uint8_t  valid;           /**< Non-zero = entry is valid */
     uint8_t  any_matched;     /**< Non-zero = at least one rule matched */
 } query_cache_entry_t;
-
-/**
- * Cache set for 8-way set associative cache.
- * Each set contains 8 cache entries and maintains LRU order.
- */
-typedef struct {
-    query_cache_entry_t entries[QUERY_CACHE_WAYS]; /**< 8 cache entries */
-    uint8_t lru_order[QUERY_CACHE_WAYS];           /**< LRU tracking: 0=MRU, 7=LRU */
-} query_cache_set_t;
 
 /* ------------------------------------------------------------------ */
 /*  Internal rule structure                                            */
@@ -176,7 +165,7 @@ struct soft_ruleset {
     effective_ruleset_t effective;             /**< Simplified (read-only after compile) */
     bool                is_compiled;           /**< true if effective is valid */
     custom_op_entry_t   custom_ops[MAX_CUSTOM_OPS];
-    query_cache_set_t   query_cache[QUERY_CACHE_SETS]; /**< 8-way set associative cache */
+    ht_cache_t         *query_cache;          /**< LRU cache (lazily created on first store) */
     char                last_error[256];
     /* Evaluation statistics (not thread-safe) */
     uint64_t            stats_cache_hits;
