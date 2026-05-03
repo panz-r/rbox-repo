@@ -1010,6 +1010,21 @@ int soft_ruleset_compile_err(soft_ruleset_t *rs,
             if (strcmp(pending[i].rule.pattern, pending[j].rule.pattern) != 0)
                 break;  /* patterns diverge → no more matches possible */
             if (rule_constraints_equal(&pending[i].rule, &pending[j].rule)) {
+                /* DENY rules must not participate in mode intersection —
+                 * they short-circuit independently of other layers' grants.
+                 * ANDing DENY with any other mode yields 0, which would
+                 * silently drop both the deny and the grants. */
+                bool i_deny = (pending[i].rule.mode & SOFT_ACCESS_DENY) != 0;
+                bool j_deny = (pending[j].rule.mode & SOFT_ACCESS_DENY) != 0;
+                if (i_deny || j_deny) {
+                    /* If both are DENY, merge into one */
+                    if (i_deny && j_deny) {
+                        groups[j].used = true;
+                    }
+                    /* Otherwise keep both — DENY and grant must coexist
+                     * so the DENY can short-circuit at eval time */
+                    continue;
+                }
                 groups[i].mode &= pending[j].rule.mode;
                 groups[j].used = true;
             }

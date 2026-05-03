@@ -90,7 +90,7 @@ $(DFA_FILE): $(CDFATOOL) $(PATTERN_FILE) | $(BUILD_DIR)
 $(DFA_DATA_C): $(DFA_FILE)
 	$(CDFATOOL) embedd $(DFA_FILE) -o $(DFA_DATA_C)
 
-$(TARGET): $(OBJS) ../c-dfa/libdfa_eval.a ../rbox-ruleset/build/lib/liblandlock-builder.a
+$(TARGET): $(OBJS) ../c-dfa/build/lib_eval/libreadonlybox_dfa_eval.a ../rbox-ruleset/build/lib/liblandlock-builder.a
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c

@@ -1,7 +1,7 @@
 package shell
 
 // #cgo CFLAGS: -I../../shellgate/include -I../../shellsplit/include -I../../shelltype/include
-// #cgo LDFLAGS: -L../../shellgate/build -lshellgate -lshelltype_gate -lshellsplit_gate -lm
+// #cgo LDFLAGS: -L../../shellgate/build -lshellgate -lshelltype_gate -lshellsplit_gate -lxxhash -lm
 // #include <shellgate.h>
 // #include <stdlib.h>
 // #include <string.h>
