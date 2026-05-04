@@ -47,6 +47,43 @@ type Stats struct {
 	totalUnknown int
 }
 
+// OpMode represents the operational mode of the TUI
+type OpMode int
+
+const (
+	OpModeInteractive OpMode = iota // Current behavior: waits for user input
+	OpModePassthrough                 // Allows everything without involvement
+	OpModeAuto                        // Policy-based, auto-denies what needs user input
+)
+
+const (
+	opModeInteractiveText = "Interactive"
+	opModePassthroughText  = "Passthrough"
+	opModeAutoText         = "Auto"
+)
+
+func (m OpMode) String() string {
+	switch m {
+	case OpModePassthrough:
+		return opModePassthroughText
+	case OpModeAuto:
+		return opModeAutoText
+	default:
+		return opModeInteractiveText
+	}
+}
+
+func (m OpMode) Description() string {
+	switch m {
+	case OpModePassthrough:
+		return "Allow all requests without user involvement"
+	case OpModeAuto:
+		return "Allow/deny by policy, auto-deny requests needing user input"
+	default:
+		return "Wait for user input on each request"
+	}
+}
+
 type EventType int
 
 const (
@@ -170,7 +207,10 @@ type Model struct {
 	gate          *shell.Gate         // shellgate policy engine (may be nil)
 	suggAccepted  []bool              // per-suggestion accept state (true = accepted/green)
 	suggDuration  int                 // last selected duration (0-3) for suggestion accept
-	violOverrides map[uint32]bool     // violation types user has explicitly allowed this session
+	violOverrides   map[uint32]bool     // violation types user has explicitly allowed this session
+	opMode          OpMode             // Current operational mode
+	showModeModal   bool               // Whether mode chooser modal is visible
+	modeModalCursor int               // Cursor position in mode modal (0-2)
 }
 
 func NewModel() *Model {
@@ -184,7 +224,10 @@ func NewModel() *Model {
 		focus:        "history",
 		pendingRetry: make(map[int]*CommandLog),
 		viewOnly:     false,
-		violOverrides: make(map[uint32]bool),
+		violOverrides:   make(map[uint32]bool),
+		opMode:          OpModeInteractive,
+		showModeModal:   false,
+		modeModalCursor: 0,
 	}
 }
 
@@ -300,6 +343,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "up":
+			if m.showModeModal {
+				m.modeModalCursor = (m.modeModalCursor - 1 + 3) % 3
+				return m, nil
+			}
 			if m.step == 1 && m.selectedIdx > 0 {
 				m.selectedIdx--
 			} else if m.step == 2 {
@@ -320,6 +367,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "down":
+			if m.showModeModal {
+				m.modeModalCursor = (m.modeModalCursor + 1) % 3
+				return m, nil
+			}
 			if m.step == 1 && m.selectedIdx < len(m.commands)-1 {
 				m.selectedIdx++
 			} else if m.step == 2 {
@@ -390,7 +441,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+		case "shift+tab":
+			// Open mode chooser modal
+			m.showModeModal = true
+			m.modeModalCursor = int(m.opMode)
+			return m, nil
 		case "tab":
+			if m.showModeModal {
+				// In mode modal, tab cycles through options
+				m.modeModalCursor = (m.modeModalCursor + 1) % 3
+				return m, nil
+			}
 			if m.step == 2 && !m.viewOnly {
 				if m.focus == "actions" {
 					m.focus = "details"
@@ -399,6 +460,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "enter":
+			if m.showModeModal {
+				m.opMode = OpMode(m.modeModalCursor)
+				m.showModeModal = false
+				m.flashMessage = "Mode: " + m.opMode.String()
+				m.flashTimer = FlashTimerSeconds
+				return m, nil
+			}
+
 			if m.step == 1 && len(m.commands) > 0 {
 				if m.selectedIdx >= 0 && m.selectedIdx < len(m.commands) {
 					selectedCmd := m.commands[m.selectedIdx]
@@ -559,7 +628,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.focus = "actions"
 				m.executeDecision()
 			}
+			if m.showModeModal {
+				m.opMode = OpMode(m.modeModalCursor)
+				m.showModeModal = false
+				m.flashMessage = "Mode: " + m.opMode.String()
+				m.flashTimer = FlashTimerSeconds
+				return m, nil
+			}
 		case "esc":
+			if m.showModeModal {
+				m.showModeModal = false
+				return m, nil
+			}
 			if m.step == 2 {
 				if m.viewOnly {
 					m.step = 1
@@ -632,8 +712,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if !autoAllowed && !autoDenied {
-				StoreRequest(msg.RequestID, msg.Req)
-				m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, evalResult)
+				// Check operational mode
+				switch m.opMode {
+				case OpModePassthrough:
+					// Allow everything without involvement
+					msg.Req.Decide(DecisionAllow, "once", 0, nil)
+					m.AddCommand("ALLOW", msg.Command, msg.Args, msg.Caller, msg.Syscall, "passthrough", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, evalResult)
+				case OpModeAuto:
+					// Auto-deny anything that would need user input (has suggestions or env vars)
+					if evalResult != nil && (len(evalResult.Suggestions) > 0 || len(evalResult.DenySuggestions) > 0 || len(msg.EnvVars) > 0) {
+						msg.Req.Decide(DecisionDeny, "once", 0, nil)
+						m.AddCommand("DENY", msg.Command, msg.Args, msg.Caller, msg.Syscall, "auto-deny: needs user input", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, evalResult)
+					} else {
+						// No user input needed, use policy decision
+						StoreRequest(msg.RequestID, msg.Req)
+						m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, evalResult)
+					}
+				default:
+					// OpModeInteractive - wait for user input
+					StoreRequest(msg.RequestID, msg.Req)
+					m.AddCommand("PENDING", msg.Command, msg.Args, msg.Caller, msg.Syscall, "waiting for decision", msg.ClientID, msg.Cwd, msg.RequestID, msg.EnvVars, evalResult)
+				}
 			}
 		case EventAddPendingRetry:
 			// Find the command log for this request
@@ -990,7 +1089,20 @@ func (m *Model) View() string {
 		statsStr += pendingStr
 	}
 
-	padding := m.width - len(statsStr)
+	// Add current mode indicator - always visible, dimmed, left-justified
+	var modeText string
+	switch m.opMode {
+	case OpModePassthrough:
+		modeText = "PASSTHROUGH"
+	case OpModeAuto:
+		modeText = "AUTO"
+	default:
+		modeText = "INTERACTIVE"
+	}
+	modeStr := dimStyle.Render("[" + modeText + "]")
+
+	// Build header: mode on left, stats centered (or right after mode if narrow)
+	padding := m.width - len(statsStr) - len(modeStr)
 	if m.width == 0 {
 		padding = DefaultPadding
 	}
@@ -1001,6 +1113,9 @@ func (m *Model) View() string {
 	rightPadding := padding - leftPadding
 
 	headerLine := strings.Repeat(" ", leftPadding) + statsStr + strings.Repeat(" ", rightPadding)
+	// But mode should be at absolute left - prepend it
+	headerLine = modeStr + strings.Repeat(" ", 2) + headerLine
+
 	sb.WriteString(titleStyle.Render(headerLine))
 	sb.WriteString("\n")
 
@@ -1028,11 +1143,11 @@ func (m *Model) View() string {
 	// Footer
 	var controls string
 	if m.step == 1 {
-		controls = "↑↓ navigate  Enter/A/D expand  C clear policy  q/ctrl+c quit"
+		controls = "↑↓ navigate  Enter/A/D expand  C clear policy  Shift+Tab mode  q/ctrl+c quit"
 	} else if m.viewOnly {
-		controls = "↑↓ scroll  Esc back"
+		controls = "↑↓ scroll  Shift+Tab mode  Esc back"
 	} else {
-		controls = "A/D decision  1-4 duration  Esc back"
+		controls = "A/D decision  1-4 duration  Shift+Tab mode  Esc back"
 	}
 	footer := fmt.Sprintf(" %s  Connections: %d  |  %s  q/ctrl+c to quit",
 		infoStyle.Render(controls),
@@ -1043,7 +1158,48 @@ func (m *Model) View() string {
 	sb.WriteString("\n")
 	sb.WriteString(footerStyle.Render(footer))
 
+	if m.showModeModal {
+		m.renderModeModal(&sb)
+	}
+
 	return sb.String()
+}
+
+func (m *Model) renderModeModal(sb *strings.Builder) {
+	// Render mode chooser modal overlay
+	modalWidth := 50
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF79C6")).Width(modalWidth)
+	optionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F8F8F2")).Width(modalWidth)
+	selectedOptionStyle := lipgloss.NewStyle().Background(lipgloss.Color("#44475A")).Foreground(lipgloss.Color("#F8F8F2")).Width(modalWidth)
+	dimOptionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6272A4")).Width(modalWidth)
+	boxStyle := lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#6272A4")).Padding(1, 2)
+
+	opts := []struct {
+		mode OpMode
+		name string
+		desc string
+	}{
+		{OpModeInteractive, "Interactive", "Wait for user input on each request"},
+		{OpModePassthrough, "Passthrough", "Allow all requests without user involvement"},
+		{OpModeAuto, "Auto", "Allow/deny by policy, auto-deny requests needing user input"},
+	}
+
+	sb.WriteString("[?25l") // Hide cursor
+	sb.WriteString(boxStyle.Render(titleStyle.Render("  Choose Mode (Shift+Tab to close)  ")))
+	sb.WriteString("\n")
+
+	for i, opt := range opts {
+		var row string
+		if i == m.modeModalCursor {
+			row = fmt.Sprintf(" > %s - %s", selectedOptionStyle.Render(opt.name), dimOptionStyle.Render(opt.desc))
+		} else {
+			row = fmt.Sprintf("   %s - %s", optionStyle.Render(opt.name), dimOptionStyle.Render(opt.desc))
+		}
+		sb.WriteString(selectedOptionStyle.Render(row))
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(dimOptionStyle.Render("\n   Press Enter to confirm, Esc to cancel"))
 }
 
 func (m *Model) renderHistoryList(sb *strings.Builder, maxHeight int) {
