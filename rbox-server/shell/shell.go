@@ -53,6 +53,22 @@ type EvalResult struct {
 	Truncated       bool
 }
 
+// Suggestion is a suggested policy pattern for covering a command.
+// Mirrors st_expand_suggestion_t from shelltype.h.
+type Suggestion struct {
+	Pattern    string
+	BasedOn    string // existing pattern this extends, or ""
+	Confidence float64
+}
+
+// TokenVariant is a type suggestion for a single token position.
+// Mirrors st_token_variant_t from shelltype.h.
+type TokenVariant struct {
+	Type        int    // st_token_type_t
+	TypeSymbol  string // e.g., "#path", "#val", "*"
+	SampleValue string // optional sample, may be empty
+}
+
 type Gate struct {
 	mu   sync.Mutex
 	gate *C.sg_gate_t
@@ -252,6 +268,33 @@ func (g *Gate) DenyRuleCount() uint32 {
 		return 0
 	}
 	return uint32(C.sg_gate_deny_rule_count(g.gate))
+}
+
+const maxTokenVariants = 8 // ST_MAX_TOKEN_VARIANTS in shelltype.h
+
+// SuggestionTokenVariantsAt returns type variants for a token position in a suggestion pattern.
+// Chain: literal → most_specific_type → ... → #any.
+// Returns variants from more specific to more general.
+func (g *Gate) SuggestionTokenVariantsAt(pattern string, editPos int) ([]string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.gate == nil {
+		return nil, fmt.Errorf("gate is closed")
+	}
+	cPattern := C.CString(pattern)
+	defer C.free(unsafe.Pointer(cPattern))
+	var variants [maxTokenVariants]C.st_token_variant_t
+	n := C.sg_gate_suggestion_token_variants_at(
+		g.gate,
+		cPattern,
+		C.size_t(editPos),
+		&variants[0],
+		C.size_t(maxTokenVariants))
+	result := make([]string, int(n))
+	for i := 0; i < int(n); i++ {
+		result[i] = C.GoString(variants[i].type_symbol)
+	}
+	return result, nil
 }
 
 func (g *Gate) SavePolicy(path string) error {

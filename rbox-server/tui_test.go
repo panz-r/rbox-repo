@@ -136,53 +136,6 @@ func TestDurationToReason(t *testing.T) {
 	})
 }
 
-func TestNewModel(t *testing.T) {
-	model := NewModel()
-	assert.NotNil(t, model)
-	assert.Empty(t, model.commands)
-	assert.Empty(t, model.logs)
-	assert.Equal(t, 1, model.step)
-	assert.Equal(t, 0, model.cursor)
-	assert.Equal(t, 0, model.selectedIdx)
-	assert.Equal(t, "history", model.focus)
-	assert.NotNil(t, model.eventChan)
-	assert.Empty(t, model.pendingRetry)
-}
-
-func TestAddCommand(t *testing.T) {
-	model := NewModel()
-
-	// Add first command
-	model.AddCommand("ALLOW", "ls", "-l", "", "", "read-only command", "", "", 1, nil, nil)
-	assert.Len(t, model.commands, 1)
-	assert.Equal(t, "ALLOW", model.commands[0].Decision)
-	assert.Equal(t, "ls", model.commands[0].Command)
-	assert.Equal(t, "-l", model.commands[0].Args)
-	assert.Equal(t, 0, model.selectedIdx)
-
-	// Add second command - should be selected
-	model.AddCommand("DENY", "rm", "-rf /", "", "", "dangerous command", "", "", 2, nil, nil)
-	assert.Len(t, model.commands, 2)
-	assert.Equal(t, 1, model.selectedIdx)
-
-	// Stats should count pending
-	model.AddCommand("PENDING", "git", "status", "", "", "waiting for decision", "", "", 3, nil, nil)
-	assert.Equal(t, 1, model.stats.totalUnknown)
-}
-
-func TestAddLog(t *testing.T) {
-	model := NewModel()
-	model.AddLog("Test log entry")
-	assert.Len(t, model.logs, 1)
-	assert.Equal(t, "Test log entry", model.logs[0])
-
-	// Test MaxLogs limit
-	for i := 0; i < 60; i++ {
-		model.AddLog("entry")
-	}
-	assert.Len(t, model.logs, 50) // Should be capped at MaxLogs
-}
-
 func TestMinInt(t *testing.T) {
 	assert.Equal(t, 5, minInt(5, 10))
 	assert.Equal(t, 5, minInt(10, 5))

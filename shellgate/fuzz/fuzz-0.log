@@ -1,0 +1,28 @@
+Dictionary: 66 entries
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1862458095
+INFO: Loaded 1 modules   (13 inline 8-bit counters): 13 [0x624e75cd25a0, 0x624e75cd25ad), 
+INFO: Loaded 1 PC tables (13 PCs): 13 [0x624e75cd25b0,0x624e75cd2680), 
+INFO:       28 files found in /w/rbox-repo/shellgate/fuzz/../tests/corpus
+INFO: seed corpus: files: 28 min: 1b max: 42b total: 483b rss: 27Mb
+#29	INITED cov: 3 ft: 3 corp: 2/10b exec/s: 0 rss: 27Mb
+#166	REDUCE cov: 3 ft: 3 corp: 2/9b lim: 9 exec/s: 0 rss: 27Mb L: 8/8 MS: 2 ChangeBinInt-EraseBytes-
+#215	REDUCE cov: 3 ft: 3 corp: 2/7b lim: 9 exec/s: 0 rss: 27Mb L: 6/6 MS: 4 EraseBytes-InsertByte-ShuffleBytes-ShuffleBytes-
+#303	REDUCE cov: 3 ft: 3 corp: 2/6b lim: 9 exec/s: 0 rss: 27Mb L: 5/5 MS: 3 ChangeByte-ShuffleBytes-EraseBytes-
+#359	REDUCE cov: 4 ft: 4 corp: 3/15b lim: 9 exec/s: 0 rss: 27Mb L: 9/9 MS: 1 InsertRepeatedBytes-
+#632	REDUCE cov: 4 ft: 4 corp: 3/13b lim: 9 exec/s: 0 rss: 27Mb L: 7/7 MS: 3 CrossOver-ChangeByte-CrossOver-
+#2258	REDUCE cov: 4 ft: 4 corp: 3/12b lim: 22 exec/s: 0 rss: 27Mb L: 6/6 MS: 1 EraseBytes-
+#6559	REDUCE cov: 4 ft: 4 corp: 3/11b lim: 64 exec/s: 0 rss: 27Mb L: 5/5 MS: 1 EraseBytes-
+#31283	NEW    cov: 5 ft: 5 corp: 4/311b lim: 304 exec/s: 31283 rss: 29Mb L: 300/300 MS: 5 ChangeByte-InsertRepeatedBytes-CopyPart-InsertRepeatedBytes-InsertRepeatedBytes-
+#31296	REDUCE cov: 5 ft: 5 corp: 4/268b lim: 304 exec/s: 31296 rss: 29Mb L: 257/257 MS: 3 ChangeBit-ManualDict-EraseBytes- DE: "grep"-
+#65536	pulse  cov: 5 ft: 5 corp: 4/268b lim: 638 exec/s: 21845 rss: 31Mb
+#131072	pulse  cov: 5 ft: 5 corp: 4/268b lim: 1295 exec/s: 10922 rss: 36Mb
+#262144	pulse  cov: 5 ft: 5 corp: 4/268b lim: 2594 exec/s: 5698 rss: 47Mb
+#524288	pulse  cov: 5 ft: 5 corp: 4/268b lim: 4096 exec/s: 2730 rss: 58Mb
+#1048576	pulse  cov: 5 ft: 5 corp: 4/268b lim: 4096 exec/s: 1107 rss: 87Mb
+==807751== libFuzzer: run interrupted; exiting
+stat::number_of_executed_units: 2024468
+stat::average_exec_per_sec:     403
+stat::new_units_added:          9
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              128

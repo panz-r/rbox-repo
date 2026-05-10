@@ -228,7 +228,11 @@ func main() {
 				envNames[i] = req.GetEnvVarName(i)
 				envScores[i] = req.GetEnvVarScore(i)
 			}
-			CaptureRequest(cmd, args[1:], caller, syscallName, envCount, envNames, envScores, decision, reason, 0, envDecisions)
+			var argsSlice []string
+			if len(args) > 1 {
+				argsSlice = args[1:]
+			}
+			CaptureRequest(cmd, argsSlice, caller, syscallName, envCount, envNames, envScores, decision, reason, 0, envDecisions)
 		}
 
 		// Send decision with env decisions

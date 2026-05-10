@@ -1,0 +1,33 @@
+Dictionary: 66 entries
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1862442375
+INFO: Loaded 1 modules   (13 inline 8-bit counters): 13 [0x56a7e40ae5a0, 0x56a7e40ae5ad), 
+INFO: Loaded 1 PC tables (13 PCs): 13 [0x56a7e40ae5b0,0x56a7e40ae680), 
+INFO:       28 files found in /w/rbox-repo/shellgate/fuzz/../tests/corpus
+INFO: seed corpus: files: 28 min: 1b max: 42b total: 483b rss: 27Mb
+#29	INITED cov: 3 ft: 3 corp: 2/10b exec/s: 0 rss: 27Mb
+#90	REDUCE cov: 3 ft: 3 corp: 2/8b lim: 9 exec/s: 0 rss: 27Mb L: 7/7 MS: 1 EraseBytes-
+#171	REDUCE cov: 4 ft: 4 corp: 3/16b lim: 9 exec/s: 0 rss: 27Mb L: 8/8 MS: 1 InsertByte-
+#247	REDUCE cov: 4 ft: 4 corp: 3/15b lim: 9 exec/s: 0 rss: 27Mb L: 7/7 MS: 1 EraseBytes-
+#905	REDUCE cov: 4 ft: 4 corp: 3/14b lim: 15 exec/s: 0 rss: 27Mb L: 6/7 MS: 3 ShuffleBytes-ShuffleBytes-EraseBytes-
+#1618	REDUCE cov: 4 ft: 4 corp: 3/13b lim: 22 exec/s: 0 rss: 27Mb L: 6/6 MS: 3 ChangeBit-EraseBytes-CopyPart-
+#4204	REDUCE cov: 4 ft: 4 corp: 3/12b lim: 44 exec/s: 0 rss: 27Mb L: 5/6 MS: 1 EraseBytes-
+#31697	NEW    cov: 5 ft: 5 corp: 4/305b lim: 312 exec/s: 31697 rss: 29Mb L: 293/293 MS: 4 InsertRepeatedBytes-CopyPart-InsertRepeatedBytes-InsertRepeatedBytes-
+#31754	REDUCE cov: 5 ft: 5 corp: 4/296b lim: 312 exec/s: 31754 rss: 29Mb L: 284/284 MS: 2 CMP-EraseBytes- DE: "\001\000\000\000\000\000\000\011"-
+#32527	REDUCE cov: 5 ft: 5 corp: 4/282b lim: 312 exec/s: 32527 rss: 29Mb L: 270/270 MS: 3 ManualDict-InsertByte-EraseBytes- DE: "cat"-
+#32708	REDUCE cov: 5 ft: 5 corp: 4/279b lim: 312 exec/s: 32708 rss: 29Mb L: 267/267 MS: 1 EraseBytes-
+#33014	REDUCE cov: 5 ft: 5 corp: 4/270b lim: 312 exec/s: 33014 rss: 29Mb L: 258/258 MS: 1 EraseBytes-
+#33653	REDUCE cov: 5 ft: 5 corp: 4/269b lim: 312 exec/s: 33653 rss: 29Mb L: 257/257 MS: 4 EraseBytes-CopyPart-EraseBytes-CopyPart-
+#37407	REDUCE cov: 5 ft: 5 corp: 4/268b lim: 344 exec/s: 37407 rss: 29Mb L: 5/257 MS: 4 ShuffleBytes-CrossOver-EraseBytes-CopyPart-
+#65536	pulse  cov: 5 ft: 5 corp: 4/268b lim: 620 exec/s: 21845 rss: 31Mb
+#131072	pulse  cov: 5 ft: 5 corp: 4/268b lim: 1275 exec/s: 11915 rss: 37Mb
+#262144	pulse  cov: 5 ft: 5 corp: 4/268b lim: 2572 exec/s: 6241 rss: 42Mb
+#524288	pulse  cov: 5 ft: 5 corp: 4/268b lim: 4096 exec/s: 2912 rss: 58Mb
+#1048576	pulse  cov: 5 ft: 5 corp: 4/268b lim: 4096 exec/s: 1278 rss: 80Mb
+#2097152	pulse  cov: 5 ft: 5 corp: 4/268b lim: 4096 exec/s: 436 rss: 128Mb
+==807752== libFuzzer: run interrupted; exiting
+stat::number_of_executed_units: 2136139
+stat::average_exec_per_sec:     425
+stat::new_units_added:          13
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              128
