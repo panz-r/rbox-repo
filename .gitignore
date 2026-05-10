@@ -1,3 +1,8 @@
+Testing/
+.dirac/
+.dirac-tmp/
+.dirac-logs/
+.dirac-state/
 # generated files
 merged-*.txt
 rbox-preload/readonlybox_dfa.c 
@@ -5,6 +10,9 @@ rbox-preload/readonlybox_dfa.c
 .qwen/
 build/
 bin/
+lib/
+*.so
+*.so.*
 *.so
 *.o
 */*.so
@@ -32,3 +40,5 @@ compile_commands.json
 # opencode
 .opencode/package-lock.json
 .worktrees/
+# vendored dependencies
+vendor/github.com/

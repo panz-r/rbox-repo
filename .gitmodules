@@ -5,3 +5,7 @@
 [submodule "vendor/xxhash"]
 	path = vendor/xxhash
 	url = https://github.com/Cyan4973/xxHash.git
+[submodule "draugr"]
+	path = draugr
+	url = https://github.com/panz-r/draugr-repo.git
+	branch = master

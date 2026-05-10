@@ -52,7 +52,7 @@ set(SHELLSPLIT_SRC ${CMAKE_SOURCE_DIR}/../shellsplit/src/shell_tokenizer.c)
 add_library(shellsplit STATIC ${SHELLSPLIT_SRC})
 target_compile_options(shellsplit PRIVATE -Wall -Wextra -std=gnu11 -pthread -fPIC)
 
-# Draugr hash table dependency
+# Draugr is built by shellgate and linked as a pre-built static library
 set(DRAUGR_DIR ${CMAKE_SOURCE_DIR}/../draugr)
 
 # Source files for rbox-protocol library
@@ -71,13 +71,12 @@ set(LIB_SOURCES
     src/protocol_decoding.c
     src/timer_heap.c
     src/log.c
-    ${DRAUGR_DIR}/src/ht.c
-    ${DRAUGR_DIR}/src/ht_cache.c
 )
 
 # Build shared library
 add_library(rbox_protocol SHARED ${LIB_SOURCES})
-target_link_libraries(rbox_protocol PRIVATE shellsplit pthread m atomic)
+target_link_libraries(rbox_protocol PRIVATE shellsplit pthread m atomic
+    ${CMAKE_SOURCE_DIR}/../draugr/build/libdraugr.a)
 set_target_properties(rbox_protocol PROPERTIES
     VERSION 1.0.0
     SOVERSION 1

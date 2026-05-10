@@ -21,6 +21,7 @@ const (
 	cDfaToolsDir    = cDfaDir + "/build/tools"
 	cDfaSrcDir      = cDfaDir + "/src"
 	cDfaIncludeDir  = cDfaDir + "/include"
+	draugrDir       = "draugr"
 	shellsplitDir   = "shellsplit"
 	rboxProtocolDir = "rbox-protocol"
 	rboxWrapDir     = "rbox-wrap"
@@ -96,7 +97,13 @@ func BuildDependencies() error {
 	defer os.Setenv("CGO_ENABLED", oldCGO)
 	os.MkdirAll(binDir, 0755)
 
-	// Build c-dfa FIRST using CMake (produces tools needed for pattern validation)
+	// Build draugr submodule first — shellgate, rbox-protocol, rbox-ruleset,
+	// and c-dfa all link against the pre-built static library in draugr/build/
+	if err := buildCMake(filepath.Join(wd, draugrDir)); err != nil {
+		return fmt.Errorf("draugr build failed: %w", err)
+	}
+
+	// Build c-dfa (produces tools needed for pattern validation)
 	if err := runCMake(filepath.Join(wd, cDfaDir), true); err != nil {
 		return fmt.Errorf("c-dfa build failed: %w", err)
 	}

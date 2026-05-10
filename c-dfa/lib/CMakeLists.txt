@@ -31,7 +31,6 @@ set(LIB_SOURCES
 # ============================================================================
 add_library(readonlybox_dfa STATIC ${LIB_SOURCES}
     ${XXHASH_DIR}/xxhash.c
-    ${DRAUGR_DIR}/src/ht.c
 )
 target_compile_definitions(readonlybox_dfa PRIVATE
     NFABUILDER_NO_MAIN
@@ -50,6 +49,7 @@ target_link_libraries(readonlybox_dfa PUBLIC
     readonlybox_dfa_headers
     readonlybox_dfa_eval
     cadical
+    ${CMAKE_SOURCE_DIR}/../draugr/build/libdraugr.a
 )
 
 # ============================================================================
@@ -57,7 +57,9 @@ target_link_libraries(readonlybox_dfa PUBLIC
 # ============================================================================
 add_library(readonlybox_dfa_shared SHARED ${LIB_SOURCES}
     ${XXHASH_DIR}/xxhash.c
-    ${DRAUGR_DIR}/src/ht.c
+)
+target_link_libraries(readonlybox_dfa_shared PRIVATE
+    ${CMAKE_SOURCE_DIR}/../draugr/build/libdraugr.a
 )
 target_compile_definitions(readonlybox_dfa_shared PRIVATE
     NFABUILDER_NO_MAIN
